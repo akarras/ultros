@@ -1,10 +1,16 @@
 use clap::Parser;
+use console::Term;
+use dialoguer::theme::ColorfulTheme;
+use dialoguer::FuzzySelect;
 use itertools::Itertools;
 use num_format::{Locale, ToFormattedString};
-use recipepricecheck::{best_pricing, BestPricingForItem, ListingStatus};
+use recipepricecheck::{
+    get_ingredient_prices, BestPricingForItem, ListingStatus, PricingArguments,
+    RecipePricingRawData,
+};
 use std::collections::HashMap;
-use universalis::ListingView;
-use xivapi::{RecipeRequest, XivDataType};
+use universalis::{ListingView, UniversalisClient};
+use xivapi::{disk_query_async, RecipeRequest, XivDataType};
 
 #[derive(Debug, Parser)]
 #[clap(author, version, about)]
@@ -15,8 +21,12 @@ struct Args {
     world_name: String,
     #[clap(short, long, value_parser)]
     quantity: i64,
-    #[clap(short, long, value_parser, default_value="true")]
+    #[clap(short, long, value_parser, default_value = "true")]
     filter_shards: bool,
+    #[clap(long, value_parser, default_value = "false")]
+    filter_items_with_too_much_quantity: bool,
+    #[clap(short)]
+    user_home_world: Option<String>,
 }
 
 #[tokio::main]
@@ -24,27 +34,39 @@ async fn main() {
     let args: Args = Args::parse();
     // find the recipe first
     let index = xivapi::get_index(&XivDataType::Recipe);
-    let search = index
-        .search(&args.recipe_name)
-        .next()
-        .expect(&format!("No recipes found {}", args.recipe_name));
-    let recipe = xivapi::disk_query(RecipeRequest::new(search.id as u32))
+
+    /*let recipes : Vec<_> = index
+    .search(&args.recipe_name)
+    .collect();*/
+
+    let selection = FuzzySelect::with_theme(&ColorfulTheme::default())
+        .items(&index.0)
+        .default(0)
+        .interact_on_opt(&Term::stderr())
+        .unwrap()
+        .unwrap();
+
+    let search = index.0.get(selection).unwrap();
+
+    let recipe = disk_query_async(RecipeRequest::new(search.id as u32))
         .await
         .unwrap();
-    let best_pricing = best_pricing(&args.world_name, recipe, args.quantity, args.filter_shards)
-        .await
-        .unwrap();
+    let client = UniversalisClient::new();
+    let best_pricing = get_ingredient_prices(
+        client,
+        &args.world_name,
+        recipe,
+        args.quantity,
+        &PricingArguments {
+            filter_shards: args.filter_shards,
+            filter_items_with_too_much_quantity: args.filter_items_with_too_much_quantity,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
     let world_to_item_map: HashMap<&String, Vec<(&BestPricingForItem, Vec<&ListingView>)>> =
-        best_pricing
-            .items
-            .iter()
-            .map(|m| (m, m.items_by_world()))
-            .fold(HashMap::new(), |mut map, (item, item_map)| {
-                for (world, listings) in item_map {
-                    map.entry(world).or_default().push((item, listings));
-                }
-                map
-            });
+        get_items_by_world(&best_pricing);
 
     /*for item in &best_pricing.items {
         let group_by = item.items_by_world();
@@ -78,7 +100,10 @@ async fn main() {
                     ))
                     .join("\n")
             );
-            println!("               Total: {}mgp", total.to_formatted_string(&Locale::en));
+            println!(
+                "               Total: {}mgp",
+                total.to_formatted_string(&Locale::en)
+            );
         }
     }
     println!(

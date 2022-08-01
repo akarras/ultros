@@ -3,6 +3,7 @@ extern crate core;
 use crate::MarketView::{MultiView, SingleView};
 use reqwest::{Client, Method, Request, Url};
 use serde::Deserialize;
+use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use thiserror::Error;
@@ -21,13 +22,15 @@ pub enum Error {
     NoItems,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MateriaView {
-    pub slot_id: u32,
+    #[serde(rename = "slotID")]
+    pub slot_id: Option<u32>,
+    #[serde(rename = "materiaID")]
     pub materia_id: u32,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ListingMultiViewData {
     #[serde(rename = "itemID")]
@@ -65,7 +68,7 @@ pub struct ListingMultiViewData {
     pub world_upload_times: Value,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ListingView {
     pub last_review_time: Option<u64>,
@@ -91,7 +94,7 @@ pub struct ListingView {
     pub total: u32,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(untagged)]
 pub enum MarketView {
     SingleView(CurrentlyShownSingleView),
@@ -117,7 +120,7 @@ impl MarketView {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct CurrentlyShownSingleView {
     #[serde(rename = "itemID")]
@@ -125,7 +128,7 @@ pub struct CurrentlyShownSingleView {
     pub listings: Vec<ListingView>,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct CurrentlyShownMultiView {
     #[serde(rename = "itemIDs")]

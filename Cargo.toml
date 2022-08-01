@@ -1,2 +1,2 @@
 [workspace]
-members = ["universalis", "xivapi", "recipepricecheck"]
+members = ["universalis", "xivapi", "recipepricecheck", "xivdb", "crafterstoolbox", "xiv-compiled-data"]

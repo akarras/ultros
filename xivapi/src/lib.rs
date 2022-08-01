@@ -1,5 +1,6 @@
 pub mod models;
 
+use crate::models::item::Item;
 use crate::models::recipe::Recipe;
 use clap::PossibleValue;
 use futures::channel::mpsc::UnboundedSender;
@@ -11,8 +12,11 @@ use serde::Serialize;
 use serde::{Deserialize, Deserializer};
 use serde_aux::serde_introspection::serde_introspect;
 use serde_json::Value;
+use std::error::Error;
 use std::fmt;
 use std::fmt::{Display, Formatter};
+use std::io::Read;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::time::Duration;
 use thiserror::Error;
@@ -31,15 +35,42 @@ pub enum XivApiError {
     JsonError(#[from] serde_json::Error),
 }
 
+fn print_pretty_serde_error(path: &str, str: &str, error: &serde_json::Error) {
+    let line = error.line();
+    let column = error.column();
+    let line = str.lines().skip(line - 1).next().unwrap();
+    let mut before_str = &line[..column];
+    let mut after_str = &line[column + 1..];
+    if let Some(start) = before_str.rfind(",") {
+        before_str = &before_str[start..];
+    }
+    if let Some(end) = after_str.find(",") {
+        after_str = &after_str[..end];
+    }
+    eprintln!();
+    eprintln!("error parsing {:?}", path);
+    eprintln!(
+        "error on line: {before_str}{}{after_str}",
+        &line[column..=column]
+    );
+    let pre_pad: String = (0..=before_str.len()).map(|m| '-').collect();
+    let post_pad: String = (0..=after_str.len()).map(|m| '-').collect();
+    eprintln!("             : {}^{}", pre_pad, post_pad);
+    eprintln!("{}", error);
+    eprintln!();
+}
+
 #[cfg(test)]
 mod test {
     use crate::{
-        query, GenericColumnQuery, Recipe, RecipePage, RecipeRequest, XivApiError, XivDataType,
+        print_pretty_serde_error, query, GenericColumnQuery, Recipe, RecipePage, RecipeRequest,
+        XivApiError, XivDataType,
     };
     use itertools::Itertools;
     use serde_aux::serde_introspection::serde_introspect;
     use serde_json::error::Category;
     use serde_json::Error;
+    use std::path::PathBuf;
     use std::time::SystemTime;
 
     #[tokio::test]
@@ -53,28 +84,7 @@ mod test {
                 let res = serde_json::from_str::<Recipe>(&str);
                 // Do some quick introspection on the error because this is impossible to traceback
                 if let Err(error) = &res {
-                    let line = error.line();
-                    let column = error.column();
-                    let line = str.lines().skip(line - 1).next().unwrap();
-                    let mut before_str = &line[..column];
-                    let mut after_str = &line[column + 1..];
-                    if let Some(start) = before_str.rfind(",") {
-                        before_str = &before_str[start..];
-                    }
-                    if let Some(end) = after_str.find(",") {
-                        after_str = &after_str[..end];
-                    }
-                    eprintln!();
-                    eprintln!("error parsing {:?}", path);
-                    eprintln!(
-                        "error on line: {before_str}{}{after_str}",
-                        &line[column..=column]
-                    );
-                    let pre_pad: String = (0..=before_str.len()).map(|m| '-').collect();
-                    let post_pad: String = (0..=after_str.len()).map(|m| '-').collect();
-                    eprintln!("             : {}^{}", pre_pad, post_pad);
-                    eprintln!("{}", error);
-                    eprintln!();
+                    print_pretty_serde_error(&path, &str, error);
                 }
                 Ok(res?)
             });
@@ -124,15 +134,20 @@ pub struct IndexRecord {
     pub id: i64,
 }
 
+impl Display for IndexRecord {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.name)
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize)]
-pub struct Index(Vec<Option<IndexRecord>>);
+pub struct Index(pub Vec<IndexRecord>);
 
 impl<'a> Index {
     pub fn search(&'a self, search: &str) -> impl Iterator<Item = &IndexRecord> {
         let search = search.to_owned();
         self.0
             .iter()
-            .flatten()
             .filter(move |record| record.name.contains(&search))
     }
 }
@@ -343,7 +358,20 @@ where
     Ok(get.json().await?)
 }
 
-pub async fn disk_query<T: XivDataQuery>(query: T) -> Result<T::Data, XivApiError> {
+pub fn disk_query<T: XivDataQuery>(query: T) -> Result<T::Data, XivApiError> {
+    let disk_path = format!(".{}.json", query.get_path());
+    println!("opening disk path {}", disk_path);
+    let mut file = std::fs::File::open(&disk_path)?;
+    let mut string = String::new();
+    file.read_to_string(&mut string)?;
+    let value = serde_json::from_str(&string);
+    if let Err(e) = &value {
+        print_pretty_serde_error(&disk_path, &string, e);
+    }
+    Ok(value?)
+}
+
+pub async fn disk_query_async<T: XivDataQuery>(query: T) -> Result<T::Data, XivApiError> {
     let disk_path = format!(".{}.json", query.get_path());
     println!("opening disk path {}", disk_path);
     let mut file = File::open(disk_path).await?;
@@ -351,6 +379,23 @@ pub async fn disk_query<T: XivDataQuery>(query: T) -> Result<T::Data, XivApiErro
     file.read_to_string(&mut string).await?;
     let value = serde_json::from_str(&string)?;
     Ok(value)
+}
+
+/// Requests a given recipe with the given ID
+pub struct ItemRequest(u32);
+
+impl ItemRequest {
+    pub fn new(id: u32) -> Self {
+        Self { 0: id }
+    }
+}
+
+impl XivDataQuery for ItemRequest {
+    type Data = Item;
+
+    fn get_path(&self) -> String {
+        format!("/Item/{}", self.0)
+    }
 }
 
 /// Requests a given recipe with the given ID
@@ -369,7 +414,6 @@ impl XivDataQuery for RecipeRequest {
         format!("/Recipe/{0}", self.0)
     }
 }
-
 
 pub struct RecipePage {
     pub page: u32,

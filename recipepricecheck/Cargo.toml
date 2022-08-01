@@ -9,7 +9,20 @@ edition = "2021"
 universalis = {path = "../universalis"}
 xivapi = {path = "../xivapi"}
 clap = {version = "3.2.5", features = ["derive"]}
-tokio = "1"
+tokio = {version = "1.19.2", features = ["full"]}
 thiserror = "1.0.31"
 itertools = "0"
-num-format = "0.4.0"
+num-format = {version = "0.4.0", optional = true}
+dialoguer = {version = "0.10.1", features = ["fuzzy-select"], optional = true}
+console = {version = "0.15.0", optional = true}
+serde = {version = "1", features = ["derive"]}
+
+[features]
+binary = ['num-format', "dialoguer", "console"]
+
+[lib]
+name = 'recipepricecheck'
+
+[[bin]]
+name = 'recipepricecheck'
+required-features = ["binary"]

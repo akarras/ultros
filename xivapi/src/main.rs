@@ -2,10 +2,11 @@ use clap::Parser;
 use futures::{Stream, StreamExt};
 use log::info;
 use serde_json::{json, Value};
+use sled::IVec;
 use std::path::PathBuf;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
-use xivapi::{DeepCrawl, XivApiError, XivDataType};
+use xivapi::{DeepCrawl, IndexRecord, XivApiError, XivDataType};
 
 async fn fetch_data(
     data_type: XivDataType,
@@ -49,8 +50,8 @@ async fn save_recipes(
 
 #[derive(Debug, Parser)]
 struct Args {
-    #[clap(short, long, value_parser)]
-    index_create: Option<bool>,
+    #[clap(short, long, value_parser, default_value = "false")]
+    index_create: bool,
     #[clap(short, long, value_parser, default_value = "./")]
     path: PathBuf,
     #[clap(short, long, value_parser)]
@@ -64,21 +65,36 @@ struct Args {
 #[tokio::main]
 async fn main() {
     let args: Args = Args::parse();
-    if let Some(index) = args.index_create {
+    if args.index_create {
         let path = args.path.join(format!("{}/", args.data_type));
-        let dir = std::fs::read_dir(args.path.clone()).unwrap();
-        let values = dir.map(|m| m.unwrap().path()).map(|path| async move {
-            let mut file = File::open(path).await.unwrap();
-            let mut json_str = String::new();
-            file.read_to_string(&mut json_str).await.unwrap();
-            let json: Value = serde_json::from_str(&json_str).unwrap();
-            let name = json.get("Name").unwrap().as_str().unwrap().to_string();
-            let id = json.get("ID").unwrap().as_i64().unwrap();
-            println!("{name} {id}");
-            let value = json!({"name": name, "id": id});
-            value
-        });
-        let values = futures::future::join_all(values).await;
+        let dir = std::fs::read_dir(path).unwrap();
+        let values = dir
+            .map(|m| m.unwrap().path())
+            .filter(|m| {
+                m.extension()
+                    .map(|e| {
+                        println!("{e:?}");
+                        e.eq_ignore_ascii_case("json")
+                    })
+                    .unwrap_or_default()
+            })
+            .map(|path| async move {
+                println!("path {path:?}");
+                let mut file = File::open(path).await.unwrap();
+                let mut json_str = String::new();
+                file.read_to_string(&mut json_str).await.unwrap();
+                let json: Value = serde_json::from_str(&json_str).unwrap();
+                let name = json.get("Name")?.as_str()?.to_string();
+                let id = json.get("ID")?.as_i64()?;
+                let value = IndexRecord { name, id };
+                Some(value)
+            });
+        let values: Vec<_> = futures::future::join_all(values)
+            .await
+            .into_iter()
+            .flatten()
+            .collect();
+        assert!(values.len() > 0);
         let path = args.path.join(format!("{}_index.json", args.data_type));
         let bytes = serde_json::to_vec(&values).unwrap();
         std::fs::write(path, bytes).unwrap();
