@@ -7,6 +7,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use thiserror::Error;
+use log::info;
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -65,7 +66,7 @@ pub struct ListingMultiViewData {
     pub stack_size_histogram_nq: Value,
     #[serde(rename = "stackSizeHistogramHQ")]
     pub stack_size_histogram_hq: Value,
-    pub world_upload_times: Value,
+    pub world_upload_times: Option<Value>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -142,11 +143,90 @@ pub struct UniversalisClient {
     client: Client,
 }
 
+#[derive(Serialize, Deserialize, Debug, Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Hash)]
+pub struct WorldId(pub u32);
+
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, PartialOrd, Ord, Hash)]
+pub struct RegionName(pub String);
+
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, PartialOrd, Ord, Hash)]
+pub struct DataCenterName(pub String);
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct DataCentersView(pub Vec<DataCenterView>);
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct DataCenterView {
+    pub name: DataCenterName,
+    pub region: RegionName,
+    pub worlds: Vec<WorldId>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WorldsView(pub Vec<WorldView>);
+
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, PartialOrd, Ord, Hash)]
+pub struct WorldName(pub String);
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WorldView {
+    pub id: WorldId,
+    pub name: WorldName,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum HistoryView {
+    SingleView()
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryEntry {
+    hq: bool,
+    price_per_unit: u64,
+    quantity: u32,
+    buyer_name: String,
+    on_mannequin: bool,
+    timestamp: u64,
+    world_name: WorldName,
+    world_id: WorldId,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct HistorySingleView {
+    item_id: u32,
+    entries: Vec<HistoryEntry>,
+    last_upload_time: u64,
+    dc_name: Option<String>,
+    // TODO finish implementation
+}
+
 impl UniversalisClient {
+    const UNIVERSALIS_BASE_URL: &'static str = "https://universalis.app/api/v2";
+
     pub fn new() -> Self {
         let client = Client::new();
-
         UniversalisClient { client }
+    }
+
+    pub async fn get_data_centers(&self) -> Result<DataCentersView, Error> {
+        let data_centers = Request::new(
+            Method::GET,
+            Url::parse(&format!("{}/data-centers", Self::UNIVERSALIS_BASE_URL))?,
+        );
+        Ok(self.client.execute(data_centers).await?.json().await?)
+    }
+
+    pub async fn get_worlds(&self) -> Result<WorldsView, Error> {
+        let data_centers = Request::new(
+            Method::GET,
+            Url::parse(&format!("{}/worlds", Self::UNIVERSALIS_BASE_URL))?,
+        );
+        Ok(self.client.execute(data_centers).await?.json().await?)
     }
 
     pub async fn marketboard_current_data(
@@ -162,23 +242,35 @@ impl UniversalisClient {
         let request = Request::new(
             Method::GET,
             Url::parse(&format!(
-                "https://universalis.app/api/v2/{}/{}",
-                world_or_datacenter, id_str
+                "{}/{world_or_datacenter}/{id_str}",
+                Self::UNIVERSALIS_BASE_URL
             ))?,
         );
-        println!("Requesting URL {}", request.url());
+        info!("Getting current marketboard data: {}", request.url());
         let data = self.client.execute(request).await?;
+        // serde struggles with this untagged enum so I just manually decide for it :)
         Ok(if item_ids.len() > 1 {
             MultiView(data.json().await?)
         } else {
             SingleView(data.json().await?)
         })
     }
+
+    pub async fn get_item_history(&self, world_or_datacenter: &str, item_ids: &[i32]) {
+
+    }
 }
 
 #[cfg(test)]
 mod test {
     use crate::{CurrentlyShownMultiView, MarketView, UniversalisClient};
+
+    #[tokio::test]
+    async fn test_get_worlds() {
+        let client = UniversalisClient::new();
+        client.get_worlds().await.unwrap();
+        client.get_data_centers().await.unwrap();
+    }
 
     #[tokio::test]
     async fn test_marketboard_multiview_parse() {

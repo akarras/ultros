@@ -20,6 +20,11 @@ lazy_static = "1.4.0"
 futures = "0.3.23"
 anyhow = "1.0.62"
 serde-error = "0.1.2"
+fixed_decimal = "0.4.0"
+icu = {version = "1.0.0-beta1", features = ["serde"]}
+icu_testdata = "1.0.0-beta1"
+writeable = "0.4.1"
+log = "0.4.17"
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

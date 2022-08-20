@@ -239,7 +239,8 @@ fn create_struct(
             })
     });
     let line_four: Vec<_> = line_four.into_iter().map(|m| m.end()).collect();
-    let key_name = format!("{}Id", csv_name.to_upper_camel_case());
+    let csv_name = &csv_name.to_upper_camel_case();
+    let key_name = format!("{}Id", csv_name);
     let mut s = Struct::new(csv_name);
     let mut i = Impl::new(csv_name);
     apply_derives(&mut s).vis("pub");
@@ -323,7 +324,7 @@ fn create_struct(
                 if field_name.is_empty() {
                     (line_one, "String".to_string())
                 } else {
-                    let local_key_name = format!("{}Id", field_value);
+                    let local_key_name = format!("{}Id", field_value.to_upper_camel_case());
                     if !local_data
                         .requested_structs
                         .iter()
@@ -462,6 +463,7 @@ fn main() {
         bin_code_generation: false,
         list_filter: Some(vec![
             "Item".to_string(),
+            "ItemUICategory".to_string(),
             "Recipe".to_string(),
             "RecipeLookup".to_string(),
         ]),

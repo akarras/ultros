@@ -24,8 +24,9 @@ fn read_csv<T: DeserializeOwned>(path: &str) -> Vec<T> {
         .iter()
         .map(|s| s.to_string())
         .collect();
+    // line 2
     csv.deserialize()
-        .skip(4)
+        .skip(2)
         .map(|m| {
             if let Err(e) = &m {
                 if let Some(position) = e.position() {

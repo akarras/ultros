@@ -247,7 +247,10 @@ impl RecipePricingRawData {
             .ingredients
             .iter()
             .flat_map(|ingredient| {
-                let item = items.get(&ingredient.item_id).unwrap();
+                let item = items.get(&ingredient.item_id).expect(&format!(
+                    "Static data didn't have item id {:?}",
+                    ingredient.item_id
+                ));
                 if !(args.filter_shards && is_shard(&item.get_name())) {
                     Some((item, ingredient))
                 } else {

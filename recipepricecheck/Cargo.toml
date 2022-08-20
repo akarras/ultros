@@ -16,6 +16,7 @@ dialoguer = {version = "0.10.1", features = ["fuzzy-select"], optional = true}
 console = {version = "0.15.0", optional = true}
 serde = {version = "1", features = ["derive"]}
 xiv-gen = {path = "../xiv-gen"}
+log = "0.4.17"
 
 [features]
 binary = ['num-format', "dialoguer", "console"]

@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
 use crafterstoolbox::{AppRx, AppTx, CraftersToolbox, UniversalisData};
+use log::info;
 use recipepricecheck::PricingArguments;
 use tokio::sync::mpsc::Sender;
 use universalis::UniversalisClient;
@@ -13,11 +14,10 @@ fn main() {
     // Log to stdout (if you run with `RUST_LOG=debug`).
     tracing_subscriber::fmt::init();
     let native_options = eframe::NativeOptions::default();
-    println!("init tx");
     let (app_tx_sender, mut app_tx_receiver) = tokio::sync::mpsc::channel(10);
     let (app_rx_sender, app_rx_receiver) = tokio::sync::mpsc::channel(10);
     let data = CraftersToolbox::decompress_data();
-    println!("spawn thread");
+    info!("Starting network thread");
 
     std::thread::scope(move |s| {
         s.spawn(move || {
@@ -25,9 +25,9 @@ fn main() {
                 .enable_all()
                 .build()
                 .unwrap();
-            println!("starting tokio");
+            info!("starting tokio");
             runtime.block_on(async move {
-                println!("runtime begin");
+                info!("runtime begin");
                 let universalis_data = UniversalisData::initialize_data().await;
                 app_rx_sender
                     .send(AppRx::UniversalisData { universalis_data })
@@ -39,7 +39,7 @@ fn main() {
                         match value {
                             AppTx::RequestRecipe {
                                 recipe_id,
-                                data_center: datacenter,
+                                region_datacenter_or_server: datacenter,
                             } => {
                                 let recipes = data.get_recipes();
                                 let recipe = recipes.get(&recipe_id).unwrap();
@@ -57,12 +57,30 @@ fn main() {
                                     .await
                                     .expect("cross thread IO error");
                             }
+                            AppTx::RequestItem {
+                                item_id,
+                                region_datacenter_or_server,
+                            } => {
+                                let market_view = client
+                                    .marketboard_current_data(
+                                        &region_datacenter_or_server,
+                                        &[item_id.inner()],
+                                    )
+                                    .await;
+                                app_rx_sender
+                                    .send(AppRx::ItemResponse {
+                                        item_id,
+                                        market_view,
+                                    })
+                                    .await
+                                    .unwrap();
+                            }
                         }
                     }
                 }
             })
         });
-        println!("crafters toolbox run");
+        info!("initiating gui");
         eframe::run_native(
             "crafters toolbox",
             native_options,

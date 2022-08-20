@@ -1,48 +1,93 @@
-use std::collections::HashMap;
-use xiv_gen::RecipeId;
-use crate::CraftersToolbox;
+use crate::app::WindowsList;
 use crate::crafting_types::CraftJob;
+use crate::{AppRx, AppTx, CraftersToolbox};
+use egui::{ScrollArea, Ui};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use tokio::sync::mpsc::{Receiver, Sender};
+use xiv_gen::RecipeId;
 
-/// Enum for the side panel
 #[derive(Serialize, Deserialize, Debug)]
-pub(crate) enum SidePanel {
-    ItemLookup {
-
-    },
-    RecipeLookup {
-        #[serde(skip)]
-        recipes: Vec<(RecipeId, String, Vec<CraftJob>)>,
-        /// Holds the query results for the previous recipe query
-        #[serde(skip)]
-        recipe_query_results: Vec<(RecipeId, String, Vec<CraftJob>)>,
-        /// Represents the users current query
-        recipe_query: String,
-    }
+pub(crate) struct RecipeSearchPanel {
+    #[serde(skip)]
+    recipes: Vec<(RecipeId, String, Vec<CraftJob>)>,
+    /// Holds the query results for the previous recipe query
+    #[serde(skip)]
+    recipe_query_results: Vec<(RecipeId, String, Vec<CraftJob>)>,
+    /// Represents the users current query
+    recipe_query: String,
 }
 
-impl SidePanel {
-    pub fn draw(&mut self, ui: &mut egui::Ui, game_data: &xiv_gen::Data) {
-        match self {
-            SidePanel::ItemLookup { .. } => {}
-            SidePanel::RecipeLookup { .. } => {}
+impl RecipeSearchPanel {
+    pub fn draw(
+        &mut self,
+        ui: &mut Ui,
+        universalis_datacenter: &str,
+        windows: &mut WindowsList,
+        network_channel: &mut Option<(Sender<AppTx>, Receiver<AppRx>)>,
+        game_data: &xiv_gen::Data,
+    ) {
+        self.check_init();
+        ui.heading("Recipe Lookup");
+        if ui.text_edit_singleline(&mut self.recipe_query).changed() {
+            self.update_search();
         }
+        let recipe_query_results = &self.recipe_query_results;
+        ScrollArea::vertical().show_rows(ui, 15.0, recipe_query_results.len(), |ui, range| {
+            for i in range {
+                let (id, item_name, jobs) = &recipe_query_results[i];
+                ui.horizontal(|ui| {
+                    ui.label(item_name.as_str());
+                    ui.with_layout(egui::Layout::right_to_left(), |ui| {
+                        ui.scope(|ui| {
+                            let already_open = windows
+                                .recipe_windows
+                                .iter()
+                                .any(|list| *id == list.recipe_id);
+                            ui.set_enabled(!already_open);
+                            if ui.button("💲").clicked() {
+                                windows.add_recipe(
+                                    *id,
+                                    network_channel,
+                                    game_data,
+                                    universalis_datacenter.to_string(),
+                                );
+                            }
+                        });
+                        if ui.button("⚒").clicked() {
+                            println!("todo implement");
+                        }
+                        for job in jobs {
+                            ui.label(&format!("[{job}]"));
+                        }
+                    });
+                });
+            }
+        });
     }
 
-    pub(crate) fn new_recipe_lookup() -> Self {
+    pub(crate) fn new() -> Self {
         let recipes = Self::create_recipe_list();
-
-        SidePanel::RecipeLookup {
+        Self {
             recipes: recipes.clone(),
             recipe_query_results: recipes,
-            recipe_query: "".to_string()
+            recipe_query: "".to_string(),
         }
     }
 
-    fn update_search(
-        recipe_query: &String,
-        recipes: &Vec<(xiv_gen::RecipeId, String, Vec<CraftJob>)>,
-        recipe_query_results: &mut Vec<(xiv_gen::RecipeId, String, Vec<CraftJob>)>,
-    ) {
+    fn check_init(&mut self) {
+        if self.recipes.is_empty() {
+            self.recipes = Self::create_recipe_list();
+            self.update_search();
+        }
+    }
+
+    fn update_search(&mut self) {
+        let Self {
+            recipes,
+            recipe_query_results,
+            recipe_query,
+        } = self;
         let lower = recipe_query.to_lowercase();
 
         *recipe_query_results = recipes
@@ -95,7 +140,15 @@ impl SidePanel {
             .collect()
     }
 
-
-
+    /// small utility function
+    fn try_insert_recipe(
+        map: &mut HashMap<RecipeId, Vec<CraftJob>>,
+        recipe_id: RecipeId,
+        crafter: CraftJob,
+    ) {
+        if recipe_id.inner() == 0 {
+            return;
+        }
+        map.entry(recipe_id).or_default().push(crafter);
+    }
 }
-

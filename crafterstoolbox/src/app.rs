@@ -1,30 +1,42 @@
+use crate::crafting_types::{create_crafter_menu, CraftJob, Crafters};
+use crate::sidepanel::item_panel::ItemPanel;
+use crate::sidepanel::SidePanel;
 use crate::UniversalisData;
 use bincode::config::Configuration;
 use egui::{Color32, Grid, ScrollArea, Visuals, Widget};
+use fixed_decimal::FixedDecimal;
 use flate2::FlushDecompress;
 use futures::StreamExt;
+use icu::decimal::options::{FixedDecimalFormatterOptions, GroupingStrategy};
+use icu::decimal::FixedDecimalFormatter;
+use icu::locid::locale;
 use lazy_static::lazy_static;
+use log::{info, warn};
 use recipepricecheck::{
-    BestPricingForItem, BestPricingSummary, ItemListingsSummary, PricingArguments,
+    BestPricingForItem, BestPricingSummary, CrafterDetails, ItemListingsSummary, PricingArguments,
     RecipePricingRawData,
 };
 use serde::{Deserialize, Serialize, Serializer};
 use serde_error::Error;
+use std::borrow::Borrow;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::{Display, Formatter};
 use std::task::Poll;
 use tokio::sync::mpsc::{Receiver, Sender};
 use universalis::{
-    CurrentlyShownSingleView, DataCenterName, ListingView, MarketView, RegionName, WorldName,
+    CurrentlyShownMultiView, CurrentlyShownSingleView, DataCenterName, ListingView, MarketView,
+    RegionName, WorldName,
 };
+use writeable::Writeable;
+use xiv_gen::ItemId;
 use xiv_gen::Recipe;
 use xiv_gen::RecipeId;
 
 pub type Result<T> = core::result::Result<T, Error>;
 
 #[derive(Deserialize, Serialize, Debug)]
-struct RecipePriceList {
-    recipe_id: RecipeId,
+pub(crate) struct RecipePriceList {
+    pub(crate) recipe_id: RecipeId,
     pricing_args: PricingArguments,
     data: Option<DataCollection>,
 }
@@ -56,7 +68,7 @@ impl RecipePriceList {
             sender
                 .blocking_send(AppTx::RequestRecipe {
                     recipe_id: self.recipe_id,
-                    data_center: data_center.to_string(),
+                    region_datacenter_or_server: data_center.to_string(),
                 })
                 .expect("tokio sender error, unrecoverable aborting");
         }
@@ -72,16 +84,71 @@ struct DataCollection {
     home_world_pricing: Option<ItemListingsSummary>,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) struct ItemData {
+    item_id: ItemId,
+    state: ItemWindowDataState,
+}
+
+impl ItemData {
+    fn new(item_id: ItemId) -> Self {
+        Self {
+            item_id,
+            state: ItemWindowDataState::Loading,
+        }
+    }
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+pub(crate) enum ItemWindowButtonState {
+    Current,
+    History,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+pub(crate) enum ItemWindowDataState {
+    Loading,
+    Loaded {
+        button_state: ItemWindowButtonState,
+        item_data: MarketView,
+    },
+    Error {
+        error: Error,
+    },
+}
+
+impl ItemWindowDataState {
+    pub(crate) fn accept_data(
+        &mut self,
+        market_data: core::result::Result<MarketView, universalis::Error>,
+    ) {
+        *self = match market_data {
+            Ok(market_data) => ItemWindowDataState::Loaded {
+                button_state: ItemWindowButtonState::Current,
+                item_data: market_data,
+            },
+            Err(e) => ItemWindowDataState::Error {
+                error: Error::new(&e),
+            },
+        }
+    }
+}
+
 #[derive(Deserialize, Serialize, Default, Debug)]
-struct CraftsList {
-    windows: Vec<RecipePriceList>,
+pub(crate) struct WindowsList {
+    pub(crate) recipe_windows: Vec<RecipePriceList>,
+    pub(crate) item_windows: Vec<ItemData>,
 }
 
 #[derive(Debug)]
 pub enum AppTx {
+    RequestItem {
+        item_id: ItemId,
+        region_datacenter_or_server: String,
+    },
     RequestRecipe {
         recipe_id: RecipeId,
-        data_center: String,
+        region_datacenter_or_server: String,
     },
 }
 
@@ -90,6 +157,11 @@ pub enum AppRx {
     RecipeResponse {
         recipe_id: RecipeId,
         raw_data: core::result::Result<RecipePricingRawData, universalis::Error>,
+    },
+    ItemResponse {
+        item_id: ItemId,
+        market_view: core::result::Result<MarketView, universalis::Error>,
+        // todo history:
     },
     UniversalisData {
         universalis_data: UniversalisData,
@@ -105,94 +177,38 @@ struct UserData {
     crafters: Crafters,
 }
 
-#[derive(Deserialize, Serialize, Default, Debug)]
-#[serde(default)]
-struct CrafterDetails {
-    cp: u32,
-    control: u32,
-    craftsmanship: u32,
-    level: u32,
-}
-
-#[derive(Deserialize, Serialize, Default, Debug)]
-#[serde(default)]
-struct Crafters {
-    carpenter: CrafterDetails,
-    blacksmith: CrafterDetails,
-    armorer: CrafterDetails,
-    goldsmith: CrafterDetails,
-    leatherworker: CrafterDetails,
-    weaver: CrafterDetails,
-    alchemist: CrafterDetails,
-    culinarian: CrafterDetails,
-}
-
-#[derive(Deserialize, Serialize, Debug, Clone, Copy)]
-pub enum CraftJob {
-    Carpenter,
-    Blacksmith,
-    Armorer,
-    Goldsmith,
-    Leatherworker,
-    Weaver,
-    Alchemist,
-    Culinarian,
-}
-
-impl Display for CraftJob {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                CraftJob::Carpenter => "CRP",
-                CraftJob::Blacksmith => "BSM",
-                CraftJob::Armorer => "ARM",
-                CraftJob::Goldsmith => "GSM",
-                CraftJob::Leatherworker => "LTW",
-                CraftJob::Weaver => "WVR",
-                CraftJob::Alchemist => "ALC",
-                CraftJob::Culinarian => "CUL",
-            }
-        )
-    }
-}
-
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(Deserialize, Serialize, Debug)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
 pub struct CraftersToolbox {
-    crafts: CraftsList,
+    windows: WindowsList,
+    /// Allows us to communicate with our network thread
     #[serde(skip)]
     network_channel: Option<(Sender<AppTx>, Receiver<AppRx>)>,
-    // Example stuff:
-    recipe_query: String,
+    /// Stores user profile information
     user_data: UserData,
-    query_target: String,
-    /// Holds data about datacenters and worlds
+    /// Universalis query target. Can be either a region, datacenter, or server.
+    /// Potentially can refactor this to use the Universalis types to prevent misuse.
+    universalis_query_target: String,
+    /// Holds data about datacenters and worlds & what items Universalis can lookup
     #[serde(skip)]
     universalis_data: UniversalisData,
-    /// Holds the query results for the previous recipe query
-    #[serde(skip)]
-    recipe_query_results: Vec<(RecipeId, String, Vec<CraftJob>)>,
+    sidebar_state: SidePanel,
+    /// Reference to the static xiv_gen data containing all items & recipes.
     #[serde(skip)]
     game_data: &'static xiv_gen::Data,
-    #[serde(skip)]
-    recipes: Vec<(RecipeId, String, Vec<CraftJob>)>,
 }
 
 impl Default for CraftersToolbox {
     fn default() -> Self {
         Self {
-            crafts: Default::default(),
+            windows: Default::default(),
             network_channel: None,
-            recipe_query: "".to_string(),
-            recipe_query_results: vec![],
             user_data: Default::default(),
-            query_target: "".to_string(),
+            universalis_query_target: "".to_string(),
             game_data: CraftersToolbox::decompress_data(),
-            recipes: vec![],
             universalis_data: UniversalisData::default(),
+            sidebar_state: SidePanel::ItemLookup(ItemPanel::new()),
         }
     }
 }
@@ -208,7 +224,7 @@ impl CraftersToolbox {
         cc.egui_ctx.set_visuals(Visuals::dark());
         // Load previous app state (if any).
         // Note that you must enable the `persistence` feature for this to work.
-        let recipes = Self::create_recipe_list();
+
         let universalis_data = match network_channel.1.blocking_recv().unwrap() {
             AppRx::UniversalisData { universalis_data } => universalis_data,
             _ => panic!("Expected universalis data"),
@@ -217,9 +233,9 @@ impl CraftersToolbox {
         if let Some(storage) = cc.storage {
             let mut value: CraftersToolbox =
                 eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
-            value.crafts.windows = value
-                .crafts
+            value.windows.recipe_windows = value
                 .windows
+                .recipe_windows
                 .into_iter()
                 .filter(|e| e.data.is_some())
                 .map(|mut m| {
@@ -228,75 +244,15 @@ impl CraftersToolbox {
                 })
                 .collect();
             value.network_channel = Some(network_channel);
-            value.recipes = recipes;
-            Self::update_search(
-                &value.recipe_query,
-                &value.recipes,
-                &mut value.recipe_query_results,
-            );
             value.universalis_data = universalis_data;
             return value;
         }
 
         Self {
             network_channel: Some(network_channel),
-            recipes,
             universalis_data,
             ..Default::default()
         }
-    }
-
-    fn try_insert_recipe(
-        map: &mut HashMap<RecipeId, Vec<CraftJob>>,
-        recipe_id: RecipeId,
-        crafter: CraftJob,
-    ) {
-        if recipe_id.inner() == 0 {
-            return;
-        }
-        map.entry(recipe_id).or_default().push(crafter);
-    }
-
-    fn create_recipe_list() -> Vec<(RecipeId, String, Vec<CraftJob>)> {
-        // this might be good to store somewhere
-        let game_data = Self::decompress_data();
-        let recipes = game_data.get_recipes();
-        let items = game_data.get_items();
-        let recipe_lookup = game_data.get_recipe_lookups();
-        let mut jobs: HashMap<RecipeId, Vec<CraftJob>> =
-            recipe_lookup
-                .values()
-                .fold(HashMap::new(), |mut map, lookup| {
-                    Self::try_insert_recipe(&mut map, lookup.get_crp(), CraftJob::Carpenter);
-                    Self::try_insert_recipe(&mut map, lookup.get_bsm(), CraftJob::Blacksmith);
-                    Self::try_insert_recipe(&mut map, lookup.get_arm(), CraftJob::Armorer);
-                    Self::try_insert_recipe(&mut map, lookup.get_gsm(), CraftJob::Goldsmith);
-                    Self::try_insert_recipe(&mut map, lookup.get_ltw(), CraftJob::Leatherworker);
-                    Self::try_insert_recipe(&mut map, lookup.get_wvr(), CraftJob::Weaver);
-                    Self::try_insert_recipe(&mut map, lookup.get_alc(), CraftJob::Alchemist);
-                    Self::try_insert_recipe(&mut map, lookup.get_cul(), CraftJob::Culinarian);
-                    map
-                });
-        recipes
-            .values()
-            .map(|r| (r.get_key_id(), r.get_item_result()))
-            .filter(|(_id, result)| result.inner() != 0)
-            .map(|(recipe_id, item_id)| {
-                (
-                    recipe_id,
-                    items
-                        .get(&item_id)
-                        .expect(&format!("unable to get item_id: {}", item_id.inner())),
-                )
-            })
-            .map(|(recipe_id, item)| {
-                (
-                    recipe_id,
-                    item.get_name(),
-                    jobs.remove(&recipe_id).unwrap_or_default(),
-                )
-            })
-            .collect()
     }
 
     pub fn decompress_data() -> &'static xiv_gen::Data {
@@ -317,20 +273,6 @@ impl CraftersToolbox {
         }
         &XIV_DATA
     }
-
-    fn update_search(
-        recipe_query: &String,
-        recipes: &Vec<(xiv_gen::RecipeId, String, Vec<CraftJob>)>,
-        recipe_query_results: &mut Vec<(xiv_gen::RecipeId, String, Vec<CraftJob>)>,
-    ) {
-        let lower = recipe_query.to_lowercase();
-
-        *recipe_query_results = recipes
-            .iter()
-            .filter(|(_, name, _)| name.to_lowercase().find(&lower).is_some())
-            .cloned()
-            .collect()
-    }
 }
 
 fn add_disabled_button(ui: &mut egui::Ui, target: &mut String, src: &str) {
@@ -340,19 +282,6 @@ fn add_disabled_button(ui: &mut egui::Ui, target: &mut String, src: &str) {
             *target = src.to_string();
         }
     });
-}
-
-fn create_crafter_menu(ui: &mut egui::Ui, crafter_details: &mut CrafterDetails) {
-    let values = [
-        ("craftsmanship: ", &mut crafter_details.craftsmanship),
-        ("control: ", &mut crafter_details.control),
-        ("cp: ", &mut crafter_details.cp),
-        ("level: ", &mut crafter_details.level),
-    ];
-    for (label, value) in values {
-        ui.label(label);
-        egui::DragValue::new(value).ui(ui);
-    }
 }
 
 fn draw_err<'a, T>(data: &'a Result<T>, ui: &'_ mut egui::Ui) -> Option<&'a T> {
@@ -368,14 +297,12 @@ impl<'a> eframe::App for CraftersToolbox {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let Self {
             network_channel,
-            recipe_query,
             universalis_data,
-            recipe_query_results,
-            crafts,
+            windows,
             user_data,
-            query_target,
+            universalis_query_target,
+            sidebar_state,
             game_data,
-            recipes,
         } = self;
         let UserData {
             region,
@@ -383,6 +310,17 @@ impl<'a> eframe::App for CraftersToolbox {
             home_world,
             crafters,
         } = user_data;
+        // ICU
+        let provider = icu_testdata::get_provider();
+        let mut fixed_decimal = FixedDecimalFormatterOptions::default();
+        fixed_decimal.grouping_strategy = GroupingStrategy::Auto;
+        let decimal_format = FixedDecimalFormatter::try_new_with_buffer_provider(
+            &provider,
+            &locale!("en").into(),
+            fixed_decimal,
+        )
+        .unwrap();
+
         if let Some((_, rx)) = network_channel {
             if let Ok(value) = rx.try_recv() {
                 match value {
@@ -390,22 +328,24 @@ impl<'a> eframe::App for CraftersToolbox {
                         recipe_id,
                         raw_data,
                     } => {
-                        if let Some(value) = crafts
-                            .windows
+                        if let Some(value) = windows
+                            .recipe_windows
                             .iter_mut()
                             .find(|window| window.recipe_id == recipe_id)
                         {
                             let raw_data = raw_data.map_err(|e| Error::new(&e));
                             // todo this sucks
-                            let pricing_for_item = if let Some(pricing_for_item) = raw_data.as_ref().ok().map(|raw_data| {
-                                raw_data
-                                    .create_best_price_summary(&value.pricing_args, game_data)
-                                    .map_err(|e| e.into())
-                            }) {
+                            let pricing_for_item = if let Some(pricing_for_item) =
+                                raw_data.as_ref().ok().map(|raw_data| {
+                                    raw_data
+                                        .create_best_price_summary(&value.pricing_args, game_data)
+                                        .map_err(|e| e.into())
+                                }) {
                                 pricing_for_item
                             } else {
                                 Err(anyhow::Error::msg("No raw data to work from"))
-                            }.map_err(|e| serde_error::Error::new(&*e));
+                            }
+                            .map_err(|e| serde_error::Error::new(&*e));
                             let world_by_item_pricing = pricing_for_item
                                 .as_ref()
                                 .map(|m| m.get_items_by_world_cloned())
@@ -413,7 +353,10 @@ impl<'a> eframe::App for CraftersToolbox {
                             let datacenter_pricing = raw_data
                                 .as_ref()
                                 .map_err(|e| Error::new(&*e))
-                                .and_then(|m| m.get_recipe_target_item_listing_summary().map_err(|e| Error::new(&e)));
+                                .and_then(|m| {
+                                    m.get_recipe_target_item_listing_summary()
+                                        .map_err(|e| Error::new(&e))
+                                });
                             let home_world_pricing = if let Some(home_world) = home_world {
                                 raw_data
                                     .as_ref()
@@ -440,6 +383,20 @@ impl<'a> eframe::App for CraftersToolbox {
                         universalis_data: data,
                     } => {
                         *universalis_data = data;
+                    }
+                    AppRx::ItemResponse {
+                        item_id,
+                        market_view,
+                    } => {
+                        if let Some(i) = windows
+                            .item_windows
+                            .iter_mut()
+                            .find(|i| i.item_id == item_id)
+                        {
+                            i.state.accept_data(market_view);
+                        } else {
+                            warn!("No window for item response {item_id:?}");
+                        }
                     }
                 }
             }
@@ -481,6 +438,8 @@ impl<'a> eframe::App for CraftersToolbox {
                     }
                 });
                 ui.menu_button("Home world settings", |ui| {
+                    ui.set_min_width(200.0);
+                    ui.set_min_height(300.0);
                     egui::ComboBox::from_label("Region")
                         .selected_text(format!(
                             "{}",
@@ -532,19 +491,19 @@ impl<'a> eframe::App for CraftersToolbox {
                     }
                 });
 
-                    if let Some(region) = region {
-                ui.menu_button(&format!("marketboard filter: {query_target}"), |ui| {
-                        add_disabled_button(ui, query_target, &region.0);
-                    if let Some(data_center) = data_center {
-                        add_disabled_button(ui, query_target, &data_center.0);
-                        if let Some(worlds) = universalis_data.data_centers.get(data_center) {
-                            for world in worlds {
-                                add_disabled_button(ui, query_target, &world.0);
+                if let Some(region) = region {
+                    ui.menu_button(&format!("marketboard filter: {}", universalis_query_target.as_str()), |ui| {
+                        add_disabled_button(ui, universalis_query_target, &region.0);
+                        if let Some(data_center) = data_center {
+                            add_disabled_button(ui, universalis_query_target, &data_center.0);
+                            if let Some(worlds) = universalis_data.data_centers.get(data_center) {
+                                for world in worlds {
+                                    add_disabled_button(ui, universalis_query_target, &world.0);
+                                }
                             }
                         }
-                    }
-                });
-                    }
+                    });
+                }
             });
         });
 
@@ -552,39 +511,7 @@ impl<'a> eframe::App for CraftersToolbox {
             .default_width(250.0)
             .resizable(false)
             .show(ctx, |ui| {
-                ui.heading("Recipe Lookup");
-                if ui.text_edit_singleline(recipe_query).changed() {
-                    Self::update_search(recipe_query, recipes, recipe_query_results)
-                }
-                ScrollArea::vertical().show_rows(ui, 15.0, recipe_query_results.len(), |ui, range| {
-                    for i in range {
-                        let (id, item_name, jobs) = &recipe_query_results[i];
-                        ui.horizontal(|ui| {
-                            ui.label(item_name.as_str());
-                            ui.with_layout(egui::Layout::right_to_left(), |ui| {
-                                ui.scope(|ui| {
-                                    let already_open =
-                                        crafts.windows.iter().any(|list| *id == list.recipe_id);
-                                    ui.set_enabled(!already_open);
-                                    if ui.button("💲").clicked() {
-                                        crafts.add_recipe(
-                                            *id,
-                                            network_channel,
-                                            game_data,
-                                            query_target.to_string(),
-                                        );
-                                    }
-                                });
-                                if ui.button("⚒").clicked() {
-                                    println!("todo implement");
-                                }
-                                for job in jobs {
-                                    ui.label(&format!("[{job}]"));
-                                }
-                            });
-                        });
-                    }
-                });
+                sidebar_state.draw(ui, universalis_query_target, windows, network_channel, game_data);
 
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                     ui.spacing_mut().item_spacing.x = 7.5;
@@ -601,9 +528,85 @@ impl<'a> eframe::App for CraftersToolbox {
             // The central panel the region left after adding TopPanel's and SidePanel's
             egui::warn_if_debug_build(ui);
         });
+        let mut remove_item_window = None;
+        for (i, item_window) in windows.item_windows.iter_mut().enumerate() {
+            let items = game_data.get_items();
+            let item = items.get(&item_window.item_id).expect(&format!(
+                "item missing from static data {:?}",
+                item_window.item_id
+            ));
+            let item_name = item.get_name();
+            egui::Window::new(&format!("{item_name} Pricing"))
+                .default_width(400.0)
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        if ui.button("❌").clicked() {
+                            remove_item_window = Some(i);
+                        }
+                    });
+                    match &item_window.state {
+                        ItemWindowDataState::Loading => {
+                            ui.spinner();
+                        }
+                        ItemWindowDataState::Loaded {
+                            button_state,
+                            item_data,
+                        } => match button_state {
+                            ItemWindowButtonState::Current => match item_data {
+                                MarketView::SingleView(s) => {
+                                    ScrollArea::vertical().max_height(400.0).show_rows(ui, 15.0, s.listings.len(), |ui, range| {
+                                        Grid::new(format!("{:?}", item_window.item_id))
+                                            .striped(true)
+                                            .num_columns(4)
+                                            .show(ui, |ui| {
+                                                ui.label("world name");
+                                                ui.label("price per unit");
+                                                ui.label("quantity");
+                                                ui.label("total");
+                                                ui.end_row();
+                                                for i in range {
+                                                    let listing = &s.listings[i];
+                                                    ui.label(
+                                                        listing
+                                                            .world_name
+                                                            .as_ref()
+                                                            .unwrap_or(&"".to_string()),
+                                                    );
+                                                    ui.label(
+                                                        listing
+                                                            .price_per_unit
+                                                            .unwrap_or_default()
+                                                            .to_string(),
+                                                    );
+                                                    ui.label(
+                                                        listing
+                                                            .quantity
+                                                            .unwrap_or_default()
+                                                            .to_string(),
+                                                    );
+                                                    ui.label(listing.total.to_string());
+                                                    ui.end_row();
+                                                }
+                                            });
+                                    });
+                                }
+                                MarketView::MultiView(_) => {}
+                            },
+                            ItemWindowButtonState::History => {}
+                        },
+                        ItemWindowDataState::Error { error } => {
+                            ui.label("{error}");
+                        }
+                    }
+                });
+        }
+        if let Some(remove) = remove_item_window {
+            windows.item_windows.remove(remove);
+        }
 
         let mut remove_id = None;
-        for (i, buddy) in crafts.windows.iter_mut().enumerate() {
+        let mut delayed_open_item_window = None;
+        for (i, buddy) in windows.recipe_windows.iter_mut().enumerate() {
             let items = game_data.get_items();
             let recipes = game_data.get_recipes();
             let recipe = recipes.get(&buddy.recipe_id).unwrap();
@@ -642,7 +645,7 @@ impl<'a> eframe::App for CraftersToolbox {
                             buddy.update_data(game_data);
                         }
                         if ui.button("🔃").clicked() {
-                            buddy.refresh(network_channel, query_target.to_string());
+                            buddy.refresh(network_channel, universalis_query_target.to_string());
                         }
                         if ui.button("❌").clicked() {
                             remove_id = Some(i)
@@ -650,28 +653,27 @@ impl<'a> eframe::App for CraftersToolbox {
                     });
                     if let Some(data) = &buddy.data {
                         let world_map = &data.world_by_item_pricing;
-                        ScrollArea::vertical().max_height(600.0).show(ui, |ui| {
+                        ScrollArea::vertical().max_height(400.0).show(ui, |ui| {
                             Grid::new(buddy.recipe_id)
-                                .num_columns(3)
-                                .spacing([40.0, 5.0])
+                                .num_columns(5)
+                                .spacing([15.0, 5.0])
                                 .striped(true)
                                 .show(ui, |ui| {
+                                    let item_color = Color32::from_rgb(250, 50, 100);
+                                    ui.colored_label(item_color, "item");
+                                    ui.colored_label(item_color, "HQ");
+                                    ui.colored_label(item_color, "quantity");
+                                    ui.colored_label(item_color, "price per item");
+                                    ui.colored_label(item_color, "retainer");
+                                    ui.end_row();
                                     for (world, items) in world_map {
                                         let world_color = Color32::from_rgb(69, 199, 19);
-                                        ui.colored_label(world_color, "World: ");
+                                        // ui.colored_label(world_color, "World: ");
                                         ui.colored_label(world_color, world);
                                         ui.end_row();
                                         for (item, listings) in items {
-                                            let item_color = Color32::from_rgb(100, 50, 210);
-                                            ui.colored_label(item_color, "item");
-                                            ui.colored_label(item_color, &item.name);
-                                            ui.colored_label(item_color, "HQ");
-                                            ui.colored_label(item_color, "quantity");
-                                            ui.colored_label(item_color, "price per item");
-                                            ui.end_row();
                                             for listing in listings {
-                                                ui.label("retainer");
-                                                ui.label(&listing.retainer_name);
+                                                ui.label(&item.name);
                                                 ui.label(match listing.hq {
                                                     true => "✅",
                                                     false => "",
@@ -680,9 +682,15 @@ impl<'a> eframe::App for CraftersToolbox {
                                                 ui.label(
                                                     listing
                                                         .price_per_unit
-                                                        .unwrap_or(9999999)
-                                                        .to_string(),
+                                                        .map(|price| {
+                                                            decimal_format
+                                                                .format(&price.into())
+                                                                .write_to_string()
+                                                                .to_string()
+                                                        })
+                                                        .unwrap_or_default(),
                                                 );
+                                                ui.label(&listing.retainer_name);
                                                 ui.end_row();
                                             }
                                         }
@@ -692,36 +700,33 @@ impl<'a> eframe::App for CraftersToolbox {
                         if let Some(pricing) = draw_err(&data.pricing_for_item, ui) {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 5.0;
-                                ui.label("craft ingredient gil total: ");
-                                ui.label(pricing.total.to_string());
+                                ui.label("Ingredient cost total: ");
+
+                                ui.label(
+                                    (decimal_format
+                                        .format(&pricing.total.into())
+                                        .write_to_string()
+                                        .borrow()) as &str,
+                                );
                                 ui.label("items total: ");
-                                ui.label(pricing.items.len().to_string())
-                            });
-                            if let Some(pricing_summary) = &data.datacenter_pricing {
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 5.0;
-                                    ui.label(query_target.as_str());
-                                    if let Some(lq) = &pricing_summary.lq_items {
-                                        ui.label("LQ: ");
-                                        ui.label(lq.to_string());
-                                    }
-                                    if let Some(hq) = &pricing_summary.hq_items {
-                                        ui.label("HQ: ");
-                                        ui.label(hq.to_string());
-                                    }
-                                });
-                            }
-                            if let Some(pricing_summary) = &data.home_world_pricing {
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 5.0;
+                                ui.label(pricing.items.len().to_string());
+                                if buddy.pricing_args.craft_quantity > 1 {
+                                    ui.label("per item: ");
+                                    let quantity =
+                                        pricing.total / buddy.pricing_args.craft_quantity;
                                     ui.label(
-                                        user_data
-                                            .home_world
-                                            .as_ref()
-                                            .unwrap_or(&WorldName("invalid".to_string()))
-                                            .0
-                                            .as_str(),
+                                        (decimal_format
+                                            .format(&quantity.into())
+                                            .write_to_string()
+                                            .borrow())
+                                            as &str,
                                     );
+                                }
+                            });
+                            ui.horizontal(|ui| {
+                                if let Some(pricing_summary) = &data.datacenter_pricing {
+                                    ui.spacing_mut().item_spacing.x = 5.0;
+                                    ui.label(universalis_query_target.as_str());
                                     if let Some(lq) = &pricing_summary.lq_items {
                                         ui.label("LQ: ");
                                         ui.label(lq.to_string());
@@ -730,16 +735,47 @@ impl<'a> eframe::App for CraftersToolbox {
                                         ui.label("HQ: ");
                                         ui.label(hq.to_string());
                                     }
-                                });
-                            }
+                                }
+                                if let Some(pricing_summary) = &data.home_world_pricing {
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 5.0;
+                                        ui.label(
+                                            user_data
+                                                .home_world
+                                                .as_ref()
+                                                .unwrap_or(&WorldName("invalid".to_string()))
+                                                .0
+                                                .as_str(),
+                                        );
+                                        if let Some(lq) = &pricing_summary.lq_items {
+                                            ui.label("LQ: ");
+                                            ui.label(lq.to_string());
+                                        }
+                                        if let Some(hq) = &pricing_summary.hq_items {
+                                            ui.label("HQ: ");
+                                            ui.label(hq.to_string());
+                                        }
+                                        ui.with_layout(egui::Layout::right_to_left(), |ui| {
+                                            if ui.button("💲").context_menu(|ui| {
+                                                ui.label("Show listings of target item");
+                                            }).clicked() {
+                                                delayed_open_item_window = Some(recipe.get_item_result());
+                                            }
+                                        });
+                                    });
+                                }
+                            });
                         }
                     } else {
                         ui.spinner();
                     }
                 });
         }
+        if let Some(delay) = delayed_open_item_window {
+            windows.add_item(delay, network_channel, &universalis_query_target);
+        }
         if let Some(remove_id) = remove_id {
-            crafts.windows.remove(remove_id);
+            windows.recipe_windows.remove(remove_id);
         }
     }
 
@@ -749,19 +785,23 @@ impl<'a> eframe::App for CraftersToolbox {
     }
 }
 
-impl CraftsList {
-    fn add_recipe(
+impl WindowsList {
+    pub(crate) fn add_recipe(
         &mut self,
         recipe_id: RecipeId,
         network_channel: &mut Option<(Sender<AppTx>, Receiver<AppRx>)>,
         data: &xiv_gen::Data,
         data_center: impl ToString,
     ) {
+        if self.recipe_windows.iter().any(|r| r.recipe_id == recipe_id) {
+            info!("Duplicate recipe window requested {recipe_id:?}");
+            return;
+        }
         // let recipe = data.get_recipes().get(&recipe_id).unwrap();
         if let Some((tx, _)) = network_channel {
             tx.blocking_send(AppTx::RequestRecipe {
                 recipe_id: recipe_id,
-                data_center: data_center.to_string(),
+                region_datacenter_or_server: data_center.to_string(),
             })
             .unwrap();
         }
@@ -770,6 +810,28 @@ impl CraftsList {
             data: None,
             pricing_args: PricingArguments::default(),
         };
-        self.windows.push(pricing_buddy);
+        self.recipe_windows.push(pricing_buddy);
+    }
+
+    pub(crate) fn add_item(
+        &mut self,
+        item_id: ItemId,
+        network_channel: &mut Option<(Sender<AppTx>, Receiver<AppRx>)>,
+        data_center: impl ToString,
+    ) {
+        if self.item_windows.iter().any(|i| i.item_id == item_id) {
+            info!("Duplciate item id window requested {item_id:?}");
+            return;
+        }
+        let (sender, _receiver) = network_channel
+            .as_mut()
+            .expect("Tried to do network request without network");
+        sender
+            .blocking_send(AppTx::RequestItem {
+                item_id,
+                region_datacenter_or_server: data_center.to_string(),
+            })
+            .unwrap();
+        self.item_windows.push(ItemData::new(item_id));
     }
 }
