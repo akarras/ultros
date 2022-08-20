@@ -8,22 +8,15 @@ edition = "2021"
 [dependencies]
 universalis = {path = "../universalis"}
 clap = {version = "3.2.5", features = ["derive"]}
-tokio = {version = "1.19.2", features = ["full"]}
 thiserror = "1.0.31"
 itertools = "0"
-num-format = {version = "0.4.0", optional = true}
-dialoguer = {version = "0.10.1", features = ["fuzzy-select"], optional = true}
-console = {version = "0.15.0", optional = true}
 serde = {version = "1", features = ["derive"]}
 xiv-gen = {path = "../xiv-gen"}
 log = "0.4.17"
 
-[features]
-binary = ['num-format', "dialoguer", "console"]
+[dev-dependencies]
+tokio = {version = "1.19.2", features = ["full"]}
+
 
 [lib]
 name = 'recipepricecheck'
-
-[[bin]]
-name = 'recipepricecheck'
-required-features = ["binary"]

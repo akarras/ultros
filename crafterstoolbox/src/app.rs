@@ -87,13 +87,28 @@ struct DataCollection {
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct ItemData {
     item_id: ItemId,
+    hq_only: bool,
     state: ItemWindowDataState,
+}
+
+impl ItemData {
+    pub(crate) fn update_query(&mut self) {
+        if let ItemWindowDataState::Loaded { item_data, query_view, .. } = &mut self.state {
+            *query_view = item_data.get_listings_for_item_id(self.item_id.inner() as u32).expect("Should always have this?").iter().filter(|item| !self.hq_only || item.hq).cloned().collect();
+        }
+    }
+
+    pub(crate) fn refresh(&self, network_channel: &mut Option<(Sender<AppTx>, Receiver<AppRx>)>, universalis_query_target: &str) {
+        let (sender, _) = network_channel.as_mut().unwrap();
+        sender.blocking_send(AppTx::RequestItem { item_id: self.item_id, region_datacenter_or_server: universalis_query_target.to_string() }).unwrap();
+    }
 }
 
 impl ItemData {
     fn new(item_id: ItemId) -> Self {
         Self {
             item_id,
+            hq_only: false,
             state: ItemWindowDataState::Loading,
         }
     }
@@ -111,6 +126,8 @@ pub(crate) enum ItemWindowDataState {
     Loaded {
         button_state: ItemWindowButtonState,
         item_data: MarketView,
+        #[serde(skip)]
+        query_view: Vec<ListingView>
     },
     Error {
         error: Error,
@@ -126,6 +143,7 @@ impl ItemWindowDataState {
             Ok(market_data) => ItemWindowDataState::Loaded {
                 button_state: ItemWindowButtonState::Current,
                 item_data: market_data,
+                query_view: vec![]
             },
             Err(e) => ItemWindowDataState::Error {
                 error: Error::new(&e),
@@ -243,6 +261,7 @@ impl CraftersToolbox {
                     m
                 })
                 .collect();
+            value.windows.item_windows.iter_mut().for_each(|i| i.update_query());
             value.network_channel = Some(network_channel);
             value.universalis_data = universalis_data;
             return value;
@@ -394,6 +413,7 @@ impl<'a> eframe::App for CraftersToolbox {
                             .find(|i| i.item_id == item_id)
                         {
                             i.state.accept_data(market_view);
+                            i.update_query();
                         } else {
                             warn!("No window for item response {item_id:?}");
                         }
@@ -529,6 +549,7 @@ impl<'a> eframe::App for CraftersToolbox {
             egui::warn_if_debug_build(ui);
         });
         let mut remove_item_window = None;
+        let mut open_recipe_window = None;
         for (i, item_window) in windows.item_windows.iter_mut().enumerate() {
             let items = game_data.get_items();
             let item = items.get(&item_window.item_id).expect(&format!(
@@ -543,6 +564,22 @@ impl<'a> eframe::App for CraftersToolbox {
                         if ui.button("❌").clicked() {
                             remove_item_window = Some(i);
                         }
+                        if ui.button("🔃").clicked() {
+                            item_window.refresh(network_channel, universalis_query_target);
+                        }
+                        if ui.checkbox(&mut item_window.hq_only, "hq only").changed() {
+                            item_window.update_query();
+                        }
+                        // Check if there's a recipe for this item
+                        let recipes = game_data.get_recipes();
+                        if let Some(recipe_id) = recipes.iter().find(|(recipe_id, recipe)| recipe.get_item_result() == item_window.item_id).map(|(recipe_id, _)| recipe_id) {
+                            ui.scope(|ui| {
+                                ui.set_enabled(!windows.recipe_windows.iter().any(|recipe| recipe.recipe_id == *recipe_id));
+                                if ui.button("⚒").clicked() {
+                                    open_recipe_window = Some(*recipe_id);
+                                }
+                            });
+                        }
                     });
                     match &item_window.state {
                         ItemWindowDataState::Loading => {
@@ -551,10 +588,11 @@ impl<'a> eframe::App for CraftersToolbox {
                         ItemWindowDataState::Loaded {
                             button_state,
                             item_data,
+                            query_view,
                         } => match button_state {
                             ItemWindowButtonState::Current => match item_data {
                                 MarketView::SingleView(s) => {
-                                    ScrollArea::vertical().max_height(400.0).show_rows(ui, 15.0, s.listings.len(), |ui, range| {
+                                    ScrollArea::vertical().max_height(400.0).show_rows(ui, 15.0, query_view.len(), |ui, range| {
                                         Grid::new(format!("{:?}", item_window.item_id))
                                             .striped(true)
                                             .num_columns(4)
@@ -562,10 +600,11 @@ impl<'a> eframe::App for CraftersToolbox {
                                                 ui.label("world name");
                                                 ui.label("price per unit");
                                                 ui.label("quantity");
+                                                ui.label("hq");
                                                 ui.label("total");
                                                 ui.end_row();
                                                 for i in range {
-                                                    let listing = &s.listings[i];
+                                                    let listing = &query_view[i];
                                                     ui.label(
                                                         listing
                                                             .world_name
@@ -584,6 +623,7 @@ impl<'a> eframe::App for CraftersToolbox {
                                                             .unwrap_or_default()
                                                             .to_string(),
                                                     );
+                                                    ui.label(listing.hq.then_some("✅").unwrap_or_default());
                                                     ui.label(listing.total.to_string());
                                                     ui.end_row();
                                                 }
@@ -595,10 +635,13 @@ impl<'a> eframe::App for CraftersToolbox {
                             ItemWindowButtonState::History => {}
                         },
                         ItemWindowDataState::Error { error } => {
-                            ui.label("{error}");
+                            ui.label(format!("{error}"));
                         }
                     }
                 });
+        }
+        if let Some(recipe_id) = open_recipe_window {
+            windows.add_recipe(recipe_id, network_channel, game_data, universalis_query_target.as_str());
         }
         if let Some(remove) = remove_item_window {
             windows.item_windows.remove(remove);
@@ -756,10 +799,12 @@ impl<'a> eframe::App for CraftersToolbox {
                                             ui.label(hq.to_string());
                                         }
                                         ui.with_layout(egui::Layout::right_to_left(), |ui| {
+                                            let item_id = recipe.get_item_result();
+                                            ui.set_enabled(!windows.item_windows.iter().any(|i| i.item_id == item_id));
                                             if ui.button("💲").context_menu(|ui| {
                                                 ui.label("Show listings of target item");
                                             }).clicked() {
-                                                delayed_open_item_window = Some(recipe.get_item_result());
+                                                delayed_open_item_window = Some(item_id);
                                             }
                                         });
                                     });

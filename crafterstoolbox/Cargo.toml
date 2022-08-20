@@ -13,7 +13,6 @@ serde_json = "1"
 recipepricecheck = { path = "../recipepricecheck"}
 xiv-gen = {path = "../xiv-gen"}
 universalis = {path = "../universalis"}
-tokio = {version = "1.19.2", features = ["full"]}
 bincode = "2.0.0-rc.1"
 flate2 = "1.0.24"
 lazy_static = "1.4.0"
@@ -34,6 +33,7 @@ tracing-subscriber = "0.3"
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1.6"
 tracing-wasm = "0.2"
+tokio = {version = "1.19.2", default-features = false, features = ["sync"]}
 
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-C", "target-feature=+crt-static"]
