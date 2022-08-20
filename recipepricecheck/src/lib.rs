@@ -1,9 +1,12 @@
+pub mod ingredients_iter;
+
+use crate::ingredients_iter::{IngredientsIter, ItemIngredient};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::{Display, Formatter};
 use universalis::{Error as UniversalisError, Error, ListingView, MarketView, UniversalisClient};
-use xivapi::models::recipe::{ItemIngredient, Recipe};
+use xiv_gen::{ItemId, Recipe};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BestPricingSummary {
@@ -56,8 +59,8 @@ impl Display for ItemSummary {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "low: {:>5} avg: {:>5} high: {:>5}",
-            self.lowest_price, self.average_price, self.highest_price
+            "{}",              //  avg: {:>5} high: {:>5}",
+            self.lowest_price, // self.average_price, self.highest_price
         )
     }
 }
@@ -109,6 +112,9 @@ pub struct BestPricingForItem {
     pub item: u32,
     pub amount_needed: i64,
     pub market_ingredients: Vec<ListingView>,
+    /// Discriminate of the world that initiated the query
+    pub query_start_world: String,
+    /// Generated status data
     pub listing_status: ListingStatus,
 }
 
@@ -116,7 +122,7 @@ impl BestPricingForItem {
     pub fn items_by_world(&self) -> HashMap<&String, Vec<&ListingView>> {
         self.market_ingredients
             .iter()
-            .into_group_map_by(|e| e.world_name.as_ref().unwrap())
+            .into_group_map_by(|e| e.world_name.as_ref().unwrap_or(&self.query_start_world))
     }
 }
 
@@ -179,20 +185,23 @@ impl Default for PricingArguments {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RecipePricingRawData {
-    ingredients: Vec<(i64, ItemIngredient)>,
-    recipe_item: i32,
-    market_view: MarketView,
+    pub ingredients: Vec<ItemIngredient>,
+    pub recipe_item: i32,
+    pub world_name: String,
+    pub market_view: MarketView,
 }
 
 pub async fn get_ingredient_prices<'a>(
     client: &UniversalisClient,
     world_or_datacenter: &str,
-    item: &'a Recipe,
+    recipe: &'a Recipe,
 ) -> Result<RecipePricingRawData, UniversalisError> {
-    let ingredients: Vec<(i64, ItemIngredient)> =
-        item.ingredients().map(|(c, i)| (c, i.clone())).collect();
-    let mut ids: Vec<_> = ingredients.iter().map(|(_, i)| i.id as i32).collect();
-    let recipe_item = item.item_result_target_id as i32;
+    let ingredients: Vec<ItemIngredient> = IngredientsIter::from(recipe).collect();
+    let mut ids: Vec<_> = ingredients
+        .iter()
+        .map(|ingredient| ingredient.item_id.inner())
+        .collect();
+    let recipe_item = recipe.get_item_result().inner();
     ids.push(recipe_item);
     let market_view = client
         .marketboard_current_data(world_or_datacenter, ids.as_slice())
@@ -200,6 +209,7 @@ pub async fn get_ingredient_prices<'a>(
     Ok(RecipePricingRawData {
         ingredients,
         recipe_item,
+        world_name: world_or_datacenter.to_string(),
         market_view,
     })
 }
@@ -229,21 +239,33 @@ impl RecipePricingRawData {
     pub fn create_best_price_summary(
         &self,
         args: &PricingArguments,
+        data: &xiv_gen::Data,
     ) -> Result<BestPricingSummary, Error> {
         let number_to_craft = args.craft_quantity;
+        let items = data.get_items();
         let items: Vec<_> = self
             .ingredients
             .iter()
-            .filter(|(_, item)| !(args.filter_shards && is_shard(&item.name)))
-            .map(|(quantity, ingredient)| {
+            .flat_map(|ingredient| {
+                let item = items.get(&ingredient.item_id).unwrap();
+                if !(args.filter_shards && is_shard(&item.get_name())) {
+                    Some((item, ingredient))
+                } else {
+                    None
+                }
+            })
+            .map(|(item_data, ingredient)| {
                 let item = self
                     .market_view
-                    .get_listings_for_item_id(ingredient.id as u32)
+                    .get_listings_for_item_id(ingredient.item_id.inner() as u32)
                     .unwrap();
                 if item.is_empty() {
-                    eprintln!("warning: no listings found for item {}", ingredient.id);
+                    eprintln!(
+                        "warning: no listings found for item {}",
+                        ingredient.item_id.inner()
+                    );
                 }
-                let mut remaining_quantity = *quantity * number_to_craft;
+                let mut remaining_quantity = ingredient.amount as i64 * number_to_craft;
                 let market_ingredients: Vec<_> = item
                     .iter()
                     .sorted_by(|a, b| {
@@ -255,9 +277,9 @@ impl RecipePricingRawData {
                     .filter(|m| {
                         if args.filter_items_with_too_much_quantity {
                             let craft_max_stack_size =
-                                (*quantity as f64 * number_to_craft as f64 * 1.2) as u32;
-                            // keep items with quantity < max stack size
-                            m.quantity.unwrap_or_default() < craft_max_stack_size
+                                (ingredient.amount as f64 * number_to_craft as f64 * 1.2) as u32;
+                            // keep items with quantity <= max stack size
+                            m.quantity.unwrap_or_default() <= craft_max_stack_size
                         } else {
                             // we're not applying the filter, true allows every item through.
                             true
@@ -275,7 +297,7 @@ impl RecipePricingRawData {
                     // TODO test to see if we can remove a listing
                 }
 
-                let listing_status = if remaining_quantity == *quantity {
+                let listing_status = if remaining_quantity == ingredient.amount as i64 {
                     ListingStatus::PartialFill
                 } else if remaining_quantity > 0 {
                     ListingStatus::Unavailable
@@ -284,10 +306,11 @@ impl RecipePricingRawData {
                 };
 
                 BestPricingForItem {
-                    name: ingredient.name.clone(),
-                    item: ingredient.id as u32,
-                    amount_needed: *quantity * number_to_craft,
+                    name: item_data.get_name(),
+                    item: ingredient.item_id.inner() as u32,
+                    amount_needed: ingredient.amount as i64 * number_to_craft as i64,
                     market_ingredients,
+                    query_start_world: self.world_name.clone(),
                     listing_status,
                 }
             })

@@ -39,7 +39,7 @@ async fn main() {
     .search(&args.recipe_name)
     .collect();*/
 
-    let selection = FuzzySelect::with_theme(&ColorfulTheme::default())
+    /*let selection = FuzzySelect::with_theme(&ColorfulTheme::default())
         .items(&index.0)
         .default(0)
         .interact_on_opt(&Term::stderr())
@@ -50,9 +50,9 @@ async fn main() {
 
     let recipe = disk_query_async(RecipeRequest::new(search.id as u32))
         .await
-        .unwrap();
+        .unwrap();*/
     let client = UniversalisClient::new();
-    let best_pricing = get_ingredient_prices(
+    /*let best_pricing = get_ingredient_prices(
         client,
         &args.world_name,
         recipe,
@@ -64,7 +64,7 @@ async fn main() {
         },
     )
     .await
-    .unwrap();
+    .unwrap();*/
     let world_to_item_map: HashMap<&String, Vec<(&BestPricingForItem, Vec<&ListingView>)>> =
         get_items_by_world(&best_pricing);
 

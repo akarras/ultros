@@ -1,0 +1,31 @@
+[package]
+name = "xiv-gen"
+version = "0.1.0"
+edition = "2021"
+description = "Generates structs capabale of deserializing the CSV files and packing bin code"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+
+[features]
+default = ["serd", "bin"]
+
+serd = ["serde"]
+bin = ["bincode"]
+
+[dependencies]
+serde = {version = "1.0.143", features = ["derive"], optional = true}
+bincode = {version = "2.0.0-rc.1", optional = true}
+serde_json = "1.0.83"
+csv = "1.1.6"
+clap = {version = "3.2.16", features = ["derive"]}
+flate2 = "1.0.24"
+
+[build-dependencies]
+codegen = "0.1.3"
+clap = {version = "3.2.16", features = ["derive"]}
+csv = "1.1.6"
+reqwest = {version = "0.11.11", features = ["blocking"]}
+heck = "0.4.0"
+regex = "1.6.0"
+lazy_static = "1.4.0"

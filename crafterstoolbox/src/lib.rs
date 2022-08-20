@@ -3,6 +3,7 @@
 mod app;
 mod universalis;
 
+pub use crate::universalis::UniversalisData;
 pub use app::AppRx;
 pub use app::AppTx;
 pub use app::CraftersToolbox;
