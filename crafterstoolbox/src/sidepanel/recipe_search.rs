@@ -25,7 +25,7 @@ impl RecipeSearchPanel {
         universalis_datacenter: &str,
         windows: &mut WindowsList,
         network_channel: &mut Option<(Sender<AppTx>, Receiver<AppRx>)>,
-        game_data: &xiv_gen::Data,
+        _game_data: &xiv_gen::Data,
     ) {
         self.check_init();
         ui.heading("Recipe Lookup");
@@ -91,7 +91,7 @@ impl RecipeSearchPanel {
 
         *recipe_query_results = recipes
             .iter()
-            .filter(|(_, name, _)| name.to_lowercase().find(&lower).is_some())
+            .filter(|(_, name, _)| name.to_lowercase().contains(&lower))
             .cloned()
             .collect()
     }
@@ -126,7 +126,7 @@ impl RecipeSearchPanel {
                     recipe_id,
                     items
                         .get(&item_id)
-                        .expect(&format!("unable to get item_id: {}", item_id.inner())),
+                        .unwrap_or_else(|| panic!("unable to get item_id: {}", item_id.inner())),
                 )
             })
             .map(|(recipe_id, item)| {

@@ -13,7 +13,7 @@ impl UniversalisData {
         let client = UniversalisClient::new();
         let (data_centers, worlds) =
             futures::future::join(client.get_data_centers(), client.get_worlds()).await;
-        let mut worlds = worlds.unwrap();
+        let worlds = worlds.unwrap();
         let data_centers = data_centers.unwrap();
         let regions: BTreeMap<RegionName, Vec<DataCenterName>> =
             data_centers.0.iter().fold(BTreeMap::new(), |mut map, dc| {

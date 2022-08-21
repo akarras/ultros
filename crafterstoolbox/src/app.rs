@@ -1,10 +1,10 @@
-use crate::crafting_types::{create_crafter_menu, CraftJob, Crafters};
+use crate::crafting_types::{create_crafter_menu, Crafters};
 use crate::sidepanel::item_panel::ItemPanel;
 use crate::sidepanel::SidePanel;
 use crate::UniversalisData;
-use bincode::config::Configuration;
-use egui::{Color32, Grid, ScrollArea, Visuals, Widget};
-use fixed_decimal::FixedDecimal;
+
+use egui::{Color32, Grid, ScrollArea, Visuals};
+
 use flate2::FlushDecompress;
 use icu::decimal::options::{FixedDecimalFormatterOptions, GroupingStrategy};
 use icu::decimal::FixedDecimalFormatter;
@@ -12,23 +12,23 @@ use icu::locid::locale;
 use lazy_static::lazy_static;
 use log::{info, warn};
 use recipepricecheck::{
-    BestPricingForItem, BestPricingSummary, CrafterDetails, ItemListingsSummary, PricingArguments,
+    BestPricingForItem, BestPricingSummary, ItemListingsSummary, PricingArguments,
     RecipePricingRawData,
 };
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 use serde_error::Error;
 use std::borrow::Borrow;
-use std::collections::{BTreeMap, HashMap};
-use std::fmt::{Display, Formatter};
-use std::task::Poll;
+use std::collections::{BTreeMap};
+
+
 use tokio::sync::mpsc::{Receiver, Sender};
 use universalis::{
-    CurrentlyShownMultiView, CurrentlyShownSingleView, DataCenterName, ListingView, MarketView,
+    DataCenterName, ListingView, MarketView,
     RegionName, WorldName,
 };
 use writeable::Writeable;
 use xiv_gen::ItemId;
-use xiv_gen::Recipe;
+
 use xiv_gen::RecipeId;
 
 pub type Result<T> = core::result::Result<T, Error>;
@@ -276,7 +276,7 @@ impl CraftersToolbox {
                 .into_iter()
                 .filter(|e| e.data.is_some())
                 .map(|mut m| {
-                    m.update_data(&value.game_data);
+                    m.update_data(value.game_data);
                     m
                 })
                 .collect();
@@ -333,7 +333,7 @@ fn draw_err<'a, T>(data: &'a Result<T>, ui: &'_ mut egui::Ui) -> Option<&'a T> {
     data.as_ref().ok()
 }
 
-impl<'a> eframe::App for CraftersToolbox {
+impl eframe::App for CraftersToolbox {
     /// Called each time the UI needs repainting, which may be many times per second.
     /// Put your widgets into a `SidePanel`, `TopPanel`, `CentralPanel`, `Window` or `Area`.
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
@@ -394,7 +394,7 @@ impl<'a> eframe::App for CraftersToolbox {
                                 .unwrap_or_default();
                             let datacenter_pricing = raw_data
                                 .as_ref()
-                                .map_err(|e| Error::new(&*e))
+                                .map_err(Error::new)
                                 .and_then(|m| {
                                     m.get_recipe_target_item_listing_summary()
                                         .map_err(|e| Error::new(&e))
@@ -403,10 +403,9 @@ impl<'a> eframe::App for CraftersToolbox {
                                 raw_data
                                     .as_ref()
                                     .ok()
-                                    .map(|m| {
+                                    .and_then(|m| {
                                         m.get_recipe_target_pricing_for_world(&home_world.0).ok()
                                     })
-                                    .flatten()
                             } else {
                                 None
                             };
@@ -484,15 +483,12 @@ impl<'a> eframe::App for CraftersToolbox {
                     ui.set_min_width(200.0);
                     ui.set_min_height(300.0);
                     egui::ComboBox::from_label("Region")
-                        .selected_text(format!(
-                            "{}",
-                            region
+                        .selected_text(region
                                 .as_mut()
                                 .unwrap_or(&mut RegionName("No Region".to_string()))
-                                .0
-                        ))
+                                .0.to_string())
                         .show_ui(ui, |ui| {
-                            for (r, _) in &universalis_data.regions {
+                            for r in universalis_data.regions.keys() {
                                 ui.selectable_value(region, Some(r.clone()), &r.0);
                             }
                         });
@@ -501,13 +497,10 @@ impl<'a> eframe::App for CraftersToolbox {
                         .and_then(|selected_region| universalis_data.regions.get(selected_region))
                     {
                         egui::ComboBox::from_label("Datacenter")
-                            .selected_text(format!(
-                                "{}",
-                                data_center
+                            .selected_text(data_center
                                     .as_mut()
                                     .unwrap_or(&mut DataCenterName("No Datacenter".to_string()))
-                                    .0
-                            ))
+                                    .0.to_string())
                             .show_ui(ui, |ui| {
                                 for dc in dcs {
                                     ui.selectable_value(data_center, Some(dc.clone()), &dc.0);
@@ -519,13 +512,10 @@ impl<'a> eframe::App for CraftersToolbox {
                         .and_then(|selected_dc| universalis_data.data_centers.get(selected_dc))
                     {
                         egui::ComboBox::from_label("Home World")
-                            .selected_text(format!(
-                                "{}",
-                                home_world
+                            .selected_text(home_world
                                     .as_mut()
                                     .unwrap_or(&mut WorldName("No Homeworld".to_string()))
-                                    .0
-                            ))
+                                    .0.to_string())
                             .show_ui(ui, |ui| {
                                 for w in worlds {
                                     ui.selectable_value(home_world, Some(w.clone()), &w.0);
@@ -593,10 +583,8 @@ impl<'a> eframe::App for CraftersToolbox {
         let mut open_recipe_window = None;
         for (i, item_window) in windows.item_windows.iter_mut().enumerate() {
             let items = game_data.get_items();
-            let item = items.get(&item_window.item_id).expect(&format!(
-                "item missing from static data {:?}",
-                item_window.item_id
-            ));
+            let item = items.get(&item_window.item_id).unwrap_or_else(|| panic!("item missing from static data {:?}",
+                item_window.item_id));
             let item_name = item.get_name();
             egui::Window::new(&format!("{item_name} Pricing"))
                 .default_width(400.0)
@@ -641,7 +629,7 @@ impl<'a> eframe::App for CraftersToolbox {
                             query_view,
                         } => match button_state {
                             ItemWindowButtonState::Current => match item_data {
-                                MarketView::SingleView(s) => {
+                                MarketView::SingleView(_s) => {
                                     ScrollArea::vertical().max_height(400.0).show_rows(
                                         ui,
                                         15.0,
@@ -870,11 +858,12 @@ impl<'a> eframe::App for CraftersToolbox {
                                                     .iter()
                                                     .any(|i| i.item_id == item_id),
                                             );
+                                            let menu = |ui: &mut egui::Ui| {
+                                                ui.label("Show listings of target item");
+                                            };
                                             if ui
                                                 .button("💲")
-                                                .context_menu(|ui| {
-                                                    ui.label("Show listings of target item");
-                                                })
+                                                .context_menu(menu)
                                                 .clicked()
                                             {
                                                 delayed_open_item_window = Some(item_id);
@@ -917,13 +906,13 @@ impl WindowsList {
         // let recipe = data.get_recipes().get(&recipe_id).unwrap();
         if let Some((tx, _)) = network_channel {
             tx.blocking_send(AppTx::RequestRecipe {
-                recipe_id: recipe_id,
+                recipe_id,
                 region_datacenter_or_server: data_center.to_string(),
             })
             .unwrap();
         }
         let pricing_buddy = RecipePriceList {
-            recipe_id: recipe_id,
+            recipe_id,
             data: None,
             pricing_args: PricingArguments::default(),
         };

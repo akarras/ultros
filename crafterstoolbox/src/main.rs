@@ -43,7 +43,7 @@ fn main() {
                                 let pricing = recipepricecheck::get_ingredient_prices(
                                     &client,
                                     &datacenter,
-                                    &recipe,
+                                    recipe,
                                 )
                                 .await;
                                 app_rx_sender

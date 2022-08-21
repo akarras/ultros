@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::{Display, Formatter};
 use universalis::{Error as UniversalisError, Error, ListingView, MarketView, UniversalisClient};
-use xiv_gen::{ItemId, Recipe};
+use xiv_gen::Recipe;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BestPricingSummary {
