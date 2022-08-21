@@ -238,7 +238,7 @@ impl UniversalisClient {
         world_or_datacenter: &str,
         item_ids: &[i32],
     ) -> Result<MarketView, Error> {
-        if item_ids.len() == 0 {
+        if item_ids.is_empty() {
             return Err(Error::NoItems);
         }
         let id_strs: Vec<_> = item_ids.iter().map(|m| m.to_string()).collect();
@@ -260,7 +260,7 @@ impl UniversalisClient {
         })
     }
 
-    pub async fn get_item_history(&self, world_or_datacenter: &str, item_ids: &[i32]) {}
+    pub async fn get_item_history(&self, _world_or_datacenter: &str, _item_ids: &[i32]) {}
 }
 
 #[cfg(test)]
@@ -283,7 +283,7 @@ mod test {
                 .json()
                 .await
                 .unwrap();
-        assert!(data.items.len() > 0);
+        assert!(!data.items.is_empty());
     }
 
     #[tokio::test]
@@ -305,7 +305,7 @@ mod test {
         match multiview {
             MarketView::SingleView(_) => panic!("unexpected"),
             MarketView::MultiView(v) => {
-                assert!(v.items.len() > 0);
+                assert!(!v.items.is_empty());
             }
         }
     }

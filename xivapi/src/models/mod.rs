@@ -1,4 +1,4 @@
 pub mod item;
 pub mod recipe;
 
-pub const BASE_URL: &'static str = "https://xivapi.com/";
+pub const BASE_URL: &str = "https://xivapi.com/";

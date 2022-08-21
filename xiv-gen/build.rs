@@ -1,14 +1,14 @@
 use clap::Parser;
-use codegen::{Field, Function, Impl, Module, Scope, Struct, Trait};
-use csv::Reader;
-use heck::{ToLowerCamelCase, ToSnakeCase, ToUpperCamelCase};
+use codegen::{Field, Function, Impl, Module, Scope, Struct};
+
+use heck::{ToSnakeCase, ToUpperCamelCase};
 use lazy_static::lazy_static;
 use regex::Regex;
 use std::collections::HashSet;
 use std::env;
 use std::fmt::{Display, Formatter};
-use std::fs::{write, File};
-use std::io::{Cursor, Read};
+use std::fs::{write};
+
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
@@ -178,7 +178,7 @@ impl DataDetector {
                         (i64::MIN..=i64::MAX, DataType::SignedInt64),
                     ]
                     .into_iter()
-                    .find(|(range, data_type)| range.contains(&min) && range.contains(&max))
+                    .find(|(range, _data_type)| range.contains(&min) && range.contains(&max))
                     .map(|(_, d)| d)
                     .unwrap()
                 } else {
@@ -257,10 +257,10 @@ fn create_struct(
                 format!("unknown_{}", unknown_counter)
             } else {
                 field_name
-                    .replace("{", "_")
-                    .replace("}", "")
-                    .replace("[", "_")
-                    .replace("]", "")
+                    .replace('{', "_")
+                    .replace('}', "")
+                    .replace('[', "_")
+                    .replace(']', "")
                     .replace("PvP", "Pvp")
                     .to_snake_case()
             };
@@ -289,7 +289,7 @@ fn create_struct(
                 let mut line_two = field_value.replace("int", "");
                 // uint64 -> u64
                 // int64 -> 64, add the i if no u
-                if !line_two.starts_with("u") {
+                if !line_two.starts_with('u') {
                     line_two = format!("i{}", line_two);
                 }
 
@@ -298,7 +298,7 @@ fn create_struct(
                     apply_derives(&mut key).tuple_field(&line_two).vis("pub").derive("Hash").derive("Eq").derive("PartialEq").derive("Copy");
                     scope.push_struct(key);
                     let mut key_impl = Impl::new(&key_name);
-                    key_impl.new_fn("new").arg("value", &line_two).line(format!("Self(value)")).ret("Self");
+                    key_impl.new_fn("new").arg("value", &line_two).line("Self(value)".to_string()).ret("Self");
                     key_impl.new_fn("inner").arg_ref_self().line("self.0").ret(&line_two).vis("pub");
                     scope.push_impl(key_impl);
                     line_two = key_name.clone();
@@ -319,7 +319,7 @@ fn create_struct(
             } else {
                 // remove trailing numbers from the field_name before adding the ID
                 let field_name = field_name.to_upper_camel_case();
-                let mut field_name: String =
+                let field_name: String =
                     field_name.chars().filter(|c| !c.is_numeric()).collect();
                 if field_name.is_empty() {
                     (line_one, "String".to_string())
@@ -341,7 +341,7 @@ fn create_struct(
         })
         .collect();
     for (field_name, field_value) in &fields {
-        let mut function = Function::new(&format!("get_{}", field_name.replace("#", "")));
+        let mut function = Function::new(&format!("get_{}", field_name.replace('#', "")));
         function
             .vis("pub")
             .arg_ref_self()
@@ -418,7 +418,7 @@ fn read_dir<T: Container>(path: PathBuf, mut scope: T, args: &mut Args) -> T {
                 if let Some(ext) = file.path().extension() {
                     if ext == "csv" {
                         let file_name = file.file_name();
-                        let mut file_name = file_name.to_str().unwrap().split(".");
+                        let mut file_name = file_name.to_str().unwrap().split('.');
                         let file_name = file_name.next().unwrap().to_string();
                         if let Some(filter) = &args.list_filter {
                             if !filter.contains(&file_name) {
@@ -446,7 +446,7 @@ fn read_dir<T: Container>(path: PathBuf, mut scope: T, args: &mut Args) -> T {
     } in local_data.requested_structs.into_iter().filter(
         |RequestedStructData {
              requested_struct,
-             sample_data,
+             sample_data: _,
          }| !local_data.known_structs.contains(requested_struct),
     ) {
         let mut s = Struct::new(&requested_struct);

@@ -3,17 +3,17 @@ pub mod event_types;
 use crate::websocket::event_types::{
     Channel, EventChannel, EventResponse, SubscribeMode, WebSocketSubscriptionUpdate, WorldFilter,
 };
-use crate::{ListingView, WorldId};
-use async_tungstenite::tokio::{connect_async, ConnectStream};
+use crate::{WorldId};
+use async_tungstenite::tokio::{connect_async};
 use async_tungstenite::tungstenite::Message;
-use async_tungstenite::WebSocketStream;
+
 use bson::Bson;
-use futures::future::{Either, Select};
-use futures::stream::{FusedStream, Next};
-use futures::{SinkExt, Stream, StreamExt, TryStreamExt};
+use futures::future::{Either};
+
+use futures::{SinkExt, Stream, StreamExt};
 use log::{debug, info, warn};
-use serde_json::Value;
-use std::future::Future;
+
+
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
@@ -45,7 +45,7 @@ impl WebsocketClient {
         self.socket_sender
             .send(SocketTx::Subscription(WebSocketSubscriptionUpdate::new(
                 subscribe_mode,
-                Channel::new(channel, world_id.map(|m| WorldFilter::new(m))),
+                Channel::new(channel, world_id.map(WorldFilter::new)),
             )))
             .await
             .unwrap();
@@ -99,7 +99,7 @@ impl WebsocketClient {
                                 if let Ok(b) = bson::from_slice::<EventResponse>(b) {
                                     listing_sender.send(SocketRx::Event(b)).await.unwrap();
                                 } else {
-                                    let b: Bson = bson::from_slice(&b).unwrap();
+                                    let b: Bson = bson::from_slice(b).unwrap();
                                     warn!("Received invalid bson data {b:?}");
                                 }
                             }

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 impl Recipe {
     pub fn ingredients(&self) -> impl Iterator<Item = (i64, &ItemIngredient)> {
         RecipeIngredientIterator {
-            recipe: &self,
+            recipe: self,
             index: 0,
         }
         .flatten()
@@ -321,7 +321,7 @@ pub struct Recipe {
     pub url: String,
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClassJob {
     #[serde(rename = "Abbreviation")]
@@ -474,7 +474,7 @@ pub struct ClassJob {
     pub url: String,
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CraftType {
     #[serde(rename = "ID")]
@@ -504,14 +504,14 @@ pub struct GameContentLinks {
     pub recipe_notebook_list: RecipeNotebookList,
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecipeNotebookList {
     #[serde(rename = "Recipe0")]
     pub recipe0: Option<Vec<i64>>,
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GamePatch {
     #[serde(rename = "Banner")]
@@ -857,7 +857,7 @@ pub struct ItemIngredient {
     pub sub_stat_category: i64,
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ItemSearchCategory {
     #[serde(rename = "Category")]
@@ -890,7 +890,7 @@ pub struct ItemSearchCategory {
     pub order: i64,
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ItemSortCategory {
     #[serde(rename = "ID")]
@@ -899,7 +899,7 @@ pub struct ItemSortCategory {
     pub param: i64,
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ItemUicategory {
     #[serde(rename = "ID")]
@@ -926,7 +926,7 @@ pub struct ItemUicategory {
     pub order_minor: i64,
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ItemSortCategory3 {
     #[serde(rename = "ID")]
@@ -1250,7 +1250,7 @@ pub struct ItemResult {
     pub sub_stat_category: i64,
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ItemSortCategory4 {
     #[serde(rename = "ID")]
@@ -1259,7 +1259,7 @@ pub struct ItemSortCategory4 {
     pub param: i64,
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecipeLevelTable {
     #[serde(rename = "ClassJobLevel")]

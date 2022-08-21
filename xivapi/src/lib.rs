@@ -12,11 +12,11 @@ use serde::Serialize;
 use serde::{Deserialize, Deserializer};
 use serde_aux::serde_introspection::serde_introspect;
 use serde_json::Value;
-use std::error::Error;
+
 use std::fmt;
 use std::fmt::{Display, Formatter};
 use std::io::Read;
-use std::path::PathBuf;
+
 use std::pin::Pin;
 use std::time::Duration;
 use thiserror::Error;
@@ -38,13 +38,13 @@ pub enum XivApiError {
 fn print_pretty_serde_error(path: &str, str: &str, error: &serde_json::Error) {
     let line = error.line();
     let column = error.column();
-    let line = str.lines().skip(line - 1).next().unwrap();
+    let line = str.lines().nth(line - 1).unwrap();
     let mut before_str = &line[..column];
     let mut after_str = &line[column + 1..];
-    if let Some(start) = before_str.rfind(",") {
+    if let Some(start) = before_str.rfind(',') {
         before_str = &before_str[start..];
     }
-    if let Some(end) = after_str.find(",") {
+    if let Some(end) = after_str.find(',') {
         after_str = &after_str[..end];
     }
     eprintln!();
@@ -53,8 +53,8 @@ fn print_pretty_serde_error(path: &str, str: &str, error: &serde_json::Error) {
         "error on line: {before_str}{}{after_str}",
         &line[column..=column]
     );
-    let pre_pad: String = (0..=before_str.len()).map(|m| '-').collect();
-    let post_pad: String = (0..=after_str.len()).map(|m| '-').collect();
+    let pre_pad: String = (0..=before_str.len()).map(|_m| '-').collect();
+    let post_pad: String = (0..=after_str.len()).map(|_m| '-').collect();
     eprintln!("             : {}^{}", pre_pad, post_pad);
     eprintln!("{}", error);
     eprintln!();
@@ -244,7 +244,7 @@ impl DeepCrawl {
     pub async fn deep_crawl(&self) -> Result<Pin<Box<dyn Stream<Item = Vec<Value>>>>, XivApiError> {
         let data_type = self.data.clone();
         let start_page = self.start_page.unwrap_or(1);
-        let max_page = self.max_page.clone();
+        let max_page = self.max_page;
         let columns = query(self.data.clone()).await?;
         let (sender, receiver) = futures::channel::mpsc::unbounded();
         tokio::spawn(async move {
@@ -386,7 +386,7 @@ pub struct ItemRequest(u32);
 
 impl ItemRequest {
     pub fn new(id: u32) -> Self {
-        Self { 0: id }
+        Self(id)
     }
 }
 
@@ -403,7 +403,7 @@ pub struct RecipeRequest(u32);
 
 impl RecipeRequest {
     pub fn new(id: u32) -> Self {
-        Self { 0: id }
+        Self(id)
     }
 }
 

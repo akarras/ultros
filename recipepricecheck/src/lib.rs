@@ -258,10 +258,11 @@ impl RecipePricingRawData {
                 }
             })
             .map(|(item_data, ingredient)| {
+                let empty = vec![];
                 let item = self
                     .market_view
                     .get_listings_for_item_id(ingredient.item_id.inner() as u32)
-                    .unwrap();
+                    .unwrap_or(&empty);
                 if item.is_empty() {
                     eprintln!(
                         "warning: no listings found for item {}",
