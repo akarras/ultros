@@ -4,6 +4,7 @@ mod app;
 mod crafting_types;
 mod sidepanel;
 mod universalis;
+mod simulator;
 
 pub use crate::universalis::UniversalisData;
 pub use app::AppRx;

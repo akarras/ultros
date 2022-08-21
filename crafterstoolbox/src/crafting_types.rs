@@ -4,11 +4,12 @@ use std::fmt::{Display, Formatter};
 
 #[derive(Deserialize, Serialize, Default, Debug)]
 #[serde(default)]
-pub(crate) struct CrafterDetails {
+pub struct CrafterDetails {
     cp: u32,
     control: u32,
     craftsmanship: u32,
     level: u32,
+    has_masters_mend: bool,
 }
 
 pub(crate) fn create_crafter_menu(ui: &mut egui::Ui, crafter_details: &mut CrafterDetails) {

@@ -1,4 +1,4 @@
-use crate::crafting_types::{create_crafter_menu, Crafters};
+use crate::crafting_types::{create_crafter_menu, Crafters, CrafterDetails};
 use crate::sidepanel::item_panel::ItemPanel;
 use crate::sidepanel::SidePanel;
 use crate::UniversalisData;
@@ -27,6 +27,8 @@ use universalis::{
     RegionName, WorldName,
 };
 use writeable::Writeable;
+use xiv_crafting_sim::simulator::SimStep;
+use xiv_crafting_sim::Synth;
 use xiv_gen::ItemId;
 
 use xiv_gen::RecipeId;
@@ -175,6 +177,17 @@ impl ItemWindowDataState {
 pub(crate) struct WindowsList {
     pub(crate) recipe_windows: Vec<RecipePriceList>,
     pub(crate) item_windows: Vec<ItemData>,
+}
+
+#[derive(Debug)]
+pub enum CraftingSimControl {
+    Start(RecipeId, CrafterDetails, Synth),
+    Stop(RecipeId)
+}
+
+#[derive(Debug)]
+pub enum CraftingSimStatus {
+    Progress(SimStep)
 }
 
 #[derive(Debug)]
