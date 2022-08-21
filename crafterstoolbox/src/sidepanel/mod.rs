@@ -4,7 +4,7 @@ mod recipe_search;
 use crate::app::WindowsList;
 use crate::sidepanel::item_panel::ItemPanel;
 use crate::sidepanel::recipe_search::RecipeSearchPanel;
-use crate::{AppRx, AppTx, CraftersToolbox};
+use crate::{AppRx, AppTx};
 use egui::Ui;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -41,13 +41,9 @@ impl SidePanel {
     ) {
         self.draw_tab(ui);
         match self {
-            SidePanel::ItemLookup(i) => i.draw(
-                ui,
-                universalis_datacenter,
-                windows,
-                network_channel,
-                game_data,
-            ),
+            SidePanel::ItemLookup(i) => {
+                i.draw(ui, universalis_datacenter, windows, network_channel)
+            }
             SidePanel::RecipeLookup(r) => r.draw(
                 ui,
                 universalis_datacenter,

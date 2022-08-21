@@ -3,10 +3,7 @@
 
 use crafterstoolbox::{AppRx, AppTx, CraftersToolbox, UniversalisData};
 use log::info;
-use recipepricecheck::PricingArguments;
-use tokio::sync::mpsc::Sender;
 use universalis::UniversalisClient;
-use xiv_gen::RecipeId;
 
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]

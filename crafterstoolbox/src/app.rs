@@ -6,7 +6,6 @@ use bincode::config::Configuration;
 use egui::{Color32, Grid, ScrollArea, Visuals, Widget};
 use fixed_decimal::FixedDecimal;
 use flate2::FlushDecompress;
-use futures::StreamExt;
 use icu::decimal::options::{FixedDecimalFormatterOptions, GroupingStrategy};
 use icu::decimal::FixedDecimalFormatter;
 use icu::locid::locale;
@@ -93,14 +92,34 @@ pub(crate) struct ItemData {
 
 impl ItemData {
     pub(crate) fn update_query(&mut self) {
-        if let ItemWindowDataState::Loaded { item_data, query_view, .. } = &mut self.state {
-            *query_view = item_data.get_listings_for_item_id(self.item_id.inner() as u32).expect("Should always have this?").iter().filter(|item| !self.hq_only || item.hq).cloned().collect();
+        if let ItemWindowDataState::Loaded {
+            item_data,
+            query_view,
+            ..
+        } = &mut self.state
+        {
+            *query_view = item_data
+                .get_listings_for_item_id(self.item_id.inner() as u32)
+                .expect("Should always have this?")
+                .iter()
+                .filter(|item| !self.hq_only || item.hq)
+                .cloned()
+                .collect();
         }
     }
 
-    pub(crate) fn refresh(&self, network_channel: &mut Option<(Sender<AppTx>, Receiver<AppRx>)>, universalis_query_target: &str) {
+    pub(crate) fn refresh(
+        &self,
+        network_channel: &mut Option<(Sender<AppTx>, Receiver<AppRx>)>,
+        universalis_query_target: &str,
+    ) {
         let (sender, _) = network_channel.as_mut().unwrap();
-        sender.blocking_send(AppTx::RequestItem { item_id: self.item_id, region_datacenter_or_server: universalis_query_target.to_string() }).unwrap();
+        sender
+            .blocking_send(AppTx::RequestItem {
+                item_id: self.item_id,
+                region_datacenter_or_server: universalis_query_target.to_string(),
+            })
+            .unwrap();
     }
 }
 
@@ -127,7 +146,7 @@ pub(crate) enum ItemWindowDataState {
         button_state: ItemWindowButtonState,
         item_data: MarketView,
         #[serde(skip)]
-        query_view: Vec<ListingView>
+        query_view: Vec<ListingView>,
     },
     Error {
         error: Error,
@@ -143,7 +162,7 @@ impl ItemWindowDataState {
             Ok(market_data) => ItemWindowDataState::Loaded {
                 button_state: ItemWindowButtonState::Current,
                 item_data: market_data,
-                query_view: vec![]
+                query_view: vec![],
             },
             Err(e) => ItemWindowDataState::Error {
                 error: Error::new(&e),
@@ -261,7 +280,11 @@ impl CraftersToolbox {
                     m
                 })
                 .collect();
-            value.windows.item_windows.iter_mut().for_each(|i| i.update_query());
+            value
+                .windows
+                .item_windows
+                .iter_mut()
+                .for_each(|i| i.update_query());
             value.network_channel = Some(network_channel);
             value.universalis_data = universalis_data;
             return value;
@@ -395,7 +418,7 @@ impl<'a> eframe::App for CraftersToolbox {
                                 home_world_pricing,
                             });
                         } else {
-                            panic!("Failed to find window");
+                            warn!("Failed to find window");
                         }
                     }
                     AppRx::UniversalisData {
@@ -512,17 +535,29 @@ impl<'a> eframe::App for CraftersToolbox {
                 });
 
                 if let Some(region) = region {
-                    ui.menu_button(&format!("marketboard filter: {}", universalis_query_target.as_str()), |ui| {
-                        add_disabled_button(ui, universalis_query_target, &region.0);
-                        if let Some(data_center) = data_center {
-                            add_disabled_button(ui, universalis_query_target, &data_center.0);
-                            if let Some(worlds) = universalis_data.data_centers.get(data_center) {
-                                for world in worlds {
-                                    add_disabled_button(ui, universalis_query_target, &world.0);
+                    ui.menu_button(
+                        &format!("marketboard filter: {}", universalis_query_target.as_str()),
+                        |ui| {
+                            add_disabled_button(ui, universalis_query_target, &region.0);
+                            if let Some(data_center) = data_center {
+                                add_disabled_button(ui, universalis_query_target, &data_center.0);
+                                if let Some(worlds) = universalis_data.data_centers.get(data_center)
+                                {
+                                    for world in worlds {
+                                        add_disabled_button(ui, universalis_query_target, &world.0);
+                                    }
                                 }
                             }
-                        }
-                    });
+                        },
+                    );
+                }
+
+                if ui.button("Delete all windows").clicked() {
+                    windows.item_windows.clear();
+                    windows.recipe_windows.clear();
+                }
+                if ui.button("Organize Windows").clicked() {
+                    ui.ctx().memory().reset_areas();
                 }
             });
         });
@@ -531,7 +566,13 @@ impl<'a> eframe::App for CraftersToolbox {
             .default_width(250.0)
             .resizable(false)
             .show(ctx, |ui| {
-                sidebar_state.draw(ui, universalis_query_target, windows, network_channel, game_data);
+                sidebar_state.draw(
+                    ui,
+                    universalis_query_target,
+                    windows,
+                    network_channel,
+                    game_data,
+                );
 
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                     ui.spacing_mut().item_spacing.x = 7.5;
@@ -572,9 +613,18 @@ impl<'a> eframe::App for CraftersToolbox {
                         }
                         // Check if there's a recipe for this item
                         let recipes = game_data.get_recipes();
-                        if let Some(recipe_id) = recipes.iter().find(|(recipe_id, recipe)| recipe.get_item_result() == item_window.item_id).map(|(recipe_id, _)| recipe_id) {
+                        if let Some(recipe_id) = recipes
+                            .iter()
+                            .find(|(_, recipe)| recipe.get_item_result() == item_window.item_id)
+                            .map(|(recipe_id, _)| recipe_id)
+                        {
                             ui.scope(|ui| {
-                                ui.set_enabled(!windows.recipe_windows.iter().any(|recipe| recipe.recipe_id == *recipe_id));
+                                ui.set_enabled(
+                                    !windows
+                                        .recipe_windows
+                                        .iter()
+                                        .any(|recipe| recipe.recipe_id == *recipe_id),
+                                );
                                 if ui.button("⚒").clicked() {
                                     open_recipe_window = Some(*recipe_id);
                                 }
@@ -592,43 +642,53 @@ impl<'a> eframe::App for CraftersToolbox {
                         } => match button_state {
                             ItemWindowButtonState::Current => match item_data {
                                 MarketView::SingleView(s) => {
-                                    ScrollArea::vertical().max_height(400.0).show_rows(ui, 15.0, query_view.len(), |ui, range| {
-                                        Grid::new(format!("{:?}", item_window.item_id))
-                                            .striped(true)
-                                            .num_columns(4)
-                                            .show(ui, |ui| {
-                                                ui.label("world name");
-                                                ui.label("price per unit");
-                                                ui.label("quantity");
-                                                ui.label("hq");
-                                                ui.label("total");
-                                                ui.end_row();
-                                                for i in range {
-                                                    let listing = &query_view[i];
-                                                    ui.label(
-                                                        listing
-                                                            .world_name
-                                                            .as_ref()
-                                                            .unwrap_or(&"".to_string()),
-                                                    );
-                                                    ui.label(
-                                                        listing
-                                                            .price_per_unit
-                                                            .unwrap_or_default()
-                                                            .to_string(),
-                                                    );
-                                                    ui.label(
-                                                        listing
-                                                            .quantity
-                                                            .unwrap_or_default()
-                                                            .to_string(),
-                                                    );
-                                                    ui.label(listing.hq.then_some("✅").unwrap_or_default());
-                                                    ui.label(listing.total.to_string());
+                                    ScrollArea::vertical().max_height(400.0).show_rows(
+                                        ui,
+                                        15.0,
+                                        query_view.len(),
+                                        |ui, range| {
+                                            Grid::new(format!("{:?}", item_window.item_id))
+                                                .striped(true)
+                                                .num_columns(4)
+                                                .show(ui, |ui| {
+                                                    ui.label("world name");
+                                                    ui.label("price per unit");
+                                                    ui.label("quantity");
+                                                    ui.label("hq");
+                                                    ui.label("total");
                                                     ui.end_row();
-                                                }
-                                            });
-                                    });
+                                                    for i in range {
+                                                        let listing = &query_view[i];
+                                                        ui.label(
+                                                            listing
+                                                                .world_name
+                                                                .as_ref()
+                                                                .unwrap_or(&"".to_string()),
+                                                        );
+                                                        ui.label(
+                                                            listing
+                                                                .price_per_unit
+                                                                .unwrap_or_default()
+                                                                .to_string(),
+                                                        );
+                                                        ui.label(
+                                                            listing
+                                                                .quantity
+                                                                .unwrap_or_default()
+                                                                .to_string(),
+                                                        );
+                                                        ui.label(
+                                                            listing
+                                                                .hq
+                                                                .then_some("✅")
+                                                                .unwrap_or_default(),
+                                                        );
+                                                        ui.label(listing.total.to_string());
+                                                        ui.end_row();
+                                                    }
+                                                });
+                                        },
+                                    );
                                 }
                                 MarketView::MultiView(_) => {}
                             },
@@ -641,7 +701,11 @@ impl<'a> eframe::App for CraftersToolbox {
                 });
         }
         if let Some(recipe_id) = open_recipe_window {
-            windows.add_recipe(recipe_id, network_channel, game_data, universalis_query_target.as_str());
+            windows.add_recipe(
+                recipe_id,
+                network_channel,
+                universalis_query_target.as_str(),
+            );
         }
         if let Some(remove) = remove_item_window {
             windows.item_windows.remove(remove);
@@ -800,10 +864,19 @@ impl<'a> eframe::App for CraftersToolbox {
                                         }
                                         ui.with_layout(egui::Layout::right_to_left(), |ui| {
                                             let item_id = recipe.get_item_result();
-                                            ui.set_enabled(!windows.item_windows.iter().any(|i| i.item_id == item_id));
-                                            if ui.button("💲").context_menu(|ui| {
-                                                ui.label("Show listings of target item");
-                                            }).clicked() {
+                                            ui.set_enabled(
+                                                !windows
+                                                    .item_windows
+                                                    .iter()
+                                                    .any(|i| i.item_id == item_id),
+                                            );
+                                            if ui
+                                                .button("💲")
+                                                .context_menu(|ui| {
+                                                    ui.label("Show listings of target item");
+                                                })
+                                                .clicked()
+                                            {
                                                 delayed_open_item_window = Some(item_id);
                                             }
                                         });
@@ -835,7 +908,6 @@ impl WindowsList {
         &mut self,
         recipe_id: RecipeId,
         network_channel: &mut Option<(Sender<AppTx>, Receiver<AppRx>)>,
-        data: &xiv_gen::Data,
         data_center: impl ToString,
     ) {
         if self.recipe_windows.iter().any(|r| r.recipe_id == recipe_id) {

@@ -49,7 +49,6 @@ impl RecipeSearchPanel {
                                 windows.add_recipe(
                                     *id,
                                     network_channel,
-                                    game_data,
                                     universalis_datacenter.to_string(),
                                 );
                             }

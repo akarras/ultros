@@ -3,7 +3,7 @@ use crate::{AppRx, AppTx, CraftersToolbox};
 use egui::{ScrollArea, Ui};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::{Receiver, Sender};
-use xiv_gen::{Data, Item, ItemId};
+use xiv_gen::ItemId;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct ItemPanel {
@@ -29,7 +29,6 @@ impl ItemPanel {
         universalis_datacenter: &str,
         windows_list: &mut WindowsList,
         network_channel: &mut Option<(Sender<AppTx>, Receiver<AppRx>)>,
-        game_data: &xiv_gen::Data,
     ) {
         self.check_invalid();
         ui.heading("Item search");

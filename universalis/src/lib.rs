@@ -1,13 +1,17 @@
+#[cfg(feature = "websocket")]
+pub mod websocket;
+#[cfg(feature = "websocket")]
+pub use websocket::WebsocketClient;
 extern crate core;
 
 use crate::MarketView::{MultiView, SingleView};
+use log::info;
 use reqwest::{Client, Method, Request, Url};
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use thiserror::Error;
-use log::info;
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -144,7 +148,7 @@ pub struct UniversalisClient {
 }
 
 #[derive(Serialize, Deserialize, Debug, Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Hash)]
-pub struct WorldId(pub u32);
+pub struct WorldId(pub i32);
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, PartialOrd, Ord, Hash)]
 pub struct RegionName(pub String);
@@ -179,7 +183,7 @@ pub struct WorldView {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum HistoryView {
-    SingleView()
+    SingleView(),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -256,9 +260,7 @@ impl UniversalisClient {
         })
     }
 
-    pub async fn get_item_history(&self, world_or_datacenter: &str, item_ids: &[i32]) {
-
-    }
+    pub async fn get_item_history(&self, world_or_datacenter: &str, item_ids: &[i32]) {}
 }
 
 #[cfg(test)]
