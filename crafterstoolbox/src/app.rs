@@ -763,7 +763,7 @@ impl eframe::App for CraftersToolbox {
                         let world_map = &data.world_by_item_pricing;
                         ScrollArea::vertical().max_height(400.0).show(ui, |ui| {
                             Grid::new(buddy.recipe_id)
-                                .num_columns(5)
+                                .num_columns(6)
                                 .spacing([15.0, 5.0])
                                 .striped(true)
                                 .show(ui, |ui| {
@@ -772,6 +772,7 @@ impl eframe::App for CraftersToolbox {
                                     ui.colored_label(item_color, "HQ");
                                     ui.colored_label(item_color, "quantity");
                                     ui.colored_label(item_color, "price per item");
+                                    ui.colored_label(item_color, "total");
                                     ui.colored_label(item_color, "retainer");
                                     ui.end_row();
                                     for (world, items) in world_map {
@@ -798,6 +799,10 @@ impl eframe::App for CraftersToolbox {
                                                         })
                                                         .unwrap_or_default(),
                                                 );
+                                                ui.label(decimal_format
+                                                    .format(&listing.total.into())
+                                                    .write_to_string()
+                                                    .to_string());
                                                 ui.label(&listing.retainer_name);
                                                 ui.end_row();
                                             }
