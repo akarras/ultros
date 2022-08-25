@@ -5,12 +5,13 @@ pub use websocket::WebsocketClient;
 extern crate core;
 
 use crate::MarketView::{MultiView, SingleView};
+use chrono::{DateTime, Local};
 use log::info;
 use reqwest::{Client, Method, Request, Url};
-use serde::Deserialize;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
+use serde_with::{formats::Flexible, serde_as, TimestampMilliSeconds, TimestampSeconds};
+use std::collections::{BTreeMap, HashMap};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -34,6 +35,8 @@ pub struct MateriaView {
     #[serde(rename = "materiaID")]
     pub materia_id: u32,
 }
+
+pub type StackSizeHistogram = HashMap<u64, u16>;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -65,32 +68,38 @@ pub struct ListingMultiViewData {
     pub max_price_nq: f64,
     #[serde(rename = "maxPriceHQ")]
     pub max_price_hq: f64,
-    pub stack_size_histogram: Value,
+    pub stack_size_histogram: StackSizeHistogram,
     #[serde(rename = "stackSizeHistogramNQ")]
-    pub stack_size_histogram_nq: Value,
+    pub stack_size_histogram_nq: StackSizeHistogram,
     #[serde(rename = "stackSizeHistogramHQ")]
-    pub stack_size_histogram_hq: Value,
+    pub stack_size_histogram_hq: StackSizeHistogram,
     pub world_upload_times: Option<Value>,
 }
 
+#[serde_as]
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ListingView {
-    pub last_review_time: Option<u64>,
+    #[serde_as(as = "TimestampSeconds<i64, Flexible>")]
+    pub last_review_time: DateTime<Local>,
     pub price_per_unit: Option<u32>,
     pub quantity: Option<u32>,
     #[serde(rename = "stainID")]
     pub stain_id: Option<u32>,
     pub world_name: Option<String>,
+    #[serde(rename = "worldID")]
     pub world_id: Option<u8>,
     pub creator_name: Option<String>,
-    pub creator_id: Option<u32>,
+    /// UUID
+    #[serde(rename = "creatorID")]
+    pub creator_id: Option<String>,
     pub hq: bool,
     pub is_crafted: bool,
     pub listing_id: Option<u32>,
     pub materia: Vec<MateriaView>,
     pub on_mannequin: bool,
     pub retainer_city: u32,
+    /// UUID
     #[serde(rename = "retainerID")]
     pub retainer_id: String,
     pub retainer_name: String,
@@ -183,30 +192,54 @@ pub struct WorldView {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum HistoryView {
-    SingleView(),
+    SingleView(HistorySingleView),
+    MultiView(HistoryMultiView),
 }
 
+#[serde_as]
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct HistoryEntry {
-    hq: bool,
-    price_per_unit: u64,
-    quantity: u32,
-    buyer_name: String,
-    on_mannequin: bool,
-    timestamp: u64,
-    world_name: WorldName,
-    world_id: WorldId,
+    pub hq: bool,
+    pub price_per_unit: u64,
+    pub quantity: u32,
+    pub buyer_name: Option<String>,
+    pub on_mannequin: Option<bool>,
+    #[serde_as(as = "TimestampSeconds<i64, Flexible>")]
+    pub timestamp: DateTime<Local>,
+    pub world_name: Option<WorldName>,
+    #[serde(rename = "worldID")]
+    pub world_id: WorldId,
 }
 
+#[serde_as]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryMultiView {
+    #[serde(rename = "itemIDs")]
+    pub item_ids: Vec<u32>,
+    pub items: BTreeMap<u32, HistorySingleView>,
+    pub dc_name: Option<String>,
+    pub unresolved_items: Vec<u32>,
+}
+
+#[serde_as]
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct HistorySingleView {
-    item_id: u32,
-    entries: Vec<HistoryEntry>,
-    last_upload_time: u64,
-    dc_name: Option<String>,
-    // TODO finish implementation
+    #[serde(rename = "itemID")]
+    pub item_id: u32,
+    pub entries: Vec<HistoryEntry>,
+    #[serde_as(as = "TimestampMilliSeconds<i64, Flexible>")]
+    pub last_upload_time: DateTime<Local>,
+    pub dc_name: Option<String>,
+    pub stack_size_histogram: StackSizeHistogram,
+    #[serde(rename = "stackSizeHistogramHQ")]
+    pub stack_size_histogram_hq: StackSizeHistogram,
+    #[serde(rename = "stackSizeHistogramNQ")]
+    pub stack_size_histogram_nq: StackSizeHistogram,
+    pub nq_sale_velocity: f64,
+    pub hq_sale_velocity: f64,
 }
 
 impl UniversalisClient {
@@ -241,8 +274,7 @@ impl UniversalisClient {
         if item_ids.is_empty() {
             return Err(Error::NoItems);
         }
-        let id_strs: Vec<_> = item_ids.iter().map(|m| m.to_string()).collect();
-        let id_str = id_strs.join(",");
+        let id_str = Self::ids_to_string(item_ids);
         let request = Request::new(
             Method::GET,
             Url::parse(&format!(
@@ -251,16 +283,39 @@ impl UniversalisClient {
             ))?,
         );
         info!("Getting current marketboard data: {}", request.url());
-        let data = self.client.execute(request).await?;
+        let response = self.client.execute(request).await?;
         // serde struggles with this untagged enum so I just manually decide for it :)
-        Ok(if item_ids.len() > 1 {
-            MultiView(data.json().await?)
+        Ok(if item_ids.len() == 1 {
+            SingleView(response.json().await?)
         } else {
-            SingleView(data.json().await?)
+            MultiView(response.json().await?)
         })
     }
 
-    pub async fn get_item_history(&self, _world_or_datacenter: &str, _item_ids: &[i32]) {}
+    pub async fn get_item_history(
+        &self,
+        world_or_datacenter: &str,
+        item_ids: &[i32],
+    ) -> Result<HistoryView, Error> {
+        let id_str = Self::ids_to_string(item_ids);
+        let url = format!(
+            "{}/history/{world_or_datacenter}/{}?entries=4800",
+            Self::UNIVERSALIS_BASE_URL,
+            id_str
+        );
+        info!("getting historical marketboard data: {}", url);
+        let response = self.client.get(url).send().await?;
+        Ok(if item_ids.len() == 1 {
+            HistoryView::SingleView(response.json().await?)
+        } else {
+            HistoryView::MultiView(response.json().await?)
+        })
+    }
+
+    fn ids_to_string(item_ids: &[i32]) -> String {
+        let id_strs: Vec<_> = item_ids.iter().map(|m| m.to_string()).collect();
+        id_strs.join(",")
+    }
 }
 
 #[cfg(test)]
@@ -287,7 +342,7 @@ mod test {
     }
 
     #[tokio::test]
-    async fn test_marketboard_parse() {
+    async fn test_marketboard() {
         let client = UniversalisClient::new();
         let items = client
             .marketboard_current_data("Aether", &[3i32])
@@ -308,5 +363,21 @@ mod test {
                 assert!(!v.items.is_empty());
             }
         }
+    }
+
+    #[tokio::test]
+    async fn test_history() {
+        let client = UniversalisClient::new();
+
+        // let data : HistorySingleView = serde_json::from_str(&test_data).unwrap();
+        client.get_item_history("Aether", &[15858]).await.unwrap();
+        client.get_item_history("Aether", &[3, 2]).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_local_world_history() {
+        let client = UniversalisClient::new();
+        client.get_item_history("Sargatanas", &[36693]);
+        client.get_item_history("Sargatanas", &[36693, 2]);
     }
 }

@@ -13,7 +13,7 @@ fn main() {
     let native_options = eframe::NativeOptions::default();
     let (app_tx_sender, mut app_tx_receiver) = tokio::sync::mpsc::channel(10);
     let (app_rx_sender, app_rx_receiver) = tokio::sync::mpsc::channel(10);
-    let data = CraftersToolbox::decompress_data();
+    let data = xiv_gen_db::decompress_data();
     info!("Starting network thread");
 
     std::thread::scope(move |s| {
@@ -58,21 +58,28 @@ fn main() {
                                 item_id,
                                 region_datacenter_or_server,
                             } => {
-                                let market_view = client
-                                    .marketboard_current_data(
+                                let item_ids = [item_id.inner()];
+                                let (market_view, history_view) = futures::future::join(
+                                    client.marketboard_current_data(
                                         &region_datacenter_or_server,
-                                        &[item_id.inner()],
-                                    )
-                                    .await;
+                                        &item_ids,
+                                    ),
+                                    client
+                                        .get_item_history(&region_datacenter_or_server, &item_ids),
+                                )
+                                .await;
                                 app_rx_sender
                                     .send(AppRx::ItemResponse {
                                         item_id,
                                         market_view,
+                                        history_view,
                                     })
                                     .await
                                     .unwrap();
                             }
                         }
+                    } else {
+                        break;
                     }
                 }
             })

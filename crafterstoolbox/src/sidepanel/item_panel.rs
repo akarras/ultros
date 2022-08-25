@@ -1,6 +1,6 @@
 use crate::app::WindowsList;
 use crate::{AppRx, AppTx, CraftersToolbox};
-use egui::{ScrollArea, Ui};
+use egui::{Align, ScrollArea, Ui};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::{Receiver, Sender};
 use xiv_gen::ItemId;
@@ -44,7 +44,7 @@ impl ItemPanel {
                 let (id, item_name, category_name) = &item_query[i];
                 ui.label(item_name.as_str());
                 ui.horizontal(|ui| {
-                    ui.with_layout(egui::Layout::right_to_left(), |ui| {
+                    ui.with_layout(egui::Layout::right_to_left(Align::RIGHT), |ui| {
                         ui.scope(|ui| {
                             // let already_open =
                             //    crafts_list.windows.iter().any(|list| *id == list.recipe_id);
@@ -85,7 +85,7 @@ impl ItemPanel {
     }
 
     fn get_item_data() -> Vec<(ItemId, String, String)> {
-        let data = CraftersToolbox::decompress_data();
+        let data = xiv_gen_db::decompress_data();
         let items = data.get_items();
         let ui_category_ids = data.get_item_ui_categorys();
 

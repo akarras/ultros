@@ -1,6 +1,7 @@
 use crate::app::WindowsList;
 use crate::crafting_types::CraftJob;
 use crate::{AppRx, AppTx, CraftersToolbox};
+use eframe::emath::Align;
 use egui::{ScrollArea, Ui};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -38,7 +39,7 @@ impl RecipeSearchPanel {
                 let (id, item_name, jobs) = &recipe_query_results[i];
                 ui.horizontal(|ui| {
                     ui.label(item_name.as_str());
-                    ui.with_layout(egui::Layout::right_to_left(), |ui| {
+                    ui.with_layout(egui::Layout::right_to_left(Align::RIGHT), |ui| {
                         ui.scope(|ui| {
                             let already_open = windows
                                 .recipe_windows
@@ -99,7 +100,7 @@ impl RecipeSearchPanel {
     /// Prepares all the recipe data we need for recipes
     fn create_recipe_list() -> Vec<(RecipeId, String, Vec<CraftJob>)> {
         // this might be good to store somewhere
-        let game_data = CraftersToolbox::decompress_data();
+        let game_data = xiv_gen_db::decompress_data();
         let recipes = game_data.get_recipes();
         let items = game_data.get_items();
         let recipe_lookup = game_data.get_recipe_lookups();

@@ -1,16 +1,18 @@
-use crate::crafting_types::{create_crafter_menu, Crafters, CrafterDetails};
+use crate::crafting_types::{create_crafter_menu, CrafterDetails, Crafters};
 use crate::sidepanel::item_panel::ItemPanel;
 use crate::sidepanel::SidePanel;
 use crate::UniversalisData;
 
-use egui::{Color32, Grid, ScrollArea, Visuals};
+use egui::{Align, Color32, Grid, Layout, ScrollArea, Visuals};
 
+use egui::plot::{Line, Plot, PlotPoints};
 use flate2::FlushDecompress;
 use icu::decimal::options::{FixedDecimalFormatterOptions, GroupingStrategy};
 use icu::decimal::FixedDecimalFormatter;
 use icu::locid::locale;
+use itertools::Itertools;
 use lazy_static::lazy_static;
-use log::{info, warn};
+use log::{debug, error, info, warn};
 use recipepricecheck::{
     BestPricingForItem, BestPricingSummary, ItemListingsSummary, PricingArguments,
     RecipePricingRawData,
@@ -18,19 +20,16 @@ use recipepricecheck::{
 use serde::{Deserialize, Serialize};
 use serde_error::Error;
 use std::borrow::Borrow;
-use std::collections::{BTreeMap};
-
+use std::collections::{BTreeMap, HashMap};
 
 use tokio::sync::mpsc::{Receiver, Sender};
-use universalis::{
-    DataCenterName, ListingView, MarketView,
-    RegionName, WorldName,
-};
+use universalis::{DataCenterName, HistoryView, ListingView, MarketView, RegionName, WorldName};
 use writeable::Writeable;
 use xiv_crafting_sim::simulator::SimStep;
 use xiv_crafting_sim::Synth;
 use xiv_gen::ItemId;
 
+use crate::plots::{CandleStickHistoryPlot, HistoryPlot};
 use xiv_gen::RecipeId;
 
 pub type Result<T> = core::result::Result<T, Error>;
@@ -102,11 +101,13 @@ impl ItemData {
         {
             *query_view = item_data
                 .get_listings_for_item_id(self.item_id.inner() as u32)
-                .expect("Should always have this?")
-                .iter()
-                .filter(|item| !self.hq_only || item.hq)
-                .cloned()
-                .collect();
+                .map(|m| {
+                    m.iter()
+                        .filter(|item| !self.hq_only || item.hq)
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default();
         }
     }
 
@@ -147,6 +148,7 @@ pub(crate) enum ItemWindowDataState {
     Loaded {
         button_state: ItemWindowButtonState,
         item_data: MarketView,
+        history_view: HistoryView,
         #[serde(skip)]
         query_view: Vec<ListingView>,
     },
@@ -159,16 +161,24 @@ impl ItemWindowDataState {
     pub(crate) fn accept_data(
         &mut self,
         market_data: core::result::Result<MarketView, universalis::Error>,
+        history_view: core::result::Result<HistoryView, universalis::Error>,
     ) {
-        *self = match market_data {
-            Ok(market_data) => ItemWindowDataState::Loaded {
+        *self = match (market_data, history_view) {
+            (Ok(market_data), Ok(history_view)) => ItemWindowDataState::Loaded {
                 button_state: ItemWindowButtonState::Current,
                 item_data: market_data,
+                history_view,
                 query_view: vec![],
             },
-            Err(e) => ItemWindowDataState::Error {
+            (Err(e), _) => ItemWindowDataState::Error {
                 error: Error::new(&e),
             },
+            (_, Err(e)) => ItemWindowDataState::Error {
+                error: Error::new(&e),
+            },
+        };
+        if let ItemWindowDataState::Error { error } = self {
+            error!("{error:?}");
         }
     }
 }
@@ -182,12 +192,12 @@ pub(crate) struct WindowsList {
 #[derive(Debug)]
 pub enum CraftingSimControl {
     Start(RecipeId, CrafterDetails, Synth),
-    Stop(RecipeId)
+    Stop(RecipeId),
 }
 
 #[derive(Debug)]
 pub enum CraftingSimStatus {
-    Progress(SimStep)
+    Progress(SimStep),
 }
 
 #[derive(Debug)]
@@ -211,7 +221,7 @@ pub enum AppRx {
     ItemResponse {
         item_id: ItemId,
         market_view: core::result::Result<MarketView, universalis::Error>,
-        // todo history:
+        history_view: core::result::Result<HistoryView, universalis::Error>,
     },
     UniversalisData {
         universalis_data: UniversalisData,
@@ -256,7 +266,7 @@ impl Default for CraftersToolbox {
             network_channel: None,
             user_data: Default::default(),
             universalis_query_target: "".to_string(),
-            game_data: CraftersToolbox::decompress_data(),
+            game_data: xiv_gen_db::decompress_data(),
             universalis_data: UniversalisData::default(),
             sidebar_state: SidePanel::ItemLookup(ItemPanel::new()),
         }
@@ -308,25 +318,6 @@ impl CraftersToolbox {
             universalis_data,
             ..Default::default()
         }
-    }
-
-    pub fn decompress_data() -> &'static xiv_gen::Data {
-        fn decompress_impl() -> xiv_gen::Data {
-            let mut decompressor = flate2::Decompress::new(true);
-            let mut data = Vec::new();
-            let bytes = include_bytes!("../../database.bincode");
-            data.reserve(bytes.len() * 5);
-            decompressor
-                .decompress_vec(bytes, &mut data, FlushDecompress::Sync)
-                .unwrap();
-            let (data, _) =
-                bincode::decode_from_slice(data.as_slice(), bincode::config::standard()).unwrap();
-            data
-        }
-        lazy_static! {
-            pub static ref XIV_DATA: xiv_gen::Data = decompress_impl();
-        }
-        &XIV_DATA
     }
 }
 
@@ -405,20 +396,15 @@ impl eframe::App for CraftersToolbox {
                                 .as_ref()
                                 .map(|m| m.get_items_by_world_cloned())
                                 .unwrap_or_default();
-                            let datacenter_pricing = raw_data
-                                .as_ref()
-                                .map_err(Error::new)
-                                .and_then(|m| {
+                            let datacenter_pricing =
+                                raw_data.as_ref().map_err(Error::new).and_then(|m| {
                                     m.get_recipe_target_item_listing_summary()
                                         .map_err(|e| Error::new(&e))
                                 });
                             let home_world_pricing = if let Some(home_world) = home_world {
-                                raw_data
-                                    .as_ref()
-                                    .ok()
-                                    .and_then(|m| {
-                                        m.get_recipe_target_pricing_for_world(&home_world.0).ok()
-                                    })
+                                raw_data.as_ref().ok().and_then(|m| {
+                                    m.get_recipe_target_pricing_for_world(&home_world.0).ok()
+                                })
                             } else {
                                 None
                             };
@@ -441,13 +427,14 @@ impl eframe::App for CraftersToolbox {
                     AppRx::ItemResponse {
                         item_id,
                         market_view,
+                        history_view,
                     } => {
                         if let Some(i) = windows
                             .item_windows
                             .iter_mut()
                             .find(|i| i.item_id == item_id)
                         {
-                            i.state.accept_data(market_view);
+                            i.state.accept_data(market_view, history_view);
                             i.update_query();
                         } else {
                             warn!("No window for item response {item_id:?}");
@@ -496,10 +483,13 @@ impl eframe::App for CraftersToolbox {
                     ui.set_min_width(200.0);
                     ui.set_min_height(300.0);
                     egui::ComboBox::from_label("Region")
-                        .selected_text(region
+                        .selected_text(
+                            region
                                 .as_mut()
                                 .unwrap_or(&mut RegionName("No Region".to_string()))
-                                .0.to_string())
+                                .0
+                                .to_string(),
+                        )
                         .show_ui(ui, |ui| {
                             for r in universalis_data.regions.keys() {
                                 ui.selectable_value(region, Some(r.clone()), &r.0);
@@ -510,10 +500,13 @@ impl eframe::App for CraftersToolbox {
                         .and_then(|selected_region| universalis_data.regions.get(selected_region))
                     {
                         egui::ComboBox::from_label("Datacenter")
-                            .selected_text(data_center
+                            .selected_text(
+                                data_center
                                     .as_mut()
                                     .unwrap_or(&mut DataCenterName("No Datacenter".to_string()))
-                                    .0.to_string())
+                                    .0
+                                    .to_string(),
+                            )
                             .show_ui(ui, |ui| {
                                 for dc in dcs {
                                     ui.selectable_value(data_center, Some(dc.clone()), &dc.0);
@@ -525,10 +518,13 @@ impl eframe::App for CraftersToolbox {
                         .and_then(|selected_dc| universalis_data.data_centers.get(selected_dc))
                     {
                         egui::ComboBox::from_label("Home World")
-                            .selected_text(home_world
+                            .selected_text(
+                                home_world
                                     .as_mut()
                                     .unwrap_or(&mut WorldName("No Homeworld".to_string()))
-                                    .0.to_string())
+                                    .0
+                                    .to_string(),
+                            )
                             .show_ui(ui, |ui| {
                                 for w in worlds {
                                     ui.selectable_value(home_world, Some(w.clone()), &w.0);
@@ -596,16 +592,14 @@ impl eframe::App for CraftersToolbox {
         let mut open_recipe_window = None;
         for (i, item_window) in windows.item_windows.iter_mut().enumerate() {
             let items = game_data.get_items();
-            let item = items.get(&item_window.item_id).unwrap_or_else(|| panic!("item missing from static data {:?}",
-                item_window.item_id));
+            let item = items.get(&item_window.item_id).unwrap_or_else(|| {
+                panic!("item missing from static data {:?}", item_window.item_id)
+            });
             let item_name = item.get_name();
             egui::Window::new(&format!("{item_name} Pricing"))
                 .default_width(400.0)
                 .show(ctx, |ui| {
                     ui.horizontal(|ui| {
-                        if ui.button("❌").clicked() {
-                            remove_item_window = Some(i);
-                        }
                         if ui.button("🔃").clicked() {
                             item_window.refresh(network_channel, universalis_query_target);
                         }
@@ -631,6 +625,9 @@ impl eframe::App for CraftersToolbox {
                                 }
                             });
                         }
+                        if ui.button("❌").clicked() {
+                            remove_item_window = Some(i);
+                        }
                     });
                     match &item_window.state {
                         ItemWindowDataState::Loading => {
@@ -639,60 +636,143 @@ impl eframe::App for CraftersToolbox {
                         ItemWindowDataState::Loaded {
                             button_state,
                             item_data,
+                            history_view,
                             query_view,
                         } => match button_state {
-                            ItemWindowButtonState::Current => match item_data {
-                                MarketView::SingleView(_s) => {
-                                    ScrollArea::vertical().max_height(400.0).show_rows(
-                                        ui,
-                                        15.0,
-                                        query_view.len(),
-                                        |ui, range| {
-                                            Grid::new(format!("{:?}", item_window.item_id))
-                                                .striped(true)
-                                                .num_columns(4)
-                                                .show(ui, |ui| {
-                                                    ui.label("world name");
-                                                    ui.label("price per unit");
-                                                    ui.label("quantity");
-                                                    ui.label("hq");
-                                                    ui.label("total");
-                                                    ui.end_row();
-                                                    for i in range {
-                                                        let listing = &query_view[i];
-                                                        ui.label(
-                                                            listing
-                                                                .world_name
-                                                                .as_ref()
-                                                                .unwrap_or(&"".to_string()),
-                                                        );
-                                                        ui.label(
-                                                            listing
-                                                                .price_per_unit
-                                                                .unwrap_or_default()
-                                                                .to_string(),
-                                                        );
-                                                        ui.label(
-                                                            listing
-                                                                .quantity
-                                                                .unwrap_or_default()
-                                                                .to_string(),
-                                                        );
-                                                        ui.label(
-                                                            listing
-                                                                .hq
-                                                                .then_some("✅")
-                                                                .unwrap_or_default(),
-                                                        );
-                                                        ui.label(listing.total.to_string());
-                                                        ui.end_row();
-                                                    }
-                                                });
-                                        },
-                                    );
+                            ItemWindowButtonState::Current => {
+                                ui.label("price history per unit");
+                                match history_view {
+                                    HistoryView::SingleView(s) => {
+                                        let colors = [
+                                            Color32::from_rgb(0, 150, 0),
+                                            Color32::from_rgb(255, 0, 0),
+                                            Color32::from_rgb(0, 255, 0),
+                                            Color32::from_rgb(255, 0, 255),
+                                            Color32::from_rgb(0, 0, 255),
+                                            Color32::from_rgb(255, 255, 0),
+                                            Color32::from_rgb(0, 255, 255),
+                                            Color32::from_rgb(100, 150, 0),
+                                            Color32::from_rgb(0, 150, 100),
+                                            Color32::from_rgb(200, 150, 100),
+                                            Color32::from_rgb(0, 150, 100),
+                                            Color32::from_rgb(50, 15, 100),
+                                            Color32::from_rgb(189, 120, 40),
+                                        ];
+                                        // let entries = s.entries.iter().group_by(|m| m.hq);
+                                        let items = game_data.get_items();
+                                        let item =
+                                            items.get(&ItemId::new(s.item_id as i32)).unwrap();
+                                        let map: BTreeMap<String, Vec<_>> = s.entries.iter().fold(
+                                            BTreeMap::new(),
+                                            |mut acc, value| {
+                                                acc.entry(format!(
+                                                    "{}{item_name} {}",
+                                                    value.hq.then(|| "[HQ] ").unwrap_or_default(),
+                                                    value
+                                                        .world_name
+                                                        .as_ref()
+                                                        .map(|m| m.0.as_str())
+                                                        .unwrap_or_default()
+                                                ))
+                                                .or_default()
+                                                .push(value);
+                                                acc
+                                            },
+                                        );
+
+                                        //let g: Vec<_> = map
+                                        //    .into_iter()
+                                        //    .zip(colors.into_iter())
+                                        //    .map(|((name, history), color)| (history, color, name))
+                                        //    .collect();
+                                        let g: Vec<_> = s
+                                            .entries
+                                            .iter()
+                                            .group_by(|m| m.hq)
+                                            .borrow()
+                                            .into_iter()
+                                            .map(|(b, g)| {
+                                                (
+                                                    g.collect::<Vec<_>>(),
+                                                    b.then(|| colors[0]).unwrap_or(colors[1]),
+                                                    format!(
+                                                        "{}{item_name}",
+                                                        b.then(|| "[HQ]")
+                                                            .unwrap_or_default()
+                                                            .to_string()
+                                                    ),
+                                                )
+                                            })
+                                            .collect();
+                                        // TODO delete if the other iter works
+                                        let _ = CandleStickHistoryPlot::from_custom_iter(
+                                            [(
+                                                s.entries.iter(),
+                                                Color32::from_rgb(255, 0, 0),
+                                                item.get_name(),
+                                            )]
+                                            .iter(),
+                                        );
+                                        let iter =
+                                            CandleStickHistoryPlot::from_custom_iter(g.iter());
+
+                                        if let Ok(candles) = iter {
+                                            candles.draw_graph(ui);
+                                        }
+                                    }
+                                    HistoryView::MultiView(_) => {
+                                        warn!("Multiview unsupported for now");
+                                    }
                                 }
-                                MarketView::MultiView(_) => {}
-                            },
+                                ScrollArea::vertical().max_height(400.0).show_rows(
+                                    ui,
+                                    15.0,
+                                    query_view.len(),
+                                    |ui, range| {
+                                        ui.label("current listings");
+                                        Grid::new(format!("{:?}", item_window.item_id))
+                                            .striped(true)
+                                            .num_columns(4)
+                                            .show(ui, |ui| {
+                                                ui.label("world name");
+                                                ui.label("price per unit");
+                                                ui.label("quantity");
+                                                ui.label("hq");
+                                                ui.label("total");
+                                                ui.end_row();
+                                                for i in range {
+                                                    let listing = &query_view[i];
+                                                    ui.label(
+                                                        listing
+                                                            .world_name
+                                                            .as_ref()
+                                                            .unwrap_or(&"".to_string()),
+                                                    );
+                                                    ui.label(
+                                                        listing
+                                                            .price_per_unit
+                                                            .unwrap_or_default()
+                                                            .to_string(),
+                                                    );
+                                                    ui.label(
+                                                        listing
+                                                            .quantity
+                                                            .unwrap_or_default()
+                                                            .to_string(),
+                                                    );
+                                                    ui.label(
+                                                        listing
+                                                            .hq
+                                                            .then_some("✅")
+                                                            .unwrap_or_default(),
+                                                    );
+                                                    ui.label(listing.total.to_string());
+                                                    ui.end_row();
+                                                }
+                                            });
+                                    },
+                                );
+                            }
                             ItemWindowButtonState::History => {}
                         },
                         ItemWindowDataState::Error { error } => {
@@ -777,7 +857,6 @@ impl eframe::App for CraftersToolbox {
                                     ui.end_row();
                                     for (world, items) in world_map {
                                         let world_color = Color32::from_rgb(69, 199, 19);
-                                        // ui.colored_label(world_color, "World: ");
                                         ui.colored_label(world_color, world);
                                         ui.end_row();
                                         for (item, listings) in items {
@@ -799,10 +878,12 @@ impl eframe::App for CraftersToolbox {
                                                         })
                                                         .unwrap_or_default(),
                                                 );
-                                                ui.label(decimal_format
-                                                    .format(&listing.total.into())
-                                                    .write_to_string()
-                                                    .to_string());
+                                                ui.label(
+                                                    decimal_format
+                                                        .format(&listing.total.into())
+                                                        .write_to_string()
+                                                        .to_string(),
+                                                );
                                                 ui.label(&listing.retainer_name);
                                                 ui.end_row();
                                             }
@@ -868,25 +949,24 @@ impl eframe::App for CraftersToolbox {
                                             ui.label("HQ: ");
                                             ui.label(hq.to_string());
                                         }
-                                        ui.with_layout(egui::Layout::right_to_left(), |ui| {
-                                            let item_id = recipe.get_item_result();
-                                            ui.set_enabled(
-                                                !windows
-                                                    .item_windows
-                                                    .iter()
-                                                    .any(|i| i.item_id == item_id),
-                                            );
-                                            let menu = |ui: &mut egui::Ui| {
-                                                ui.label("Show listings of target item");
-                                            };
-                                            if ui
-                                                .button("💲")
-                                                .context_menu(menu)
-                                                .clicked()
-                                            {
-                                                delayed_open_item_window = Some(item_id);
-                                            }
-                                        });
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(Align::RIGHT),
+                                            |ui| {
+                                                let item_id = recipe.get_item_result();
+                                                ui.set_enabled(
+                                                    !windows
+                                                        .item_windows
+                                                        .iter()
+                                                        .any(|i| i.item_id == item_id),
+                                                );
+                                                let menu = |ui: &mut egui::Ui| {
+                                                    ui.label("Show listings of target item");
+                                                };
+                                                if ui.button("💲").context_menu(menu).clicked() {
+                                                    delayed_open_item_window = Some(item_id);
+                                                }
+                                            },
+                                        );
                                     });
                                 }
                             });

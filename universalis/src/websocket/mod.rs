@@ -3,16 +3,15 @@ pub mod event_types;
 use crate::websocket::event_types::{
     Channel, EventChannel, EventResponse, SubscribeMode, WebSocketSubscriptionUpdate, WorldFilter,
 };
-use crate::{WorldId};
-use async_tungstenite::tokio::{connect_async};
+use crate::WorldId;
+use async_tungstenite::tokio::connect_async;
 use async_tungstenite::tungstenite::Message;
 
 use bson::Bson;
-use futures::future::{Either};
+use futures::future::Either;
 
 use futures::{SinkExt, Stream, StreamExt};
-use log::{debug, info, warn};
-
+use log::{debug, error, info, warn};
 
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -21,7 +20,6 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 #[derive(Debug)]
 enum SocketTx {
     Subscription(WebSocketSubscriptionUpdate),
-    Close,
 }
 
 #[derive(Debug)]
@@ -30,7 +28,6 @@ pub enum SocketRx {
 }
 
 pub struct WebsocketClient {
-    channels: Vec<Channel>,
     socket_sender: Sender<SocketTx>,
     listing_receiver: Receiver<SocketRx>,
 }
@@ -79,15 +76,19 @@ impl WebsocketClient {
                 )
                 .await
                 {
-                    Either::Left((Some(data), _)) => match &data {
-                        SocketTx::Subscription(s) => {
-                            info!("Subscription update {s:?}");
-                            let bson = bson::to_vec(&s).unwrap();
-                            websocket.send(Message::Binary(bson)).await.unwrap();
-                        }
-                        SocketTx::Close => {
+                    Either::Left((sock, _pin)) => match &sock {
+                        Some(data) => match data {
+                            SocketTx::Subscription(s) => {
+                                info!("Subscription update {s:?}");
+                                let bson = bson::to_vec(&s).unwrap();
+                                websocket.send(Message::Binary(bson)).await.unwrap();
+                            }
+                        },
+                        None => {
+                            if let Err(e) = websocket.close(None).await {
+                                error!("Unexpected error closing socket {e:?}");
+                            }
                             break;
-                            info!("Closing socket?");
                         }
                     },
                     Either::Right((Some(Ok(message)), _)) => {
@@ -126,7 +127,6 @@ impl WebsocketClient {
         });
 
         Self {
-            channels: vec![],
             socket_sender,
             listing_receiver,
         }

@@ -1,4 +1,3 @@
-
 use log::debug;
 use universalis::websocket::event_types::{EventChannel, SubscribeMode};
 use universalis::{UniversalisClient, WebsocketClient};

@@ -2,9 +2,10 @@
 
 mod app;
 mod crafting_types;
+mod plots;
 mod sidepanel;
-mod universalis;
 mod simulator;
+mod universalis;
 
 pub use crate::universalis::UniversalisData;
 pub use app::AppRx;
