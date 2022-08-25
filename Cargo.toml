@@ -1,2 +1,8 @@
 [workspace]
-members = ["universalis", "xivapi", "recipepricecheck", "crafterstoolbox", "xiv-gen"]
+members = ["universalis", "xivapi", "recipepricecheck", "crafterstoolbox", "xiv-gen", "xiv-gen-db"]
+
+
+[profile.release]
+lto = true
+opt-level = 3
+codegen-units = 1
