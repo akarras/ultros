@@ -7,7 +7,7 @@ use regex::Regex;
 use std::collections::HashSet;
 use std::env;
 use std::fmt::{Display, Formatter};
-use std::fs::{write};
+use std::fs::write;
 
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -298,7 +298,7 @@ fn create_struct(
                     apply_derives(&mut key).tuple_field(&line_two).vis("pub").derive("Hash").derive("Eq").derive("PartialEq").derive("Copy");
                     scope.push_struct(key);
                     let mut key_impl = Impl::new(&key_name);
-                    key_impl.new_fn("new").arg("value", &line_two).line("Self(value)".to_string()).ret("Self");
+                    key_impl.new_fn("new").arg("value", &line_two).line("Self(value)".to_string()).ret("Self").vis("pub");
                     key_impl.new_fn("inner").arg_ref_self().line("self.0").ret(&line_two).vis("pub");
                     scope.push_impl(key_impl);
                     line_two = key_name.clone();
@@ -459,8 +459,7 @@ fn read_dir<T: Container>(path: PathBuf, mut scope: T, args: &mut Args) -> T {
 fn main() {
     let mut args: Args = Args {
         recurse_directories: false,
-        // bin_code_generation: false,
-        bin_code_generation: false,
+        bin_code_generation: true,
         list_filter: Some(vec![
             "Item".to_string(),
             "ItemUICategory".to_string(),
@@ -478,9 +477,11 @@ fn main() {
     args.recurse_directories = false;
     let out_dir = env::var_os("OUT_DIR").unwrap();
     let dest_path = Path::new(&out_dir).join("types.rs");
-    let dir = "G:/Code/ffxiv-datamining/csv/";
+    // get absolute path to this
+    let dir = "./ffxiv-datamining/csv/";
+    let path = std::fs::canonicalize(dir).unwrap();
     let scope = Scope::new();
-    let mut scope = read_dir(PathBuf::from_str(dir).unwrap(), scope, &mut args);
+    let mut scope = read_dir(path, scope, &mut args);
     apply_derives(&mut args.db).vis("pub").derive("Default");
     scope.push_struct(args.db);
     scope.push_impl(args.db_impl);
@@ -489,10 +490,9 @@ fn main() {
 
     let conversion_files = Path::new(&out_dir).join("serialization.rs");
 
-    args.read_data.line("data").ret("Data");
+    args.read_data.line("data").ret("Data").vis("pub");
 
     let mut ser_scope = Scope::new();
-    ser_scope.import("xiv_gen", "*");
     ser_scope.push_fn(args.read_data);
     write(conversion_files, ser_scope.to_string()).unwrap();
 
