@@ -1,7 +1,7 @@
 use clap::Parser;
 use futures::{Stream, StreamExt};
 use log::info;
-use serde_json::{Value};
+use serde_json::Value;
 use std::path::PathBuf;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;

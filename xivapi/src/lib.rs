@@ -84,7 +84,11 @@ mod test {
                 let res = serde_json::from_str::<Recipe>(&str);
                 // Do some quick introspection on the error because this is impossible to traceback
                 if let Err(error) = &res {
-                    print_pretty_serde_error(&path, &str, error);
+                    print_pretty_serde_error(
+                        path.as_path().to_str().unwrap_or_default(),
+                        &str,
+                        error,
+                    );
                 }
                 Ok(res?)
             });
