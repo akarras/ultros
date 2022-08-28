@@ -39,6 +39,3 @@ tokio = {version = "1.19.2", features = ["full"]}
 console_error_panic_hook = "0.1.6"
 tracing-wasm = "0.2"
 tokio = {version = "1.19.2", default-features = false, features = ["sync"]}
-
-[target.x86_64-pc-windows-msvc]
-rustflags = ["-C", "target-feature=+crt-static"]
