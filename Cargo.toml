@@ -1,5 +1,5 @@
 [workspace]
-members = ["universalis", "xivapi", "recipepricecheck", "crafterstoolbox", "xiv-gen", "xiv-gen-db"]
+members = ["universalis", "xivapi", "recipepricecheck", "crafterstoolbox", "xiv-gen", "xiv-gen-db", "ultros", "ultros-db", "migration"]
 
 
 [profile.release]

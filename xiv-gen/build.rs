@@ -7,7 +7,7 @@ use regex::Regex;
 use std::collections::HashSet;
 use std::env;
 use std::fmt::{Display, Formatter};
-use std::fs::write;
+use std::fs::{write, DirEntry};
 
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -21,7 +21,7 @@ struct Args {
     bin_code_generation: bool,
 
     /// List filter
-    list_filter: Option<Vec<String>>,
+    list_filter: Vec<String>,
 
     /// Parent data struct for all data types
     ///
@@ -420,10 +420,8 @@ fn read_dir<T: Container>(path: PathBuf, mut scope: T, args: &mut Args) -> T {
                         let file_name = file.file_name();
                         let mut file_name = file_name.to_str().unwrap().split('.');
                         let file_name = file_name.next().unwrap().to_string();
-                        if let Some(filter) = &args.list_filter {
-                            if !filter.contains(&file_name) {
-                                continue;
-                            }
+                        if !args.list_filter.contains(&file_name) {
+                            continue;
                         }
                         let path = file.path();
                         create_struct(
@@ -456,16 +454,61 @@ fn read_dir<T: Container>(path: PathBuf, mut scope: T, args: &mut Args) -> T {
     scope
 }
 
+fn get_table_names(path: impl AsRef<Path>) -> Box<dyn Iterator<Item = (String, String)>> {
+    let dir = std::fs::read_dir(path).unwrap();
+    Box::new(
+        dir.into_iter()
+            .flat_map(|m| {
+                let entry = m.unwrap();
+                let value: Option<Box<dyn Iterator<Item = (String, String)>>> =
+                    if entry.file_type().unwrap().is_dir() {
+                        // get_table_names(entry.path()).into_iter()
+                        None
+                    } else {
+                        let csv_name = entry.file_name().into_string().unwrap().replace(".csv", "");
+                        let feature_name = csv_name.to_snake_case();
+                        Some(Box::new([(csv_name, feature_name)].into_iter()))
+                    };
+                value
+            })
+            .flatten(),
+    )
+}
+
 fn main() {
+    // figure out what features have been enabled
+    let dir = "./ffxiv-datamining/csv/";
+    let table_names: Vec<_> = get_table_names(dir).collect();
+    let list_str = table_names
+        .iter()
+        .map(|(_, feature_name)| format!("{} = []", feature_name))
+        .collect::<Vec<String>>()
+        .join("\n");
+    let all_features_str = format!(
+        "all = [{}]",
+        table_names
+            .iter()
+            .map(|(_, feature_name)| format!("\"{feature_name}\""))
+            .collect::<Vec<String>>()
+            .join(",")
+    );
+    println!("available features: \n{}\n{}", all_features_str, list_str);
+    let list_filter: Vec<_> = table_names
+        .into_iter()
+        .flat_map(|(csv_name, feature)| {
+            env::var(format!("CARGO_FEATURE_{}", feature)).map(|_| csv_name)
+        })
+        .collect();
+
+    write(
+        "./extra.toml",
+        format!("{}\n{}", all_features_str, list_str).as_bytes(),
+    );
+
     let mut args: Args = Args {
         recurse_directories: false,
         bin_code_generation: true,
-        list_filter: Some(vec![
-            "Item".to_string(),
-            "ItemUICategory".to_string(),
-            "Recipe".to_string(),
-            "RecipeLookup".to_string(),
-        ]),
+        list_filter,
         db: Struct::new("Data"),
         db_impl: Impl::new("Data"),
         read_data: Function::new("read_data"),
@@ -473,12 +516,9 @@ fn main() {
 
     // Start the read function with the data header
     args.read_data.line("let mut data = Data::default();");
-
     args.recurse_directories = false;
     let out_dir = env::var_os("OUT_DIR").unwrap();
     let dest_path = Path::new(&out_dir).join("types.rs");
-    // get absolute path to this
-    let dir = "./ffxiv-datamining/csv/";
     let path = std::fs::canonicalize(dir).unwrap();
     let scope = Scope::new();
     let mut scope = read_dir(path, scope, &mut args);

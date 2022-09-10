@@ -11,7 +11,7 @@ eframe = { version = "0.19.0", features = ["persistence"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 recipepricecheck = { path = "../recipepricecheck"}
-xiv-gen = {path = "../xiv-gen"}
+xiv-gen = {path = "../xiv-gen", features = ["recipe", "recipe_lookup", "item", "item_ui_category"]}
 xiv-gen-db = {path = "../xiv-gen-db"}
 universalis = {path = "../universalis"}
 bincode = "2.0.0-rc.1"
@@ -25,7 +25,7 @@ icu = {version = "1.0.0-beta1", features = ["serde"]}
 icu_testdata = "1.0.0-beta1"
 writeable = "0.4.1"
 log = "0.4.17"
-xiv-crafting-sim = {git = "https://github.com/akarras/NotRanged.github.io/"}
+
 itertools = "0.10.3"
 chrono = "0.4.22"
 

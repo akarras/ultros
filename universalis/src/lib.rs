@@ -14,6 +14,9 @@ use serde_with::{formats::Flexible, serde_as, TimestampMilliSeconds, TimestampSe
 use std::collections::{BTreeMap, HashMap};
 use thiserror::Error;
 
+#[derive(Hash, Copy, Clone, Debug, Deserialize, Serialize, Eq, PartialEq, PartialOrd, Ord)]
+pub struct ItemId(pub i32);
+
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("URL parse error: {0}")]
@@ -22,6 +25,8 @@ pub enum Error {
     HttpError(#[from] reqwest::Error),
     #[error("JSON error: {0}")]
     JsonError(#[from] serde_json::Error),
+    #[error("Error deserializing BSON {0}")]
+    BsonDeserializeError(#[from] bson::de::Error),
     #[error("Bad ID, listing returned id {0}")]
     BadId(u32),
     #[error("No items were suggested")]

@@ -1,13 +1,14 @@
 pub mod event_types;
 
 use crate::websocket::event_types::{
-    Channel, EventChannel, EventResponse, SubscribeMode, WebSocketSubscriptionUpdate, WorldFilter,
+    Channel, EventChannel, EventResponse, SubscribeMode, WSMessage, WebSocketSubscriptionUpdate,
+    WorldFilter,
 };
 use crate::WorldId;
 use async_tungstenite::tokio::connect_async;
 use async_tungstenite::tungstenite::Message;
 
-use bson::Bson;
+use bson::{Bson, Document};
 use futures::future::Either;
 
 use futures::{SinkExt, Stream, StreamExt};
@@ -24,7 +25,7 @@ enum SocketTx {
 
 #[derive(Debug)]
 pub enum SocketRx {
-    Event(EventResponse),
+    Event(Result<WSMessage, crate::Error>),
 }
 
 pub struct WebsocketClient {
@@ -33,6 +34,7 @@ pub struct WebsocketClient {
 }
 
 impl WebsocketClient {
+    /// Creates a websocket subscription
     pub async fn subscribe(
         &self,
         subscribe_mode: SubscribeMode,
@@ -91,34 +93,35 @@ impl WebsocketClient {
                             break;
                         }
                     },
-                    Either::Right((Some(Ok(message)), _)) => {
-                        match &message {
-                            Message::Text(t) => {
-                                info!("Received text {t}");
-                            }
-                            Message::Binary(b) => {
-                                if let Ok(b) = bson::from_slice::<EventResponse>(b) {
-                                    listing_sender.send(SocketRx::Event(b)).await.unwrap();
-                                } else {
-                                    let b: Bson = bson::from_slice(b).unwrap();
-                                    warn!("Received invalid bson data {b:?}");
-                                }
-                            }
-                            Message::Ping(p) => {
-                                info!("responding to pong with payload: {p:?}");
-                                // websocket.send(Message::Pong(p)).await.unwrap();
-                            }
-                            Message::Pong(pong) => {
-                                info!("got pong! {pong:?}");
-                            }
-                            Message::Close(closed) => {
-                                info!("Socket closed with reason {closed:?}");
-                            }
-                            Message::Frame(frame) => {
-                                info!("received frame: {frame:?}");
-                            }
+                    Either::Right((Some(Ok(message)), _)) => match &message {
+                        Message::Text(t) => {
+                            info!(
+                                "Received text {t}, unexpected only BSON messages were expected."
+                            );
                         }
-                    }
+                        Message::Binary(b) => {
+                            let b = bson::from_slice::<WSMessage>(b).map_err(|e| {
+                                if let Ok(document) = bson::from_slice::<Document>(b) {
+                                    error!("valid bson document but not valid struct {document:?}");
+                                }
+                                e.into()
+                            });
+                            listing_sender.send(SocketRx::Event(b)).await.unwrap();
+                        }
+                        Message::Ping(p) => {
+                            info!("responding to pong with payload: {p:?}");
+                            websocket.send(Message::Pong(p.clone())).await.unwrap();
+                        }
+                        Message::Pong(pong) => {
+                            info!("got pong! {pong:?}");
+                        }
+                        Message::Close(closed) => {
+                            info!("Socket closed with reason {closed:?}");
+                        }
+                        Message::Frame(frame) => {
+                            info!("received frame: {frame:?}");
+                        }
+                    },
                     _ => {
                         debug!("empty stream");
                     }

@@ -1,5 +1,7 @@
-use crate::{ListingView, WorldId};
+use crate::{ItemId, ListingView, WorldId};
+use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize, Serializer};
+use serde_with::{formats::Flexible, serde_as, TimestampSeconds};
 use std::fmt::{Display, Formatter};
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -10,12 +12,68 @@ pub enum SubscribeMode {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+#[serde(tag = "event")]
+pub enum WSMessage {
+    #[serde(rename = "listings/add")]
+    ListingsAdd {
+        item: ItemId,
+        world: WorldId,
+        listings: Vec<ListingView>,
+    },
+    #[serde(rename = "listings/remove")]
+    ListingsRemove {
+        item: ItemId,
+        world: WorldId,
+        listings: Vec<ListingView>,
+    },
+    #[serde(rename = "sales/add")]
+    SalesAdd {
+        item: ItemId,
+        world: WorldId,
+        sales: Vec<SaleView>,
+    },
+    #[serde(rename = "sales/remove")]
+    SalesRemove {
+        item: ItemId,
+        world: WorldId,
+        sales: Vec<SaleView>,
+    },
+}
+
+impl From<&WSMessage> for EventChannel {
+    fn from(ws: &WSMessage) -> Self {
+        match ws {
+            WSMessage::ListingsAdd { .. } => EventChannel::ListingsAdd,
+            WSMessage::ListingsRemove { .. } => EventChannel::ListingsRemove,
+            WSMessage::SalesAdd { .. } => EventChannel::SalesAdd,
+            WSMessage::SalesRemove { .. } => EventChannel::SalesRemove,
+        }
+    }
+}
+
+#[serde_as]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SaleView {
+    pub hq: bool,
+    pub price_per_unit: i32,
+    pub quantity: i32,
+    #[serde_as(as = "TimestampSeconds<i64, Flexible>")]
+    pub timestamp: DateTime<Local>,
+    pub on_mannequin: bool,
+    pub world_name: Option<String>,
+    pub world_id: Option<WorldId>,
+    pub buyer_name: String,
+    pub total: i32,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct EventResponse {
-    event: String,
-    item: i32,
-    world: WorldId,
-    listings: Vec<ListingView>,
+    pub event: EventChannel,
+    pub item: i32,
+    pub world: WorldId,
+    pub listings: Vec<ListingView>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
