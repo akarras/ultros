@@ -310,12 +310,12 @@ impl UltrosDb {
 
     async fn get_retainer_ids_from_name(
         &self,
-        name: impl Iterator<Item = &str>,
+        name_and_ids: impl Iterator<Item = (&str, &str)>,
         world_id: i32,
     ) -> Result<Vec<retainer::Model>> {
         use retainer::*;
-        if let Some(filter) = name
-            .map(|name| Column::Name.eq(name))
+        if let Some(filter) = name_and_ids
+            .map(|(name, id)| Column::Name.eq(name).and(Column::Id.eq(id)))
             .reduce(|a, b| a.or(b))
             .map(|m| m.and(Column::WorldId.eq(world_id)))
         {
@@ -409,7 +409,7 @@ impl UltrosDb {
 
         let mut retainers = self
             .get_retainer_ids_from_name(
-                all_retainers.iter().map(|(name, _, _)| name.as_str()),
+                all_retainers.iter().map(|(name, id, _)| (name.as_str(), id.as_str())),
                 world_id.0,
             )
             .await?;
