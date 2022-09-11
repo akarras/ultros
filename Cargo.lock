@@ -4147,6 +4147,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "futures",
+ "itertools",
  "migration",
  "sea-orm",
  "sea-query",

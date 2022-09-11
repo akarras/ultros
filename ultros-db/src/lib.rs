@@ -1,5 +1,6 @@
+pub(crate) mod partial_diff_iterator;
 mod entity;
-pub(crate) mod disjoint_diff;
+pub mod regions_and_datacenters;
 
 use anyhow::Result;
 use chrono::prelude::Local;
@@ -38,7 +39,7 @@ impl UltrosDb {
         ;
         let db: DatabaseConnection = Database::connect(opt).await?;
         Migrator::up(&db, None).await?;
-        
+
         Ok(Self { db })
     }
 
@@ -89,9 +90,9 @@ impl UltrosDb {
             })
             .collect();
         if !cities_not_in_db.is_empty() {
-        let insert = retainer_city::Entity::insert_many(cities_not_in_db)
-            .exec(&self.db)
-            .await?;
+            let insert = retainer_city::Entity::insert_many(cities_not_in_db)
+                .exec(&self.db)
+                .await?;
             info!(
                 "Added retainer home cities. Last insert id: {}",
                 insert.last_insert_id
@@ -290,7 +291,12 @@ impl UltrosDb {
             retainer_id
         } else {
             let retainer = self
-                .store_retainer(&listing.retainer_id, &listing.retainer_name, world_id, listing.retainer_city as i32)
+                .store_retainer(
+                    &listing.retainer_id,
+                    &listing.retainer_name,
+                    world_id,
+                    listing.retainer_city as i32,
+                )
                 .await?;
             retainer.id
         };
@@ -403,21 +409,25 @@ impl UltrosDb {
                 (
                     listing.retainer_name.to_string(),
                     listing.retainer_id.clone(),
-                    listing.retainer_city as i32
+                    listing.retainer_city as i32,
                 )
             })
             .collect();
 
         let mut retainers = self
             .get_retainer_ids_from_name(
-                all_retainers.iter().map(|(name, id, _)| (name.as_str(), id.as_str())),
+                all_retainers
+                    .iter()
+                    .map(|(name, id, _)| (name.as_str(), id.as_str())),
                 world_id.0,
             )
             .await?;
         // determine missing retainers
         for (name, id, retainer_city) in all_retainers {
             if !retainers.iter().any(|m| m.universalis_id == id) {
-                let retainer = self.store_retainer(&id, &name, world_id, retainer_city as i32).await?;
+                let retainer = self
+                    .store_retainer(&id, &name, world_id, retainer_city as i32)
+                    .await?;
                 retainers.push(retainer);
             }
         }
@@ -609,34 +619,30 @@ impl UltrosDb {
             return Ok(0);
         }
         let now = Local::now();
-        let values = Entity::insert_many(
-            sales
-                .into_iter()
-                .map(|sale| {
-                    let SaleView {
-                        hq,
-                        price_per_unit,
-                        quantity,
-                        buyer_name,
-                        ..
-                    } = sale;
-                    let character_id = characters
-                        .iter()
-                        .find(|character| character.name == buyer_name)
-                        .map(|c| c.id)
-                        .expect("Shouldn't be able to have a character not in the list");
-                    ActiveModel {
-                        id: ActiveValue::default(),
-                        quantity: Set(quantity),
-                        price_per_item: Set(price_per_unit),
-                        buying_character_id: Set(character_id),
-                        hq: Set(hq),
-                        sold_item_id: Set(item_id.0),
-                        sold_date: Set(sale.timestamp.naive_utc()),
-                        world_id: Set(world_id.0),
-                    }
-                }),
-        )
+        let values = Entity::insert_many(sales.into_iter().map(|sale| {
+            let SaleView {
+                hq,
+                price_per_unit,
+                quantity,
+                buyer_name,
+                ..
+            } = sale;
+            let character_id = characters
+                .iter()
+                .find(|character| character.name == buyer_name)
+                .map(|c| c.id)
+                .expect("Shouldn't be able to have a character not in the list");
+            ActiveModel {
+                id: ActiveValue::default(),
+                quantity: Set(quantity),
+                price_per_item: Set(price_per_unit),
+                buying_character_id: Set(character_id),
+                hq: Set(hq),
+                sold_item_id: Set(item_id.0),
+                sold_date: Set(sale.timestamp.naive_utc()),
+                world_id: Set(world_id.0),
+            }
+        }))
         .exec(&self.db)
         .await?;
         Ok(values.last_insert_id.0)

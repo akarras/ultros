@@ -61,8 +61,7 @@ async fn run_socket_listener(db: UltrosDb) {
                             Err(e) => error!("Error removing listings {e:?}. Listings set {listings:?} {item:?} {world:?}")
                         }
                     }
-                    SocketRx::Event(Ok(WSMessage::SalesAdd { item, world, sales })) => {
-                        
+                    SocketRx::Event(Ok(WSMessage::SalesAdd { item, world, sales })) => {                        
                         match db.store_sale(sales.clone(), item, world).await {
                             Ok(sale) => info!("Stored sale data. Last id: {sale} {item:?} {world:?}"),
                             Err(e) => error!("Error inserting sale {e}. {sales:?} {item:?} {world:?}")
@@ -86,45 +85,8 @@ async fn init_db(worlds_view: &WorldsView, datacenters: &DataCentersView) -> Res
     db.insert_default_retainer_cities().await.unwrap();
     info!("DB connected & ffxiv world data primed");
     {
-        let db = &db;
-        let regions: HashSet<String> = datacenters.0.iter().map(|m| m.region.0.clone()).collect();
-        let regions = join_all(
-            regions
-                .iter()
-                .map(|m| async move { db.store_region(m).await }),
-        )
-        .await
-        .into_iter()
-        .collect::<Result<Vec<_>>>()?;
-        info!("inserted regions {regions:?}");
-
-        let dcs = join_all(
-            datacenters
-                .0
-                .iter()
-                .map(|dc| async move { db.store_datacenter(&dc.name.0, &dc.region.0).await }),
-        )
-        .await
-        .into_iter()
-        .collect::<Result<Vec<_>>>()?;
-        info!("inserted datacenters {datacenters:?}");
-        let worlds = join_all(worlds_view.0.iter().map(|world| {
-            db.store_world(
-                world.id,
-                &world.name.0,
-                &datacenters
-                    .0
-                    .iter()
-                    .find(|dc| dc.worlds.contains(&world.id))
-                    .unwrap()
-                    .name
-                    .0,
-            )
-        }))
-        .await
-        .into_iter()
-        .collect::<Result<Vec<_>>>()?;
-        info!("inserted worlds {worlds:?}");
+        db.update_datacenters(datacenters, worlds_view).await?;
+        
     }
     Ok(db)
 }
