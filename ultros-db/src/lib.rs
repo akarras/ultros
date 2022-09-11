@@ -1,4 +1,5 @@
 mod entity;
+mod regions_and_datacenters;
 
 use anyhow::Result;
 use chrono::prelude::Local;
@@ -315,7 +316,7 @@ impl UltrosDb {
     ) -> Result<Vec<retainer::Model>> {
         use retainer::*;
         if let Some(filter) = name_and_ids
-            .map(|(name, id)| Column::Name.eq(name).and(Column::Id.eq(id)))
+            .map(|(name, id)| Column::Name.eq(name).and(Column::UniversalisId.eq(id)))
             .reduce(|a, b| a.or(b))
             .map(|m| m.and(Column::WorldId.eq(world_id)))
         {
