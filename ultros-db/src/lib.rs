@@ -36,9 +36,67 @@ impl UltrosDb {
         //    .sqlx_logging_level(log::LevelFilter::Info)
         ;
         let db: DatabaseConnection = Database::connect(opt).await?;
-
         Migrator::up(&db, None).await?;
+        
         Ok(Self { db })
+    }
+
+    pub async fn insert_default_retainer_cities(&self) -> Result<()> {
+        struct RetainerCityData {
+            id: i32,
+            name: &'static str,
+        }
+        let cities = [
+            RetainerCityData {
+                id: 1,
+                name: "Limsa Lominsa",
+            },
+            RetainerCityData {
+                id: 2,
+                name: "Gridania",
+            },
+            RetainerCityData {
+                id: 3,
+                name: "Ul'dah",
+            },
+            RetainerCityData {
+                id: 4,
+                name: "Ishguard",
+            },
+            RetainerCityData {
+                id: 7,
+                name: "Kugane",
+            },
+            RetainerCityData {
+                id: 10,
+                name: "Crystarium",
+            },
+            RetainerCityData {
+                id: 12,
+                name: "Old Sharlyan",
+            },
+        ];
+        // check if the database matches our coded data
+        let db_cities = retainer_city::Entity::find().all(&self.db).await?;
+
+        let cities_not_in_db: Vec<_> = cities
+            .iter()
+            .filter(|a| !db_cities.iter().any(|c| a.id.eq(&c.id)))
+            .map(|m| retainer_city::ActiveModel {
+                id: Set(m.id),
+                name: Set(m.name.to_string()),
+            })
+            .collect();
+        if !cities_not_in_db.is_empty() {
+        let insert = retainer_city::Entity::insert_many(cities_not_in_db)
+            .exec(&self.db)
+            .await?;
+            info!(
+                "Added retainer home cities. Last insert id: {}",
+                insert.last_insert_id
+            );
+        }
+        Ok(())
     }
 
     pub async fn get_or_create_discord_user(
@@ -196,6 +254,7 @@ impl UltrosDb {
         retainer_id: &str,
         retainer_name: &str,
         world_id: WorldId,
+        retainer_city_id: i32,
     ) -> Result<retainer::Model> {
         use retainer::*;
         let active_model = retainer::ActiveModel {
@@ -203,6 +262,7 @@ impl UltrosDb {
             world_id: Set(world_id.0),
             name: Set(retainer_name.to_string()),
             universalis_id: Set(retainer_id.to_string()),
+            retainer_city_id: Set(retainer_city_id),
         };
         let model = Entity::insert(active_model)
             .on_conflict(
@@ -229,7 +289,7 @@ impl UltrosDb {
             retainer_id
         } else {
             let retainer = self
-                .store_retainer(&listing.retainer_id, &listing.retainer_name, world_id)
+                .store_retainer(&listing.retainer_id, &listing.retainer_name, world_id, listing.retainer_city as i32)
                 .await?;
             retainer.id
         };
@@ -336,26 +396,27 @@ impl UltrosDb {
                 .then_with(|| b.quantity.cmp(&a.quantity))
                 .then_with(|| b.retainer_name.cmp(&a.retainer_name))
         });
-        let all_retainers: HashSet<(String, String)> = listings
+        let all_retainers: HashSet<(String, String, i32)> = listings
             .iter()
             .map(|listing| {
                 (
                     listing.retainer_name.to_string(),
                     listing.retainer_id.clone(),
+                    listing.retainer_city as i32
                 )
             })
             .collect();
 
         let mut retainers = self
             .get_retainer_ids_from_name(
-                all_retainers.iter().map(|(name, _)| name.as_str()),
+                all_retainers.iter().map(|(name, _, _)| name.as_str()),
                 world_id.0,
             )
             .await?;
         // determine missing retainers
-        for (name, id) in all_retainers {
+        for (name, id, retainer_city) in all_retainers {
             if !retainers.iter().any(|m| m.universalis_id == id) {
-                let retainer = self.store_retainer(&id, &name, world_id).await?;
+                let retainer = self.store_retainer(&id, &name, world_id, retainer_city as i32).await?;
                 retainers.push(retainer);
             }
         }
@@ -543,11 +604,13 @@ impl UltrosDb {
                 })
                 .collect();
         }
+        if sales.is_empty() {
+            return Ok(0);
+        }
         let now = Local::now();
         let values = Entity::insert_many(
             sales
                 .into_iter()
-                .filter(|sale| sale.timestamp.signed_duration_since(now).num_weeks() == 0)
                 .map(|sale| {
                     let SaleView {
                         hq,

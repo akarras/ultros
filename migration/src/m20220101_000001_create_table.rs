@@ -53,16 +53,15 @@ impl MigrationTrait for Migration {
         manager
             .create_table(
                 Table::create()
-                    .table(GrandCompany::Table)
+                    .table(RetainerCity::Table)
                     .if_not_exists()
                     .col(
-                        ColumnDef::new(GrandCompany::Id)
+                        ColumnDef::new(RetainerCity::Id)
                             .integer()
                             .primary_key()
-                            .auto_increment()
                             .not_null(),
                     )
-                    .col(ColumnDef::new(GrandCompany::Name).string().not_null())
+                    .col(ColumnDef::new(RetainerCity::Name).string().not_null())
                     .to_owned(),
             )
             .await?;
@@ -97,7 +96,7 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Retainer::WorldId).integer().not_null())
                     .col(ColumnDef::new(Retainer::Name).string().not_null())
                     .col(
-                        ColumnDef::new(Retainer::GrandCompanyId)
+                        ColumnDef::new(Retainer::RetainerCityId)
                             .integer()
                             .not_null(),
                     )
@@ -107,8 +106,8 @@ impl MigrationTrait for Migration {
         manager
             .create_foreign_key(
                 ForeignKeyCreateStatement::new()
-                    .from(Retainer::Table, Retainer::GrandCompanyId)
-                    .to(GrandCompany::Table, GrandCompany::Id)
+                    .from(Retainer::Table, Retainer::RetainerCityId)
+                    .to(RetainerCity::Table, RetainerCity::Id)
                     .on_delete(ForeignKeyAction::Cascade)
                     .on_update(ForeignKeyAction::Cascade)
                     .to_owned(),
@@ -549,7 +548,7 @@ impl MigrationTrait for Migration {
         manager
             .drop_table(
                 Table::drop()
-                    .table(GrandCompany::Table)
+                    .table(RetainerCity::Table)
                     .if_exists()
                     .to_owned(),
             )
@@ -778,11 +777,11 @@ pub(crate) enum Retainer {
     UniversalisID,
     WorldId,
     Name,
-    GrandCompanyId,
+    RetainerCityId,
 }
 
 #[derive(Iden)]
-pub(crate) enum GrandCompany {
+pub(crate) enum RetainerCity {
     Table,
     Id,
     Name,

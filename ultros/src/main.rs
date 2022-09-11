@@ -83,6 +83,7 @@ async fn run_socket_listener(db: UltrosDb) {
 async fn init_db(worlds_view: &WorldsView, datacenters: &DataCentersView) -> Result<UltrosDb> {
     info!("db starting");
     let db = UltrosDb::connect().await?;
+    db.insert_default_retainer_cities().await.unwrap();
     info!("DB connected & ffxiv world data primed");
     {
         let db = &db;
@@ -96,7 +97,7 @@ async fn init_db(worlds_view: &WorldsView, datacenters: &DataCentersView) -> Res
         .into_iter()
         .collect::<Result<Vec<_>>>()?;
         info!("inserted regions {regions:?}");
-        
+
         let dcs = join_all(
             datacenters
                 .0
