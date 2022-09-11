@@ -1,5 +1,5 @@
 mod entity;
-mod regions_and_datacenters;
+pub(crate) mod disjoint_diff;
 
 use anyhow::Result;
 use chrono::prelude::Local;
