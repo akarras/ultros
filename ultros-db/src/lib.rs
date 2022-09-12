@@ -5,7 +5,6 @@ mod regions_and_datacenters;
 
 
 use anyhow::Result;
-use chrono::prelude::Local;
 use migration::{Migrator, MigratorTrait};
 use sea_orm::{
     ActiveValue, Order, QueryOrder, RelationTrait,
@@ -428,7 +427,7 @@ impl UltrosDb {
                 (Some(list), None) => {
                     let retainer_id = retainers
                         .iter()
-                        .find(|m| m.name == list.retainer_name)
+                        .find(|m| m.name == list.retainer_name && m.universalis_id == list.retainer_id)
                         .map(|m| m.id);
                     self.create_listing(&list, item_id, world_id, retainer_id)
                         .await?;
