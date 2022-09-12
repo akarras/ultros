@@ -5,7 +5,7 @@ use crate::websocket::event_types::{
     WorldFilter,
 };
 use crate::WorldId;
-use async_tungstenite::tokio::connect_async;
+use async_tungstenite::tokio::{connect_async, ConnectStream};
 use async_tungstenite::tungstenite::Message;
 
 use bson::{Bson, Document};
@@ -16,6 +16,9 @@ use log::{debug, error, info, warn};
 
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use std::time::Duration;
+use async_tungstenite::WebSocketStream;
+use futures::stream::FusedStream;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 #[derive(Debug)]
@@ -57,13 +60,7 @@ impl WebsocketClient {
     }
 
     pub async fn connect() -> Self {
-        let (mut websocket, response) =
-            connect_async("wss://universalis.app/api/ws").await.unwrap();
-        info!("Connected Websocket. {} status", response.status());
-        info!("Headers: ");
-        for (ref header, _value) in response.headers() {
-            info!("* {}", header);
-        }
+        let mut websocket = Self::start_websocket().await;
         let (socket_sender, mut socket_receiver) = channel(100);
         let (listing_sender, listing_receiver) = channel(100);
         tokio::spawn(async move {
@@ -72,6 +69,11 @@ impl WebsocketClient {
                 .await
                 .unwrap();
             loop {
+                if websocket.is_terminated() {
+                    info!("Socket terminated, waiting 10 seconds and retrying.");
+                    tokio::time::sleep(Duration::from_secs(10)).await;
+                    websocket = Self::start_websocket().await;
+                }
                 match futures::future::select(
                     Box::pin(socket_receiver.recv()),
                     Box::pin(websocket.next()),
@@ -93,20 +95,23 @@ impl WebsocketClient {
                             break;
                         }
                     },
-                    Either::Right((Some(Ok(message)), _)) => match &message {
+                    Either::Right((Some(Ok(message)), _)) => match message {
                         Message::Text(t) => {
                             info!(
                                 "Received text {t}, unexpected only BSON messages were expected."
                             );
                         }
                         Message::Binary(b) => {
-                            let b = bson::from_slice::<WSMessage>(b).map_err(|e| {
-                                if let Ok(document) = bson::from_slice::<Document>(b) {
-                                    error!("valid bson document but not valid struct {document:?}");
-                                }
-                                e.into()
+                            let sender = listing_sender.clone();
+                            tokio::spawn(async move {
+                                let b = bson::from_slice::<WSMessage>(&b).map_err(|e| {
+                                    if let Ok(document) = bson::from_slice::<Document>(&b) {
+                                        error!("valid bson document but not valid struct {document:?}");
+                                    }
+                                    e.into()
+                                });
+                                sender.send(SocketRx::Event(b)).await.unwrap();
                             });
-                            listing_sender.send(SocketRx::Event(b)).await.unwrap();
                         }
                         Message::Ping(p) => {
                             info!("responding to pong with payload: {p:?}");
@@ -122,9 +127,13 @@ impl WebsocketClient {
                             info!("received frame: {frame:?}");
                         }
                     },
-                    _ => {
-                        debug!("empty stream");
-                    }
+                    Either::Right((None, _)) => {
+                        info!("Web socket closed");
+                    },
+                    Either::Right((Some(Err(e)), _)) => {
+
+                        error!("Socket error {e:?}");
+                    },
                 }
             }
         });
@@ -133,6 +142,17 @@ impl WebsocketClient {
             socket_sender,
             listing_receiver,
         }
+    }
+
+    async fn start_websocket() -> WebSocketStream<ConnectStream> {
+        let (mut websocket, response) =
+            connect_async("wss://universalis.app/api/ws").await.unwrap();
+        info!("Connected Websocket. {} status", response.status());
+        info!("Headers: ");
+        for (ref header, _value) in response.headers() {
+            info!("* {}", header);
+        }
+        websocket
     }
 }
 
