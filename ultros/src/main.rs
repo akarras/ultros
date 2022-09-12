@@ -1,21 +1,17 @@
+mod discord;
 mod web;
 
 use crate::web::WebState;
 use anyhow::Result;
-use futures::future::join_all;
-use std::collections::HashSet;
+use discord::start_discord;
 use std::sync::Arc;
-use std::time::Duration;
 use tracing::{error, info};
 use ultros_db::UltrosDb;
 use universalis::websocket::event_types::{EventChannel, SaleView, SubscribeMode, WSMessage};
 use universalis::websocket::SocketRx;
 use universalis::{
-    DataCenterView, DataCentersView, ItemId, ListingView, UniversalisClient, WebsocketClient,
-    WorldId, WorldsView,
+    DataCentersView, ItemId, UniversalisClient, WebsocketClient, WorldId, WorldsView,
 };
-
-async fn process_sales(db: &UltrosDb, sales: Vec<SaleView>, item_id: ItemId, world_id: WorldId) {}
 
 async fn run_socket_listener(db: UltrosDb) {
     let mut socket = WebsocketClient::connect().await;
@@ -61,7 +57,7 @@ async fn run_socket_listener(db: UltrosDb) {
                             Err(e) => error!("Error removing listings {e:?}. Listings set {listings:?} {item:?} {world:?}")
                         }
                     }
-                    SocketRx::Event(Ok(WSMessage::SalesAdd { item, world, sales })) => {                        
+                    SocketRx::Event(Ok(WSMessage::SalesAdd { item, world, sales })) => {
                         match db.store_sale(sales.clone(), item, world).await {
                             Ok(sale) => info!("Stored sale data. Last id: {sale} {item:?} {world:?}"),
                             Err(e) => error!("Error inserting sale {e}. {sales:?} {item:?} {world:?}")
@@ -86,7 +82,6 @@ async fn init_db(worlds_view: &WorldsView, datacenters: &DataCentersView) -> Res
     info!("DB connected & ffxiv world data primed");
     {
         db.update_datacenters(datacenters, worlds_view).await?;
-        
     }
     Ok(db)
 }
@@ -108,6 +103,7 @@ async fn main() -> Result<()> {
     let datacenters = Arc::new(datacenters);
     // begin listening to universalis events
     tokio::spawn(run_socket_listener(db.clone()));
+    tokio::spawn(start_discord(db.clone()));
     let web_state = WebState {
         db,
         worlds,

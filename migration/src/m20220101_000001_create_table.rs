@@ -1,5 +1,5 @@
 use crate::{DeleteStatement, SelectStatement, SimpleExpr};
-use sea_orm_migration::{prelude::*, sea_orm::StatementBuilder};
+use sea_orm_migration::{prelude::*, sea_orm::StatementBuilder, sea_query::ColumnDef};
 
 #[derive(DeriveMigrationName)]
 pub struct Migration;
@@ -659,14 +659,14 @@ impl Iden for CreateHypertable {
 
 /// Learn more at https://docs.rs/sea-query#iden
 #[derive(Iden)]
-enum DiscordUser {
+pub(crate) enum DiscordUser {
     Table,
     Id,
     Username,
 }
 
 #[derive(Iden)]
-enum FinalFantasyCharacter {
+pub(crate) enum FinalFantasyCharacter {
     Table,
     Id,
     FirstName,
@@ -736,7 +736,7 @@ pub(crate) enum MateriaListing {
 }
 
 #[derive(Iden)]
-enum SaleHistory {
+pub(crate) enum SaleHistory {
     Table,
     Id,
     SoldItemId,
@@ -785,12 +785,4 @@ pub(crate) enum RetainerCity {
     Table,
     Id,
     Name,
-}
-
-#[derive(Iden)]
-enum FfxivCharacterVerification {
-    Table,
-    Id,
-    DiscordUserId,
-    FfxivCharacterId,
 }

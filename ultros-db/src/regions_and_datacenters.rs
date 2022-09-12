@@ -1,15 +1,15 @@
 use std::collections::BTreeSet;
 
-use crate::partial_diff_iterator::PartialDiffIterator;
 use crate::entity::*;
+use crate::partial_diff_iterator::PartialDiffIterator;
 use crate::UltrosDb;
 use anyhow::Result;
 use itertools::Itertools;
 use migration::Order;
 use sea_orm::{ActiveValue, EntityTrait, QueryOrder, Set};
+use tracing::info;
 use universalis::{DataCenterView, DataCentersView, WorldsView};
 use universalis::{RegionName, WorldView};
-use tracing::info;
 
 impl PartialEq<datacenter::Model> for DataCenterView {
     fn eq(&self, other: &datacenter::Model) -> bool {
@@ -71,12 +71,12 @@ impl UltrosDb {
                 })
                 .collect();
             if !added_regions.is_empty() {
-              tracing::info!("new regions {added_regions:?}");
+                tracing::info!("new regions {added_regions:?}");
                 let just_inserted = region::Entity::insert_many(added_regions)
                     .exec(&self.db)
                     .await?;
             } else {
-              info!("no new regions");
+                info!("no new regions");
             }
         }
         {
@@ -110,12 +110,12 @@ impl UltrosDb {
                     })
                     .collect();
             if !new_datacenters.is_empty() {
-              info!("new datacenters {new_datacenters:?}");
+                info!("new datacenters {new_datacenters:?}");
                 datacenter::Entity::insert_many(new_datacenters)
                     .exec(&self.db)
                     .await?;
             } else {
-              info!("no new datacenters");
+                info!("no new datacenters");
             }
         }
         {
@@ -130,34 +130,33 @@ impl UltrosDb {
                 .sorted_by(|a, b| a.name.cmp(&b.name))
                 .cloned()
                 .collect();
-            let worlds: Vec<_> =
-                PartialDiffIterator::from((worlds.iter(), existing_worlds.iter()))
-                    .flat_map(|m| match m {
-                        crate::partial_diff_iterator::Diff::Same(_, _) => None,
-                        crate::partial_diff_iterator::Diff::Left(left) => Some(world::ActiveModel {
-                            id: Set(left.id.0),
-                            name: Set(left.name.0.clone()),
-                            datacenter_id: Set(datacenter
-                                .0
-                                .iter()
-                                .find(|d| d.worlds.iter().any(|w| *w == left.id))
-                                .map(|m| {
-                                    datacenters
-                                        .iter()
-                                        .find(|dc| dc.name == m.name.0)
-                                        .map(|m| m.id)
-                                })
-                                .flatten()
-                                .expect("Should have a valid datacenter id available")),
-                        }),
-                        crate::partial_diff_iterator::Diff::Right(right) => None,
-                    })
-                    .collect();
+            let worlds: Vec<_> = PartialDiffIterator::from((worlds.iter(), existing_worlds.iter()))
+                .flat_map(|m| match m {
+                    crate::partial_diff_iterator::Diff::Same(_, _) => None,
+                    crate::partial_diff_iterator::Diff::Left(left) => Some(world::ActiveModel {
+                        id: Set(left.id.0),
+                        name: Set(left.name.0.clone()),
+                        datacenter_id: Set(datacenter
+                            .0
+                            .iter()
+                            .find(|d| d.worlds.iter().any(|w| *w == left.id))
+                            .map(|m| {
+                                datacenters
+                                    .iter()
+                                    .find(|dc| dc.name == m.name.0)
+                                    .map(|m| m.id)
+                            })
+                            .flatten()
+                            .expect("Should have a valid datacenter id available")),
+                    }),
+                    crate::partial_diff_iterator::Diff::Right(right) => None,
+                })
+                .collect();
             if !worlds.is_empty() {
                 info!("new worlds {worlds:?}");
                 let world = world::Entity::insert_many(worlds).exec(&self.db).await?;
             } else {
-              info!("no new worlds");
+                info!("no new worlds");
             }
         }
 

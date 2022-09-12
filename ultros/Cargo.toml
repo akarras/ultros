@@ -15,3 +15,7 @@ futures = "0.3.24"
 anyhow = "1.0.64"
 axum = "0.6.0-rc.1"
 xiv-gen-db = {path = "../xiv-gen-db"}
+poise = "0.3"
+chrono = "0.4.22"
+lodestone = {git = "https://github.com/akarras/lodestone.git", branch = 'async', default-features = false, features = ["rustls-tls"]}
+reqwest = "0.11"

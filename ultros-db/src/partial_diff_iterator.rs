@@ -1,4 +1,4 @@
-/// Assuming two sorted sets of differing types this iterator will yield disjointed that have added or removed from either set
+/// Assuming two sorted sets of differing types this iterator will yield values that are different from either set
 pub struct PartialDiffIterator<A, B, C, D>
 where
     A: Iterator<Item = C>,

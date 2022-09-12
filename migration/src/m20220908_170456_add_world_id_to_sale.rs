@@ -50,7 +50,7 @@ enum World {
 }
 
 #[derive(Iden)]
-enum SaleHistory {
+pub(crate) enum SaleHistory {
     Table,
     WorldId,
 }

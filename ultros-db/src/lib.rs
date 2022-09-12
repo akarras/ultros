@@ -1,20 +1,21 @@
-pub(crate) mod partial_diff_iterator;
 mod entity;
-pub mod regions_and_datacenters;
+pub(crate) mod partial_diff_iterator;
+mod ffxiv_character;
+mod regions_and_datacenters;
+
 
 use anyhow::Result;
 use chrono::prelude::Local;
-use migration::{Migrator, MigratorTrait, OnConflict};
+use migration::{Migrator, MigratorTrait};
 use sea_orm::{
-    prelude::DateTime, ActiveValue, Condition, Order, QueryOrder, Related, RelationTrait,
+    ActiveValue, Order, QueryOrder, RelationTrait,
 };
 use sea_orm::{
     ActiveModelTrait, ActiveValue::NotSet, ColumnTrait, ConnectOptions, Database,
     DatabaseConnection, EntityTrait, IntoActiveModel, ModelTrait, QueryFilter, QuerySelect, Set,
 };
 use std::collections::HashSet;
-use std::time::{Duration, Instant};
-use tracing::{info, log};
+use tracing::{info};
 use universalis::{websocket::event_types::SaleView, ItemId, ListingView, WorldId};
 
 use crate::entity::*;
@@ -99,32 +100,6 @@ impl UltrosDb {
             );
         }
         Ok(())
-    }
-
-    pub async fn get_or_create_discord_user(
-        &self,
-        user_id: u64,
-        name: String,
-    ) -> Result<discord_user::Model> {
-        let user = discord_user::ActiveModel {
-            id: Set(user_id as i64),
-            username: Set(name),
-        };
-        Ok(user.insert(&self.db).await?)
-    }
-
-    async fn get_or_insert_unknown_character(
-        &self,
-        name: &str,
-    ) -> Result<unknown_final_fantasy_character::Model> {
-        use unknown_final_fantasy_character::{ActiveModel, Column, Entity, Model};
-        Ok(Entity::insert(ActiveModel {
-            id: Default::default(),
-            name: Set(name.to_string()),
-        })
-        .on_conflict(OnConflict::column(Column::Name).do_nothing().to_owned())
-        .exec_with_returning(&self.db)
-        .await?)
     }
 
     pub async fn search_retainers(
@@ -244,8 +219,6 @@ impl UltrosDb {
         &self,
         retainer: &retainer::Model,
     ) -> Result<Option<world::Model>> {
-        use retainer::*;
-
         let world = retainer.find_related(world::Entity).one(&self.db).await?;
 
         Ok(world)
@@ -326,7 +299,7 @@ impl UltrosDb {
             .reduce(|a, b| a.or(b))
             .map(|m| m.and(Column::WorldId.eq(world_id)))
         {
-            let mut retainers = Entity::find().filter(filter).all(&self.db).await?;
+            let retainers = Entity::find().filter(filter).all(&self.db).await?;
             Ok(retainers)
         } else {
             Ok(vec![])
@@ -618,7 +591,6 @@ impl UltrosDb {
         if sales.is_empty() {
             return Ok(0);
         }
-        let now = Local::now();
         let values = Entity::insert_many(sales.into_iter().map(|sale| {
             let SaleView {
                 hq,

@@ -1,10 +1,8 @@
-use axum::error_handling::HandleErrorLayer;
-use axum::extract::{Extension, FromRef, Path, State};
-use axum::handler::HandlerWithoutStateExt;
-use axum::http::{Method, StatusCode, Uri};
+use axum::extract::{FromRef, Path, State};
+use axum::http::StatusCode;
 use axum::response::Html;
 use axum::routing::get;
-use axum::{BoxError, Json, Router};
+use axum::Router;
 use std::fmt::Write;
 use std::net::SocketAddr;
 use std::sync::Arc;
