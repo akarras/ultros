@@ -14,11 +14,11 @@ use futures::future::Either;
 use futures::{SinkExt, Stream, StreamExt};
 use log::{debug, error, info, warn};
 
+use async_tungstenite::WebSocketStream;
+use futures::stream::FusedStream;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
-use async_tungstenite::WebSocketStream;
-use futures::stream::FusedStream;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 #[derive(Debug)]
@@ -95,45 +95,46 @@ impl WebsocketClient {
                             break;
                         }
                     },
-                    Either::Right((Some(Ok(message)), _)) => match message {
-                        Message::Text(t) => {
-                            info!(
+                    Either::Right((Some(Ok(message)), _)) => {
+                        match message {
+                            Message::Text(t) => {
+                                info!(
                                 "Received text {t}, unexpected only BSON messages were expected."
                             );
-                        }
-                        Message::Binary(b) => {
-                            let sender = listing_sender.clone();
-                            tokio::spawn(async move {
-                                let b = bson::from_slice::<WSMessage>(&b).map_err(|e| {
+                            }
+                            Message::Binary(b) => {
+                                let sender = listing_sender.clone();
+                                tokio::spawn(async move {
+                                    let b = bson::from_slice::<WSMessage>(&b).map_err(|e| {
                                     if let Ok(document) = bson::from_slice::<Document>(&b) {
                                         error!("valid bson document but not valid struct {document:?}");
                                     }
                                     e.into()
                                 });
-                                sender.send(SocketRx::Event(b)).await.unwrap();
-                            });
+                                    sender.send(SocketRx::Event(b)).await.unwrap();
+                                });
+                            }
+                            Message::Ping(p) => {
+                                info!("responding to pong with payload: {p:?}");
+                                websocket.send(Message::Pong(p.clone())).await.unwrap();
+                            }
+                            Message::Pong(pong) => {
+                                info!("got pong! {pong:?}");
+                            }
+                            Message::Close(closed) => {
+                                info!("Socket closed with reason {closed:?}");
+                            }
+                            Message::Frame(frame) => {
+                                info!("received frame: {frame:?}");
+                            }
                         }
-                        Message::Ping(p) => {
-                            info!("responding to pong with payload: {p:?}");
-                            websocket.send(Message::Pong(p.clone())).await.unwrap();
-                        }
-                        Message::Pong(pong) => {
-                            info!("got pong! {pong:?}");
-                        }
-                        Message::Close(closed) => {
-                            info!("Socket closed with reason {closed:?}");
-                        }
-                        Message::Frame(frame) => {
-                            info!("received frame: {frame:?}");
-                        }
-                    },
+                    }
                     Either::Right((None, _)) => {
                         info!("Web socket closed");
-                    },
+                    }
                     Either::Right((Some(Err(e)), _)) => {
-
                         error!("Socket error {e:?}");
-                    },
+                    }
                 }
             }
         });

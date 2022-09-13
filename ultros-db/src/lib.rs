@@ -1,20 +1,19 @@
 mod entity;
-pub(crate) mod partial_diff_iterator;
 mod ffxiv_character;
+mod listings;
+pub(crate) mod partial_diff_iterator;
 mod regions_and_datacenters;
 
-
 use anyhow::Result;
-use migration::{Migrator, MigratorTrait};
-use sea_orm::{
-    ActiveValue, Order, QueryOrder, RelationTrait,
-};
+use migration::{Migrator, MigratorTrait, SelectStatement, SimpleExpr, Value};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::NotSet, ColumnTrait, ConnectOptions, Database,
     DatabaseConnection, EntityTrait, IntoActiveModel, ModelTrait, QueryFilter, QuerySelect, Set,
 };
+use sea_orm::{ActiveValue, Order, QueryOrder, RelationTrait};
 use std::collections::HashSet;
-use tracing::{info};
+use tracing::info;
+use tracing::log::warn;
 use universalis::{websocket::event_types::SaleView, ItemId, ListingView, WorldId};
 
 use crate::entity::*;
@@ -138,6 +137,20 @@ impl UltrosDb {
         Ok(worlds)
     }
 
+    pub async fn get_multiple_listings_for_worlds(
+        &self,
+        world_id: impl Iterator<Item = WorldId>,
+        item: impl Iterator<Item = ItemId>,
+    ) -> Result<Vec<active_listing::Model>> {
+        use active_listing::*;
+
+        Ok(Entity::find()
+            .filter(Column::WorldId.is_in(world_id.map(|m| Value::Int(Some(m.0)))))
+            .filter(Column::ItemId.is_in(item.map(|i| Value::Int(Some(i.0)))))
+            .all(&self.db)
+            .await?)
+    }
+
     pub async fn get_listings_for_world(
         &self,
         world: WorldId,
@@ -235,13 +248,12 @@ impl UltrosDb {
             id: NotSet,
             world_id: Set(world_id.0),
             name: Set(retainer_name.to_string()),
-            universalis_id: Set(retainer_id.to_string()),
             retainer_city_id: Set(retainer_city_id),
         };
         let model = Entity::insert(active_model)
             .on_conflict(
-                sea_query::OnConflict::column(Column::UniversalisId)
-                    .update_columns([Column::Name, Column::WorldId])
+                sea_query::OnConflict::columns([Column::Name, Column::WorldId].into_iter())
+                    .update_columns([Column::RetainerCityId])
                     .to_owned(),
             )
             .exec_with_returning(&self.db)
@@ -289,20 +301,16 @@ impl UltrosDb {
 
     async fn get_retainer_ids_from_name(
         &self,
-        name_and_ids: impl Iterator<Item = (&str, &str)>,
+        names: impl Iterator<Item = &str>,
         world_id: i32,
     ) -> Result<Vec<retainer::Model>> {
         use retainer::*;
-        if let Some(filter) = name_and_ids
-            .map(|(name, id)| Column::Name.eq(name).and(Column::UniversalisId.eq(id)))
-            .reduce(|a, b| a.or(b))
-            .map(|m| m.and(Column::WorldId.eq(world_id)))
-        {
-            let retainers = Entity::find().filter(filter).all(&self.db).await?;
+        let retainers = Entity::find()
+                .filter(Column::Name.is_in(names.map(|name| Value::String(Some(Box::new(name.to_string()))))))
+                .filter(Column::WorldId.eq(world_id))
+                .all(&self.db)
+                .await?;
             Ok(retainers)
-        } else {
-            Ok(vec![])
-        }
     }
 
     pub async fn remove_listings(
@@ -356,153 +364,6 @@ impl UltrosDb {
         );
         let count = Entity::delete_many().filter(filter).exec(&self.db).await?;
         Ok(count.rows_affected)
-    }
-
-    /// Updates listings assuming a pure view of the listing board
-    pub async fn update_listings(
-        &self,
-        mut listings: Vec<ListingView>,
-        item_id: ItemId,
-        world_id: WorldId,
-    ) -> Result<(Vec<active_listing::Model>, i32)> {
-        use active_listing::*;
-        // Assumes that we are being given a full list of all the listings for the item and world.
-        // First, query the db to see what listings it has
-        // Then diff against the listings that we have
-        listings.sort_by(|a, b| {
-            a.price_per_unit
-                .cmp(&b.price_per_unit)
-                .then_with(|| b.quantity.cmp(&a.quantity))
-                .then_with(|| b.retainer_name.cmp(&a.retainer_name))
-        });
-        let all_retainers: HashSet<(String, String, i32)> = listings
-            .iter()
-            .map(|listing| {
-                (
-                    listing.retainer_name.to_string(),
-                    listing.retainer_id.clone(),
-                    listing.retainer_city as i32,
-                )
-            })
-            .collect();
-
-        let mut retainers = self
-            .get_retainer_ids_from_name(
-                all_retainers
-                    .iter()
-                    .map(|(name, id, _)| (name.as_str(), id.as_str())),
-                world_id.0,
-            )
-            .await?;
-        // determine missing retainers
-        for (name, id, retainer_city) in all_retainers {
-            if !retainers.iter().any(|m| m.universalis_id == id) {
-                let retainer = self
-                    .store_retainer(&id, &name, world_id, retainer_city as i32)
-                    .await?;
-                retainers.push(retainer);
-            }
-        }
-        let existing_items = Entity::find()
-            .filter(
-                Column::WorldId
-                    .eq(world_id.0)
-                    .and(Column::ItemId.eq(item_id.0)),
-            )
-            .join(sea_orm::JoinType::InnerJoin, Relation::Retainer.def())
-            .order_by(Column::PricePerUnit, Order::Asc)
-            .order_by(Column::Quantity, Order::Desc)
-            .order_by(retainer::Column::Name, Order::Desc)
-            .all(&self.db)
-            .await?;
-        let mut incoming_iter = listings.into_iter();
-        let mut db_iter = existing_items.into_iter();
-        // compare each item, then advance the list
-        let mut incoming_list = incoming_iter.next();
-        let mut db_value = db_iter.next();
-        let mut added = vec![];
-        let mut removed = vec![];
-        loop {
-            match (incoming_list, db_value) {
-                (Some(list), None) => {
-                    let retainer_id = retainers
-                        .iter()
-                        .find(|m| m.name == list.retainer_name && m.universalis_id == list.retainer_id)
-                        .map(|m| m.id);
-                    self.create_listing(&list, item_id, world_id, retainer_id)
-                        .await?;
-                    incoming_list = incoming_iter.next();
-                    db_value = None;
-                }
-                (None, Some(model)) => {
-                    model.delete(&self.db).await?;
-                    db_value = db_iter.next();
-                    incoming_list = None;
-                }
-                (Some(list), Some(model)) => {
-                    match list
-                        .price_per_unit
-                        .map(|m| m as i32)
-                        .unwrap_or(list.total as i32)
-                        .cmp(&model.price_per_unit)
-                        .then_with(|| {
-                            model
-                                .quantity
-                                .cmp(&list.quantity.map(|q| q as i32).unwrap_or(1))
-                        }) {
-                        std::cmp::Ordering::Less => {
-                            let retainer_id = retainers
-                                .iter()
-                                .find(|m| m.name == list.retainer_name)
-                                .map(|m| m.id);
-                            let future = async move {
-                                let list = list;
-                                self.create_listing(&list, item_id, world_id, retainer_id)
-                                    .await
-                            };
-                            added.push(future);
-                            incoming_list = incoming_iter.next();
-                            db_value = Some(model);
-                        }
-                        std::cmp::Ordering::Equal => {
-                            // NOOP, keep checking list
-                            db_value = db_iter.next();
-                            incoming_list = incoming_iter.next();
-                        }
-                        std::cmp::Ordering::Greater => {
-                            removed.push(model);
-                            incoming_list = Some(list);
-                            db_value = db_iter.next();
-                        }
-                    }
-                }
-                (None, None) => {
-                    // lists exhausted, exit this loop
-                    break;
-                }
-            }
-        }
-        let remove_ids = removed
-            .into_iter()
-            .map(|i| Column::Id.eq(i.id).and(Column::Timestamp.eq(i.timestamp)))
-            .reduce(|a, b| a.or(b));
-
-        let (added, removed) =
-            futures::future::join(futures::future::join_all(added), async move {
-                if let Some(ids) = remove_ids {
-                    Entity::delete_many()
-                        .filter(ids)
-                        .exec(&self.db)
-                        .await
-                        .map(|i| i.rows_affected)
-                } else {
-                    Ok(0)
-                }
-            })
-            .await;
-
-        let added = added.into_iter().flatten().collect();
-        Ok((added, removed? as i32))
     }
 
     /// Stores a sale from a given sale view.

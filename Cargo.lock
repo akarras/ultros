@@ -4680,6 +4680,7 @@ dependencies = [
  "tracing-subscriber",
  "ultros-db",
  "universalis",
+ "xiv-gen",
  "xiv-gen-db",
 ]
 

@@ -8,8 +8,6 @@ use serde::{Deserialize, Serialize};
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i32,
-    #[sea_orm(unique)]
-    pub universalis_id: String,
     pub world_id: i32,
     pub name: String,
     pub retainer_city_id: i32,
@@ -33,12 +31,12 @@ pub enum Relation {
         on_delete = "Cascade"
     )]
     World,
-    #[sea_orm(has_many = "super::active_listing::Entity")]
-    ActiveListing,
-    #[sea_orm(has_many = "super::alert_retainer_undercut::Entity")]
-    AlertRetainerUndercut,
     #[sea_orm(has_one = "super::owned_retainers::Entity")]
     OwnedRetainers,
+    #[sea_orm(has_many = "super::alert_retainer_undercut::Entity")]
+    AlertRetainerUndercut,
+    #[sea_orm(has_many = "super::active_listing::Entity")]
+    ActiveListing,
 }
 
 impl Related<super::retainer_city::Entity> for Entity {
@@ -53,9 +51,9 @@ impl Related<super::world::Entity> for Entity {
     }
 }
 
-impl Related<super::active_listing::Entity> for Entity {
+impl Related<super::owned_retainers::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::ActiveListing.def()
+        Relation::OwnedRetainers.def()
     }
 }
 
@@ -65,9 +63,9 @@ impl Related<super::alert_retainer_undercut::Entity> for Entity {
     }
 }
 
-impl Related<super::owned_retainers::Entity> for Entity {
+impl Related<super::active_listing::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::OwnedRetainers.def()
+        Relation::ActiveListing.def()
     }
 }
 

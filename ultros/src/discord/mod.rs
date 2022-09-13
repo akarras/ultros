@@ -10,7 +10,7 @@ type Context<'a> = poise::Context<'a, Data, Error>;
 #[derive(Debug)]
 pub(crate) struct Data {
     db: UltrosDb,
-    lodestone_client: reqwest::Client
+    lodestone_client: reqwest::Client,
 }
 
 #[poise::command(slash_command, prefix_command)]
@@ -63,6 +63,13 @@ pub(crate) async fn start_discord(db: UltrosDb) {
         })
         .token(std::env::var("DISCORD_TOKEN").expect("missing DISCORD_TOKEN"))
         .intents(serenity::GatewayIntents::non_privileged())
-        .user_data_setup(move |_ctx, _ready, _framework| Box::pin(async move { Ok(Data { db, lodestone_client: reqwest::Client::new() }) }));
+        .user_data_setup(move |_ctx, _ready, _framework| {
+            Box::pin(async move {
+                Ok(Data {
+                    db,
+                    lodestone_client: reqwest::Client::new(),
+                })
+            })
+        });
     framework.run().await.unwrap();
 }

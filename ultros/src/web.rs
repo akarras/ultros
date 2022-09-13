@@ -6,8 +6,10 @@ use axum::Router;
 use std::fmt::Write;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tracing::error;
 use ultros_db::UltrosDb;
 use universalis::{DataCentersView, ItemId, WorldId, WorldsView};
+use xiv_gen::ItemId as XivDBItemId;
 
 // basic handler that responds with a static string
 async fn root() -> Html<&'static str> {
@@ -30,9 +32,9 @@ async fn search_retainers(
     for (retainer, world) in retainers {
         write!(
             &mut string,
-            "<tr><td>{}</td><td>{}</td><td>{}<td><td>{}</td></tr>",
-            retainer.name,
+            "<tr><a href=\"/listing/retainer/{}\"<td>{}</td><td>{}<td><td>{}</td></tr>",
             retainer.id,
+            retainer.name,
             retainer.world_id,
             world
                 .map(|w| w.name)
@@ -53,8 +55,18 @@ async fn get_retainer_listings(
             format!("Database error occured {e}"),
         )
     })?;
+
+    let game_data = xiv_gen_db::decompress_data();
+    let items = game_data.get_items();
     if let Some((retainer, listings)) = data {
         let mut data = format!("<h1>{}</h1>", retainer.name);
+        // get all listings from the retainer and calculate heuristics
+        let multiple_listings = db
+            .get_multiple_listings_for_worlds(
+                [WorldId(retainer.world_id)].into_iter(),
+                listings.iter().map(|i| ItemId(i.item_id)),
+            )
+            .await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")));
         if let Ok(Some(world)) = db.get_world_from_retainer(&retainer).await {
             write!(data, "<h1>{}</h1>", world.name);
         }
@@ -63,10 +75,14 @@ async fn get_retainer_listings(
             "<table><th>item id</th><th>price per unit</th> <th>quantity</th><th>total</th>"
         );
         for listing in listings {
+            let item = items
+                .get(&XivDBItemId::new(listing.item_id))
+                .map(|m| m.get_name())
+                .unwrap_or_default();
             write!(
                 data,
                 "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
-                listing.item_id,
+                item,
                 listing.price_per_unit,
                 listing.quantity,
                 listing.price_per_unit * listing.quantity,
@@ -135,7 +151,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/", get(root))
         .route("/retainer/search/:search", get(search_retainers))
         .route("/listings/:world/:itemid", get(world_item_listings))
-        .route("/retainer/:id/listings", get(get_retainer_listings))
+        .route("/listings/retainer/:id", get(get_retainer_listings))
         .fallback(fallback);
 
     // run our app with hyper

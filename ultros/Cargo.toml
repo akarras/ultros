@@ -19,3 +19,4 @@ poise = "0.3"
 chrono = "0.4.22"
 lodestone = {git = "https://github.com/akarras/lodestone.git", branch = 'async', default-features = false, features = ["rustls-tls"]}
 reqwest = "0.11"
+xiv-gen = {path = "../xiv-gen", features = ["recipe", "recipe_lookup", "item", "item_ui_category"]}

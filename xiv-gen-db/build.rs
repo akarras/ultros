@@ -1,8 +1,6 @@
 extern crate core;
 
 use flate2::{Compression, FlushCompress};
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Deserializer};
 use std::env;
 use std::path::Path;
 use xiv_gen::csv_to_bincode::read_data;
