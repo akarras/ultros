@@ -8,6 +8,7 @@ mod m20220911_200503_add_sale_index;
 mod m20220912_194248_joint_foreign_key_world_retainer;
 mod m20220912_201555_drop_retainer_universalis_id;
 mod m20220912_202909_drop_old_listing_retainer_fk;
+mod m20220913_102706_retainer_id_before_world_id_in_foreign_key;
 
 pub struct Migrator;
 
@@ -23,6 +24,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20220912_194248_joint_foreign_key_world_retainer::Migration),
             Box::new(m20220912_201555_drop_retainer_universalis_id::Migration),
             Box::new(m20220912_202909_drop_old_listing_retainer_fk::Migration),
+            Box::new(m20220913_102706_retainer_id_before_world_id_in_foreign_key::Migration),
         ]
     }
 }

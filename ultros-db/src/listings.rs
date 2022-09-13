@@ -4,7 +4,7 @@ use sea_orm::{
     ColumnTrait, EntityTrait, ModelTrait, QueryFilter, QueryOrder, QuerySelect, RelationTrait,
 };
 use std::collections::HashSet;
-use tracing::{info, warn};
+use tracing::{info, instrument, warn};
 use universalis::{ItemId, ListingView, WorldId};
 
 use crate::{
@@ -14,6 +14,7 @@ use crate::{
 
 impl UltrosDb {
     /// Updates listings assuming a pure view of the listing board
+    #[instrument(skip(self))]
     pub async fn update_listings(
         &self,
         mut listings: Vec<ListingView>,
@@ -25,9 +26,9 @@ impl UltrosDb {
         // First, query the db to see what listings it has
         // Then diff against the listings that we have
         listings.sort_by(|a, b| {
-            a.price_per_unit
-                .cmp(&b.price_per_unit)
+            a.hq.cmp(&b.hq)
                 .then_with(|| a.quantity.cmp(&b.quantity))
+                .then_with(|| a.price_per_unit.cmp(&b.price_per_unit))
                 .then_with(|| a.retainer_name.cmp(&b.retainer_name))
         });
 
@@ -44,9 +45,7 @@ impl UltrosDb {
 
         let mut retainers = self
             .get_retainer_ids_from_name(
-                queried_retainers
-                    .iter()
-                    .map(|(name, id, _)| name.as_str()),
+                queried_retainers.iter().map(|(name, id, _)| name.as_str()),
                 world_id.0,
             )
             .await?;
@@ -59,19 +58,31 @@ impl UltrosDb {
                 retainers.push(retainer);
             }
         }
-        let existing_items = Entity::find()
+        let mut existing_items = Entity::find()
             .filter(
                 Column::WorldId
                     .eq(world_id.0)
                     .and(Column::ItemId.eq(item_id.0)),
             )
-            .join(sea_orm::JoinType::InnerJoin, Relation::Retainer.def())
-            .order_by(Column::PricePerUnit, Order::Asc)
-            .order_by(Column::Quantity, Order::Asc)
-            .order_by(retainer::Column::Name, Order::Asc)
+            .find_also_related(retainer::Entity)
             .all(&self.db)
             .await?;
-
+        existing_items.sort_by(|(listinga, retainera), (listingb, retainerb)| {
+            let retainer_name_a = retainera
+                .as_ref()
+                .map(|m| m.name.as_str())
+                .unwrap_or_default();
+            let retainer_name_b = retainerb
+                .as_ref()
+                .map(|m| m.name.as_str())
+                .unwrap_or_default();
+            listinga
+                .hq
+                .cmp(&listingb.hq)
+                .then_with(|| listinga.quantity.cmp(&listingb.quantity))
+                .then_with(|| listinga.price_per_unit.cmp(&listingb.price_per_unit))
+                .then_with(|| retainer_name_a.cmp(retainer_name_b))
+        });
         let mut incoming_iter = listings.into_iter();
         let mut db_iter = existing_items.into_iter();
         // compare each item, then advance the list
@@ -87,27 +98,27 @@ impl UltrosDb {
                     db_value = None;
                 }
                 (None, Some(model)) => {
-                    model.delete(&self.db).await?;
-                    db_value = db_iter.next();
+                    removed.push(model);
                     incoming_list = None;
+                    db_value = db_iter.next();
                 }
-                (Some(list), Some(model)) => {
+                (Some(list), Some((model, retainer))) => {
                     let price_per_unit = list.price_per_unit.unwrap_or(list.total) as i32;
                     let quantity = list.quantity.unwrap_or(1) as i32;
-                    let retainer_id = retainers
-                        .iter()
-                        .find(|m| m.name == list.retainer_name)
-                        .expect("All retainers should be known at this stage")
-                        .id;
+                    let retainer_name = retainer
+                        .as_ref()
+                        .map(|r| r.name.as_str())
+                        .unwrap_or_default();
                     match price_per_unit
                         .cmp(&model.price_per_unit)
                         .then_with(|| quantity.cmp(&model.quantity))
-                        .then_with(|| retainer_id.cmp(&model.retainer_id))
+                        .then_with(|| list.retainer_name.as_str().cmp(retainer_name))
+                        .then_with(|| list.hq.cmp(&model.hq))
                     {
                         std::cmp::Ordering::Less => {
                             added.push(list);
                             incoming_list = incoming_iter.next();
-                            db_value = Some(model);
+                            db_value = Some((model, retainer));
                         }
                         std::cmp::Ordering::Equal => {
                             // item in list, keep checking list
@@ -115,7 +126,7 @@ impl UltrosDb {
                             incoming_list = incoming_iter.next();
                         }
                         std::cmp::Ordering::Greater => {
-                            removed.push(model);
+                            removed.push((model, retainer));
                             incoming_list = Some(list);
                             db_value = db_iter.next();
                         }
@@ -135,7 +146,7 @@ impl UltrosDb {
         let is_in = if removed.is_empty() {
             None
         } else {
-            Some(Column::Id.is_in(removed.into_iter().map(|m| Value::Int(Some(m.id)))))
+            Some(Column::Id.is_in(removed.into_iter().map(|(m, _)| Value::Int(Some(m.id)))))
         };
         let added = added.iter().map(|m| {
             let retainer_id = retainers
@@ -149,10 +160,10 @@ impl UltrosDb {
             futures::future::join(futures::future::join_all(added), async move {
                 if let Some(is_in) = is_in {
                     Entity::delete_many()
-                            .filter(is_in)
-                            .exec(&self.db)
-                            .await
-                            .map(|i| i.rows_affected)
+                        .filter(is_in)
+                        .exec(&self.db)
+                        .await
+                        .map(|i| i.rows_affected)
                 } else {
                     Ok(0)
                 }

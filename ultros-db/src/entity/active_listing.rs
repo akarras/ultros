@@ -22,8 +22,8 @@ pub struct Model {
 pub enum Relation {
     #[sea_orm(
         belongs_to = "super::retainer::Entity",
-        from = "Column::WorldId",
-        to = "super::retainer::Column::WorldId",
+        from = "Column::RetainerId",
+        to = "super::retainer::Column::Id",
         on_update = "NoAction",
         on_delete = "NoAction"
     )]

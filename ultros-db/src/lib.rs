@@ -1,3 +1,4 @@
+mod discord_user;
 mod entity;
 mod ffxiv_character;
 mod listings;
@@ -12,8 +13,8 @@ use sea_orm::{
 };
 use sea_orm::{ActiveValue, Order, QueryOrder, RelationTrait};
 use std::collections::HashSet;
-use tracing::info;
 use tracing::log::warn;
+use tracing::{info, instrument};
 use universalis::{websocket::event_types::SaleView, ItemId, ListingView, WorldId};
 
 use crate::entity::*;
@@ -42,6 +43,7 @@ impl UltrosDb {
         Ok(Self { db })
     }
 
+    #[instrument(skip(self))]
     pub async fn insert_default_retainer_cities(&self) -> Result<()> {
         struct RetainerCityData {
             id: i32,
@@ -100,6 +102,7 @@ impl UltrosDb {
         Ok(())
     }
 
+    #[instrument(skip(self))]
     pub async fn search_retainers(
         &self,
         retainer_name: &str,
@@ -113,6 +116,7 @@ impl UltrosDb {
         Ok(val)
     }
 
+    #[instrument(skip(self))]
     pub async fn get_retainer_listings(
         &self,
         retainer_id: i32,
@@ -127,6 +131,7 @@ impl UltrosDb {
     }
 
     /// Looks up a world via it's world name. Requires exact match
+    #[instrument(skip(self))]
     pub async fn get_world(&self, world_name: &str) -> Result<world::Model> {
         use world::*;
         let worlds = Entity::find()
@@ -137,6 +142,7 @@ impl UltrosDb {
         Ok(worlds)
     }
 
+    #[instrument(skip(self, world_id, item))]
     pub async fn get_multiple_listings_for_worlds(
         &self,
         world_id: impl Iterator<Item = WorldId>,
@@ -151,6 +157,7 @@ impl UltrosDb {
             .await?)
     }
 
+    #[instrument(skip(self))]
     pub async fn get_listings_for_world(
         &self,
         world: WorldId,
@@ -164,6 +171,7 @@ impl UltrosDb {
             .await?)
     }
 
+    #[instrument(skip(self))]
     pub async fn add_owned_character(
         &self,
         character_id: i32,
@@ -183,6 +191,7 @@ impl UltrosDb {
         Ok(model)
     }
 
+    #[instrument(skip(self))]
     pub async fn create_alert(&self, owner: discord_user::Model) -> Result<alert::Model> {
         use alert::ActiveModel;
         Ok(ActiveModel {
@@ -193,6 +202,7 @@ impl UltrosDb {
         .await?)
     }
 
+    #[instrument(skip(self))]
     pub async fn add_discord_notification_to_alert(
         &self,
         alert: &alert::Model,
@@ -209,6 +219,7 @@ impl UltrosDb {
         Ok(model)
     }
 
+    #[instrument(skip(self))]
     pub async fn add_retainer_alert(
         &self,
         alert: &alert::Model,
@@ -227,6 +238,7 @@ impl UltrosDb {
         Ok(model)
     }
 
+    #[instrument(skip(self))]
     pub async fn get_world_from_retainer(
         &self,
         retainer: &retainer::Model,
@@ -236,6 +248,7 @@ impl UltrosDb {
         Ok(world)
     }
 
+    #[instrument(skip(self))]
     pub async fn store_retainer(
         &self,
         retainer_id: &str,
@@ -262,6 +275,7 @@ impl UltrosDb {
         Ok(model)
     }
 
+    #[instrument(skip(self))]
     pub async fn create_listing(
         &self,
         listing: &ListingView,
@@ -299,6 +313,7 @@ impl UltrosDb {
         Ok(m)
     }
 
+    #[instrument(skip(self))]
     async fn get_retainer_ids_from_name(
         &self,
         names: impl Iterator<Item = &str>,
@@ -306,13 +321,17 @@ impl UltrosDb {
     ) -> Result<Vec<retainer::Model>> {
         use retainer::*;
         let retainers = Entity::find()
-                .filter(Column::Name.is_in(names.map(|name| Value::String(Some(Box::new(name.to_string()))))))
-                .filter(Column::WorldId.eq(world_id))
-                .all(&self.db)
-                .await?;
-            Ok(retainers)
+            .filter(
+                Column::Name
+                    .is_in(names.map(|name| Value::String(Some(Box::new(name.to_string()))))),
+            )
+            .filter(Column::WorldId.eq(world_id))
+            .all(&self.db)
+            .await?;
+        Ok(retainers)
     }
 
+    #[instrument(skip(self))]
     pub async fn remove_listings(
         &self,
         listings: Vec<ListingView>,
@@ -368,6 +387,7 @@ impl UltrosDb {
 
     /// Stores a sale from a given sale view.
     /// Demands that a world name for the sale is provided as it is optional on the sale view, but can be determined other ways
+    #[instrument(skip(self))]
     pub async fn store_sale(
         &self,
         mut sales: Vec<SaleView>,
@@ -481,6 +501,7 @@ impl UltrosDb {
     }
 
     /// Stores a region. This generally assumes the regions haven't changed and really is just querying for region IDs
+    #[instrument(skip(self))]
     pub async fn store_region(&self, region_name: &str) -> Result<region::Model> {
         if let Some(value) = region::Entity::find()
             .filter(region::Column::Name.eq(region_name))
@@ -500,6 +521,7 @@ impl UltrosDb {
 
     /// Stores a datacenter. Similarly to the region, this will mostly just update.
     /// It will try to update the datacenter if the region somehow changed. (unlikely)
+    #[instrument(skip(self))]
     pub async fn store_datacenter(
         &self,
         datacenter_name: &str,
@@ -536,6 +558,7 @@ impl UltrosDb {
     }
 
     /// Stores a world. Similar to the region/datacenter, but the final step.
+    #[instrument(skip(self))]
     pub async fn store_world(
         &self,
         world_id: WorldId,

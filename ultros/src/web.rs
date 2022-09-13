@@ -66,7 +66,8 @@ async fn get_retainer_listings(
                 [WorldId(retainer.world_id)].into_iter(),
                 listings.iter().map(|i| ItemId(i.item_id)),
             )
-            .await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")));
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")));
         if let Ok(Some(world)) = db.get_world_from_retainer(&retainer).await {
             write!(data, "<h1>{}</h1>", world.name);
         }

@@ -1,10 +1,12 @@
 use sea_orm::{ActiveValue, EntityTrait, Set};
+use tracing::instrument;
 
 use super::UltrosDb;
 use crate::entity::*;
 use anyhow::Result;
 
 impl UltrosDb {
+    #[instrument(skip(self))]
     pub async fn insert_character(
         &self,
         lodestone_id: i32,
