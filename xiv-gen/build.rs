@@ -496,10 +496,9 @@ fn main() {
     let list_filter: Vec<_> = table_names
         .into_iter()
         .flat_map(|(csv_name, feature)| {
-            env::var(format!("CARGO_FEATURE_{}", feature)).map(|_| csv_name)
+            env::var(format!("CARGO_FEATURE_{}", feature.to_uppercase())).map(|_| csv_name)
         })
         .collect();
-
     write(
         "./extra.toml",
         format!("{}\n{}", all_features_str, list_str).as_bytes(),
