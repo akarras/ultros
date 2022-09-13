@@ -9,7 +9,7 @@ pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: i32,
     #[sea_orm(unique)]
-    pub discord_user_id: i32,
+    pub discord_user_id: i64,
     pub ffxiv_character_id: i32,
     pub challenge: String,
 }

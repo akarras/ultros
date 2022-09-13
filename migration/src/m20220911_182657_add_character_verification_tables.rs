@@ -21,7 +21,7 @@ impl MigrationTrait for Migration {
                     )
                     .col(
                         ColumnDef::new(FfxivCharacterVerification::DiscordUserId)
-                            .integer()
+                            .big_unsigned()
                             .not_null()
                             .unique_key(),
                     )
@@ -63,7 +63,7 @@ impl MigrationTrait for Migration {
                     )
                     .col(
                         ColumnDef::new(OwnedFfxivCharacter::DiscordUserId)
-                            .integer()
+                            .big_unsigned()
                             .not_null(),
                     )
                     .to_owned(),
@@ -120,7 +120,7 @@ impl MigrationTrait for Migration {
 }
 
 #[derive(Iden)]
-enum FfxivCharacterVerification {
+pub enum FfxivCharacterVerification {
     Table,
     Id,
     DiscordUserId,
@@ -129,7 +129,7 @@ enum FfxivCharacterVerification {
 }
 
 #[derive(Iden)]
-enum OwnedFfxivCharacter {
+pub enum OwnedFfxivCharacter {
     Table,
     FfxivCharacterId,
     DiscordUserId,

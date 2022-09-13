@@ -1,4 +1,4 @@
-use crate::{DeleteStatement, SelectStatement, SimpleExpr};
+use crate::{SelectStatement, SimpleExpr};
 use sea_orm_migration::{prelude::*, sea_orm::StatementBuilder, sea_query::ColumnDef};
 
 #[derive(DeriveMigrationName)]
@@ -26,7 +26,7 @@ impl MigrationTrait for Migration {
                     .if_not_exists()
                     .col(
                         ColumnDef::new(DiscordUser::Id)
-                            .big_integer()
+                            .big_unsigned()
                             .not_null()
                             .primary_key(),
                     )
@@ -45,7 +45,7 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(ColumnDef::new(Alert::Owner).big_integer().not_null())
+                    .col(ColumnDef::new(Alert::Owner).big_unsigned().not_null())
                     .to_owned(),
             )
             .await?;
@@ -247,7 +247,11 @@ impl MigrationTrait for Migration {
                     .col(
                         ColumnDef::new(OwnedRetainers::RetainerId)
                             .integer()
-                            .unique_key()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(OwnedRetainers::DiscordId)
+                            .integer()
                             .not_null(),
                     )
                     .col(
@@ -255,6 +259,24 @@ impl MigrationTrait for Migration {
                             .integer()
                             .not_null(),
                     )
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .create_index(
+                IndexCreateStatement::new()
+                    .table(OwnedRetainers::Table)
+                    .col(OwnedRetainers::DiscordId)
+                    .col(OwnedRetainers::RetainerId)
+                    .unique()
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .create_foreign_key(
+                ForeignKeyCreateStatement::new()
+                    .from(OwnedRetainers::Table, OwnedRetainers::DiscordId)
+                    .to(DiscordUser::Table, DiscordUser::Id)
                     .to_owned(),
             )
             .await?;
@@ -510,7 +532,7 @@ impl MigrationTrait for Migration {
                     )
                     .col(
                         ColumnDef::new(AlertDiscordDestination::ChannelId)
-                            .big_integer()
+                            .big_unsigned()
                             .not_null(),
                     )
                     .to_owned(),
@@ -682,10 +704,11 @@ enum UnknownFinalFantasyCharacter {
 }
 
 #[derive(Iden)]
-enum OwnedRetainers {
+pub enum OwnedRetainers {
     Table,
     Id,
     RetainerId,
+    DiscordId,
     CharacterId,
 }
 

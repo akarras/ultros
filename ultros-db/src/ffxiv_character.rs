@@ -24,4 +24,19 @@ impl UltrosDb {
         .exec_with_returning(&self.db)
         .await?)
     }
+
+    #[instrument(skip(self))]
+    pub async fn create_character_challenge<T: ToString + std::fmt::Debug>(
+        &self,
+        lodestone_id: i32,
+        discord_user_id: i64,
+        challenge: T,
+    ) {
+        ffxiv_character_verification::ActiveModel {
+            id: ActiveValue::default(),
+            discord_user_id: Set(discord_user_id),
+            ffxiv_character_id: Set(lodestone_id),
+            challenge: Set(challenge.to_string()),
+        };
+    }
 }

@@ -1,10 +1,8 @@
 use anyhow::Result;
-use migration::{Order, Value};
-use sea_orm::{
-    ColumnTrait, EntityTrait, ModelTrait, QueryFilter, QueryOrder, QuerySelect, RelationTrait,
-};
+use migration::Value;
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use std::collections::HashSet;
-use tracing::{info, instrument, warn};
+use tracing::instrument;
 use universalis::{ItemId, ListingView, WorldId};
 
 use crate::{

@@ -32,7 +32,7 @@ async fn search_retainers(
     for (retainer, world) in retainers {
         write!(
             &mut string,
-            "<tr><a href=\"/listing/retainer/{}\"<td>{}</td><td>{}<td><td>{}</td></tr>",
+            "<tr><td><a href=\"/listings/retainer/{}\">{}</a></td><td>{}<td><td>{}</td></tr>",
             retainer.id,
             retainer.name,
             retainer.world_id,
@@ -67,23 +67,40 @@ async fn get_retainer_listings(
                 listings.iter().map(|i| ItemId(i.item_id)),
             )
             .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")));
-        if let Ok(Some(world)) = db.get_world_from_retainer(&retainer).await {
-            write!(data, "<h1>{}</h1>", world.name);
-        }
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")))?;
+        let world = if let Ok(Some(world)) = db.get_world_from_retainer(&retainer).await {
+            world
+        } else {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to get world data for retainer".to_string(),
+            ));
+        };
+        write!(data, "<h1>{}</h1>", world.name);
+        let world_name = world.name;
         write!(
             data,
-            "<table><th>item id</th><th>price per unit</th> <th>quantity</th><th>total</th>"
+            "<table><th>ranking</th><th>item id</th><th>price per unit</th> <th>quantity</th><th>total</th>"
         );
         for listing in listings {
             let item = items
                 .get(&XivDBItemId::new(listing.item_id))
                 .map(|m| m.get_name())
                 .unwrap_or_default();
+            // get the the ranking of this listing for the world
+            let market_position = multiple_listings
+                .iter()
+                .filter(|m| m.item_id == listing.item_id)
+                .enumerate()
+                .find(|(_, m)| m.id == listing.id)
+                .map(|(pos, _)| pos + 1)
+                .unwrap_or_default();
+            let item_id = listing.item_id;
             write!(
                 data,
-                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                r#"<tr><td><a href="/listings/{world_name}/{item_id}">{}</a></td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>"#,
                 item,
+                market_position,
                 listing.price_per_unit,
                 listing.quantity,
                 listing.price_per_unit * listing.quantity,

@@ -60,20 +60,27 @@ impl WebsocketClient {
     }
 
     pub async fn connect() -> Self {
-        let mut websocket = Self::start_websocket().await;
+        let mut websocket: Option<WebSocketStream<ConnectStream>> = None;
         let (socket_sender, mut socket_receiver) = channel(100);
         let (listing_sender, listing_receiver) = channel(100);
         tokio::spawn(async move {
-            websocket
-                .send(Message::Ping(vec![1, 2, 3, 4]))
-                .await
-                .unwrap();
             loop {
-                if websocket.is_terminated() {
-                    info!("Socket terminated, waiting 10 seconds and retrying.");
-                    tokio::time::sleep(Duration::from_secs(10)).await;
-                    websocket = Self::start_websocket().await;
+                if let Some(ws) = websocket {
+                    if ws.is_terminated() {
+                        websocket = None;
+                        continue;
+                    } else {
+                        websocket = Some(ws);
+                    }
                 }
+                let websocket = if let Some(websocket) = &mut websocket {
+                    websocket
+                } else {
+                    info!("Socket terminated, waiting 30 seconds and retrying.");
+                    tokio::time::sleep(Duration::from_secs(30)).await;
+                    websocket = Self::start_websocket().await.ok();
+                    continue;
+                };
                 match futures::future::select(
                     Box::pin(socket_receiver.recv()),
                     Box::pin(websocket.next()),
@@ -145,15 +152,14 @@ impl WebsocketClient {
         }
     }
 
-    async fn start_websocket() -> WebSocketStream<ConnectStream> {
-        let (mut websocket, response) =
-            connect_async("wss://universalis.app/api/ws").await.unwrap();
+    async fn start_websocket() -> Result<WebSocketStream<ConnectStream>, crate::Error> {
+        let (mut websocket, response) = connect_async("wss://universalis.app/api/ws").await?;
         info!("Connected Websocket. {} status", response.status());
         info!("Headers: ");
         for (ref header, _value) in response.headers() {
             info!("* {}", header);
         }
-        websocket
+        Ok(websocket)
     }
 }
 

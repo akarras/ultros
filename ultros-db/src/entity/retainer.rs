@@ -31,12 +31,12 @@ pub enum Relation {
         on_delete = "Cascade"
     )]
     World,
+    #[sea_orm(has_many = "super::active_listing::Entity")]
+    ActiveListing,
     #[sea_orm(has_many = "super::alert_retainer_undercut::Entity")]
     AlertRetainerUndercut,
     #[sea_orm(has_one = "super::owned_retainers::Entity")]
     OwnedRetainers,
-    #[sea_orm(has_many = "super::active_listing::Entity")]
-    ActiveListing,
 }
 
 impl Related<super::retainer_city::Entity> for Entity {
@@ -51,6 +51,12 @@ impl Related<super::world::Entity> for Entity {
     }
 }
 
+impl Related<super::active_listing::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::ActiveListing.def()
+    }
+}
+
 impl Related<super::alert_retainer_undercut::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::AlertRetainerUndercut.def()
@@ -60,12 +66,6 @@ impl Related<super::alert_retainer_undercut::Entity> for Entity {
 impl Related<super::owned_retainers::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::OwnedRetainers.def()
-    }
-}
-
-impl Related<super::active_listing::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::ActiveListing.def()
     }
 }
 

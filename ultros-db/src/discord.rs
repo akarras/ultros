@@ -1,4 +1,6 @@
-use crate::UltrosDb;
+use crate::{entity::discord_user, UltrosDb};
+use anyhow::Result;
+use sea_orm::{ActiveModelTrait, Set};
 use tracing::instrument;
 
 impl UltrosDb {

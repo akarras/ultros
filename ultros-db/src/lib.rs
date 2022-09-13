@@ -1,19 +1,19 @@
-mod discord_user;
-mod entity;
+mod discord;
+pub mod entity;
 mod ffxiv_character;
 mod listings;
 pub(crate) mod partial_diff_iterator;
 mod regions_and_datacenters;
 
 use anyhow::Result;
-use migration::{Migrator, MigratorTrait, SelectStatement, SimpleExpr, Value};
+use migration::{Migrator, MigratorTrait, Value};
+use sea_orm::ActiveValue;
 use sea_orm::{
     ActiveModelTrait, ActiveValue::NotSet, ColumnTrait, ConnectOptions, Database,
     DatabaseConnection, EntityTrait, IntoActiveModel, ModelTrait, QueryFilter, QuerySelect, Set,
 };
-use sea_orm::{ActiveValue, Order, QueryOrder, RelationTrait};
 use std::collections::HashSet;
-use tracing::log::warn;
+
 use tracing::{info, instrument};
 use universalis::{websocket::event_types::SaleView, ItemId, ListingView, WorldId};
 
@@ -313,7 +313,7 @@ impl UltrosDb {
         Ok(m)
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip(self, names))]
     async fn get_retainer_ids_from_name(
         &self,
         names: impl Iterator<Item = &str>,
