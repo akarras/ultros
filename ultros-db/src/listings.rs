@@ -1,5 +1,5 @@
 use anyhow::Result;
-use migration::Order;
+use migration::{Order, Value};
 use sea_orm::{
     ColumnTrait, EntityTrait, ModelTrait, QueryFilter, QueryOrder, QuerySelect, RelationTrait,
 };
@@ -128,11 +128,15 @@ impl UltrosDb {
             }
         }
 
-        let remove_ids = removed
-            .into_iter()
-            .map(|i| Column::Id.eq(i.id))
-            .reduce(|a, b| a.or(b));
-
+        // let remove_ids = removed
+        //     .into_iter()
+        //     .map(|i| Column::Id.eq(i.id))
+        //     .reduce(|a, b| a.or(b));
+        let is_in = if removed.is_empty() {
+            None
+        } else {
+            Some(Column::Id.is_in(removed.into_iter().map(|m| Value::Int(Some(m.id)))))
+        };
         let added = added.iter().map(|m| {
             let retainer_id = retainers
                 .iter()
@@ -143,12 +147,12 @@ impl UltrosDb {
         });
         let (added, removed) =
             futures::future::join(futures::future::join_all(added), async move {
-                if let Some(ids) = remove_ids {
+                if let Some(is_in) = is_in {
                     Entity::delete_many()
-                        .filter(ids)
-                        .exec(&self.db)
-                        .await
-                        .map(|i| i.rows_affected)
+                            .filter(is_in)
+                            .exec(&self.db)
+                            .await
+                            .map(|i| i.rows_affected)
                 } else {
                     Ok(0)
                 }
