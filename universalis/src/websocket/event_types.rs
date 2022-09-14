@@ -76,7 +76,7 @@ pub struct EventResponse {
     pub listings: Vec<ListingView>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Hash)]
 pub enum EventChannel {
     #[serde(rename = "listings/add")]
     ListingsAdd,
@@ -99,7 +99,7 @@ impl Display for EventChannel {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Hash, Clone, Copy)]
 pub(crate) struct WorldFilter(WorldId);
 
 impl WorldFilter {
@@ -114,7 +114,7 @@ impl Display for WorldFilter {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Hash, Clone)]
 pub(crate) struct Channel(EventChannel, Option<WorldFilter>);
 
 impl Channel {
@@ -140,8 +140,8 @@ impl Serialize for Channel {
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct WebSocketSubscriptionUpdate {
-    event: SubscribeMode,
-    channel: Channel,
+    pub(crate) event: SubscribeMode,
+    pub(crate) channel: Channel,
 }
 
 impl WebSocketSubscriptionUpdate {

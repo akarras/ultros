@@ -27,6 +27,8 @@ pub enum Error {
     JsonError(#[from] serde_json::Error),
     #[error("Error deserializing BSON {0}")]
     BsonDeserializeError(#[from] bson::de::Error),
+    #[error("Error serializing bson {0}")]
+    BsonSerializeError(#[from] bson::ser::Error),
     #[error("Websocket error {0}")]
     TungsteniteError(#[from] async_tungstenite::tungstenite::Error),
     #[error("Bad ID, listing returned id {0}")]

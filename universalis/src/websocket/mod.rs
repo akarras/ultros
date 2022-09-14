@@ -15,6 +15,7 @@ use log::{error, info, warn};
 
 use async_tungstenite::WebSocketStream;
 use futures::stream::FusedStream;
+use std::collections::HashSet;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
@@ -54,6 +55,33 @@ impl WebsocketClient {
     }
 }
 
+/// Internally keeps track of the state of what subscriptions have been sent
+struct SubscriptionTracker {
+    subscriptions: HashSet<Channel>
+}
+
+impl SubscriptionTracker {
+    async fn resend_subscriptions(&self, sender: &mut WebSocketStream<ConnectStream>) -> Result<(), crate::Error> {
+        for channel in &self.subscriptions {
+            let bson = bson::to_vec(&WebSocketSubscriptionUpdate {
+                event: SubscribeMode::Subscribe,
+                channel: channel.clone(),
+            })?;
+            
+            sender.send(Message::Binary(bson)).await?;
+        }
+        Ok(())
+    }
+
+    fn subscribe(&mut self, channel: Channel) {
+        self.subscriptions.insert(channel);
+    }
+
+    fn unsubscribe(&mut self, channel: &Channel) {
+        self.subscriptions.remove(channel);
+    }
+}
+
 impl WebsocketClient {
     pub fn get_receiver(&mut self) -> &mut Receiver<SocketRx> {
         &mut self.listing_receiver
@@ -79,6 +107,7 @@ impl WebsocketClient {
         });
         tokio::spawn(async move {
             loop {
+                let mut active_subscriptions = SubscriptionTracker { subscriptions: HashSet::new() };
                 if let Some(ws) = websocket {
                     if ws.is_terminated() {
                         websocket = None;
@@ -97,6 +126,9 @@ impl WebsocketClient {
                         .await
                         .map_err(|e| error!("{e:?}"))
                         .ok();
+                    if let Some(websocket) = &mut websocket {
+                        active_subscriptions.resend_subscriptions(websocket).await;
+                    }
                     continue;
                 };
                 match futures::future::select(
@@ -105,12 +137,18 @@ impl WebsocketClient {
                 )
                 .await
                 {
-                    Either::Left((sock, _pin)) => match &sock {
+                    Either::Left((sock, _pin)) => match sock {
                         Some(data) => match data {
                             SocketTx::Subscription(s) => {
                                 info!("Subscription update {s:?}");
                                 let bson = bson::to_vec(&s).unwrap();
                                 websocket.send(Message::Binary(bson)).await.unwrap();
+                                // keep track of the subscriptions so if the socket closes we can update accordingly
+                                let WebSocketSubscriptionUpdate { event, channel } = s;
+                                match event {
+                                    SubscribeMode::Subscribe => active_subscriptions.subscribe(channel),
+                                    SubscribeMode::Unsubscribe => active_subscriptions.unsubscribe(&channel),
+                                }
                             }
                             SocketTx::Ping => {
                                 websocket
