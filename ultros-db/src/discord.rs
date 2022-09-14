@@ -1,6 +1,7 @@
 use crate::{entity::discord_user, UltrosDb};
 use anyhow::Result;
-use sea_orm::{ActiveModelTrait, Set};
+use migration::OnConflict;
+use sea_orm::{EntityTrait, Set};
 use tracing::instrument;
 
 impl UltrosDb {
@@ -14,7 +15,13 @@ impl UltrosDb {
             id: Set(user_id as i64),
             username: Set(name),
         };
-
-        Ok(user.insert(&self.db).await?)
+        Ok(discord_user::Entity::insert(user)
+            .on_conflict(
+                OnConflict::column(discord_user::Column::Id)
+                    .update_column(discord_user::Column::Username)
+                    .to_owned(),
+            )
+            .exec_with_returning(&self.db)
+            .await?)
     }
 }

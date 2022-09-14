@@ -1,18 +1,17 @@
 pub mod event_types;
 
 use crate::websocket::event_types::{
-    Channel, EventChannel, EventResponse, SubscribeMode, WSMessage, WebSocketSubscriptionUpdate,
-    WorldFilter,
+    Channel, EventChannel, SubscribeMode, WSMessage, WebSocketSubscriptionUpdate, WorldFilter,
 };
 use crate::WorldId;
 use async_tungstenite::tokio::{connect_async, ConnectStream};
 use async_tungstenite::tungstenite::Message;
 
-use bson::{Bson, Document};
+use bson::Document;
 use futures::future::Either;
 
 use futures::{SinkExt, Stream, StreamExt};
-use log::{debug, error, info, warn};
+use log::{error, info, warn};
 
 use async_tungstenite::WebSocketStream;
 use futures::stream::FusedStream;
@@ -24,6 +23,7 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 #[derive(Debug)]
 enum SocketTx {
     Subscription(WebSocketSubscriptionUpdate),
+    Ping,
 }
 
 #[derive(Debug)]
@@ -60,14 +60,29 @@ impl WebsocketClient {
     }
 
     pub async fn connect() -> Self {
-        let mut websocket: Option<WebSocketStream<ConnectStream>> = None;
+        let mut websocket: Option<WebSocketStream<ConnectStream>> = Self::start_websocket()
+            .await
+            .map_err(|e| error!("{e:?}"))
+            .ok();
         let (socket_sender, mut socket_receiver) = channel(100);
         let (listing_sender, listing_receiver) = channel(100);
+        let sender = socket_sender.clone();
+        tokio::spawn(async move {
+            loop {
+                info!("Sending ping to keep the socket alive");
+                sender
+                    .send(SocketTx::Ping)
+                    .await
+                    .expect("local sender failed to send ping");
+                tokio::time::sleep(Duration::from_secs(60)).await;
+            }
+        });
         tokio::spawn(async move {
             loop {
                 if let Some(ws) = websocket {
                     if ws.is_terminated() {
                         websocket = None;
+                        warn!("websocket terminated, restarting");
                         continue;
                     } else {
                         websocket = Some(ws);
@@ -76,9 +91,12 @@ impl WebsocketClient {
                 let websocket = if let Some(websocket) = &mut websocket {
                     websocket
                 } else {
-                    info!("Socket terminated, waiting 30 seconds and retrying.");
+                    warn!("Socket terminated, waiting 30 seconds and retrying.");
                     tokio::time::sleep(Duration::from_secs(30)).await;
-                    websocket = Self::start_websocket().await.ok();
+                    websocket = Self::start_websocket()
+                        .await
+                        .map_err(|e| error!("{e:?}"))
+                        .ok();
                     continue;
                 };
                 match futures::future::select(
@@ -93,6 +111,12 @@ impl WebsocketClient {
                                 info!("Subscription update {s:?}");
                                 let bson = bson::to_vec(&s).unwrap();
                                 websocket.send(Message::Binary(bson)).await.unwrap();
+                            }
+                            SocketTx::Ping => {
+                                websocket
+                                    .send(Message::Ping(vec![1, 2, 3, 4]))
+                                    .await
+                                    .unwrap();
                             }
                         },
                         None => {
@@ -122,7 +146,7 @@ impl WebsocketClient {
                                 });
                             }
                             Message::Ping(p) => {
-                                info!("responding to pong with payload: {p:?}");
+                                info!("responding to ping with payload: {p:?}");
                                 websocket.send(Message::Pong(p.clone())).await.unwrap();
                             }
                             Message::Pong(pong) => {
@@ -153,7 +177,7 @@ impl WebsocketClient {
     }
 
     async fn start_websocket() -> Result<WebSocketStream<ConnectStream>, crate::Error> {
-        let (mut websocket, response) = connect_async("wss://universalis.app/api/ws").await?;
+        let (websocket, response) = connect_async("wss://universalis.app/api/ws").await?;
         info!("Connected Websocket. {} status", response.status());
         info!("Headers: ");
         for (ref header, _value) in response.headers() {

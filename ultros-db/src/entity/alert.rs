@@ -21,10 +21,10 @@ pub enum Relation {
         on_delete = "Cascade"
     )]
     DiscordUser,
-    #[sea_orm(has_many = "super::alert_retainer_undercut::Entity")]
-    AlertRetainerUndercut,
     #[sea_orm(has_many = "super::alert_discord_destination::Entity")]
     AlertDiscordDestination,
+    #[sea_orm(has_many = "super::alert_retainer_undercut::Entity")]
+    AlertRetainerUndercut,
 }
 
 impl Related<super::discord_user::Entity> for Entity {
@@ -33,15 +33,15 @@ impl Related<super::discord_user::Entity> for Entity {
     }
 }
 
-impl Related<super::alert_retainer_undercut::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::AlertRetainerUndercut.def()
-    }
-}
-
 impl Related<super::alert_discord_destination::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::AlertDiscordDestination.def()
+    }
+}
+
+impl Related<super::alert_retainer_undercut::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AlertRetainerUndercut.def()
     }
 }
 

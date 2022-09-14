@@ -2,8 +2,10 @@ mod discord;
 pub mod entity;
 mod ffxiv_character;
 mod listings;
+mod listings_stats;
 pub(crate) mod partial_diff_iterator;
 mod regions_and_datacenters;
+mod retainers;
 
 use anyhow::Result;
 use migration::{Migrator, MigratorTrait, Value};

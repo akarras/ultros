@@ -23,12 +23,12 @@ pub enum Relation {
         on_delete = "Cascade"
     )]
     Datacenter,
-    #[sea_orm(has_many = "super::retainer::Entity")]
-    Retainer,
     #[sea_orm(has_many = "super::active_listing::Entity")]
     ActiveListing,
     #[sea_orm(has_many = "super::final_fantasy_character::Entity")]
     FinalFantasyCharacter,
+    #[sea_orm(has_many = "super::retainer::Entity")]
+    Retainer,
     #[sea_orm(has_many = "super::sale_history::Entity")]
     SaleHistory,
 }
@@ -36,12 +36,6 @@ pub enum Relation {
 impl Related<super::datacenter::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Datacenter.def()
-    }
-}
-
-impl Related<super::retainer::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::Retainer.def()
     }
 }
 
@@ -54,6 +48,12 @@ impl Related<super::active_listing::Entity> for Entity {
 impl Related<super::final_fantasy_character::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::FinalFantasyCharacter.def()
+    }
+}
+
+impl Related<super::retainer::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Retainer.def()
     }
 }
 

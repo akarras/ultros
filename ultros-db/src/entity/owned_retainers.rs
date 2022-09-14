@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i32,
-    #[sea_orm(unique)]
     pub retainer_id: i32,
-    pub character_id: i32,
+    pub discord_id: i64,
+    pub character_id: Option<i32>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -24,6 +24,14 @@ pub enum Relation {
     )]
     FinalFantasyCharacter,
     #[sea_orm(
+        belongs_to = "super::discord_user::Entity",
+        from = "Column::DiscordId",
+        to = "super::discord_user::Column::Id",
+        on_update = "NoAction",
+        on_delete = "NoAction"
+    )]
+    DiscordUser,
+    #[sea_orm(
         belongs_to = "super::retainer::Entity",
         from = "Column::RetainerId",
         to = "super::retainer::Column::Id",
@@ -36,6 +44,12 @@ pub enum Relation {
 impl Related<super::final_fantasy_character::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::FinalFantasyCharacter.def()
+    }
+}
+
+impl Related<super::discord_user::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::DiscordUser.def()
     }
 }
 

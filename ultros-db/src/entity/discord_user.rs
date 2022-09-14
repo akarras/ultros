@@ -19,6 +19,8 @@ pub enum Relation {
     FfxivCharacterVerification,
     #[sea_orm(has_many = "super::owned_ffxiv_character::Entity")]
     OwnedFfxivCharacter,
+    #[sea_orm(has_many = "super::owned_retainers::Entity")]
+    OwnedRetainers,
 }
 
 impl Related<super::alert::Entity> for Entity {
@@ -36,6 +38,12 @@ impl Related<super::ffxiv_character_verification::Entity> for Entity {
 impl Related<super::owned_ffxiv_character::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::OwnedFfxivCharacter.def()
+    }
+}
+
+impl Related<super::owned_retainers::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::OwnedRetainers.def()
     }
 }
 

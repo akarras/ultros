@@ -136,11 +136,6 @@ impl UltrosDb {
                 }
             }
         }
-
-        // let remove_ids = removed
-        //     .into_iter()
-        //     .map(|i| Column::Id.eq(i.id))
-        //     .reduce(|a, b| a.or(b));
         let is_in = if removed.is_empty() {
             None
         } else {

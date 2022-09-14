@@ -251,13 +251,12 @@ impl MigrationTrait for Migration {
                     )
                     .col(
                         ColumnDef::new(OwnedRetainers::DiscordId)
-                            .integer()
+                            .big_unsigned()
                             .not_null(),
                     )
                     .col(
                         ColumnDef::new(OwnedRetainers::CharacterId)
-                            .integer()
-                            .not_null(),
+                            .integer(),
                     )
                     .to_owned(),
             )

@@ -35,7 +35,7 @@ pub enum Relation {
     ActiveListing,
     #[sea_orm(has_many = "super::alert_retainer_undercut::Entity")]
     AlertRetainerUndercut,
-    #[sea_orm(has_one = "super::owned_retainers::Entity")]
+    #[sea_orm(has_many = "super::owned_retainers::Entity")]
     OwnedRetainers,
 }
 
