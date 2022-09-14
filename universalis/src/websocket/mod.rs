@@ -126,8 +126,13 @@ impl WebsocketClient {
                         .await
                         .map_err(|e| error!("{e:?}"))
                         .ok();
-                    if let Some(websocket) = &mut websocket {
-                        active_subscriptions.resend_subscriptions(websocket).await;
+                    if let Some(mut ws) = websocket {
+                        if let Err(e) = active_subscriptions.resend_subscriptions(&mut ws).await {
+                            error!("error resending subscriptions {e:?}");
+                            websocket = None;
+                        } else {
+                            websocket = Some(ws);
+                        }                        
                     }
                     continue;
                 };
