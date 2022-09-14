@@ -18,13 +18,13 @@ impl<'a> ListingStats<'a> {
                 .then_with(|| a.quantity.cmp(&b.quantity))
         });
         let total = listings.len();
-        listings.iter().enumerate().map(|(i, l)| {
+        let listings : Vec<_> = listings.iter().enumerate().map(|(i, l)| {
             let percentile = (i as f64 / total as f64 * 100.0) as i8;
-            ListingStat { percentile }
-        });
+            (ListingStat { percentile }, *l)
+        }).collect();
 
         Self {
-            listings: Vec::new(),
+            listings,
         }
     }
 }

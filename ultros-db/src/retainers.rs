@@ -43,7 +43,7 @@ impl UltrosDb {
             .filter(owned_retainers::Column::DiscordId.eq(discord_user as i64))
             .all(&self.db)
             .await?;
-        let retainer_ids = retainers.iter().map(|r| r.id);
+        let retainer_ids = retainers.iter().map(|r| r.retainer_id);
         let retainers = retainer::Entity::find()
             .filter(retainer::Column::Id.is_in(retainer_ids))
             .find_with_related(active_listing::Entity)
