@@ -1,4 +1,5 @@
 use anyhow::Result;
+use futures::future::join_all;
 use migration::Value;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use std::collections::HashSet;
@@ -165,5 +166,22 @@ impl UltrosDb {
 
         let added = added.into_iter().flatten().collect();
         Ok((added, removed? as i32))
+    }
+
+    /// Creates statistics for existing models and returns summaries for just these listings
+    pub async fn create_listing_stats(&self, listings: &[&active_listing::Model]) {
+        // add the items to a hash set to get unique keys
+        let items: HashSet<(i32, i32)> = listings
+            .into_iter()
+            .map(|listing| (listing.item_id, listing.world_id))
+            .collect();
+
+        let results = join_all(items.into_iter().map(|(item, world)| async move {
+            let listings = self
+                .get_listings_for_world(WorldId(world), ItemId(item))
+                .await;
+            listings
+        }))
+        .await;
     }
 }

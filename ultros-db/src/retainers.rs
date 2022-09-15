@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use migration::Value;
 use sea_orm::ActiveModelTrait;
 use sea_orm::ActiveValue;
@@ -6,6 +8,8 @@ use sea_orm::EntityTrait;
 use sea_orm::QueryFilter;
 use sea_orm::QuerySelect;
 use sea_orm::Set;
+use universalis::ItemId;
+use universalis::WorldId;
 
 use crate::entity::*;
 use crate::UltrosDb;
@@ -18,7 +22,8 @@ impl UltrosDb {
         discord_user_id: u64,
         username: String,
     ) -> Result<owned_retainers::Model> {
-        let user = self.get_or_create_discord_user(discord_user_id, username)
+        let user = self
+            .get_or_create_discord_user(discord_user_id, username)
             .await?;
         // validate that the discord user & retainer exist in the database
         let retainer = retainer::Entity::find_by_id(retainer_id)
@@ -35,7 +40,78 @@ impl UltrosDb {
         .await?)
     }
 
-    pub async fn get_retainers_for_discord_user(
+    /// Only returns the undercut items for retainers
+    pub async fn get_retainer_undercut_items(
+        &self,
+        discord_user: u64,
+    ) -> Result<Vec<(retainer::Model, Vec<(active_listing::Model, usize)>)>> {
+        // get the user's active listings from the retainers
+        let retainer_listings = self
+            .get_retainer_listings_for_discord_user(discord_user)
+            .await?;
+        let items_by_world: BTreeMap<i32, Vec<i32>> = retainer_listings
+            .iter()
+            .map(|(_, listings)| listings.iter().map(|m| (m.world_id, m.item_id)))
+            .flatten()
+            .fold(BTreeMap::new(), |mut map, (world_id, item_id)| {
+                map.entry(world_id).or_default().push(item_id);
+                map
+            });
+        // execute multiple queries for world item listings at once
+        let results = futures::future::join_all(
+            items_by_world
+                .into_iter()
+                .map(|(world, item_ids)| {
+                    item_ids.into_iter().map(move |i| async move {
+                        (
+                            world,
+                            i,
+                            self.get_listings_for_world(WorldId(world), ItemId(i)).await,
+                        )
+                    })
+                })
+                .flatten(),
+        )
+        .await;
+        // now filter the retainer queries down to just the ones that don't have our
+        Ok(retainer_listings
+            .into_iter()
+            .map(|(retainer, listings)| {
+                (
+                    retainer,
+                    listings
+                        .into_iter()
+                        .flat_map(|listing| {
+                            let l = &listing;
+                            // find the item in the main listings set that matches this item
+                            let number_of_listings_undercutting =
+                                results.iter().find_map(|(world_id, item_id, listings)| {
+                                    if let Ok(listings) = listings {
+                                        if l.world_id == *world_id && l.item_id == *item_id {
+                                            // now check if the given listing is UNDERCUTTING than our given listing
+                                            return Some(
+                                                listings
+                                                    .iter()
+                                                    .filter(|all_l| {
+                                                        all_l.price_per_unit < l.price_per_unit
+                                                            && (!l.hq || l.hq == all_l.hq)
+                                                    })
+                                                    .count(),
+                                            );
+                                        }
+                                    }
+                                    None
+                                });
+                            number_of_listings_undercutting.map(|num| (listing, num))
+                        })
+                        .filter(|(_, count)| *count > 0)
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>())
+    }
+
+    pub async fn get_retainer_listings_for_discord_user(
         &self,
         discord_user: u64,
     ) -> Result<Vec<(retainer::Model, Vec<active_listing::Model>)>> {
@@ -49,7 +125,7 @@ impl UltrosDb {
             .find_with_related(active_listing::Entity)
             .all(&self.db)
             .await?;
-
+        // TODO add heuristics for retainers
         Ok(retainers)
     }
 }

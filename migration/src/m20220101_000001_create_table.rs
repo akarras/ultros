@@ -9,7 +9,7 @@ struct TimeScaleInstall;
 impl StatementBuilder for TimeScaleInstall {
     fn build(&self, db_backend: &sea_orm::DbBackend) -> sea_orm::Statement {
         sea_orm::Statement::from_string(
-            db_backend.clone(),
+            *db_backend,
             "CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;".to_string(),
         )
     }
@@ -254,10 +254,7 @@ impl MigrationTrait for Migration {
                             .big_unsigned()
                             .not_null(),
                     )
-                    .col(
-                        ColumnDef::new(OwnedRetainers::CharacterId)
-                            .integer(),
-                    )
+                    .col(ColumnDef::new(OwnedRetainers::CharacterId).integer())
                     .to_owned(),
             )
             .await?;

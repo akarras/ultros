@@ -1,5 +1,5 @@
 use poise::{serenity_prelude::Color, CreateReply};
-use std::{fmt::Write, collections::HashSet};
+use std::{collections::HashSet, fmt::Write};
 use ultros_db::entity::active_listing;
 use xiv_gen::ItemId;
 
@@ -8,7 +8,7 @@ use super::{Context, Error};
 #[poise::command(
     slash_command,
     prefix_command,
-    subcommands("list", "add", "check_listings")
+    subcommands("list", "add", "check_listings", "check_undercuts")
 )]
 pub(crate) async fn retainer(ctx: Context<'_>) -> Result<(), Error> {
     ctx.say("Hello world").await?;
@@ -41,6 +41,41 @@ async fn autocomplete_retainer_id(
         })
 }
 
+#[poise::command(slash_command)]
+async fn check_undercuts(ctx: Context<'_>) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    let user_id = ctx.author().id.0;
+    let under_cut_items = ctx.data().db.get_retainer_undercut_items(user_id).await?;
+    let data = xiv_gen_db::decompress_data();
+    let item_db = data.get_items();
+    ctx.send(|r| {
+        for (retainer, items) in &under_cut_items {
+            r.embed(|e| {
+                let item = items.iter().fold(
+                    format!("```{:>30} {:>10} {:>5}\n", "name", "price", "behind"),
+                    |mut s, (listing, num_beating)| {
+                        let item_id = ItemId::new(listing.item_id);
+                        let item_name = item_db
+                            .get(&item_id)
+                            .map(|i| i.get_name())
+                            .unwrap_or_default();
+                        let _ = writeln!(
+                            s,
+                            "{:>30} {:>10} {:>5}",
+                            item_name, listing.price_per_unit, num_beating
+                        );
+                        s
+                    },
+                ) + "```";
+                e.title(&retainer.name).description(item)
+            });
+        }
+        r
+    })
+    .await?;
+    Ok(())
+}
+
 /// Returns a list of your retainers & all of their marketboard listings
 #[poise::command(slash_command)]
 async fn check_listings(ctx: Context<'_>) -> Result<(), Error> {
@@ -48,12 +83,24 @@ async fn check_listings(ctx: Context<'_>) -> Result<(), Error> {
     let retainers = ctx
         .data()
         .db
-        .get_retainers_for_discord_user(ctx.author().id.0)
+        .get_retainer_listings_for_discord_user(ctx.author().id.0)
         .await?;
     // get data on how well each of the listings for the retainer are performing
-    let item_and_world_ids : HashSet<(i32, i32)> = retainers.iter().map(|(_, listing)| listing.iter().map(|listing| (listing.item_id, listing.world_id))).flatten().collect();
+    let item_and_world_ids: HashSet<(i32, i32)> = retainers
+        .iter()
+        .map(|(_, listing)| {
+            listing
+                .iter()
+                .map(|listing| (listing.item_id, listing.world_id))
+        })
+        .flatten()
+        .collect();
     for (item, world) in item_and_world_ids {
-        let world_listings = ctx.data().db.get_listings_for_world(universalis::WorldId(world), universalis::ItemId(item)).await?;
+        let world_listings = ctx
+            .data()
+            .db
+            .get_listings_for_world(universalis::WorldId(world), universalis::ItemId(item))
+            .await?;
     }
     if retainers.is_empty() {
         ctx.say("No retainers found :(").await?;
@@ -61,40 +108,44 @@ async fn check_listings(ctx: Context<'_>) -> Result<(), Error> {
     let data = xiv_gen_db::decompress_data();
     let items = data.get_items();
     ctx.send(|r| {
-    for (retainer, listings) in retainers {
-        let mut msg_contents = String::new();
-        msg_contents += "```";
-        write!(msg_contents, "{:<30} {:>9} {:>4} {:>1}", "Item name", "price per item", "quantity", "hq");
-        for listing in listings {
-            let item_name = items
-                .get(&ItemId::new(listing.item_id))
-                .map(|i| i.get_name())
-                .unwrap_or_default();
-            let active_listing::Model {
-                id,
-                world_id,
-                item_id,
-                retainer_id,
-                price_per_unit,
-                quantity,
-                hq,
-                timestamp,
-            } = &listing;
-            let hq = if *hq { '✅' } else { ' ' };
-            let _ = writeln!(
+        for (retainer, listings) in retainers {
+            let mut msg_contents = String::new();
+            msg_contents += "```";
+            writeln!(
                 msg_contents,
-                "{item_name:<30} {price_per_unit:>9} {quantity:<4} {hq}"
+                "{:<30} {:>9} {:>4} {:>1}",
+                "Item name", "price per item", "quantity", "hq"
             );
+            for listing in listings {
+                let item_name = items
+                    .get(&ItemId::new(listing.item_id))
+                    .map(|i| i.get_name())
+                    .unwrap_or_default();
+                let active_listing::Model {
+                    id,
+                    world_id,
+                    item_id,
+                    retainer_id,
+                    price_per_unit,
+                    quantity,
+                    hq,
+                    timestamp,
+                } = &listing;
+                let hq = if *hq { '✅' } else { ' ' };
+                let _ = writeln!(
+                    msg_contents,
+                    "{item_name:<30} {price_per_unit:>9} {quantity:<4} {hq}"
+                );
+            }
+            msg_contents += "```";
+
+            r.embed(|e| {
+                e.title(retainer.name)
+                    .description(msg_contents)
+                    .color(Color::from_rgb(123, 0, 123))
+            });
         }
-        msg_contents += "```";
-        
-        r.embed(|e| {
-            e.title(retainer.name)
-                .description(msg_contents)
-                .color(Color::from_rgb(123, 0, 123))
-        });
-    }
-    r
+        r
     })
     .await?;
     Ok(())

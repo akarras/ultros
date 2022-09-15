@@ -2,38 +2,33 @@ use crate::entity::active_listing::Model as Listing;
 use std::iter::FromIterator;
 
 #[derive(Debug)]
-struct ListingStat {
-    percentile: i8,
+pub struct ListingStat {
+    /// Numeric percentile representation. Ranges from 0-99
+    pub percentile: i8,
 }
 
-struct ListingStats<'a> {
-    listings: Vec<(ListingStat, &'a Listing)>,
+pub struct ListingStats<'a> {
+    pub listings: Vec<(ListingStat, &'a Listing)>,
 }
 
 impl<'a> ListingStats<'a> {
-    fn calculate_stats(listings: &mut [&'a Listing]) -> Self {
+    pub fn calculate_stats(listings: &mut [&'a Listing]) -> Self {
         listings.sort_by(|a, b| {
             a.price_per_unit
                 .cmp(&b.price_per_unit)
                 .then_with(|| a.quantity.cmp(&b.quantity))
         });
         let total = listings.len();
-        let listings : Vec<_> = listings.iter().enumerate().map(|(i, l)| {
-            let percentile = (i as f64 / total as f64 * 100.0) as i8;
-            (ListingStat { percentile }, *l)
-        }).collect();
+        let listings: Vec<_> = listings
+            .iter()
+            .enumerate()
+            .map(|(i, l)| {
+                let percentile = (i as f64 / total as f64 * 100.0) as i8;
+                (ListingStat { percentile }, *l)
+            })
+            .collect();
 
-        Self {
-            listings,
-        }
-    }
-}
-
-impl<'a> FromIterator<&'a Listing> for ListingStats<'a> {
-    fn from_iter<T: IntoIterator<Item = &'a Listing>>(iter: T) -> Self {
-        Self {
-            listings: Vec::new(),
-        }
+        Self { listings }
     }
 }
 
