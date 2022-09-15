@@ -41,6 +41,7 @@ async fn autocomplete_retainer_id(
         })
 }
 
+/// Shows only listings where your retainers listing has been undercut by someone else
 #[poise::command(slash_command)]
 async fn check_undercuts(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
