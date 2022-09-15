@@ -57,17 +57,20 @@ impl WebsocketClient {
 
 /// Internally keeps track of the state of what subscriptions have been sent
 struct SubscriptionTracker {
-    subscriptions: HashSet<Channel>
+    subscriptions: HashSet<Channel>,
 }
 
 impl SubscriptionTracker {
-    async fn resend_subscriptions(&self, sender: &mut WebSocketStream<ConnectStream>) -> Result<(), crate::Error> {
+    async fn resend_subscriptions(
+        &self,
+        sender: &mut WebSocketStream<ConnectStream>,
+    ) -> Result<(), crate::Error> {
         for channel in &self.subscriptions {
             let bson = bson::to_vec(&WebSocketSubscriptionUpdate {
                 event: SubscribeMode::Subscribe,
                 channel: channel.clone(),
             })?;
-            
+
             sender.send(Message::Binary(bson)).await?;
         }
         Ok(())
@@ -107,7 +110,9 @@ impl WebsocketClient {
         });
         tokio::spawn(async move {
             loop {
-                let mut active_subscriptions = SubscriptionTracker { subscriptions: HashSet::new() };
+                let mut active_subscriptions = SubscriptionTracker {
+                    subscriptions: HashSet::new(),
+                };
                 if let Some(ws) = websocket {
                     if ws.is_terminated() {
                         websocket = None;
@@ -132,7 +137,7 @@ impl WebsocketClient {
                             websocket = None;
                         } else {
                             websocket = Some(ws);
-                        }                        
+                        }
                     }
                     continue;
                 };
@@ -151,8 +156,12 @@ impl WebsocketClient {
                                 // keep track of the subscriptions so if the socket closes we can update accordingly
                                 let WebSocketSubscriptionUpdate { event, channel } = s;
                                 match event {
-                                    SubscribeMode::Subscribe => active_subscriptions.subscribe(channel),
-                                    SubscribeMode::Unsubscribe => active_subscriptions.unsubscribe(&channel),
+                                    SubscribeMode::Subscribe => {
+                                        active_subscriptions.subscribe(channel)
+                                    }
+                                    SubscribeMode::Unsubscribe => {
+                                        active_subscriptions.unsubscribe(&channel)
+                                    }
                                 }
                             }
                             SocketTx::Ping => {

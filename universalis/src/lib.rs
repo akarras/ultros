@@ -251,6 +251,12 @@ pub struct HistorySingleView {
     pub hq_sale_velocity: f64,
 }
 
+impl Default for UniversalisClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl UniversalisClient {
     const UNIVERSALIS_BASE_URL: &'static str = "https://universalis.app/api/v2";
 

@@ -36,10 +36,10 @@ async fn main() {
     //     Some(sargatanas.id),
     // )
     // .await;
-    let receiver = ws.get_receiver();
+    // let receiver = ws.get_receiver();
     let mut last_message_received = Instant::now();
     loop {
-        if let Some(next) = receiver.recv().await {
+        if let Some(next) = ws {
             if let universalis::websocket::SocketRx::Event(Ok(WSMessage::ListingsAdd {
                 item,
                 world,
