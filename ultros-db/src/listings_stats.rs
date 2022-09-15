@@ -1,5 +1,4 @@
 use crate::entity::active_listing::Model as Listing;
-use std::iter::FromIterator;
 
 #[derive(Debug)]
 pub struct ListingStat {

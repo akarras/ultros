@@ -4,13 +4,12 @@ mod web;
 use crate::web::WebState;
 use anyhow::Result;
 use discord::start_discord;
-use std::sync::Arc;
 use tracing::{error, info};
 use ultros_db::UltrosDb;
-use universalis::websocket::event_types::{EventChannel, SaleView, SubscribeMode, WSMessage};
+use universalis::websocket::event_types::{EventChannel, SubscribeMode, WSMessage};
 use universalis::websocket::SocketRx;
 use universalis::{
-    DataCentersView, ItemId, UniversalisClient, WebsocketClient, WorldId, WorldsView,
+    DataCentersView, UniversalisClient, WebsocketClient, WorldsView,
 };
 
 async fn run_socket_listener(db: UltrosDb) {
@@ -64,7 +63,7 @@ async fn run_socket_listener(db: UltrosDb) {
                         }
                     }
                     SocketRx::Event(Ok(WSMessage::SalesRemove { item, world, sales })) => {
-                        info!("sales removed {sales:?}");
+                        info!("sales removed {item:?} {world:?} {sales:?}");
                     }
                     SocketRx::Event(Err(e)) => {
                         eprintln!("Error {e:?}");
@@ -102,9 +101,7 @@ async fn main() -> Result<()> {
     // begin listening to universalis events
     tokio::spawn(run_socket_listener(db.clone()));
     tokio::spawn(start_discord(db.clone()));
-    let web_state = WebState {
-        db,
-    };
+    let web_state = WebState { db };
     web::start_web(web_state).await;
     Ok(())
 }

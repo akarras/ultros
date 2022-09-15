@@ -1,12 +1,11 @@
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
-use migration::Value;
 use sea_orm::ActiveModelTrait;
 use sea_orm::ActiveValue;
 use sea_orm::ColumnTrait;
 use sea_orm::EntityTrait;
 use sea_orm::QueryFilter;
-use sea_orm::QuerySelect;
 use sea_orm::Set;
 use universalis::ItemId;
 use universalis::WorldId;
@@ -14,6 +13,12 @@ use universalis::WorldId;
 use crate::entity::*;
 use crate::UltrosDb;
 use anyhow::Result;
+
+#[derive(Debug)]
+pub struct ListingUndercutData {
+    pub number_behind: i32,
+    pub price_to_beat: i32,
+}
 
 impl UltrosDb {
     pub async fn register_retainer(
@@ -44,11 +49,17 @@ impl UltrosDb {
     pub async fn get_retainer_undercut_items(
         &self,
         discord_user: u64,
-    ) -> Result<Vec<(retainer::Model, Vec<(active_listing::Model, usize)>)>> {
+    ) -> Result<
+        Vec<(
+            retainer::Model,
+            Vec<(active_listing::Model, ListingUndercutData)>,
+        )>,
+    > {
         // get the user's active listings from the retainers
         let retainer_listings = self
             .get_retainer_listings_for_discord_user(discord_user)
             .await?;
+        let retainer_ids: BTreeSet<_> = retainer_listings.iter().map(|(i, _)| i.id).collect();
         let items_by_world: BTreeMap<i32, Vec<i32>> = retainer_listings
             .iter()
             .flat_map(|(_, listings)| listings.iter().map(|m| (m.world_id, m.item_id)))
@@ -86,24 +97,35 @@ impl UltrosDb {
                             let number_of_listings_undercutting =
                                 results.iter().find_map(|(world_id, item_id, listings)| {
                                     if let Ok(listings) = listings {
+                                        if listings.is_empty() {
+                                            return None;
+                                        }
                                         if l.world_id == *world_id && l.item_id == *item_id {
                                             // now check if the given listing is UNDERCUTTING than our given listing
-                                            return Some(
-                                                listings
+                                            let listings_in_range: Vec<_> = listings
+                                                .iter()
+                                                .filter(|all_l| {
+                                                    all_l.price_per_unit < l.price_per_unit
+                                                        && (!l.hq || l.hq == all_l.hq)
+                                                        // filter our own retainer listings
+                                                        && !retainer_ids
+                                                            .contains(&all_l.retainer_id)
+                                                })
+                                                .collect();
+                                            return Some(ListingUndercutData {
+                                                number_behind: listings_in_range.len() as i32,
+                                                price_to_beat: listings_in_range
                                                     .iter()
-                                                    .filter(|all_l| {
-                                                        all_l.price_per_unit < l.price_per_unit
-                                                            && (!l.hq || l.hq == all_l.hq)
-                                                    })
-                                                    .count(),
-                                            );
+                                                    .map(|x| x.price_per_unit)
+                                                    .min()
+                                                    .unwrap_or_default(),
+                                            });
                                         }
                                     }
                                     None
                                 });
                             number_of_listings_undercutting.map(|num| (listing, num))
                         })
-                        .filter(|(_, count)| *count > 0)
                         .collect::<Vec<_>>(),
                 )
             })

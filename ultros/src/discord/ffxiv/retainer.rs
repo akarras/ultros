@@ -51,25 +51,36 @@ async fn check_undercuts(ctx: Context<'_>) -> Result<(), Error> {
     let item_db = &data.items;
     ctx.send(|r| {
         for (retainer, items) in &under_cut_items {
-            r.embed(|e| {
-                let item = items.iter().fold(
-                    format!("```{:>30} {:>10} {:>5}\n", "name", "price", "behind"),
-                    |mut s, (listing, num_beating)| {
-                        let item_id = ItemId(listing.item_id);
-                        let item_name = item_db
-                            .get(&item_id)
-                            .map(|i| i.name.as_str())
-                            .unwrap_or_default();
-                        let _ = writeln!(
-                            s,
-                            "{:>30} {:>10} {:>5}",
-                            item_name, listing.price_per_unit, num_beating
-                        );
-                        s
-                    },
-                ) + "```";
-                e.title(&retainer.name).description(item)
-            });
+            if items.len() > 0 {
+                r.embed(|e| {
+                    let item = items.iter().fold(
+                        format!(
+                            "```{:>30} {:>10}->{:>10} {:>5}\n",
+                            "name", "price", "target price", "behind"
+                        ),
+                        |mut s, (listing, undercut)| {
+                            let item_id = ItemId(listing.item_id);
+                            let item_name = item_db
+                                .get(&item_id)
+                                .map(|i| i.name.as_str())
+                                .unwrap_or_default();
+                            let _ = writeln!(
+                                s,
+                                "{:>30} {:>10}->{:>10} {:>5}",
+                                item_name,
+                                listing.price_per_unit,
+                                undercut.price_to_beat - 1,
+                                undercut.number_behind
+                            );
+                            s
+                        },
+                    ) + "```";
+                    e.title(&retainer.name).description(item)
+                });
+            }
+        }
+        if r.embeds.is_empty() {
+            r.content("No undercuts found!");
         }
         r
     })
@@ -124,12 +135,10 @@ async fn check_listings(ctx: Context<'_>) -> Result<(), Error> {
                 let active_listing::Model {
                     id,
                     world_id,
-                    item_id,
-                    retainer_id,
                     price_per_unit,
                     quantity,
                     hq,
-                    timestamp,
+                    ..
                 } = &listing;
                 let hq = if *hq { '✅' } else { ' ' };
                 let _ = writeln!(

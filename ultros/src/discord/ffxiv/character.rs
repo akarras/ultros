@@ -55,7 +55,7 @@ pub(crate) async fn register(
         // msg.data.values[0]
         // TODO lookup what value was selected from the list of interactions
     } else {
-        let context = ctx.say("No choice selected").await?;
+        ctx.say("No choice selected").await?;
         return Ok(());
     };
 

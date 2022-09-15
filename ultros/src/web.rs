@@ -5,10 +5,8 @@ use axum::routing::get;
 use axum::Router;
 use std::fmt::Write;
 use std::net::SocketAddr;
-use std::sync::Arc;
-use tracing::error;
 use ultros_db::UltrosDb;
-use universalis::{DataCentersView, ItemId, WorldId, WorldsView};
+use universalis::{ItemId, WorldId};
 use xiv_gen::ItemId as XivDBItemId;
 
 // basic handler that responds with a static string

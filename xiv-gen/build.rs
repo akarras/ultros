@@ -7,18 +7,16 @@ use regex::Regex;
 use std::collections::HashSet;
 use std::env;
 use std::fmt::{Display, Formatter};
-use std::fs::{write, DirEntry};
+use std::fs::{write};
 
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 
 #[derive(Debug)]
 struct Args {
-    /// Number of times to greet
+    // Whether to descend into subdirectories in the ffxiv-data-mining table
     recurse_directories: bool,
 
-    /// Number of times to greet
-    bin_code_generation: bool,
+    // bin_code_generation: bool,
 
     /// List filter
     list_filter: Vec<String>,
@@ -498,7 +496,7 @@ fn main() {
 
     let mut args: Args = Args {
         recurse_directories: false,
-        bin_code_generation: true,
+        // bin_code_generation: true,
         list_filter,
         db: Struct::new("Data"),
         db_impl: Impl::new("Data"),
