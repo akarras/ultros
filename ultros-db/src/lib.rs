@@ -358,7 +358,7 @@ impl UltrosDb {
         let filter = if let Some(filter) = iter.clone().reduce(|a, b| a.or(b)) {
             filter
         } else {
-            iter.next().unwrap().clone()
+            iter.next().unwrap()
         };
         let retainers = REntity::find().filter(filter).all(&self.db).await?;
         if retainers.is_empty() {
@@ -381,7 +381,7 @@ impl UltrosDb {
         let filter = retainer_iter.clone().reduce(|a, b| a.or(b)).unwrap_or(
             retainer_iter
                 .next()
-                .ok_or(anyhow::Error::msg("No retainers"))?,
+                .ok_or_else(|| anyhow::Error::msg("No retainers"))?,
         );
         let count = Entity::delete_many().filter(filter).exec(&self.db).await?;
         Ok(count.rows_affected)
@@ -408,7 +408,7 @@ impl UltrosDb {
             .iter()
             .map(|name| FFColumn::Name.eq(name.as_str()))
             .reduce(|inc, out| inc.or(out))
-            .ok_or(anyhow::Error::msg("No characters inserted?"))?;
+            .ok_or_else(|| anyhow::Error::msg("No characters inserted?"))?;
         let mut characters = unknown_final_fantasy_character::Entity::find()
             .filter(filter_expression)
             .all(&self.db)
@@ -437,7 +437,7 @@ impl UltrosDb {
                     .find(|character| character.name == sale.buyer_name)
                     .map(|c| c.id)
                     .expect("Should know all characters");
-                let value = Column::WorldId
+                Column::WorldId
                     .eq(world_id.0)
                     .and(Column::SoldDate.eq(sale.timestamp))
                     .and(
@@ -447,8 +447,7 @@ impl UltrosDb {
                     )
                     .and(Column::PricePerItem.eq(sale.price_per_unit))
                     .and(Column::Quantity.eq(sale.quantity))
-                    .and(Column::Hq.eq(sale.hq));
-                value
+                    .and(Column::Hq.eq(sale.hq))
             })
             .reduce(|a, b| a.or(b));
         if let Some(filter) = filter {

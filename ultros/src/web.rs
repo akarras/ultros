@@ -57,7 +57,7 @@ async fn get_retainer_listings(
     })?;
 
     let game_data = xiv_gen_db::decompress_data();
-    let items = game_data.get_items();
+    let items = &game_data.items;
     if let Some((retainer, listings)) = data {
         let mut data = format!("<h1>{}</h1>", retainer.name);
         // get all listings from the retainer and calculate heuristics
@@ -84,8 +84,8 @@ async fn get_retainer_listings(
         );
         for listing in listings {
             let item = items
-                .get(&XivDBItemId::new(listing.item_id))
-                .map(|m| m.get_name())
+                .get(&XivDBItemId(listing.item_id))
+                .map(|m| m.name.as_str())
                 .unwrap_or_default();
             // get the the ranking of this listing for the world
             let market_position = multiple_listings
@@ -153,8 +153,6 @@ async fn world_item_listings(
 #[derive(Clone, Debug)]
 pub(crate) struct WebState {
     pub(crate) db: UltrosDb,
-    pub(crate) datacenters: Arc<DataCentersView>,
-    pub(crate) worlds: Arc<WorldsView>,
 }
 
 impl FromRef<WebState> for UltrosDb {

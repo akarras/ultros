@@ -1,5 +1,5 @@
 use clap::Parser;
-use codegen::{Field, Function, Impl, Module, Scope, Struct};
+use codegen_rs::{Field, Function, Impl, Module, Scope, Struct};
 
 use heck::{ToSnakeCase, ToUpperCamelCase};
 use lazy_static::lazy_static;
@@ -280,10 +280,7 @@ fn create_struct(
                 // regex: check is bit offset
                 static ref BIT: Regex = Regex::new(r#"^bit(&[0-9]+|)$"#).unwrap();
             }
-            if BIT.is_match(field_value) {
-                (line_one, "bool".to_string())
-            } else if field_value == "sbyte" {
-                // TODO add serde attribute for this
+            if BIT.is_match(field_value) || field_value == "sbyte" {
                 (line_one, "bool".to_string())
             } else if INT.is_match(field_value) {
                 let mut line_two = field_value.replace("int", "");
@@ -295,20 +292,15 @@ fn create_struct(
 
                 if line_one == "key_id" {
                     let mut key = Struct::new(&key_name);
-                    apply_derives(&mut key).tuple_field(&line_two).vis("pub").derive("Hash").derive("Eq").derive("PartialEq").derive("Copy");
+                    apply_derives(&mut key).derive("Hash").derive("Eq").derive("PartialEq").derive("Copy").vis("pub").tuple_field(&line_two).vis("pub");
                     scope.push_struct(key);
-                    let mut key_impl = Impl::new(&key_name);
-                    key_impl.new_fn("new").arg("value", &line_two).line("Self(value)".to_string()).ret("Self").vis("pub");
-                    key_impl.new_fn("inner").arg_ref_self().line("self.0").ret(&line_two).vis("pub");
-                    scope.push_impl(key_impl);
+
                     line_two = key_name.clone();
                     let db_field_name = format!("{}s", csv_name.to_snake_case());
                     let db_field_key = format!("HashMap<{key_name}, {csv_name}>");
                     args.db
-                        .field(&db_field_name, &db_field_key);
-                    args.db_impl.new_fn(&format!("set_{db_field_name}")).vis("pub").arg_mut_self().line(format!("self.{db_field_name} = arg;")).arg("arg", &db_field_key);
-                    args.db_impl.new_fn(&format!("get_{db_field_name}")).vis("pub").arg_ref_self().line(format!("&self.{db_field_name}")).ret(&format!("&{db_field_key}"));
-                    args.read_data.line(format!("data.set_{db_field_name}(read_csv::<{csv_name}>(r#\"{path}\"#).into_iter().map(|m| (m.get_key_id(), m)).collect());"));
+                        .field(&db_field_name, &db_field_key).vis("pub");
+                    args.read_data.line(format!("data.{db_field_name} = read_csv::<{csv_name}>(r#\"{path}\"#).into_iter().map(|m| (m.key_id, m)).collect();"));
                     local_data.known_structs.insert(key_name.clone());
                 }
                 (line_one, line_two)
@@ -341,14 +333,14 @@ fn create_struct(
         })
         .collect();
     for (field_name, field_value) in &fields {
-        let mut function = Function::new(&format!("get_{}", field_name.replace('#', "")));
-        function
-            .vis("pub")
-            .arg_ref_self()
-            .line(format!("self.{field_name}.clone()"))
-            .ret(field_value);
-        i.push_fn(function);
-        let mut field = Field::new(field_name, field_value);
+        //let mut function = Function::new(&format!("get_{}", field_name.replace('#', "")));
+        //function
+        //    .vis("pub")
+        //    .arg_ref_self()
+        //    .line(format!("self.{field_name}.clone()"))
+        //    .ret(field_value);
+        //i.push_fn(function);
+        let mut field = Field::new(field_name, field_value).vis("pub").to_owned();
         if field_value == "i64" {
             field.annotation(vec![
                 "#[serde(deserialize_with = \"deserialize_i64_from_u8_array\")]",

@@ -689,10 +689,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "codegen"
-version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34c59e8a9b988977ec3bd61ab380cf1167048817ecd3d6999fac03657f85a609"
+name = "codegen-rs"
+version = "0.1.0"
+source = "git+https://github.com/sayanarijit/codegen-rs#f081d6e109adfca1e40f07c61ee59d0b6babf337"
 dependencies = [
  "indexmap",
 ]
@@ -5300,7 +5299,7 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "clap",
- "codegen",
+ "codegen-rs",
  "csv",
  "heck 0.4.0",
  "lazy_static",

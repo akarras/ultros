@@ -51,8 +51,7 @@ impl UltrosDb {
             .await?;
         let items_by_world: BTreeMap<i32, Vec<i32>> = retainer_listings
             .iter()
-            .map(|(_, listings)| listings.iter().map(|m| (m.world_id, m.item_id)))
-            .flatten()
+            .flat_map(|(_, listings)| listings.iter().map(|m| (m.world_id, m.item_id)))
             .fold(BTreeMap::new(), |mut map, (world_id, item_id)| {
                 map.entry(world_id).or_default().push(item_id);
                 map

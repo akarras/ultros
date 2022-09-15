@@ -99,15 +99,11 @@ async fn main() -> Result<()> {
     let worlds = worlds?;
     let datacenters = datacenters?;
     let db = init_db(&worlds, &datacenters).await.unwrap();
-    let worlds = Arc::new(worlds);
-    let datacenters = Arc::new(datacenters);
     // begin listening to universalis events
     tokio::spawn(run_socket_listener(db.clone()));
     tokio::spawn(start_discord(db.clone()));
     let web_state = WebState {
         db,
-        worlds,
-        datacenters,
     };
     web::start_web(web_state).await;
     Ok(())

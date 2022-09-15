@@ -48,17 +48,17 @@ async fn check_undercuts(ctx: Context<'_>) -> Result<(), Error> {
     let user_id = ctx.author().id.0;
     let under_cut_items = ctx.data().db.get_retainer_undercut_items(user_id).await?;
     let data = xiv_gen_db::decompress_data();
-    let item_db = data.get_items();
+    let item_db = &data.items;
     ctx.send(|r| {
         for (retainer, items) in &under_cut_items {
             r.embed(|e| {
                 let item = items.iter().fold(
                     format!("```{:>30} {:>10} {:>5}\n", "name", "price", "behind"),
                     |mut s, (listing, num_beating)| {
-                        let item_id = ItemId::new(listing.item_id);
+                        let item_id = ItemId(listing.item_id);
                         let item_name = item_db
                             .get(&item_id)
-                            .map(|i| i.get_name())
+                            .map(|i| i.name.as_str())
                             .unwrap_or_default();
                         let _ = writeln!(
                             s,
@@ -89,12 +89,11 @@ async fn check_listings(ctx: Context<'_>) -> Result<(), Error> {
     // get data on how well each of the listings for the retainer are performing
     let item_and_world_ids: HashSet<(i32, i32)> = retainers
         .iter()
-        .map(|(_, listing)| {
+        .flat_map(|(_, listing)| {
             listing
                 .iter()
                 .map(|listing| (listing.item_id, listing.world_id))
         })
-        .flatten()
         .collect();
     for (item, world) in item_and_world_ids {
         let world_listings = ctx
@@ -107,7 +106,7 @@ async fn check_listings(ctx: Context<'_>) -> Result<(), Error> {
         ctx.say("No retainers found :(").await?;
     }
     let data = xiv_gen_db::decompress_data();
-    let items = data.get_items();
+    let items = &data.items;
     ctx.send(|r| {
         for (retainer, listings) in retainers {
             let mut msg_contents = String::new();
@@ -119,8 +118,8 @@ async fn check_listings(ctx: Context<'_>) -> Result<(), Error> {
             );
             for listing in listings {
                 let item_name = items
-                    .get(&ItemId::new(listing.item_id))
-                    .map(|i| i.get_name())
+                    .get(&ItemId(listing.item_id))
+                    .map(|i| i.name.as_str())
                     .unwrap_or_default();
                 let active_listing::Model {
                     id,
