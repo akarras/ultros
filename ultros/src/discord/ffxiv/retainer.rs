@@ -69,7 +69,7 @@ async fn add_undercut_alert(
         .event_senders
         .retainer_undercut
         .send(EventType::Add(Arc::new(alert)));
-    ctx.say(&format!("Now sending alerts to this channel anytime someone undercuts your retainer by {margin_percent}%"));
+    ctx.say(&format!("Now sending alerts to this channel anytime someone undercuts your retainer by {margin_percent}%")).await?;
     Ok(())
 }
 
