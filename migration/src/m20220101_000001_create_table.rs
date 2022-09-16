@@ -716,10 +716,11 @@ enum Alert {
 }
 
 #[derive(Iden)]
-enum AlertRetainerUndercut {
+pub(crate) enum AlertRetainerUndercut {
     Table,
     Id,
     AlertId,
+    // dropped in m20220916_011325_drop_retainer_id
     RetainerId,
     MarginPercent,
 }

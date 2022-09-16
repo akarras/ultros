@@ -1,18 +1,21 @@
 mod discord;
+pub(crate) mod event;
 mod web;
+
+use std::sync::Arc;
 
 use crate::web::WebState;
 use anyhow::Result;
 use discord::start_discord;
+use event::{create_event_busses, EventProducer, EventType};
 use tracing::{error, info};
+use ultros_db::entity::active_listing;
 use ultros_db::UltrosDb;
 use universalis::websocket::event_types::{EventChannel, SubscribeMode, WSMessage};
 use universalis::websocket::SocketRx;
-use universalis::{
-    DataCentersView, UniversalisClient, WebsocketClient, WorldsView,
-};
+use universalis::{DataCentersView, UniversalisClient, WebsocketClient, WorldsView};
 
-async fn run_socket_listener(db: UltrosDb) {
+async fn run_socket_listener(db: UltrosDb, listings_tx: EventProducer<Vec<active_listing::Model>>) {
     let mut socket = WebsocketClient::connect().await;
     socket
         .subscribe(SubscribeMode::Subscribe, EventChannel::ListingsAdd, None)
@@ -28,6 +31,8 @@ async fn run_socket_listener(db: UltrosDb) {
         if let Some(msg) = receiver.recv().await {
             // create a new task for each message
             let db = db.clone();
+            // hopefully this is cheap to clone
+            let listings_tx = listings_tx.clone();
             tokio::spawn(async move {
                 let db = &db;
                 match msg {
@@ -38,10 +43,8 @@ async fn run_socket_listener(db: UltrosDb) {
                     })) => {
                         match db.update_listings(listings.clone(), item, world).await {
                             Ok((listings, num_removed)) => {
-                                for listing in listings {
-                                    info!("Listing added: {item:?} {world:?} {listing:?}");
-                                }
-                                info!("removed {num_removed}");
+                                let listings = Arc::new(listings);
+                                let _ = listings_tx.send(EventType::Add(listings));
                             },
                             Err(e) => error!("Listing add failed {e} {listings:?}")
                         }
@@ -98,9 +101,10 @@ async fn main() -> Result<()> {
     let worlds = worlds?;
     let datacenters = datacenters?;
     let db = init_db(&worlds, &datacenters).await.unwrap();
+    let (senders, receivers) = create_event_busses();
     // begin listening to universalis events
-    tokio::spawn(run_socket_listener(db.clone()));
-    tokio::spawn(start_discord(db.clone()));
+    tokio::spawn(run_socket_listener(db.clone(), senders.listings.clone()));
+    tokio::spawn(start_discord(db.clone(), senders, receivers));
     let web_state = WebState { db };
     web::start_web(web_state).await;
     Ok(())

@@ -10,7 +10,6 @@ pub struct Model {
     pub id: i32,
     pub alert_id: i32,
     pub margin_percent: i32,
-    pub retainer_id: i32,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -23,25 +22,11 @@ pub enum Relation {
         on_delete = "Cascade"
     )]
     Alert,
-    #[sea_orm(
-        belongs_to = "super::retainer::Entity",
-        from = "Column::RetainerId",
-        to = "super::retainer::Column::Id",
-        on_update = "Cascade",
-        on_delete = "Cascade"
-    )]
-    Retainer,
 }
 
 impl Related<super::alert::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Alert.def()
-    }
-}
-
-impl Related<super::retainer::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::Retainer.def()
     }
 }
 

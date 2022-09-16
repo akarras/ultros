@@ -4,6 +4,10 @@ use chrono::Local;
 use poise::{builtins::HelpConfiguration, serenity_prelude as serenity};
 use ultros_db::UltrosDb;
 
+use crate::event::{EventReceivers, EventSenders};
+
+use self::ffxiv::alerts::AlertManager;
+
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Context<'a> = poise::Context<'a, Data, Error>;
 // User data, which is stored and accessible in all command invocations
@@ -11,6 +15,8 @@ type Context<'a> = poise::Context<'a, Data, Error>;
 pub(crate) struct Data {
     db: UltrosDb,
     lodestone_client: reqwest::Client,
+    event_senders: EventSenders,
+    event_receivers: EventReceivers,
 }
 
 #[poise::command(slash_command, prefix_command)]
@@ -55,7 +61,11 @@ async fn register(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-pub(crate) async fn start_discord(db: UltrosDb) {
+pub(crate) async fn start_discord(
+    db: UltrosDb,
+    event_senders: EventSenders,
+    event_receivers: EventReceivers,
+) {
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
             commands: vec![age(), register(), ping(), ffxiv::ffxiv()],
@@ -63,11 +73,30 @@ pub(crate) async fn start_discord(db: UltrosDb) {
         })
         .token(std::env::var("DISCORD_TOKEN").expect("missing DISCORD_TOKEN"))
         .intents(serenity::GatewayIntents::non_privileged())
-        .user_data_setup(move |_ctx, _ready, _framework| {
+        .user_data_setup(move |ctx, _ready, _framework| {
             Box::pin(async move {
+                // start the alert monitor
+                let (item_events, alert_events) = (
+                    (
+                        event_receivers.retainers.resubscribe(),
+                        event_receivers.listings.resubscribe(),
+                    ),
+                    (
+                        event_receivers.alerts.resubscribe(),
+                        event_receivers.retainer_undercut.resubscribe(),
+                    ),
+                );
+                tokio::spawn(AlertManager::start_manager(
+                    db.clone(),
+                    item_events,
+                    alert_events,
+                    ctx.clone(),
+                ));
                 Ok(Data {
                     db,
                     lodestone_client: reqwest::Client::new(),
+                    event_senders,
+                    event_receivers,
                 })
             })
         });

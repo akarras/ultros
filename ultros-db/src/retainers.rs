@@ -16,7 +16,7 @@ use anyhow::Result;
 
 #[derive(Debug)]
 pub struct ListingUndercutData {
-    pub number_behind: i32,
+    pub number_behind: usize,
     pub price_to_beat: i32,
 }
 
@@ -113,7 +113,7 @@ impl UltrosDb {
                                                 })
                                                 .collect();
                                             return Some(ListingUndercutData {
-                                                number_behind: listings_in_range.len() as i32,
+                                                number_behind: listings_in_range.len(),
                                                 price_to_beat: listings_in_range
                                                     .iter()
                                                     .map(|x| x.price_per_unit)
@@ -126,6 +126,7 @@ impl UltrosDb {
                                 });
                             number_of_listings_undercutting.map(|num| (listing, num))
                         })
+                        .filter(|(l, data)| data.number_behind > 0)
                         .collect::<Vec<_>>(),
                 )
             })

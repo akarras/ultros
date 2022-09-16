@@ -7,7 +7,7 @@ use regex::Regex;
 use std::collections::HashSet;
 use std::env;
 use std::fmt::{Display, Formatter};
-use std::fs::{write};
+use std::fs::write;
 
 use std::path::{Path, PathBuf};
 
@@ -17,7 +17,6 @@ struct Args {
     recurse_directories: bool,
 
     // bin_code_generation: bool,
-
     /// List filter
     list_filter: Vec<String>,
 

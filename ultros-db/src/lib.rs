@@ -1,3 +1,4 @@
+mod alerts;
 mod discord;
 pub mod entity;
 mod ffxiv_character;
@@ -214,25 +215,6 @@ impl UltrosDb {
         let model = ActiveModel {
             alert_id: Set(alert.id),
             channel_id: Set(discord_channel),
-            ..Default::default()
-        }
-        .insert(&self.db)
-        .await?;
-        Ok(model)
-    }
-
-    #[instrument(skip(self))]
-    pub async fn add_retainer_alert(
-        &self,
-        alert: &alert::Model,
-        retainer: &retainer::Model,
-        margin_percent: i32,
-    ) -> Result<alert_retainer_undercut::Model> {
-        use alert_retainer_undercut::*;
-        let model = ActiveModel {
-            alert_id: Set(alert.id),
-            margin_percent: Set(margin_percent),
-            retainer_id: Set(retainer.id),
             ..Default::default()
         }
         .insert(&self.db)

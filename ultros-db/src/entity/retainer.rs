@@ -33,8 +33,6 @@ pub enum Relation {
     World,
     #[sea_orm(has_many = "super::active_listing::Entity")]
     ActiveListing,
-    #[sea_orm(has_many = "super::alert_retainer_undercut::Entity")]
-    AlertRetainerUndercut,
     #[sea_orm(has_many = "super::owned_retainers::Entity")]
     OwnedRetainers,
 }
@@ -54,12 +52,6 @@ impl Related<super::world::Entity> for Entity {
 impl Related<super::active_listing::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::ActiveListing.def()
-    }
-}
-
-impl Related<super::alert_retainer_undercut::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::AlertRetainerUndercut.def()
     }
 }
 

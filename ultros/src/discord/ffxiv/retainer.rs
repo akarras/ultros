@@ -1,4 +1,6 @@
+use crate::EventType;
 use poise::{serenity_prelude::Color, CreateReply};
+use std::sync::Arc;
 use std::{collections::HashSet, fmt::Write};
 use ultros_db::entity::active_listing;
 use xiv_gen::ItemId;
@@ -8,7 +10,13 @@ use super::{Context, Error};
 #[poise::command(
     slash_command,
     prefix_command,
-    subcommands("list", "add", "check_listings", "check_undercuts")
+    subcommands(
+        "list",
+        "add",
+        "check_listings",
+        "check_undercuts",
+        "add_undercut_alert"
+    )
 )]
 pub(crate) async fn retainer(ctx: Context<'_>) -> Result<(), Error> {
     ctx.say("Hello world").await?;
@@ -41,6 +49,30 @@ async fn autocomplete_retainer_id(
         })
 }
 
+#[poise::command(slash_command)]
+async fn add_undercut_alert(
+    ctx: Context<'_>,
+    #[description = "Margin to send an alert for. Range 0-200. 0 = 0%, and will always notify for undercuts."]
+    margin_percent: i32,
+) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    let alert = ctx
+        .data()
+        .db
+        .add_discord_retainer_alert(
+            ctx.channel_id().0 as i64,
+            ctx.author().id.0 as i64,
+            margin_percent,
+        )
+        .await?;
+    ctx.data()
+        .event_senders
+        .retainer_undercut
+        .send(EventType::Add(Arc::new(alert)));
+    ctx.say(&format!("Now sending alerts to this channel anytime someone undercuts your retainer by {margin_percent}%"));
+    Ok(())
+}
+
 /// Shows only listings where your retainers listing has been undercut by someone else
 #[poise::command(slash_command)]
 async fn check_undercuts(ctx: Context<'_>) -> Result<(), Error> {
@@ -55,7 +87,7 @@ async fn check_undercuts(ctx: Context<'_>) -> Result<(), Error> {
                 r.embed(|e| {
                     let item = items.iter().fold(
                         format!(
-                            "```{:>30} {:>10}->{:>10} {:>5}\n",
+                            "```{:>30}{:>10}->{:<10}{}\n",
                             "name", "price", "target price", "behind"
                         ),
                         |mut s, (listing, undercut)| {
@@ -75,7 +107,9 @@ async fn check_undercuts(ctx: Context<'_>) -> Result<(), Error> {
                             s
                         },
                     ) + "```";
-                    e.title(&retainer.name).description(item)
+                    e.title(&retainer.name)
+                        .description(item)
+                        .color(Color::from_rgb(123, 0, 123))
                 });
             }
         }
