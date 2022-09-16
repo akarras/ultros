@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::Result;
 use poise::serenity_prelude::{self, Color, UserId};
-use tracing::{error, instrument};
+use tracing::{error, info, instrument};
 use ultros_db::{entity::*, UltrosDb};
 
 use crate::event::EventBus;
@@ -125,7 +125,7 @@ struct RetainerAlertListener {
 async fn get_user_unique_retainer_ids_and_listing_ids_by_price(
     ultros_db: &UltrosDb,
     discord_user: u64,
-) -> Result<(HashSet<i32>, HashMap<i32, i32>)> {
+) -> Result<(HashSet<i32>, HashMap<(i32, i32), i32>)> {
     // this might be better as a sql query
     let retainer_listings = ultros_db
         .get_retainer_listings_for_discord_user(discord_user)
@@ -133,9 +133,13 @@ async fn get_user_unique_retainer_ids_and_listing_ids_by_price(
     // get a list of what retainers and items the users have
     let user_retainer_ids: HashSet<i32> = retainer_listings.iter().map(|(r, _)| r.id).collect();
     // map item id -> min(price_per_unit)
-    let user_lowest_listings: HashMap<i32, i32> = retainer_listings
+    let user_lowest_listings: HashMap<(i32, i32), i32> = retainer_listings
         .into_iter()
-        .flat_map(|(_, listings)| listings.into_iter().map(|l| (l.item_id, l.price_per_unit)))
+        .flat_map(|(_, listings)| {
+            listings
+                .into_iter()
+                .map(|l| ((l.item_id, l.world_id), l.price_per_unit))
+        })
         .fold(HashMap::new(), |mut map, (item_id, price)| {
             let entry = map.entry(item_id).or_insert(price);
             *entry = price.min(*entry);
@@ -226,8 +230,9 @@ impl RetainerAlertListener {
                                 for removed in removed.iter() {
                                     // if we removed our listing, we need to refetch our pricing from the database if the listing was the lowest
                                     if user_retainer_ids.contains(&removed.retainer_id) {
-                                        if let Some(value) =
-                                            user_lowest_listings.get(&removed.item_id).copied()
+                                        if let Some(value) = user_lowest_listings
+                                            .get(&(removed.item_id, removed.world_id))
+                                            .copied()
                                         {
                                             if value == removed.price_per_unit {
                                                 if let Ok((retainer_ids, listings)) = get_user_unique_retainer_ids_and_listing_ids_by_price(&ultros_db, discord_user).await {
@@ -244,18 +249,20 @@ impl RetainerAlertListener {
                                 if let Some(added) = added.iter().min_by_key(|a| a.price_per_unit) {
                                     match (
                                         user_retainer_ids.contains(&added.retainer_id),
-                                        user_lowest_listings.get(&added.item_id).copied(),
+                                        user_lowest_listings
+                                            .get(&(added.item_id, added.world_id))
+                                            .copied(),
                                     ) {
                                         (true, None) => {
                                             // our listing, do the update thing
                                             let entry = user_lowest_listings
-                                                .entry(added.item_id)
+                                                .entry((added.item_id, added.world_id))
                                                 .or_insert(added.price_per_unit);
                                             *entry = added.price_per_unit.min(*entry);
                                         }
                                         (false, Some(our_price)) => {
                                             // we have a listing, make sure they didn't just beat our price
-                                            if (our_price as f64 * (1.0 - (margin as f32 / 100.0)))
+                                            if (our_price as f64 * (1.0 - (margin as f64 / 100.0)))
                                                 as i32
                                                 > added.price_per_unit
                                             {
@@ -268,7 +275,7 @@ impl RetainerAlertListener {
                                                     .map(|i| i.name.as_str())
                                                     .unwrap_or_default();
                                                 // figure out what retainers have been undercut
-                                                let retainers: Vec<_> = ultros_db
+                                                let retainers = ultros_db
                                                     .get_retainer_listings_for_discord_user(
                                                         discord_user,
                                                     )
@@ -276,36 +283,44 @@ impl RetainerAlertListener {
                                                     .map(|i| {
                                                         i.into_iter()
                                                             .flat_map(|(r, listings)| {
-                                                                (
-                                                                    r,
-                                                                    listings.iter().find(|i| {
+                                                                listings
+                                                                    .iter()
+                                                                    .find(|i| {
                                                                         i.item_id == added.item_id
                                                                         && added.price_per_unit
                                                                             < (i.price_per_unit
-                                                                                as f32
+                                                                                as f64
                                                                                 * (1.0
                                                                                     - (margin
-                                                                                        as f32
+                                                                                        as f64
                                                                                         / 100.0)))
                                                                                 as i32
-                                                                    }),
+                                                                    })
+                                                                    .map(|l| (r, l.price_per_unit))
+                                                            })
+                                                            .map(|(retainer, price)| {
+                                                                format!(
+                                                                    "{} -> {}",
+                                                                    retainer.name, price
                                                                 )
                                                             })
-                                                            .map(|(retainer, l)| {
-                                                                (retainer.name, l.price_per_unit)
-                                                            })
-                                                            .collect::<Vec<_>>();
+                                                            .collect::<Vec<_>>()
+                                                            .join(", ")
                                                     })
                                                     .unwrap_or_default();
+                                                info!("detected undercut {user_retainer_ids:?} {user_lowest_listings:?}");
                                                 let undercut_msg = format!("<@{discord_user}> your retainers {retainers} have been undercut on {item_name}! Check your retainers!");
-                                                let _ = send_discord_alerts(
+                                                if let Err(e) = send_discord_alerts(
                                                     alert_id,
                                                     discord_user,
                                                     &ultros_db,
                                                     &ctx,
                                                     &undercut_msg,
                                                 )
-                                                .await;
+                                                .await
+                                                {
+                                                    error!("Couldn't write to discord channel for reason {e:?}");
+                                                }
                                                 break;
                                             }
                                         }
