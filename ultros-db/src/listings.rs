@@ -19,7 +19,7 @@ impl UltrosDb {
         mut listings: Vec<ListingView>,
         item_id: ItemId,
         world_id: WorldId,
-    ) -> Result<(Vec<active_listing::Model>, i32)> {
+    ) -> Result<(Vec<active_listing::Model>, Vec<active_listing::Model>)> {
         use active_listing::*;
         // Assumes that we are being given a full list of all the listings for the item and world.
         // First, query the db to see what listings it has
@@ -140,7 +140,7 @@ impl UltrosDb {
         let is_in = if removed.is_empty() {
             None
         } else {
-            Some(Column::Id.is_in(removed.into_iter().map(|(m, _)| Value::Int(Some(m.id)))))
+            Some(Column::Id.is_in(removed.iter().map(|(m, _)| Value::Int(Some(m.id)))))
         };
         let added = added.iter().map(|m| {
             let retainer_id = retainers
@@ -150,7 +150,7 @@ impl UltrosDb {
                 .id;
             self.create_listing(m, item_id, world_id, Some(retainer_id))
         });
-        let (added, removed) =
+        let (added, removed_result) =
             futures::future::join(futures::future::join_all(added), async move {
                 if let Some(is_in) = is_in {
                     Entity::delete_many()
@@ -165,18 +165,23 @@ impl UltrosDb {
             .await;
 
         let added = added.into_iter().flatten().collect();
-        Ok((added, removed? as i32))
+        Ok((added, removed.into_iter().map(|(m, _)| m).collect()))
     }
-    
+
     /// Creates statistics for existing models and returns summaries for just these listings
     pub async fn create_listing_stats(&self, listings: &[&active_listing::Model]) {
         // add the items to a hash set to get unique keys
-        let items : HashSet<(i32, i32)> = listings.into_iter().map(|listing| (listing.item_id, listing.world_id)).collect();
-        
-        let results = join_all(items.into_iter().map(|(item, world)| async move { 
+        let items: HashSet<(i32, i32)> = listings
+            .into_iter()
+            .map(|listing| (listing.item_id, listing.world_id))
+            .collect();
 
-            let listings = self.get_listings_for_world(WorldId(world), ItemId(item)).await;
+        let results = join_all(items.into_iter().map(|(item, world)| async move {
+            let listings = self
+                .get_listings_for_world(WorldId(world), ItemId(item))
+                .await;
             listings
-        })).await;
+        }))
+        .await;
     }
 }

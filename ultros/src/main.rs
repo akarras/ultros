@@ -42,12 +42,17 @@ async fn run_socket_listener(db: UltrosDb, listings_tx: EventProducer<Vec<active
                         listings,
                     })) => {
                         match db.update_listings(listings.clone(), item, world).await {
-                            Ok((listings, num_removed)) => {
+                            Ok((listings, removed)) => {
                                 let listings = Arc::new(listings);
                                 match listings_tx.send(EventType::Add(listings)) {
                                     Ok(o) => info!("updated listings, sent {o:?} updates"),
-                                    Err(e) => error!("{e:?}")
+                                    Err(e) => error!("Error adding listings {e}")
                                 };
+                                let removed = Arc::new(removed);
+                                match listings_tx.send(EventType::Remove(removed)) {
+                                    Ok(o) => info!("sent removed listings {o} updates"),
+                                    Err(e) => error!("Error removing listings {e}")
+                                }
                             },
                             Err(e) => error!("Listing add failed {e} {listings:?}")
                         }

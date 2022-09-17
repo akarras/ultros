@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::Result;
 use poise::serenity_prelude::{self, Color, UserId};
-use tracing::{error, info, instrument, debug};
+use tracing::{debug, error, info, instrument};
 use ultros_db::{entity::*, UltrosDb};
 
 use crate::event::EventBus;
@@ -263,13 +263,11 @@ impl RetainerAlertListener {
                                             *entry = added.price_per_unit.min(*entry);
                                         }
                                         (false, Some(our_price)) => {
-                                          let margin_price = our_price as f64 * (1.0 - (margin as f64 / 100.0));
-                                          debug!("comparing our_price {our_price} {margin_price} {added:?}");
+                                            let margin_price =
+                                                our_price as f64 * (1.0 - (margin as f64 / 100.0));
+                                            debug!("comparing our_price {our_price} {margin_price} {added:?}");
                                             // we have a listing, make sure they didn't just beat our price
-                                            if margin_price
-                                                as i32
-                                                > added.price_per_unit
-                                            {
+                                            if margin_price as i32 > added.price_per_unit {
                                                 // they beat our price, raise the alarms
                                                 // get the name of the item
                                                 let data = xiv_gen_db::decompress_data();
