@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::Result;
 use poise::serenity_prelude::{self, Color, UserId};
-use tracing::{error, info, instrument};
+use tracing::{error, info, instrument, debug};
 use ultros_db::{entity::*, UltrosDb};
 
 use crate::event::EventBus;
@@ -167,6 +167,7 @@ async fn send_discord_alerts(
                         .description(&undercut_msg)
                 })
                 .allowed_mentions(|mentions| mentions.users([UserId(discord_user_id)]))
+                .content(format!("<@{discord_user_id}>"))
             })
             .await?;
     }
@@ -197,6 +198,7 @@ impl RetainerAlertListener {
         let (mut user_retainer_ids, mut user_lowest_listings) =
             get_user_unique_retainer_ids_and_listing_ids_by_price(&ultros_db, discord_user).await?;
         let (cancellation_sender, mut receiver) = tokio::sync::mpsc::channel::<RetainerAlertTx>(10);
+        info!("Starting alert listener {alert_id} {user_retainer_ids:?} {user_lowest_listings:?}");
         tokio::spawn(async move {
             loop {
                 let ended =
@@ -222,7 +224,7 @@ impl RetainerAlertListener {
                             Ok(listing) => listing,
                             Err(e) => {
                                 tracing::error!("Error receiving listing {e:?}");
-                                break;
+                                continue;
                             }
                         };
                         match listing {
@@ -261,8 +263,10 @@ impl RetainerAlertListener {
                                             *entry = added.price_per_unit.min(*entry);
                                         }
                                         (false, Some(our_price)) => {
+                                          let margin_price = our_price as f64 * (1.0 - (margin as f64 / 100.0));
+                                          debug!("comparing our_price {our_price} {margin_price} {added:?}");
                                             // we have a listing, make sure they didn't just beat our price
-                                            if (our_price as f64 * (1.0 - (margin as f64 / 100.0)))
+                                            if margin_price
                                                 as i32
                                                 > added.price_per_unit
                                             {
@@ -287,6 +291,7 @@ impl RetainerAlertListener {
                                                                     .iter()
                                                                     .find(|i| {
                                                                         i.item_id == added.item_id
+                                                                        && i.world_id == added.world_id
                                                                         && added.price_per_unit
                                                                             < (i.price_per_unit
                                                                                 as f64
@@ -320,8 +325,8 @@ impl RetainerAlertListener {
                                                 .await
                                                 {
                                                     error!("Couldn't write to discord channel for reason {e:?}");
+                                                    break;
                                                 }
-                                                break;
                                             }
                                         }
                                         _ => {}

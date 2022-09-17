@@ -216,7 +216,8 @@ impl WebsocketClient {
                         info!("Web socket closed");
                     }
                     Either::Right((Some(Err(e)), _)) => {
-                        error!("Socket error {e:?}");
+                        error!("Socket error. Closing socket {e:?}");
+                        let socket = websocket.close(None).await;
                     }
                 }
             }
