@@ -55,7 +55,7 @@ impl UltrosDb {
         })
         .exec_with_returning(&self.db)
         .await?;
-        let discord_alert =
+        let _ =
             alert_discord_destination::Entity::insert(alert_discord_destination::ActiveModel {
                 id: ActiveValue::default(),
                 alert_id: Set(alert.id),

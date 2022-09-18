@@ -54,7 +54,7 @@ impl UltrosDb {
         worlds: &WorldsView,
     ) -> Result<()> {
         {
-            let mut current_regions = region::Entity::find()
+            let current_regions = region::Entity::find()
                 .order_by(region::Column::Name, Order::Asc)
                 .all(&self.db)
                 .await?;

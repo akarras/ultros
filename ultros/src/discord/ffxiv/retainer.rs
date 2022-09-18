@@ -68,7 +68,7 @@ async fn add_undercut_alert(
     ctx.data()
         .event_senders
         .retainer_undercut
-        .send(EventType::Add(Arc::new(alert)));
+        .send(EventType::Add(Arc::new(alert)))?;
     ctx.say(&format!("Now sending alerts to this channel anytime someone undercuts your retainer by {margin_percent}%")).await?;
     Ok(())
 }
@@ -160,7 +160,7 @@ async fn check_listings(ctx: Context<'_>) -> Result<(), Error> {
                 msg_contents,
                 "{:<30} {:>9} {:>4} {:>1}",
                 "Item name", "price per item", "quantity", "hq"
-            );
+            ).unwrap();
             for listing in listings {
                 let item_name = items
                     .get(&ItemId(listing.item_id))
@@ -168,7 +168,6 @@ async fn check_listings(ctx: Context<'_>) -> Result<(), Error> {
                     .unwrap_or_default();
                 let active_listing::Model {
                     id,
-                    world_id,
                     price_per_unit,
                     quantity,
                     hq,
@@ -178,7 +177,7 @@ async fn check_listings(ctx: Context<'_>) -> Result<(), Error> {
                 let _ = writeln!(
                     msg_contents,
                     "{item_name:<30} {price_per_unit:>9} {quantity:<4} {hq}"
-                );
+                ).unwrap();
             }
             msg_contents += "```";
 

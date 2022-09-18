@@ -29,7 +29,7 @@ pub fn read_csv<T: DeserializeOwned>(path: &str) -> Vec<T> {
                 // try to pretty print this error a bit, otherwise it's hard to tell what went wrong
                 if let Some(position) = e.position() {
                     match e.kind() {
-                        ErrorKind::Deserialize { pos, err } => {
+                        ErrorKind::Deserialize { err, .. } => {
                             let field = err.field().unwrap();
                             let field_name = &headers[field as usize];
                             eprintln!("{field}: {field_name}");

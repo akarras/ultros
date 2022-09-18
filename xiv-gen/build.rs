@@ -1,4 +1,3 @@
-use clap::Parser;
 use codegen_rs::{Field, Function, Impl, Module, Scope, Struct};
 
 use heck::{ToSnakeCase, ToUpperCamelCase};
@@ -239,7 +238,7 @@ fn create_struct(
     let csv_name = &csv_name.to_upper_camel_case();
     let key_name = format!("{}Id", csv_name);
     let mut s = Struct::new(csv_name);
-    let mut i = Impl::new(csv_name);
+    let i = Impl::new(csv_name);
     apply_derives(&mut s).vis("pub");
     let mut unknown_counter = 0;
     let fields: Vec<(String, String)> = line_two
@@ -491,7 +490,7 @@ fn main() {
     write(
         "./extra.toml",
         format!("{}\n{}", all_features_str, list_str).as_bytes(),
-    );
+    ).unwrap();
 
     let mut args: Args = Args {
         recurse_directories: false,

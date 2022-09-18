@@ -11,7 +11,7 @@ use self::ffxiv::alerts::AlertManager;
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Context<'a> = poise::Context<'a, Data, Error>;
 // User data, which is stored and accessible in all command invocations
-#[derive(Debug)]
+
 pub(crate) struct Data {
     db: UltrosDb,
     lodestone_client: reqwest::Client,

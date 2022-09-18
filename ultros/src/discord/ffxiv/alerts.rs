@@ -60,10 +60,12 @@ impl AlertManager {
             let mut retainer_alert_events = Box::pin(undercuts.recv());
             match futures::future::select(alerts, retainer_alert_events).await {
                 futures::future::Either::Left(alert) => todo!(),
-                futures::future::Either::Right((retainer_alert_create, b)) => {
+                futures::future::Either::Right((retainer_alert_create, _)) => {
                     if let Ok(retainer) = &retainer_alert_create {
                         match retainer {
-                            crate::event::EventType::Remove(remove) => todo!(),
+                            crate::event::EventType::Remove(removed) => {
+                              manager.current_retainer_alerts.remove(&removed.id);
+                            },
                             crate::event::EventType::Add(retainer_alert) => {
                                 manager
                                     .create_retainer_alert_listener(

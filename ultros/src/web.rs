@@ -26,7 +26,7 @@ async fn search_retainers(
     write!(
         string,
         "<table><tr><th>retainer name</th><th>retainer id</th><th>world id</th><th>world name</th></tr>"
-    );
+    ).unwrap();
     for (retainer, world) in retainers {
         write!(
             &mut string,
@@ -37,9 +37,9 @@ async fn search_retainers(
             world
                 .map(|w| w.name)
                 .unwrap_or(retainer.world_id.to_string())
-        );
+        ).unwrap();
     }
-    write!(string, "</table>");
+    write!(string, "</table>").unwrap();
     Ok(Html(string))
 }
 
@@ -74,12 +74,12 @@ async fn get_retainer_listings(
                 "Failed to get world data for retainer".to_string(),
             ));
         };
-        write!(data, "<h1>{}</h1>", world.name);
+        write!(data, "<h1>{}</h1>", world.name).unwrap();
         let world_name = world.name;
         write!(
             data,
             "<table><th>ranking</th><th>item id</th><th>price per unit</th> <th>quantity</th><th>total</th>"
-        );
+        ).unwrap();
         for listing in listings {
             let item = items
                 .get(&XivDBItemId(listing.item_id))
@@ -103,9 +103,9 @@ async fn get_retainer_listings(
                 listing.quantity,
                 listing.price_per_unit * listing.quantity,
                 listing.timestamp
-            );
+            ).unwrap();
         }
-        write!(data, "</table>");
+        write!(data, "</table>").unwrap();
         Ok(Html(data))
     } else {
         Ok(Html(format!("Unable to find retainer")))
@@ -132,7 +132,7 @@ async fn world_item_listings(
             )
         })?;
     let mut value = String::new();
-    write!(value, "<table><tr><th>id</th><th>price per unit</th><th>quantity</th><th>total</th><th>timestamp</th></tr>");
+    write!(value, "<table><tr><th>id</th><th>price per unit</th><th>quantity</th><th>total</th><th>timestamp</th></tr>").unwrap();
     for listing in listings {
         write!(
             &mut value,
@@ -142,9 +142,9 @@ async fn world_item_listings(
             listing.quantity,
             listing.price_per_unit * listing.quantity,
             listing.timestamp
-        );
+        ).unwrap();
     }
-    write!(value, "</table>");
+    write!(value, "</table>").unwrap();
     Ok(Html(value))
 }
 

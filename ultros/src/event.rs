@@ -34,7 +34,6 @@ pub(crate) fn create_event_busses() -> (EventSenders, EventReceivers) {
     )
 }
 
-#[derive(Debug, Clone)]
 pub(crate) struct EventSenders {
     pub(crate) retainers: EventProducer<retainer::Model>,
     pub(crate) listings: EventProducer<Vec<active_listing::Model>>,
