@@ -21,6 +21,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
+/// Internal SocketTx. Enables the user to communicate with the worker task.
 #[derive(Debug)]
 enum SocketTx {
     Subscription(WebSocketSubscriptionUpdate),
@@ -32,14 +33,39 @@ pub enum SocketRx {
     Event(Result<WSMessage, crate::Error>),
 }
 
+/// Websocket Client for Universalis's real time event API.
+/// Handles reconnecting and resubscribing to events on connection loss automatically.
+///
+/// See the websocket example for an example on how to use.
+///
+/// Internally, this worker will spawn a task that then uses channels to communicate with the external user,
+/// ensuring that the websocket is always read from.
+///
 pub struct WebsocketClient {
     socket_sender: Sender<SocketTx>,
     listing_receiver: Receiver<SocketRx>,
 }
 
 impl WebsocketClient {
-    /// Creates a websocket subscription
-    pub async fn subscribe(
+    /// Updates subscriptions to data from universalis. Necessary to receieve any data from the API.
+    ///
+    /// ###Arguments:
+    /// * `subscribe_mode` - Whether to to subscribe or unsubscribe. See [SubscribeMode](SubscribeMode) for options
+    /// * `channel` - Datatype that you wish to subscribe with See [EventChannel](EventChannel) for options
+    /// * `world_id` - Optional [WorldId](World ID), used if you wish to only receive data from a certain world. If None, you will receive data from all worlds.
+    ///
+    /// ###Example:
+    /// ```
+    /// use universalis::{WebsocketClient, SubscribeMode, EventChannel, WorldId};
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let socket_client = WebsocketClient::new();
+    ///     socket_client.update_subscription(SubscribeMode::Subscribe, EventChannel).await;
+    ///     
+    /// }
+    /// ```
+    pub async fn update_subscription(
         &self,
         subscribe_mode: SubscribeMode,
         channel: EventChannel,
@@ -61,6 +87,7 @@ struct SubscriptionTracker {
 }
 
 impl SubscriptionTracker {
+    /// to be used when the socket is reconnected, will resend all the subscriptions previously sent by the user
     async fn resend_subscriptions(
         &self,
         sender: &mut WebSocketStream<ConnectStream>,
@@ -76,10 +103,12 @@ impl SubscriptionTracker {
         Ok(())
     }
 
+    /// track another subscription
     fn subscribe(&mut self, channel: Channel) {
         self.subscriptions.insert(channel);
     }
 
+    /// remove a subscription from the tracker
     fn unsubscribe(&mut self, channel: &Channel) {
         self.subscriptions.remove(channel);
     }

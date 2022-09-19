@@ -21,12 +21,14 @@ impl MigrationTrait for Migration {
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        manager.drop_index(
-            IndexDropStatement::new()
-                .table(ActiveListing::Table)
-                .name("active_listing_item_id_index")
-                .to_owned(),
-        ).await?;
+        manager
+            .drop_index(
+                IndexDropStatement::new()
+                    .table(ActiveListing::Table)
+                    .name("active_listing_item_id_index")
+                    .to_owned(),
+            )
+            .await?;
         Ok(())
     }
 }

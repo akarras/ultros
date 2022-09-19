@@ -12,7 +12,7 @@ async fn main() {
     let worlds = universalis_client.get_worlds().await.unwrap();
     let sargatanas = worlds.0.iter().find(|w| w.name.0 == "Sargatanas").unwrap();
     let mut ws = WebsocketClient::connect().await;
-    ws.subscribe(
+    ws.update_subscription(
         SubscribeMode::Subscribe,
         EventChannel::ListingsAdd,
         Some(sargatanas.id),

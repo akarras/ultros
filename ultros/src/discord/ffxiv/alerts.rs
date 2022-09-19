@@ -1,6 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-};
+use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
 use poise::serenity_prelude::{self, Color, UserId};
@@ -307,9 +305,6 @@ impl RetainerAlertListener {
                                                     })
                                                     .unwrap_or_default();
                                                 info!("detected undercut {user_retainer_ids:?} {user_lowest_listings:?}");
-                                                if retainers.is_empty() {
-                                                    continue;
-                                                }
                                                 let retainers = retainers
                                                     .into_iter()
                                                     .map(|(name, undercutamount)| {

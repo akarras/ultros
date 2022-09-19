@@ -18,13 +18,13 @@ use universalis::{DataCentersView, UniversalisClient, WebsocketClient, WorldsVie
 async fn run_socket_listener(db: UltrosDb, listings_tx: EventProducer<Vec<active_listing::Model>>) {
     let mut socket = WebsocketClient::connect().await;
     socket
-        .subscribe(SubscribeMode::Subscribe, EventChannel::ListingsAdd, None)
+        .update_subscription(SubscribeMode::Subscribe, EventChannel::ListingsAdd, None)
         .await;
     socket
-        .subscribe(SubscribeMode::Subscribe, EventChannel::ListingsRemove, None)
+        .update_subscription(SubscribeMode::Subscribe, EventChannel::ListingsRemove, None)
         .await;
     socket
-        .subscribe(SubscribeMode::Subscribe, EventChannel::SalesAdd, None)
+        .update_subscription(SubscribeMode::Subscribe, EventChannel::SalesAdd, None)
         .await;
     let receiver = socket.get_receiver();
     loop {

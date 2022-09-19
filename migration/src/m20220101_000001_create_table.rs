@@ -548,7 +548,7 @@ impl MigrationTrait for Migration {
             )
             .await?;
         // create hypertable from sale history data. This can be compressed & aggregated instead of removed after a threshold
-        manager
+        println!("{:?}" ,manager
             .exec_stmt(
                 SelectStatement::new()
                     .expr(Func::cust(CreateHypertable).args(vec![
@@ -557,7 +557,7 @@ impl MigrationTrait for Migration {
                     ]))
                     .to_owned(),
             )
-            .await?;
+            .await);
 
         Ok(())
     }

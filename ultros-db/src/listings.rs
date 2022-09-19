@@ -166,5 +166,4 @@ impl UltrosDb {
         let added = added.into_iter().flatten().collect();
         Ok((added, removed.into_iter().map(|(m, _)| m).collect()))
     }
-
 }
