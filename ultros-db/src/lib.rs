@@ -30,6 +30,7 @@ pub struct UltrosDb {
 }
 
 impl UltrosDb {
+    #[instrument]
     pub async fn connect() -> Result<Self> {
         let url = std::env::var("DATABASE_URL").unwrap();
         let mut opt = ConnectOptions::new(url);

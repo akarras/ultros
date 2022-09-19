@@ -4,11 +4,10 @@ use migration::Alias;
 use migration::BinOper;
 use migration::ColumnRef;
 use migration::Expr;
-use migration::PostgresQueryBuilder;
 use migration::Query;
 use migration::SeaRc;
 use migration::SimpleExpr;
-use tracing::log::warn;
+use tracing::instrument;
 
 use crate::entity::*;
 use crate::UltrosDb;
@@ -29,6 +28,7 @@ impl UltrosDb {
     /// * world_id - World you want to sale items on
     /// * sale_amount_threshold - How many recent sales within the window should have occured (see next argument)
     /// * sale_window - How long ago should sales be considered for this query
+    #[instrument]
     pub async fn get_best_item_to_resell_on_world(
         &self,
         world_id: i32,
@@ -86,8 +86,21 @@ impl UltrosDb {
                 .sub(active_listing::Column::PricePerUnit.min()),
                 profit.clone(),
             )
-            .expr_as(SimpleExpr::Binary(Box::new(SimpleExpr::Column(ColumnRef::TableColumn(query_iden.clone(), min_sale_price_alias.clone()))), BinOper::Div, Box::new(active_listing::Column::PricePerUnit.min())),
-            margin.clone())
+            .expr_as(
+                SimpleExpr::Binary(
+                    Box::new(SimpleExpr::Binary(
+                        Box::new(SimpleExpr::Column(ColumnRef::TableColumn(
+                            query_iden.clone(),
+                            min_sale_price_alias.clone(),
+                        ))),
+                        BinOper::Div,
+                        Box::new(active_listing::Column::PricePerUnit.min()),
+                    )),
+                    BinOper::Mul,
+                    Box::new(SimpleExpr::Value(Value::Int(Some(100)))),
+                ),
+                margin.clone(),
+            )
             .join_subquery(
                 JoinType::InnerJoin,
                 world_sale_history_query,
@@ -101,8 +114,6 @@ impl UltrosDb {
             .limit(10)
             .order_by(profit, Order::Desc)
             .to_owned();
-        let builder = all_query.to_string(PostgresQueryBuilder);
-        warn!("{builder}");
         let query = self.db.get_database_backend().build(&all_query);
         let results = BestResellResults::find_by_statement(query)
             .all(&self.db)

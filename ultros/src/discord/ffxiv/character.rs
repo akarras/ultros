@@ -52,12 +52,11 @@ pub(crate) async fn register(
         .timeout(Duration::from_secs(5 * 60))
         .await
     {
-        // msg.data.values[0]
+        ctx.say(format!("selected {}", msg.data.values[0])).await?;
         // TODO lookup what value was selected from the list of interactions
     } else {
         ctx.say("No choice selected").await?;
         return Ok(());
     };
-
     Ok(())
 }

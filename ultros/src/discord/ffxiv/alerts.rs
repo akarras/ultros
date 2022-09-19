@@ -1,6 +1,5 @@
 use std::{
     collections::{HashMap, HashSet},
-    error,
 };
 
 use anyhow::Result;
@@ -64,8 +63,8 @@ impl AlertManager {
                     if let Ok(retainer) = &retainer_alert_create {
                         match retainer {
                             crate::event::EventType::Remove(removed) => {
-                              manager.current_retainer_alerts.remove(&removed.id);
-                            },
+                                manager.current_retainer_alerts.remove(&removed.id);
+                            }
                             crate::event::EventType::Add(retainer_alert) => {
                                 manager
                                     .create_retainer_alert_listener(
@@ -303,17 +302,21 @@ impl RetainerAlertListener {
                                                                     })
                                                                     .map(|l| (r, l.price_per_unit))
                                                             })
-                                                            .map(|(retainer, price)| {
-                                                                format!(
-                                                                    "{} -> {}",
-                                                                    retainer.name, price
-                                                                )
-                                                            })
+                                                            .map(|(retainer, price)| {(retainer.name, price)})
                                                             .collect::<Vec<_>>()
-                                                            .join(", ")
                                                     })
                                                     .unwrap_or_default();
                                                 info!("detected undercut {user_retainer_ids:?} {user_lowest_listings:?}");
+                                                if retainers.is_empty() {
+                                                    continue;
+                                                }
+                                                let retainers = retainers
+                                                    .into_iter()
+                                                    .map(|(name, undercutamount)| {
+                                                        format!("{name} {undercutamount}")
+                                                    })
+                                                    .collect::<Vec<_>>()
+                                                    .join(", ");
                                                 let undercut_msg = format!("<@{discord_user}> your retainers {retainers} have been undercut on {item_name}! Check your retainers!");
                                                 if let Err(e) = send_discord_alerts(
                                                     alert_id,

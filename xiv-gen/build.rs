@@ -490,7 +490,8 @@ fn main() {
     write(
         "./extra.toml",
         format!("{}\n{}", all_features_str, list_str).as_bytes(),
-    ).unwrap();
+    )
+    .unwrap();
 
     let mut args: Args = Args {
         recurse_directories: false,

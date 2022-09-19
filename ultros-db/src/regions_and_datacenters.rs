@@ -7,7 +7,7 @@ use anyhow::Result;
 use itertools::Itertools;
 use migration::Order;
 use sea_orm::{ActiveValue, EntityTrait, QueryOrder, Set};
-use tracing::info;
+use tracing::{info, instrument};
 use universalis::{DataCenterView, DataCentersView, WorldsView};
 use universalis::{RegionName, WorldView};
 
@@ -48,6 +48,7 @@ impl PartialOrd<world::Model> for WorldView {
 }
 
 impl UltrosDb {
+    #[instrument]
     pub async fn update_datacenters(
         &self,
         datacenter: &DataCentersView,

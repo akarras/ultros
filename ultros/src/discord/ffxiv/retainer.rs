@@ -160,7 +160,8 @@ async fn check_listings(ctx: Context<'_>) -> Result<(), Error> {
                 msg_contents,
                 "{:<30} {:>9} {:>4} {:>1}",
                 "Item name", "price per item", "quantity", "hq"
-            ).unwrap();
+            )
+            .unwrap();
             for listing in listings {
                 let item_name = items
                     .get(&ItemId(listing.item_id))
@@ -177,7 +178,8 @@ async fn check_listings(ctx: Context<'_>) -> Result<(), Error> {
                 let _ = writeln!(
                     msg_contents,
                     "{item_name:<30} {price_per_unit:>9} {quantity:<4} {hq}"
-                ).unwrap();
+                )
+                .unwrap();
             }
             msg_contents += "```";
 

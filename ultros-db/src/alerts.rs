@@ -55,14 +55,13 @@ impl UltrosDb {
         })
         .exec_with_returning(&self.db)
         .await?;
-        let _ =
-            alert_discord_destination::Entity::insert(alert_discord_destination::ActiveModel {
-                id: ActiveValue::default(),
-                alert_id: Set(alert.id),
-                channel_id: Set(channel_id),
-            })
-            .exec(&self.db)
-            .await?;
+        let _ = alert_discord_destination::Entity::insert(alert_discord_destination::ActiveModel {
+            id: ActiveValue::default(),
+            alert_id: Set(alert.id),
+            channel_id: Set(channel_id),
+        })
+        .exec(&self.db)
+        .await?;
         let retainer_margin =
             alert_retainer_undercut::Entity::insert(alert_retainer_undercut::ActiveModel {
                 id: ActiveValue::default(),

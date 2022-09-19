@@ -37,7 +37,8 @@ async fn search_retainers(
             world
                 .map(|w| w.name)
                 .unwrap_or(retainer.world_id.to_string())
-        ).unwrap();
+        )
+        .unwrap();
     }
     write!(string, "</table>").unwrap();
     Ok(Html(string))
@@ -142,7 +143,8 @@ async fn world_item_listings(
             listing.quantity,
             listing.price_per_unit * listing.quantity,
             listing.timestamp
-        ).unwrap();
+        )
+        .unwrap();
     }
     write!(value, "</table>").unwrap();
     Ok(Html(value))

@@ -7,6 +7,7 @@ use sea_orm::ColumnTrait;
 use sea_orm::EntityTrait;
 use sea_orm::QueryFilter;
 use sea_orm::Set;
+use tracing::instrument;
 use universalis::ItemId;
 use universalis::WorldId;
 
@@ -21,13 +22,14 @@ pub struct ListingUndercutData {
 }
 
 impl UltrosDb {
+    #[instrument]
     pub async fn register_retainer(
         &self,
         retainer_id: i32,
         discord_user_id: u64,
         username: String,
     ) -> Result<owned_retainers::Model> {
-        let user = self
+        let _user = self
             .get_or_create_discord_user(discord_user_id, username)
             .await?;
         // validate that the discord user & retainer exist in the database
@@ -46,6 +48,7 @@ impl UltrosDb {
     }
 
     /// Only returns the undercut items for retainers
+    #[instrument]
     pub async fn get_retainer_undercut_items(
         &self,
         discord_user: u64,
@@ -133,6 +136,7 @@ impl UltrosDb {
             .collect::<Vec<_>>())
     }
 
+    #[instrument]
     pub async fn get_retainer_listings_for_discord_user(
         &self,
         discord_user: u64,
