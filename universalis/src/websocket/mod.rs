@@ -93,11 +93,12 @@ impl SubscriptionTracker {
         sender: &mut WebSocketStream<ConnectStream>,
     ) -> Result<(), crate::Error> {
         for channel in &self.subscriptions {
-            let bson = bson::to_vec(&WebSocketSubscriptionUpdate {
+            let subscription_update = WebSocketSubscriptionUpdate {
                 event: SubscribeMode::Subscribe,
                 channel: channel.clone(),
-            })?;
-
+            };
+            let bson = bson::to_vec(&)?;
+            info!("Resent subscription update {subscription_update:?}");
             sender.send(Message::Binary(bson)).await?;
         }
         Ok(())
@@ -132,16 +133,15 @@ impl WebsocketClient {
                 info!("Sending ping to keep the socket alive");
                 sender
                     .send(SocketTx::Ping)
-                    .await
-                    .expect("local sender failed to send ping");
+                    .await.expect("Unable to push message to message queue");
                 tokio::time::sleep(Duration::from_secs(60)).await;
             }
         });
         tokio::spawn(async move {
+            let mut active_subscriptions = SubscriptionTracker {
+                subscriptions: HashSet::new(),
+            };
             loop {
-                let mut active_subscriptions = SubscriptionTracker {
-                    subscriptions: HashSet::new(),
-                };
                 if let Some(ws) = websocket {
                     if ws.is_terminated() {
                         websocket = None;
@@ -158,9 +158,14 @@ impl WebsocketClient {
                     tokio::time::sleep(Duration::from_secs(30)).await;
                     websocket = Self::start_websocket()
                         .await
-                        .map_err(|e| error!("{e:?}"))
+                        .map_err(|e| error!("Error restarting socket? {e:?}"))
                         .ok();
                     if let Some(mut ws) = websocket {
+                        // send a ping first
+                        if let Err(ping_result) = ws.send(Message::Ping(vec![1,2,3,4,5])).await {
+                            error!("Error writing ping {ping_result}");
+                        }
+                        
                         if let Err(e) = active_subscriptions.resend_subscriptions(&mut ws).await {
                             error!("error resending subscriptions {e:?}");
                             websocket = None;
@@ -242,7 +247,7 @@ impl WebsocketClient {
                         }
                     }
                     Either::Right((None, _)) => {
-                        info!("Web socket closed");
+                        warn!("Web socket closed");
                     }
                     Either::Right((Some(Err(e)), _)) => {
                         error!("Socket error. Closing socket {e:?}");
