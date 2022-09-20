@@ -18,7 +18,7 @@ impl StatementBuilder for TimeScaleInstall {
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        manager.exec_stmt(TimeScaleInstall).await?;
+        println!("{:?}", manager.exec_stmt(TimeScaleInstall).await);
         manager
             .create_table(
                 Table::create()
@@ -548,16 +548,19 @@ impl MigrationTrait for Migration {
             )
             .await?;
         // create hypertable from sale history data. This can be compressed & aggregated instead of removed after a threshold
-        println!("{:?}" ,manager
-            .exec_stmt(
-                SelectStatement::new()
-                    .expr(Func::cust(CreateHypertable).args(vec![
-                        SimpleExpr::Custom("'sale_history'".to_string()),
-                        SimpleExpr::Custom("'sold_date'".to_string()),
-                    ]))
-                    .to_owned(),
-            )
-            .await);
+        println!(
+            "{:?}",
+            manager
+                .exec_stmt(
+                    SelectStatement::new()
+                        .expr(Func::cust(CreateHypertable).args(vec![
+                            SimpleExpr::Custom("'sale_history'".to_string()),
+                            SimpleExpr::Custom("'sold_date'".to_string()),
+                        ]))
+                        .to_owned(),
+                )
+                .await
+        );
 
         Ok(())
     }

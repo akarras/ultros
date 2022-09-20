@@ -13,6 +13,7 @@ use super::{Context, Error};
     subcommands(
         "list",
         "add",
+        "remove",
         "check_listings",
         "check_undercuts",
         "add_undercut_alert"
@@ -217,5 +218,52 @@ async fn add(
         })
     })
     .await?;
+    Ok(())
+}
+
+async fn owned_retainer_auto_complete(
+    ctx: Context<'_>,
+    partial: &str,
+) -> impl Iterator<Item = poise::AutocompleteChoice<i32>> {
+    let partial = partial.to_string();
+    ctx.data()
+        .db
+        .get_owned_retainers(ctx.author().id.0, ctx.author().name.clone())
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(move |(_o, r)| {
+            if let Some(retainer) = r {
+                retainer
+                    .name
+                    .to_ascii_lowercase()
+                    .contains(&partial.to_ascii_lowercase())
+            } else {
+                false
+            }
+        })
+        .flat_map(|(owned, retainer)| {
+            let retainer = retainer?;
+            Some(poise::AutocompleteChoice {
+                name: format!("{}", retainer.name),
+                value: owned.id,
+            })
+        })
+}
+
+/// Removes a retainer from your profile
+#[poise::command(slash_command)]
+async fn remove(
+    ctx: Context<'_>,
+    #[autocomplete = "owned_retainer_auto_complete"]
+    #[description = "Retainer to remove"]
+    owned_retainer_id: i32,
+) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    ctx.data()
+        .db
+        .remove_owned_retainer(ctx.author().id.0, owned_retainer_id)
+        .await?;
+    ctx.say("Removed retainer successfully!").await?;
     Ok(())
 }

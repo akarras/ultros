@@ -1,12 +1,14 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
+use migration::sea_orm::IntoActiveModel;
 use sea_orm::ActiveModelTrait;
 use sea_orm::ActiveValue;
 use sea_orm::ColumnTrait;
 use sea_orm::EntityTrait;
 use sea_orm::QueryFilter;
 use sea_orm::Set;
+use tracing::info;
 use tracing::instrument;
 use universalis::ItemId;
 use universalis::WorldId;
@@ -45,6 +47,45 @@ impl UltrosDb {
         }
         .insert(&self.db)
         .await?)
+    }
+
+    #[instrument]
+    pub async fn get_owned_retainers(
+        &self,
+        discord_user_id: u64,
+        username: String,
+    ) -> Result<Vec<(owned_retainers::Model, Option<retainer::Model>)>> {
+        let _user = self
+            .get_or_create_discord_user(discord_user_id, username)
+            .await?;
+        Ok(owned_retainers::Entity::find()
+            .filter(owned_retainers::Column::DiscordId.eq(discord_user_id as i64))
+            .find_also_related(retainer::Entity)
+            .all(&self.db)
+            .await?)
+    }
+
+    #[instrument]
+    pub async fn remove_owned_retainer(
+        &self,
+        discord_owner: u64,
+        owned_retainer_id: i32,
+    ) -> Result<()> {
+        // validate that the discord user id matches the entity we're about to delete
+        let owned_retainer = owned_retainers::Entity::find_by_id(owned_retainer_id)
+            .one(&self.db)
+            .await?
+            .ok_or(anyhow::Error::msg(
+                "Coulnd't find the given record of ownership",
+            ))?;
+        if discord_owner as i64 != owned_retainer.discord_id {
+            return Err(anyhow::Error::msg("You do not own this retainer record"));
+        }
+        let value = owned_retainers::Entity::delete(owned_retainer.into_active_model())
+            .exec(&self.db)
+            .await?;
+        info!("Deleted retainer {value:?}");
+        Ok(())
     }
 
     /// Only returns the undercut items for retainers

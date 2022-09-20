@@ -243,52 +243,62 @@ impl RetainerAlertListener {
                                             }
                                         }
                                     }
+
+                                    if user_lowest_listings
+                                        .contains_key(&(removed.item_id, removed.world_id))
+                                    {
+                                    }
                                 }
                             }
                             crate::event::EventType::Add(added) => {
+                                // update our own data from the added list
+                                if let Some(retainer_listing) = added
+                                    .iter()
+                                    .filter(|added| user_retainer_ids.contains(&added.retainer_id))
+                                    .min_by_key(|i| i.price_per_unit)
+                                {
+                                    let entry = user_lowest_listings
+                                        .entry((
+                                            retainer_listing.item_id,
+                                            retainer_listing.world_id,
+                                        ))
+                                        .or_insert(retainer_listing.price_per_unit);
+                                    *entry = retainer_listing.price_per_unit.min(*entry);
+                                }
                                 // items in an added vec should all be the same type, so lets just find the cheapest item
                                 if let Some(added) = added.iter().min_by_key(|a| a.price_per_unit) {
-                                    match (
-                                        user_retainer_ids.contains(&added.retainer_id),
-                                        user_lowest_listings
-                                            .get(&(added.item_id, added.world_id))
-                                            .copied(),
-                                    ) {
-                                        (true, None) => {
-                                            // our listing, do the update thing
-                                            let entry = user_lowest_listings
-                                                .entry((added.item_id, added.world_id))
-                                                .or_insert(added.price_per_unit);
-                                            *entry = added.price_per_unit.min(*entry);
-                                        }
-                                        (false, Some(our_price)) => {
-                                            let margin_price =
-                                                our_price as f64 * (1.0 - (margin as f64 / 100.0));
-                                            debug!("comparing our_price {our_price} {margin_price} {added:?}");
-                                            // we have a listing, make sure they didn't just beat our price
-                                            if margin_price as i32 > added.price_per_unit {
-                                                // they beat our price, raise the alarms
-                                                // get the name of the item
-                                                let data = xiv_gen_db::decompress_data();
-                                                let item_name = data
-                                                    .items
-                                                    .get(&xiv_gen::ItemId(added.item_id))
-                                                    .map(|i| i.name.as_str())
-                                                    .unwrap_or_default();
-                                                // figure out what retainers have been undercut
-                                                let retainers = ultros_db
-                                                    .get_retainer_listings_for_discord_user(
-                                                        discord_user,
-                                                    )
-                                                    .await
-                                                    .map(|i| {
-                                                        i.into_iter()
-                                                            .flat_map(|(r, listings)| {
-                                                                listings
-                                                                    .iter()
-                                                                    .find(|i| {
-                                                                        i.item_id == added.item_id
-                                                                        && i.world_id == added.world_id
+                                    if let Some(our_price) = user_lowest_listings
+                                        .get(&(added.item_id, added.world_id))
+                                        .copied()
+                                    {
+                                        let margin_price =
+                                            our_price as f64 * (1.0 - (margin as f64 / 100.0));
+                                        debug!("comparing our_price {our_price} {margin_price} {added:?}");
+                                        // we have a listing, make sure they didn't just beat our price
+                                        if margin_price as i32 > added.price_per_unit {
+                                            // they beat our price, raise the alarms
+                                            // get the name of the item
+                                            let data = xiv_gen_db::decompress_data();
+                                            let item_name = data
+                                                .items
+                                                .get(&xiv_gen::ItemId(added.item_id))
+                                                .map(|i| i.name.as_str())
+                                                .unwrap_or_default();
+                                            // figure out what retainers have been undercut
+                                            let retainers = ultros_db
+                                                .get_retainer_listings_for_discord_user(
+                                                    discord_user,
+                                                )
+                                                .await
+                                                .map(|i| {
+                                                    i.into_iter()
+                                                        .flat_map(|(r, listings)| {
+                                                            listings
+                                                                .iter()
+                                                                .find(|i| {
+                                                                    i.item_id == added.item_id
+                                                                        && i.world_id
+                                                                            == added.world_id
                                                                         && added.price_per_unit
                                                                             < (i.price_per_unit
                                                                                 as f64
@@ -297,37 +307,37 @@ impl RetainerAlertListener {
                                                                                         as f64
                                                                                         / 100.0)))
                                                                                 as i32
-                                                                    })
-                                                                    .map(|l| (r, l.price_per_unit))
-                                                            })
-                                                            .map(|(retainer, price)| {(retainer.name, price)})
-                                                            .collect::<Vec<_>>()
-                                                    })
-                                                    .unwrap_or_default();
-                                                info!("detected undercut {user_retainer_ids:?} {user_lowest_listings:?}");
-                                                let retainers = retainers
-                                                    .into_iter()
-                                                    .map(|(name, undercutamount)| {
-                                                        format!("{name} {undercutamount}")
-                                                    })
-                                                    .collect::<Vec<_>>()
-                                                    .join(", ");
-                                                let undercut_msg = format!("<@{discord_user}> your retainers {retainers} have been undercut on {item_name}! Check your retainers!");
-                                                if let Err(e) = send_discord_alerts(
-                                                    alert_id,
-                                                    discord_user,
-                                                    &ultros_db,
-                                                    &ctx,
-                                                    &undercut_msg,
-                                                )
-                                                .await
-                                                {
-                                                    error!("Couldn't write to discord channel for reason {e:?}");
-                                                    break;
-                                                }
+                                                                })
+                                                                .map(|l| (r, l.price_per_unit))
+                                                        })
+                                                        .map(|(retainer, price)| {
+                                                            (retainer.name, price)
+                                                        })
+                                                        .collect::<Vec<_>>()
+                                                })
+                                                .unwrap_or_default();
+                                            info!("detected undercut {user_retainer_ids:?} {user_lowest_listings:?}");
+                                            let retainers = retainers
+                                                .into_iter()
+                                                .map(|(name, undercutamount)| {
+                                                    format!("{name} {undercutamount}")
+                                                })
+                                                .collect::<Vec<_>>()
+                                                .join(", ");
+                                            let undercut_msg = format!("<@{discord_user}> your retainers {retainers} have been undercut on {item_name}! Check your retainers!");
+                                            if let Err(e) = send_discord_alerts(
+                                                alert_id,
+                                                discord_user,
+                                                &ultros_db,
+                                                &ctx,
+                                                &undercut_msg,
+                                            )
+                                            .await
+                                            {
+                                                error!("Couldn't write to discord channel for reason {e:?}");
+                                                break;
                                             }
                                         }
-                                        _ => {}
                                     }
                                 }
                             }
