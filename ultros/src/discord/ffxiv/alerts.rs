@@ -124,7 +124,7 @@ struct RetainerAlertListener {
 async fn get_user_unique_retainer_ids_and_listing_ids_by_price(
     ultros_db: &UltrosDb,
     discord_user: u64,
-) -> Result<(HashSet<i32>, HashMap<(i32, i32), i32>)> {
+) -> Result<(HashSet<i32>, HashMap<(i32, i32, bool), i32>)> {
     // this might be better as a sql query
     let retainer_listings = ultros_db
         .get_retainer_listings_for_discord_user(discord_user)
@@ -132,12 +132,12 @@ async fn get_user_unique_retainer_ids_and_listing_ids_by_price(
     // get a list of what retainers and items the users have
     let user_retainer_ids: HashSet<i32> = retainer_listings.iter().map(|(r, _)| r.id).collect();
     // map item id -> min(price_per_unit)
-    let user_lowest_listings: HashMap<(i32, i32), i32> = retainer_listings
+    let user_lowest_listings: HashMap<(i32, i32, bool), i32> = retainer_listings
         .into_iter()
         .flat_map(|(_, listings)| {
             listings
                 .into_iter()
-                .map(|l| ((l.item_id, l.world_id), l.price_per_unit))
+                .map(|l| ((l.item_id, l.world_id, l.hq), l.price_per_unit))
         })
         .fold(HashMap::new(), |mut map, (item_id, price)| {
             let entry = map.entry(item_id).or_insert(price);
@@ -232,7 +232,7 @@ impl RetainerAlertListener {
                                     // if we removed our listing, we need to refetch our pricing from the database if the listing was the lowest
                                     if user_retainer_ids.contains(&removed.retainer_id) {
                                         if let Some(value) = user_lowest_listings
-                                            .get(&(removed.item_id, removed.world_id))
+                                            .get(&(removed.item_id, removed.world_id, removed.hq))
                                             .copied()
                                         {
                                             if value == removed.price_per_unit {
@@ -244,10 +244,11 @@ impl RetainerAlertListener {
                                         }
                                     }
 
-                                    if user_lowest_listings
-                                        .contains_key(&(removed.item_id, removed.world_id))
-                                    {
-                                    }
+                                    if user_lowest_listings.contains_key(&(
+                                        removed.item_id,
+                                        removed.world_id,
+                                        removed.hq,
+                                    )) {}
                                 }
                             }
                             crate::event::EventType::Add(added) => {
@@ -261,6 +262,7 @@ impl RetainerAlertListener {
                                         .entry((
                                             retainer_listing.item_id,
                                             retainer_listing.world_id,
+                                            retainer_listing.hq,
                                         ))
                                         .or_insert(retainer_listing.price_per_unit);
                                     *entry = retainer_listing.price_per_unit.min(*entry);
@@ -268,7 +270,7 @@ impl RetainerAlertListener {
                                 // items in an added vec should all be the same type, so lets just find the cheapest item
                                 if let Some(added) = added.iter().min_by_key(|a| a.price_per_unit) {
                                     if let Some(our_price) = user_lowest_listings
-                                        .get(&(added.item_id, added.world_id))
+                                        .get(&(added.item_id, added.world_id, added.hq))
                                         .copied()
                                     {
                                         let margin_price =
@@ -297,6 +299,7 @@ impl RetainerAlertListener {
                                                                 .iter()
                                                                 .find(|i| {
                                                                     i.item_id == added.item_id
+                                                                        && i.hq == added.hq
                                                                         && i.world_id
                                                                             == added.world_id
                                                                         && added.price_per_unit
