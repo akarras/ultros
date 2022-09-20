@@ -75,6 +75,7 @@ impl UltrosDb {
         let query_iden: DynIden = SeaRc::new(Alias::new("sale_hist"));
         let profit: DynIden = SeaRc::new(Alias::new("profit"));
         let margin: DynIden = SeaRc::new(Alias::new("margin"));
+
         let all_query = Query::select()
             .from(active_listing::Entity)
             .column(active_listing::Column::ItemId)
@@ -89,15 +90,22 @@ impl UltrosDb {
             .expr_as(
                 SimpleExpr::Binary(
                     Box::new(SimpleExpr::Binary(
-                        Box::new(SimpleExpr::Column(ColumnRef::TableColumn(
-                            query_iden.clone(),
-                            min_sale_price_alias.clone(),
-                        ))),
+                        Box::new(
+                            SimpleExpr::Column(ColumnRef::TableColumn(
+                                query_iden.clone(),
+                                min_sale_price_alias.clone(),
+                            ))
+                            .cast_as(Alias::new("float")),
+                        ),
                         BinOper::Div,
-                        Box::new(active_listing::Column::PricePerUnit.min()),
+                        Box::new(
+                            active_listing::Column::PricePerUnit
+                                .min()
+                                .cast_as(Alias::new("float")),
+                        ),
                     )),
                     BinOper::Mul,
-                    Box::new(SimpleExpr::Value(Value::Int(Some(100)))),
+                    Box::new(SimpleExpr::Value(Value::Float(Some(100.0)))),
                 ),
                 margin.clone(),
             )

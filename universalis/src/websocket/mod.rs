@@ -97,7 +97,7 @@ impl SubscriptionTracker {
                 event: SubscribeMode::Subscribe,
                 channel: channel.clone(),
             };
-            let bson = bson::to_vec(&)?;
+            let bson = bson::to_vec(&subscription_update)?;
             info!("Resent subscription update {subscription_update:?}");
             sender.send(Message::Binary(bson)).await?;
         }
@@ -133,7 +133,8 @@ impl WebsocketClient {
                 info!("Sending ping to keep the socket alive");
                 sender
                     .send(SocketTx::Ping)
-                    .await.expect("Unable to push message to message queue");
+                    .await
+                    .expect("Unable to push message to message queue");
                 tokio::time::sleep(Duration::from_secs(60)).await;
             }
         });
@@ -162,10 +163,11 @@ impl WebsocketClient {
                         .ok();
                     if let Some(mut ws) = websocket {
                         // send a ping first
-                        if let Err(ping_result) = ws.send(Message::Ping(vec![1,2,3,4,5])).await {
+                        if let Err(ping_result) = ws.send(Message::Ping(vec![1, 2, 3, 4, 5])).await
+                        {
                             error!("Error writing ping {ping_result}");
                         }
-                        
+
                         if let Err(e) = active_subscriptions.resend_subscriptions(&mut ws).await {
                             error!("error resending subscriptions {e:?}");
                             websocket = None;
