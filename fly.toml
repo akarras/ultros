@@ -5,21 +5,19 @@ kill_signal = "SIGINT"
 kill_timeout = 5
 
 [env]
-  RUST_LOG='ultros=info,warn'
+  RUST_LOG='ultros=info,warn,universalis=info'
 [experimental]
-  allowed_public_ports = []
-  auto_rollback = true
+  auto_rollback = false
   cmd = "./ultros"
 
 [[services]]
   http_checks = []
   internal_port = 8080
-  processes = ["ultros"]
   protocol = "tcp"
   script_checks = []
   [services.concurrency]
-    hard_limit = 300
-    soft_limit = 100
+    hard_limit = 10000
+    soft_limit = 1000
     type = "connections"
 
   [[services.ports]]
@@ -35,4 +33,4 @@ kill_timeout = 5
     grace_period = "2s"
     interval = "15s"
     restart_limit = 6
-    timeout = "2s"
+    timeout = "3s"
