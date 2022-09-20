@@ -14,7 +14,9 @@ FROM rust:latest as builder
 # Copy the rest
 COPY . .
 # Build (install) the actual binaries
-RUN cargo install --path ultros
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/home/root/app/target \
+    cargo install --path ultros
 
 # Runtime image
 FROM debian:bullseye-slim

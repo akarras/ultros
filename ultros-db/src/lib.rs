@@ -5,7 +5,7 @@ mod ffxiv_character;
 mod listings;
 mod listings_stats;
 pub(crate) mod partial_diff_iterator;
-mod price_optimizer;
+pub mod price_optimizer;
 mod regions_and_datacenters;
 mod retainers;
 

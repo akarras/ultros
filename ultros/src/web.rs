@@ -1,10 +1,12 @@
-use axum::extract::{FromRef, Path, State};
+use axum::extract::{FromRef, Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::Html;
 use axum::routing::get;
 use axum::Router;
+use serde::Deserialize;
 use std::fmt::Write;
 use std::net::SocketAddr;
+use ultros_db::price_optimizer::BestResellResults;
 use ultros_db::UltrosDb;
 use universalis::{ItemId, WorldId};
 use xiv_gen::ItemId as XivDBItemId;
@@ -150,6 +152,61 @@ async fn world_item_listings(
     Ok(Html(value))
 }
 
+#[derive(Deserialize)]
+struct ProfitParameters {
+    sale_amount_threshold: i32,
+    sale_window_days: i64,
+}
+
+async fn analyze_profits(
+    State(db): State<UltrosDb>,
+    Path(world): Path<String>,
+    Query(parameters): Query<ProfitParameters>,
+) -> Result<Html<String>, (StatusCode, String)> {
+    let ProfitParameters {
+        sale_amount_threshold,
+        sale_window_days,
+    } = &parameters;
+    let world = db.get_world(&world).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("World not found {e:?}"),
+        )
+    })?;
+    let best_items = db
+        .get_best_item_to_resell_on_world(
+            world.id,
+            *sale_amount_threshold,
+            chrono::Duration::days(*sale_window_days),
+        )
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")))?;
+    let game_data = xiv_gen_db::decompress_data();
+    let mut html = format!(
+        "<table><tr><th>{}</th><th>{}</th><th>{}</th></tr>",
+        "Item name", "Margin %", "Profit Amount"
+    );
+    for item in best_items {
+        let BestResellResults {
+            item_id,
+            margin,
+            profit,
+        } = &item;
+        let item_name = game_data
+            .items
+            .get(&xiv_gen::ItemId(item.item_id))
+            .map(|item| item.name.as_str())
+            .unwrap_or_default();
+        write!(
+            &mut html,
+            "<tr><td>{item_name}</td><td>{margin}</td><td>{profit}</td></tr>"
+        )
+        .unwrap();
+    }
+    write!(&mut html, "</table>").unwrap();
+    Ok(Html(html))
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct WebState {
     pub(crate) db: UltrosDb,
@@ -168,6 +225,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/retainer/search/:search", get(search_retainers))
         .route("/listings/:world/:itemid", get(world_item_listings))
         .route("/listings/retainer/:id", get(get_retainer_listings))
+        .route("/listings/analyze/:world", get(analyze_profits))
         .fallback(fallback);
 
     // run our app with hyper
@@ -177,7 +235,7 @@ pub(crate) async fn start_web(state: WebState) {
         .ok()
         .flatten()
         .unwrap_or(8080);
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
     tracing::info!("listening on {}", addr);
     axum::Server::bind(&addr)
         .serve(app.into_make_service())
