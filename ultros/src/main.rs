@@ -77,7 +77,7 @@ async fn run_socket_listener(db: UltrosDb, listings_tx: EventProducer<Vec<active
                         info!("sales removed {item:?} {world:?} {sales:?}");
                     }
                     SocketRx::Event(Err(e)) => {
-                        eprintln!("Error {e:?}");
+                        error!("Error {e:?}");
                     }
                 }
             });
