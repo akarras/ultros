@@ -31,7 +31,7 @@ pub(crate) async fn profit(
         .await?;
     ctx.send(|reply| {
         reply.embed(|e| {
-            let mut content = format!("`{:<40} | margin | profit`\n", "item name");
+            let mut content = format!("`{:<40} |  margin  | profit`\n", "item name");
             for sale in sales {
                 let item_name = items
                     .get(&ItemId(sale.item_id))
@@ -39,7 +39,7 @@ pub(crate) async fn profit(
                     .unwrap_or_default();
                 writeln!(
                     &mut content,
-                    "`{item_name:<40} | {:3}% | {:<10}` [url](https://universalis.app/market/{})",
+                    "`{item_name:<40} | {:7.2}% | {:<10}` [url](https://universalis.app/market/{})",
                     sale.margin, sale.profit, sale.item_id
                 )
                 .unwrap();

@@ -18,10 +18,11 @@ use sea_orm::*;
 pub struct BestResellResults {
     pub item_id: i32,
     pub profit: i32,
-    pub margin: i32,
+    pub margin: f64,
 }
 
 impl UltrosDb {
+    #[instrument]
     /// Tries to calculate what the best item to resell for the given world is
     /// Assumes that the user is willing to travel to all worlds in the region
     /// Parameters:
@@ -94,12 +95,14 @@ impl UltrosDb {
                             SimpleExpr::Column(ColumnRef::TableColumn(
                                 query_iden.clone(),
                                 min_sale_price_alias.clone(),
-                            )),
+                            ))
+                            .cast_as(Alias::new("float8")),
                         ),
                         BinOper::Div,
                         Box::new(
                             active_listing::Column::PricePerUnit
-                                .min(),
+                                .min()
+                                .cast_as(Alias::new("float8")),
                         ),
                     )),
                     BinOper::Mul,
@@ -117,8 +120,8 @@ impl UltrosDb {
             .and_where(active_listing::Column::WorldId.in_subquery(all_worlds_in_region_query))
             .group_by_col(active_listing::Column::ItemId)
             .group_by_col((query_iden.clone(), min_sale_price_alias.clone()))
-            .limit(10)
             .order_by(profit, Order::Desc)
+            .limit(25)
             .to_owned();
         let query = self.db.get_database_backend().build(&all_query);
         let results = BestResellResults::find_by_statement(query)

@@ -32,7 +32,7 @@ pub struct UltrosDb {
 impl UltrosDb {
     #[instrument]
     pub async fn connect() -> Result<Self> {
-        let url = std::env::var("DATABASE_URL").unwrap();
+        let url = std::env::var("DATABASE_URL").expect("Missing DATABASE_URL environment variable");
         let mut opt = ConnectOptions::new(url);
         opt.max_connections(90)
             .min_connections(0)
