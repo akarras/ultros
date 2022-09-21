@@ -94,14 +94,12 @@ impl UltrosDb {
                             SimpleExpr::Column(ColumnRef::TableColumn(
                                 query_iden.clone(),
                                 min_sale_price_alias.clone(),
-                            ))
-                            .cast_as(Alias::new("float")),
+                            )),
                         ),
                         BinOper::Div,
                         Box::new(
                             active_listing::Column::PricePerUnit
-                                .min()
-                                .cast_as(Alias::new("float")),
+                                .min(),
                         ),
                     )),
                     BinOper::Mul,
