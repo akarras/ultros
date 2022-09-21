@@ -92,6 +92,9 @@ impl SubscriptionTracker {
         &self,
         sender: &mut WebSocketStream<ConnectStream>,
     ) -> Result<(), crate::Error> {
+        if self.subscriptions.is_empty() {
+            warn!("No subscriptions to resend, websocket won't get any data.");
+        }
         for channel in &self.subscriptions {
             let subscription_update = WebSocketSubscriptionUpdate {
                 event: SubscribeMode::Subscribe,
