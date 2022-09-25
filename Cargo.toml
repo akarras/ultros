@@ -6,3 +6,7 @@ members = ["universalis", "xivapi", "recipepricecheck", "crafterstoolbox", "xiv-
 lto = true
 opt-level = 3
 codegen-units = 1
+
+[profile.fastdev]
+inherits = "dev"
+opt-level = 1

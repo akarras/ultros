@@ -1,19 +1,50 @@
+mod fuzzy_item_search;
+mod templates;
+pub mod item_search_index;
+
+use axum::body::{Empty, Full};
 use axum::extract::{FromRef, Path, Query, State};
-use axum::http::StatusCode;
-use axum::response::Html;
+use axum::http::{HeaderValue, Response, StatusCode};
+use axum::response::{Html, IntoResponse};
 use axum::routing::get;
-use axum::Router;
+use axum::{body, Router};
+use include_dir::include_dir;
+use maud::{html, Markup, Render};
+use reqwest::header;
 use serde::Deserialize;
 use std::fmt::Write;
+use std::io::Read;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use ultros_db::price_optimizer::BestResellResults;
 use ultros_db::UltrosDb;
 use universalis::{ItemId, WorldId};
 use xiv_gen::ItemId as XivDBItemId;
 
+use self::templates::page::{Page, RenderPage};
+use crate::web::templates::components::header::Header;
+use crate::web::templates::components::SearchBox;
+
+struct HomePage;
+
+impl Page for HomePage {
+    fn get_name<'a>(&self) -> &'a str {
+        "Home page"
+    }
+
+    fn draw_body(&self) -> Markup {
+        html! {
+            (Header)
+            h1 class="hero-title" {
+                "Own the marketboard"
+            }
+        }
+    }
+}
+
 // basic handler that responds with a static string
-async fn root() -> Html<&'static str> {
-    Html("Hello, World!")
+async fn root() -> RenderPage<HomePage> {
+    RenderPage(HomePage)
 }
 
 async fn search_retainers(
@@ -218,6 +249,43 @@ impl FromRef<WebState> for UltrosDb {
     }
 }
 
+/// In release mode, return the files from a statically included dir
+#[cfg(not(debug_assertions))]
+fn get_static_file(path: &str) -> Option<&'static [u8]> {
+    static STATIC_DIR: include_dir::Dir = include_dir!("$CARGO_MANIFEST_DIR/static");
+    let dir = &STATIC_DIR;
+    None
+}
+
+/// In debug mode, just load the files from disk
+#[cfg(debug_assertions)]
+fn get_static_file(path: &str) -> Option<Vec<u8>> {
+    let file = PathBuf::from("./ultros/static").join(path);
+    let mut file = std::fs::File::open(file).ok()?;
+    let mut vec = Vec::new();
+    file.read_to_end(&mut vec).ok()?;
+    Some(vec)
+}
+
+async fn static_path(Path(path): Path<String>) -> impl IntoResponse {
+    let path = path.trim_start_matches('/');
+    let mime_type = mime_guess::from_path(path).first_or_text_plain();
+    match get_static_file(&path) {
+        None => Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(body::boxed(Empty::new()))
+            .unwrap(),
+        Some(file) => Response::builder()
+            .status(StatusCode::OK)
+            .header(
+                header::CONTENT_TYPE,
+                HeaderValue::from_str(mime_type.as_ref()).unwrap(),
+            )
+            .body(body::boxed(Full::from(file)))
+            .unwrap(),
+    }
+}
+
 pub(crate) async fn start_web(state: WebState) {
     // build our application with a route
     let app = Router::with_state(state)
@@ -226,6 +294,8 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/listings/:world/:itemid", get(world_item_listings))
         .route("/listings/retainer/:id", get(get_retainer_listings))
         .route("/listings/analyze/:world", get(analyze_profits))
+        .route("/items/:search", get(fuzzy_item_search::search_items))
+        .route("/static/*path", get(static_path))
         .fallback(fallback);
 
     // run our app with hyper
