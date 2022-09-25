@@ -43,6 +43,8 @@ fn calculate_score(matches: &Vec<Match>) -> usize {
 pub(crate) async fn search_items(Path(search_str): Path<String>) -> Result<Html<String>, (StatusCode, String)> {
     let matches = do_query(&search_str).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("search issue: {e}")))?;
     // todo highlight with ahochorasick the parts of the string that match the name
+    let categories = &xiv_gen_db::decompress_data().item_ui_categorys;
+
     Ok(Html(html!{
     div {
       @for (item_id, item) in matches {
@@ -52,10 +54,10 @@ pub(crate) async fn search_items(Path(search_str): Path<String>) -> Result<Html<
             img src={"https://universalis-ffxiv.github.io/universalis-assets/icon2x/" (item_id) ".png"};
             div class="search-result-details" {
               span class="item-name" {
-                (PreEscaped(&item.name))
+                (&item.name)
               }
               span class="item-type" {
-                "item"
+                (categories.get(&item.item_ui_category).map(|i| i.name.as_str()).unwrap_or_default())
               }
             }
           }
