@@ -11,7 +11,6 @@ use axum::response::{Html, IntoResponse};
 use axum::routing::get;
 use axum::{body, Router};
 use axum_extra::extract::cookie::Key;
-use maud::{html, Markup};
 use reqwest::header;
 use serde::Deserialize;
 use std::fmt::Write;
@@ -24,30 +23,9 @@ use universalis::{ItemId, WorldId};
 use xiv_gen::ItemId as XivDBItemId;
 
 use self::oauth::{AuthDiscordUser, AuthUserCache, DiscordAuthConfig};
-use self::templates::page::{Page, RenderPage};
+use self::templates::page::{RenderPage};
+use self::templates::pages::home_page::HomePage;
 use crate::web::oauth::{begin_login, logout};
-use crate::web::templates::components::header::Header;
-
-struct HomePage {
-    user: Option<AuthDiscordUser>,
-}
-
-impl Page for HomePage {
-    fn get_name<'a>(&self) -> &'a str {
-        "Home page"
-    }
-
-    fn draw_body(&self) -> Markup {
-        html! {
-            (Header {
-                user: &self.user
-            })
-            h1 class="hero-title" {
-                "Own the marketboard"
-            }
-        }
-    }
-}
 
 // basic handler that responds with a static string
 async fn root(user: Option<AuthDiscordUser>) -> RenderPage<HomePage> {
