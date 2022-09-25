@@ -23,7 +23,6 @@ use xiv_gen::ItemId as XivDBItemId;
 
 use self::templates::page::{Page, RenderPage};
 use crate::web::templates::components::header::Header;
-use crate::web::templates::components::SearchBox;
 
 struct HomePage;
 
@@ -254,7 +253,8 @@ impl FromRef<WebState> for UltrosDb {
 fn get_static_file(path: &str) -> Option<&'static [u8]> {
     static STATIC_DIR: include_dir::Dir = include_dir!("$CARGO_MANIFEST_DIR/static");
     let dir = &STATIC_DIR;
-    None
+    let file = dir.get_file(path)?;
+    Some(file.contents())
 }
 
 /// In debug mode, just load the files from disk
