@@ -53,15 +53,19 @@ impl AlertManager {
             Err(e) => error!("Error creating all alerts {e:?}"),
         }
         loop {
-            let mut alerts = Box::pin(alerts.recv());
-            let mut retainer_alert_events = Box::pin(undercuts.recv());
+            let alerts = Box::pin(alerts.recv());
+            let retainer_alert_events = Box::pin(undercuts.recv());
             match futures::future::select(alerts, retainer_alert_events).await {
-                futures::future::Either::Left(alert) => todo!(),
+                futures::future::Either::Left(_alert) => {
+                    /*if let Ok(alert) = alert {
+                        manager.remove_retainer_alert(alert);
+                    }*/
+                },
                 futures::future::Either::Right((retainer_alert_create, _)) => {
                     if let Ok(retainer) = &retainer_alert_create {
                         match retainer {
                             crate::event::EventType::Remove(removed) => {
-                                manager.current_retainer_alerts.remove(&removed.id);
+                                manager.remove_retainer_alert(&removed).await;
                             }
                             crate::event::EventType::Add(retainer_alert) => {
                                 manager
@@ -74,7 +78,9 @@ impl AlertManager {
                                     )
                                     .await;
                             }
-                            crate::event::EventType::Update(m) => {}
+                            crate::event::EventType::Update(m) => {
+                                manager.update_alert(&m, m.margin_percent).await;
+                            }
                         }
                     }
                 }
@@ -108,11 +114,23 @@ impl AlertManager {
         {
             Ok(l) => l,
             Err(e) => {
-                error!("Error creating retainer alert listener");
+                error!("Error creating retainer alert listener {e}");
                 return;
             }
         };
         self.current_retainer_alerts.insert(*id, listener);
+    }
+
+    async fn remove_retainer_alert(&mut self, alert: &alert_retainer_undercut::Model) {
+        if let Some(listener) = self.current_retainer_alerts.remove(&alert.id) {
+            let _ = listener.cancellation_sender.send(RetainerAlertTx::Stop).await;
+        }
+    }
+
+    async fn update_alert(&self, alert: &alert_retainer_undercut::Model, margin: i32) {
+        if let Some(listener) = self.current_retainer_alerts.get(&alert.id) {
+            let _ = listener.cancellation_sender.send(RetainerAlertTx::UpdateMargin(margin));
+        }
     }
 }
 
@@ -186,7 +204,7 @@ impl RetainerAlertListener {
         mut margin: i32,
         ultros_db: UltrosDb,
         mut listings: EventBus<Vec<active_listing::Model>>,
-        mut active_retainers: EventBus<retainer::Model>,
+        active_retainers: EventBus<retainer::Model>,
         ctx: serenity_prelude::Context,
     ) -> Result<Self> {
         let alert = ultros_db

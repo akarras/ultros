@@ -48,8 +48,6 @@ pub fn do_query(query_str: &str) -> Result<Vec<(i32, &'static Item)>> {
         .ok_or(anyhow::Error::msg("Unable to get category field"))?;
     let parser = QueryParser::for_index(&ITEM_INDEX, vec![name, category]);
     let query = parser.parse_query(query_str).unwrap();
-    let name = ITEM_INDEX.schema().get_field("name").unwrap();
-    let category = ITEM_INDEX.schema().get_field("category").unwrap();
     let reader = ITEM_INDEX.reader().unwrap();
     let searcher = reader.searcher();
     let results = searcher.search(&query, &TopDocs::with_limit(10))?;

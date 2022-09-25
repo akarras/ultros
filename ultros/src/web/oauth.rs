@@ -151,7 +151,7 @@ pub async fn redirect(
         .exchange_code(code)
         .request_async(oauth2::reqwest::async_http_client)
         .await
-        .map_err(|e| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map_err(|e| { error!("{e}"); StatusCode::INTERNAL_SERVER_ERROR })?
         .access_token()
         .secret()
         .clone();
@@ -207,7 +207,7 @@ impl AuthUserCache {
 pub struct AuthDiscordUser {
     pub(crate) id: u64,
     pub(crate) name: String,
-    pub(crate) avatar_url: String
+    pub(crate) avatar_url: String,
 }
 
 #[async_trait]
@@ -234,7 +234,7 @@ where
             State::from_request_parts(parts, state).await.unwrap();
 
         if let Some(user) = user_cache.get_user(discord_auth.value()).await {
-            return Ok(user)
+            return Ok(user);
         }
 
         let http = Http::new(&format!("Bearer {}", discord_auth.value()));
@@ -242,13 +242,17 @@ where
             error!("error accessing logged in user {e}");
             StatusCode::UNAUTHORIZED
         })?;
-        let avatar_url = user.static_avatar_url().unwrap_or(user.default_avatar_url());
+        let avatar_url = user
+            .static_avatar_url()
+            .unwrap_or(user.default_avatar_url());
         let user = AuthDiscordUser {
             id: user.id.0,
             name: user.name,
-            avatar_url
+            avatar_url,
         };
-        user_cache.store_user(discord_auth.value(), user.clone()).await;
+        user_cache
+            .store_user(discord_auth.value(), user.clone())
+            .await;
         Ok(user)
     }
 }

@@ -73,7 +73,7 @@ impl UltrosDb {
                 .collect();
             if !added_regions.is_empty() {
                 tracing::info!("new regions {added_regions:?}");
-                let just_inserted = region::Entity::insert_many(added_regions)
+                let _just_inserted = region::Entity::insert_many(added_regions)
                     .exec(&self.db)
                     .await?;
             } else {
@@ -150,12 +150,12 @@ impl UltrosDb {
                             .flatten()
                             .expect("Should have a valid datacenter id available")),
                     }),
-                    crate::partial_diff_iterator::Diff::Right(right) => None,
+                    crate::partial_diff_iterator::Diff::Right(_right) => None,
                 })
                 .collect();
             if !worlds.is_empty() {
                 info!("new worlds {worlds:?}");
-                let world = world::Entity::insert_many(worlds).exec(&self.db).await?;
+                let _world = world::Entity::insert_many(worlds).exec(&self.db).await?;
             } else {
                 info!("no new worlds");
             }

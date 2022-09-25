@@ -45,7 +45,7 @@ pub(crate) async fn register(
             })
         })
         .await?;
-    let selected_value = if let Some(msg) = msg
+    if let Some(msg) = msg
         .message()
         .await?
         .await_component_interaction(ctx.discord())

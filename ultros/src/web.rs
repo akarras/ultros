@@ -18,7 +18,6 @@ use std::fmt::Write;
 use std::io::Read;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use ultros_db::entity::prelude::DiscordUser;
 use ultros_db::price_optimizer::BestResellResults;
 use ultros_db::UltrosDb;
 use universalis::{ItemId, WorldId};

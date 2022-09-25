@@ -170,7 +170,7 @@ impl UltrosDb {
                                 });
                             number_of_listings_undercutting.map(|num| (listing, num))
                         })
-                        .filter(|(l, data)| data.number_behind > 0)
+                        .filter(|(_, data)| data.number_behind > 0)
                         .collect::<Vec<_>>(),
                 )
             })
