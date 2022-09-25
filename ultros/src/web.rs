@@ -1,6 +1,8 @@
+pub mod error;
 mod fuzzy_item_search;
-mod templates;
 pub mod item_search_index;
+pub mod oauth;
+mod templates;
 
 use axum::body::{Empty, Full};
 use axum::extract::{FromRef, Path, Query, State};
@@ -8,23 +10,28 @@ use axum::http::{HeaderValue, Response, StatusCode};
 use axum::response::{Html, IntoResponse};
 use axum::routing::get;
 use axum::{body, Router};
-use include_dir::include_dir;
-use maud::{html, Markup, Render};
+use axum_extra::extract::cookie::Key;
+use maud::{html, Markup};
 use reqwest::header;
 use serde::Deserialize;
 use std::fmt::Write;
 use std::io::Read;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use ultros_db::entity::prelude::DiscordUser;
 use ultros_db::price_optimizer::BestResellResults;
 use ultros_db::UltrosDb;
 use universalis::{ItemId, WorldId};
 use xiv_gen::ItemId as XivDBItemId;
 
+use self::oauth::{AuthDiscordUser, AuthUserCache, DiscordAuthConfig};
 use self::templates::page::{Page, RenderPage};
+use crate::web::oauth::{begin_login, logout};
 use crate::web::templates::components::header::Header;
 
-struct HomePage;
+struct HomePage {
+    user: Option<AuthDiscordUser>,
+}
 
 impl Page for HomePage {
     fn get_name<'a>(&self) -> &'a str {
@@ -33,7 +40,9 @@ impl Page for HomePage {
 
     fn draw_body(&self) -> Markup {
         html! {
-            (Header)
+            (Header {
+                user: &self.user
+            })
             h1 class="hero-title" {
                 "Own the marketboard"
             }
@@ -42,8 +51,8 @@ impl Page for HomePage {
 }
 
 // basic handler that responds with a static string
-async fn root() -> RenderPage<HomePage> {
-    RenderPage(HomePage)
+async fn root(user: Option<AuthDiscordUser>) -> RenderPage<HomePage> {
+    RenderPage(HomePage { user })
 }
 
 async fn search_retainers(
@@ -237,9 +246,12 @@ async fn analyze_profits(
     Ok(Html(html))
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) struct WebState {
     pub(crate) db: UltrosDb,
+    pub(crate) key: Key,
+    pub(crate) oauth_config: DiscordAuthConfig,
+    pub(crate) user_cache: AuthUserCache,
 }
 
 impl FromRef<WebState> for UltrosDb {
@@ -248,9 +260,28 @@ impl FromRef<WebState> for UltrosDb {
     }
 }
 
+impl FromRef<WebState> for Key {
+    fn from_ref(input: &WebState) -> Self {
+        input.key.clone()
+    }
+}
+
+impl FromRef<WebState> for DiscordAuthConfig {
+    fn from_ref(input: &WebState) -> Self {
+        input.oauth_config.clone()
+    }
+}
+
+impl FromRef<WebState> for AuthUserCache {
+    fn from_ref(input: &WebState) -> Self {
+        input.user_cache.clone()
+    }
+}
+
 /// In release mode, return the files from a statically included dir
 #[cfg(not(debug_assertions))]
 fn get_static_file(path: &str) -> Option<&'static [u8]> {
+    use include_dir::include_dir;
     static STATIC_DIR: include_dir::Dir = include_dir!("$CARGO_MANIFEST_DIR/static");
     let dir = &STATIC_DIR;
     let file = dir.get_file(path)?;
@@ -296,6 +327,9 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/listings/analyze/:world", get(analyze_profits))
         .route("/items/:search", get(fuzzy_item_search::search_items))
         .route("/static/*path", get(static_path))
+        .route("/redirect", get(self::oauth::redirect))
+        .route("/login", get(begin_login))
+        .route("/logout", get(logout))
         .fallback(fallback);
 
     // run our app with hyper

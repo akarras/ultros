@@ -1,4 +1,4 @@
-use maud::{html, PreEscaped, Render};
+use maud::{html, Render};
 
 pub(crate) struct SearchBox;
 

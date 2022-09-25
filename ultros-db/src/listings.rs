@@ -43,7 +43,7 @@ impl UltrosDb {
 
         let mut retainers = self
             .get_retainer_ids_from_name(
-                queried_retainers.iter().map(|(name, id, _)| name.as_str()),
+                queried_retainers.iter().map(|(name, _, _)| name.as_str()),
                 world_id.0,
             )
             .await?;
@@ -149,7 +149,7 @@ impl UltrosDb {
                 .id;
             self.create_listing(m, item_id, world_id, Some(retainer_id))
         });
-        let (added, removed_result) =
+        let (added, _removed_result) =
             futures::future::join(futures::future::join_all(added), async move {
                 if let Some(is_in) = is_in {
                     Entity::delete_many()

@@ -1,7 +1,6 @@
 use aho_corasick::Match;
-use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
 use axum::{extract::Path, response::Html};
-use maud::{html, Markup, PreEscaped, Render};
+use maud::{html, Render};
 use reqwest::StatusCode;
 use std::fmt::Write;
 
@@ -40,8 +39,15 @@ fn calculate_score(matches: &Vec<Match>) -> usize {
     matches.iter().map(|m| m.len()).sum()
 }
 
-pub(crate) async fn search_items(Path(search_str): Path<String>) -> Result<Html<String>, (StatusCode, String)> {
-    let matches = do_query(&search_str).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("search issue: {e}")))?;
+pub(crate) async fn search_items(
+    Path(search_str): Path<String>,
+) -> Result<Html<String>, (StatusCode, String)> {
+    let matches = do_query(&search_str).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("search issue: {e}"),
+        )
+    })?;
     // todo highlight with ahochorasick the parts of the string that match the name
     let categories = &xiv_gen_db::decompress_data().item_ui_categorys;
 

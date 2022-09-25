@@ -1,5 +1,5 @@
 use crate::EventType;
-use poise::{serenity_prelude::Color, CreateReply};
+use poise::serenity_prelude::Color;
 use std::sync::Arc;
 use std::{collections::HashSet, fmt::Write};
 use ultros_db::entity::active_listing;

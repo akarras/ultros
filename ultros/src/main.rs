@@ -2,10 +2,14 @@ mod discord;
 pub(crate) mod event;
 mod web;
 
+use std::collections::HashSet;
+use std::env;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::web::WebState;
 use anyhow::Result;
+use axum_extra::extract::cookie::Key;
 use discord::start_discord;
 use event::{create_event_busses, EventProducer, EventType};
 use tracing::{error, info};
@@ -14,6 +18,7 @@ use ultros_db::UltrosDb;
 use universalis::websocket::event_types::{EventChannel, SubscribeMode, WSMessage};
 use universalis::websocket::SocketRx;
 use universalis::{DataCentersView, UniversalisClient, WebsocketClient, WorldsView};
+use web::oauth::{AuthUserCache, DiscordAuthConfig, OAuthScope};
 
 async fn run_socket_listener(db: UltrosDb, listings_tx: EventProducer<Vec<active_listing::Model>>) {
     let mut socket = WebsocketClient::connect().await;
@@ -113,7 +118,31 @@ async fn main() -> Result<()> {
     // begin listening to universalis events
     tokio::spawn(run_socket_listener(db.clone(), senders.listings.clone()));
     tokio::spawn(start_discord(db.clone(), senders, receivers));
-    let web_state = WebState { db };
+    // create the oauth config
+    let hostname = env::var("HOSTNAME").expect(
+        "Missing env variable HOSTNAME, which should be the domain of the server running this app.",
+    );
+    let client_id =
+        env::var("DISCORD_CLIENT_ID").expect("environment variable DISCORD_CLIENT_ID not found");
+    let client_secret = env::var("DISCORD_CLIENT_SECRET")
+        .expect("environment variable DISCORD_CLIENT_SECRET for OAuth missing");
+    let key = env::var("KEY").expect("environment variable KEY not found");
+    let web_state = WebState {
+        db,
+        key: Key::from(key.as_bytes()),
+        oauth_config: DiscordAuthConfig::new(
+            client_id,
+            client_secret,
+            PathBuf::from(hostname)
+                .join("redirect")
+                .into_os_string()
+                .to_str()
+                .unwrap()
+                .to_string(),
+            HashSet::from_iter([OAuthScope::Identify]),
+        ),
+        user_cache: AuthUserCache::new(),
+    };
     web::start_web(web_state).await;
     Ok(())
 }

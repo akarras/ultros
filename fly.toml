@@ -7,6 +7,8 @@ kill_timeout = 5
 [env]
   RUST_LOG='ultros=info,warn,universalis=info'
   PORT = "8080"
+  HOSTNAME = "https://ultros.app/"
+  DISCORD_CLIENT_ID = 1018657822344478741
 [experimental]
   auto_rollback = false
   cmd = "./ultros"
