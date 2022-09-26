@@ -3,7 +3,7 @@ use maud::{html, Render};
 use crate::web::{oauth::AuthDiscordUser, templates::components::SearchBox};
 
 pub(crate) struct Header<'a> {
-    pub(crate) user: &'a Option<AuthDiscordUser>,
+    pub(crate) user: Option<&'a AuthDiscordUser>,
 }
 
 impl<'a> Render for Header<'a> {

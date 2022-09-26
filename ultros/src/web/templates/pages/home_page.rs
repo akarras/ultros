@@ -17,7 +17,7 @@ impl Page for HomePage {
     fn draw_body(&self) -> Markup {
         html! {
             (Header {
-                user: &self.user
+                user: self.user.as_ref(),
             })
             h1 class="hero-title" {
                 "Dominate the marketboard"

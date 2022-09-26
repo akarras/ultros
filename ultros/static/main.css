@@ -175,7 +175,7 @@ body {
   margin-right: 10%;
 }
 
-.world-filter {
+.content-nav {
   font-size: 20px;
   margin-left: 25px;
 }
@@ -205,4 +205,12 @@ body {
 
 .main-content table {
   background-color: rgba(0, 0, 0, 0.08);
+}
+
+tr:nth-child(even) {
+  background-color: #140F0F61; /* 38% */
+}
+
+tr:nth-child(odd) {
+  background-color: #D4C7C70A;
 }

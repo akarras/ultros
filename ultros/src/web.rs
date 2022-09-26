@@ -27,6 +27,7 @@ use self::oauth::{AuthDiscordUser, AuthUserCache, DiscordAuthConfig};
 use self::templates::page::RenderPage;
 use self::templates::pages::home_page::HomePage;
 use self::templates::pages::listings_view::ListingsPage;
+use self::templates::pages::user_retainers_page::{UserRetainersPage, RetainerViewType};
 use crate::web::oauth::{begin_login, logout};
 
 // basic handler that responds with a static string
@@ -133,13 +134,26 @@ async fn get_retainer_listings(
     }
 }
 
+async fn user_retainers_listings(State(db): State<UltrosDb>, current_user: AuthDiscordUser) -> Result<RenderPage<UserRetainersPage>, WebError> {
+    let retainer_listings = db.get_retainer_listings_for_discord_user(current_user.id).await?;
+    Ok(RenderPage(UserRetainersPage {
+        character_names: Vec::new(),
+        view_type: RetainerViewType::Listings(retainer_listings),
+        current_user,
+    }))
+}
+
+async fn user_retainers_undercuts(State(db): State<UltrosDb>, current_user: AuthDiscordUser) -> Result<RenderPage<UserRetainersPage>, WebError> {
+    let undercut_retainers = db.get_retainer_undercut_items(current_user.id).await?;
+    Ok(RenderPage(UserRetainersPage { character_names: Vec::new(), view_type: RetainerViewType::Undercuts(undercut_retainers), current_user }))
+}
+
 async fn world_item_listings<'a>(
     State(db): State<UltrosDb>,
     Path((world, item_id)): Path<(String, i32)>,
     user: Option<AuthDiscordUser>,
 ) -> Result<RenderPage<ListingsPage>, WebError> {
     let world = db.get_world(&world).await?;
-
     let (worlds, datacenter, region) = db.get_relative_worlds_datacenter_and_region(&world).await?;
     let mut world_names: Vec<_> = worlds.into_iter().map(|i| i.name).collect();
     world_names.push(datacenter.name);
@@ -285,7 +299,10 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/", get(root))
         .route("/retainer/search/:search", get(search_retainers))
         .route("/listings/:world/:itemid", get(world_item_listings))
-        .route("/listings/retainer/:id", get(get_retainer_listings))
+        .route("/retainers/listings/:id", get(get_retainer_listings))
+        .route("/retainers/undercuts", get(user_retainers_undercuts))
+        .route("/retainers/listings", get(user_retainers_listings))
+        .route("/retainers", get(user_retainers_listings))
         .route("/listings/analyze/:world", get(analyze_profits))
         .route("/items/:search", get(fuzzy_item_search::search_items))
         .route("/static/*path", get(static_path))

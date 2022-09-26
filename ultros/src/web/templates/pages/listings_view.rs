@@ -59,7 +59,7 @@ impl Page for ListingsPage {
         high_quality_listings.sort_by_key(|(l, _)| l.price_per_unit);
         html! {
           (Header {
-            user: &self.user
+            user: self.user.as_ref()
           })
           div class="container" {
             div class="search-result" {
@@ -73,7 +73,7 @@ impl Page for ListingsPage {
                 }
               }
             }
-            div class="world-filter nav" {
+            div class="content-nav nav" {
               @for world_name in &self.worlds {
                 @if world_name == &self.selected_world {
                   a class="btn-secondary active" {
@@ -122,10 +122,10 @@ impl Page for ListingsPage {
                           ((listing.price_per_unit * listing.quantity))
                         }
                         td {
-                          ((listing.timestamp))
+                          ((retainer.as_ref().map(|r| r.name.as_str()).unwrap_or_default()))
                         }
                         td {
-                          ((retainer.as_ref().map(|r| r.name.as_str()).unwrap_or_default()))
+                          ((listing.timestamp))
                         }
                       }
                     }
