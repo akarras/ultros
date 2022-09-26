@@ -9,25 +9,29 @@ a {
 
 body {
   background-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.35), rgba(0, 0, 0, 0.35)), url("./images/flower_1.png");
-  background-size: 512px 512px;
+  background-size: 30em;
   background-repeat: repeat;
   background-color: #222;
-  min-height: 100vh;
   color: #fff;
   font-family: Jaldi;
 }
 .gradient-outer {
-  
-}
-.gradient {
-  background: linear-gradient(black, transparent 75%);
   position: absolute;
   width: 100%;
-  height: 100em;
+  height: 100%;
+  margin: -20px -8px;
+  z-index: -10000;
+}
+.gradient {
+  background: linear-gradient(black, transparent 40em);
+  position: relative;
+  width: 100%;
+  height: 40em;
   left: 0px;
   top: 0px;
   overflow: hidden;
-  z-index: -100;
+  z-index: -10000;
+  
 }
 
 .header {
@@ -60,8 +64,8 @@ body {
 }
 
 .hero-title {
-  margin-top: 40vh;
-  margin-left:10vh;
+  margin-top: 15%;
+  margin-left: 10%;
   text-shadow: 15px 17px 22px #000;
   font-size: 10vh;
 }
@@ -163,6 +167,7 @@ body {
   width: 50px;
   height: 50px;
   border-radius: 50px;
+  padding: 5px;
 }
 
 .container {
@@ -192,9 +197,10 @@ body {
 
 .main-content {
   background-color: #281A2DED;
-  padding: 30px;
+  padding: 2em;
   border-top-left-radius: 35px;
   border-top-right-radius: 35px;
+  display: flex;
 }
 
 .main-content table {
