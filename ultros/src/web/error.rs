@@ -19,12 +19,17 @@ pub enum WebError {
             StandardErrorResponse<RevocationErrorResponseType>,
         >,
     ),
+    #[error("Could not find an item with the ID of {0}")]
+    InvalidItem(i32),
+    #[error("Generic error {0}")]
+    AnyhowError(#[from] anyhow::Error),
 }
 
 impl WebError {
     fn as_status_code(&self) -> StatusCode {
         match self {
             WebError::NotAuthenticated => StatusCode::UNAUTHORIZED,
+            WebError::InvalidItem(_) => StatusCode::BAD_REQUEST,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }

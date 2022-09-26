@@ -8,7 +8,7 @@ a {
 }
 
 body {
-  background-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.25), rgba(0, 0, 0, 0.25)), url("./images/flower_1.png");
+  background-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.35), rgba(0, 0, 0, 0.35)), url("./images/flower_1.png");
   background-size: 512px 512px;
   background-repeat: repeat;
   background-color: #222;
@@ -23,7 +23,7 @@ body {
   background: linear-gradient(black, transparent 75%);
   position: absolute;
   width: 100%;
-  height: 50em;
+  height: 100em;
   left: 0px;
   top: 0px;
   overflow: hidden;
@@ -108,8 +108,9 @@ body {
 }
 
 .search-result {
+  display: flex;
   text-align: left;
-  justify-content: center;
+  justify-content: left;
   align-items: center;
   top: 40px;
   width: 344px;
@@ -137,6 +138,8 @@ body {
 .search-result-details {
   display: flex;
   flex-direction: column;
+  align-items: left;
+  justify-content: center;
 }
 
 .search-result img {
@@ -147,6 +150,7 @@ body {
 
 .item-name {
   font-size: 21px;
+  margin-bottom: -10px;
   text-align: left;
 }
 
@@ -159,4 +163,40 @@ body {
   width: 50px;
   height: 50px;
   border-radius: 50px;
+}
+
+.container {
+  margin-left: 10%;
+  margin-right: 10%;
+}
+
+.world-filter {
+  font-size: 20px;
+  margin-left: 25px;
+}
+
+.btn-secondary {
+  background-color: #846D8F;
+  color: #fff;
+  border-top-left-radius: 11px;
+  border-top-right-radius: 11px;
+  padding-right: 10px; 
+  padding-left: 10px;
+  text-decoration: none;
+  border: 1px solid #000;
+}
+
+.btn-secondary.active {
+  background-color: #171518;
+}
+
+.main-content {
+  background-color: #281A2DED;
+  padding: 30px;
+  border-top-left-radius: 35px;
+  border-top-right-radius: 35px;
+}
+
+.main-content table {
+  background-color: rgba(0, 0, 0, 0.08);
 }

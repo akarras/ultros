@@ -151,7 +151,10 @@ pub async fn redirect(
         .exchange_code(code)
         .request_async(oauth2::reqwest::async_http_client)
         .await
-        .map_err(|e| { error!("{e}"); StatusCode::INTERNAL_SERVER_ERROR })?
+        .map_err(|e| {
+            error!("{e}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
         .access_token()
         .secret()
         .clone();

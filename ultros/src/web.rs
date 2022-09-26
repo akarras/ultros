@@ -22,9 +22,11 @@ use ultros_db::UltrosDb;
 use universalis::{ItemId, WorldId};
 use xiv_gen::ItemId as XivDBItemId;
 
+use self::error::WebError;
 use self::oauth::{AuthDiscordUser, AuthUserCache, DiscordAuthConfig};
-use self::templates::page::{RenderPage};
+use self::templates::page::RenderPage;
 use self::templates::pages::home_page::HomePage;
+use self::templates::pages::listings_view::ListingsPage;
 use crate::web::oauth::{begin_login, logout};
 
 // basic handler that responds with a static string
@@ -131,41 +133,24 @@ async fn get_retainer_listings(
     }
 }
 
-async fn world_item_listings(
+async fn world_item_listings<'a>(
     State(db): State<UltrosDb>,
     Path((world, item_id)): Path<(String, i32)>,
-) -> Result<Html<String>, (StatusCode, String)> {
-    let world = db.get_world(&world).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to get world {e}"),
-        )
-    })?;
+    user: Option<AuthDiscordUser>,
+) -> Result<RenderPage<ListingsPage>, WebError> {
+    let world = db.get_world(&world).await?;
+
+    let (worlds, datacenter, region) = db.get_relative_worlds_datacenter_and_region(&world).await?;
+    let mut world_names: Vec<_> = worlds.into_iter().map(|i| i.name).collect();
+    world_names.push(datacenter.name);
+    world_names.push(region.name);
+
     let listings = db
-        .get_listings_for_world(WorldId(world.id), ItemId(item_id))
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to get listings".to_string(),
-            )
-        })?;
-    let mut value = String::new();
-    write!(value, "<table><tr><th>id</th><th>price per unit</th><th>quantity</th><th>total</th><th>timestamp</th></tr>").unwrap();
-    for listing in listings {
-        write!(
-            &mut value,
-            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
-            listing.id,
-            listing.price_per_unit,
-            listing.quantity,
-            listing.price_per_unit * listing.quantity,
-            listing.timestamp
-        )
-        .unwrap();
-    }
-    write!(value, "</table>").unwrap();
-    Ok(Html(value))
+        .get_all_listings_in_worlds_with_retainers(vec![world.id], ItemId(item_id))
+        .await?;
+
+    let page = ListingsPage::new(item_id, listings, world.name, world_names, user)?;
+    Ok(RenderPage(page))
 }
 
 #[derive(Deserialize)]

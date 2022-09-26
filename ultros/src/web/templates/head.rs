@@ -16,8 +16,8 @@ impl<'a> Render for HtmlHead<'a> {
           (DOCTYPE)
           head {
             title { (self.title) };
-            link rel="stylesheet" href="./static/main.css";
-            script src="./static/search.js" {};
+            link rel="stylesheet" href="/static/main.css";
+            script src="/static/search.js" {};
           }
         }
     }

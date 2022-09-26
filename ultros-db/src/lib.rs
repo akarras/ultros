@@ -8,6 +8,7 @@ pub(crate) mod partial_diff_iterator;
 pub mod price_optimizer;
 mod regions_and_datacenters;
 mod retainers;
+mod worlds;
 
 use anyhow::Result;
 use migration::{Migrator, MigratorTrait, Value};

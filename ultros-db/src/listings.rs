@@ -11,6 +11,21 @@ use crate::{
 };
 
 impl UltrosDb {
+    #[instrument(skip(self))]
+    pub async fn get_all_listings_in_worlds_with_retainers(
+        &self,
+        worlds: Vec<i32>,
+        item: ItemId,
+    ) -> Result<Vec<(active_listing::Model, Option<retainer::Model>)>> {
+        use active_listing::*;
+        Ok(Entity::find()
+            .filter(Column::ItemId.eq(item.0))
+            .filter(Column::WorldId.is_in(worlds))
+            .find_also_related(retainer::Entity)
+            .all(&self.db)
+            .await?)
+    }
+
     /// Updates listings assuming a pure view of the listing board
     #[instrument(skip(self))]
     pub async fn update_listings(

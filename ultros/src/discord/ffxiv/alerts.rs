@@ -60,7 +60,7 @@ impl AlertManager {
                     /*if let Ok(alert) = alert {
                         manager.remove_retainer_alert(alert);
                     }*/
-                },
+                }
                 futures::future::Either::Right((retainer_alert_create, _)) => {
                     if let Ok(retainer) = &retainer_alert_create {
                         match retainer {
@@ -123,13 +123,18 @@ impl AlertManager {
 
     async fn remove_retainer_alert(&mut self, alert: &alert_retainer_undercut::Model) {
         if let Some(listener) = self.current_retainer_alerts.remove(&alert.id) {
-            let _ = listener.cancellation_sender.send(RetainerAlertTx::Stop).await;
+            let _ = listener
+                .cancellation_sender
+                .send(RetainerAlertTx::Stop)
+                .await;
         }
     }
 
     async fn update_alert(&self, alert: &alert_retainer_undercut::Model, margin: i32) {
         if let Some(listener) = self.current_retainer_alerts.get(&alert.id) {
-            let _ = listener.cancellation_sender.send(RetainerAlertTx::UpdateMargin(margin));
+            let _ = listener
+                .cancellation_sender
+                .send(RetainerAlertTx::UpdateMargin(margin));
         }
     }
 }
