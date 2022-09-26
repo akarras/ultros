@@ -86,10 +86,10 @@ impl Page for ListingsPage {
                 }
               }
             }
-            div class="main-content" {
+            div class="main-content flex-wrap" {
               @if !high_quality_listings.is_empty() {
                 div class="listings-table" {
-                  h3 {
+                  h2 {
                     "high quality listings"
                   }
                   table {
@@ -122,11 +122,14 @@ impl Page for ListingsPage {
                           ((listing.price_per_unit * listing.quantity))
                         }
                         td {
-                          ((retainer.as_ref().map(|r| r.name.as_str()).unwrap_or_default()))
+                          @if let Some(retainer) = retainer {
+                            a href={ "/retainers/listings/" ((retainer.id)) } { ((retainer.name)) }
+                          }
                         }
                         td {
                           ((listing.timestamp))
                         }
+
                       }
                     }
                   }
@@ -134,7 +137,7 @@ impl Page for ListingsPage {
               }
               @if !low_quality_listings.is_empty() {
                 div class="listings-table" {
-                  h3 {
+                  h2 {
                     "low quality listings"
                   }
                   table {
@@ -167,10 +170,12 @@ impl Page for ListingsPage {
                           ((listing.price_per_unit * listing.quantity))
                         }
                         td {
-                          ((listing.timestamp))
+                          @if let Some(retainer) = retainer {
+                            a href={ "/retainers/listings/" ((retainer.id)) } { ((retainer.name)) }
+                          }
                         }
                         td {
-                          ((retainer.as_ref().map(|r| r.name.as_str()).unwrap_or_default()))
+                          ((listing.timestamp))
                         }
                       }
                     }

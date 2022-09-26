@@ -24,10 +24,15 @@ use xiv_gen::ItemId as XivDBItemId;
 
 use self::error::WebError;
 use self::oauth::{AuthDiscordUser, AuthUserCache, DiscordAuthConfig};
-use self::templates::page::RenderPage;
-use self::templates::pages::home_page::HomePage;
-use self::templates::pages::listings_view::ListingsPage;
-use self::templates::pages::user_retainers_page::{UserRetainersPage, RetainerViewType};
+use self::templates::pages::retainer::add_retainer::AddRetainer;
+use self::templates::{
+    page::RenderPage,
+    pages::{
+        home_page::HomePage,
+        listings_view::ListingsPage,
+        retainer::user_retainers_page::{RetainerViewType, UserRetainersPage},
+    },
+};
 use crate::web::oauth::{begin_login, logout};
 
 // basic handler that responds with a static string
@@ -134,8 +139,13 @@ async fn get_retainer_listings(
     }
 }
 
-async fn user_retainers_listings(State(db): State<UltrosDb>, current_user: AuthDiscordUser) -> Result<RenderPage<UserRetainersPage>, WebError> {
-    let retainer_listings = db.get_retainer_listings_for_discord_user(current_user.id).await?;
+async fn user_retainers_listings(
+    State(db): State<UltrosDb>,
+    current_user: AuthDiscordUser,
+) -> Result<RenderPage<UserRetainersPage>, WebError> {
+    let retainer_listings = db
+        .get_retainer_listings_for_discord_user(current_user.id)
+        .await?;
     Ok(RenderPage(UserRetainersPage {
         character_names: Vec::new(),
         view_type: RetainerViewType::Listings(retainer_listings),
@@ -143,9 +153,39 @@ async fn user_retainers_listings(State(db): State<UltrosDb>, current_user: AuthD
     }))
 }
 
-async fn user_retainers_undercuts(State(db): State<UltrosDb>, current_user: AuthDiscordUser) -> Result<RenderPage<UserRetainersPage>, WebError> {
+async fn user_retainers_undercuts(
+    State(db): State<UltrosDb>,
+    current_user: AuthDiscordUser,
+) -> Result<RenderPage<UserRetainersPage>, WebError> {
     let undercut_retainers = db.get_retainer_undercut_items(current_user.id).await?;
-    Ok(RenderPage(UserRetainersPage { character_names: Vec::new(), view_type: RetainerViewType::Undercuts(undercut_retainers), current_user }))
+    Ok(RenderPage(UserRetainersPage {
+        character_names: Vec::new(),
+        view_type: RetainerViewType::Undercuts(undercut_retainers),
+        current_user,
+    }))
+}
+
+#[derive(Deserialize)]
+struct RetainerAddQueryParams {
+    search: Option<String>
+}
+
+async fn add_retainer_page(
+    State(db): State<UltrosDb>,
+    current_user: AuthDiscordUser,
+    Query(query_parameter): Query<RetainerAddQueryParams>
+) -> Result<RenderPage<AddRetainer>, WebError> {
+    let mut results = None;
+    if let Some(search_str) = &query_parameter.search {
+        results = Some(db.search_retainers(search_str).await?);
+    
+    }
+
+    Ok(RenderPage(AddRetainer {
+        user: Some(current_user),
+        search_results: results.unwrap_or_default(),
+        search_text: query_parameter.search.unwrap_or_default(),
+    }))
 }
 
 async fn world_item_listings<'a>(
@@ -288,6 +328,13 @@ async fn static_path(Path(path): Path<String>) -> impl IntoResponse {
                 header::CONTENT_TYPE,
                 HeaderValue::from_str(mime_type.as_ref()).unwrap(),
             )
+            .header(
+                header::CACHE_CONTROL,
+                #[cfg(not(debug_assertions))]
+                HeaderValue::from_str("max-age=3600").unwrap(),
+                #[cfg(debug_assertions)]
+                HeaderValue::from_str("none").unwrap(),
+            )
             .body(body::boxed(Full::from(file)))
             .unwrap(),
     }
@@ -302,6 +349,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/retainers/listings/:id", get(get_retainer_listings))
         .route("/retainers/undercuts", get(user_retainers_undercuts))
         .route("/retainers/listings", get(user_retainers_listings))
+        .route("/retainers/add", get(add_retainer_page))
         .route("/retainers", get(user_retainers_listings))
         .route("/listings/analyze/:world", get(analyze_profits))
         .route("/items/:search", get(fuzzy_item_search::search_items))

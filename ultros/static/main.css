@@ -200,11 +200,31 @@ body {
   padding: 2em;
   border-top-left-radius: 35px;
   border-top-right-radius: 35px;
+}
+
+.flex-wrap {
   display: flex;
+  flex-flow: wrap;
 }
 
 .main-content table {
-  background-color: rgba(0, 0, 0, 0.08);
+  white-space: nowrap;
+  
+}
+
+.main-content td {
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+.main-content a {
+  color: #846D8F;
+}
+
+.listings-table {
+  text-align: center;
+  margin: 15px;
+  background-color: rgba(0, 0, 0, 0.08)
 }
 
 tr:nth-child(even) {
