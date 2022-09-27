@@ -2,7 +2,7 @@ use crate::web::oauth::AuthDiscordUser;
 use crate::web::templates::components::header::Header;
 use crate::web::templates::page::Page;
 use maud::html;
-use ultros_db::entity::{active_listing, retainer};
+use ultros_db::entity::{active_listing, retainer, owned_retainers};
 use ultros_db::retainers::ListingUndercutData;
 use xiv_gen::ItemId;
 
@@ -19,6 +19,7 @@ pub(crate) enum RetainerViewType {
 pub(crate) struct UserRetainersPage {
     pub(crate) character_names: Vec<(i32, String)>,
     pub(crate) view_type: RetainerViewType,
+    pub(crate) owned_retainers: Vec<owned_retainers::Model>,
     pub(crate) current_user: AuthDiscordUser,
 }
 
@@ -55,10 +56,13 @@ impl Page for UserRetainersPage {
               }
               div class="main-content" {
                 @if let RetainerViewType::Undercuts(undercuts) = &self.view_type {
-                  @for (retainer, listings) in undercuts {
+                  @for ((retainer, listings), owned) in undercuts.iter().zip(self.owned_retainers.iter()) {
                     div class="content-well" {
                         span class="content-title" {
                           ((retainer.name))
+                        }
+                        a class="btn" href={"/retainers/remove/" ((owned.id))} {
+                          "remove"
                         }
                         table {
                           tr {
@@ -103,10 +107,13 @@ impl Page for UserRetainersPage {
                     }
                   }
                 @if let RetainerViewType::Listings(active) = &self.view_type {
-                    @for (retainer, listings) in active {
+                    @for ((retainer, listings), owned) in active.iter().zip(self.owned_retainers.iter()) {
                       div class="content-well" {
                         span class="content-title" {
                           ((retainer.name))
+                        }
+                        a class="btn align-right" href={"/retainers/remove/" ((owned.id))} {
+                          "Remove"
                         }
                         table {
                           tr {

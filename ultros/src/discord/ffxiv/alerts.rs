@@ -149,7 +149,7 @@ async fn get_user_unique_retainer_ids_and_listing_ids_by_price(
     discord_user: u64,
 ) -> Result<(HashSet<i32>, HashMap<(i32, i32, bool), i32>)> {
     // this might be better as a sql query
-    let retainer_listings = ultros_db
+    let (_, retainer_listings) = ultros_db
         .get_retainer_listings_for_discord_user(discord_user)
         .await?;
     // get a list of what retainers and items the users have
@@ -315,7 +315,7 @@ impl RetainerAlertListener {
                                                     discord_user,
                                                 )
                                                 .await
-                                                .map(|i| {
+                                                .map(|(o, i)| {
                                                     i.into_iter()
                                                         .flat_map(|(r, listings)| {
                                                             listings

@@ -243,6 +243,12 @@ body {
   font-size: 26px;
 }
 
+.align-right {
+  float: right;
+  margin-top: 10px;
+  margin-right: 10px;
+}
+
 .small-icon {
   width: 30px;
   height: 30px;

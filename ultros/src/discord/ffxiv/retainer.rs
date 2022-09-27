@@ -79,7 +79,7 @@ async fn add_undercut_alert(
 async fn check_undercuts(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     let user_id = ctx.author().id.0;
-    let under_cut_items = ctx.data().db.get_retainer_undercut_items(user_id).await?;
+    let (_, under_cut_items) = ctx.data().db.get_retainer_undercut_items(user_id).await?;
     let data = xiv_gen_db::decompress_data();
     let item_db = &data.items;
     ctx.send(|r| {
@@ -127,7 +127,7 @@ async fn check_undercuts(ctx: Context<'_>) -> Result<(), Error> {
 #[poise::command(slash_command)]
 async fn check_listings(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
-    let retainers = ctx
+    let (_, retainers) = ctx
         .data()
         .db
         .get_retainer_listings_for_discord_user(ctx.author().id.0)

@@ -12,9 +12,6 @@ impl<'a> Render for Header<'a> {
           div class="gradient-outer"{div class="gradient"{}};
           header {
             div class="header" {
-              a class="nav-item" href="/" {
-                "Home"
-              }
               a class="nav-item" href="/alerts" {
                 "Alerts"
               };

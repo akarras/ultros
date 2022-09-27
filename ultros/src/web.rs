@@ -143,13 +143,14 @@ async fn user_retainers_listings(
     State(db): State<UltrosDb>,
     current_user: AuthDiscordUser,
 ) -> Result<RenderPage<UserRetainersPage>, WebError> {
-    let retainer_listings = db
+    let (owned_retainers, retainer_listings) = db
         .get_retainer_listings_for_discord_user(current_user.id)
         .await?;
     Ok(RenderPage(UserRetainersPage {
         character_names: Vec::new(),
         view_type: RetainerViewType::Listings(retainer_listings),
         current_user,
+        owned_retainers,
     }))
 }
 
@@ -157,11 +158,12 @@ async fn user_retainers_undercuts(
     State(db): State<UltrosDb>,
     current_user: AuthDiscordUser,
 ) -> Result<RenderPage<UserRetainersPage>, WebError> {
-    let undercut_retainers = db.get_retainer_undercut_items(current_user.id).await?;
+    let (owned_retainers, undercut_retainers) = db.get_retainer_undercut_items(current_user.id).await?;
     Ok(RenderPage(UserRetainersPage {
         character_names: Vec::new(),
         view_type: RetainerViewType::Undercuts(undercut_retainers),
         current_user,
+        owned_retainers,
     }))
 }
 
@@ -192,7 +194,7 @@ async fn add_retainer(
     current_user: AuthDiscordUser,
     Path(retainer_id): Path<i32>,
 ) -> Result<Redirect, WebError> {
-    let register_retainer = db
+    let _register_retainer = db
         .register_retainer(retainer_id, current_user.id, current_user.name)
         .await?;
     Ok(Redirect::to("/retainers"))
@@ -268,7 +270,7 @@ async fn analyze_profits(
         } = &item;
         let item_name = game_data
             .items
-            .get(&xiv_gen::ItemId(item.item_id))
+            .get(&xiv_gen::ItemId(*item_id))
             .map(|item| item.name.as_str())
             .unwrap_or_default();
         write!(
