@@ -148,6 +148,28 @@ impl UltrosDb {
         Ok(worlds)
     }
 
+    #[instrument(skip(self))]
+    pub async fn get_datacenter_from_world(
+        &self,
+        world: &world::Model,
+    ) -> Result<datacenter::Model> {
+        Ok(datacenter::Entity::find_by_id(world.datacenter_id)
+            .one(&self.db)
+            .await?
+            .ok_or(anyhow::Error::msg("Datacenter not found"))?)
+    }
+
+    #[instrument(skip(self))]
+    pub async fn get_region_from_datacenter(
+        &self,
+        datacenter: &datacenter::Model,
+    ) -> Result<region::Model> {
+        Ok(region::Entity::find_by_id(datacenter.region_id)
+            .one(&self.db)
+            .await?
+            .ok_or(anyhow::Error::msg("Region not found"))?)
+    }
+
     #[instrument(skip(self, world_id, item))]
     pub async fn get_multiple_listings_for_worlds(
         &self,

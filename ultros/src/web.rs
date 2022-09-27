@@ -24,6 +24,7 @@ use xiv_gen::ItemId as XivDBItemId;
 
 use self::error::WebError;
 use self::oauth::{AuthDiscordUser, AuthUserCache, DiscordAuthConfig};
+use self::templates::pages::analyzer_page::AnalyzerPage;
 use self::templates::pages::retainer::add_retainer::AddRetainer;
 use self::templates::{
     page::RenderPage,
@@ -232,57 +233,41 @@ async fn world_item_listings<'a>(
 
 #[derive(Deserialize)]
 struct ProfitParameters {
-    sale_amount_threshold: i32,
-    sale_window_days: i64,
+    sale_amount_threshold: Option<i32>,
+    sale_window_days: Option<i64>,
+    world: Option<String>,
 }
 
 async fn analyze_profits(
     State(db): State<UltrosDb>,
-    Path(world): Path<String>,
     Query(parameters): Query<ProfitParameters>,
-) -> Result<Html<String>, (StatusCode, String)> {
+    user: Option<AuthDiscordUser>,
+) -> Result<RenderPage<AnalyzerPage>, WebError> {
     let ProfitParameters {
         sale_amount_threshold,
         sale_window_days,
+        world,
     } = &parameters;
-    let world = db.get_world(&world).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("World not found {e:?}"),
-        )
-    })?;
-    let best_items = db
+    // this doesn't change often, could easily cache.
+    let world = db
+        .get_world(&world.as_ref().map(|w| w.as_str()).unwrap_or("Sargatanas"))
+        .await?;
+    let datacenter = db.get_datacenter_from_world(&world).await?;
+    let region = db.get_region_from_datacenter(&datacenter).await?;
+    let analyzer_results = db
         .get_best_item_to_resell_on_world(
             world.id,
-            *sale_amount_threshold,
-            chrono::Duration::days(*sale_window_days),
+            sale_amount_threshold.unwrap_or(10),
+            chrono::Duration::days(sale_window_days.unwrap_or(2)),
         )
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")))?;
-    let game_data = xiv_gen_db::decompress_data();
-    let mut html = format!(
-        "<table><tr><th>{}</th><th>{}</th><th>{}</th></tr>",
-        "Item name", "Margin %", "Profit Amount"
-    );
-    for item in best_items {
-        let BestResellResults {
-            item_id,
-            margin,
-            profit,
-        } = &item;
-        let item_name = game_data
-            .items
-            .get(&xiv_gen::ItemId(*item_id))
-            .map(|item| item.name.as_str())
-            .unwrap_or_default();
-        write!(
-            &mut html,
-            "<tr><td>{item_name}</td><td>{margin}</td><td>{profit}</td></tr>"
-        )
-        .unwrap();
-    }
-    write!(&mut html, "</table>").unwrap();
-    Ok(Html(html))
+        .await?;
+
+    Ok(RenderPage(AnalyzerPage {
+        user,
+        analyzer_results,
+        region: region,
+        world,
+    }))
 }
 
 #[derive(Clone)]
@@ -376,7 +361,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/retainers/add/:id", get(add_retainer))
         .route("/retainers/remove/:id", get(remove_owned_retainer))
         .route("/retainers", get(user_retainers_listings))
-        .route("/listings/analyze/:world", get(analyze_profits))
+        .route("/analyzer", get(analyze_profits))
         .route("/items/:search", get(fuzzy_item_search::search_items))
         .route("/static/*path", get(static_path))
         .route("/redirect", get(self::oauth::redirect))
