@@ -29,7 +29,13 @@ use tracing::log::error;
 
 use crate::web::templates::pages::error_page::ErrorPage;
 
-use super::{error::WebError, templates::{page::{RenderPage, Page}, pages::unauthorized_page::UnauthorizedPage}};
+use super::{
+    error::WebError,
+    templates::{
+        page::{Page, RenderPage},
+        pages::unauthorized_page::UnauthorizedPage,
+    },
+};
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialOrd, PartialEq, Hash)]
 pub enum OAuthScope {
@@ -231,7 +237,12 @@ where
             .unwrap();
         let discord_auth = match cookie_jar.get("discord_auth") {
             Some(discord_auth) => discord_auth,
-            None => return Err((StatusCode::UNAUTHORIZED, RenderPage(Box::new(UnauthorizedPage {})))),
+            None => {
+                return Err((
+                    StatusCode::UNAUTHORIZED,
+                    RenderPage(Box::new(UnauthorizedPage {})),
+                ))
+            }
         };
         // get the discord user
         // let State(ultros): State<UltrosDb> = State::from_request_parts(parts, state).await.unwrap();
@@ -245,7 +256,10 @@ where
         let http = Http::new(&format!("Bearer {}", discord_auth.value()));
         let user = http.get_current_user().await.map_err(|e| {
             error!("error accessing logged in user {e}");
-            (StatusCode::INTERNAL_SERVER_ERROR, RenderPage(Box::new(ErrorPage {}) as Box<dyn Page>))
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                RenderPage(Box::new(ErrorPage {}) as Box<dyn Page>),
+            )
         })?;
         let avatar_url = user
             .static_avatar_url()

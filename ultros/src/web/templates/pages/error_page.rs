@@ -1,6 +1,6 @@
 use maud::html;
 
-use crate::web::templates::{page::Page, components::header::Header};
+use crate::web::templates::{components::header::Header, page::Page};
 
 pub struct ErrorPage {}
 
@@ -11,7 +11,7 @@ impl Page for ErrorPage {
 
     fn draw_body(&self) -> maud::Markup {
         html! {
-          ((Header{ 
+          ((Header{
             user: None
           }))
           div class="container" {

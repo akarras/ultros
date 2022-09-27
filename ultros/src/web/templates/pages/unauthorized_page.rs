@@ -1,6 +1,6 @@
 use maud::html;
 
-use crate::web::templates::{page::Page, components::header::Header};
+use crate::web::templates::{components::header::Header, page::Page};
 
 pub(crate) struct UnauthorizedPage {}
 

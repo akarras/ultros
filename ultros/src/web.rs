@@ -158,7 +158,8 @@ async fn user_retainers_undercuts(
     State(db): State<UltrosDb>,
     current_user: AuthDiscordUser,
 ) -> Result<RenderPage<UserRetainersPage>, WebError> {
-    let (owned_retainers, undercut_retainers) = db.get_retainer_undercut_items(current_user.id).await?;
+    let (owned_retainers, undercut_retainers) =
+        db.get_retainer_undercut_items(current_user.id).await?;
     Ok(RenderPage(UserRetainersPage {
         character_names: Vec::new(),
         view_type: RetainerViewType::Undercuts(undercut_retainers),
@@ -205,7 +206,8 @@ async fn remove_owned_retainer(
     current_user: AuthDiscordUser,
     Path(retainer_id): Path<i32>,
 ) -> Result<Redirect, WebError> {
-    db.remove_owned_retainer(current_user.id, retainer_id).await?;
+    db.remove_owned_retainer(current_user.id, retainer_id)
+        .await?;
     Ok(Redirect::to("/retainers"))
 }
 

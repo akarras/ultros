@@ -93,14 +93,15 @@ impl UltrosDb {
     pub async fn get_retainer_undercut_items(
         &self,
         discord_user: u64,
-    ) -> Result<
+    ) -> Result<(
+        Vec<owned_retainers::Model>,
         Vec<(
             retainer::Model,
             Vec<(active_listing::Model, ListingUndercutData)>,
         )>,
-    > {
+    )> {
         // get the user's active listings from the retainers
-        let retainer_listings = self
+        let (owned_retainers, retainer_listings) = self
             .get_retainer_listings_for_discord_user(discord_user)
             .await?;
         let retainer_ids: BTreeSet<_> = retainer_listings.iter().map(|(i, _)| i.id).collect();
@@ -128,71 +129,77 @@ impl UltrosDb {
         )
         .await;
         // now filter the retainer queries down to just the ones that don't have our
-        Ok(retainer_listings
-            .into_iter()
-            .map(|(retainer, listings)| {
-                (
-                    retainer,
-                    listings
-                        .into_iter()
-                        .flat_map(|listing| {
-                            let l = &listing;
-                            // find the item in the main listings set that matches this item
-                            let number_of_listings_undercutting =
-                                results.iter().find_map(|(world_id, item_id, listings)| {
-                                    if let Ok(listings) = listings {
-                                        if listings.is_empty() {
-                                            return None;
-                                        }
-                                        if l.world_id == *world_id && l.item_id == *item_id {
-                                            // now check if the given listing is UNDERCUTTING than our given listing
-                                            let listings_in_range: Vec<_> = listings
-                                                .iter()
-                                                .filter(|all_l| {
-                                                    all_l.price_per_unit < l.price_per_unit
+        Ok((
+            owned_retainers,
+            retainer_listings
+                .into_iter()
+                .map(|(retainer, listings)| {
+                    (
+                        retainer,
+                        listings
+                            .into_iter()
+                            .flat_map(|listing| {
+                                let l = &listing;
+                                // find the item in the main listings set that matches this item
+                                let number_of_listings_undercutting =
+                                    results.iter().find_map(|(world_id, item_id, listings)| {
+                                        if let Ok(listings) = listings {
+                                            if listings.is_empty() {
+                                                return None;
+                                            }
+                                            if l.world_id == *world_id && l.item_id == *item_id {
+                                                // now check if the given listing is UNDERCUTTING than our given listing
+                                                let listings_in_range: Vec<_> = listings
+                                                    .iter()
+                                                    .filter(|all_l| {
+                                                        all_l.price_per_unit < l.price_per_unit
                                                         && (!l.hq || l.hq == all_l.hq)
                                                         // filter our own retainer listings
                                                         && !retainer_ids
                                                             .contains(&all_l.retainer_id)
-                                                })
-                                                .collect();
-                                            return Some(ListingUndercutData {
-                                                number_behind: listings_in_range.len(),
-                                                price_to_beat: listings_in_range
-                                                    .iter()
-                                                    .map(|x| x.price_per_unit)
-                                                    .min()
-                                                    .unwrap_or_default(),
-                                            });
+                                                    })
+                                                    .collect();
+                                                return Some(ListingUndercutData {
+                                                    number_behind: listings_in_range.len(),
+                                                    price_to_beat: listings_in_range
+                                                        .iter()
+                                                        .map(|x| x.price_per_unit)
+                                                        .min()
+                                                        .unwrap_or_default(),
+                                                });
+                                            }
                                         }
-                                    }
-                                    None
-                                });
-                            number_of_listings_undercutting.map(|num| (listing, num))
-                        })
-                        .filter(|(_, data)| data.number_behind > 0)
-                        .collect::<Vec<_>>(),
-                )
-            })
-            .collect::<Vec<_>>())
+                                        None
+                                    });
+                                number_of_listings_undercutting.map(|num| (listing, num))
+                            })
+                            .filter(|(_, data)| data.number_behind > 0)
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+        ))
     }
 
     #[instrument]
     pub async fn get_retainer_listings_for_discord_user(
         &self,
         discord_user: u64,
-    ) -> Result<Vec<(retainer::Model, Vec<active_listing::Model>)>> {
-        let retainers = owned_retainers::Entity::find()
+    ) -> Result<(
+        Vec<owned_retainers::Model>,
+        Vec<(retainer::Model, Vec<active_listing::Model>)>,
+    )> {
+        let owned_retainers = owned_retainers::Entity::find()
             .filter(owned_retainers::Column::DiscordId.eq(discord_user as i64))
             .all(&self.db)
             .await?;
-        let retainer_ids = retainers.iter().map(|r| r.retainer_id);
+        let retainer_ids = owned_retainers.iter().map(|r| r.retainer_id);
         let retainers = retainer::Entity::find()
             .filter(retainer::Column::Id.is_in(retainer_ids))
             .find_with_related(active_listing::Entity)
             .all(&self.db)
             .await?;
         // TODO add heuristics for retainers
-        Ok(retainers)
+        Ok((owned_retainers, retainers))
     }
 }

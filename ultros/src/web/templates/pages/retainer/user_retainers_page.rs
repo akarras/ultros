@@ -2,7 +2,7 @@ use crate::web::oauth::AuthDiscordUser;
 use crate::web::templates::components::header::Header;
 use crate::web::templates::page::Page;
 use maud::html;
-use ultros_db::entity::{active_listing, retainer, owned_retainers};
+use ultros_db::entity::{active_listing, owned_retainers, retainer};
 use ultros_db::retainers::ListingUndercutData;
 use xiv_gen::ItemId;
 
