@@ -28,17 +28,15 @@ impl Page for AddRetainer {
               label for="retainer-name" {
                 "retainer name"
               }
-              input id="retainer-name"{
-                ((self.search_text))
-              }
-              a id="retainer-button" class="btn" href="/retainer/add" {
+              input id="retainer-name" value=((self.search_text));
+              a id="retainer-button" class="btn" href={ "/retainers/add?search=" ((urlencoding::encode(&self.search_text))) } {
                 "search"
               }
               ul {
                 @for (retainer, world) in &self.search_results {
                   li{
                     span { ((retainer.name)) " - " ((world.as_ref().map(|w| w.name.as_str()).unwrap_or_default())) }
-                    a class="btn" href={"/retainer/add/" ((retainer.id))} {
+                    a class="btn" href={"/retainers/add/" ((retainer.id))} {
                       "add"
                     }
                   }

@@ -48,6 +48,18 @@ body {
   color: #fff;
   border-radius: 11px;
   padding-right: 20px;
+  text-decoration: none;
+}
+
+.btn:hover {
+  background-color: #3A2B7E;
+  
+  box-shadow: inset 0px 0px 0px 2px #3B2B9E;
+}
+
+.main-content .btn {
+  padding-left: 20px;
+  color: #fff;
 }
 
 .nav-item {

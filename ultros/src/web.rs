@@ -7,7 +7,7 @@ mod templates;
 use axum::body::{Empty, Full};
 use axum::extract::{FromRef, Path, Query, State};
 use axum::http::{HeaderValue, Response, StatusCode};
-use axum::response::{Html, IntoResponse};
+use axum::response::{Html, IntoResponse, Redirect};
 use axum::routing::get;
 use axum::{body, Router};
 use axum_extra::extract::cookie::Key;
@@ -167,18 +167,17 @@ async fn user_retainers_undercuts(
 
 #[derive(Deserialize)]
 struct RetainerAddQueryParams {
-    search: Option<String>
+    search: Option<String>,
 }
 
 async fn add_retainer_page(
     State(db): State<UltrosDb>,
     current_user: AuthDiscordUser,
-    Query(query_parameter): Query<RetainerAddQueryParams>
+    Query(query_parameter): Query<RetainerAddQueryParams>,
 ) -> Result<RenderPage<AddRetainer>, WebError> {
     let mut results = None;
     if let Some(search_str) = &query_parameter.search {
         results = Some(db.search_retainers(search_str).await?);
-    
     }
 
     Ok(RenderPage(AddRetainer {
@@ -186,6 +185,17 @@ async fn add_retainer_page(
         search_results: results.unwrap_or_default(),
         search_text: query_parameter.search.unwrap_or_default(),
     }))
+}
+
+async fn add_retainer(
+    State(db): State<UltrosDb>,
+    current_user: AuthDiscordUser,
+    Path(retainer_id): Path<i32>,
+) -> Result<Redirect, WebError> {
+    let register_retainer = db
+        .register_retainer(retainer_id, current_user.id, current_user.name)
+        .await?;
+    Ok(Redirect::to("/retainers"))
 }
 
 async fn world_item_listings<'a>(
@@ -350,6 +360,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/retainers/undercuts", get(user_retainers_undercuts))
         .route("/retainers/listings", get(user_retainers_listings))
         .route("/retainers/add", get(add_retainer_page))
+        .route("/retainers/add/:id", get(add_retainer))
         .route("/retainers", get(user_retainers_listings))
         .route("/listings/analyze/:world", get(analyze_profits))
         .route("/items/:search", get(fuzzy_item_search::search_items))
