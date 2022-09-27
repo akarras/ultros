@@ -1,0 +1,29 @@
+use maud::html;
+
+use crate::web::templates::{page::Page, components::header::Header};
+
+pub struct ErrorPage {}
+
+impl Page for ErrorPage {
+    fn get_name<'a>(&self) -> &'a str {
+        "Error"
+    }
+
+    fn draw_body(&self) -> maud::Markup {
+        html! {
+          ((Header{ 
+            user: None
+          }))
+          div class="container" {
+            div class="main-content" {
+              h2 {
+                "Error"
+              }
+              span {
+                "Server error has occured"
+              }
+            }
+          }
+        }
+    }
+}

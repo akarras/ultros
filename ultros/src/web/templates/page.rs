@@ -1,13 +1,24 @@
 use super::head::HtmlHead;
 use axum::response::{Html, IntoResponse};
+use lazy_static::__Deref;
 use maud::{html, Markup, Render};
 
-pub(crate) trait Page {
+pub trait Page {
     fn get_name<'a>(&self) -> &'a str;
     fn draw_body(&self) -> Markup;
 }
 
-pub(crate) struct RenderPage<T: Page>(pub(crate) T);
+pub struct RenderPage<T: Page>(pub(crate) T);
+
+impl<P: Page + ?Sized> Page for Box<P> {
+    fn draw_body(&self) -> Markup {
+        self.deref().draw_body()
+    }
+
+    fn get_name<'a>(&self) -> &'a str {
+        self.deref().get_name()
+    }
+}
 
 impl<T> IntoResponse for RenderPage<T>
 where

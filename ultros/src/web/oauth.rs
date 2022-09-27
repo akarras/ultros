@@ -27,7 +27,9 @@ use ultros_db::UltrosDb;
 
 use tracing::log::error;
 
-use super::error::WebError;
+use crate::web::templates::pages::error_page::ErrorPage;
+
+use super::{error::WebError, templates::{page::{RenderPage, Page}, pages::unauthorized_page::UnauthorizedPage}};
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialOrd, PartialEq, Hash)]
 pub enum OAuthScope {
@@ -142,7 +144,7 @@ pub async fn redirect(
     cookies: PrivateCookieJar,
     State(config): State<DiscordAuthConfig>,
     Query(RedirectParameters { code, state }): Query<RedirectParameters>,
-) -> Result<(PrivateCookieJar, Redirect), StatusCode> {
+) -> Result<(PrivateCookieJar, Redirect), (StatusCode, RenderPage<ErrorPage>)> {
     let code = AuthorizationCode::new(code);
     let _state = CsrfToken::new(state);
     let token = config
@@ -153,7 +155,7 @@ pub async fn redirect(
         .await
         .map_err(|e| {
             error!("{e}");
-            StatusCode::INTERNAL_SERVER_ERROR
+            (StatusCode::INTERNAL_SERVER_ERROR, RenderPage(ErrorPage {}))
         })?
         .access_token()
         .secret()
@@ -221,7 +223,7 @@ where
     UltrosDb: FromRef<S>,
     AuthUserCache: FromRef<S>,
 {
-    type Rejection = StatusCode;
+    type Rejection = (StatusCode, RenderPage<Box<dyn Page>>);
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         // let Extension(key) = Extension::from_request_parts(parts, state).await?;
         let cookie_jar: PrivateCookieJar<Key> = PrivateCookieJar::from_request_parts(parts, state)
@@ -229,7 +231,7 @@ where
             .unwrap();
         let discord_auth = match cookie_jar.get("discord_auth") {
             Some(discord_auth) => discord_auth,
-            None => return Err(StatusCode::UNAUTHORIZED),
+            None => return Err((StatusCode::UNAUTHORIZED, RenderPage(Box::new(UnauthorizedPage {})))),
         };
         // get the discord user
         // let State(ultros): State<UltrosDb> = State::from_request_parts(parts, state).await.unwrap();
@@ -243,7 +245,7 @@ where
         let http = Http::new(&format!("Bearer {}", discord_auth.value()));
         let user = http.get_current_user().await.map_err(|e| {
             error!("error accessing logged in user {e}");
-            StatusCode::UNAUTHORIZED
+            (StatusCode::INTERNAL_SERVER_ERROR, RenderPage(Box::new(ErrorPage {}) as Box<dyn Page>))
         })?;
         let avatar_url = user
             .static_avatar_url()
