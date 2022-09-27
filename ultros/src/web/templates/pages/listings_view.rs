@@ -88,8 +88,8 @@ impl Page for ListingsPage {
             }
             div class="main-content flex-wrap" {
               @if !high_quality_listings.is_empty() {
-                div class="listings-table" {
-                  h2 {
+                div class="content-well" {
+                  span class="content-title" {
                     "high quality listings"
                   }
                   table {
@@ -136,8 +136,8 @@ impl Page for ListingsPage {
                 }
               }
               @if !low_quality_listings.is_empty() {
-                div class="listings-table" {
-                  h2 {
+                div class="content-well" {
+                  span class="content-title" {
                     "low quality listings"
                   }
                   table {

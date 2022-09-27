@@ -198,6 +198,15 @@ async fn add_retainer(
     Ok(Redirect::to("/retainers"))
 }
 
+async fn remove_owned_retainer(
+    State(db): State<UltrosDb>,
+    current_user: AuthDiscordUser,
+    Path(retainer_id): Path<i32>,
+) -> Result<Redirect, WebError> {
+    db.remove_owned_retainer(current_user.id, retainer_id).await?;
+    Ok(Redirect::to("/retainers"))
+}
+
 async fn world_item_listings<'a>(
     State(db): State<UltrosDb>,
     Path((world, item_id)): Path<(String, i32)>,
@@ -361,6 +370,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/retainers/listings", get(user_retainers_listings))
         .route("/retainers/add", get(add_retainer_page))
         .route("/retainers/add/:id", get(add_retainer))
+        .route("/retainers/remove/:id", get(remove_owned_retainer))
         .route("/retainers", get(user_retainers_listings))
         .route("/listings/analyze/:world", get(analyze_profits))
         .route("/items/:search", get(fuzzy_item_search::search_items))

@@ -233,10 +233,20 @@ body {
   color: #846D8F;
 }
 
-.listings-table {
-  text-align: center;
+.content-well {
   margin: 15px;
-  background-color: rgba(0, 0, 0, 0.08)
+  background-color: rgba(0, 0, 0, 0.08);
+  border-radius: 8px;
+}
+
+.content-title {
+  font-size: 26px;
+}
+
+.small-icon {
+  width: 30px;
+  height: 30px;
+  margin: 0px 5px -7px -5px;
 }
 
 tr:nth-child(even) {

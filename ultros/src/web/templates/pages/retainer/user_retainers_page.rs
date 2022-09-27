@@ -56,8 +56,8 @@ impl Page for UserRetainersPage {
               div class="main-content" {
                 @if let RetainerViewType::Undercuts(undercuts) = &self.view_type {
                   @for (retainer, listings) in undercuts {
-                    div {
-                        h3 {
+                    div class="content-well" {
+                        span class="content-title" {
                           ((retainer.name))
                         }
                         table {
@@ -81,6 +81,7 @@ impl Page for UserRetainersPage {
                           @for (listing, undercut) in listings {
                             tr {
                               td {
+                                img class="small-icon" src={"https://universalis-ffxiv.github.io/universalis-assets/icon2x/" (listing.item_id) ".png"};
                                 ((items.get(&ItemId(listing.item_id)).map(|i| i.name.as_str()).unwrap_or_default()))
                               } td {
                                 ((listing.price_per_unit))
@@ -103,8 +104,8 @@ impl Page for UserRetainersPage {
                   }
                 @if let RetainerViewType::Listings(active) = &self.view_type {
                     @for (retainer, listings) in active {
-                      div {
-                        h3 {
+                      div class="content-well" {
+                        span class="content-title" {
                           ((retainer.name))
                         }
                         table {
@@ -124,6 +125,7 @@ impl Page for UserRetainersPage {
                           @for listing in listings {
                             tr {
                               td {
+                                img class="small-icon" src={"https://universalis-ffxiv.github.io/universalis-assets/icon2x/" (listing.item_id) ".png"};
                                 ((items.get(&ItemId(listing.item_id)).map(|i| i.name.as_str()).unwrap_or_default()))
                               } td {
                                 ((listing.price_per_unit))
