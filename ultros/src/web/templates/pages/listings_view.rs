@@ -127,7 +127,7 @@ impl Page for ListingsPage {
                           }
                         }
                         td {
-                          ((listing.timestamp))
+                          ((listing.timestamp.to_string()))
                         }
 
                       }
@@ -175,7 +175,7 @@ impl Page for ListingsPage {
                           }
                         }
                         td {
-                          ((listing.timestamp))
+                          ((listing.timestamp.to_string()))
                         }
                       }
                     }

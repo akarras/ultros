@@ -364,39 +364,12 @@ checksum = "d468802bab17cbc0cc575e9b053f41e72aa36bfa6b7f55e3529ffa43161b97fa"
 
 [[package]]
 name = "axum"
-version = "0.2.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f08f95a202e827209db1491047aa57c18c8adb4c5efcfcfd4a2da4838ee3a72"
-dependencies = [
- "async-trait",
- "bitflags",
- "bytes",
- "futures-util",
- "http",
- "http-body",
- "hyper",
- "pin-project-lite",
- "regex",
- "serde",
- "serde_json",
- "serde_urlencoded",
- "sync_wrapper",
- "tokio",
- "tokio-util 0.6.10",
- "tower",
- "tower-http 0.1.3",
- "tower-layer",
- "tower-service",
-]
-
-[[package]]
-name = "axum"
 version = "0.6.0-rc.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2628a243073c55aef15a1c1fe45c87f21b84f9e89ca9e7b262a180d3d03543d"
 dependencies = [
  "async-trait",
- "axum-core",
+ "axum-core 0.3.0-rc.2",
  "bitflags",
  "bytes",
  "futures-util",
@@ -415,7 +388,23 @@ dependencies = [
  "sync_wrapper",
  "tokio",
  "tower",
- "tower-http 0.3.4",
+ "tower-http",
+ "tower-layer",
+ "tower-service",
+]
+
+[[package]]
+name = "axum-core"
+version = "0.2.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d9f0c0a60006f2a293d82d571f635042a72edf927539b7685bd62d361963839b"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "futures-util",
+ "http",
+ "http-body",
+ "mime",
  "tower-layer",
  "tower-service",
 ]
@@ -442,7 +431,7 @@ version = "0.4.0-rc.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "090ae29ae83a40882fb99bce421d8dce4a819325a013bb301dad4cc4b74ab40c"
 dependencies = [
- "axum 0.6.0-rc.2",
+ "axum",
  "bytes",
  "cookie",
  "futures-util",
@@ -451,7 +440,7 @@ dependencies = [
  "pin-project-lite",
  "tokio",
  "tower",
- "tower-http 0.3.4",
+ "tower-http",
  "tower-layer",
  "tower-service",
 ]
@@ -1924,7 +1913,7 @@ dependencies = [
  "indexmap",
  "slab",
  "tokio",
- "tokio-util 0.7.4",
+ "tokio-util",
  "tracing",
 ]
 
@@ -2667,19 +2656,21 @@ checksum = "3dfc802da7b1cf80aefffa0c7b2f77247c8b32206cc83c270b61264f5b360a80"
 
 [[package]]
 name = "maud"
-version = "0.23.0"
+version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7384febb4f8fc970cc2efab1650a6f48cac2e79b0b29587c90497b646fb10e1e"
+checksum = "19aff2cd19eb4b93df29efa602652513b0f731f1d3474f6e377f763fddf61e58"
 dependencies = [
- "axum 0.2.8",
+ "axum-core 0.2.8",
+ "http",
+ "itoa 0.4.8",
  "maud_macros",
 ]
 
 [[package]]
 name = "maud_macros"
-version = "0.23.0"
+version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "423430ac467408136d7de93f2929debd8a7bc3e795c92476f45e259b158e3355"
+checksum = "e5c114f6f24b08fdd4a25d2fb87a8b140df56b577723247b382e8b04c583f2eb"
 dependencies = [
  "proc-macro-error",
  "proc-macro2",
@@ -3735,7 +3726,7 @@ dependencies = [
  "serde_urlencoded",
  "tokio",
  "tokio-rustls",
- "tokio-util 0.7.4",
+ "tokio-util",
  "tower-service",
  "url",
  "wasm-bindgen",
@@ -4848,20 +4839,6 @@ dependencies = [
 
 [[package]]
 name = "tokio-util"
-version = "0.6.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "36943ee01a6d67977dd3f84a5a1d2efeb4ada3a1ae771cadfaa535d9d9fc6507"
-dependencies = [
- "bytes",
- "futures-core",
- "futures-sink",
- "log",
- "pin-project-lite",
- "tokio",
-]
-
-[[package]]
-name = "tokio-util"
 version = "0.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0bb2e075f03b3d66d8d8785356224ba688d2906a371015e225beeb65ca92c740"
@@ -4894,26 +4871,9 @@ dependencies = [
  "pin-project",
  "pin-project-lite",
  "tokio",
- "tokio-util 0.7.4",
  "tower-layer",
  "tower-service",
  "tracing",
-]
-
-[[package]]
-name = "tower-http"
-version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81eca72647e58054bbfa41e6f297c23436f1c60aff6e5eb38455a0f9ca420bb5"
-dependencies = [
- "bytes",
- "futures-core",
- "futures-util",
- "http",
- "http-body",
- "pin-project",
- "tower-layer",
- "tower-service",
 ]
 
 [[package]]
@@ -5073,7 +5033,7 @@ dependencies = [
  "aho-corasick",
  "anyhow",
  "async-trait",
- "axum 0.6.0-rc.2",
+ "axum",
  "axum-extra",
  "chrono",
  "futures",

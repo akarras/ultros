@@ -22,7 +22,7 @@ lodestone = {git = "https://github.com/akarras/lodestone.git", branch = 'async',
 reqwest = {version = "0.11", default-features = false, features = ["rustls-tls"]}
 xiv-gen = {path = "../xiv-gen", features = ["recipe", "recipe_lookup", "item", "item_ui_category"]}
 serde = {version = "^1", features = ["derive"]}
-maud = {version = "0.23.0", features = ["axum"]}
+maud = {version = "0.24.0", features = ["axum"]}
 aho-corasick = "0.7.19"
 include_dir = "0.7.2"
 mime_guess = "2.0.4"
