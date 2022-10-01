@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use chrono::Duration;
 use chrono::Utc;
 use migration::Alias;
@@ -18,7 +20,15 @@ use sea_orm::*;
 pub struct BestResellResults {
     pub item_id: i32,
     pub profit: i32,
-    pub margin: f64,
+    pub margin: f32,
+}
+
+pub struct Margin(f32);
+
+impl Display for Margin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:.2}%", self.0 * 100.0)
+    }
 }
 
 impl UltrosDb {
@@ -76,7 +86,6 @@ impl UltrosDb {
         let query_iden: DynIden = SeaRc::new(Alias::new("sale_hist"));
         let profit: DynIden = SeaRc::new(Alias::new("profit"));
         let margin: DynIden = SeaRc::new(Alias::new("margin"));
-
         let all_query = Query::select()
             .from(active_listing::Entity)
             .column(active_listing::Column::ItemId)
@@ -90,23 +99,19 @@ impl UltrosDb {
             )
             .expr_as(
                 SimpleExpr::Binary(
-                    Box::new(SimpleExpr::Binary(
-                        Box::new(
-                            SimpleExpr::Column(ColumnRef::TableColumn(
-                                query_iden.clone(),
-                                min_sale_price_alias.clone(),
-                            ))
-                            .cast_as(Alias::new("float8")),
-                        ),
-                        BinOper::Div,
-                        Box::new(
-                            active_listing::Column::PricePerUnit
-                                .min()
-                                .cast_as(Alias::new("float8")),
-                        ),
-                    )),
-                    BinOper::Mul,
-                    Box::new(SimpleExpr::Value(Value::Float(Some(100.0)))),
+                    Box::new(
+                        SimpleExpr::Column(ColumnRef::TableColumn(
+                            query_iden.clone(),
+                            min_sale_price_alias.clone(),
+                        ))
+                        .cast_as(Alias::new("float4")),
+                    ),
+                    BinOper::Div,
+                    Box::new(
+                        active_listing::Column::PricePerUnit
+                            .min()
+                            .cast_as(Alias::new("float4")),
+                    ),
                 ),
                 margin.clone(),
             )
