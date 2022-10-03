@@ -18,7 +18,7 @@ pub(crate) struct AnalyzerPage {
 }
 
 impl Page for AnalyzerPage {
-    fn get_name<'a>(&self) -> &'a str {
+    fn get_name<'a>(&'a self) -> &'a str {
         "Analyzer"
     }
 

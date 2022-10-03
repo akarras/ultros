@@ -4,10 +4,13 @@ use maud::html;
 use ultros_db::entity::{active_listing, retainer};
 use xiv_gen::ItemId;
 
-use crate::{web::{
-    oauth::AuthDiscordUser,
-    templates::{components::header::Header, page::Page},
-}, world_cache::{WorldCache, AnySelector}};
+use crate::{
+    web::{
+        oauth::AuthDiscordUser,
+        templates::{components::header::Header, page::Page},
+    },
+    world_cache::{AnySelector, WorldCache},
+};
 
 pub(crate) struct ListingsPage {
     pub(crate) listings: Vec<(active_listing::Model, Option<retainer::Model>)>,
@@ -16,11 +19,11 @@ pub(crate) struct ListingsPage {
     pub(crate) item_id: i32,
     pub(crate) item: &'static xiv_gen::Item,
     pub(crate) user: Option<AuthDiscordUser>,
-    pub(crate) world_cache: Arc<WorldCache>
+    pub(crate) world_cache: Arc<WorldCache>,
 }
 
 impl Page for ListingsPage {
-    fn get_name<'b>(&self) -> &'b str {
+    fn get_name<'b>(&'b self) -> &'b str {
         xiv_gen_db::decompress_data()
             .items
             .get(&ItemId(self.item_id))

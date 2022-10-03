@@ -2,6 +2,8 @@ use axum::{extract::Path, response::Html};
 use maud::{html, Render};
 use reqwest::StatusCode;
 
+use crate::utils;
+
 use super::item_search_index::do_query;
 
 pub(crate) async fn search_items(
@@ -21,7 +23,7 @@ pub(crate) async fn search_items(
           div class="search-result" {
             // todo this should be the logged in user's world if we can get it.
             a href= {"/listings/Sargatanas/"(item_id)} {
-              img src={"https://universalis-ffxiv.github.io/universalis-assets/icon2x/" (item_id) ".png"};
+              img src=((utils::get_item_icon_url(item_id)));
               div class="search-result-details" {
                 span class="item-name" {
                   (&item.name)

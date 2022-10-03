@@ -24,7 +24,7 @@ pub(crate) struct UserRetainersPage {
 }
 
 impl Page for UserRetainersPage {
-    fn get_name<'a>(&self) -> &'a str {
+    fn get_name<'a>(&'a self) -> &'a str {
         "Your Retainers"
     }
 
@@ -62,7 +62,7 @@ impl Page for UserRetainersPage {
                           ((retainer.name))
                         }
                         a class="btn align-right" href={"/retainers/remove/" ((owned.id))} {
-                          "remove"
+                          "Remove"
                         }
                         table {
                           tr {

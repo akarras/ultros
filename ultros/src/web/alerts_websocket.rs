@@ -14,7 +14,10 @@ use axum::{
 };
 use futures::future::select;
 use serde::{Deserialize, Serialize};
-use tracing::{log::{debug, error, info}, instrument};
+use tracing::{
+    instrument,
+    log::{debug, error, info},
+};
 use ultros_db::UltrosDb;
 
 #[derive(Debug, Deserialize)]

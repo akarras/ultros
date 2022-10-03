@@ -10,7 +10,7 @@ pub(crate) struct HomePage {
 }
 
 impl Page for HomePage {
-    fn get_name<'a>(&self) -> &'a str {
+    fn get_name<'a>(&'a self) -> &'a str {
         "Home page"
     }
 

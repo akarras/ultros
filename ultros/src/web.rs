@@ -26,6 +26,7 @@ use xiv_gen::ItemId as XivDBItemId;
 
 use self::error::WebError;
 use self::oauth::{AuthDiscordUser, AuthUserCache, DiscordAuthConfig};
+use self::templates::pages::retainer::generic_retainer_page::GenericRetainerPage;
 use self::templates::pages::{
     alerts::AlertsPage, analyzer_page::AnalyzerPage, retainer::add_retainer::AddRetainer,
 };
@@ -79,71 +80,37 @@ async fn search_retainers(
 
 async fn get_retainer_listings(
     State(db): State<ultros_db::UltrosDb>,
+    State(world_cache): State<Arc<WorldCache>>,
     Path(retainer_id): Path<i32>,
-) -> Result<Html<String>, (StatusCode, String)> {
-    let data = db.get_retainer_listings(retainer_id).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Database error occured {e}"),
-        )
-    })?;
+    user: Option<AuthDiscordUser>,
+) -> Result<RenderPage<GenericRetainerPage>, WebError> {
+    let data = db
+        .get_retainer_listings(retainer_id)
+        .await?
+        .ok_or(WebError::InvalidItem(retainer_id))?;
 
     let game_data = xiv_gen_db::decompress_data();
     let items = &game_data.items;
-    if let Some((retainer, listings)) = data {
-        let mut data = format!("<h1>{}</h1>", retainer.name);
-        // get all listings from the retainer and calculate heuristics
-        let multiple_listings = db
-            .get_multiple_listings_for_worlds(
-                [WorldId(retainer.world_id)].into_iter(),
-                listings.iter().map(|i| ItemId(i.item_id)),
-            )
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")))?;
-        let world = if let Ok(Some(world)) = db.get_world_from_retainer(&retainer).await {
-            world
-        } else {
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to get world data for retainer".to_string(),
-            ));
-        };
-        write!(data, "<h1>{}</h1>", world.name).unwrap();
-        let world_name = world.name;
-        write!(
-            data,
-            "<table><th>ranking</th><th>item id</th><th>price per unit</th> <th>quantity</th><th>total</th>"
-        ).unwrap();
-        for listing in listings {
-            let item = items
-                .get(&XivDBItemId(listing.item_id))
-                .map(|m| m.name.as_str())
-                .unwrap_or_default();
-            // get the the ranking of this listing for the world
-            let market_position = multiple_listings
-                .iter()
-                .filter(|m| m.item_id == listing.item_id)
-                .enumerate()
-                .find(|(_, m)| m.id == listing.id)
-                .map(|(pos, _)| pos + 1)
-                .unwrap_or_default();
-            let item_id = listing.item_id;
-            write!(
-                data,
-                r#"<tr><td><a href="/listings/{world_name}/{item_id}">{}</a></td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>"#,
-                item,
-                market_position,
-                listing.price_per_unit,
-                listing.quantity,
-                listing.price_per_unit * listing.quantity,
-                listing.timestamp
-            ).unwrap();
-        }
-        write!(data, "</table>").unwrap();
-        Ok(Html(data))
-    } else {
-        Ok(Html(format!("Unable to find retainer")))
-    }
+    let (retainer, listings) = data;
+    let mut data = format!("<h1>{}</h1>", retainer.name);
+    // get all listings from the retainer and calculate heuristics
+    let multiple_listings = db
+        .get_multiple_listings_for_worlds(
+            [WorldId(retainer.world_id)].into_iter(),
+            listings.iter().map(|i| ItemId(i.item_id)),
+        )
+        .await?;
+
+    Ok(RenderPage(GenericRetainerPage {
+        retainer_name: retainer.name,
+        retainer_id: retainer.id,
+        world_name: world_cache
+            .lookup_selector(&AnySelector::World(retainer.world_id))
+            .map(|w| w.get_name().to_string())
+            .unwrap_or_default(),
+        listings,
+        user,
+    }))
 }
 
 async fn user_retainers_listings(

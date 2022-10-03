@@ -4,7 +4,7 @@ use lazy_static::__Deref;
 use maud::{html, Markup, Render};
 
 pub trait Page {
-    fn get_name<'a>(&self) -> &'a str;
+    fn get_name<'a>(&'a self) -> &'a str;
     fn draw_body(&self) -> Markup;
 }
 
@@ -15,7 +15,7 @@ impl<P: Page + ?Sized> Page for Box<P> {
         self.deref().draw_body()
     }
 
-    fn get_name<'a>(&self) -> &'a str {
+    fn get_name<'a>(&'a self) -> &'a str {
         self.deref().get_name()
     }
 }
