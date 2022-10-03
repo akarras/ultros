@@ -20,6 +20,16 @@ pub enum AnyResult<'a> {
     Region(&'a region::Model),
 }
 
+impl<'a> AnyResult<'a> {
+    pub(crate) fn get_name(&self) -> &str {
+        match self {
+            AnyResult::World(world) => &world.name,
+            AnyResult::Datacenter(datacenter) => &datacenter.name,
+            AnyResult::Region(region) => &region.name,
+        }
+    }
+}
+
 pub struct WorldCache {
     worlds: HashMap<i32, world::Model>,
     datacenter: HashMap<i32, datacenter::Model>,
@@ -86,20 +96,20 @@ impl WorldCache {
         }
     }
 
-    fn lookup_selector(&self, selector: AnySelector) -> Option<AnyResult> {
+    pub fn lookup_selector(&self, selector: &AnySelector) -> Option<AnyResult> {
         match selector {
-            AnySelector::World(world) => Some(AnyResult::World(self.worlds.get(&world)?)),
+            AnySelector::World(world) => Some(AnyResult::World(self.worlds.get(world)?)),
             AnySelector::Datacenter(datacenter) => {
-                Some(AnyResult::Datacenter(self.datacenter.get(&datacenter)?))
+                Some(AnyResult::Datacenter(self.datacenter.get(datacenter)?))
             }
-            AnySelector::Region(region) => Some(AnyResult::Region(self.regions.get(&region)?)),
+            AnySelector::Region(region) => Some(AnyResult::Region(self.regions.get(region)?)),
         }
     }
 
     pub fn lookup_value_by_name(&self, name: &str) -> Option<AnyResult> {
         self.name_map
             .get(name)
-            .map(|selector| self.lookup_selector(*selector))
+            .map(|selector| self.lookup_selector(selector))
             .flatten()
     }
 
@@ -111,6 +121,28 @@ impl WorldCache {
                 .get(&datacenter.id)
                 .map(|i| i.clone()),
             AnyResult::Region(region) => self.region_to_worlds.get(&region.id).map(|i| i.clone()),
+        }
+    }
+
+    pub fn get_datacenter(&self, result: &AnyResult) -> Option<&datacenter::Model> {
+        match result {
+            AnyResult::World(world) => self.datacenter.get(&world.datacenter_id),
+            AnyResult::Datacenter(datacenter) => self.datacenter.get(&datacenter.id),
+            AnyResult::Region(region) => self
+                .datacenter
+                .values()
+                .find(|datacenter| datacenter.region_id == region.id),
+        }
+    }
+
+    pub fn get_region(&self, result: &AnyResult) -> Option<&region::Model> {
+        match result {
+            AnyResult::World(world) => {
+                let datacenter = self.datacenter.get(&world.datacenter_id)?;
+                self.regions.get(&datacenter.region_id)
+            }
+            AnyResult::Datacenter(datacenter) => self.regions.get(&datacenter.region_id),
+            AnyResult::Region(region) => self.regions.get(&region.id),
         }
     }
 }

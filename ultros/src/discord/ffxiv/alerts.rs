@@ -316,14 +316,11 @@ impl UndercutTracker {
                 }
                 // items in an added vec should all be the same type, so lets just find the cheapest item
                 if let Some(added) = added.iter().min_by_key(|a| a.price_per_unit) {
-                    if let Some(our_price) = self
-                        .user_lowest_listings
-                        .get_mut(&ListingKey {
-                            item_id: added.item_id,
-                            world_id: added.world_id,
-                            hq: added.hq,
-                        })
-                    {
+                    if let Some(our_price) = self.user_lowest_listings.get_mut(&ListingKey {
+                        item_id: added.item_id,
+                        world_id: added.world_id,
+                        hq: added.hq,
+                    }) {
                         let margin_price =
                             our_price.lowest_price as f64 * (1.0 - (self.margin as f64 / 100.0));
                         debug!("comparing our_price {our_price:?} {margin_price} {added:?}");
@@ -438,12 +435,21 @@ impl RetainerAlertListener {
                                 } => {
                                     let items = &xiv_gen_db::decompress_data().items;
                                     if let Some(item) = items.get(&xiv_gen::ItemId(item_id)) {
-                                        let retainer_names = retainer_name_and_ids.into_iter().map(|r| {
-                                            r.name
-                                        }).collect::<Vec<_>>().join(", ");
+                                        let retainer_names = retainer_name_and_ids
+                                            .into_iter()
+                                            .map(|r| r.name)
+                                            .collect::<Vec<_>>()
+                                            .join(", ");
                                         let item_name = &item.name;
                                         let undercut_msg = format!("Your retainers {retainer_names} have been undercut on {item_name}");
-                                        send_discord_alerts(alert_id, discord_user, &ultros_db, &ctx, &undercut_msg).await;
+                                        send_discord_alerts(
+                                            alert_id,
+                                            discord_user,
+                                            &ultros_db,
+                                            &ctx,
+                                            &undercut_msg,
+                                        )
+                                        .await;
                                     }
                                 }
                             },

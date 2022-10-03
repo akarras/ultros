@@ -5,6 +5,7 @@ pub mod item_search_index;
 pub mod oauth;
 mod templates;
 
+use anyhow::Error;
 use axum::body::{Empty, Full};
 use axum::extract::{FromRef, Path, Query, State};
 use axum::http::{HeaderValue, Response, StatusCode};
@@ -18,6 +19,7 @@ use std::fmt::Write;
 use std::io::Read;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
 use ultros_db::price_optimizer::BestResellResults;
 use ultros_db::UltrosDb;
 use universalis::{websocket, ItemId, WorldId};
@@ -38,6 +40,7 @@ use self::templates::{
 use crate::event::EventReceivers;
 use crate::web::alerts_websocket::connect_websocket;
 use crate::web::oauth::{begin_login, logout};
+use crate::world_cache::{AnySelector, WorldCache};
 
 // basic handler that responds with a static string
 async fn root(user: Option<AuthDiscordUser>) -> RenderPage<HomePage> {
@@ -217,20 +220,47 @@ async fn remove_owned_retainer(
 
 async fn world_item_listings<'a>(
     State(db): State<UltrosDb>,
+    State(world_cache): State<Arc<WorldCache>>,
     Path((world, item_id)): Path<(String, i32)>,
     user: Option<AuthDiscordUser>,
 ) -> Result<RenderPage<ListingsPage>, WebError> {
-    let world = db.get_world(&world).await?;
-    let (worlds, datacenter, region) = db.get_relative_worlds_datacenter_and_region(&world).await?;
-    let mut world_names: Vec<_> = worlds.into_iter().map(|i| i.name).collect();
-    world_names.push(datacenter.name);
-    world_names.push(region.name);
-
+    let selected_value = world_cache
+        .lookup_value_by_name(&world)
+        .ok_or(Error::msg("Unable to find world/datacenter"))?;
+    let worlds = world_cache
+        .get_all_worlds_in(&selected_value)
+        .ok_or(Error::msg("Unable to get worlds"))?;
     let listings = db
-        .get_all_listings_in_worlds_with_retainers(vec![world.id], ItemId(item_id))
+        .get_all_listings_in_worlds_with_retainers(&worlds, ItemId(item_id))
         .await?;
-
-    let page = ListingsPage::new(item_id, listings, world.name, world_names, user)?;
+    let region = world_cache
+        .get_region(&selected_value)
+        .ok_or(Error::msg("No region found?"))?;
+    let datacenter = world_cache
+        .get_datacenter(&selected_value)
+        .ok_or(Error::msg("No datacenter found"))?;
+    let item = xiv_gen_db::decompress_data()
+        .items
+        .get(&xiv_gen::ItemId(item_id))
+        .ok_or(WebError::InvalidItem(item_id))?;
+    let mut world_names: Vec<_> = worlds
+        .iter()
+        .flat_map(|i| {
+            let world = AnySelector::World(*i);
+            world_cache.lookup_selector(&world)
+        })
+        .map(|selector| selector.get_name().to_string())
+        .collect();
+    world_names.push(region.name.clone());
+    world_names.push(datacenter.name.clone());
+    let page = ListingsPage {
+        listings,
+        selected_world: selected_value.get_name().to_string(),
+        worlds: world_names,
+        item_id,
+        item,
+        user,
+    };
     Ok(RenderPage(page))
 }
 
@@ -280,6 +310,7 @@ pub(crate) struct WebState {
     pub(crate) oauth_config: DiscordAuthConfig,
     pub(crate) user_cache: AuthUserCache,
     pub(crate) event_receivers: EventReceivers,
+    pub(crate) world_cache: Arc<WorldCache>,
 }
 
 impl FromRef<WebState> for UltrosDb {
@@ -309,6 +340,12 @@ impl FromRef<WebState> for AuthUserCache {
 impl FromRef<WebState> for EventReceivers {
     fn from_ref(input: &WebState) -> Self {
         input.event_receivers.clone()
+    }
+}
+
+impl FromRef<WebState> for Arc<WorldCache> {
+    fn from_ref(input: &WebState) -> Self {
+        input.world_cache.clone()
     }
 }
 

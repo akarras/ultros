@@ -20,6 +20,7 @@ use universalis::websocket::event_types::{EventChannel, SubscribeMode, WSMessage
 use universalis::websocket::SocketRx;
 use universalis::{DataCentersView, UniversalisClient, WebsocketClient, WorldsView};
 use web::oauth::{AuthUserCache, DiscordAuthConfig, OAuthScope};
+use world_cache::WorldCache;
 
 async fn run_socket_listener(db: UltrosDb, listings_tx: EventProducer<Vec<active_listing::Model>>) {
     let mut socket = WebsocketClient::connect().await;
@@ -115,6 +116,7 @@ async fn main() -> Result<()> {
     let worlds = worlds?;
     let datacenters = datacenters?;
     let db = init_db(&worlds, &datacenters).await.unwrap();
+    let world_cache = Arc::new(WorldCache::new(&db).await);
     let (senders, receivers) = create_event_busses();
     // begin listening to universalis events
     tokio::spawn(run_socket_listener(db.clone(), senders.listings.clone()));
@@ -144,6 +146,7 @@ async fn main() -> Result<()> {
         ),
         user_cache: AuthUserCache::new(),
         event_receivers: receivers,
+        world_cache,
     };
     web::start_web(web_state).await;
     Ok(())

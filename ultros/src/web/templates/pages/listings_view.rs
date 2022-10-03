@@ -9,35 +9,12 @@ use crate::web::{
 };
 
 pub(crate) struct ListingsPage {
-    listings: Vec<(active_listing::Model, Option<retainer::Model>)>,
-    selected_world: String,
-    worlds: Vec<String>,
-    item_id: i32,
-    item: &'static xiv_gen::Item,
-    user: Option<AuthDiscordUser>,
-}
-
-impl ListingsPage {
-    pub(crate) fn new(
-        item_id: i32,
-        listings: Vec<(active_listing::Model, Option<retainer::Model>)>,
-        selected_world: String,
-        worlds: Vec<String>,
-        user: Option<AuthDiscordUser>,
-    ) -> Result<Self, WebError> {
-        let item = xiv_gen_db::decompress_data()
-            .items
-            .get(&ItemId(item_id))
-            .ok_or(WebError::InvalidItem(item_id))?;
-        Ok(Self {
-            listings,
-            selected_world,
-            worlds,
-            item_id,
-            item,
-            user,
-        })
-    }
+    pub(crate) listings: Vec<(active_listing::Model, Option<retainer::Model>)>,
+    pub(crate) selected_world: String,
+    pub(crate) worlds: Vec<String>,
+    pub(crate) item_id: i32,
+    pub(crate) item: &'static xiv_gen::Item,
+    pub(crate) user: Option<AuthDiscordUser>,
 }
 
 impl Page for ListingsPage {

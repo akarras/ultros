@@ -8,9 +8,7 @@ use axum::{
     response::Response,
 };
 use serde::{Deserialize, Serialize};
-use tracing::{
-    log::{debug, error},
-};
+use tracing::log::{debug, error};
 
 #[derive(Debug, Deserialize)]
 pub(crate) enum AlertsRx {
