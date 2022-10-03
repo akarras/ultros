@@ -1,7 +1,9 @@
+pub(crate) mod alerts;
 mod discord;
 pub(crate) mod event;
+pub(crate) mod utils;
 mod web;
-pub mod world_cache;
+pub(crate) mod world_cache;
 
 use std::collections::HashSet;
 use std::env;

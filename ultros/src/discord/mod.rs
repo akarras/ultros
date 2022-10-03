@@ -1,4 +1,4 @@
-mod ffxiv;
+pub(crate) mod ffxiv;
 
 use chrono::Local;
 use poise::{builtins::HelpConfiguration, serenity_prelude as serenity};

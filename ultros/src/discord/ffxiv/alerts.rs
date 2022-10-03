@@ -6,6 +6,7 @@ use std::{
 use anyhow::Result;
 use futures::future::{self, Either};
 use poise::serenity_prelude::{self, Color, UserId};
+use serde::Serialize;
 use tracing::{debug, error, info, instrument};
 use ultros_db::{entity::*, UltrosDb};
 
@@ -228,7 +229,7 @@ struct ListingValue {
     has_alerted: bool,
 }
 
-#[derive(Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Debug, Eq, PartialEq, PartialOrd, Ord, Serialize)]
 pub(crate) struct UndercutRetainer {
     pub(crate) id: i32,
     pub(crate) name: String,
@@ -240,7 +241,7 @@ pub(crate) enum UndercutResult {
     None,
     Undercut {
         item_id: i32,
-        retainer_name_and_ids: Vec<UndercutRetainer>,
+        undercut_retainers: Vec<UndercutRetainer>,
     },
 }
 
@@ -254,6 +255,23 @@ pub(crate) struct UndercutTracker {
 }
 
 impl UndercutTracker {
+    pub(crate) async fn new(
+        discord_user: u64,
+        ultros_db: &UltrosDb,
+        margin: i32,
+    ) -> Result<Self, anyhow::Error> {
+        let (mut user_retainer_ids, mut user_lowest_listings) =
+            get_user_unique_retainer_ids_and_listing_ids_by_price(ultros_db, discord_user).await?;
+
+        Ok(Self {
+            retainer_ids: user_retainer_ids,
+            user_lowest_listings,
+            discord_user_id: discord_user,
+            margin,
+            db: ultros_db.clone(),
+        })
+    }
+
     pub(crate) async fn handle_listing_event(
         &mut self,
         listings: Result<EventType<Arc<Vec<active_listing::Model>>>, anyhow::Error>,
@@ -360,7 +378,8 @@ impl UndercutTracker {
                                 .unwrap_or_default();
                             return Ok(UndercutResult::Undercut {
                                 item_id: added.item_id,
-                                retainer_name_and_ids: retainers,
+                                undercut_retainers
+                    : retainers,
                             });
                         }
                     }
@@ -388,17 +407,9 @@ impl RetainerAlertListener {
             .await?
             .ok_or(anyhow::Error::msg("Unable to find retainer"))?;
         let discord_user = alert.owner as u64;
-        let (mut user_retainer_ids, mut user_lowest_listings) =
-            get_user_unique_retainer_ids_and_listing_ids_by_price(&ultros_db, discord_user).await?;
+
         let (cancellation_sender, mut receiver) = tokio::sync::mpsc::channel::<RetainerAlertTx>(10);
-        info!("Starting alert listener {alert_id} {user_retainer_ids:?} {user_lowest_listings:?}");
-        let mut undercut_tracker = UndercutTracker {
-            db: ultros_db.clone(),
-            margin,
-            user_lowest_listings,
-            retainer_ids: user_retainer_ids,
-            discord_user_id: discord_user,
-        };
+        let mut undercut_tracker = UndercutTracker::new(discord_user, &ultros_db, margin).await?;
         tokio::spawn(async move {
             loop {
                 let ended =
@@ -431,11 +442,13 @@ impl RetainerAlertListener {
                                 UndercutResult::None => {}
                                 UndercutResult::Undercut {
                                     item_id,
-                                    retainer_name_and_ids,
+                                    undercut_retainers
+                        ,
                                 } => {
                                     let items = &xiv_gen_db::decompress_data().items;
                                     if let Some(item) = items.get(&xiv_gen::ItemId(item_id)) {
-                                        let retainer_names = retainer_name_and_ids
+                                        let retainer_names = undercut_retainers
+                            
                                             .into_iter()
                                             .map(|r| r.name)
                                             .collect::<Vec<_>>()
