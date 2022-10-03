@@ -1,5 +1,8 @@
 use maud::html;
-use ultros_db::{entity::{region, world}, price_optimizer::BestResellResults};
+use ultros_db::{
+    entity::{region, world},
+    price_optimizer::BestResellResults,
+};
 
 use crate::web::{
     oauth::AuthDiscordUser,
