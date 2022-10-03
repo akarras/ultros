@@ -12,6 +12,7 @@ mod m20220913_102706_retainer_id_before_world_id_in_foreign_key;
 mod m20220916_011325_drop_retainer_id_from_retainer_undercut;
 mod m20220918_135945_add_item_id_and_retainer_indexes;
 mod m20220918_203336_add_retainer_index_to_active_listing;
+mod m20221003_151617_add_time_index;
 
 pub struct Migrator;
 
@@ -31,6 +32,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20220916_011325_drop_retainer_id_from_retainer_undercut::Migration),
             Box::new(m20220918_135945_add_item_id_and_retainer_indexes::Migration),
             Box::new(m20220918_203336_add_retainer_index_to_active_listing::Migration),
+            Box::new(m20221003_151617_add_time_index::Migration),
         ]
     }
 }
