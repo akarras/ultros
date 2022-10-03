@@ -14,7 +14,7 @@ use axum::{
 };
 use futures::future::select;
 use serde::{Deserialize, Serialize};
-use tracing::log::{debug, error};
+use tracing::{log::{debug, error, info}, instrument};
 use ultros_db::UltrosDb;
 
 #[derive(Debug, Deserialize)]
@@ -27,7 +27,7 @@ pub(crate) enum AlertsRx {
         travel_amount: AnySelector,
         price_threshold: i32,
     },
-    Ping(Vec<u8>)
+    Ping(Vec<u8>),
 }
 
 #[derive(Debug, Serialize)]
@@ -50,28 +50,31 @@ pub(crate) enum AlertsTx {
 /// The websocket messages are defined by AlertsTx, AlertsRx.
 /// The websocket shall also only allow one websocket per user.
 /// The websocket will use the authentication cookie to validate the user.
+#[instrument]
 pub(crate) async fn connect_websocket(
     State(receivers): State<EventReceivers>,
     State(ultros_db): State<UltrosDb>,
     user: AuthDiscordUser,
     websocket: WebSocketUpgrade,
 ) -> Response {
+    info!("creating websocket");
     websocket.on_upgrade(|socket| handle_upgrade(socket, user, receivers, ultros_db))
 }
 
+#[instrument(skip(ws))]
 async fn handle_upgrade(
     mut ws: WebSocket,
     user: AuthDiscordUser,
     mut receivers: EventReceivers,
     ultros_db: UltrosDb,
 ) {
+    info!("websocket upgraded");
     let mut undercut_tracker: Option<UndercutTracker> = None;
     enum Action {
         Tx(AlertsTx),
-        Pong(Vec<u8>)
+        Pong(Vec<u8>),
     }
     loop {
-        
         let result = match select(Box::pin(ws.recv()), Box::pin(receivers.listings.recv())).await {
             futures::future::Either::Left((websocket, _)) => {
                 if let Some(received_message) = websocket {
@@ -114,6 +117,7 @@ async fn handle_upgrade(
                     };
                     match alert_value {
                         AlertsRx::Undercuts { margin } => {
+                            info!("creating undercut tracker");
                             undercut_tracker =
                                 UndercutTracker::new(user.id, &ultros_db, margin).await.ok();
                             continue;
@@ -123,11 +127,10 @@ async fn handle_upgrade(
                             travel_amount,
                             price_threshold,
                         } => {
+                            info!("price alert tried create, but not implemented");
                             continue;
                         }
-                        AlertsRx::Ping(ping) => {
-                            Action::Pong(ping)
-                        },
+                        AlertsRx::Ping(ping) => Action::Pong(ping),
                     }
                 } else {
                     // stream has been closed
@@ -171,6 +174,7 @@ async fn handle_upgrade(
         let value = match result {
             Action::Tx(tx) => ws.send(Message::Text(serde_json::to_string(&tx).unwrap())),
             Action::Pong(pong) => ws.send(Message::Pong(pong)),
-        }.await;
+        }
+        .await;
     }
 }

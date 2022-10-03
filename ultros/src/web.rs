@@ -20,15 +20,15 @@ use std::io::Read;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use ultros_db::price_optimizer::BestResellResults;
 use ultros_db::UltrosDb;
-use universalis::{websocket, ItemId, WorldId};
+use universalis::{ItemId, WorldId};
 use xiv_gen::ItemId as XivDBItemId;
 
 use self::error::WebError;
 use self::oauth::{AuthDiscordUser, AuthUserCache, DiscordAuthConfig};
-use self::templates::pages::analyzer_page::AnalyzerPage;
-use self::templates::pages::retainer::add_retainer::AddRetainer;
+use self::templates::pages::{
+    alerts::AlertsPage, analyzer_page::AnalyzerPage, retainer::add_retainer::AddRetainer,
+};
 use self::templates::{
     page::RenderPage,
     pages::{
@@ -264,6 +264,10 @@ async fn world_item_listings<'a>(
     Ok(RenderPage(page))
 }
 
+async fn alerts(discord_user: AuthDiscordUser) -> Result<RenderPage<AlertsPage>, WebError> {
+    Ok(RenderPage(AlertsPage { discord_user }))
+}
+
 #[derive(Deserialize)]
 struct ProfitParameters {
     sale_amount_threshold: Option<i32>,
@@ -399,6 +403,7 @@ pub(crate) async fn start_web(state: WebState) {
     // build our application with a route
     let app = Router::with_state(state)
         .route("/", get(root))
+        .route("/alerts", get(alerts))
         .route("/alerts/websocket", get(connect_websocket))
         .route("/retainer/search/:search", get(search_retainers))
         .route("/listings/:world/:itemid", get(world_item_listings))

@@ -1,3 +1,4 @@
+pub(crate) mod alerts;
 pub(crate) mod analyzer_page;
 pub(crate) mod error_page;
 pub(crate) mod home_page;

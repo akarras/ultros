@@ -378,8 +378,7 @@ impl UndercutTracker {
                                 .unwrap_or_default();
                             return Ok(UndercutResult::Undercut {
                                 item_id: added.item_id,
-                                undercut_retainers
-                    : retainers,
+                                undercut_retainers: retainers,
                             });
                         }
                     }
@@ -442,13 +441,11 @@ impl RetainerAlertListener {
                                 UndercutResult::None => {}
                                 UndercutResult::Undercut {
                                     item_id,
-                                    undercut_retainers
-                        ,
+                                    undercut_retainers,
                                 } => {
                                     let items = &xiv_gen_db::decompress_data().items;
                                     if let Some(item) = items.get(&xiv_gen::ItemId(item_id)) {
                                         let retainer_names = undercut_retainers
-                            
                                             .into_iter()
                                             .map(|r| r.name)
                                             .collect::<Vec<_>>()
