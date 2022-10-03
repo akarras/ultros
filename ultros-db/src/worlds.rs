@@ -3,9 +3,22 @@ use crate::{
     UltrosDb,
 };
 use anyhow::Result;
-use sea_orm::ModelTrait;
+use sea_orm::{EntityTrait, ModelTrait};
 
 impl UltrosDb {
+    pub async fn get_all_worlds_regions_and_datacenters(
+        &self,
+    ) -> Result<(
+        Vec<world::Model>,
+        Vec<datacenter::Model>,
+        Vec<region::Model>,
+    )> {
+        let worlds = world::Entity::find().all(&self.db).await?;
+        let datacenters = datacenter::Entity::find().all(&self.db).await?;
+        let regions = region::Entity::find().all(&self.db).await?;
+        Ok((worlds, datacenters, regions))
+    }
+
     pub async fn get_relative_worlds_datacenter_and_region(
         &self,
         world: &world::Model,

@@ -1,6 +1,7 @@
 mod discord;
 pub(crate) mod event;
 mod web;
+pub mod world_cache;
 
 use std::collections::HashSet;
 use std::env;
@@ -117,7 +118,7 @@ async fn main() -> Result<()> {
     let (senders, receivers) = create_event_busses();
     // begin listening to universalis events
     tokio::spawn(run_socket_listener(db.clone(), senders.listings.clone()));
-    tokio::spawn(start_discord(db.clone(), senders, receivers));
+    tokio::spawn(start_discord(db.clone(), senders, receivers.clone()));
     // create the oauth config
     let hostname = env::var("HOSTNAME").expect(
         "Missing env variable HOSTNAME, which should be the domain of the server running this app.",
@@ -142,6 +143,7 @@ async fn main() -> Result<()> {
             HashSet::from_iter([OAuthScope::Identify]),
         ),
         user_cache: AuthUserCache::new(),
+        event_receivers: receivers,
     };
     web::start_web(web_state).await;
     Ok(())

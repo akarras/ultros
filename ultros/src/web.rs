@@ -1,3 +1,4 @@
+mod alerts_websocket;
 pub mod error;
 mod fuzzy_item_search;
 pub mod item_search_index;
@@ -19,7 +20,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use ultros_db::price_optimizer::BestResellResults;
 use ultros_db::UltrosDb;
-use universalis::{ItemId, WorldId};
+use universalis::{websocket, ItemId, WorldId};
 use xiv_gen::ItemId as XivDBItemId;
 
 use self::error::WebError;
@@ -34,6 +35,8 @@ use self::templates::{
         retainer::user_retainers_page::{RetainerViewType, UserRetainersPage},
     },
 };
+use crate::event::EventReceivers;
+use crate::web::alerts_websocket::connect_websocket;
 use crate::web::oauth::{begin_login, logout};
 
 // basic handler that responds with a static string
@@ -276,6 +279,7 @@ pub(crate) struct WebState {
     pub(crate) key: Key,
     pub(crate) oauth_config: DiscordAuthConfig,
     pub(crate) user_cache: AuthUserCache,
+    pub(crate) event_receivers: EventReceivers,
 }
 
 impl FromRef<WebState> for UltrosDb {
@@ -299,6 +303,12 @@ impl FromRef<WebState> for DiscordAuthConfig {
 impl FromRef<WebState> for AuthUserCache {
     fn from_ref(input: &WebState) -> Self {
         input.user_cache.clone()
+    }
+}
+
+impl FromRef<WebState> for EventReceivers {
+    fn from_ref(input: &WebState) -> Self {
+        input.event_receivers.clone()
     }
 }
 
@@ -352,6 +362,7 @@ pub(crate) async fn start_web(state: WebState) {
     // build our application with a route
     let app = Router::with_state(state)
         .route("/", get(root))
+        .route("/alerts/websocket", get(connect_websocket))
         .route("/retainer/search/:search", get(search_retainers))
         .route("/listings/:world/:itemid", get(world_item_listings))
         .route("/retainers/listings/:id", get(get_retainer_listings))
