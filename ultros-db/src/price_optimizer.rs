@@ -129,10 +129,14 @@ impl UltrosDb {
             .limit(25)
             .to_owned();
         let query = self.db.get_database_backend().build(&all_query);
-        let results = BestResellResults::find_by_statement(query)
+        let mut results = BestResellResults::find_by_statement(query)
             .all(&self.db)
             .await?;
-
+        // multiply margin by 100, subtract by 100
+        results.iter_mut().for_each(|e| { 
+            e.margin *= 100.0;
+            e.margin -= 100.0;
+        });
         // now find sale history for *all* items in our server
         Ok(results)
     }

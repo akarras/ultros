@@ -1,12 +1,13 @@
+use std::sync::Arc;
+
 use maud::html;
 use ultros_db::entity::{active_listing, retainer};
 use xiv_gen::ItemId;
 
-use crate::web::{
-    error::WebError,
+use crate::{web::{
     oauth::AuthDiscordUser,
     templates::{components::header::Header, page::Page},
-};
+}, world_cache::{WorldCache, AnySelector}};
 
 pub(crate) struct ListingsPage {
     pub(crate) listings: Vec<(active_listing::Model, Option<retainer::Model>)>,
@@ -15,6 +16,7 @@ pub(crate) struct ListingsPage {
     pub(crate) item_id: i32,
     pub(crate) item: &'static xiv_gen::Item,
     pub(crate) user: Option<AuthDiscordUser>,
+    pub(crate) world_cache: Arc<WorldCache>
 }
 
 impl Page for ListingsPage {
@@ -132,6 +134,9 @@ impl Page for ListingsPage {
                         "retainer name"
                       }
                       th {
+                        "world"
+                      }
+                      th {
                         "first seen"
                       }
                     }
@@ -149,6 +154,11 @@ impl Page for ListingsPage {
                         td {
                           @if let Some(retainer) = retainer {
                             a href={ "/retainers/listings/" ((retainer.id)) } { ((retainer.name)) }
+                          }
+                        }
+                        td {
+                          @if let Some(world) = self.world_cache.lookup_selector(&AnySelector::World(listing.world_id)) {
+                            ((world.get_name()))
                           }
                         }
                         td {

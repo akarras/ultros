@@ -124,14 +124,15 @@ impl WorldCache {
         }
     }
 
-    pub fn get_datacenter(&self, result: &AnyResult) -> Option<&datacenter::Model> {
+    pub fn get_datacenters(&self, result: &AnyResult) -> Option<Vec<&datacenter::Model>> {
         match result {
-            AnyResult::World(world) => self.datacenter.get(&world.datacenter_id),
-            AnyResult::Datacenter(datacenter) => self.datacenter.get(&datacenter.id),
-            AnyResult::Region(region) => self
+            AnyResult::World(world) => self.datacenter.get(&world.datacenter_id).map(|i| vec![i]),
+            AnyResult::Datacenter(datacenter) => self.datacenter.get(&datacenter.id).map(|d| vec![d]),
+            AnyResult::Region(region) => Some(self
                 .datacenter
                 .values()
-                .find(|datacenter| datacenter.region_id == region.id),
+                .filter(|datacenter| datacenter.region_id == region.id)
+                .collect()),
         }
     }
 

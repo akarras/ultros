@@ -181,6 +181,7 @@ impl UltrosDb {
         Ok(Entity::find()
             .filter(Column::WorldId.is_in(world_id.map(|m| Value::Int(Some(m.0)))))
             .filter(Column::ItemId.is_in(item.map(|i| Value::Int(Some(i.0)))))
+            .limit(50)
             .all(&self.db)
             .await?)
     }

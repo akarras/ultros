@@ -1,5 +1,5 @@
 use anyhow::Result;
-use migration::Value;
+use migration::{Value, sea_orm::QuerySelect};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use std::collections::HashSet;
 use tracing::instrument;
@@ -22,6 +22,7 @@ impl UltrosDb {
             .filter(Column::ItemId.eq(item.0))
             .filter(Column::WorldId.is_in(worlds.iter().copied()))
             .find_also_related(retainer::Entity)
+            .limit(100)
             .all(&self.db)
             .await?)
     }

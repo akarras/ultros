@@ -218,7 +218,7 @@ async fn remove_owned_retainer(
     Ok(Redirect::to("/retainers"))
 }
 
-async fn world_item_listings<'a>(
+async fn world_item_listings(
     State(db): State<UltrosDb>,
     State(world_cache): State<Arc<WorldCache>>,
     Path((world, item_id)): Path<(String, i32)>,
@@ -237,7 +237,7 @@ async fn world_item_listings<'a>(
         .get_region(&selected_value)
         .ok_or(Error::msg("No region found?"))?;
     let datacenter = world_cache
-        .get_datacenter(&selected_value)
+        .get_datacenters(&selected_value)
         .ok_or(Error::msg("No datacenter found"))?;
     let item = xiv_gen_db::decompress_data()
         .items
@@ -252,7 +252,9 @@ async fn world_item_listings<'a>(
         .map(|selector| selector.get_name().to_string())
         .collect();
     world_names.push(region.name.clone());
-    world_names.push(datacenter.name.clone());
+    for dc in datacenter {
+        world_names.push(dc.name.clone());
+    }
     let page = ListingsPage {
         listings,
         selected_world: selected_value.get_name().to_string(),
@@ -260,6 +262,7 @@ async fn world_item_listings<'a>(
         item_id,
         item,
         user,
+        world_cache,
     };
     Ok(RenderPage(page))
 }
