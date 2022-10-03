@@ -61,7 +61,7 @@ impl Page for UserRetainersPage {
                         span class="content-title" {
                           ((retainer.name))
                         }
-                        a class="btn" href={"/retainers/remove/" ((owned.id))} {
+                        a class="btn align-right" href={"/retainers/remove/" ((owned.id))} {
                           "remove"
                         }
                         table {
