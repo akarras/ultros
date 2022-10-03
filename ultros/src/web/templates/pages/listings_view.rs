@@ -86,6 +86,9 @@ impl Page for ListingsPage {
                         "retainer name"
                       }
                       th {
+                        "world"
+                      }
+                      th {
                         "first seen"
                       }
                     }
@@ -103,6 +106,11 @@ impl Page for ListingsPage {
                         td {
                           @if let Some(retainer) = retainer {
                             a href={ "/retainers/listings/" ((retainer.id)) } { ((retainer.name)) }
+                          }
+                        }
+                        td {
+                          @if let Some(world) = self.world_cache.lookup_selector(&AnySelector::World(listing.world_id)) {
+                            ((world.get_name()))
                           }
                         }
                         td {
