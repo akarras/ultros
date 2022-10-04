@@ -30,6 +30,7 @@ impl<'a> AnyResult<'a> {
     }
 }
 
+#[derive(Debug)]
 pub struct WorldCache {
     worlds: HashMap<i32, world::Model>,
     datacenter: HashMap<i32, datacenter::Model>,
@@ -148,5 +149,9 @@ impl WorldCache {
             AnyResult::Datacenter(datacenter) => self.regions.get(&datacenter.region_id),
             AnyResult::Region(region) => self.regions.get(&region.id),
         }
+    }
+
+    pub fn get_all_regions(&self) -> Vec<&region::Model> {
+        self.regions.values().collect()
     }
 }

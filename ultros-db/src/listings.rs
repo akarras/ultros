@@ -1,5 +1,6 @@
 use anyhow::Result;
-use migration::{sea_orm::QuerySelect, Value};
+use futures::Stream;
+use migration::{sea_orm::QuerySelect, DbErr, Value};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use std::collections::HashSet;
 use tracing::instrument;
@@ -181,5 +182,15 @@ impl UltrosDb {
 
         let added = added.into_iter().flatten().collect();
         Ok((added, removed.into_iter().map(|(m, _)| m).collect()))
+    }
+
+    pub async fn get_all_listings_for_world(
+        &self,
+        world_id: i32,
+    ) -> Result<impl Stream<Item = Result<active_listing::Model, DbErr>> + '_, anyhow::Error> {
+        Ok(active_listing::Entity::find()
+            .filter(active_listing::Column::WorldId.eq(world_id))
+            .stream(&self.db)
+            .await?)
     }
 }

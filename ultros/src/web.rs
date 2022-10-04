@@ -92,7 +92,7 @@ async fn get_retainer_listings(
     let game_data = xiv_gen_db::decompress_data();
     let items = &game_data.items;
     let (retainer, listings) = data;
-    let mut data = format!("<h1>{}</h1>", retainer.name);
+    let data = format!("<h1>{}</h1>", retainer.name);
     // get all listings from the retainer and calculate heuristics
     let multiple_listings = db
         .get_multiple_listings_for_worlds(

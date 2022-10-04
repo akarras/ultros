@@ -1,4 +1,5 @@
 pub(crate) mod alerts;
+pub(crate) mod analyzer_service;
 mod discord;
 pub(crate) mod event;
 pub(crate) mod utils;
@@ -11,6 +12,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::web::WebState;
+use analyzer_service::AnalyzerService;
 use anyhow::Result;
 use axum_extra::extract::cookie::Key;
 use discord::start_discord;
@@ -132,6 +134,8 @@ async fn main() -> Result<()> {
     let client_secret = env::var("DISCORD_CLIENT_SECRET")
         .expect("environment variable DISCORD_CLIENT_SECRET for OAuth missing");
     let key = env::var("KEY").expect("environment variable KEY not found");
+    let analyzer_service =
+        AnalyzerService::start_analyzer(db.clone(), receivers.clone(), world_cache.clone()).await;
     let web_state = WebState {
         db,
         key: Key::from(key.as_bytes()),

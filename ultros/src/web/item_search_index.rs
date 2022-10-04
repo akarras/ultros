@@ -19,9 +19,10 @@ fn build_item_search_schema() -> Result<Index> {
     let items = &documents.items;
     let categories = &documents.item_ui_categorys;
     // should also filter on marketable items
-    for (id, item) in items.iter().filter(|(_, item)| {
-        item.item_search_category.0 > 1
-    }) {
+    for (id, item) in items
+        .iter()
+        .filter(|(_, item)| item.item_search_category.0 > 1)
+    {
         let category = categories
             .get(&item.item_ui_category)
             .map(|m| m.name.to_string())

@@ -11,7 +11,10 @@ pub mod retainers;
 mod worlds;
 
 use anyhow::Result;
-use migration::{Migrator, MigratorTrait, Value};
+use chrono::{Duration, Utc};
+use futures::Stream;
+use migration::sea_orm::QueryOrder;
+use migration::{DbErr, Migrator, MigratorTrait, Value};
 use sea_orm::ActiveValue;
 use sea_orm::{
     ActiveModelTrait, ActiveValue::NotSet, ColumnTrait, ConnectOptions, Database,
@@ -197,6 +200,23 @@ impl UltrosDb {
             .filter(Column::ItemId.eq(item.0))
             .filter(Column::WorldId.eq(world.0))
             .all(&self.db)
+            .await?)
+    }
+
+    #[instrument(skip(self))]
+    pub async fn get_cheapest_listing_by_world(
+        &self,
+        world: i32,
+        item: i32,
+        is_hq: bool,
+    ) -> Result<Option<active_listing::Model>> {
+        use active_listing::*;
+        Ok(Entity::find()
+            .filter(Column::ItemId.eq(item))
+            .filter(Column::WorldId.eq(world))
+            .filter(Column::Hq.eq(is_hq))
+            .order_by_asc(Column::PricePerUnit)
+            .one(&self.db)
             .await?)
     }
 
@@ -393,6 +413,19 @@ impl UltrosDb {
         );
         let count = Entity::delete_many().filter(filter).exec(&self.db).await?;
         Ok(count.rows_affected)
+    }
+
+    #[instrument(skip(self))]
+    pub async fn stream_sales_within_days(
+        &self,
+        days: i64,
+        world_id: i32,
+    ) -> Result<impl Stream<Item = Result<sale_history::Model, DbErr>> + '_, anyhow::Error> {
+        Ok(sale_history::Entity::find()
+            .filter(sale_history::Column::WorldId.eq(world_id))
+            .filter(sale_history::Column::SoldDate.gt(Utc::now() - Duration::days(days)))
+            .stream(&self.db)
+            .await?)
     }
 
     /// Stores a sale from a given sale view.

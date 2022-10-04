@@ -133,7 +133,7 @@ impl UltrosDb {
             .all(&self.db)
             .await?;
         // multiply margin by 100, subtract by 100
-        results.iter_mut().for_each(|e| { 
+        results.iter_mut().for_each(|e| {
             e.margin *= 100.0;
             e.margin -= 100.0;
         });
