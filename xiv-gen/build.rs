@@ -436,7 +436,10 @@ fn read_dir<T: Container>(path: PathBuf, mut scope: T, args: &mut Args) -> T {
          }| !local_data.known_structs.contains(requested_struct),
     ) {
         let mut s = Struct::new(&requested_struct);
-        apply_derives(&mut s).vis("pub").tuple_field(sample_data).vis("pub");
+        apply_derives(&mut s)
+            .vis("pub")
+            .tuple_field(sample_data)
+            .vis("pub");
         scope.push_struct(s);
     }
     scope
