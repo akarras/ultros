@@ -1,18 +1,18 @@
 use maud::html;
-use ultros_db::{
-    entity::{region, world},
-    price_optimizer::BestResellResults,
-};
+use ultros_db::entity::{region, world};
 
-use crate::web::{
-    oauth::AuthDiscordUser,
-    templates::{components::header::Header, page::Page},
+use crate::{
+    analyzer_service::ResaleStats,
+    web::{
+        oauth::AuthDiscordUser,
+        templates::{components::header::Header, page::Page},
+    },
 };
 use xiv_gen::ItemId;
 
 pub(crate) struct AnalyzerPage {
     pub user: Option<AuthDiscordUser>,
-    pub analyzer_results: Vec<BestResellResults>,
+    pub analyzer_results: Vec<ResaleStats>,
     pub world: world::Model,
     pub region: region::Model,
 }
@@ -43,10 +43,13 @@ impl Page for AnalyzerPage {
                       "profit"
                     }
                     th {
+                      "cheapest"
+                    }
+                    th {
                       "margin"
                     }
                   }
-                  @for result in &self.analyzer_results {
+                  @for result in self.analyzer_results.iter().take(100) {
                     tr{
                       td{
                         a href={"/listings/" ((self.region.name)) "/" ((result.item_id))}{
@@ -58,7 +61,10 @@ impl Page for AnalyzerPage {
                         ((result.profit))
                       }
                       td {
-                        ((format!("{:.2}%", result.margin)))
+                        ((result.cheapest))
+                      }
+                      td {
+                        ((format!("{:.2}%", (result.profit + result.cheapest) / result.cheapest)))
                       }
                     }
                   }

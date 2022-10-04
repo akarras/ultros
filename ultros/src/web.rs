@@ -38,6 +38,7 @@ use self::templates::{
         retainer::user_retainers_page::{RetainerViewType, UserRetainersPage},
     },
 };
+use crate::analyzer_service::AnalyzerService;
 use crate::event::EventReceivers;
 use crate::web::alerts_websocket::connect_websocket;
 use crate::web::oauth::{begin_login, logout};
@@ -247,6 +248,8 @@ struct ProfitParameters {
 
 async fn analyze_profits(
     State(db): State<UltrosDb>,
+    State(analyzer): State<AnalyzerService>,
+    State(world_cache): State<Arc<WorldCache>>,
     Query(parameters): Query<ProfitParameters>,
     user: Option<AuthDiscordUser>,
 ) -> Result<RenderPage<AnalyzerPage>, WebError> {
@@ -256,24 +259,30 @@ async fn analyze_profits(
         world,
     } = &parameters;
     // this doesn't change often, could easily cache.
-    let world = db
-        .get_world(&world.as_ref().map(|w| w.as_str()).unwrap_or("Sargatanas"))
-        .await?;
-    let datacenter = db.get_datacenter_from_world(&world).await?;
-    let region = db.get_region_from_datacenter(&datacenter).await?;
-    let analyzer_results = db
-        .get_best_item_to_resell_on_world(
-            world.id,
-            sale_amount_threshold.unwrap_or(10),
-            chrono::Duration::days(sale_window_days.unwrap_or(2)),
-        )
-        .await?;
-
+    let world = world_cache
+        .lookup_value_by_name(world.as_ref().map(|w| w.as_str()).unwrap_or("Sargatanas"))
+        .ok_or(anyhow::Error::msg("Invalid world"))?;
+    let region = world_cache
+        .get_region(&world)
+        .ok_or(anyhow::Error::msg("Unable to get region"))?;
+    let world = match world {
+        crate::world_cache::AnyResult::World(w) => w,
+        crate::world_cache::AnyResult::Datacenter(_) => {
+            return Err(Error::msg("Datacenter found?").into())
+        }
+        crate::world_cache::AnyResult::Region(_) => {
+            return Err(Error::msg("Region not found").into())
+        }
+    };
+    let analyzer_results = analyzer
+        .get_best_resale(world.id, region.id)
+        .await
+        .ok_or(anyhow::Error::msg("Analyzer failed"))?;
     Ok(RenderPage(AnalyzerPage {
         user,
         analyzer_results,
-        region: region,
-        world,
+        region: region.clone(),
+        world: world.clone(),
     }))
 }
 
@@ -285,6 +294,7 @@ pub(crate) struct WebState {
     pub(crate) user_cache: AuthUserCache,
     pub(crate) event_receivers: EventReceivers,
     pub(crate) world_cache: Arc<WorldCache>,
+    pub(crate) analyzer_service: AnalyzerService,
 }
 
 impl FromRef<WebState> for UltrosDb {
@@ -320,6 +330,12 @@ impl FromRef<WebState> for EventReceivers {
 impl FromRef<WebState> for Arc<WorldCache> {
     fn from_ref(input: &WebState) -> Self {
         input.world_cache.clone()
+    }
+}
+
+impl FromRef<WebState> for AnalyzerService {
+    fn from_ref(input: &WebState) -> Self {
+        input.analyzer_service.clone()
     }
 }
 

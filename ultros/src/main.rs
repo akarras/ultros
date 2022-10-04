@@ -137,6 +137,7 @@ async fn main() -> Result<()> {
     let analyzer_service =
         AnalyzerService::start_analyzer(db.clone(), receivers.clone(), world_cache.clone()).await;
     let web_state = WebState {
+        analyzer_service,
         db,
         key: Key::from(key.as_bytes()),
         oauth_config: DiscordAuthConfig::new(

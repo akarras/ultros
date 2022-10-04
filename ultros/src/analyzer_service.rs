@@ -274,7 +274,11 @@ impl AnalyzerService {
             })
             .collect();
         drop(items);
-        possible_sales.sort();
+        possible_sales.sort_by(|a, b| {
+            b.profit
+                .cmp(&a.profit)
+                .then_with(|| a.cheapest.cmp(&b.cheapest))
+        });
         Some(possible_sales)
     }
 
@@ -313,6 +317,6 @@ impl AnalyzerService {
 pub(crate) struct ResaleStats {
     pub(crate) profit: i32,
     pub(crate) cheapest: i32,
-    item_id: i32,
-    hq: bool,
+    pub(crate) item_id: i32,
+    pub(crate) hq: bool,
 }
