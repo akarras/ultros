@@ -1,10 +1,19 @@
 use std::collections::HashSet;
 
-use migration::sea_orm::{EntityTrait, QueryFilter, ActiveValue, Set, ActiveModelTrait, ColumnTrait};
+use crate::{
+    entity::{
+        active_listing,
+        sale_history::{self, Model},
+        unknown_final_fantasy_character,
+    },
+    UltrosDb,
+};
+use anyhow::Result;
+use migration::sea_orm::{
+    ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter, Set,
+};
 use tracing::instrument;
 use universalis::{websocket::event_types::SaleView, ItemId, WorldId};
-use anyhow::Result;
-use crate::{entity::{sale_history::{self, Model}, unknown_final_fantasy_character, active_listing}, UltrosDb};
 
 impl UltrosDb {
     /// Stores a sale from a given sale view.
@@ -114,7 +123,7 @@ impl UltrosDb {
                 hq,
                 sold_item_id: item_id.0,
                 sold_date: sale.timestamp.naive_utc(),
-                world_id: world_id.0
+                world_id: world_id.0,
             });
             ActiveModel {
                 id: ActiveValue::default(),

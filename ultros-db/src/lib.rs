@@ -8,8 +8,8 @@ pub(crate) mod partial_diff_iterator;
 pub mod price_optimizer;
 mod regions_and_datacenters;
 pub mod retainers;
-mod worlds;
 pub mod sales;
+mod worlds;
 
 use anyhow::Result;
 use chrono::{Duration, Utc};

@@ -42,7 +42,7 @@ pub(crate) struct EventSenders {
     pub(crate) listings: EventProducer<Vec<active_listing::Model>>,
     pub(crate) alerts: EventProducer<alert::Model>,
     pub(crate) retainer_undercut: EventProducer<alert_retainer_undercut::Model>,
-    pub(crate) history: EventProducer<Vec<sale_history::Model>>
+    pub(crate) history: EventProducer<Vec<sale_history::Model>>,
 }
 
 /// Base event type for communicating across different parts of the app
@@ -52,7 +52,7 @@ pub(crate) struct EventReceivers {
     pub(crate) listings: EventBus<Vec<active_listing::Model>>,
     pub(crate) alerts: EventBus<alert::Model>,
     pub(crate) retainer_undercut: EventBus<alert_retainer_undercut::Model>,
-    pub(crate) history: EventBus<Vec<sale_history::Model>>
+    pub(crate) history: EventBus<Vec<sale_history::Model>>,
 }
 
 impl Clone for EventReceivers {

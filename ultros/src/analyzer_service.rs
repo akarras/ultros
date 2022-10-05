@@ -200,13 +200,13 @@ impl AnalyzerService {
         loop {
             if let Ok(history) = event_receivers.history.recv().await {
                 match history {
-                    crate::event::EventType::Remove(_) => {},
+                    crate::event::EventType::Remove(_) => {}
                     crate::event::EventType::Add(sales) => {
                         for sale in sales.iter() {
                             self.add_sale(sale).await;
                         }
-                    },
-                    crate::event::EventType::Update(_) => {},
+                    }
+                    crate::event::EventType::Update(_) => {}
                 }
             }
             if let Ok(listings) = event_receivers.listings.recv().await {
@@ -227,7 +227,8 @@ impl AnalyzerService {
                         } else {
                             continue;
                         };
-                        self.remove_listings(region, remove, &world_cache, &ultros_db).await;
+                        self.remove_listings(region, remove, &world_cache, &ultros_db)
+                            .await;
                     }
                     crate::event::EventType::Add(add) => {
                         let region = if let Some(region) = add
@@ -318,7 +319,9 @@ impl AnalyzerService {
         let mut lock_guard = self.cheapest_items.write().await;
         let entry = lock_guard.entry(region_id).or_default();
         for listing in listings.iter() {
-            entry.remove_listing(listing, region_id, &world_cache, &ultros_db).await;
+            entry
+                .remove_listing(listing, region_id, &world_cache, &ultros_db)
+                .await;
         }
     }
 
