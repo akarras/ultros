@@ -77,6 +77,8 @@ impl Page for UserRetainersPage {
                             } th {
                               "Quantity"
                             } th {
+                              "HQ"
+                            } th {
                               "Total"
                             } th {
                               "Retainer"
@@ -95,6 +97,10 @@ impl Page for UserRetainersPage {
                                 ((undercut.number_behind))
                               } td {
                                 ((listing.quantity))
+                              } td {
+                                @if listing.hq {
+                                  "✔️"
+                                }
                               } td {
                                 ((listing.quantity * listing.price_per_unit))
                               } td {
@@ -126,6 +132,8 @@ impl Page for UserRetainersPage {
                             } th {
                               "Total"
                             } th {
+                              "HQ"
+                            } th {
                               "Retainer"
                             }
                           }
@@ -140,6 +148,10 @@ impl Page for UserRetainersPage {
                                 ((listing.quantity))
                               } td {
                                 ((listing.quantity * listing.price_per_unit))
+                              } td {
+                                @if listing.hq {
+                                  "✔️"
+                                }
                               } td {
                                 ((retainer.name))
                               }
