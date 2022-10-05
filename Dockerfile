@@ -14,6 +14,7 @@ FROM rust:latest as builder
 # Copy the rest
 COPY . .
 # Build (install) the actual binaries
+ENV RUSTFLAGS='-C target-cpu=native'
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/home/root/app/target \
     cargo install --path ultros
