@@ -212,7 +212,7 @@ body {
 }
 
 .container {
-  
+  margin-bottom: -10px;
 }
 
 .content-nav {
@@ -246,6 +246,7 @@ body {
   padding: 2em;
   border-top-left-radius: 35px;
   border-top-right-radius: 35px;
+  min-height: 90vh;
 }
 
 .flex-wrap {
