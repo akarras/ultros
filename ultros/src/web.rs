@@ -49,36 +49,6 @@ async fn root(user: Option<AuthDiscordUser>) -> RenderPage<HomePage> {
     RenderPage(HomePage { user })
 }
 
-async fn search_retainers(
-    State(db): State<ultros_db::UltrosDb>,
-    Path(search): Path<String>,
-) -> Result<Html<String>, StatusCode> {
-    let retainers = db
-        .search_retainers(&search)
-        .await
-        .map_err(|e| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let mut string = String::new();
-    write!(
-        string,
-        "<table><tr><th>retainer name</th><th>retainer id</th><th>world id</th><th>world name</th></tr>"
-    ).unwrap();
-    for (retainer, world) in retainers {
-        write!(
-            &mut string,
-            "<tr><td><a href=\"/listings/retainer/{}\">{}</a></td><td>{}<td><td>{}</td></tr>",
-            retainer.id,
-            retainer.name,
-            retainer.world_id,
-            world
-                .map(|w| w.name)
-                .unwrap_or(retainer.world_id.to_string())
-        )
-        .unwrap();
-    }
-    write!(string, "</table>").unwrap();
-    Ok(Html(string))
-}
-
 async fn get_retainer_listings(
     State(db): State<ultros_db::UltrosDb>,
     State(world_cache): State<Arc<WorldCache>>,
@@ -277,7 +247,7 @@ async fn analyze_profits(
     let analyzer_results = analyzer
         .get_best_resale(world.id, region.id)
         .await
-        .ok_or(anyhow::Error::msg("Analyzer failed"))?;
+        .ok_or(anyhow::Error::msg("Couldn't find items. Might need more warm up time"))?;
     Ok(RenderPage(AnalyzerPage {
         user,
         analyzer_results,
@@ -391,7 +361,6 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/", get(root))
         .route("/alerts", get(alerts))
         .route("/alerts/websocket", get(connect_websocket))
-        .route("/retainer/search/:search", get(search_retainers))
         .route("/listings/:world/:itemid", get(world_item_listings))
         .route("/retainers/listings/:id", get(get_retainer_listings))
         .route("/retainers/undercuts", get(user_retainers_undercuts))
