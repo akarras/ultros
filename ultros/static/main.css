@@ -16,9 +16,10 @@ body {
   background-color: #222;
   color: #fff;
   font-family: Jaldi;
+  opacity: 1;
   animation: fadeInAnimation linear .5s;
   animation-iteration-count: 1;
-  animation-fill-mode:both;
+  animation-fill-mode:forwards;
 }
 @keyframes fadeInAnimation {
   0% {
@@ -29,7 +30,8 @@ body {
     opacity: 1;
   }
   100% {
-      background-position: 0px;
+    opacity: 1;
+    background-position: 0px;
   }
 }
 @keyframes slowSlide {
