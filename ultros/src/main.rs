@@ -79,8 +79,12 @@ async fn run_socket_listener(db: UltrosDb, listings_tx: EventProducer<Vec<active
                         }
                     }
                     SocketRx::Event(Ok(WSMessage::SalesAdd { item, world, sales })) => {
+
                         match db.store_sale(sales.clone(), item, world).await {
-                            Ok(sale) => info!("Stored sale data. Last id: {sale} {item:?} {world:?}"),
+                            Ok(sale) => {
+                                info!("Stored sale data. Last id: {sale:?} {item:?} {world:?}");
+                                
+                            },
                             Err(e) => error!("Error inserting sale {e}. {sales:?} {item:?} {world:?}")
                         }
                     }

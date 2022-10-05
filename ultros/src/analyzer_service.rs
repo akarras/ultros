@@ -187,7 +187,7 @@ impl AnalyzerService {
                 for world in &worlds {
                     let history = writer.entry(*world).or_default();
                     if let Ok(mut history_stream) =
-                        ultros_db.stream_sales_within_days(1, *world).await
+                        ultros_db.stream_sales_within_days(10, *world).await
                     {
                         while let Ok(Some(sale)) = history_stream.try_next().await {
                             history.add_sale(&sale);
@@ -198,11 +198,21 @@ impl AnalyzerService {
         }
         info!("worker primed, now using live data");
         loop {
-            // I don't get any sale data at the moment
+            if let Ok(history) = event_receivers.history.recv().await {
+                match history {
+                    crate::event::EventType::Remove(_) => {},
+                    crate::event::EventType::Add(sales) => {
+                        for sale in sales.iter() {
+                            self.add_sale(sale).await;
+                        }
+                    },
+                    crate::event::EventType::Update(_) => {},
+                }
+            }
             if let Ok(listings) = event_receivers.listings.recv().await {
                 match listings {
                     crate::event::EventType::Remove(remove) => {
-                        if let Some(region) = remove
+                        let region = if let Some(region) = remove
                             .iter()
                             .map(|w| {
                                 world_cache
@@ -213,23 +223,29 @@ impl AnalyzerService {
                             .flatten()
                             .next()
                         {
-                            self.remove_listings(region.id, &remove, &world_cache, &ultros_db);
-                        }
+                            region.id
+                        } else {
+                            continue;
+                        };
+                        self.remove_listings(region, remove, &world_cache, &ultros_db).await;
                     }
                     crate::event::EventType::Add(add) => {
-                        if let Some(region) = add
+                        let region = if let Some(region) = add
                             .iter()
                             .map(|w| {
                                 world_cache
                                     .lookup_selector(&AnySelector::World(w.world_id))
-                                    .map(|w| world_cache.get_region(&w))
+                                    .map(|w| world_cache.get_region(&w).map(|r| r.id))
                             })
                             .flatten()
                             .flatten()
                             .next()
                         {
-                            self.add_listings(region.id, &add);
-                        }
+                            region
+                        } else {
+                            continue;
+                        };
+                        self.add_listings(region, &add).await;
                     }
                     crate::event::EventType::Update(_) => todo!(),
                 }
@@ -295,18 +311,18 @@ impl AnalyzerService {
     async fn remove_listings(
         &self,
         region_id: i32,
-        listings: &[active_listing::Model],
+        listings: Arc<Vec<active_listing::Model>>,
         world_cache: &WorldCache,
         ultros_db: &UltrosDb,
     ) {
         let mut lock_guard = self.cheapest_items.write().await;
         let entry = lock_guard.entry(region_id).or_default();
-        for listing in listings {
-            entry.remove_listing(listing, region_id, &world_cache, ultros_db);
+        for listing in listings.iter() {
+            entry.remove_listing(listing, region_id, &world_cache, &ultros_db).await;
         }
     }
 
-    async fn add_sale(&mut self, sale: &sale_history::Model) {
+    async fn add_sale(&self, sale: &sale_history::Model) {
         let mut lock_guard = self.recent_sale_history.write().await;
         let entry = lock_guard.entry(sale.world_id).or_default();
         entry.add_sale(sale);

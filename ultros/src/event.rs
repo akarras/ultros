@@ -18,18 +18,21 @@ pub(crate) fn create_event_busses() -> (EventSenders, EventReceivers) {
     let (listing_sender, listing_receiver) = channel(100);
     let (alert_sender, alert_receiver) = channel(10);
     let (retainer_undercut_sender, retainer_undercut_receiver) = channel(40);
+    let (history_sender, history_receiver) = channel(40);
     (
         EventSenders {
             retainers: retainer_sender,
             listings: listing_sender,
             alerts: alert_sender,
             retainer_undercut: retainer_undercut_sender,
+            history: history_sender,
         },
         EventReceivers {
             retainers: retainer_receiver,
             listings: listing_receiver,
             alerts: alert_receiver,
             retainer_undercut: retainer_undercut_receiver,
+            history: history_receiver,
         },
     )
 }
@@ -39,6 +42,7 @@ pub(crate) struct EventSenders {
     pub(crate) listings: EventProducer<Vec<active_listing::Model>>,
     pub(crate) alerts: EventProducer<alert::Model>,
     pub(crate) retainer_undercut: EventProducer<alert_retainer_undercut::Model>,
+    pub(crate) history: EventProducer<Vec<sale_history::Model>>
 }
 
 /// Base event type for communicating across different parts of the app
@@ -48,6 +52,7 @@ pub(crate) struct EventReceivers {
     pub(crate) listings: EventBus<Vec<active_listing::Model>>,
     pub(crate) alerts: EventBus<alert::Model>,
     pub(crate) retainer_undercut: EventBus<alert_retainer_undercut::Model>,
+    pub(crate) history: EventBus<Vec<sale_history::Model>>
 }
 
 impl Clone for EventReceivers {
@@ -57,6 +62,7 @@ impl Clone for EventReceivers {
             listings: self.listings.resubscribe(),
             alerts: self.alerts.resubscribe(),
             retainer_undercut: self.retainer_undercut.resubscribe(),
+            history: self.history.resubscribe(),
         }
     }
 }
