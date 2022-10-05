@@ -92,10 +92,13 @@ impl Page for ListingsPage {
                         "world"
                       }
                       th {
+                        "datacenter"
+                      }
+                      th {
                         "first seen"
                       }
                     }
-                    @for (listing, retainer) in &high_quality_listings {
+                    @for (listing, retainer) in high_quality_listings.iter().take(25) {
                       tr {
                         td {
                           ((listing.price_per_unit))
@@ -111,9 +114,14 @@ impl Page for ListingsPage {
                             a href={ "/retainers/listings/" ((retainer.id)) } { ((retainer.name)) }
                           }
                         }
-                        td {
-                          @if let Some(world) = self.world_cache.lookup_selector(&AnySelector::World(listing.world_id)) {
+                        @if let Some(world) = self.world_cache.lookup_selector(&AnySelector::World(listing.world_id)) {
+                          td {
                             ((world.get_name()))
+                          }
+                          td {
+                            @for datacenter in self.world_cache.get_datacenters(&world).unwrap_or_default() {
+                              ((datacenter.name))
+                            }
                           }
                         }
                         td {
@@ -148,10 +156,13 @@ impl Page for ListingsPage {
                         "world"
                       }
                       th {
+                        "datacenter"
+                      }
+                      th {
                         "first seen"
                       }
                     }
-                    @for (listing, retainer) in &low_quality_listings {
+                    @for (listing, retainer) in low_quality_listings.iter().take(25) {
                       tr {
                         td {
                           ((listing.price_per_unit))
@@ -167,9 +178,14 @@ impl Page for ListingsPage {
                             a href={ "/retainers/listings/" ((retainer.id)) } { ((retainer.name)) }
                           }
                         }
-                        td {
-                          @if let Some(world) = self.world_cache.lookup_selector(&AnySelector::World(listing.world_id)) {
+                        @if let Some(world) = self.world_cache.lookup_selector(&AnySelector::World(listing.world_id)) {
+                          td {
                             ((world.get_name()))
+                          }
+                          td {
+                            @for datacenter in self.world_cache.get_datacenters(&world).unwrap_or_default() {
+                              ((datacenter.name))
+                            }
                           }
                         }
                         td {
