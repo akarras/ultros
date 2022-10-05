@@ -244,10 +244,13 @@ async fn analyze_profits(
             return Err(Error::msg("Region not found").into())
         }
     };
-    let analyzer_results = analyzer
-        .get_best_resale(world.id, region.id)
-        .await
-        .ok_or(anyhow::Error::msg("Couldn't find items. Might need more warm up time"))?;
+    let analyzer_results =
+        analyzer
+            .get_best_resale(world.id, region.id)
+            .await
+            .ok_or(anyhow::Error::msg(
+                "Couldn't find items. Might need more warm up time",
+            ))?;
     Ok(RenderPage(AnalyzerPage {
         user,
         analyzer_results,
