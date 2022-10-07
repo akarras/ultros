@@ -193,18 +193,23 @@ impl AnalyzerService {
             }
         }
         info!("worker primed, now using live data");
-        loop {
-            if let Ok(history) = event_receivers.history.recv().await {
-                match history {
-                    crate::event::EventType::Remove(_) => {}
-                    crate::event::EventType::Add(sales) => {
-                        for sale in sales.iter() {
-                            self.add_sale(sale).await;
+        let second_worker_instance = self.clone();
+        tokio::spawn(async move {
+            loop {
+                if let Ok(history) = event_receivers.history.recv().await {
+                    match history {
+                        crate::event::EventType::Remove(_) => {}
+                        crate::event::EventType::Add(sales) => {
+                            for sale in sales.iter() {
+                                second_worker_instance.add_sale(sale).await;
+                            }
                         }
+                        crate::event::EventType::Update(_) => {}
                     }
-                    crate::event::EventType::Update(_) => {}
                 }
             }
+        });
+        loop {
             if let Ok(listings) = event_receivers.listings.recv().await {
                 match listings {
                     crate::event::EventType::Remove(remove) => {
