@@ -61,15 +61,11 @@ impl SaleHistory {
             sale_date: sale.sold_date,
             price_per_item: sale.price_per_item,
         });
-        while entries.len() > 10 {
+        while entries.len() > 3 {
             if let Some(last) = entries.iter().last().copied() {
                 entries.remove(&last);
             }
         }
-        // TODO: use pop last once stabilized
-        //while entries.len() > 10 {
-        //    entries.pop_last();
-        //}
     }
 }
 

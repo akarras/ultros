@@ -1,4 +1,5 @@
 use log::{debug, info};
+use universalis::websocket::SocketRx;
 use std::borrow::Borrow;
 use std::time::Instant;
 use universalis::websocket::event_types::{EventChannel, SubscribeMode, WSMessage};
@@ -18,11 +19,11 @@ async fn main() {
         Some(sargatanas.id),
     )
     .await;
-    // ws.subscribe(
-    //     SubscribeMode::Subscribe,
-    //     EventChannel::ListingsRemove,
-    //     Some(sargatanas.id),
-    // )
+    ws.update_subscription(
+        SubscribeMode::Subscribe,
+        EventChannel::ListingsRemove,
+        Some(sargatanas.id),
+    ).await;
     // .await;
     // ws.subscribe(
     //     SubscribeMode::Subscribe,
@@ -39,18 +40,24 @@ async fn main() {
     // let receiver = ws.get_receiver();
     let mut last_message_received = Instant::now();
     loop {
-        if let Some(next) = ws {
+        if let Some(next) = ws.get_receiver().recv().await {
             if let universalis::websocket::SocketRx::Event(Ok(WSMessage::ListingsAdd {
                 item,
                 world,
                 listings,
-            })) = next
+            })) = &next
             {
-                if item.0 == 27842 {
-                    for listing in listings {
-                        info!("{listing:?}");
-                    }
+                if item.0 == 27842 || item.0 == 10592 {
+                    info!("added {listings:?}");
                 }
+            }
+            match &next {
+                SocketRx::Event(Ok(WSMessage::ListingsRemove { item, world, listings })) => {
+                    if item.0 == 27842 || item.0 == 10592 {
+                        info!("removed {listings:?}");
+                    }
+                },
+                _ => {}
             }
             // print one example of each event, so lets unsubscribe from the channel
             /*ws.subscribe(SubscribeMode::Unsubscribe, match next {
