@@ -21,7 +21,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use ultros_db::UltrosDb;
-use universalis::{ItemId, WorldId};
+use universalis::ItemId;
 
 use self::error::WebError;
 use self::oauth::{AuthDiscordUser, AuthUserCache, DiscordAuthConfig};
@@ -59,18 +59,14 @@ async fn get_retainer_listings(
         .get_retainer_listings(retainer_id)
         .await?
         .ok_or(WebError::InvalidItem(retainer_id))?;
-
-    let game_data = xiv_gen_db::decompress_data();
-    let items = &game_data.items;
     let (retainer, listings) = data;
-    let data = format!("<h1>{}</h1>", retainer.name);
     // get all listings from the retainer and calculate heuristics
-    let multiple_listings = db
-        .get_multiple_listings_for_worlds(
-            [WorldId(retainer.world_id)].into_iter(),
-            listings.iter().map(|i| ItemId(i.item_id)),
-        )
-        .await?;
+    //let multiple_listings = db
+    //    .get_multiple_listings_for_worlds(
+    //        [WorldId(retainer.world_id)].into_iter(),
+    //        listings.iter().map(|i| ItemId(i.item_id)),
+    //    )
+    //    .await?;
 
     Ok(RenderPage(GenericRetainerPage {
         retainer_name: retainer.name,
@@ -209,25 +205,12 @@ async fn alerts(discord_user: AuthDiscordUser) -> Result<RenderPage<AlertsPage>,
     Ok(RenderPage(AlertsPage { discord_user }))
 }
 
-#[derive(Deserialize)]
-struct ProfitParameters {
-    sale_amount_threshold: Option<i32>,
-    sale_window_days: Option<i64>,
-    world: Option<String>,
-}
-
 async fn analyze_profits(
-    State(db): State<UltrosDb>,
     State(analyzer): State<AnalyzerService>,
     State(world_cache): State<Arc<WorldCache>>,
-    Query(parameters): Query<ProfitParameters>,
+    Path(world): Path<Option<String>>,
     user: Option<AuthDiscordUser>,
 ) -> Result<RenderPage<AnalyzerPage>, WebError> {
-    let ProfitParameters {
-        sale_amount_threshold,
-        sale_window_days,
-        world,
-    } = &parameters;
     // this doesn't change often, could easily cache.
     let world = world_cache
         .lookup_value_by_name(world.as_ref().map(|w| w.as_str()).unwrap_or("Sargatanas"))
@@ -379,7 +362,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/retainers/add/:id", get(add_retainer))
         .route("/retainers/remove/:id", get(remove_owned_retainer))
         .route("/retainers", get(user_retainers_listings))
-        .route("/analyzer", get(analyze_profits))
+        .route("/analyzer/:world", get(analyze_profits))
         .route("/items/:search", get(fuzzy_item_search::search_items))
         .route("/static/*path", get(static_path))
         .route("/redirect", get(self::oauth::redirect))
