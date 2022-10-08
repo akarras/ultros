@@ -29,7 +29,7 @@ impl<'a> Render for Header<'a> {
                 a class="btn nav-item" href="/logout" {
                   "Logout"
                 }
-                a href="/logout" {
+                a href="/profile" {
                   img class="avatar" src=((user.avatar_url)) alt=((user.name));
                 }
               } @else {

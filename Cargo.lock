@@ -5168,6 +5168,7 @@ dependencies = [
  "urlencoding",
  "xiv-gen",
  "xiv-gen-db",
+ "yoke",
 ]
 
 [[package]]
@@ -5910,9 +5911,9 @@ checksum = "09041cd90cf85f7f8b2df60c646f853b7f535ce68f85244eb6731cf89fa498ec"
 
 [[package]]
 name = "yoke"
-version = "0.6.1"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "620cda8a59740b1e9313dad314848c6ffe15792c38cc4ac2def245ee77a6cae2"
+checksum = "1fe1d55ca72c32d573bfbd5cb2f0ca65a497854c44762957a6d3da96041a5184"
 dependencies = [
  "serde",
  "stable_deref_trait",

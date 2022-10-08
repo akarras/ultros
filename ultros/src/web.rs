@@ -1,6 +1,7 @@
 mod alerts_websocket;
 pub mod error;
 mod fuzzy_item_search;
+mod home_world_cookie;
 pub mod item_search_index;
 pub mod oauth;
 mod templates;
@@ -24,6 +25,7 @@ use ultros_db::UltrosDb;
 use universalis::ItemId;
 
 use self::error::WebError;
+use self::home_world_cookie::HomeWorld;
 use self::oauth::{AuthDiscordUser, AuthUserCache, DiscordAuthConfig};
 use self::templates::pages::retainer::generic_retainer_page::GenericRetainerPage;
 use self::templates::pages::{
@@ -42,6 +44,7 @@ use crate::event::EventReceivers;
 use crate::metrics::metrics;
 use crate::web::alerts_websocket::connect_websocket;
 use crate::web::oauth::{begin_login, logout};
+use crate::web::templates::pages::profile::profile;
 use crate::world_cache::{AnySelector, WorldCache};
 
 // basic handler that responds with a static string
@@ -158,9 +161,7 @@ async fn world_item_listings(
     Path((world, item_id)): Path<(String, i32)>,
     user: Option<AuthDiscordUser>,
 ) -> Result<RenderPage<ListingsPage>, WebError> {
-    let selected_value = world_cache
-        .lookup_value_by_name(&world)
-        .ok_or(Error::msg("Unable to find world/datacenter"))?;
+    let selected_value = world_cache.lookup_value_by_name(&world)?;
     let worlds = world_cache
         .get_all_worlds_in(&selected_value)
         .ok_or(Error::msg("Unable to get worlds"))?;
@@ -208,13 +209,11 @@ async fn alerts(discord_user: AuthDiscordUser) -> Result<RenderPage<AlertsPage>,
 async fn analyze_profits(
     State(analyzer): State<AnalyzerService>,
     State(world_cache): State<Arc<WorldCache>>,
-    Path(world): Path<Option<String>>,
+    world: HomeWorld,
     user: Option<AuthDiscordUser>,
 ) -> Result<RenderPage<AnalyzerPage>, WebError> {
     // this doesn't change often, could easily cache.
-    let world = world_cache
-        .lookup_value_by_name(world.as_ref().map(|w| w.as_str()).unwrap_or("Sargatanas"))
-        .ok_or(anyhow::Error::msg("Invalid world"))?;
+    let world = world_cache.lookup_selector(&AnySelector::World(world.home_world))?;
     let region = world_cache
         .get_region(&world)
         .ok_or(anyhow::Error::msg("Unable to get region"))?;
@@ -362,10 +361,11 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/retainers/add/:id", get(add_retainer))
         .route("/retainers/remove/:id", get(remove_owned_retainer))
         .route("/retainers", get(user_retainers_listings))
-        .route("/analyzer/:world", get(analyze_profits))
+        .route("/analyzer", get(analyze_profits))
         .route("/items/:search", get(fuzzy_item_search::search_items))
         .route("/static/*path", get(static_path))
         .route("/redirect", get(self::oauth::redirect))
+        .route("/profile", get(profile))
         .route("/login", get(begin_login))
         .route("/logout", get(logout))
         .route("/metrics", get(metrics))

@@ -93,6 +93,7 @@ impl CheapestListings {
             let worlds = world_cache
                 .lookup_selector(&AnySelector::Region(region_id))
                 .map(|r| world_cache.get_all_worlds_in(&r))
+                .ok()
                 .flatten()
                 .expect("Should have worlds");
             if let Ok(listings) = ultros_db

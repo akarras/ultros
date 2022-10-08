@@ -16,7 +16,7 @@ use chrono::{Duration, Utc};
 use futures::Stream;
 use migration::sea_orm::QueryOrder;
 use migration::{DbErr, Migrator, MigratorTrait, Value};
-use sea_orm::ActiveValue;
+
 use sea_orm::{
     ActiveModelTrait, ActiveValue::NotSet, ColumnTrait, ConnectOptions, Database,
     DatabaseConnection, EntityTrait, IntoActiveModel, ModelTrait, QueryFilter, QuerySelect, Set,
@@ -24,7 +24,7 @@ use sea_orm::{
 use std::collections::HashSet;
 
 use tracing::{info, instrument};
-use universalis::{websocket::event_types::SaleView, ItemId, ListingView, WorldId};
+use universalis::{ItemId, ListingView, WorldId};
 
 use crate::entity::*;
 

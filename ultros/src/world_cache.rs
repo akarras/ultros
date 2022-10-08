@@ -1,10 +1,12 @@
-use std::collections::HashMap;
+use std::{borrow::Borrow, collections::HashMap, mem};
 
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use ultros_db::{
     entity::{datacenter, region, world},
     UltrosDb,
 };
+use yoke::{Yoke, Yokeable};
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy)]
 pub enum AnySelector {
@@ -20,6 +22,18 @@ pub enum AnyResult<'a> {
     Region(&'a region::Model),
 }
 
+#[derive(Debug, Error)]
+pub enum WorldCacheError {
+    #[error("Failed to get world by id {0}")]
+    World(i32),
+    #[error("Failed to get datacenter by id {0}")]
+    Datacenter(i32),
+    #[error("Failed to get region by id {0}")]
+    Region(i32),
+    #[error("Name lookup error {0}")]
+    NameLookupError(String),
+}
+
 impl<'a> AnyResult<'a> {
     pub(crate) fn get_name(&self) -> &str {
         match self {
@@ -31,13 +45,88 @@ impl<'a> AnyResult<'a> {
 }
 
 #[derive(Debug)]
-pub struct WorldCache {
+struct RawData {
     worlds: HashMap<i32, world::Model>,
-    datacenter: HashMap<i32, datacenter::Model>,
+    datacenters: HashMap<i32, datacenter::Model>,
     regions: HashMap<i32, region::Model>,
+}
+
+pub struct WorldCache {
+    yoke: Yoke<VirtualData<'static>, Box<RawData>>,
     datacenter_to_world: HashMap<i32, Vec<i32>>,
     region_to_worlds: HashMap<i32, Vec<i32>>,
     name_map: HashMap<String, AnySelector>,
+}
+
+#[derive(Debug)]
+struct VirtualData<'a> {
+    /// Represents a Vec with a list to all worlds
+    all: Vec<(
+        &'a region::Model,
+        Vec<(&'a datacenter::Model, Vec<&'a world::Model>)>,
+    )>,
+}
+
+unsafe impl<'a> Yokeable<'a> for VirtualData<'static> {
+    type Output = VirtualData<'a>;
+    #[inline]
+    fn transform(&'a self) -> &'a VirtualData<'a> {
+        self
+    }
+    #[inline]
+    fn transform_owned(self) -> VirtualData<'a> {
+        self
+    }
+    #[inline]
+    unsafe fn make(from: VirtualData<'a>) -> Self {
+        let ret = mem::transmute_copy(&from);
+        mem::forget(from);
+        ret
+    }
+    #[inline]
+    fn transform_mut<F>(&'a mut self, f: F)
+    where
+        F: 'static + FnOnce(&'a mut Self::Output),
+    {
+        unsafe { f(mem::transmute(self)) }
+    }
+}
+
+fn yoke(raw_data: Box<RawData>) -> Yoke<VirtualData<'static>, Box<RawData>> {
+    Yoke::<VirtualData<'static>, Box<RawData>>::attach_to_cart(raw_data, |r: &RawData| {
+        VirtualData::new(&r)
+    })
+}
+
+impl<'a> VirtualData<'a> {
+    fn new(raw_data: &'a RawData) -> Self {
+        Self {
+            all: raw_data
+                .regions
+                .values()
+                .map(|r| {
+                    (
+                        r,
+                        raw_data
+                            .datacenters
+                            .values()
+                            .filter(|d| d.region_id == r.id)
+                            .map(|d| {
+                                (
+                                    d,
+                                    raw_data
+                                        .worlds
+                                        .values()
+                                        .filter(|w| w.datacenter_id == d.id)
+                                        .collect(),
+                                )
+                            })
+                            .collect(),
+                    )
+                })
+                .collect(),
+        }
+    }
 }
 
 impl WorldCache {
@@ -76,12 +165,12 @@ impl WorldCache {
                 map
             },
         );
-        Self {
+        let raw_data = RawData {
             worlds: worlds.into_iter().fold(HashMap::new(), |mut map, world| {
                 map.insert(world.id, world);
                 map
             }),
-            datacenter: datacenters
+            datacenters: datacenters
                 .into_iter()
                 .fold(HashMap::new(), |mut map, datacenter| {
                     map.insert(datacenter.id, datacenter);
@@ -91,27 +180,46 @@ impl WorldCache {
                 map.insert(region.id, region);
                 map
             }),
+        };
+        let yoke = yoke(Box::new(raw_data));
+        Self {
+            yoke,
             name_map,
             datacenter_to_world,
             region_to_worlds,
         }
     }
 
-    pub fn lookup_selector(&self, selector: &AnySelector) -> Option<AnyResult> {
+    pub fn lookup_selector(&self, selector: &AnySelector) -> Result<AnyResult, WorldCacheError> {
+        let cart = self.yoke.backing_cart();
+        let RawData {
+            worlds,
+            datacenters: datacenter,
+            regions,
+        } = cart.borrow();
         match selector {
-            AnySelector::World(world) => Some(AnyResult::World(self.worlds.get(world)?)),
-            AnySelector::Datacenter(datacenter) => {
-                Some(AnyResult::Datacenter(self.datacenter.get(datacenter)?))
+            AnySelector::World(world) => {
+                let world = worlds.get(world).ok_or(WorldCacheError::World(*world))?;
+                Ok(AnyResult::World(world))
             }
-            AnySelector::Region(region) => Some(AnyResult::Region(self.regions.get(region)?)),
+            AnySelector::Datacenter(dc) => {
+                let datacenter = datacenter.get(dc).ok_or(WorldCacheError::Datacenter(*dc))?;
+                Ok(AnyResult::Datacenter(datacenter))
+            }
+            AnySelector::Region(region) => Ok(AnyResult::Region(
+                regions
+                    .get(region)
+                    .ok_or(WorldCacheError::Region(*region))?,
+            )),
         }
     }
 
-    pub fn lookup_value_by_name(&self, name: &str) -> Option<AnyResult> {
+    pub fn lookup_value_by_name(&self, name: &str) -> Result<AnyResult, WorldCacheError> {
         self.name_map
             .get(name)
-            .map(|selector| self.lookup_selector(selector))
+            .map(|selector| self.lookup_selector(selector).ok())
             .flatten()
+            .ok_or(WorldCacheError::NameLookupError(name.to_string()))
     }
 
     pub fn get_all_worlds_in(&self, result: &AnyResult) -> Option<Vec<i32>> {
@@ -126,13 +234,17 @@ impl WorldCache {
     }
 
     pub fn get_datacenters(&self, result: &AnyResult) -> Option<Vec<&datacenter::Model>> {
+        let cart = self.yoke.backing_cart();
+        let RawData {
+            worlds,
+            datacenters: datacenter,
+            regions,
+        } = cart.borrow();
         match result {
-            AnyResult::World(world) => self.datacenter.get(&world.datacenter_id).map(|i| vec![i]),
-            AnyResult::Datacenter(datacenter) => {
-                self.datacenter.get(&datacenter.id).map(|d| vec![d])
-            }
+            AnyResult::World(world) => datacenter.get(&world.datacenter_id).map(|i| vec![i]),
+            AnyResult::Datacenter(dc) => datacenter.get(&dc.id).map(|d| vec![d]),
             AnyResult::Region(region) => Some(
-                self.datacenter
+                datacenter
                     .values()
                     .filter(|datacenter| datacenter.region_id == region.id)
                     .collect(),
@@ -141,17 +253,34 @@ impl WorldCache {
     }
 
     pub fn get_region(&self, result: &AnyResult) -> Option<&region::Model> {
+        let cart = self.yoke.backing_cart();
+        let RawData {
+            worlds,
+            datacenters: datacenter,
+            regions,
+        } = cart.borrow();
         match result {
             AnyResult::World(world) => {
-                let datacenter = self.datacenter.get(&world.datacenter_id)?;
-                self.regions.get(&datacenter.region_id)
+                let datacenter = datacenter.get(&world.datacenter_id)?;
+                regions.get(&datacenter.region_id)
             }
-            AnyResult::Datacenter(datacenter) => self.regions.get(&datacenter.region_id),
-            AnyResult::Region(region) => self.regions.get(&region.id),
+            AnyResult::Datacenter(dc) => regions.get(&dc.region_id),
+            AnyResult::Region(region) => regions.get(&region.id),
         }
     }
 
     pub fn get_all_regions(&self) -> Vec<&region::Model> {
-        self.regions.values().collect()
+        let cart = self.yoke.backing_cart();
+        let RawData { regions, .. } = cart.borrow();
+        regions.values().collect()
+    }
+
+    pub fn get_all(
+        &self,
+    ) -> &Vec<(
+        &region::Model,
+        Vec<(&datacenter::Model, Vec<&world::Model>)>,
+    )> {
+        &self.yoke.get().all
     }
 }

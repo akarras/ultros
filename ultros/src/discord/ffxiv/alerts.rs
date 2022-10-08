@@ -346,40 +346,43 @@ impl UndercutTracker {
                         if margin_price as i32 > added.price_per_unit {
                             // they beat our price, raise the alarms
                             our_price.has_alerted = true;
-                            // figure out what retainers have been undercut
-                            let retainers = self
-                                .db
-                                .get_retainer_listings_for_discord_user(self.discord_user_id)
-                                .await
-                                .map(|(o, i)| {
-                                    i.into_iter()
-                                        .flat_map(|(r, listings)| {
-                                            listings
-                                                .iter()
-                                                .find(|i| {
-                                                    i.item_id == added.item_id
-                                                        && i.hq == added.hq
-                                                        && i.world_id == added.world_id
-                                                        && added.price_per_unit
-                                                            < (i.price_per_unit as f64
-                                                                * (1.0
-                                                                    - (self.margin as f64 / 100.0)))
-                                                                as i32
-                                                })
-                                                .map(|l| (r, l.price_per_unit))
-                                        })
-                                        .map(|(retainer, price)| UndercutRetainer {
-                                            id: retainer.id,
-                                            name: retainer.name,
-                                            undercut_amount: price,
-                                        })
-                                        .collect::<Vec<_>>()
-                                })
-                                .unwrap_or_default();
-                            return Ok(UndercutResult::Undercut {
-                                item_id: added.item_id,
-                                undercut_retainers: retainers,
-                            });
+                            if our_price.has_alerted {
+                                // figure out what retainers have been undercut
+                                let retainers = self
+                                    .db
+                                    .get_retainer_listings_for_discord_user(self.discord_user_id)
+                                    .await
+                                    .map(|(o, i)| {
+                                        i.into_iter()
+                                            .flat_map(|(r, listings)| {
+                                                listings
+                                                    .iter()
+                                                    .find(|i| {
+                                                        i.item_id == added.item_id
+                                                            && i.hq == added.hq
+                                                            && i.world_id == added.world_id
+                                                            && added.price_per_unit
+                                                                < (i.price_per_unit as f64
+                                                                    * (1.0
+                                                                        - (self.margin as f64
+                                                                            / 100.0)))
+                                                                    as i32
+                                                    })
+                                                    .map(|l| (r, l.price_per_unit))
+                                            })
+                                            .map(|(retainer, price)| UndercutRetainer {
+                                                id: retainer.id,
+                                                name: retainer.name,
+                                                undercut_amount: price,
+                                            })
+                                            .collect::<Vec<_>>()
+                                    })
+                                    .unwrap_or_default();
+                                return Ok(UndercutResult::Undercut {
+                                    item_id: added.item_id,
+                                    undercut_retainers: retainers,
+                                });
+                            }
                         }
                     }
                 }

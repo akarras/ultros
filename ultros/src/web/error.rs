@@ -1,9 +1,13 @@
-use axum::response::{IntoResponse, Response};
+use std::num::ParseIntError;
+
+use axum::response::{IntoResponse, Redirect, Response};
 use oauth2::{
     ConfigurationError, RequestTokenError, RevocationErrorResponseType, StandardErrorResponse,
 };
 use reqwest::StatusCode;
 use thiserror::Error;
+
+use crate::world_cache::WorldCacheError;
 
 #[derive(Debug, Error)]
 pub enum WebError {
@@ -25,6 +29,12 @@ pub enum WebError {
     AnyhowError(#[from] anyhow::Error),
     #[error("Prometheus error {0}")]
     AnalyticsError(#[from] prometheus::Error),
+    #[error("Home world has not been set")]
+    HomeWorldNotSet,
+    #[error("Parse int failed {0}")]
+    ParseIntError(#[from] ParseIntError),
+    #[error("{0}")]
+    WorldSelectError(#[from] WorldCacheError),
 }
 
 impl WebError {
@@ -39,6 +49,10 @@ impl WebError {
 
 impl IntoResponse for WebError {
     fn into_response(self) -> Response {
+        match self {
+            WebError::HomeWorldNotSet => return Redirect::to("/profile").into_response(),
+            _ => {}
+        }
         (self.as_status_code(), format!("{self}")).into_response()
     }
 }

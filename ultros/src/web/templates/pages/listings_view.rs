@@ -114,7 +114,7 @@ impl Page for ListingsPage {
                             a href={ "/retainers/listings/" ((retainer.id)) } { ((retainer.name)) }
                           }
                         }
-                        @if let Some(world) = self.world_cache.lookup_selector(&AnySelector::World(listing.world_id)) {
+                        @if let Ok(world) = self.world_cache.lookup_selector(&AnySelector::World(listing.world_id)) {
                           td {
                             ((world.get_name()))
                           }
@@ -178,7 +178,7 @@ impl Page for ListingsPage {
                             a href={ "/retainers/listings/" ((retainer.id)) } { ((retainer.name)) }
                           }
                         }
-                        @if let Some(world) = self.world_cache.lookup_selector(&AnySelector::World(listing.world_id)) {
+                        @if let Ok(world) = self.world_cache.lookup_selector(&AnySelector::World(listing.world_id)) {
                           td {
                             ((world.get_name()))
                           }

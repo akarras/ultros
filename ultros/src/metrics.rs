@@ -2,21 +2,21 @@ use std::sync::Arc;
 
 use axum::extract::State;
 use opentelemetry::sdk::{
-    export::{metrics::aggregation, trace::stdout},
+    export::metrics::aggregation,
     metrics::{controllers, processors, selectors},
 };
 use opentelemetry_prometheus::PrometheusExporter;
-use prometheus::{Encoder, TextEncoder};
-use tracing_subscriber::{prelude::__tracing_subscriber_SubscriberExt, Registry};
+use prometheus::TextEncoder;
 
 use crate::web::error::WebError;
 
 pub(crate) fn init_telemetry() {
-    let tracer = stdout::new_pipeline().install_simple();
-
-    let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
-    let subscriber = Registry::default().with(telemetry);
-    tracing::subscriber::set_global_default(subscriber).expect("global default");
+    //let otel_rsrc = make_resource(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+    //let otel_tracer = otlp::init_tracer(otel_rsc, otlp::identity).expect("failed setup of tracer");
+    //tracing_subscriber::registry().with(otel_layer)
+    //let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+    //let subscriber = Registry::default().with(telemetry);
+    //tracing::subscriber::set_global_default(subscriber).expect("global default");
 }
 
 pub(crate) fn init_meter() -> PrometheusExporter {

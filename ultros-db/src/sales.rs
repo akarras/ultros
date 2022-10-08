@@ -2,7 +2,6 @@ use std::collections::HashSet;
 
 use crate::{
     entity::{
-        active_listing,
         sale_history::{self, Model},
         unknown_final_fantasy_character,
     },
@@ -18,7 +17,7 @@ use universalis::{websocket::event_types::SaleView, ItemId, WorldId};
 impl UltrosDb {
     /// Stores a sale from a given sale view.
     /// Demands that a world name for the sale is provided as it is optional on the sale view, but can be determined other ways
-    // #[instrument(skip(self))]
+    #[instrument(skip(self))]
     pub async fn store_sale(
         &self,
         mut sales: Vec<SaleView>,
@@ -102,7 +101,7 @@ impl UltrosDb {
             return Ok(vec![]);
         }
         let mut recorded_sales = vec![];
-        let values = Entity::insert_many(sales.into_iter().map(|sale| {
+        let _ = Entity::insert_many(sales.into_iter().map(|sale| {
             let SaleView {
                 hq,
                 price_per_unit,
