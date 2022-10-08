@@ -475,8 +475,7 @@ fn main() {
         .map(|(_, feature_name)| format!("{} = []", feature_name))
         .collect::<Vec<String>>();
     list.sort();
-    let list_str = list
-        .join("\n");
+    let list_str = list.join("\n");
     let all_features_str = format!(
         "all = [{}]",
         table_names
