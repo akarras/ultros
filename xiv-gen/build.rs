@@ -470,10 +470,12 @@ fn main() {
     // figure out what features have been enabled
     let dir = "./ffxiv-datamining/csv/";
     let table_names: Vec<_> = get_table_names(dir).collect();
-    let list_str = table_names
+    let mut list = table_names
         .iter()
         .map(|(_, feature_name)| format!("{} = []", feature_name))
-        .collect::<Vec<String>>()
+        .collect::<Vec<String>>();
+    list.sort();
+    let list_str = list
         .join("\n");
     let all_features_str = format!(
         "all = [{}]",
