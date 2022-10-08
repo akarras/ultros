@@ -5,7 +5,7 @@ kill_signal = "SIGINT"
 kill_timeout = 5
 
 [env]
-  RUST_LOG='ultros=info,warn,universalis=info'
+  RUST_LOG='warn'
   PORT = "8080"
   HOSTNAME = "https://ultros.app/"
   DISCORD_CLIENT_ID = 1018657822344478741
