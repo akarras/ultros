@@ -103,9 +103,7 @@ impl Page for Profile {
                                 }
                             }
                         }
-                        input type="submit" {
-                            "Update"
-                        };
+                        input type="submit" value="Update";
                     }
                 }
             }
