@@ -23,6 +23,8 @@ pub enum WebError {
     InvalidItem(i32),
     #[error("Generic error {0}")]
     AnyhowError(#[from] anyhow::Error),
+    #[error("Prometheus error {0}")]
+    AnalyticsError(#[from] prometheus::Error),
 }
 
 impl WebError {

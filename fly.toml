@@ -37,3 +37,7 @@ kill_timeout = 5
     interval = "15s"
     restart_limit = 6
     timeout = "3s"
+
+[metrics]
+port = 9091 # default for most prometheus clients
+path = "/metrics" # default for most prometheus clients

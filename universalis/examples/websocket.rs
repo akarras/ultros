@@ -1,8 +1,8 @@
 use log::{debug, info};
-use universalis::websocket::SocketRx;
 use std::borrow::Borrow;
 use std::time::Instant;
 use universalis::websocket::event_types::{EventChannel, SubscribeMode, WSMessage};
+use universalis::websocket::SocketRx;
 use universalis::{UniversalisClient, WebsocketClient};
 
 #[tokio::main]
@@ -23,7 +23,8 @@ async fn main() {
         SubscribeMode::Subscribe,
         EventChannel::ListingsRemove,
         Some(sargatanas.id),
-    ).await;
+    )
+    .await;
     // .await;
     // ws.subscribe(
     //     SubscribeMode::Subscribe,
@@ -52,11 +53,15 @@ async fn main() {
                 }
             }
             match &next {
-                SocketRx::Event(Ok(WSMessage::ListingsRemove { item, world, listings })) => {
+                SocketRx::Event(Ok(WSMessage::ListingsRemove {
+                    item,
+                    world,
+                    listings,
+                })) => {
                     if item.0 == 27842 || item.0 == 10592 {
                         info!("removed {listings:?}");
                     }
-                },
+                }
                 _ => {}
             }
             // print one example of each event, so lets unsubscribe from the channel

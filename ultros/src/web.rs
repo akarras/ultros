@@ -9,20 +9,19 @@ use anyhow::Error;
 use axum::body::{Empty, Full};
 use axum::extract::{FromRef, Path, Query, State};
 use axum::http::{HeaderValue, Response, StatusCode};
-use axum::response::{Html, IntoResponse, Redirect};
+use axum::response::{IntoResponse, Redirect};
 use axum::routing::get;
 use axum::{body, Router};
 use axum_extra::extract::cookie::Key;
+use opentelemetry_prometheus::PrometheusExporter;
 use reqwest::header;
 use serde::Deserialize;
-use std::fmt::Write;
 use std::io::Read;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use ultros_db::UltrosDb;
 use universalis::{ItemId, WorldId};
-use xiv_gen::ItemId as XivDBItemId;
 
 use self::error::WebError;
 use self::oauth::{AuthDiscordUser, AuthUserCache, DiscordAuthConfig};
@@ -40,6 +39,7 @@ use self::templates::{
 };
 use crate::analyzer_service::AnalyzerService;
 use crate::event::EventReceivers;
+use crate::metrics::metrics;
 use crate::web::alerts_websocket::connect_websocket;
 use crate::web::oauth::{begin_login, logout};
 use crate::world_cache::{AnySelector, WorldCache};
@@ -268,6 +268,7 @@ pub(crate) struct WebState {
     pub(crate) event_receivers: EventReceivers,
     pub(crate) world_cache: Arc<WorldCache>,
     pub(crate) analyzer_service: AnalyzerService,
+    pub(crate) analytics_exporter: Arc<PrometheusExporter>,
 }
 
 impl FromRef<WebState> for UltrosDb {
@@ -309,6 +310,12 @@ impl FromRef<WebState> for Arc<WorldCache> {
 impl FromRef<WebState> for AnalyzerService {
     fn from_ref(input: &WebState) -> Self {
         input.analyzer_service.clone()
+    }
+}
+
+impl FromRef<WebState> for Arc<PrometheusExporter> {
+    fn from_ref(input: &WebState) -> Self {
+        input.analytics_exporter.clone()
     }
 }
 
@@ -378,6 +385,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/redirect", get(self::oauth::redirect))
         .route("/login", get(begin_login))
         .route("/logout", get(logout))
+        .route("/metrics", get(metrics))
         .fallback(fallback);
 
     // run our app with hyper
