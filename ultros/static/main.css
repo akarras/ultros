@@ -109,6 +109,13 @@ body {
   align-items: center;
   justify-content: center;
   padding-left: 20px;
+  transition: .25s;
+}
+
+.nav-item:hover {
+  color: #846D8F;
+  text-decoration: underline;
+  transition: .25s;
 }
 
 .hero-title {
