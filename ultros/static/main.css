@@ -23,12 +23,11 @@ body {
   color: #fff;
   font-family: Jaldi;
   opacity: 1;
-  animation: fadeInAnimation ease-out 0.4s;
+  
   animation-iteration-count: 1;
-  animation-fill-mode:forwards;
+  background-position: 0px;
   max-width: 100vw;
 }
-
 @keyframes fadeInAnimation {
   0% {
     opacity: 0;
@@ -55,21 +54,21 @@ body {
   overflow: hidden;
 }
 .gradient {
-  background: linear-gradient(black, transparent 90%);
+  background: linear-gradient(black, transparent);
   position: relative;
   width: 100%;
   height: 100%;
   left: 0px;
   top: 0px;
+  opacity: 1.0;
   z-index: -10000;
-  animation: fadeGradient ease-out .5s;
-  animation-iteration-count: 1;
-  animation-fill-mode:forwards;
+  animation: fadeGradient ease-out 1.5s;
 }
 
 @keyframes fadeGradient {
   0% {
-    height: 400%;
+    height: 200%;
+    opacity: 1;
   }
   100% {
     height: 100%;
@@ -79,8 +78,8 @@ body {
   display: flex;
   flex-direction: row;
   justify-content: flex-end;
+  flex-wrap: wrap;
   padding: 10px;
-  height: 52px;
   margin-top: 20px;
 }
 
@@ -135,6 +134,7 @@ body {
 .search-container {
   align-items: top;
   position: relative;
+  height: 52px;
 }
 
 .search-box {
@@ -293,6 +293,8 @@ body {
   border-top-left-radius: 35px;
   border-top-right-radius: 35px;
   min-height: 90vh;
+  animation: fadeInAnimation ease-out .25s;
+  opacity: 1;
 }
 
 .flex-wrap {
@@ -325,7 +327,7 @@ body {
 }
 
 .main-content a {
-  color: #846D8F;
+  color: #b996ca;
 }
 
 .main-content a:hover {

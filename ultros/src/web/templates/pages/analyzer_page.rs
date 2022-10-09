@@ -40,13 +40,31 @@ impl Page for AnalyzerPage {
                       "item"
                     }
                     th {
-                      "profit"
+                      "hq"
                     }
                     th {
-                      "cheapest"
+                      "sale price"
                     }
                     th {
-                      "margin"
+                      "-"
+                    }
+                    th {
+                      "cheapest item"
+                    }
+                    th {
+                      "="
+                    }
+                    th {
+                      a href="?sort=profit" { "profit" }
+                    }
+                    th {
+                      a href="?sort=margin" { "margin" }
+                    }
+                    th {
+                      "world"
+                    }
+                    th {
+                      "datacenter"
                     }
                   }
                   @for result in self.analyzer_results.iter().take(100) {
@@ -57,14 +75,34 @@ impl Page for AnalyzerPage {
                           ((items.get(&ItemId(result.item_id)).map(|i| i.name.as_str()).unwrap_or_default()))
                         }
                       }
+                      th {
+                        @if result.hq {
+                          "✔️"
+                        }
+                      }
                       td {
-                        ((result.profit))
+                        ((result.profit + result.cheapest))
+                      }
+                      td {
+                        "-"
                       }
                       td {
                         ((result.cheapest))
                       }
                       td {
-                        ((format!("{:.2}%", (result.profit + result.cheapest) / result.cheapest)))
+                        "="
+                      }
+                      td {
+                        ((result.profit))
+                      }
+                      td {
+                        ((format!("{:.2}%", (result.profit + result.cheapest) as f32 / result.cheapest as f32 * 100.0)))
+                      }
+                      td {
+                        "n/a"
+                      }
+                      td {
+                        "n/a"
                       }
                     }
                   }

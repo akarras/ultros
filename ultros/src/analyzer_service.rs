@@ -263,7 +263,7 @@ impl AnalyzerService {
 
         let items = self.cheapest_items.read().await;
         let region = items.get(&region_id)?;
-        let mut possible_sales: Vec<_> = region
+        let possible_sales: Vec<_> = region
             .item_map
             .iter()
             .flat_map(|(item_key, cheapest_price)| {
@@ -273,15 +273,12 @@ impl AnalyzerService {
                     cheapest: *cheapest_price,
                     item_id: item_key.item_id,
                     hq: item_key.hq,
+                    margin: (*history as f32) / (*cheapest_price as f32),
                 })
             })
             .collect();
         drop(items);
-        possible_sales.sort_by(|a, b| {
-            b.profit
-                .cmp(&a.profit)
-                .then_with(|| a.cheapest.cmp(&b.cheapest))
-        });
+        
         Some(possible_sales)
     }
 
@@ -318,10 +315,11 @@ impl AnalyzerService {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Ord, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct ResaleStats {
     pub(crate) profit: i32,
     pub(crate) cheapest: i32,
     pub(crate) item_id: i32,
+    pub(crate) margin: f32,
     pub(crate) hq: bool,
 }

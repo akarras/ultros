@@ -193,11 +193,26 @@ async fn alerts(discord_user: AuthDiscordUser) -> Result<RenderPage<AlertsPage>,
     Ok(RenderPage(AlertsPage { discord_user }))
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum AnalyzerSort {
+    Profit,
+    Margin
+}
+
+#[derive(Deserialize)]
+struct AnalyzerOptions {
+    sort: Option<AnalyzerSort>,
+    page: Option<i32>,
+}
+
 async fn analyze_profits(
     State(analyzer): State<AnalyzerService>,
     State(world_cache): State<Arc<WorldCache>>,
     world: HomeWorld,
     user: Option<AuthDiscordUser>,
+    Query(options): Query<AnalyzerOptions>,
+    State(ultros_db): State<UltrosDb>
 ) -> Result<RenderPage<AnalyzerPage>, WebError> {
     // this doesn't change often, could easily cache.
     let world = world_cache.lookup_selector(&AnySelector::World(world.home_world))?;
@@ -213,13 +228,32 @@ async fn analyze_profits(
             return Err(Error::msg("Region not found").into())
         }
     };
-    let analyzer_results =
+    let mut analyzer_results =
         analyzer
             .get_best_resale(world.id, region.id)
             .await
             .ok_or(anyhow::Error::msg(
                 "Couldn't find items. Might need more warm up time",
             ))?;
+    match options.sort.unwrap_or(AnalyzerSort::Profit) {
+        AnalyzerSort::Profit => {
+            analyzer_results.sort_by(|a, b| {
+                b.profit
+                    .cmp(&a.profit)
+                    .then_with(|| a.cheapest.cmp(&b.cheapest))
+            });
+        },
+        AnalyzerSort::Margin => {
+            analyzer_results.sort_by(|a, b| {
+                b.margin
+                    .partial_cmp(&a.margin)
+                    .unwrap_or_else(|| a.cheapest.cmp(&b.cheapest))
+            });
+        },
+    }
+    let page_count = analyzer_results.len();
+    let page = options.page.unwrap_or(1);
+    
     Ok(RenderPage(AnalyzerPage {
         user,
         analyzer_results,
