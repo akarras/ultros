@@ -1,8 +1,13 @@
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, mpsc::{self, Receiver}};
 use ultros_db::entity::active_listing;
 
 use crate::{event::EventReceivers, world_cache::AnySelector};
+
+pub(crate) struct PriceUndercutData {
+    pub(crate) item_id: i32,
+    pub(crate) undercut_by: i32,
+}
 
 #[derive(Debug)]
 pub(crate) struct PriceAlertDetails {
@@ -11,6 +16,7 @@ pub(crate) struct PriceAlertDetails {
     pub(crate) item_id: i32,
     /// If the price is within this selector, then send the alert
     pub(crate) travel_amount: AnySelector,
+    pub(crate) sender: mpsc::Sender<PriceUndercutData>
 }
 
 enum PriceAlert {
@@ -37,8 +43,9 @@ impl PriceAlertService {
         loop {
             if let Ok(listing) = event_receiver.listings.recv().await {
                 match listing {
-                    crate::event::EventType::Add(l) => {}
-                    crate::event::EventType::Update(l) => {}
+                    crate::event::EventType::Add(l) => {
+                        self.check_listings(&l).await;
+                    }
                     _ => {}
                 }
             }
@@ -48,5 +55,29 @@ impl PriceAlertService {
     async fn check_listings(&self, listings: &[active_listing::Model]) {
         // events *should* be one item at a time so this reduce is safe. if that ever changes, need to fix this.
         listings.iter().map(|i| (i.price_per_unit, i.item_id)).min();
+    }
+
+    pub(crate) async fn create_alert(&self, price_threshold: i32, item_id: i32, travel_amount: AnySelector) -> Receiver<PriceUndercutData> {
+        let (sender, receiver) = mpsc::channel(10);
+        let details = PriceAlertDetails { price_threshold, item_id, travel_amount, sender };
+
+        let mut write = self.item_map.write().await;
+        let entry = write.entry(item_id).or_default();
+        entry.push(details);
+        receiver
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::event::create_event_busses;
+
+    use super::PriceAlertService;
+
+    #[tokio::test]
+    async fn test_price_alert() {
+        let (senders, receivers) = create_event_busses();
+        let price_alert_service = PriceAlertService::new(receivers);
+        
     }
 }
