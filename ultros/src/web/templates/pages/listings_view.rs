@@ -51,7 +51,20 @@ impl Page for ListingsPage {
             user: self.user.as_ref()
           })
           div class="container" {
-            div class="flex-row" {
+            div class="flex-row flex-space" {
+              div class="flex-column" {
+                div class="search-result" {
+                  img src={"https://universalis-ffxiv.github.io/universalis-assets/icon2x/" (self.item_id) ".png"};
+                  div class="search-result-details" {
+                    span class="item-name" {
+                      (&self.item.name)
+                    }
+                    span class="item-type" {
+                      (categories.get(&self.item.item_ui_category).map(|i| i.name.as_str()).unwrap_or_default())
+                    }
+                  }
+                }
+              }
               div class="content-nav nav" {
                 @if let Some((region, datacenters)) = region {
                   div class="flex-column" {
@@ -87,19 +100,6 @@ impl Page for ListingsPage {
                           }
                         }
                       }
-                    }
-                  }
-                }
-              }
-              div class="flex-column" {
-                div class="search-result" {
-                  img src={"https://universalis-ffxiv.github.io/universalis-assets/icon2x/" (self.item_id) ".png"};
-                  div class="search-result-details" {
-                    span class="item-name" {
-                      (&self.item.name)
-                    }
-                    span class="item-type" {
-                      (categories.get(&self.item.item_ui_category).map(|i| i.name.as_str()).unwrap_or_default())
                     }
                   }
                 }

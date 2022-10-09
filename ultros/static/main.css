@@ -10,34 +10,25 @@ a {
 body {
   transition-property: background-image;
   transition: 1s;
-  background-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0.2)), url("./images/flower_1.png");
+  background: url("./images/flower_1.png");
   background-size: 30em;
   background-repeat: repeat;
-  background-color: #222;
+  background-color: #000;
   color: #fff;
   font-family: Jaldi;
   opacity: 1;
-  animation: fadeInAnimation linear .5s;
+  animation: fadeInAnimation ease-out 0.4s;
   animation-iteration-count: 1;
   animation-fill-mode:forwards;
   max-width: 100vw;
 }
+
 @keyframes fadeInAnimation {
   0% {
-      opacity: 0;
-      background-image: none;
-      background-color: #000;
-      background-position: -50px;
-  }
-  50% {
-    background-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0.2)), url("./images/flower_1.png");
-    background-color: rgba(0, 0, 0, 0.2);
-    opacity: 0.75;
+    opacity: 0;
   }
   100% {
     opacity: 1;
-    background-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0.2)), url("./images/flower_1.png");
-    background-position: 0px;
   }
 }
 @keyframes slowSlide {
@@ -50,24 +41,34 @@ body {
 }
 
 .gradient-outer {
-  position: absolute;
+  position: fixed;
   width: 100%;
   height: 100%;
   margin: -20px -8px;
   z-index: -10000;
+  overflow: hidden;
 }
 .gradient {
-  background: linear-gradient(black, transparent 40em);
+  background: linear-gradient(black, transparent 90%);
   position: relative;
   width: 100%;
-  height: 40em;
+  height: 100%;
   left: 0px;
   top: 0px;
-  overflow: hidden;
   z-index: -10000;
-  
+  animation: fadeGradient ease-out .5s;
+  animation-iteration-count: 1;
+  animation-fill-mode:forwards;
 }
 
+@keyframes fadeGradient {
+  0% {
+    height: 400%;
+  }
+  100% {
+    height: 100%;
+  }
+}
 .header {
   display: flex;
   flex-direction: row;
@@ -188,7 +189,7 @@ body {
   display: flex;
   color: #fff;
   text-decoration: none;
-  padding: 5px;
+  padding: 2.5px;
 }
 
 .search-result-details {
@@ -205,14 +206,33 @@ body {
 }
 
 .item-name {
-  font-size: 21px;
+  font-size: 16px;
   margin-bottom: -10px;
   text-align: left;
 }
 
 .item-type {
-  font-size: 16px;
+  font-size: 11px;
   text-align: left;
+}
+
+.container .search-result {
+  width: unset;
+  height: unset;
+  padding: 10px;
+}
+
+.container .item-name {
+  font-size: 36px;
+}
+
+.container .item-type {
+  font-size: 26px;
+}
+
+.container .search-result img {
+  height: 80px;
+  width: 80px;
 }
 
 .avatar {
@@ -234,7 +254,7 @@ body {
 }
 
 .btn-secondary {
-  background-color: #846D8F;
+  background-color: #48394F;
   color: #fff;
   border-top-left-radius: 11px;
   border-top-right-radius: 11px;
@@ -254,7 +274,7 @@ body {
 }
 
 .main-content {
-  background-color: #281A2DED;
+  background-color: #100A12ED;
   padding: 2em;
   border-top-left-radius: 35px;
   border-top-right-radius: 35px;
@@ -269,6 +289,11 @@ body {
 .flex-row {
   display: flex;
   flex-direction: row;
+  flex-wrap: wrap;
+}
+
+.flex-space {
+  justify-content: space-between;
 }
 
 .flex-column {
