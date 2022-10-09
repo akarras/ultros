@@ -72,7 +72,7 @@ impl Page for ListingsPage {
                       a  class="btn-secondary active" {
                         ((region.name))
                       }
-                    } else {
+                    } @else {
                       a class="btn-secondary" href={"/listings/" ((region.name)) "/" ((self.item_id))} {
                         ((region.name))
                       }
@@ -83,7 +83,7 @@ impl Page for ListingsPage {
                           a class="btn-secondary active" {
                             ((datacenter.name))
                           }
-                        } else {
+                        } @else {
                           a class="btn-secondary" href={"/listings/" ((datacenter.name)) "/" ((self.item_id))} {
                             ((datacenter.name))
                           }
