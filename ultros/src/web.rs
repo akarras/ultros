@@ -178,22 +178,9 @@ async fn world_item_listings(
         .items
         .get(&xiv_gen::ItemId(item_id))
         .ok_or(WebError::InvalidItem(item_id))?;
-    let mut world_names: Vec<_> = worlds
-        .iter()
-        .flat_map(|i| {
-            let world = AnySelector::World(*i);
-            world_cache.lookup_selector(&world)
-        })
-        .map(|selector| selector.get_name().to_string())
-        .collect();
-    world_names.push(region.name.clone());
-    for dc in datacenter {
-        world_names.push(dc.name.clone());
-    }
     let page = ListingsPage {
         listings,
         selected_world: selected_value.get_name().to_string(),
-        worlds: world_names,
         item_id,
         item,
         user,

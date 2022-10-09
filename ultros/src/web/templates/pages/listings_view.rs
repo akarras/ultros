@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use maud::html;
-use ultros_db::entity::{active_listing, retainer};
+use ultros_db::entity::{active_listing, retainer, region};
 use xiv_gen::ItemId;
 
 use crate::{
@@ -15,7 +15,6 @@ use crate::{
 pub(crate) struct ListingsPage {
     pub(crate) listings: Vec<(active_listing::Model, Option<retainer::Model>)>,
     pub(crate) selected_world: String,
-    pub(crate) worlds: Vec<String>,
     pub(crate) item_id: i32,
     pub(crate) item: &'static xiv_gen::Item,
     pub(crate) user: Option<AuthDiscordUser>,
@@ -39,31 +38,69 @@ impl Page for ListingsPage {
             self.listings.iter().filter(|(l, r)| l.hq).collect();
         low_quality_listings.sort_by_key(|(l, _)| l.price_per_unit);
         high_quality_listings.sort_by_key(|(l, _)| l.price_per_unit);
+        let value = self.world_cache.lookup_value_by_name(&self.selected_world);
+        let all = self.world_cache.get_all();
+        let region = value.map(|w| {
+          let region = self.world_cache.get_region(&w)?;
+          let region = all.iter().find(|(r, _)| r.id == region.id)?;
+          Some(region)
+        }).ok().flatten();
+
         html! {
           (Header {
             user: self.user.as_ref()
           })
           div class="container" {
-            div class="search-result" {
-              img src={"https://universalis-ffxiv.github.io/universalis-assets/icon2x/" (self.item_id) ".png"};
-              div class="search-result-details" {
-                span class="item-name" {
-                  (&self.item.name)
-                }
-                span class="item-type" {
-                  (categories.get(&self.item.item_ui_category).map(|i| i.name.as_str()).unwrap_or_default())
+            div class="flex-row" {
+              div class="content-nav nav" {
+                @if let Some((region, datacenters)) = region {
+                  div class="flex-column" {
+                    @if region.name == self.selected_world {
+                      a  class="btn-secondary active" {
+                        ((region.name))
+                      }
+                    } else {
+                      a class="btn-secondary" href={"/listings/" ((region.name)) "/" ((self.item_id))} {
+                        ((region.name))
+                      }
+                    }
+                    @for (datacenter, worlds) in datacenters {
+                      div class="flex-row" {
+                        @if datacenter.name == self.selected_world {
+                          a class="btn-secondary active" {
+                            ((datacenter.name))
+                          }
+                        } else {
+                          a class="btn-secondary" href={"/listings/" ((datacenter.name)) "/" ((self.item_id))} {
+                            ((datacenter.name))
+                          }
+                        }
+                        @for world in worlds {
+                          @if world.name == self.selected_world {
+                            a class="btn-secondary active" {
+                              ((world.name))
+                            }
+                          } @else {
+                            a class="btn-secondary" href={"/listings/" ((world.name)) "/" ((self.item_id))} {
+                              ((world.name))
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
                 }
               }
-            }
-            div class="content-nav nav" {
-              @for world_name in &self.worlds {
-                @if world_name == &self.selected_world {
-                  a class="btn-secondary active" {
-                    ((world_name))
-                  }
-                } @else {
-                  a class="btn-secondary" href={"/listings/" ((world_name)) "/" ((self.item_id))} {
-                    ((world_name))
+              div class="flex-column" {
+                div class="search-result" {
+                  img src={"https://universalis-ffxiv.github.io/universalis-assets/icon2x/" (self.item_id) ".png"};
+                  div class="search-result-details" {
+                    span class="item-name" {
+                      (&self.item.name)
+                    }
+                    span class="item-type" {
+                      (categories.get(&self.item.item_ui_category).map(|i| i.name.as_str()).unwrap_or_default())
+                    }
                   }
                 }
               }

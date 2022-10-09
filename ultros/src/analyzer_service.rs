@@ -162,22 +162,6 @@ impl AnalyzerService {
                             world_listings.add_listing(&listing);
                         }
                     }
-                    // let items = &xiv_gen_db::decompress_data().items;
-                    // for item in items.values() {
-
-                    // this version performed much slower in the dev database, but that also just could be because there's no data. keeping it around
-                    // in case the streaming method kabooms
-                    // if let Ok(mut listings) = ultros_db.get_cheapest_listing_by_world(world, id.0, true).await {
-                    // if let Some(listing) = listings {
-                    // self.add_listing(world, &listing).await;
-                    // }
-                    // }
-                    // if let Ok(mut listings) = ultros_db.get_cheapest_listing_by_world(world, id.0, false).await {
-                    // if let Some(listing) = listings {
-                    // self.add_listing(world, &listing).await;
-                    // }
-                    // }
-                    // }
                 }
                 // now prime sale history
                 let mut writer = self.recent_sale_history.write().await;

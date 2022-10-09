@@ -159,12 +159,17 @@ body {
   align-items: center;
   top: 40px;
   width: 344px;
-  height: 83px;
+  height: 40px;
   background-color: rgba(0, 0, 0, 0.22);
   border-radius: 5px;
   margin: 5px;
   animation-name: search-result-in;
   animation-duration: 300ms;
+}
+
+.search-result :hover {
+  background-color: rgba(0, 0, 0, 0.1);
+  transition: background-color 1s;
 }
 
 @keyframes search-result-in {
@@ -190,7 +195,7 @@ body {
 .search-result img {
   height: 40px;
   width: 40px;
-  margin: 16px;
+  margin: 5px;
 }
 
 .item-name {
@@ -252,6 +257,15 @@ body {
 .flex-wrap {
   display: flex;
   flex-flow: wrap;
+}
+
+.flex-row {
+  display: flex;
+  flex-direction: row;
+}
+
+.flex-column {
+  flex-direction: column;
 }
 
 .main-content table {
