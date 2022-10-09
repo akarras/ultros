@@ -20,17 +20,23 @@ body {
   animation: fadeInAnimation linear .5s;
   animation-iteration-count: 1;
   animation-fill-mode:forwards;
+  max-width: 100vw;
 }
 @keyframes fadeInAnimation {
   0% {
       opacity: 0;
+      background-image: none;
+      background-color: #000;
       background-position: -50px;
   }
   50% {
-    opacity: 1;
+    background-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0.2)), url("./images/flower_1.png");
+    background-color: rgba(0, 0, 0, 0.2);
+    opacity: 0.75;
   }
   100% {
     opacity: 1;
+    background-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0.2)), url("./images/flower_1.png");
     background-position: 0px;
   }
 }
@@ -240,6 +246,7 @@ body {
 
 .btn-secondary:hover {
   background-color: #3A2B7E;
+  transition: background-color 1s;
 }
 
 .btn-secondary.active {
