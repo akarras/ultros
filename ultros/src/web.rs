@@ -14,6 +14,7 @@ use axum::response::{IntoResponse, Redirect};
 use axum::routing::get;
 use axum::{body, Router};
 use axum_extra::extract::cookie::Key;
+use futures::future::join;
 use opentelemetry_prometheus::PrometheusExporter;
 use reqwest::header;
 use serde::Deserialize;
@@ -165,15 +166,16 @@ async fn world_item_listings(
     let worlds = world_cache
         .get_all_worlds_in(&selected_value)
         .ok_or(Error::msg("Unable to get worlds"))?;
-    let listings = db
-        .get_all_listings_in_worlds_with_retainers(&worlds, ItemId(item_id))
-        .await?;
-    let region = world_cache
-        .get_region(&selected_value)
-        .ok_or(Error::msg("No region found?"))?;
-    let datacenter = world_cache
-        .get_datacenters(&selected_value)
-        .ok_or(Error::msg("No datacenter found"))?;
+    let db_clone = db.clone();
+    let world_iter = worlds.iter().copied();
+    let (listings, sale_history) = join(db_clone
+        .get_all_listings_in_worlds_with_retainers(&worlds, ItemId(item_id)),
+    async move {
+        let paginator = db.get_sale_history_with_characters(world_iter, item_id, 25);
+        paginator.fetch().await
+    }).await;
+    let listings = listings?;
+    let sale_history = sale_history?;
     let item = xiv_gen_db::decompress_data()
         .items
         .get(&xiv_gen::ItemId(item_id))
@@ -185,6 +187,7 @@ async fn world_item_listings(
         item,
         user,
         world_cache,
+        sale_history,
     };
     Ok(RenderPage(page))
 }

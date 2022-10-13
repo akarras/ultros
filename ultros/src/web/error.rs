@@ -6,6 +6,7 @@ use oauth2::{
 };
 use reqwest::StatusCode;
 use thiserror::Error;
+use ultros_db::SeaDbErr;
 
 use crate::world_cache::WorldCacheError;
 
@@ -35,6 +36,8 @@ pub enum WebError {
     ParseIntError(#[from] ParseIntError),
     #[error("{0}")]
     WorldSelectError(#[from] WorldCacheError),
+    #[error("Db Error {0}")]
+    DbError(#[from] SeaDbErr)
 }
 
 impl WebError {

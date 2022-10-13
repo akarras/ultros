@@ -1,5 +1,8 @@
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{RwLock, mpsc::{self, Receiver}};
+use tokio::sync::{
+    mpsc::{self, Receiver},
+    RwLock,
+};
 use ultros_db::entity::active_listing;
 
 use crate::{event::EventReceivers, world_cache::AnySelector};
@@ -16,7 +19,7 @@ pub(crate) struct PriceAlertDetails {
     pub(crate) item_id: i32,
     /// If the price is within this selector, then send the alert
     pub(crate) travel_amount: AnySelector,
-    pub(crate) sender: mpsc::Sender<PriceUndercutData>
+    pub(crate) sender: mpsc::Sender<PriceUndercutData>,
 }
 
 enum PriceAlert {
@@ -57,9 +60,19 @@ impl PriceAlertService {
         listings.iter().map(|i| (i.price_per_unit, i.item_id)).min();
     }
 
-    pub(crate) async fn create_alert(&self, price_threshold: i32, item_id: i32, travel_amount: AnySelector) -> Receiver<PriceUndercutData> {
+    pub(crate) async fn create_alert(
+        &self,
+        price_threshold: i32,
+        item_id: i32,
+        travel_amount: AnySelector,
+    ) -> Receiver<PriceUndercutData> {
         let (sender, receiver) = mpsc::channel(10);
-        let details = PriceAlertDetails { price_threshold, item_id, travel_amount, sender };
+        let details = PriceAlertDetails {
+            price_threshold,
+            item_id,
+            travel_amount,
+            sender,
+        };
 
         let mut write = self.item_map.write().await;
         let entry = write.entry(item_id).or_default();
@@ -78,6 +91,5 @@ mod test {
     async fn test_price_alert() {
         let (senders, receivers) = create_event_busses();
         let price_alert_service = PriceAlertService::new(receivers);
-        
     }
 }

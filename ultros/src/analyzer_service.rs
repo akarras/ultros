@@ -278,7 +278,7 @@ impl AnalyzerService {
             })
             .collect();
         drop(items);
-        
+
         Some(possible_sales)
     }
 

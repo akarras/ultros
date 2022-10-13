@@ -11,6 +11,8 @@ pub mod retainers;
 pub mod sales;
 mod worlds;
 
+pub use sea_orm::error::DbErr as SeaDbErr;
+
 use anyhow::Result;
 use chrono::{Duration, Utc};
 use futures::Stream;

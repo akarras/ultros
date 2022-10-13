@@ -8,9 +8,10 @@ use crate::{
     UltrosDb,
 };
 use anyhow::Result;
-use migration::sea_orm::{
+use migration::{sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter, Set,
-};
+}, Value};
+use sea_orm::{Paginator, PaginatorTrait};
 use tracing::instrument;
 use universalis::{websocket::event_types::SaleView, ItemId, WorldId};
 
@@ -138,5 +139,18 @@ impl UltrosDb {
         .exec(&self.db)
         .await?;
         Ok(recorded_sales)
+    }
+
+    pub fn get_sale_history_with_characters(
+        &self,
+        world_ids: impl Iterator<Item = i32>,
+        item_id: i32,
+        page_size: usize,
+    ) -> Paginator<sea_orm::DatabaseConnection, sea_orm::SelectTwoModel<sale_history::Model, unknown_final_fantasy_character::Model>> {
+        let paginator = sale_history::Entity::find()
+            .filter(sale_history::Column::WorldId.is_in(world_ids.map(|w| Value::Int(Some(w)))))
+            .find_also_related(unknown_final_fantasy_character::Entity)
+            .paginate(&self.db, page_size);
+        paginator
     }
 }

@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use maud::html;
-use ultros_db::entity::{active_listing, retainer, region};
+use ultros_db::entity::{
+    active_listing, region, retainer, sale_history, unknown_final_fantasy_character,
+};
 use xiv_gen::ItemId;
 
 use crate::{
@@ -14,6 +16,10 @@ use crate::{
 
 pub(crate) struct ListingsPage {
     pub(crate) listings: Vec<(active_listing::Model, Option<retainer::Model>)>,
+    pub(crate) sale_history: Vec<(
+        sale_history::Model,
+        Option<unknown_final_fantasy_character::Model>,
+    )>,
     pub(crate) selected_world: String,
     pub(crate) item_id: i32,
     pub(crate) item: &'static xiv_gen::Item,
@@ -40,11 +46,14 @@ impl Page for ListingsPage {
         high_quality_listings.sort_by_key(|(l, _)| l.price_per_unit);
         let value = self.world_cache.lookup_value_by_name(&self.selected_world);
         let all = self.world_cache.get_all();
-        let region = value.map(|w| {
-          let region = self.world_cache.get_region(&w)?;
-          let region = all.iter().find(|(r, _)| r.id == region.id)?;
-          Some(region)
-        }).ok().flatten();
+        let region = value
+            .map(|w| {
+                let region = self.world_cache.get_region(&w)?;
+                let region = all.iter().find(|(r, _)| r.id == region.id)?;
+                Some(region)
+            })
+            .ok()
+            .flatten();
 
         html! {
           (Header {
@@ -234,6 +243,59 @@ impl Page for ListingsPage {
                 }
               } @else if low_quality_listings.is_empty() && high_quality_listings.is_empty() {
                 "no listings"
+              }
+              div class="content-well" {
+                span class="content-title" {
+                  "recent sales"
+                }
+                table {
+                  tr {
+                    th {
+                      "quantity"
+                    }
+                    th {
+                      "price per item"
+                    }
+                    th {
+                      "total"
+                    }
+                    th {
+                      "hq"
+                    }
+                    th {
+                      "character name"
+                    }
+                    th {
+                      "date"
+                    }
+                  }
+                  @for (sale, character) in &self.sale_history {
+                    tr {
+                      td {
+                        ((sale.quantity))
+                      }
+                      td {
+                        ((sale.price_per_item))
+                      }
+                      td {
+                        ((sale.price_per_item * sale.quantity))
+                      }
+                      td {
+                        @if sale.hq {
+                          "✔️"
+                        }
+                      }
+                      td {
+                        @if let Some(character) = character {
+                          ((character.name))
+                        }
+                      }
+                      td {
+                        ((sale.sold_date.to_string()))
+                      }
+                    }
+                  }
+                }
               }
             }
           }
