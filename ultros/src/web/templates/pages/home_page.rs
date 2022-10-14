@@ -19,8 +19,10 @@ impl Page for HomePage {
             (Header {
                 user: self.user.as_ref(),
             })
-            h1 class="hero-title" {
-                "Dominate the marketboard"
+            div class="container" {
+                h1 class="hero-title" {
+                    "Dominate the marketboard"
+                }
             }
         }
     }
