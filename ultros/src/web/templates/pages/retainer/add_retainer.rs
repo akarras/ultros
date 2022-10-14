@@ -25,19 +25,27 @@ impl Page for AddRetainer {
           script src="/static/retainer.js"{}
           div class="container" {
             div class="main-content" {
-              label for="retainer-name" {
-                "retainer name"
-              }
-              input id="retainer-name" value=((self.search_text));
-              a id="retainer-button" class="btn" href={ "/retainers/add?search=" ((urlencoding::encode(&self.search_text))) } {
-                "search"
-              }
-              ul {
-                @for (retainer, world) in &self.search_results {
-                  li{
-                    span { ((retainer.name)) " - " ((world.as_ref().map(|w| w.name.as_str()).unwrap_or_default())) }
-                    a class="btn" href={"/retainers/add/" ((retainer.id))} {
-                      "add"
+              div class="flex-column flex-start-align" {
+                span class="content-title" {
+                  "Add Retainer"
+                }
+                span {
+                  "Note: Search must exactly match retainer name"
+                }
+                label for="retainer-name" {
+                  "retainer name"
+                }
+                input id="retainer-name" value=((self.search_text));
+                a id="retainer-button" class="btn" href={ "/retainers/add?search=" ((urlencoding::encode(&self.search_text))) } {
+                  "search"
+                }
+                div class="flex-column" {
+                  @for (retainer, world) in &self.search_results {
+                    div class="flex flex-space" {
+                      span { ((retainer.name)) " - " ((world.as_ref().map(|w| w.name.as_str()).unwrap_or_default())) }
+                      a class="btn" href={"/retainers/add/" ((retainer.id))} {
+                        "add"
+                      }
                     }
                   }
                 }

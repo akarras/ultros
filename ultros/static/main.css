@@ -308,11 +308,20 @@ body {
   flex-wrap: wrap;
 }
 
+.flex {
+  display: flex;
+}
+
 .flex-space {
   justify-content: space-between;
 }
 
+.flex-start-align {
+  align-items:flex-start;
+}
+
 .flex-column {
+  display: flex;
   flex-direction: column;
 }
 
