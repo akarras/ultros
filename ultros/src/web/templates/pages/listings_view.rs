@@ -266,6 +266,12 @@ impl Page for ListingsPage {
                       "character name"
                     }
                     th {
+                      "world"
+                    }
+                    th {
+                      "datacenter"
+                    }
+                    th {
                       "date"
                     }
                   }
@@ -288,6 +294,16 @@ impl Page for ListingsPage {
                       td {
                         @if let Some(character) = character {
                           ((character.name))
+                        }
+                      }
+                      @if let Ok(world) = self.world_cache.lookup_selector(&AnySelector::World(sale.world_id)) {
+                        td {
+                          ((world.get_name()))
+                        }
+                        td {
+                          @for datacenter in self.world_cache.get_datacenters(&world).unwrap_or_default() {
+                            ((datacenter.name))
+                          }
                         }
                       }
                       td {
