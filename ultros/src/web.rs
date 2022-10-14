@@ -168,12 +168,14 @@ async fn world_item_listings(
         .ok_or(Error::msg("Unable to get worlds"))?;
     let db_clone = db.clone();
     let world_iter = worlds.iter().copied();
-    let (listings, sale_history) = join(db_clone
-        .get_all_listings_in_worlds_with_retainers(&worlds, ItemId(item_id)),
-    async move {
-        let paginator = db.get_sale_history_with_characters(world_iter, item_id, 25);
-        paginator.fetch().await
-    }).await;
+    let (listings, sale_history) = join(
+        db_clone.get_all_listings_in_worlds_with_retainers(&worlds, ItemId(item_id)),
+        async move {
+            let paginator = db.get_sale_history_with_characters(world_iter, item_id, 25);
+            paginator.fetch().await
+        },
+    )
+    .await;
     let listings = listings?;
     let sale_history = sale_history?;
     let item = xiv_gen_db::decompress_data()
@@ -200,7 +202,7 @@ async fn alerts(discord_user: AuthDiscordUser) -> Result<RenderPage<AlertsPage>,
 #[serde(rename_all = "camelCase")]
 enum AnalyzerSort {
     Profit,
-    Margin
+    Margin,
 }
 
 #[derive(Deserialize)]
@@ -215,7 +217,7 @@ async fn analyze_profits(
     world: HomeWorld,
     user: Option<AuthDiscordUser>,
     Query(options): Query<AnalyzerOptions>,
-    State(ultros_db): State<UltrosDb>
+    State(ultros_db): State<UltrosDb>,
 ) -> Result<RenderPage<AnalyzerPage>, WebError> {
     // this doesn't change often, could easily cache.
     let world = world_cache.lookup_selector(&AnySelector::World(world.home_world))?;
@@ -245,18 +247,18 @@ async fn analyze_profits(
                     .cmp(&a.profit)
                     .then_with(|| a.cheapest.cmp(&b.cheapest))
             });
-        },
+        }
         AnalyzerSort::Margin => {
             analyzer_results.sort_by(|a, b| {
                 b.margin
                     .partial_cmp(&a.margin)
                     .unwrap_or_else(|| a.cheapest.cmp(&b.cheapest))
             });
-        },
+        }
     }
     let page_count = analyzer_results.len();
     let page = options.page.unwrap_or(1);
-    
+
     Ok(RenderPage(AnalyzerPage {
         user,
         analyzer_results,

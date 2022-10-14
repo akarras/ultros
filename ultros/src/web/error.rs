@@ -37,7 +37,7 @@ pub enum WebError {
     #[error("{0}")]
     WorldSelectError(#[from] WorldCacheError),
     #[error("Db Error {0}")]
-    DbError(#[from] SeaDbErr)
+    DbError(#[from] SeaDbErr),
 }
 
 impl WebError {
