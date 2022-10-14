@@ -8,9 +8,10 @@ use crate::{
     UltrosDb,
 };
 use anyhow::Result;
-use migration::{sea_orm::{
-    ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter, Set,
-}, Value};
+use migration::{
+    sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter, Set},
+    Value,
+};
 use sea_orm::{Paginator, PaginatorTrait, QueryOrder};
 use tracing::instrument;
 use universalis::{websocket::event_types::SaleView, ItemId, WorldId};
@@ -146,7 +147,10 @@ impl UltrosDb {
         world_ids: impl Iterator<Item = i32>,
         item_id: i32,
         page_size: usize,
-    ) -> Paginator<sea_orm::DatabaseConnection, sea_orm::SelectTwoModel<sale_history::Model, unknown_final_fantasy_character::Model>> {
+    ) -> Paginator<
+        sea_orm::DatabaseConnection,
+        sea_orm::SelectTwoModel<sale_history::Model, unknown_final_fantasy_character::Model>,
+    > {
         let paginator = sale_history::Entity::find()
             .filter(sale_history::Column::WorldId.is_in(world_ids.map(|w| Value::Int(Some(w)))))
             .filter(sale_history::Column::SoldItemId.eq(item_id))

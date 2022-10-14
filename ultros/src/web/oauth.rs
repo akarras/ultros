@@ -147,12 +147,18 @@ pub struct RedirectParameters {
 }
 
 pub async fn redirect(
-    cookies: PrivateCookieJar,
+    mut cookies: PrivateCookieJar,
     State(config): State<DiscordAuthConfig>,
     Query(RedirectParameters { code, state }): Query<RedirectParameters>,
 ) -> Result<(PrivateCookieJar, Redirect), (StatusCode, RenderPage<ErrorPage>)> {
     let code = AuthorizationCode::new(code);
     let _state = CsrfToken::new(state);
+    if let Some(pkce_challenge) = cookies.get("pkce_challenge") {
+        cookies = cookies.remove(pkce_challenge);
+    }
+    if let Some(pkce_verifier) = cookies.get("pkce_verifier") {
+        cookies = cookies.remove(pkce_verifier);
+    }
     let token = config
         .inner
         .client
@@ -169,8 +175,8 @@ pub async fn redirect(
     // store the token into a cookie
     let mut cookie = Cookie::new("discord_auth", token);
     cookie.make_permanent();
-    let cookie_jar = cookies.add(cookie);
-    Ok((cookie_jar, Redirect::to("/")))
+    cookies = cookies.add(cookie);
+    Ok((cookies, Redirect::to("/")))
 }
 
 pub async fn logout(

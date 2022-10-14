@@ -13,7 +13,8 @@ use axum::http::{HeaderValue, Response, StatusCode};
 use axum::response::{IntoResponse, Redirect};
 use axum::routing::get;
 use axum::{body, Router};
-use axum_extra::extract::cookie::Key;
+use axum_extra::extract::cookie::{Cookie, Key, SameSite};
+use axum_extra::extract::CookieJar;
 use futures::future::join;
 use opentelemetry_prometheus::PrometheusExporter;
 use reqwest::header;
@@ -161,7 +162,8 @@ async fn world_item_listings(
     State(world_cache): State<Arc<WorldCache>>,
     Path((world, item_id)): Path<(String, i32)>,
     user: Option<AuthDiscordUser>,
-) -> Result<RenderPage<ListingsPage>, WebError> {
+    cookie_jar: CookieJar,
+) -> Result<(CookieJar, RenderPage<ListingsPage>), WebError> {
     let selected_value = world_cache.lookup_value_by_name(&world)?;
     let worlds = world_cache
         .get_all_worlds_in(&selected_value)
@@ -191,7 +193,13 @@ async fn world_item_listings(
         world_cache,
         sale_history,
     };
-    Ok(RenderPage(page))
+    let cookie = Cookie::build("last_listing_view", world)
+        .permanent()
+        .path("/")
+        .same_site(SameSite::Lax)
+        .finish();
+    let cookie_jar = cookie_jar.add(cookie);
+    Ok((cookie_jar, RenderPage(page)))
 }
 
 async fn alerts(discord_user: AuthDiscordUser) -> Result<RenderPage<AlertsPage>, WebError> {

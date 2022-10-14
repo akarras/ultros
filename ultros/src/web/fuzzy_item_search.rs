@@ -1,13 +1,21 @@
-use axum::{extract::Path, response::Html};
+use std::sync::Arc;
+
+use axum::{
+    extract::{Path, State},
+    response::Html,
+};
+use axum_extra::extract::CookieJar;
 use maud::{html, Render};
 use reqwest::StatusCode;
 
-use crate::utils;
+use crate::{utils, world_cache::WorldCache};
 
-use super::item_search_index::do_query;
+use super::{home_world_cookie::HomeWorld, item_search_index::do_query};
 
 pub(crate) async fn search_items(
     Path(search_str): Path<String>,
+    world: Option<HomeWorld>,
+    cookie_jar: CookieJar,
 ) -> Result<Html<String>, (StatusCode, String)> {
     let matches = do_query(&search_str).map_err(|e| {
         (
@@ -16,13 +24,16 @@ pub(crate) async fn search_items(
         )
     })?;
     let categories = &xiv_gen_db::decompress_data().item_ui_categorys;
-
+    let world = cookie_jar
+        .get("last_listing_view")
+        .map(|c| c.value())
+        .unwrap_or("North-America");
     Ok(Html(html!{
       div {
         @for (item_id, item) in matches {
           div class="search-result" {
             // todo this should be the logged in user's world if we can get it.
-            a href= {"/listings/Sargatanas/"(item_id)} {
+            a href= {"/listings/"(world)"/"(item_id)} {
               img src=((utils::get_item_icon_url(item_id)));
               div class="search-result-details" {
                 span class="item-name" {

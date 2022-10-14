@@ -1,6 +1,7 @@
 function do_search(query) {
   // todo debounce this
   var xhttp = new XMLHttpRequest();
+  xhttp.withCredentials = true;
   xhttp.onload = function() {
 
     document.getElementById("search-results").innerHTML = xhttp.responseText;
