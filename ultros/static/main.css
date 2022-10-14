@@ -23,6 +23,7 @@ body {
   color: #fff;
   font-family: Jaldi;
   opacity: 1;
+  margin: 0px;
   
   animation-iteration-count: 1;
   background-position: 0px;
@@ -49,7 +50,7 @@ body {
   position: fixed;
   width: 100%;
   height: 100%;
-  margin: -20px -8px;
+  margin: -20px 0px;
   z-index: -10000;
   overflow: hidden;
 }
@@ -128,6 +129,7 @@ body {
   margin-left: 10%;
   text-shadow: 15px 17px 22px #000;
   font-size: 10vh;
+  margin-bottom: 100vh;
 }
 
 
@@ -295,6 +297,7 @@ body {
   min-height: 90vh;
   animation: fadeInAnimation ease-out .25s;
   opacity: 1;
+  margin: 15px 5px 0px 15px;
 }
 
 .flex-wrap {
@@ -393,4 +396,10 @@ tr:nth-child(odd) {
 /* Handle on hover */
 ::-webkit-scrollbar-thumb:hover {
   background: #846D8F; 
+}
+
+footer {
+  background-color: #000;
+  width: 100vw;
+  
 }

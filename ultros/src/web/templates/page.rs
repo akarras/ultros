@@ -1,3 +1,5 @@
+use crate::web::templates::components::footer::Footer;
+
 use super::head::HtmlHead;
 use axum::response::{Html, IntoResponse};
 use lazy_static::__Deref;
@@ -39,6 +41,7 @@ where
           (header)
           body {
             (self.0.draw_body())
+            ((Footer{}))
           }
         }
     }
