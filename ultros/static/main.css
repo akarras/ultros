@@ -326,6 +326,10 @@ body {
   justify-content: space-between;
 }
 
+.flex-end {
+  justify-content: end;
+}
+
 .flex-start-align {
   align-items:flex-start;
 }

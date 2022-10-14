@@ -32,7 +32,7 @@ impl Page for AnalyzerPage {
             div class="main-content" {
               div class="content-well" {
                 span class="content-title" {
-                  "profit results for world " ((self.world.name))
+                  "resale analysis for " ((self.world.name)) " traveling within " ((self.region.name))
                 }
                 table {
                   tr{

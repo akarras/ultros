@@ -7,7 +7,7 @@ pub(crate) type EventBus<T> = tokio::sync::broadcast::Receiver<EventType<Arc<T>>
 pub(crate) type EventProducer<T> = tokio::sync::broadcast::Sender<EventType<Arc<T>>>;
 
 #[derive(Clone, Debug)]
-pub(crate) enum EventType<T> {
+pub enum EventType<T> {
     Remove(T),
     Add(T),
     Update(T),
@@ -37,6 +37,7 @@ pub(crate) fn create_event_busses() -> (EventSenders, EventReceivers) {
     )
 }
 
+#[derive(Clone)]
 pub(crate) struct EventSenders {
     pub(crate) retainers: EventProducer<retainer::Model>,
     pub(crate) listings: EventProducer<Vec<active_listing::Model>>,

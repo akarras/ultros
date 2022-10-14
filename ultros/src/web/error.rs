@@ -1,4 +1,4 @@
-use std::num::ParseIntError;
+use std::{num::ParseIntError, sync::Arc};
 
 use axum::response::{IntoResponse, Redirect, Response};
 use oauth2::{
@@ -6,9 +6,10 @@ use oauth2::{
 };
 use reqwest::StatusCode;
 use thiserror::Error;
+use tokio::sync::broadcast::error::SendError;
 use ultros_db::SeaDbErr;
 
-use crate::world_cache::WorldCacheError;
+use crate::{world_cache::WorldCacheError, event};
 
 #[derive(Debug, Error)]
 pub enum WebError {
@@ -38,6 +39,10 @@ pub enum WebError {
     WorldSelectError(#[from] WorldCacheError),
     #[error("Db Error {0}")]
     DbError(#[from] SeaDbErr),
+    #[error("Error communicaing with universalis {0}")]
+    UniversalisError(#[from] universalis::Error),
+    #[error("Error sending listing update {0}")]
+    ListingSendError(#[from] SendError<event::EventType<Arc<Vec<ultros_db::entity::active_listing::Model>>>>)
 }
 
 impl WebError {

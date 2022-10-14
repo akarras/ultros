@@ -13,7 +13,7 @@ tracing = "0.1.36"
 tracing-subscriber = "0.3"
 futures = "0.3.24"
 anyhow = "1.0.64"
-axum = {version = "0.6.0-rc.1", features = ["ws"]}
+axum = {version = "0.6.0-rc.1", features = ["ws", "headers"]}
 axum-extra = {version = "0.4.0-rc.1", features = ["cookie", "cookie-private"]}
 xiv-gen-db = {path = "../xiv-gen-db"}
 poise = {version = "0.3"}

@@ -76,14 +76,22 @@ impl Page for ListingsPage {
               }
               div class="content-nav nav" {
                 @if let Some((region, datacenters)) = region {
-                  div class="flex-column" {
-                    @if region.name == self.selected_world {
-                      a  class="btn-secondary active" {
-                        ((region.name))
+                  div class="flex-column flex-end" {
+                    div class="flex-row" {
+                      @if region.name == self.selected_world {
+                        a class="btn-secondary active" {
+                          ((region.name))
+                        }
+                      } @else {
+                        a class="btn-secondary" href={"/listings/" ((region.name)) "/" ((self.item_id))} {
+                          ((region.name))
+                        }
                       }
-                    } @else {
-                      a class="btn-secondary" href={"/listings/" ((region.name)) "/" ((self.item_id))} {
-                        ((region.name))
+                      a class="btn-secondary" title="view on universalis" href={"https://universalis.app/market/" ((self.item_id))} {
+                        "Universalis"
+                      }
+                      a class="btn-secondary" title="manually recheck universalis for updated data. usually unnecessary" href={"/listings/refresh/" ((self.selected_world)) "/" (self.item_id)} {
+                        "Manual Refresh"
                       }
                     }
                     @for (datacenter, worlds) in datacenters {

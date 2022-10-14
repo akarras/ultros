@@ -9,22 +9,25 @@ mod templates;
 use anyhow::Error;
 use axum::body::{Empty, Full};
 use axum::extract::{FromRef, Path, Query, State};
+use axum::headers::{Referer, Header};
 use axum::http::{HeaderValue, Response, StatusCode};
 use axum::response::{IntoResponse, Redirect};
 use axum::routing::get;
-use axum::{body, Router};
+use axum::{body, Router, TypedHeader};
 use axum_extra::extract::cookie::{Cookie, Key, SameSite};
 use axum_extra::extract::CookieJar;
 use futures::future::join;
 use opentelemetry_prometheus::PrometheusExporter;
 use reqwest::header;
 use serde::Deserialize;
+use tracing::log::info;
+use std::collections::HashMap;
 use std::io::Read;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use ultros_db::UltrosDb;
-use universalis::ItemId;
+use universalis::{ItemId, UniversalisClient, WorldId};
 
 use self::error::WebError;
 use self::home_world_cookie::HomeWorld;
@@ -42,7 +45,7 @@ use self::templates::{
     },
 };
 use crate::analyzer_service::AnalyzerService;
-use crate::event::EventReceivers;
+use crate::event::{EventReceivers, EventSenders, EventType};
 use crate::metrics::metrics;
 use crate::web::alerts_websocket::connect_websocket;
 use crate::web::oauth::{begin_login, logout};
@@ -202,6 +205,32 @@ async fn world_item_listings(
     Ok((cookie_jar, RenderPage(page)))
 }
 
+async fn refresh_world_item_listings(State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>, 
+    Path((world, item_id)): Path<(String, i32)>) -> Result<Redirect, WebError> {
+    let client = UniversalisClient::new();
+    let current_data = client.marketboard_current_data(&world, &[item_id]).await?;
+    // we can potentially get listings from multiple worlds from this call so we should group listings by world
+
+    let listings = match current_data {
+        universalis::MarketView::SingleView(v) => {
+            v.listings
+        },
+        universalis::MarketView::MultiView(_) => { return Err(anyhow::Error::msg("multiple listings returned?").into()) },
+    };
+    let listings : HashMap<u8, Vec<_>> = listings.into_iter().flat_map(|l| l.world_id.map(|w| (w, l))).fold(HashMap::new(), |mut m, (w, l)| {
+        m.entry(w).or_default().push(l);
+        m
+    });
+
+    for (world_id, listings) in listings {
+        let (added, removed) = db.update_listings(listings, ItemId(item_id), WorldId(world_id as i32)).await?;
+        senders.listings.send(EventType::Add(Arc::new(added)))?;
+        senders.listings.send(EventType::Remove(Arc::new(removed)))?;
+    }
+    Ok(Redirect::to(&format!("/listings/{world}/{item_id}")))
+}
+
 async fn alerts(discord_user: AuthDiscordUser) -> Result<RenderPage<AlertsPage>, WebError> {
     Ok(RenderPage(AlertsPage { discord_user }))
 }
@@ -225,7 +254,6 @@ async fn analyze_profits(
     world: HomeWorld,
     user: Option<AuthDiscordUser>,
     Query(options): Query<AnalyzerOptions>,
-    State(ultros_db): State<UltrosDb>,
 ) -> Result<RenderPage<AnalyzerPage>, WebError> {
     // this doesn't change often, could easily cache.
     let world = world_cache.lookup_selector(&AnySelector::World(world.home_world))?;
@@ -282,6 +310,7 @@ pub(crate) struct WebState {
     pub(crate) oauth_config: DiscordAuthConfig,
     pub(crate) user_cache: AuthUserCache,
     pub(crate) event_receivers: EventReceivers,
+    pub(crate) event_senders: EventSenders,
     pub(crate) world_cache: Arc<WorldCache>,
     pub(crate) analyzer_service: AnalyzerService,
     pub(crate) analytics_exporter: Arc<PrometheusExporter>,
@@ -332,6 +361,12 @@ impl FromRef<WebState> for AnalyzerService {
 impl FromRef<WebState> for Arc<PrometheusExporter> {
     fn from_ref(input: &WebState) -> Self {
         input.analytics_exporter.clone()
+    }
+}
+
+impl FromRef<WebState> for EventSenders {
+    fn from_ref(input: &WebState) -> Self {
+        input.event_senders.clone()
     }
 }
 
@@ -388,6 +423,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/alerts", get(alerts))
         .route("/alerts/websocket", get(connect_websocket))
         .route("/listings/:world/:itemid", get(world_item_listings))
+        .route("/listings/refresh/:worldid/:itemid", get(refresh_world_item_listings))
         .route("/retainers/listings/:id", get(get_retainer_listings))
         .route("/retainers/undercuts", get(user_retainers_undercuts))
         .route("/retainers/listings", get(user_retainers_listings))
