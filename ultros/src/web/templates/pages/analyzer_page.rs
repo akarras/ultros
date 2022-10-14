@@ -55,10 +55,10 @@ impl Page for AnalyzerPage {
                       "="
                     }
                     th {
-                      a href="?sort=profit" { "profit" }
+                      a title="sort thsi table by profit" href="?sort=profit" { "profit" }
                     }
                     th {
-                      a href="?sort=margin" { "margin" }
+                      a title="sort this table by margin" href="?sort=margin" { "margin" }
                     }
                     th {
                       "world"
