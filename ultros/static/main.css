@@ -5,12 +5,12 @@
 
 a {
   color: #3B2B9E;
-  transition: .25s;
+  transition: color .25s;
 }
 
 a:hover {
   color: #fff;
-  transition: .25s;
+  transition: color .25s;
 }
 
 body {
@@ -48,15 +48,15 @@ body {
 }
 
 .gradient-outer {
-  position: fixed;
+  position: absolute;
   width: 100%;
-  height: 100%;
+  height: 110vh;
   margin: -20px 0px;
   z-index: -10000;
   overflow: hidden;
 }
 .gradient {
-  background: linear-gradient(black, transparent);
+  background: linear-gradient(black 10%, transparent 50%);
   position: relative;
   width: 100%;
   height: 100%;
@@ -64,16 +64,16 @@ body {
   top: 0px;
   opacity: 1.0;
   z-index: -10000;
-  animation: fadeGradient ease-out 1.5s;
+  animation: fadeGradient ease-out .25s;
 }
 
 @keyframes fadeGradient {
   0% {
-    height: 200%;
+    height: 1000vh;
     opacity: 1;
   }
   100% {
-    height: 100%;
+    height: 110vh;
   }
 }
 .header {
@@ -93,11 +93,13 @@ body {
   padding-right: 20px;
   text-decoration: none;
   transition: 0.3s;
+  transition-property: background-color;
 }
 
 .btn:hover {
   background-color: #3A2B7E;
-  
+  transition: 0.3s;
+  transition-property: background-color, box-shadow;
   box-shadow: inset 0px 0px 0px 2px #3B2B9E;
 }
 
@@ -261,6 +263,8 @@ body {
 }
 
 .container {
+  margin-left: 10px;
+  margin-right: 10px;
   margin-bottom: -10px;
   min-height: 84vh;
 }
@@ -285,7 +289,7 @@ body {
 
 .btn-secondary:hover {
   background-color: #3A2B7E;
-  transition: background-color 1s;
+  transition: background-color .5s;
 }
 
 .btn-secondary.active {
@@ -294,13 +298,13 @@ body {
 
 .main-content {
   background-color: #100A12ED;
+  backdrop-filter: blur(5px);
   padding: 2em;
-  border-top-left-radius: 35px;
-  border-top-right-radius: 35px;
+  border-top-left-radius: 25px;
+  border-top-right-radius: 25px;
   min-height: 90vh;
   animation: fadeInAnimation ease-out .25s;
   opacity: 1;
-  margin: 15px 5px 0px 15px;
 }
 
 .flex-wrap {
@@ -402,7 +406,9 @@ tr:nth-child(odd) {
 }
 
 footer {
-  background-color: #000;
+  padding-top: 45px;
+  margin-top: -45px;
+  background: linear-gradient(transparent, black 45px);
   width: 100vw;
-  
+  text-align: center;
 }
