@@ -8,13 +8,16 @@ use crate::{
     UltrosDb,
 };
 use anyhow::Result;
+use chrono::NaiveDateTime;
+use futures::Stream;
 use migration::{
     sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter, Set},
-    Value,
+    Value, Query, DbErr,
 };
-use sea_orm::{Paginator, PaginatorTrait, QueryOrder};
+use sea_orm::{Paginator, PaginatorTrait, QueryOrder, DbBackend, Statement, FromQueryResult};
 use tracing::instrument;
 use universalis::{websocket::event_types::SaleView, ItemId, WorldId};
+
 
 impl UltrosDb {
     /// Stores a sale from a given sale view.
@@ -159,4 +162,24 @@ impl UltrosDb {
             .paginate(&self.db, page_size);
         paginator
     }
+
+    pub async fn stream_last_n_sales_by_world(&self, world_id: i32, n_sales: i32) -> Result<impl Stream<Item = Result<AbbreviatedSaleData, DbErr>> + '_, anyhow::Error> {
+        Ok(AbbreviatedSaleData::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"SELECT h.item_id, h.hq, h.price_per_item, h.sold_date,
+                RANK() OVER (PARTITION BY h.item_id, h.hq ORDER BY h.sold_date ASC) sale_rank
+                FROM sale_history h
+                WHERE sale_rank > $2
+                AND world_id = $1;"#,
+            vec![world_id.into(), n_sales.into()],
+        )).stream(&self.db).await?)
+    }
+}
+
+#[derive(Debug, FromQueryResult)]
+pub struct AbbreviatedSaleData {
+    pub item_id: i32,
+    pub hq: bool,
+    pub price_per_item: i32,
+    pub sold_date: NaiveDateTime,
 }

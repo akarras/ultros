@@ -43,10 +43,37 @@ impl From<&sale_history::Model> for ItemKey {
     }
 }
 
+impl From<&ultros_db::sales::AbbreviatedSaleData> for ItemKey {
+    fn from(sale_data: &ultros_db::sales::AbbreviatedSaleData) -> Self {
+        Self {
+            item_id: sale_data.item_id,
+            hq: sale_data.hq,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, PartialOrd, Eq, Ord, Clone, Copy)]
 struct SaleSummary {
     sale_date: NaiveDateTime,
     price_per_item: i32,
+}
+
+impl From<&ultros_db::sales::AbbreviatedSaleData> for SaleSummary {
+    fn from(sale: &ultros_db::sales::AbbreviatedSaleData) -> Self {
+        Self {
+            sale_date: sale.sold_date,
+            price_per_item: sale.price_per_item,
+        }
+    }
+}
+
+impl From<&ultros_db::entity::sale_history::Model> for SaleSummary {
+    fn from(sale: &ultros_db::entity::sale_history::Model) -> Self {
+        Self {
+            sale_date: sale.sold_date,
+            price_per_item: sale.price_per_item,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -55,13 +82,11 @@ struct SaleHistory {
 }
 
 impl SaleHistory {
-    pub(crate) fn add_sale(&mut self, sale: &ultros_db::entity::sale_history::Model) {
+    pub(crate) fn add_sale<'a, T>(&mut self, sale: &'a T)
+    where &'a T: Into<SaleSummary> + Into<ItemKey> {
         let entries = self.item_map.entry(sale.into()).or_insert(Vec::with_capacity(4));
         
-        entries.push(SaleSummary {
-            sale_date: sale.sold_date,
-            price_per_item: sale.price_per_item,
-        });
+        entries.push(sale.into());
         entries.sort();
         entries.truncate(3);
     }
@@ -177,7 +202,7 @@ impl AnalyzerService {
                 for world in &worlds {
                     let history = writer.entry(*world).or_default();
                     if let Ok(mut history_stream) =
-                        ultros_db.stream_sales_within_days(10, *world).await
+                        ultros_db.stream_last_n_sales_by_world(*world, 4).await
                     {
                         while let Ok(Some(sale)) = history_stream.try_next().await {
                             history.add_sale(&sale);
