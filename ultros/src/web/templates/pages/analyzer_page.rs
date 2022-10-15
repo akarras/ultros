@@ -55,10 +55,10 @@ impl Page for AnalyzerPage {
                       "="
                     }
                     th {
-                      a title="sort thsi table by profit" href="?sort=profit" { "profit" }
+                      a title="sort this table by profit" href="?sort=profit" { "profit" }
                     }
                     th {
-                      a title="sort this table by margin" href="?sort=margin" { "margin" }
+                      a title="sort this table by return on investment" href="?sort=margin" { "roi" }
                     }
                     th {
                       "world"
@@ -96,7 +96,7 @@ impl Page for AnalyzerPage {
                         ((Gil(result.profit)))
                       }
                       td {
-                        ((format!("{:.1}%", (result.profit + result.cheapest) as f32 / result.cheapest as f32 * 100.0)))
+                        ((format!("{:.1}%", result.return_on_investment)))
                       }
                       td {
                         "n/a"

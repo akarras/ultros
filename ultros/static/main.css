@@ -447,3 +447,8 @@ footer {
   content: '🪙';
   padding-right: 3px;
 }
+
+th {
+  word-wrap: normal;
+  height: 46px;
+}

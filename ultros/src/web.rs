@@ -286,8 +286,8 @@ async fn analyze_profits(
         }
         AnalyzerSort::Margin => {
             analyzer_results.sort_by(|a, b| {
-                b.margin
-                    .partial_cmp(&a.margin)
+                b.return_on_investment
+                    .partial_cmp(&a.return_on_investment)
                     .unwrap_or_else(|| a.cheapest.cmp(&b.cheapest))
             });
         }

@@ -273,7 +273,7 @@ impl AnalyzerService {
                     cheapest: *cheapest_price,
                     item_id: item_key.item_id,
                     hq: item_key.hq,
-                    margin: (*history as f32) / (*cheapest_price as f32),
+                    return_on_investment: ((*history as f32) / (*cheapest_price as f32) * 100.0) - 100.0,
                 })
             })
             .collect();
@@ -320,6 +320,6 @@ pub(crate) struct ResaleStats {
     pub(crate) profit: i32,
     pub(crate) cheapest: i32,
     pub(crate) item_id: i32,
-    pub(crate) margin: f32,
+    pub(crate) return_on_investment: f32,
     pub(crate) hq: bool,
 }
