@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, HashMap},
     sync::Arc,
 };
 
@@ -16,6 +16,7 @@ use crate::{
     event::EventReceivers,
     world_cache::{AnyResult, AnySelector, WorldCache},
 };
+use tracing::log::error;
 use tokio::sync::RwLock;
 
 #[derive(Hash, Eq, PartialEq, PartialOrd, Ord, Debug, Copy, Clone)]
@@ -46,8 +47,17 @@ impl From<&sale_history::Model> for ItemKey {
 impl From<&ultros_db::sales::AbbreviatedSaleData> for ItemKey {
     fn from(sale_data: &ultros_db::sales::AbbreviatedSaleData) -> Self {
         Self {
-            item_id: sale_data.item_id,
+            item_id: sale_data.sold_item_id,
             hq: sale_data.hq,
+        }
+    }
+}
+
+impl From<&ultros_db::listings::ListingSummary> for ItemKey {
+    fn from(sum: &ultros_db::listings::ListingSummary) -> Self {
+        Self {
+            item_id: sum.item_id,
+            hq: sum.hq,
         }
     }
 }
@@ -98,17 +108,33 @@ struct CheapestListingValue {
     world_id: i32
 }
 
+impl From<&ultros_db::entity::active_listing::Model> for CheapestListingValue {
+    fn from(from: &ultros_db::entity::active_listing::Model) -> Self {
+        Self {
+            price: from.price_per_unit,
+            world_id: from.world_id,
+        }
+    }
+}
+
+impl From<&ultros_db::listings::ListingSummary> for CheapestListingValue {
+    fn from(from: &ultros_db::listings::ListingSummary) -> Self {
+        Self {
+            price: from.price_per_unit,
+            world_id: from.world_id,
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 struct CheapestListings {
     item_map: HashMap<ItemKey, CheapestListingValue>,
 }
 
 impl CheapestListings {
-    fn add_listing(&mut self, listing: &active_listing::Model) {
-        let cheapest_listing = CheapestListingValue {
-            price: listing.price_per_unit,
-            world_id: listing.world_id,
-        };
+    fn add_listing<'a, T>(&mut self, listing: &'a T)
+    where &'a T: Into<CheapestListingValue> + Into<ItemKey> {
+        let cheapest_listing = listing.into();
         let entry = self.item_map.entry(listing.into()).or_insert(cheapest_listing);
         *entry = (*entry).min(cheapest_listing);
     }
@@ -191,23 +217,31 @@ impl AnalyzerService {
                     // lets keep a lock on our local service for the duration that we have a stream to the database
                     let mut writer = self.cheapest_items.write().await;
                     let world_listings = writer.entry(region.id).or_default();
-                    if let Ok(mut listings) = ultros_db.get_all_listings_for_world(*world).await {
-                        while let Ok(Some(listing)) = listings.try_next().await {
-                            world_listings.add_listing(&listing);
-                        }
+                    let mut listings = ultros_db.stream_cheapest_listings_on_world(*world).await.expect("failed to stream listings");
+                    let mut stream_result = listings.try_next().await;
+                    while let Ok(Some(listing)) = stream_result {
+                        world_listings.add_listing(&listing);
+                        stream_result = listings.try_next().await;
+                    }
+                    if let Err(e) = stream_result {
+                        error!("Streaming item listings failed {e:?}");
                     }
                 }
                 // now prime sale history
                 let mut writer = self.recent_sale_history.write().await;
                 for world in &worlds {
                     let history = writer.entry(*world).or_default();
-                    if let Ok(mut history_stream) =
-                        ultros_db.stream_last_n_sales_by_world(*world, 4).await
-                    {
-                        while let Ok(Some(sale)) = history_stream.try_next().await {
-                            history.add_sale(&sale);
-                        }
+                    let mut history_stream =
+                        ultros_db.stream_last_n_sales_by_world(*world, 4).await.expect("Failed to stream history");
+                    let mut stream_result = history_stream.try_next().await;
+                    while let Ok(Some(sale)) = stream_result  {
+                        history.add_sale(&sale);
+                        stream_result = history_stream.try_next().await;
                     }
+                    if let Err(e) = stream_result {
+                        error!("Streaming sale history failed {e:?}");
+                    }
+                    
                 }
             }
         }

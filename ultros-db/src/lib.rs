@@ -2,7 +2,7 @@ mod alerts;
 mod discord;
 pub mod entity;
 mod ffxiv_character;
-mod listings;
+pub mod listings;
 mod listings_stats;
 pub(crate) mod partial_diff_iterator;
 pub mod price_optimizer;

@@ -166,11 +166,13 @@ impl UltrosDb {
     pub async fn stream_last_n_sales_by_world(&self, world_id: i32, n_sales: i32) -> Result<impl Stream<Item = Result<AbbreviatedSaleData, DbErr>> + '_, anyhow::Error> {
         Ok(AbbreviatedSaleData::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            r#"SELECT h.item_id, h.hq, h.price_per_item, h.sold_date,
-                RANK() OVER (PARTITION BY h.item_id, h.hq ORDER BY h.sold_date ASC) sale_rank
+            r#"SELECT filter.* FROM (SELECT h.sold_item_id, h.hq, h.price_per_item, h.sold_date,
+                RANK() OVER (PARTITION BY h.sold_item_id, h.hq ORDER BY h.sold_date ASC) sale_rank
                 FROM sale_history h
-                WHERE sale_rank > $2
-                AND world_id = $1;"#,
+                WHERE
+                h.world_id = $1) filter
+                WHERE filter.sale_rank > $2
+                "#,
             vec![world_id.into(), n_sales.into()],
         )).stream(&self.db).await?)
     }
@@ -178,7 +180,7 @@ impl UltrosDb {
 
 #[derive(Debug, FromQueryResult)]
 pub struct AbbreviatedSaleData {
-    pub item_id: i32,
+    pub sold_item_id: i32,
     pub hq: bool,
     pub price_per_item: i32,
     pub sold_date: NaiveDateTime,
