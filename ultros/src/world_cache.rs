@@ -100,7 +100,7 @@ fn yoke(raw_data: Box<RawData>) -> Yoke<VirtualData<'static>, Box<RawData>> {
 
 impl<'a> VirtualData<'a> {
     fn new(raw_data: &'a RawData) -> Self {
-        Self {
+        let mut temp = Self {
             all: raw_data
                 .regions
                 .values()
@@ -125,7 +125,15 @@ impl<'a> VirtualData<'a> {
                     )
                 })
                 .collect(),
+        };
+        temp.all.sort_by_key(|a| &a.0.name);
+        for (_, datacenters) in &mut temp.all {
+            datacenters.sort_by_key(|(d, _)| &d.name);
+            for (_, worlds) in datacenters {
+                worlds.sort_by_key(|w| &w.name);
+            } 
         }
+        temp
     }
 }
 

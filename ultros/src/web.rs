@@ -165,6 +165,7 @@ async fn world_item_listings(
     State(world_cache): State<Arc<WorldCache>>,
     Path((world, item_id)): Path<(String, i32)>,
     user: Option<AuthDiscordUser>,
+    home_world: Option<HomeWorld>,
     cookie_jar: CookieJar,
 ) -> Result<(CookieJar, RenderPage<ListingsPage>), WebError> {
     let selected_value = world_cache.lookup_value_by_name(&world)?;
@@ -195,6 +196,7 @@ async fn world_item_listings(
         user,
         world_cache,
         sale_history,
+        home_world,
     };
     let cookie = Cookie::build("last_listing_view", world)
         .permanent()

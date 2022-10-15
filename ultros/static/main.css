@@ -452,3 +452,11 @@ th {
   word-wrap: normal;
   height: 46px;
 }
+
+.homeworld {
+  background-color: #3A2B7E;
+}
+
+.homeworld::before {
+  content: '🏠';
+}

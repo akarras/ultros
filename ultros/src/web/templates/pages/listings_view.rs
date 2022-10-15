@@ -9,7 +9,7 @@ use xiv_gen::ItemId;
 use crate::{
     web::{
         oauth::AuthDiscordUser,
-        templates::{components::{header::Header, gil::Gil}, page::Page},
+        templates::{components::{header::Header, gil::Gil}, page::Page}, home_world_cookie::HomeWorld,
     },
     world_cache::{AnySelector, WorldCache},
 };
@@ -21,6 +21,7 @@ pub(crate) struct ListingsPage {
         Option<unknown_final_fantasy_character::Model>,
     )>,
     pub(crate) selected_world: String,
+    pub(crate) home_world: Option<HomeWorld>,
     pub(crate) item_id: i32,
     pub(crate) item: &'static xiv_gen::Item,
     pub(crate) user: Option<AuthDiscordUser>,
@@ -106,14 +107,18 @@ impl Page for ListingsPage {
                           }
                         }
                         @for world in worlds {
-                          @if world.name == self.selected_world {
-                            a class="btn-secondary active" {
-                              ((world.name))
+                          a class={
+                            "btn-secondary"
+                            @if world.name == self.selected_world {
+                              " active"
                             }
-                          } @else {
-                            a class="btn-secondary" href={"/listings/" ((world.name)) "/" ((self.item_id))} {
-                              ((world.name))
+                            @if let Some(home_world) = &self.home_world {
+                              @if world.id == home_world.home_world {
+                                " homeworld"
+                              }
                             }
+                            } href={"/listings/" ((world.name)) "/" ((self.item_id))} {
+                            ((world.name))
                           }
                         }
                       }
