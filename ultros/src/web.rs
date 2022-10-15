@@ -407,8 +407,7 @@ fn get_static_file(path: &str) -> Option<Vec<u8>> {
     Some(vec)
 }
 
-async fn static_favicon() -> impl IntoResponse {
-    let path = "favicon.ico";
+async fn get_file(path: &str) -> impl IntoResponse {
     let mime_type = mime_guess::from_path(path).first_or_text_plain();
     match get_static_file(&path) {
         None => Response::builder()
@@ -433,30 +432,17 @@ async fn static_favicon() -> impl IntoResponse {
     }
 }
 
+async fn favicon() -> impl IntoResponse {
+    get_file("favicon.ico").await
+}
+
+async fn robots() -> impl IntoResponse {
+    get_file("robots.txt").await
+}
+
 async fn static_path(Path(path): Path<String>) -> impl IntoResponse {
     let path = path.trim_start_matches('/');
-    let mime_type = mime_guess::from_path(path).first_or_text_plain();
-    match get_static_file(&path) {
-        None => Response::builder()
-            .status(StatusCode::NOT_FOUND)
-            .body(body::boxed(Empty::new()))
-            .unwrap(),
-        Some(file) => Response::builder()
-            .status(StatusCode::OK)
-            .header(
-                header::CONTENT_TYPE,
-                HeaderValue::from_str(mime_type.as_ref()).unwrap(),
-            )
-            .header(
-                header::CACHE_CONTROL,
-                #[cfg(not(debug_assertions))]
-                HeaderValue::from_str("max-age=3600").unwrap(),
-                #[cfg(debug_assertions)]
-                HeaderValue::from_str("none").unwrap(),
-            )
-            .body(body::boxed(Full::from(file)))
-            .unwrap(),
-    }
+    get_file(&path).await
 }
 
 pub(crate) async fn invite() -> Redirect {
@@ -491,7 +477,8 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/logout", get(logout))
         .route("/invitebot", get(invite))
         .route("/metrics", get(metrics))
-        .route("/favicon.ico", get(static_favicon))
+        .route("/favicon.ico", get(favicon))
+        .route("/robots.txt", get(robots))
         .fallback(fallback);
 
     // run our app with hyper
