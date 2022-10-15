@@ -18,6 +18,7 @@ impl<'a> Render for HtmlHead<'a> {
             title { (self.title) };
             link rel="stylesheet" href="/static/main.css";
             script src="/static/search.js" {};
+            link rel="manifest" href="/static/site.webmanifest" {};
           }
         }
     }
