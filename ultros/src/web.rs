@@ -26,7 +26,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use ultros_db::UltrosDb;
-use universalis::{ItemId, UniversalisClient, WorldId};
+use universalis::{ItemId, UniversalisClient, WorldId, ListingView};
 
 use self::error::WebError;
 use self::home_world_cookie::HomeWorld;
@@ -210,7 +210,10 @@ async fn refresh_world_item_listings(
     State(db): State<UltrosDb>,
     State(senders): State<EventSenders>,
     Path((world, item_id)): Path<(String, i32)>,
+    State(world_cache): State<Arc<WorldCache>>
 ) -> Result<Redirect, WebError> {
+    let lookup = world_cache.lookup_value_by_name(&world)?;
+    let all_worlds = world_cache.get_all_worlds_in(&lookup).ok_or(anyhow::Error::msg("Unable to get worlds"))?;
     let client = UniversalisClient::new();
     let current_data = client.marketboard_current_data(&world, &[item_id]).await?;
     // we can potentially get listings from multiple worlds from this call so we should group listings by world
@@ -221,15 +224,19 @@ async fn refresh_world_item_listings(
             return Err(anyhow::Error::msg("multiple listings returned?").into())
         }
     };
-    let listings: HashMap<u8, Vec<_>> = listings
+
+    // now ensure we insert all worlds into the map to account for empty worlds
+    let listings_by_world : HashMap<u8, Vec<ListingView>> = all_worlds.into_iter().map(|w| (w as u8, vec![])).collect();
+
+    let listings_by_world = listings
         .into_iter()
         .flat_map(|l| l.world_id.map(|w| (w, l)))
-        .fold(HashMap::new(), |mut m, (w, l)| {
+        .fold(listings_by_world, |mut m, (w, l)| {
             m.entry(w).or_default().push(l);
             m
         });
-
-    for (world_id, listings) in listings {
+    
+    for (world_id, listings) in listings_by_world {
         let (added, removed) = db
             .update_listings(listings, ItemId(item_id), WorldId(world_id as i32))
             .await?;
