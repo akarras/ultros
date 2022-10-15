@@ -768,6 +768,7 @@ pub(crate) enum SaleHistory {
     PricePerItem,
     BuyingCharacterId,
     SoldDate,
+    WorldId,
 }
 
 #[derive(Iden)]
