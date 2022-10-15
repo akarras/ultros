@@ -12,12 +12,11 @@ use chrono::NaiveDateTime;
 use futures::Stream;
 use migration::{
     sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter, Set},
-    Value, Query, DbErr,
+    DbErr, Query, Value,
 };
-use sea_orm::{Paginator, PaginatorTrait, QueryOrder, DbBackend, Statement, FromQueryResult};
+use sea_orm::{DbBackend, FromQueryResult, Paginator, PaginatorTrait, QueryOrder, Statement};
 use tracing::instrument;
 use universalis::{websocket::event_types::SaleView, ItemId, WorldId};
-
 
 impl UltrosDb {
     /// Stores a sale from a given sale view.
@@ -163,18 +162,26 @@ impl UltrosDb {
         paginator
     }
 
-    pub async fn stream_last_n_sales_by_world(&self, world_id: i32, n_sales: i32) -> Result<impl Stream<Item = Result<AbbreviatedSaleData, DbErr>> + '_, anyhow::Error> {
-        Ok(AbbreviatedSaleData::find_by_statement(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            r#"SELECT filter.* FROM (SELECT h.sold_item_id, h.hq, h.price_per_item, h.sold_date,
+    pub async fn stream_last_n_sales_by_world(
+        &self,
+        world_id: i32,
+        n_sales: i32,
+    ) -> Result<impl Stream<Item = Result<AbbreviatedSaleData, DbErr>> + '_, anyhow::Error> {
+        Ok(
+            AbbreviatedSaleData::find_by_statement(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                r#"SELECT filter.* FROM (SELECT h.sold_item_id, h.hq, h.price_per_item, h.sold_date,
                 RANK() OVER (PARTITION BY h.sold_item_id, h.hq ORDER BY h.sold_date ASC) sale_rank
                 FROM sale_history h
                 WHERE
                 h.world_id = $1) filter
                 WHERE filter.sale_rank > $2
                 "#,
-            vec![world_id.into(), n_sales.into()],
-        )).stream(&self.db).await?)
+                vec![world_id.into(), n_sales.into()],
+            ))
+            .stream(&self.db)
+            .await?,
+        )
     }
 }
 

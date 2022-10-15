@@ -1,7 +1,7 @@
 use anyhow::Result;
 use futures::Stream;
 use migration::{sea_orm::QuerySelect, DbErr, Value};
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, Statement, DbBackend, FromQueryResult};
+use sea_orm::{ColumnTrait, DbBackend, EntityTrait, FromQueryResult, QueryFilter, Statement};
 use std::collections::HashSet;
 use tracing::instrument;
 use universalis::{ItemId, ListingView, WorldId};
@@ -194,7 +194,10 @@ impl UltrosDb {
             .await?)
     }
 
-    pub async fn stream_cheapest_listings_on_world(&self, world_id: i32) -> Result<impl Stream<Item = Result<ListingSummary, DbErr>> + '_, anyhow::Error> {
+    pub async fn stream_cheapest_listings_on_world(
+        &self,
+        world_id: i32,
+    ) -> Result<impl Stream<Item = Result<ListingSummary, DbErr>> + '_, anyhow::Error> {
         Ok(ListingSummary::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r#"SELECT ranks.* FROM (SELECT l.item_id, l.hq, l.price_per_unit, l.world_id,
