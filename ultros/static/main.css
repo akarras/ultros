@@ -3,6 +3,16 @@
   src: url('Jaldi-Regular.ttf');
 }
 
+@font-face {
+  font-family: Jaldi-Bold;
+  src: url('Jaldi-Bold.ttf');
+}
+
+@font-face {
+  font-family: Pacifico-Regular;
+  src: url("Pacifico-Regular.ttf")
+}
+
 a {
   color: #3B2B9E;
   transition: color .25s;
@@ -132,10 +142,22 @@ body {
   margin-top: 15%;
   margin-left: 10%;
   text-shadow: 15px 17px 22px #000;
-  font-size: 10vh;
+  font-size: 76px;
   margin-bottom: 10%;
+  font-family: 'Pacifico-Regular';
 }
 
+.hero-title::before {
+  content: '';
+  position: absolute;
+  top: 0px;
+  bottom: 0px;
+  left: 0px;
+  right: 0px;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.75), transparent);
+  
+  z-index: -1;
+}
 
 .search-container {
   align-items: top;
