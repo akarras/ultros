@@ -300,7 +300,8 @@ async fn analyze_profits(
         analyzer_results,
         region: region.clone(),
         world: world.clone(),
-        options
+        options,
+        world_cache,
     }))
 }
 

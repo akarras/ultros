@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use maud::html;
 use ultros_db::entity::{region, world};
 
@@ -6,7 +8,7 @@ use crate::{
     web::{
         oauth::AuthDiscordUser,
         templates::{components::{header::Header, gil::Gil, paginate::Paginate}, page::Page}, AnalyzerOptions,
-    },
+    }, world_cache::{WorldCache, AnySelector},
 };
 use xiv_gen::ItemId;
 
@@ -15,7 +17,8 @@ pub(crate) struct AnalyzerPage {
     pub analyzer_results: Vec<ResaleStats>,
     pub world: world::Model,
     pub region: region::Model,
-    pub options: AnalyzerOptions
+    pub options: AnalyzerOptions,
+    pub world_cache: Arc<WorldCache>
 }
 
 impl Page for AnalyzerPage {
@@ -106,11 +109,18 @@ impl Page for AnalyzerPage {
                       td {
                         ((format!("{:.1}%", result.return_on_investment)))
                       }
-                      td {
-                        "n/a"
-                      }
-                      td {
-                        "n/a"
+                      @if let Ok(world) = self.world_cache.lookup_selector(&AnySelector::World(result.world_id)) {
+                        td {
+                          ((world.get_name()))
+                        }
+                        td {
+                          // this will have one dc, but I just ran a loop because lazy
+                          @if let Some(dc) = self.world_cache.get_datacenters(&world) {
+                            @for dcs in dc {
+                              ((dcs.name))
+                            }
+                          }
+                        }
                       }
                     }
                   }

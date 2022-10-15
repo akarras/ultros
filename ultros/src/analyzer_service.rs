@@ -67,15 +67,25 @@ impl SaleHistory {
     }
 }
 
+#[derive(Debug, Copy, Clone, Eq, Ord, PartialEq, PartialOrd)]
+struct CheapestListingValue {
+    price: i32,
+    world_id: i32
+}
+
 #[derive(Debug, Default)]
 struct CheapestListings {
-    item_map: HashMap<ItemKey, i32>,
+    item_map: HashMap<ItemKey, CheapestListingValue>,
 }
 
 impl CheapestListings {
     fn add_listing(&mut self, listing: &active_listing::Model) {
-        let entry = self.item_map.entry(listing.into()).or_insert(i32::MAX);
-        *entry = (*entry).min(listing.price_per_unit)
+        let cheapest_listing = CheapestListingValue {
+            price: listing.price_per_unit,
+            world_id: listing.world_id,
+        };
+        let entry = self.item_map.entry(listing.into()).or_insert(cheapest_listing);
+        *entry = (*entry).min(cheapest_listing);
     }
 
     async fn remove_listing(
@@ -86,22 +96,23 @@ impl CheapestListings {
         ultros_db: &UltrosDb,
     ) {
         // if this was the cheapest listing we need to ask the database for the new cheapest item
-        let entry = self.item_map.entry(listing.into()).or_insert(i32::MAX);
-        if *entry == listing.price_per_unit {
-            let worlds = world_cache
-                .lookup_selector(&AnySelector::Region(region_id))
-                .map(|r| world_cache.get_all_worlds_in(&r))
-                .ok()
-                .flatten()
-                .expect("Should have worlds");
-            if let Ok(listings) = ultros_db
-                .get_all_listings_in_worlds_with_retainers(&worlds, ItemId(listing.item_id))
-                .await
-            {
-                let listing_key: ItemKey = listing.into();
-                for (db_listing, _) in &listings {
-                    if listing_key == ItemKey::from(db_listing) {
-                        *entry = db_listing.price_per_unit;
+        let key = listing.into();
+        if let Some(entry) = self.item_map.remove(&key) {
+            if entry.price == listing.price_per_unit {
+                let worlds = world_cache
+                    .lookup_selector(&AnySelector::Region(region_id))
+                    .map(|r| world_cache.get_all_worlds_in(&r))
+                    .ok()
+                    .flatten()
+                    .expect("Should have worlds");
+                if let Ok(listings) = ultros_db
+                    .get_all_listings_in_worlds_with_retainers(&worlds, ItemId(listing.item_id))
+                    .await
+                {
+                    for (db_listing, _) in &listings {
+                        if key == ItemKey::from(db_listing) {
+                            self.add_listing(db_listing);
+                        }
                     }
                 }
             }
@@ -267,11 +278,12 @@ impl AnalyzerService {
             .flat_map(|(item_key, cheapest_price)| {
                 let history = sale_history.get(item_key)?;
                 Some(ResaleStats {
-                    profit: *history - *cheapest_price,
-                    cheapest: *cheapest_price,
+                    profit: *history - cheapest_price.price,
+                    cheapest: cheapest_price.price,
                     item_id: item_key.item_id,
                     hq: item_key.hq,
-                    return_on_investment: ((*history as f32) / (*cheapest_price as f32) * 100.0) - 100.0,
+                    return_on_investment: ((*history as f32) / (cheapest_price.price as f32) * 100.0) - 100.0,
+                    world_id: cheapest_price.world_id
                 })
             })
             .collect();
@@ -320,4 +332,5 @@ pub(crate) struct ResaleStats {
     pub(crate) item_id: i32,
     pub(crate) return_on_investment: f32,
     pub(crate) hq: bool,
+    pub(crate) world_id: i32
 }
