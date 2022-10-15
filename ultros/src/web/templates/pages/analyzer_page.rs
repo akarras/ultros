@@ -5,7 +5,7 @@ use crate::{
     analyzer_service::ResaleStats,
     web::{
         oauth::AuthDiscordUser,
-        templates::{components::header::Header, page::Page},
+        templates::{components::{header::Header, gil::Gil}, page::Page},
     },
 };
 use xiv_gen::ItemId;
@@ -81,22 +81,22 @@ impl Page for AnalyzerPage {
                         }
                       }
                       td {
-                        ((result.profit + result.cheapest))
+                        ((Gil(result.profit + result.cheapest)))
                       }
                       td {
                         "-"
                       }
                       td {
-                        ((result.cheapest))
+                        ((Gil(result.cheapest)))
                       }
                       td {
                         "="
                       }
                       td {
-                        ((result.profit))
+                        ((Gil(result.profit)))
                       }
                       td {
-                        ((format!("{:.2}%", (result.profit + result.cheapest) as f32 / result.cheapest as f32 * 100.0)))
+                        ((format!("{:.1}%", (result.profit + result.cheapest) as f32 / result.cheapest as f32 * 100.0)))
                       }
                       td {
                         "n/a"

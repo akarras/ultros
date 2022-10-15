@@ -38,3 +38,4 @@ tracing-opentelemetry = {version = "0.18.0", features =["metrics"]}
 opentelemetry = "0.18"
 prometheus = "0.13.2"
 yoke = "0.6.2"
+thousands = "0.2.0"

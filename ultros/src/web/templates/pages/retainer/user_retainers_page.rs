@@ -1,4 +1,5 @@
 use crate::web::oauth::AuthDiscordUser;
+use crate::web::templates::components::gil::Gil;
 use crate::web::templates::components::header::Header;
 use crate::web::templates::page::Page;
 use maud::html;
@@ -90,9 +91,9 @@ impl Page for UserRetainersPage {
                                 img class="small-icon" src={"https://universalis-ffxiv.github.io/universalis-assets/icon2x/" (listing.item_id) ".png"};
                                 ((items.get(&ItemId(listing.item_id)).map(|i| i.name.as_str()).unwrap_or_default()))
                               } td {
-                                ((listing.price_per_unit))
+                                ((Gil(listing.price_per_unit)))
                               } td {
-                                ((undercut.price_to_beat))
+                                ((Gil(undercut.price_to_beat)))
                               } td {
                                 ((undercut.number_behind))
                               } td {
@@ -102,7 +103,7 @@ impl Page for UserRetainersPage {
                                   "✔️"
                                 }
                               } td {
-                                ((listing.quantity * listing.price_per_unit))
+                                ((Gil(listing.quantity * listing.price_per_unit)))
                               } td {
                                 ((retainer.name))
                               }
@@ -143,11 +144,11 @@ impl Page for UserRetainersPage {
                                 img class="small-icon" src={"https://universalis-ffxiv.github.io/universalis-assets/icon2x/" (listing.item_id) ".png"};
                                 ((items.get(&ItemId(listing.item_id)).map(|i| i.name.as_str()).unwrap_or_default()))
                               } td {
-                                ((listing.price_per_unit))
+                                ((Gil(listing.price_per_unit)))
                               } td {
                                 ((listing.quantity))
                               } td {
-                                ((listing.quantity * listing.price_per_unit))
+                                ((Gil(listing.quantity * listing.price_per_unit)))
                               } td {
                                 @if listing.hq {
                                   "✔️"

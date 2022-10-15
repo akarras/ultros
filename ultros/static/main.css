@@ -438,3 +438,12 @@ footer {
   width: 100vw;
   text-align: center;
 }
+
+.gil {
+  text-decoration: wavy;
+}
+
+.gil::before {
+  content: '🪙';
+  padding-right: 3px;
+}

@@ -9,7 +9,7 @@ use xiv_gen::ItemId;
 use crate::{
     web::{
         oauth::AuthDiscordUser,
-        templates::{components::header::Header, page::Page},
+        templates::{components::{header::Header, gil::Gil}, page::Page},
     },
     world_cache::{AnySelector, WorldCache},
 };
@@ -155,13 +155,13 @@ impl Page for ListingsPage {
                     @for (listing, retainer) in high_quality_listings.iter().take(25) {
                       tr {
                         td {
-                          ((listing.price_per_unit))
+                          ((Gil(listing.price_per_unit)))
                         }
                         td {
                           ((listing.quantity))
                         }
                         td {
-                          ((listing.price_per_unit * listing.quantity))
+                          ((Gil(listing.price_per_unit * listing.quantity)))
                         }
                         td {
                           @if let Some(retainer) = retainer {
@@ -219,13 +219,13 @@ impl Page for ListingsPage {
                     @for (listing, retainer) in low_quality_listings.iter().take(25) {
                       tr {
                         td {
-                          ((listing.price_per_unit))
+                          ((Gil(listing.price_per_unit)))
                         }
                         td {
                           ((listing.quantity))
                         }
                         td {
-                          ((listing.price_per_unit * listing.quantity))
+                          ((Gil(listing.price_per_unit * listing.quantity)))
                         }
                         td {
                           @if let Some(retainer) = retainer {
@@ -289,10 +289,10 @@ impl Page for ListingsPage {
                         ((sale.quantity))
                       }
                       td {
-                        ((sale.price_per_item))
+                        ((Gil(sale.price_per_item)))
                       }
                       td {
-                        ((sale.price_per_item * sale.quantity))
+                        ((Gil(sale.price_per_item * sale.quantity)))
                       }
                       td {
                         @if sale.hq {
