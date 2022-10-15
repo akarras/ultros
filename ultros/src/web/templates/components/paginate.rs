@@ -30,9 +30,9 @@ impl<'a, T> Paginate<'a, T> {
     }
 
     pub(crate) fn get_page(&self) -> &[T] {
-        let page = self.current_page.checked_sub(1).unwrap_or_default();
+        let page = self.current_page.saturating_sub(1);
         let start_index = page * self.page_size;
-        let end_index = start_index + self.page_size + 1;
+        let end_index = start_index + self.page_size;
         &self.values[start_index..end_index.min(self.values.len())]
     }
 }
@@ -48,9 +48,11 @@ impl<'a, T> Render for Paginate<'a, T> {
         };
         html! {
            div class="flex-row" {
-            @for page in 1..num_pages {
-                a href={((query_prefix)) ((page))} class="btn" {
-                    ((page))
+            @for page in 1..=num_pages {
+                @if page == 1 || (page >= self.current_page.saturating_sub(5) && page <= self.current_page.saturating_add(5)) || page == num_pages {
+                    a href={((query_prefix)) ((page))} class="btn" {
+                        ((page))
+                    }
                 }
             }
            }
