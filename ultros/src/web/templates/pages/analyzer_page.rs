@@ -5,7 +5,7 @@ use crate::{
     analyzer_service::ResaleStats,
     web::{
         oauth::AuthDiscordUser,
-        templates::{components::{header::Header, gil::Gil}, page::Page},
+        templates::{components::{header::Header, gil::Gil, paginate::Paginate}, page::Page}, AnalyzerOptions,
     },
 };
 use xiv_gen::ItemId;
@@ -15,6 +15,7 @@ pub(crate) struct AnalyzerPage {
     pub analyzer_results: Vec<ResaleStats>,
     pub world: world::Model,
     pub region: region::Model,
+    pub options: AnalyzerOptions
 }
 
 impl Page for AnalyzerPage {
@@ -24,6 +25,12 @@ impl Page for AnalyzerPage {
 
     fn draw_body(&self) -> maud::Markup {
         let items = &xiv_gen_db::decompress_data().items;
+        let page = self.options.page.unwrap_or_default();
+        let mut options = self.options.clone();
+        options.page = None;
+        let options = serde_urlencoded::to_string(&options).unwrap_or_default();
+        let paginate = Paginate::new(&self.analyzer_results, 25, page, options);
+        let results = paginate.get_page();
         html! {
           ((Header {
             user: self.user.as_ref()
@@ -34,6 +41,7 @@ impl Page for AnalyzerPage {
                 span class="content-title" {
                   "resale analysis for " ((self.world.name)) " traveling within " ((self.region.name))
                 }
+                ((paginate))
                 table {
                   tr{
                     th {
@@ -67,7 +75,7 @@ impl Page for AnalyzerPage {
                       "datacenter"
                     }
                   }
-                  @for result in self.analyzer_results.iter().take(100) {
+                  @for result in results {
                     tr{
                       td{
                         a href={"/listings/" ((self.region.name)) "/" ((result.item_id))}{

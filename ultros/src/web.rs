@@ -19,7 +19,7 @@ use axum_extra::extract::CookieJar;
 use futures::future::join;
 use opentelemetry_prometheus::PrometheusExporter;
 use reqwest::header;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tracing::log::info;
 use std::collections::HashMap;
 use std::io::Read;
@@ -237,17 +237,17 @@ async fn alerts(discord_user: AuthDiscordUser) -> Result<RenderPage<AlertsPage>,
     Ok(RenderPage(AlertsPage { discord_user }))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, Copy, Clone)]
 #[serde(rename_all = "camelCase")]
-enum AnalyzerSort {
+pub enum AnalyzerSort {
     Profit,
     Margin,
 }
 
-#[derive(Deserialize)]
-struct AnalyzerOptions {
+#[derive(Deserialize, Serialize, Clone)]
+pub struct AnalyzerOptions {
     sort: Option<AnalyzerSort>,
-    page: Option<i32>,
+    page: Option<usize>,
 }
 
 async fn analyze_profits(
@@ -278,7 +278,7 @@ async fn analyze_profits(
             .ok_or(anyhow::Error::msg(
                 "Couldn't find items. Might need more warm up time",
             ))?;
-    match options.sort.unwrap_or(AnalyzerSort::Profit) {
+    match options.sort.as_ref().unwrap_or(&AnalyzerSort::Profit) {
         AnalyzerSort::Profit => {
             analyzer_results.sort_by(|a, b| {
                 b.profit
@@ -294,14 +294,13 @@ async fn analyze_profits(
             });
         }
     }
-    let page_count = analyzer_results.len();
-    let page = options.page.unwrap_or(1);
 
     Ok(RenderPage(AnalyzerPage {
         user,
         analyzer_results,
         region: region.clone(),
         world: world.clone(),
+        options
     }))
 }
 
