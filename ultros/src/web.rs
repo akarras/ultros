@@ -9,18 +9,17 @@ mod templates;
 use anyhow::Error;
 use axum::body::{Empty, Full};
 use axum::extract::{FromRef, Path, Query, State};
-use axum::headers::{Referer, Header};
 use axum::http::{HeaderValue, Response, StatusCode};
 use axum::response::{IntoResponse, Redirect};
 use axum::routing::get;
-use axum::{body, Router, TypedHeader};
+use axum::{body, Router};
 use axum_extra::extract::cookie::{Cookie, Key, SameSite};
 use axum_extra::extract::CookieJar;
 use futures::future::join;
 use opentelemetry_prometheus::PrometheusExporter;
 use reqwest::header;
 use serde::{Deserialize, Serialize};
-use tracing::log::info;
+
 use std::collections::HashMap;
 use std::io::Read;
 use std::net::SocketAddr;
@@ -207,28 +206,37 @@ async fn world_item_listings(
     Ok((cookie_jar, RenderPage(page)))
 }
 
-async fn refresh_world_item_listings(State(db): State<UltrosDb>,
-    State(senders): State<EventSenders>, 
-    Path((world, item_id)): Path<(String, i32)>) -> Result<Redirect, WebError> {
+async fn refresh_world_item_listings(
+    State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
+    Path((world, item_id)): Path<(String, i32)>,
+) -> Result<Redirect, WebError> {
     let client = UniversalisClient::new();
     let current_data = client.marketboard_current_data(&world, &[item_id]).await?;
     // we can potentially get listings from multiple worlds from this call so we should group listings by world
 
     let listings = match current_data {
-        universalis::MarketView::SingleView(v) => {
-            v.listings
-        },
-        universalis::MarketView::MultiView(_) => { return Err(anyhow::Error::msg("multiple listings returned?").into()) },
+        universalis::MarketView::SingleView(v) => v.listings,
+        universalis::MarketView::MultiView(_) => {
+            return Err(anyhow::Error::msg("multiple listings returned?").into())
+        }
     };
-    let listings : HashMap<u8, Vec<_>> = listings.into_iter().flat_map(|l| l.world_id.map(|w| (w, l))).fold(HashMap::new(), |mut m, (w, l)| {
-        m.entry(w).or_default().push(l);
-        m
-    });
+    let listings: HashMap<u8, Vec<_>> = listings
+        .into_iter()
+        .flat_map(|l| l.world_id.map(|w| (w, l)))
+        .fold(HashMap::new(), |mut m, (w, l)| {
+            m.entry(w).or_default().push(l);
+            m
+        });
 
     for (world_id, listings) in listings {
-        let (added, removed) = db.update_listings(listings, ItemId(item_id), WorldId(world_id as i32)).await?;
+        let (added, removed) = db
+            .update_listings(listings, ItemId(item_id), WorldId(world_id as i32))
+            .await?;
         senders.listings.send(EventType::Add(Arc::new(added)))?;
-        senders.listings.send(EventType::Remove(Arc::new(removed)))?;
+        senders
+            .listings
+            .send(EventType::Remove(Arc::new(removed)))?;
     }
     Ok(Redirect::to(&format!("/listings/{world}/{item_id}")))
 }
@@ -430,7 +438,10 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/alerts", get(alerts))
         .route("/alerts/websocket", get(connect_websocket))
         .route("/listings/:world/:itemid", get(world_item_listings))
-        .route("/listings/refresh/:worldid/:itemid", get(refresh_world_item_listings))
+        .route(
+            "/listings/refresh/:worldid/:itemid",
+            get(refresh_world_item_listings),
+        )
         .route("/retainers/listings/:id", get(get_retainer_listings))
         .route("/retainers/undercuts", get(user_retainers_undercuts))
         .route("/retainers/listings", get(user_retainers_listings))

@@ -74,13 +74,13 @@ impl Page for UserRetainersPage {
                             } th {
                               "Price to beat"
                             } th {
+                              "Loss"
+                            } th {
                               "# behind"
                             } th {
                               "Quantity"
                             } th {
                               "HQ"
-                            } th {
-                              "Total"
                             } th {
                               "Retainer"
                             }
@@ -95,6 +95,8 @@ impl Page for UserRetainersPage {
                               } td {
                                 ((Gil(undercut.price_to_beat)))
                               } td {
+                                ((Gil(undercut.price_to_beat - listing.price_per_unit)))
+                              }  td {
                                 ((undercut.number_behind))
                               } td {
                                 ((listing.quantity))
@@ -102,8 +104,6 @@ impl Page for UserRetainersPage {
                                 @if listing.hq {
                                   "✔️"
                                 }
-                              } td {
-                                ((Gil(listing.quantity * listing.price_per_unit)))
                               } td {
                                 ((retainer.name))
                               }

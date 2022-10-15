@@ -131,7 +131,7 @@ impl<'a> VirtualData<'a> {
             datacenters.sort_by_key(|(d, _)| &d.name);
             for (_, worlds) in datacenters {
                 worlds.sort_by_key(|w| &w.name);
-            } 
+            }
         }
         temp
     }

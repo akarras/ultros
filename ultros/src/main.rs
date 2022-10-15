@@ -130,7 +130,11 @@ async fn main() -> Result<()> {
     let (senders, receivers) = create_event_busses();
     // begin listening to universalis events
     tokio::spawn(run_socket_listener(db.clone(), senders.listings.clone()));
-    tokio::spawn(start_discord(db.clone(), senders.clone(), receivers.clone()));
+    tokio::spawn(start_discord(
+        db.clone(),
+        senders.clone(),
+        receivers.clone(),
+    ));
     // create the oauth config
     let hostname = env::var("HOSTNAME").expect(
         "Missing env variable HOSTNAME, which should be the domain of the server running this app.",

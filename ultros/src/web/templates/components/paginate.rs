@@ -1,10 +1,8 @@
 use std::collections::HashMap;
 
-use maud::{Render, html};
+use maud::{html, Render};
 
-
-
-pub(crate) struct Paginate<'a, T>{
+pub(crate) struct Paginate<'a, T> {
     values: &'a [T],
     /// number of items to show in a page
     page_size: usize,
@@ -17,7 +15,12 @@ pub(crate) struct Paginate<'a, T>{
 
 impl<'a, T> Paginate<'a, T> {
     /// Creates a new pagination control
-    pub(crate) fn new(values: &'a [T], page_size: usize, current_page: usize, query_str: String) -> Self {
+    pub(crate) fn new(
+        values: &'a [T],
+        page_size: usize,
+        current_page: usize,
+        query_str: String,
+    ) -> Self {
         Self {
             values,
             page_size,
@@ -50,8 +53,7 @@ impl<'a, T> Render for Paginate<'a, T> {
                     ((page))
                 }
             }
-           } 
+           }
         }
     }
 }
-

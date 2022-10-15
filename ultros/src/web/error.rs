@@ -9,7 +9,7 @@ use thiserror::Error;
 use tokio::sync::broadcast::error::SendError;
 use ultros_db::SeaDbErr;
 
-use crate::{world_cache::WorldCacheError, event};
+use crate::{event, world_cache::WorldCacheError};
 
 #[derive(Debug, Error)]
 pub enum WebError {
@@ -42,7 +42,9 @@ pub enum WebError {
     #[error("Error communicaing with universalis {0}")]
     UniversalisError(#[from] universalis::Error),
     #[error("Error sending listing update {0}")]
-    ListingSendError(#[from] SendError<event::EventType<Arc<Vec<ultros_db::entity::active_listing::Model>>>>)
+    ListingSendError(
+        #[from] SendError<event::EventType<Arc<Vec<ultros_db::entity::active_listing::Model>>>>,
+    ),
 }
 
 impl WebError {

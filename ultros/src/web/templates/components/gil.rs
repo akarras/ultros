@@ -1,7 +1,6 @@
-use maud::{Render, html};
+use maud::{html, Render};
 use thousands::Separable;
 pub(crate) struct Gil(pub i32);
-
 
 impl Render for Gil {
     fn render(&self) -> maud::Markup {

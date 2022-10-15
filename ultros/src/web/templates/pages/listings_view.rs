@@ -8,8 +8,12 @@ use xiv_gen::ItemId;
 
 use crate::{
     web::{
+        home_world_cookie::HomeWorld,
         oauth::AuthDiscordUser,
-        templates::{components::{header::Header, gil::Gil}, page::Page}, home_world_cookie::HomeWorld,
+        templates::{
+            components::{gil::Gil, header::Header},
+            page::Page,
+        },
     },
     world_cache::{AnySelector, WorldCache},
 };

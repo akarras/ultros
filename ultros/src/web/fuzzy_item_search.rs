@@ -1,20 +1,14 @@
-use std::sync::Arc;
-
-use axum::{
-    extract::{Path, State},
-    response::Html,
-};
+use axum::{extract::Path, response::Html};
 use axum_extra::extract::CookieJar;
 use maud::{html, Render};
 use reqwest::StatusCode;
 
-use crate::{utils, world_cache::WorldCache};
+use crate::utils;
 
-use super::{home_world_cookie::HomeWorld, item_search_index::do_query};
+use super::item_search_index::do_query;
 
 pub(crate) async fn search_items(
     Path(search_str): Path<String>,
-    world: Option<HomeWorld>,
     cookie_jar: CookieJar,
 ) -> Result<Html<String>, (StatusCode, String)> {
     let matches = do_query(&search_str).map_err(|e| {

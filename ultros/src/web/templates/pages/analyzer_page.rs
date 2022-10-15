@@ -7,8 +7,13 @@ use crate::{
     analyzer_service::ResaleStats,
     web::{
         oauth::AuthDiscordUser,
-        templates::{components::{header::Header, gil::Gil, paginate::Paginate}, page::Page}, AnalyzerOptions,
-    }, world_cache::{WorldCache, AnySelector},
+        templates::{
+            components::{gil::Gil, header::Header, paginate::Paginate},
+            page::Page,
+        },
+        AnalyzerOptions,
+    },
+    world_cache::{AnySelector, WorldCache},
 };
 use xiv_gen::ItemId;
 
@@ -18,7 +23,7 @@ pub(crate) struct AnalyzerPage {
     pub world: world::Model,
     pub region: region::Model,
     pub options: AnalyzerOptions,
-    pub world_cache: Arc<WorldCache>
+    pub world_cache: Arc<WorldCache>,
 }
 
 impl Page for AnalyzerPage {

@@ -74,12 +74,13 @@ body {
   top: 0px;
   opacity: 1.0;
   z-index: -10000;
-  animation: fadeGradient ease-out .25s;
+  animation: fadeGradient cubic-bezier(0.12, 0, 0.39, 0) .5s;
 }
 
 @keyframes fadeGradient {
   0% {
-    height: 1000vh;
+    position:absolute;
+    height: 200vh;
     opacity: 1;
   }
   100% {
@@ -184,7 +185,7 @@ body {
 .search-box.active ~ .search-results {
   visibility: visible;
   opacity: 1.0;
-  animation: search-open .25s ease-out 0s 1;
+  animation: search-open .25s cubic-bezier(0.76, 0, 0.24, 1) 0s 1;
 }
 
 .search-results {
@@ -336,7 +337,7 @@ body {
   border-top-left-radius: 25px;
   border-top-right-radius: 25px;
   min-height: 90vh;
-  animation: fadeInAnimation ease-out .25s;
+  animation: fadeInAnimation cubic-bezier(0.11, 0, 0.5, 0) .5s;
   opacity: 1;
 }
 

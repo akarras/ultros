@@ -16,8 +16,8 @@ use crate::{
     event::EventReceivers,
     world_cache::{AnyResult, AnySelector, WorldCache},
 };
-use tracing::log::error;
 use tokio::sync::RwLock;
+use tracing::log::error;
 
 #[derive(Hash, Eq, PartialEq, PartialOrd, Ord, Debug, Copy, Clone)]
 struct ItemKey {
@@ -93,9 +93,14 @@ struct SaleHistory {
 
 impl SaleHistory {
     pub(crate) fn add_sale<'a, T>(&mut self, sale: &'a T)
-    where &'a T: Into<SaleSummary> + Into<ItemKey> {
-        let entries = self.item_map.entry(sale.into()).or_insert(Vec::with_capacity(4));
-        
+    where
+        &'a T: Into<SaleSummary> + Into<ItemKey>,
+    {
+        let entries = self
+            .item_map
+            .entry(sale.into())
+            .or_insert(Vec::with_capacity(4));
+
         entries.push(sale.into());
         entries.sort();
         entries.truncate(3);
@@ -105,7 +110,7 @@ impl SaleHistory {
 #[derive(Debug, Copy, Clone, Eq, Ord, PartialEq, PartialOrd)]
 struct CheapestListingValue {
     price: i32,
-    world_id: i32
+    world_id: i32,
 }
 
 impl From<&ultros_db::entity::active_listing::Model> for CheapestListingValue {
@@ -133,9 +138,14 @@ struct CheapestListings {
 
 impl CheapestListings {
     fn add_listing<'a, T>(&mut self, listing: &'a T)
-    where &'a T: Into<CheapestListingValue> + Into<ItemKey> {
+    where
+        &'a T: Into<CheapestListingValue> + Into<ItemKey>,
+    {
         let cheapest_listing = listing.into();
-        let entry = self.item_map.entry(listing.into()).or_insert(cheapest_listing);
+        let entry = self
+            .item_map
+            .entry(listing.into())
+            .or_insert(cheapest_listing);
         *entry = (*entry).min(cheapest_listing);
     }
 
@@ -217,7 +227,10 @@ impl AnalyzerService {
                     // lets keep a lock on our local service for the duration that we have a stream to the database
                     let mut writer = self.cheapest_items.write().await;
                     let world_listings = writer.entry(region.id).or_default();
-                    let mut listings = ultros_db.stream_cheapest_listings_on_world(*world).await.expect("failed to stream listings");
+                    let mut listings = ultros_db
+                        .stream_cheapest_listings_on_world(*world)
+                        .await
+                        .expect("failed to stream listings");
                     let mut stream_result = listings.try_next().await;
                     while let Ok(Some(listing)) = stream_result {
                         world_listings.add_listing(&listing);
@@ -231,17 +244,18 @@ impl AnalyzerService {
                 let mut writer = self.recent_sale_history.write().await;
                 for world in &worlds {
                     let history = writer.entry(*world).or_default();
-                    let mut history_stream =
-                        ultros_db.stream_last_n_sales_by_world(*world, 4).await.expect("Failed to stream history");
+                    let mut history_stream = ultros_db
+                        .stream_last_n_sales_by_world(*world, 4)
+                        .await
+                        .expect("Failed to stream history");
                     let mut stream_result = history_stream.try_next().await;
-                    while let Ok(Some(sale)) = stream_result  {
+                    while let Ok(Some(sale)) = stream_result {
                         history.add_sale(&sale);
                         stream_result = history_stream.try_next().await;
                     }
                     if let Err(e) = stream_result {
                         error!("Streaming sale history failed {e:?}");
                     }
-                    
                 }
             }
         }
@@ -341,8 +355,10 @@ impl AnalyzerService {
                     cheapest: cheapest_price.price,
                     item_id: item_key.item_id,
                     hq: item_key.hq,
-                    return_on_investment: ((*history as f32) / (cheapest_price.price as f32) * 100.0) - 100.0,
-                    world_id: cheapest_price.world_id
+                    return_on_investment: ((*history as f32) / (cheapest_price.price as f32)
+                        * 100.0)
+                        - 100.0,
+                    world_id: cheapest_price.world_id,
                 })
             })
             .collect();
@@ -391,5 +407,5 @@ pub(crate) struct ResaleStats {
     pub(crate) item_id: i32,
     pub(crate) return_on_investment: f32,
     pub(crate) hq: bool,
-    pub(crate) world_id: i32
+    pub(crate) world_id: i32,
 }
