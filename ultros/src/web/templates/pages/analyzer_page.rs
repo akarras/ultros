@@ -32,7 +32,7 @@ impl Page for AnalyzerPage {
         let mut options = self.options.clone();
         options.page = None;
         let options = serde_urlencoded::to_string(&options).unwrap_or_default();
-        let paginate = Paginate::new(&self.analyzer_results, 25, page, options);
+        let paginate = Paginate::new(&self.analyzer_results, 75, page, options);
         let results = paginate.get_page();
         html! {
           ((Header {
@@ -71,10 +71,10 @@ impl Page for AnalyzerPage {
                     th {
                       a title="sort this table by return on investment" href="?sort=margin" { "roi" }
                     }
-                    th {
+                    th title="world this item is cheapest on" {
                       "world"
                     }
-                    th {
+                    th title="datacenter this item is cheapest on" {
                       "datacenter"
                     }
                   }

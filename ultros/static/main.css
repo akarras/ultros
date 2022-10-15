@@ -184,6 +184,7 @@ body {
 .search-box.active ~ .search-results {
   visibility: visible;
   opacity: 1.0;
+  animation: search-open .25s ease-out 0s 1;
 }
 
 .search-results {
@@ -198,8 +199,18 @@ body {
   overflow-y: scroll;
   overflow-x: hidden;
   opacity: 0.0;
-  transition: visibility 0s linear 0s, opacity 300ms;
+  z-index: 100;
 }
+
+@keyframes search-open {
+  0% {
+    height: 0px;
+  }
+  100% {
+    height: 500px;
+  }
+}
+
 
 .search-result {
   display: flex;
