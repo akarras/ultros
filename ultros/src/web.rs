@@ -418,6 +418,11 @@ async fn static_path(Path(path): Path<String>) -> impl IntoResponse {
     }
 }
 
+pub(crate) async fn invite() -> Redirect {
+    let client_id = std::env::var("DISCORD_CLIENT_ID").expect("Unable to get DISCORD_CLIENT_ID");
+    Redirect::to(&format!("https://discord.com/oauth2/authorize?client_id={client_id}&scope=bot&permissions=2147483648"))
+}
+
 pub(crate) async fn start_web(state: WebState) {
     // build our application with a route
     let app = Router::with_state(state)
@@ -440,6 +445,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/profile", get(profile))
         .route("/login", get(begin_login))
         .route("/logout", get(logout))
+        .route("/invitebot", get(invite))
         .route("/metrics", get(metrics))
         .fallback(fallback);
 

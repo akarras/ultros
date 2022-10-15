@@ -22,7 +22,7 @@ impl<'a> Render for Header<'a> {
                 "Retainers"
               };
               (SearchBox);
-              a class="btn nav-item" href="/discord" {
+              a class="btn nav-item" href="/invitebot" {
                 "Invite Bot"
               }
               @if let Some(user) = self.user {
