@@ -51,21 +51,19 @@ struct SaleSummary {
 
 #[derive(Debug, Default)]
 struct SaleHistory {
-    item_map: HashMap<ItemKey, BTreeSet<SaleSummary>>,
+    item_map: HashMap<ItemKey, Vec<SaleSummary>>,
 }
 
 impl SaleHistory {
     pub(crate) fn add_sale(&mut self, sale: &ultros_db::entity::sale_history::Model) {
-        let entries = self.item_map.entry(sale.into()).or_default();
-        entries.insert(SaleSummary {
+        let entries = self.item_map.entry(sale.into()).or_insert(Vec::with_capacity(4));
+        
+        entries.push(SaleSummary {
             sale_date: sale.sold_date,
             price_per_item: sale.price_per_item,
         });
-        while entries.len() > 3 {
-            if let Some(last) = entries.iter().last().copied() {
-                entries.remove(&last);
-            }
-        }
+        entries.sort();
+        entries.truncate(3);
     }
 }
 
