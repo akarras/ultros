@@ -241,7 +241,7 @@ impl AnalyzerService {
                     }
                 }
                 // now prime sale history
-               
+
                 for world in &worlds {
                     let mut writer = self.recent_sale_history.write().await;
                     let history = writer.entry(*world).or_default();

@@ -1,6 +1,9 @@
 use anyhow::Result;
 use futures::Stream;
-use migration::{sea_orm::{QuerySelect, QueryOrder}, DbErr, Value};
+use migration::{
+    sea_orm::{QueryOrder, QuerySelect},
+    DbErr, Value,
+};
 use sea_orm::{ColumnTrait, DbBackend, EntityTrait, FromQueryResult, QueryFilter, Statement};
 use std::collections::HashSet;
 use tracing::instrument;

@@ -19,8 +19,7 @@ use futures::future::join;
 use opentelemetry_prometheus::PrometheusExporter;
 use reqwest::header;
 use serde::{Deserialize, Serialize};
-use serde_with::{serde_as, NoneAsEmptyString};
-use tracing::log::info;
+use serde_with::serde_as;
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -93,9 +92,19 @@ async fn user_retainers_listings(
     State(db): State<UltrosDb>,
     current_user: AuthDiscordUser,
 ) -> Result<RenderPage<UserRetainersPage>, WebError> {
-    let (owned_retainers, retainer_listings) = db
+    let (owned_retainers, mut retainer_listings) = db
         .get_retainer_listings_for_discord_user(current_user.id)
         .await?;
+    let items = &xiv_gen_db::decompress_data().items;
+    // sort the undercut retainers by item sort ui category to match in game
+    for (_, listings) in &mut retainer_listings {
+        listings.sort_by_key(|s| {
+            items
+                .get(&xiv_gen::ItemId(s.item_id))
+                .map(|i| i.item_sort_category.0)
+                .unwrap_or_default()
+        });
+    }
     Ok(RenderPage(UserRetainersPage {
         character_names: Vec::new(),
         view_type: RetainerViewType::Listings(retainer_listings),
@@ -108,8 +117,18 @@ async fn user_retainers_undercuts(
     State(db): State<UltrosDb>,
     current_user: AuthDiscordUser,
 ) -> Result<RenderPage<UserRetainersPage>, WebError> {
-    let (owned_retainers, undercut_retainers) =
+    let (owned_retainers, mut undercut_retainers) =
         db.get_retainer_undercut_items(current_user.id).await?;
+    let items = &xiv_gen_db::decompress_data().items;
+    // sort the undercut retainers by item sort ui category to match in game
+    for (_, listings) in &mut undercut_retainers {
+        listings.sort_by_key(|(s, _)| {
+            items
+                .get(&xiv_gen::ItemId(s.item_id))
+                .map(|i| i.item_sort_category.0)
+                .unwrap_or_default()
+        });
+    }
     Ok(RenderPage(UserRetainersPage {
         character_names: Vec::new(),
         view_type: RetainerViewType::Undercuts(undercut_retainers),
@@ -173,7 +192,6 @@ async fn world_item_listings(
     let worlds = world_cache
         .get_all_worlds_in(&selected_value)
         .ok_or(Error::msg("Unable to get worlds"))?;
-    info!("{worlds:?}");
     let db_clone = db.clone();
     let world_iter = worlds.iter().copied();
     let (listings, sale_history) = join(
