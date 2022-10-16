@@ -171,7 +171,7 @@ impl UltrosDb {
             AbbreviatedSaleData::find_by_statement(Statement::from_sql_and_values(
                 DbBackend::Postgres,
                 r#"SELECT filter.* FROM (SELECT h.sold_item_id, h.hq, h.price_per_item, h.sold_date,
-                RANK() OVER (PARTITION BY h.sold_item_id, h.hq ORDER BY h.sold_date ASC) sale_rank
+                RANK() OVER (PARTITION BY h.sold_item_id, h.hq ORDER BY h.sold_date DESC) sale_rank
                 FROM sale_history h
                 WHERE
                 h.world_id = $1) filter
