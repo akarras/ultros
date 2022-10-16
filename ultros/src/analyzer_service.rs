@@ -99,11 +99,11 @@ impl SaleHistory {
         let entries = self
             .item_map
             .entry(sale.into())
-            .or_insert(Vec::with_capacity(4));
+            .or_insert(Vec::with_capacity(12));
 
         entries.push(sale.into());
         entries.sort();
-        entries.truncate(3);
+        entries.truncate(11);
     }
 }
 
@@ -246,7 +246,7 @@ impl AnalyzerService {
                     let mut writer = self.recent_sale_history.write().await;
                     let history = writer.entry(*world).or_default();
                     let mut history_stream = ultros_db
-                        .stream_last_n_sales_by_world(*world, 4)
+                        .stream_last_n_sales_by_world(*world, 10)
                         .await
                         .expect("Failed to stream history");
                     let mut stream_result = history_stream.try_next().await;
@@ -340,7 +340,7 @@ impl AnalyzerService {
                     .iter()
                     .filter(|sale| {
                         Local::now()
-                            .naive_local()
+                            .naive_utc()
                             .signed_duration_since(sale.sale_date)
                             .lt(&Duration::days(resale_options.days as i64))
                     })
