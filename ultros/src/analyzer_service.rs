@@ -226,13 +226,13 @@ impl AnalyzerService {
                 for world in &worlds {
                     // lets keep a lock on our local service for the duration that we have a stream to the database
                     let mut writer = self.cheapest_items.write().await;
-                    let world_listings = writer.entry(region.id).or_default();
                     let mut listings = ultros_db
                         .stream_cheapest_listings_on_world(*world)
                         .await
                         .expect("failed to stream listings");
                     let mut stream_result = listings.try_next().await;
                     while let Ok(Some(listing)) = stream_result {
+                        let world_listings = writer.entry(region.id).or_default();
                         world_listings.add_listing(&listing);
                         stream_result = listings.try_next().await;
                     }
@@ -241,8 +241,9 @@ impl AnalyzerService {
                     }
                 }
                 // now prime sale history
-                let mut writer = self.recent_sale_history.write().await;
+               
                 for world in &worlds {
+                    let mut writer = self.recent_sale_history.write().await;
                     let history = writer.entry(*world).or_default();
                     let mut history_stream = ultros_db
                         .stream_last_n_sales_by_world(*world, 4)
