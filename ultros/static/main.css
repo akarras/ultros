@@ -26,7 +26,7 @@ a:hover {
 body {
   transition-property: background-image;
   transition: 1s;
-  background: url("./images/flower_1.png");
+  background: url("./images/flower_1.webp");
   background-size: 512px;
   background-repeat: repeat;
   background-color: #000;
@@ -42,19 +42,19 @@ body {
 }
 @keyframes animateBackgrounds {
   0% {
-    background: url("./images/flower_1.png");
+    background: url("./images/flower_1.webp");
     background-position: -25px;
   }
   25% {
-    background: url("./images/flower_4.png");
+    background: url("./images/flower_4.webp");
     background-position: 25px;
   }
   50% {
-    background: url("./images/flower_3.png");
+    background: url("./images/flower_3.webp");
     background-position: -25px;
   }
   75% {
-    background: url("./images/flower_2.png");
+    background: url("./images/flower_2.webp");
     background-position: 25px;
   }
 }
@@ -92,17 +92,16 @@ body {
   top: 0px;
   opacity: 1.0;
   z-index: -10000;
-  animation: fadeGradient cubic-bezier(0.12, 0, 0.39, 0) .5s;
+  animation: fadeGradient cubic-bezier(0.12, 0, 0.39, 0) .25s;
 }
 
 @keyframes fadeGradient {
   0% {
     position:absolute;
-    height: 200vh;
-    opacity: 1;
+    transform: translate(0px, 100px) scale(1, 2.5);
   }
   100% {
-    height: 110vh;
+    transform: translate(0px, 0px) scale(1, 1);
   }
 }
 .header {
