@@ -27,14 +27,15 @@ body {
   transition-property: background-image;
   transition: 1s;
   background: url("./images/flower_1.png");
-  background-size: 1024px;
+  background-size: 512px;
   background-repeat: repeat;
   background-color: #000;
+  background-origin: content-box;
   color: #fff;
   font-family: Jaldi;
   opacity: 1;
   margin: 0px;
-  animation: animateBackgrounds 50s linear 0s infinite forwards;
+  animation: animateBackgrounds 50s cubic-bezier(0.76, 0, 0.24, 1) 0s infinite forwards;
   background-position: 0px;
   max-width: 100vw;
   min-height: 100vh;
@@ -45,15 +46,15 @@ body {
     background-position: -25px;
   }
   25% {
-    background: url("./images/flower_2.png");
-    background-position: 25px 0px;
+    background: url("./images/flower_4.png");
+    background-position: 25px;
   }
   50% {
     background: url("./images/flower_3.png");
     background-position: -25px;
   }
   75% {
-    background: url("./images/flower_4.png");
+    background: url("./images/flower_2.png");
     background-position: 25px;
   }
 }
