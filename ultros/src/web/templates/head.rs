@@ -19,6 +19,7 @@ impl<'a> Render for HtmlHead<'a> {
             link rel="stylesheet" href="/static/main.css";
             script src="/static/search.js" {};
             link rel="manifest" href="/static/site.webmanifest" {};
+            meta name="viewport" content="width=device-width, initial-scale=1.0" {};
           }
         }
     }
