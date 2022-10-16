@@ -20,6 +20,7 @@ use opentelemetry_prometheus::PrometheusExporter;
 use reqwest::header;
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, NoneAsEmptyString};
+use tracing::log::info;
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -172,6 +173,7 @@ async fn world_item_listings(
     let worlds = world_cache
         .get_all_worlds_in(&selected_value)
         .ok_or(Error::msg("Unable to get worlds"))?;
+    info!("{worlds:?}");
     let db_clone = db.clone();
     let world_iter = worlds.iter().copied();
     let (listings, sale_history) = join(

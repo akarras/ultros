@@ -1,6 +1,6 @@
 use anyhow::Result;
 use futures::Stream;
-use migration::{sea_orm::QuerySelect, DbErr, Value};
+use migration::{sea_orm::{QuerySelect, QueryOrder}, DbErr, Value};
 use sea_orm::{ColumnTrait, DbBackend, EntityTrait, FromQueryResult, QueryFilter, Statement};
 use std::collections::HashSet;
 use tracing::instrument;
@@ -23,7 +23,6 @@ impl UltrosDb {
             .filter(Column::ItemId.eq(item.0))
             .filter(Column::WorldId.is_in(worlds.iter().copied()))
             .find_also_related(retainer::Entity)
-            .limit(100)
             .all(&self.db)
             .await?)
     }
