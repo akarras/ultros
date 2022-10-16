@@ -64,8 +64,8 @@ impl From<&ultros_db::listings::ListingSummary> for ItemKey {
 
 #[derive(Debug, PartialEq, PartialOrd, Eq, Ord, Clone, Copy)]
 struct SaleSummary {
-    sale_date: NaiveDateTime,
     price_per_item: i32,
+    sale_date: NaiveDateTime,
 }
 
 impl From<&ultros_db::sales::AbbreviatedSaleData> for SaleSummary {
