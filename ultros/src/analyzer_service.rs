@@ -338,7 +338,9 @@ impl AnalyzerService {
                 values
                     .iter()
                     .filter(|sale| {
-                        Local::now().naive_local().signed_duration_since(sale.sale_date)
+                        Local::now()
+                            .naive_local()
+                            .signed_duration_since(sale.sale_date)
                             .lt(&Duration::days(resale_options.days as i64))
                     })
                     .map(|sale| sale.price_per_item)
@@ -366,7 +368,12 @@ impl AnalyzerService {
                     world_id: cheapest_price.world_id,
                 })
             })
-            .filter(|w| resale_options.minimum_profit.map(|m| m.lt(&w.profit)).unwrap_or(true))
+            .filter(|w| {
+                resale_options
+                    .minimum_profit
+                    .map(|m| m.lt(&w.profit))
+                    .unwrap_or(true)
+            })
             .collect();
         drop(items);
 
