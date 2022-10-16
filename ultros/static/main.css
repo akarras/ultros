@@ -26,38 +26,116 @@ a:hover {
 body {
   transition-property: background-image;
   transition: 1s;
-  background: url("./images/flower_1.webp");
-  background-size: 512px;
-  background-repeat: repeat;
-  background-color: #000;
-  background-origin: content-box;
   color: #fff;
   font-family: Jaldi;
   opacity: 1;
   margin: 0px;
-  animation: animateBackgrounds 50s cubic-bezier(0.76, 0, 0.24, 1) 0s infinite forwards;
+  
   background-position: 0px;
   max-width: 100vw;
   min-height: 100vh;
 }
+
+body::before {
+  content: '';
+  position: fixed;
+  top: -10%;
+  left: -10%;
+  width: 120%;
+  height: 120%;
+  background: url('./images/flower_1.webp');
+  background-size: 512px;
+  background-repeat: repeat;
+  background-color: #000;
+  background-origin: content-box;
+  animation: animateBackgrounds 50s cubic-bezier(0.76, 0, 0.24, 1) 0s infinite forwards;
+  z-index: -10000;
+}
+
+body::after {
+  content: '';
+  position: fixed;
+  top: -10%;
+  left: -10%;
+  width: 120%;
+  height: 120%;
+  opacity: 0%;
+  background: url('./images/flower_4.webp');
+  background-size: 512px;
+  background-repeat: repeat;
+  background-color: #000;
+  background-origin: content-box;
+  animation: animateBackgrounds2 50s cubic-bezier(0.76, 0, 0.24, 1) 0s infinite forwards;
+  z-index: -10000;
+}
+
 @keyframes animateBackgrounds {
   0% {
     background: url("./images/flower_1.webp");
-    background-position: -25px;
+    transform: translate(-25px);
+    opacity: 1.0;
+  }
+  23% {
+    opacity: 1.0;
   }
   25% {
-    background: url("./images/flower_4.webp");
-    background-position: 25px;
+    transform: translate(25px);
+    opacity: 0.0;
+  }
+  48% {
+    opacity: 0.0;
+    background: url("./images/flower_2.webp");
   }
   50% {
-    background: url("./images/flower_3.webp");
-    background-position: -25px;
+    transform: translate(-25px);
+    opacity: 1.0;
+  }
+  73% {
+    opacity: 1.0;
   }
   75% {
-    background: url("./images/flower_2.webp");
-    background-position: 25px;
+    opacity: 0.0;
+    transform: translate(25px);
+  }
+  98% {
+    background: url("./images/flower_1.webp");
+    opacity: 0.0;
   }
 }
+
+@keyframes animateBackgrounds2 {
+  0% {
+    transform: translate(-25px);
+    opacity: 0.0;
+  }
+  23% {
+    opacity: 0.0;
+    background: url("./images/flower_4.webp");
+  }
+  25% {
+    transform: translate(25px);
+    opacity: 1.0;
+  }
+  48% {
+    opacity: 1.0;
+  }
+  50% {
+    opacity: 0.0;
+    transform: translate(-25px);
+  }
+  73% {
+    background: url("./images/flower_2.webp");
+    opacity: 0.0;
+  }
+  75% {
+    opacity: 1.0;
+    transform: translate(25px);
+  }
+  98% {
+    opacity: 1.0;
+  }
+}
+
 @keyframes fadeInAnimation {
   0% {
     opacity: 0;
@@ -66,6 +144,8 @@ body {
     opacity: 1;
   }
 }
+
+
 @keyframes slowSlide {
   0% {
     background-position: -100px;
@@ -80,14 +160,15 @@ body {
   width: 100%;
   height: 110vh;
   margin: -20px 0px;
-  z-index: -10000;
+  z-index: -500;
   overflow: hidden;
 }
 .gradient {
-  background: linear-gradient(black 10%, transparent 50%);
+  background: linear-gradient(black 20%, transparent 50%);
   position: relative;
   width: 100%;
-  height: 100%;
+  height: 110%;
+  margin-top: -10%;
   left: 0px;
   top: 0px;
   opacity: 1.0;
