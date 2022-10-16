@@ -30,7 +30,7 @@ body {
   font-family: Jaldi;
   opacity: 1;
   margin: 0px;
-  
+  background-color: #000;
   background-position: 0px;
   max-width: 100vw;
   min-height: 100vh;
@@ -48,7 +48,7 @@ body::before {
   background-repeat: repeat;
   background-color: #000;
   background-origin: content-box;
-  animation: animateBackgrounds 50s cubic-bezier(0.76, 0, 0.24, 1) 0s infinite forwards;
+  animation: animateBackgrounds 50s linear 0s infinite;
   z-index: -10000;
 }
 
@@ -65,7 +65,7 @@ body::after {
   background-repeat: repeat;
   background-color: #000;
   background-origin: content-box;
-  animation: animateBackgrounds2 50s cubic-bezier(0.76, 0, 0.24, 1) 0s infinite forwards;
+  animation: animateBackgrounds2 50s linear 0s infinite;
   z-index: -10000;
 }
 
@@ -73,7 +73,7 @@ body::after {
   0% {
     background: url("./images/flower_1.webp");
     transform: translate(-25px);
-    opacity: 1.0;
+    opacity: 1.0; 
   }
   23% {
     opacity: 1.0;
@@ -81,6 +81,9 @@ body::after {
   25% {
     transform: translate(25px);
     opacity: 0.0;
+  }
+  27% {
+    background: url("./images/flower_2.webp");
   }
   48% {
     opacity: 0.0;
@@ -96,6 +99,7 @@ body::after {
   75% {
     opacity: 0.0;
     transform: translate(25px);
+    background: url("./images/flower_1.webp");
   }
   98% {
     background: url("./images/flower_1.webp");
@@ -107,6 +111,7 @@ body::after {
   0% {
     transform: translate(-25px);
     opacity: 0.0;
+    background: url("./images/flower_4.webp");
   }
   23% {
     opacity: 0.0;
@@ -122,6 +127,9 @@ body::after {
   50% {
     opacity: 0.0;
     transform: translate(-25px);
+  }
+  51% {
+    background: url("./images/flower_2.webp");
   }
   73% {
     background: url("./images/flower_2.webp");
