@@ -291,7 +291,7 @@ impl UndercutTracker {
                             })
                             .copied()
                         {
-                            if value.lowest_price == removed.price_per_unit {
+                            if value.lowest_price >= removed.price_per_unit {
                                 if let Ok((retainer_ids, listings)) =
                                     get_user_unique_retainer_ids_and_listing_ids_by_price(
                                         &self.db,
@@ -345,8 +345,8 @@ impl UndercutTracker {
                         // we have a listing, make sure they didn't just beat our price
                         if margin_price as i32 > added.price_per_unit {
                             // they beat our price, raise the alarms
-                            our_price.has_alerted = true;
-                            if our_price.has_alerted {
+                            if !our_price.has_alerted {
+                                our_price.has_alerted = true;
                                 // figure out what retainers have been undercut
                                 let retainers = self
                                     .db
