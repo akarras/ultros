@@ -5201,6 +5201,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_urlencoded",
+ "serde_with",
  "tantivy",
  "thiserror",
  "thousands",

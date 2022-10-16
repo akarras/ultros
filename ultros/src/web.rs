@@ -19,6 +19,7 @@ use futures::future::join;
 use opentelemetry_prometheus::PrometheusExporter;
 use reqwest::header;
 use serde::{Deserialize, Serialize};
+use serde_with::{serde_as, NoneAsEmptyString};
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -26,7 +27,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use ultros_db::UltrosDb;
-use universalis::{ItemId, UniversalisClient, WorldId, ListingView};
+use universalis::{ItemId, ListingView, UniversalisClient, WorldId};
 
 use self::error::WebError;
 use self::home_world_cookie::HomeWorld;
@@ -43,7 +44,7 @@ use self::templates::{
         retainer::user_retainers_page::{RetainerViewType, UserRetainersPage},
     },
 };
-use crate::analyzer_service::AnalyzerService;
+use crate::analyzer_service::{AnalyzerService, ResaleOptions};
 use crate::event::{EventReceivers, EventSenders, EventType};
 use crate::metrics::metrics;
 use crate::web::alerts_websocket::connect_websocket;
@@ -210,10 +211,12 @@ async fn refresh_world_item_listings(
     State(db): State<UltrosDb>,
     State(senders): State<EventSenders>,
     Path((world, item_id)): Path<(String, i32)>,
-    State(world_cache): State<Arc<WorldCache>>
+    State(world_cache): State<Arc<WorldCache>>,
 ) -> Result<Redirect, WebError> {
     let lookup = world_cache.lookup_value_by_name(&world)?;
-    let all_worlds = world_cache.get_all_worlds_in(&lookup).ok_or(anyhow::Error::msg("Unable to get worlds"))?;
+    let all_worlds = world_cache
+        .get_all_worlds_in(&lookup)
+        .ok_or(anyhow::Error::msg("Unable to get worlds"))?;
     let client = UniversalisClient::new();
     let current_data = client.marketboard_current_data(&world, &[item_id]).await?;
     // we can potentially get listings from multiple worlds from this call so we should group listings by world
@@ -226,7 +229,8 @@ async fn refresh_world_item_listings(
     };
 
     // now ensure we insert all worlds into the map to account for empty worlds
-    let listings_by_world : HashMap<u8, Vec<ListingView>> = all_worlds.into_iter().map(|w| (w as u8, vec![])).collect();
+    let listings_by_world: HashMap<u8, Vec<ListingView>> =
+        all_worlds.into_iter().map(|w| (w as u8, vec![])).collect();
 
     let listings_by_world = listings
         .into_iter()
@@ -235,7 +239,7 @@ async fn refresh_world_item_listings(
             m.entry(w).or_default().push(l);
             m
         });
-    
+
     for (world_id, listings) in listings_by_world {
         let (added, removed) = db
             .update_listings(listings, ItemId(item_id), WorldId(world_id as i32))
@@ -259,10 +263,13 @@ pub enum AnalyzerSort {
     Margin,
 }
 
+#[serde_as]
 #[derive(Deserialize, Serialize, Clone)]
 pub struct AnalyzerOptions {
     sort: Option<AnalyzerSort>,
     page: Option<usize>,
+    days: Option<i32>,
+    minimum_profit: Option<i32>,
 }
 
 async fn analyze_profits(
@@ -286,13 +293,19 @@ async fn analyze_profits(
             return Err(Error::msg("Region not found").into())
         }
     };
-    let mut analyzer_results =
-        analyzer
-            .get_best_resale(world.id, region.id)
-            .await
-            .ok_or(anyhow::Error::msg(
-                "Couldn't find items. Might need more warm up time",
-            ))?;
+    let mut analyzer_results = analyzer
+        .get_best_resale(
+            world.id,
+            region.id,
+            ResaleOptions {
+                days: options.days.unwrap_or(10),
+                minimum_profit: options.minimum_profit,
+            },
+        )
+        .await
+        .ok_or(anyhow::Error::msg(
+            "Couldn't find items. Might need more warm up time",
+        ))?;
     match options.sort.as_ref().unwrap_or(&AnalyzerSort::Profit) {
         AnalyzerSort::Profit => {
             analyzer_results.sort_by(|a, b| {

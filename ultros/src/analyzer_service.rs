@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use chrono::NaiveDateTime;
+use chrono::{Duration, Local, NaiveDateTime};
 use futures::TryStreamExt;
 use tracing::log::info;
 use ultros_db::{
@@ -326,6 +326,7 @@ impl AnalyzerService {
         &self,
         world_id: i32,
         region_id: i32,
+        resale_options: ResaleOptions,
     ) -> Option<Vec<ResaleStats>> {
         let recent_sale = self.recent_sale_history.read().await;
         // figure out what items are selling best on our world first, then figure out what items are available in the region that complement that.
@@ -336,6 +337,10 @@ impl AnalyzerService {
             .flat_map(|(item, values)| {
                 values
                     .iter()
+                    .filter(|sale| {
+                        Local::now().naive_local().signed_duration_since(sale.sale_date)
+                            .lt(&Duration::days(resale_options.days as i64))
+                    })
                     .map(|sale| sale.price_per_item)
                     .min()
                     .map(|price| (*item, price))
@@ -361,6 +366,7 @@ impl AnalyzerService {
                     world_id: cheapest_price.world_id,
                 })
             })
+            .filter(|w| resale_options.minimum_profit.map(|m| m.lt(&w.profit)).unwrap_or(true))
             .collect();
         drop(items);
 
@@ -408,4 +414,9 @@ pub(crate) struct ResaleStats {
     pub(crate) return_on_investment: f32,
     pub(crate) hq: bool,
     pub(crate) world_id: i32,
+}
+
+pub(crate) struct ResaleOptions {
+    pub(crate) days: i32,
+    pub(crate) minimum_profit: Option<i32>,
 }

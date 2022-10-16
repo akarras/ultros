@@ -50,6 +50,17 @@ impl Page for AnalyzerPage {
                   "resale analysis for " ((self.world.name)) " traveling within " ((self.region.name))
                 }
                 ((paginate))
+                form {
+                  label for="days" {
+                    "sale within x days"
+                  }
+                  input id="days" name="days" type="number" value=((self.options.days.unwrap_or(100))) {}
+                  label for="minimum_profit" {
+                    "minimum profit"
+                  }
+                  input id="minimum_profit" name="minimum_profit" type="number" value=((self.options.minimum_profit.unwrap_or(0))) {}
+                  input class="btn" type="submit" value="update" {}
+                }
                 table {
                   tr{
                     th {
