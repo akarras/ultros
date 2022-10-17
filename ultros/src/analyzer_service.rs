@@ -99,11 +99,12 @@ impl SaleHistory {
         let entries = self
             .item_map
             .entry(sale.into())
-            .or_insert(Vec::with_capacity(12));
+            .or_insert(Vec::with_capacity(4));
 
         entries.push(sale.into());
         entries.sort();
-        entries.truncate(11);
+        entries.truncate(3);
+        entries.shrink_to(4);
     }
 }
 
