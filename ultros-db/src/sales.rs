@@ -175,7 +175,7 @@ impl UltrosDb {
                 FROM sale_history h
                 WHERE
                 h.world_id = $1) filter
-                WHERE filter.sale_rank > $2
+                WHERE filter.sale_rank <= $2
                 "#,
                 vec![world_id.into(), n_sales.into()],
             ))
