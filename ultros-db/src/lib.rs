@@ -16,7 +16,7 @@ pub use sea_orm::error::DbErr as SeaDbErr;
 use anyhow::Result;
 use chrono::{Duration, Utc};
 use futures::Stream;
-use migration::{DbErr, Migrator, MigratorTrait, Value, sea_orm::QueryOrder};
+use migration::{sea_orm::QueryOrder, DbErr, Migrator, MigratorTrait, Value};
 
 use sea_orm::{
     ActiveModelTrait, ActiveValue::NotSet, ColumnTrait, ConnectOptions, Database,

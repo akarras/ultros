@@ -98,11 +98,10 @@ async fn user_retainers_listings(
     let items = &xiv_gen_db::decompress_data().items;
     // sort the undercut retainers by item sort ui category to match in game
     for (_, listings) in &mut retainer_listings {
-        listings.sort_by_key(|s| {
-            items
-                .get(&xiv_gen::ItemId(s.item_id))
-                .map(|i| i.item_sort_category.0)
-                .unwrap_or_default()
+        listings.sort_by(|a, b| {
+            let item_a = items.get(&xiv_gen::ItemId(a.item_id)).expect("Unknown item");
+            let item_b = items.get(&xiv_gen::ItemId(b.item_id)).expect("Unknown item");
+            item_a.item_ui_category.0.cmp(&item_b.item_ui_category.0).then_with(|| item_a.name.cmp(&item_b.name))
         });
     }
     Ok(RenderPage(UserRetainersPage {
@@ -122,11 +121,10 @@ async fn user_retainers_undercuts(
     let items = &xiv_gen_db::decompress_data().items;
     // sort the undercut retainers by item sort ui category to match in game
     for (_, listings) in &mut undercut_retainers {
-        listings.sort_by_key(|(s, _)| {
-            items
-                .get(&xiv_gen::ItemId(s.item_id))
-                .map(|i| i.item_sort_category.0)
-                .unwrap_or_default()
+        listings.sort_by(|(a, _), (b, _)| {
+            let item_a = items.get(&xiv_gen::ItemId(a.item_id)).expect("Unknown item");
+            let item_b = items.get(&xiv_gen::ItemId(b.item_id)).expect("Unknown item");
+            item_a.item_ui_category.0.cmp(&item_b.item_ui_category.0).then_with(|| item_a.name.cmp(&item_b.name))
         });
     }
     Ok(RenderPage(UserRetainersPage {
