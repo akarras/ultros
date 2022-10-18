@@ -72,25 +72,26 @@ body::after {
 @keyframes animateBackgrounds {
   0% {
     background: url("./images/flower_1.webp");
-    transform: translate(-25px);
+    display: inline;
     opacity: 1.0; 
   }
   23% {
     opacity: 1.0;
   }
   25% {
-    transform: translate(25px);
     opacity: 0.0;
   }
   27% {
-    background: url("./images/flower_2.webp");
+    display: none;
+    opacity: 0.0;
+    background: url("./images/flower_3.webp");
   }
   48% {
     opacity: 0.0;
-    background: url("./images/flower_2.webp");
+    display: inline;
+    background: url("./images/flower_3.webp");
   }
   50% {
-    transform: translate(-25px);
     opacity: 1.0;
   }
   73% {
@@ -98,18 +99,24 @@ body::after {
   }
   75% {
     opacity: 0.0;
-    transform: translate(25px);
+  }
+  90% {
+    display: none;
     background: url("./images/flower_1.webp");
   }
   98% {
     background: url("./images/flower_1.webp");
+    display: inline;
     opacity: 0.0;
+  }
+  99% {
+    opacity: 1.0;
   }
 }
 
 @keyframes animateBackgrounds2 {
   0% {
-    transform: translate(-25px);
+    display: none;
     opacity: 0.0;
     background: url("./images/flower_4.webp");
   }
@@ -118,7 +125,7 @@ body::after {
     background: url("./images/flower_4.webp");
   }
   25% {
-    transform: translate(25px);
+    
     opacity: 1.0;
   }
   48% {
@@ -126,21 +133,27 @@ body::after {
   }
   50% {
     opacity: 0.0;
-    transform: translate(-25px);
+    
   }
   51% {
     background: url("./images/flower_2.webp");
+    display: none;
   }
   73% {
     background: url("./images/flower_2.webp");
+    display: inline;
     opacity: 0.0;
   }
   75% {
     opacity: 1.0;
-    transform: translate(25px);
+    
   }
   98% {
     opacity: 1.0;
+  }
+  99% {
+    display: none;
+    opacity: 0.0;
   }
 }
 
