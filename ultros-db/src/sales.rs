@@ -211,11 +211,11 @@ impl UltrosDb {
             .await?)
     }
 
-    pub async fn stream_last_n_sales_by_world(
+    pub async fn last_n_sales_by_world(
         &self,
         world_id: i32,
         n_sales: i32,
-    ) -> Result<impl Stream<Item = Result<AbbreviatedSaleData, DbErr>> + '_, anyhow::Error> {
+    ) -> Result<Vec<AbbreviatedSaleData>, anyhow::Error> {
         Ok(
             AbbreviatedSaleData::find_by_statement(Statement::from_sql_and_values(
                 DbBackend::Postgres,
@@ -228,7 +228,7 @@ impl UltrosDb {
                 "#,
                 vec![world_id.into(), n_sales.into()],
             ))
-            .stream(&self.db)
+            .all(&self.db)
             .await?,
         )
     }
