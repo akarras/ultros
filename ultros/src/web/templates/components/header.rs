@@ -13,6 +13,7 @@ impl<'a> Render for Header<'a> {
           header {
             div class="header" {
               a class="nav-item" href="/alerts" {
+                i class="fa-solid fa-bell" {}
                 "Alerts"
               };
               a href="/analyzer" class="nav-item" {
@@ -20,6 +21,7 @@ impl<'a> Render for Header<'a> {
                 "Analyzer"
               };
               a class="nav-item" href="/retainers" {
+                i class="fa-solid fa-user-group" {}
                 "Retainers"
               };
               (SearchBox);

@@ -41,6 +41,7 @@ impl Page for UserRetainersPage {
             div class="container" {
               div class="content-nav nav" {
                 a href="/retainers/add" class="btn-secondary" {
+                  i class="fa-solid fa-plus" {}
                   "Add Retainer"
                 }
                 @for (id, name) in &self.character_names {
@@ -49,9 +50,11 @@ impl Page for UserRetainersPage {
                   }
                 }
                 a class={ "btn-secondary" @if current_route_type == "listings" { ((" active"))} } href="/retainers/listings" {
+                  i class="fa-solid fa-sack-dollar" {}
                   "Listings"
                 }
                 a class={"btn-secondary" @if current_route_type == "undercuts" { ((" active"))}} href="/retainers/undercuts" {
+                  i class="fa-solid fa-exclamation" {}
                   "Undercuts"
                 };
               }

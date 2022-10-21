@@ -444,6 +444,10 @@ body::after {
   border: 1px solid #000;
 }
 
+.btn-secondary > * {
+  padding: 5px;
+}
+
 .btn-secondary:hover {
   background-color: #3A2B7E;
   transition: background-color .5s;
