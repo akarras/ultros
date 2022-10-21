@@ -32,18 +32,24 @@ pub fn read_csv<T: DeserializeOwned>(path: &str) -> Vec<T> {
                         ErrorKind::Deserialize { err, .. } => {
                             let field = err.field().unwrap();
                             let field_name = &headers[field as usize];
-                            eprintln!("{field}: {field_name}");
+                            eprintln!("Field {field}: {field_name}");
                         }
                         _ => {}
                     }
                     let byte = position.byte() as usize;
-                    let start_index = (byte - 10).clamp(0, str.len());
-                    let end_index = (byte + 10).clamp(0, str.len());
+                    let start_index = str[0..byte].rfind("\n").unwrap_or(0);
+                    // let start_index = (byte - 10).clamp(0, str.len());
+                    let end_index = str[byte..].find("\n").unwrap_or(str.len()) + byte;
+                    // let end_index = (byte + 10).clamp(0, str.len());
                     let value = &str[start_index..=end_index];
-                    eprintln!("{e:?}\n{value}\n{:>start_index$}", "^".to_string());
+                    let start_index = byte - start_index;
+                    eprintln!(
+                        "{e:?}error\nstring sample\n{value}\n{:>start_index$}",
+                        "^".to_string()
+                    );
                 }
             }
-            m.unwrap()
+            m.expect(&format!("Failed to deserialize file {}", path))
         })
         .collect()
 }
