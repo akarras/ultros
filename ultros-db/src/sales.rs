@@ -186,6 +186,7 @@ impl UltrosDb {
             Option<unknown_final_fantasy_character::Model>,
         )> = val?.into_iter().map(|w| w.into_iter()).flatten().collect();
         val.sort_by_key(|(sale, _)| std::cmp::Reverse(sale.sold_date));
+        val.truncate(limit as usize);
         Ok(val)
     }
 
