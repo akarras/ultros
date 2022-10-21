@@ -314,7 +314,9 @@ pub struct AnalyzerOptions {
     page: Option<usize>,
     days: Option<i32>,
     minimum_profit: Option<i32>,
-    world: Option<i32>,
+    sale_world: Option<i32>,
+    filter_world: Option<i32>,
+    filter_datacenter: Option<i32>
 }
 
 async fn analyze_profits(
@@ -325,7 +327,7 @@ async fn analyze_profits(
     Query(options): Query<AnalyzerOptions>,
 ) -> Result<RenderPage<AnalyzerPage>, WebError> {
     // this doesn't change often, could easily cache.
-    let world = if let Some(world) = options.world {
+    let world = if let Some(world) = options.sale_world {
         world
     } else if let Some(home_world) = &home_world {
         home_world.home_world
@@ -360,7 +362,10 @@ async fn analyze_profits(
             ResaleOptions {
                 days: options.days.unwrap_or(10),
                 minimum_profit: options.minimum_profit,
+                filter_world: options.filter_world,
+                filter_datacenter: options.filter_datacenter,
             },
+            &world_cache
         )
         .await
         .ok_or(anyhow::Error::msg(

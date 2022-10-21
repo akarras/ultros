@@ -31,6 +31,13 @@ pub(crate) struct AnalyzerPage {
     pub world_cache: Arc<WorldCache>,
 }
 
+fn generate_temp_query<T>(options: &AnalyzerOptions, update: T) -> String
+  where T: FnOnce(&mut AnalyzerOptions) -> () {
+    let mut value = options.clone();
+    update(&mut value);
+    serde_urlencoded::to_string(&value).unwrap_or_default()
+}
+
 impl Page for AnalyzerPage {
     fn get_name<'a>(&'a self) -> &'a str {
         "Analyzer"
@@ -39,15 +46,11 @@ impl Page for AnalyzerPage {
     fn draw_body(&self) -> maud::Markup {
         let items = &xiv_gen_db::decompress_data().items;
         let page = self.options.page.unwrap_or_default();
-        let mut options = self.options.clone();
-        options.page = None;
-        let options_str = serde_urlencoded::to_string(&options).unwrap_or_default();
+        let options_str = generate_temp_query(&self.options, |options| options.page=None );
         let paginate = Paginate::new(&self.analyzer_results, 75, page, options_str);
-        options = self.options.clone();
-        options.sort = Some(crate::web::AnalyzerSort::Margin);
-        let margin_query = serde_urlencoded::to_string(&options).unwrap_or_default();
-        options.sort = Some(crate::web::AnalyzerSort::Profit);
-        let profit_query = serde_urlencoded::to_string(&options).unwrap_or_default();
+        let margin_query = generate_temp_query(&self.options, |options| options.sort = Some(crate::web::AnalyzerSort::Margin));
+        let profit_query = generate_temp_query(&self.options, |options| options.sort = Some(crate::web::AnalyzerSort::Profit));
+        
         let results = paginate.get_page();
         html! {
           ((Header {
@@ -103,10 +106,14 @@ impl Page for AnalyzerPage {
                           a title="sort this table by return on investment" href={"?" ((margin_query))} { "roi" }
                         }
                         th title="world this item is cheapest on" {
-                          "world"
+                          a href={"?" ((generate_temp_query(&self.options, |o| o.filter_world = None)))} { 
+                            "world"
+                          }
                         }
                         th title="datacenter this item is cheapest on" {
-                          "datacenter"
+                          a href={"?" ((generate_temp_query(&self.options, |o| o.filter_datacenter = None)))} {
+                            "datacenter"
+                          }
                         }
                       }
                       @for result in results {
@@ -144,13 +151,15 @@ impl Page for AnalyzerPage {
                           }
                           @if let Ok(world) = self.world_cache.lookup_selector(&AnySelector::World(result.world_id)) {
                             td {
-                              ((world.get_name()))
+                              a href={"?" ((generate_temp_query(&self.options, |opt| opt.filter_world = Some(result.world_id))))} {((world.get_name())) }
                             }
                             td {
                               // this will have one dc, but I just ran a loop because lazy
-                              @if let Some(dc) = self.world_cache.get_datacenters(&world) {
-                                @for dcs in dc {
-                                  ((dcs.name))
+                              @if let Some(dcs) = self.world_cache.get_datacenters(&world) {
+                                @for dc in dcs {
+                                  a href={"?" ((generate_temp_query(&self.options, |opt| opt.filter_datacenter = Some(dc.id))))} {
+                                    ((dc.name))
+                                  }
                                 }
                               }
                             }

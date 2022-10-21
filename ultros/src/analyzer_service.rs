@@ -226,37 +226,39 @@ impl AnalyzerService {
             if let Some(worlds) = world_cache.get_all_worlds_in(&AnyResult::Region(region)) {
                 for world in &worlds {
                     // lets keep a lock on our local service for the duration that we have a stream to the database
-                    let mut writer = self.cheapest_items.write().await;
-                    let mut listings = ultros_db
-                        .stream_cheapest_listings_on_world(*world)
-                        .await
-                        .expect("failed to stream listings");
-                    let mut stream_result = listings.try_next().await;
-                    while let Ok(Some(listing)) = stream_result {
-                        let world_listings = writer.entry(region.id).or_default();
-                        world_listings.add_listing(&listing);
-                        stream_result = listings.try_next().await;
-                    }
-                    if let Err(e) = stream_result {
-                        error!("Streaming item listings failed {e:?}");
+                    let listings = ultros_db
+                        .cheapest_listings_on_world(*world)
+                        .await;
+                    match listings {
+                        Ok(listings) => {
+                            let mut writer = self.cheapest_items.write().await;
+                            for value in listings {
+                                let world_listings = writer.entry(region.id).or_default();
+                                world_listings.add_listing(&value);
+                            }
+                        }
+                        Err(e) => {
+                            error!("Streaming item listings failed {e:?}");
+                        }
                     }
                 }
                 // now prime sale history
 
                 for world in &worlds {
-                    let mut writer = self.recent_sale_history.write().await;
-                    let history = writer.entry(*world).or_default();
-                    let mut history_stream = ultros_db
-                        .stream_last_n_sales_by_world(*world, 10)
-                        .await
-                        .expect("Failed to stream history");
-                    let mut stream_result = history_stream.try_next().await;
-                    while let Ok(Some(sale)) = stream_result {
-                        history.add_sale(&sale);
-                        stream_result = history_stream.try_next().await;
-                    }
-                    if let Err(e) = stream_result {
-                        error!("Streaming sale history failed {e:?}");
+                    let sale_data = ultros_db
+                        .last_n_sales_by_world(*world, 10)
+                        .await;
+                    match sale_data {
+                        Ok(history_stream) => {
+                            let mut writer = self.recent_sale_history.write().await;
+                            let history = writer.entry(*world).or_default();
+                            for value in history_stream {
+                                history.add_sale(&value);
+                            }
+                        }
+                        Err(e) => {
+                            error!("Streaming item listings failed {e:?}");
+                        }
                     }
                 }
             }
@@ -329,8 +331,12 @@ impl AnalyzerService {
         world_id: i32,
         region_id: i32,
         resale_options: ResaleOptions,
+        world_cache: &Arc<WorldCache>,
     ) -> Option<Vec<ResaleStats>> {
         let recent_sale = self.recent_sale_history.read().await;
+        let datacenter_filters_worlds = resale_options.filter_datacenter.map(|w| {
+            world_cache.lookup_selector(&AnySelector::Datacenter(w)).ok().map(|w| world_cache.get_all_worlds_in(&w)).flatten()
+        }).flatten();
         // figure out what items are selling best on our world first, then figure out what items are available in the region that complement that.
         let sale = recent_sale.get(&world_id)?;
         let sale_history: BTreeMap<_, _> = sale
@@ -375,6 +381,14 @@ impl AnalyzerService {
                     .minimum_profit
                     .map(|m| m.lt(&w.profit))
                     .unwrap_or(true)
+            })
+            .filter(|sale| {
+                resale_options.filter_world.map(|w| sale.world_id.eq(&w)).unwrap_or(true)
+            })
+            .filter(|sale| {
+                datacenter_filters_worlds.as_ref().map(|dc| {
+                    dc.contains(&sale.world_id)
+                }).unwrap_or(true)
             })
             .collect();
         drop(items);
@@ -428,4 +442,6 @@ pub(crate) struct ResaleStats {
 pub(crate) struct ResaleOptions {
     pub(crate) days: i32,
     pub(crate) minimum_profit: Option<i32>,
+    pub(crate) filter_world: Option<i32>,
+    pub(crate) filter_datacenter: Option<i32>
 }
