@@ -300,10 +300,13 @@ pub enum AnalyzerSort {
 
 impl Render for AnalyzerSort {
     fn render(&self) -> maud::Markup {
-        maud::PreEscaped(match self {
-            AnalyzerSort::Profit => "profit",
-            AnalyzerSort::Margin => "margin",
-        }.to_string())
+        maud::PreEscaped(
+            match self {
+                AnalyzerSort::Profit => "profit",
+                AnalyzerSort::Margin => "margin",
+            }
+            .to_string(),
+        )
     }
 }
 
@@ -314,7 +317,7 @@ pub struct AnalyzerOptions {
     page: Option<usize>,
     days: Option<i32>,
     minimum_profit: Option<i32>,
-    world: Option<i32>
+    world: Option<i32>,
 }
 
 async fn analyze_profits(
@@ -338,7 +341,7 @@ async fn analyze_profits(
             region: None,
             options,
             world_cache,
-        }))
+        }));
     };
     let world = world_cache.lookup_selector(&AnySelector::World(world))?;
     let region = world_cache

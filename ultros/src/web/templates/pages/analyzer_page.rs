@@ -6,12 +6,15 @@ use ultros_db::entity::{region, world};
 use crate::{
     analyzer_service::ResaleStats,
     web::{
+        home_world_cookie::HomeWorld,
         oauth::AuthDiscordUser,
         templates::{
-            components::{gil::Gil, header::Header, paginate::Paginate, world_dropdown::WorldDropdown},
+            components::{
+                gil::Gil, header::Header, paginate::Paginate, world_dropdown::WorldDropdown,
+            },
             page::Page,
         },
-        AnalyzerOptions, AnalyzerSort, home_world_cookie::HomeWorld,
+        AnalyzerOptions, AnalyzerSort,
     },
     world_cache::{AnySelector, WorldCache},
 };

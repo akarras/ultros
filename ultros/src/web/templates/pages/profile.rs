@@ -57,7 +57,11 @@ impl Page for Profile {
     }
 
     fn draw_body(&self) -> maud::Markup {
-        let Self { user, home_world, world_cache } = self;
+        let Self {
+            user,
+            home_world,
+            world_cache,
+        } = self;
         html! {
             ((Header { user: user.as_ref() }))
             div class="container" {
