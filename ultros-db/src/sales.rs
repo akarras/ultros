@@ -14,7 +14,9 @@ use migration::{
     sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter, Set},
     DbErr, Query, Value,
 };
-use sea_orm::{DbBackend, FromQueryResult, Paginator, PaginatorTrait, QueryOrder, Statement};
+use sea_orm::{
+    DbBackend, FromQueryResult, Paginator, PaginatorTrait, QueryOrder, QuerySelect, Statement,
+};
 use tracing::instrument;
 use universalis::{websocket::event_types::SaleView, ItemId, WorldId};
 
@@ -144,7 +146,7 @@ impl UltrosDb {
         Ok(recorded_sales)
     }
 
-    pub fn get_sale_history_with_characters(
+    pub fn get_sale_history_with_characters_from_multiple_worlds_paginated(
         &self,
         world_ids: impl Iterator<Item = i32>,
         item_id: i32,
@@ -160,6 +162,53 @@ impl UltrosDb {
             .find_also_related(unknown_final_fantasy_character::Entity)
             .paginate(&self.db, page_size);
         paginator
+    }
+
+    pub async fn get_sale_history_with_characters_from_multiple_worlds_single(
+        &self,
+        world_ids: impl Iterator<Item = i32>,
+        item_id: i32,
+        limit: u64,
+    ) -> Result<
+        Vec<(
+            sale_history::Model,
+            Option<unknown_final_fantasy_character::Model>,
+        )>,
+        anyhow::Error,
+    > {
+        let all = futures::future::join_all(
+            world_ids.map(|world_id| self.get_sale_history_from_world(world_id, item_id, limit)),
+        )
+        .await;
+        let val: Result<Vec<_>, _> = all.into_iter().map(|w| w.map(|w| w)).collect();
+        let mut val: Vec<(
+            sale_history::Model,
+            Option<unknown_final_fantasy_character::Model>,
+        )> = val?.into_iter().map(|w| w.into_iter()).flatten().collect();
+        val.sort_by_key(|(sale, _)| std::cmp::Reverse(sale.sold_date));
+        Ok(val)
+    }
+
+    pub async fn get_sale_history_from_world(
+        &self,
+        world_id: i32,
+        item_id: i32,
+        limit: u64,
+    ) -> Result<
+        Vec<(
+            sale_history::Model,
+            Option<unknown_final_fantasy_character::Model>,
+        )>,
+        anyhow::Error,
+    > {
+        Ok(sale_history::Entity::find()
+            .filter(sale_history::Column::SoldItemId.eq(item_id))
+            .filter(sale_history::Column::WorldId.eq(world_id))
+            .order_by_desc(sale_history::Column::SoldDate)
+            .find_also_related(unknown_final_fantasy_character::Entity)
+            .limit(limit)
+            .all(&self.db)
+            .await?)
     }
 
     pub async fn stream_last_n_sales_by_world(
