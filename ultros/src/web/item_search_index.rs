@@ -2,6 +2,7 @@ use anyhow::Result;
 use lazy_static::lazy_static;
 use tantivy::collector::TopDocs;
 use tantivy::doc;
+use tantivy::query::FuzzyTermQuery;
 use tantivy::query::QueryParser;
 use tantivy::schema::*;
 use tantivy::Index;
@@ -50,10 +51,17 @@ pub fn do_query(query_str: &str) -> Result<Vec<(i32, &'static Item)>> {
         .get_field("category")
         .ok_or(anyhow::Error::msg("Unable to get category field"))?;
     let parser = QueryParser::for_index(&ITEM_INDEX, vec![name, category]);
-    let query = parser.parse_query(query_str).unwrap();
+
+    let query = parser.parse_query(query_str)?;
+
     let reader = ITEM_INDEX.reader().unwrap();
     let searcher = reader.searcher();
-    let results = searcher.search(&query, &TopDocs::with_limit(10))?;
+    let mut results = searcher.search(&query, &TopDocs::with_limit(30))?;
+    if results.is_empty() {
+        let term = Term::from_field_text(name, query_str);
+        let title = FuzzyTermQuery::new(term, 2, true);
+        results = searcher.search(&title, &TopDocs::with_limit(30))?;
+    }
     let items = &xiv_gen_db::decompress_data().items;
     results
         .iter()
