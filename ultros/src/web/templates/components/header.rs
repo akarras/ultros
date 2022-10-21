@@ -15,7 +15,8 @@ impl<'a> Render for Header<'a> {
               a class="nav-item" href="/alerts" {
                 "Alerts"
               };
-              a class="nav-item" href="/analyzer" {
+              a href="/analyzer" class="nav-item" {
+                i class="fa-solid fa-money-bill-trend-up" {}
                 "Analyzer"
               };
               a class="nav-item" href="/retainers" {

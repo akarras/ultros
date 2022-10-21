@@ -230,7 +230,7 @@ body::after {
   transition: 0.3s;
   transition-property: background-color, box-shadow;
   box-shadow: inset 0px 0px 0px 2px #3B2B9E;
-}
+}x
 
 .main-content .btn {
   padding-left: 20px;
@@ -242,13 +242,16 @@ body::after {
   margin: 5px;
   text-decoration: none;
   font-size: large;
-  height: 52px;
+  height: 36px;
   text-align: center;
   display: flex;
   align-items: center;
   justify-content: center;
   padding-left: 20px;
   transition: .25s;
+}
+.nav-item > * {
+  padding: 5px;
 }
 
 .nav-item:hover {
@@ -410,9 +413,9 @@ body::after {
 }
 
 .avatar {
-  width: 50px;
-  height: 50px;
-  border-radius: 50px;
+  width: 36px;
+  height: 36px;
+  border-radius: 36px;
   padding: 5px;
 }
 
