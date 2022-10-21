@@ -16,6 +16,7 @@ use axum::{body, Router};
 use axum_extra::extract::cookie::{Cookie, Key, SameSite};
 use axum_extra::extract::CookieJar;
 use futures::future::join;
+use maud::Render;
 use opentelemetry_prometheus::PrometheusExporter;
 use reqwest::header;
 use serde::{Deserialize, Serialize};
@@ -297,6 +298,15 @@ pub enum AnalyzerSort {
     Margin,
 }
 
+impl Render for AnalyzerSort {
+    fn render(&self) -> maud::Markup {
+        maud::PreEscaped(match self {
+            AnalyzerSort::Profit => "profit",
+            AnalyzerSort::Margin => "margin",
+        }.to_string())
+    }
+}
+
 #[serde_as]
 #[derive(Deserialize, Serialize, Clone)]
 pub struct AnalyzerOptions {
@@ -304,17 +314,33 @@ pub struct AnalyzerOptions {
     page: Option<usize>,
     days: Option<i32>,
     minimum_profit: Option<i32>,
+    world: Option<i32>
 }
 
 async fn analyze_profits(
     State(analyzer): State<AnalyzerService>,
     State(world_cache): State<Arc<WorldCache>>,
-    world: HomeWorld,
+    home_world: Option<HomeWorld>,
     user: Option<AuthDiscordUser>,
     Query(options): Query<AnalyzerOptions>,
 ) -> Result<RenderPage<AnalyzerPage>, WebError> {
     // this doesn't change often, could easily cache.
-    let world = world_cache.lookup_selector(&AnySelector::World(world.home_world))?;
+    let world = if let Some(world) = options.world {
+        world
+    } else if let Some(home_world) = &home_world {
+        home_world.home_world
+    } else {
+        return Ok(RenderPage(AnalyzerPage {
+            user,
+            analyzer_results: vec![],
+            world: None,
+            home_world,
+            region: None,
+            options,
+            world_cache,
+        }))
+    };
+    let world = world_cache.lookup_selector(&AnySelector::World(world))?;
     let region = world_cache
         .get_region(&world)
         .ok_or(anyhow::Error::msg("Unable to get region"))?;
@@ -360,10 +386,11 @@ async fn analyze_profits(
     Ok(RenderPage(AnalyzerPage {
         user,
         analyzer_results,
-        region: region.clone(),
-        world: world.clone(),
+        region: Some(region.clone()),
+        world: Some(world.clone()),
         options,
         world_cache,
+        home_world,
     }))
 }
 

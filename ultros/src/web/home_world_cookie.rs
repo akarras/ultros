@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use axum::extract::{FromRef, FromRequestParts};
 use axum_extra::extract::CookieJar;
 
+#[derive(Clone, Copy)]
 pub(crate) struct HomeWorld {
     pub(crate) home_world: i32,
 }

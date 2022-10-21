@@ -10,7 +10,7 @@ use crate::{
         home_world_cookie::{self, HomeWorld},
         oauth::AuthDiscordUser,
         templates::{
-            components::header::Header,
+            components::{header::Header, world_dropdown::WorldDropdown},
             page::{Page, RenderPage},
         },
     },
@@ -57,23 +57,9 @@ impl Page for Profile {
     }
 
     fn draw_body(&self) -> maud::Markup {
-        let all = self.world_cache.get_all();
-        let home_world = self
-            .home_world
-            .as_ref()
-            .map(|home| home.home_world)
-            .unwrap_or_default();
-        let world = self
-            .world_cache
-            .lookup_selector(&AnySelector::World(home_world))
-            .map(|w| match w {
-                crate::world_cache::AnyResult::World(world) => Some(world),
-                _ => None,
-            })
-            .ok()
-            .flatten();
+        let Self { user, home_world, world_cache } = self;
         html! {
-            ((Header { user: self.user.as_ref() }))
+            ((Header { user: user.as_ref() }))
             div class="container" {
                 div class="main-content" {
                     h1 {
@@ -83,26 +69,7 @@ impl Page for Profile {
                         "Home word:"
                     }
                     form action="/profile" {
-                        select name="world" id="name" {
-                            @if let Some(world) = world {
-                                option value=((world.id)) active {
-                                    ((world.name))
-                                }
-                            }
-                            @for (region, datacenters) in all {
-                                optgroup label=((region.name)) {
-                                    @for (datacenter, worlds) in datacenters {
-                                        optgroup label=((datacenter.name)) {
-                                            @for world in worlds {
-                                                option value=((world.id)) {
-                                                    ((world.name))
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        ((WorldDropdown { world_id: home_world.map(|h| h.home_world), world_cache }))
                         input type="submit" value="Update";
                     }
                 }
