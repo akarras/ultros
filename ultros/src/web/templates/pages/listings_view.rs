@@ -11,7 +11,7 @@ use crate::{
         home_world_cookie::HomeWorld,
         oauth::AuthDiscordUser,
         templates::{
-            components::{gil::Gil, header::Header},
+            components::{copy_text_button::CopyTextButton, gil::Gil, header::Header},
             page::Page,
         },
     },
@@ -72,6 +72,7 @@ impl Page for ListingsPage {
                   div class="search-result-details" {
                     span class="item-name" {
                       (&self.item.name)
+                      ((CopyTextButton { text: &self.item.name }))
                     }
                     span class="item-type" {
                       (categories.get(&self.item.item_ui_category).map(|i| i.name.as_str()).unwrap_or_default())

@@ -10,7 +10,8 @@ use crate::{
         oauth::AuthDiscordUser,
         templates::{
             components::{
-                gil::Gil, header::Header, paginate::Paginate, world_dropdown::WorldDropdown,
+                copy_text_button::CopyTextButton, gil::Gil, header::Header, paginate::Paginate,
+                world_dropdown::WorldDropdown,
             },
             page::Page,
         },
@@ -111,10 +112,12 @@ impl Page for AnalyzerPage {
                       @for result in results {
                         tr {
                           td{
+                            @let item_name = items.get(&ItemId(result.item_id)).map(|i| i.name.as_str()).unwrap_or_default();
                             a href={"/listings/" ((region)) "/" ((result.item_id))}{
                               img class="small-icon" src={"https://universalis-ffxiv.github.io/universalis-assets/icon2x/" (result.item_id) ".png"};
-                              ((items.get(&ItemId(result.item_id)).map(|i| i.name.as_str()).unwrap_or_default()))
+                              ((item_name))
                             }
+                            ((CopyTextButton { text: item_name }))
                           }
                           th {
                             @if result.hq {

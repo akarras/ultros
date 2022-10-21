@@ -1,3 +1,4 @@
+pub mod copy_text_button;
 pub(crate) mod footer;
 pub(crate) mod gil;
 pub(crate) mod header;
