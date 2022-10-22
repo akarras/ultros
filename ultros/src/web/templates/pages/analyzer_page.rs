@@ -80,6 +80,12 @@ impl Page for AnalyzerPage {
                   }
                   ((WorldDropdown { world_id: self.world.as_ref().map(|i| i.id), world_cache: &self.world_cache}))
                   input type="hidden" name="sort" id="sort" value=((self.options.sort.unwrap_or(AnalyzerSort::Margin))) {}
+                  @if let Some(filter_world) = self.options.filter_world {
+                    input type="hidden" name="filter_world" id="filter_world" value=((filter_world)) {}
+                  }
+                  @if let Some(filter_datacenter) = self.options.filter_datacenter {
+                    input type="hidden" name="filter_datacenter" id="filter_datacenter" value=((filter_datacenter)) {}
+                  }
                   input class="btn" type="submit" value="update" {}
                 }
                 @if let Some((world, region)) = self.world.as_ref().map(|w| self.region.as_ref().map(|r| (&w.name, &r.name))).flatten() {
@@ -157,13 +163,13 @@ impl Page for AnalyzerPage {
                           }
                           @if let Ok(world) = self.world_cache.lookup_selector(&AnySelector::World(result.world_id)) {
                             td {
-                              a href={"?" ((generate_temp_query(&self.options, |opt| opt.filter_world = Some(result.world_id))))} {((world.get_name())) }
+                              a href={"?" ((generate_temp_query(&self.options, |opt| { opt.filter_world = Some(result.world_id); opt.filter_datacenter = None; })))} {((world.get_name())) }
                             }
                             td {
                               // this will have one dc, but I just ran a loop because lazy
                               @if let Some(dcs) = self.world_cache.get_datacenters(&world) {
                                 @for dc in dcs {
-                                  a href={"?" ((generate_temp_query(&self.options, |opt| opt.filter_datacenter = Some(dc.id))))} {
+                                  a href={"?" ((generate_temp_query(&self.options, |opt| { opt.filter_datacenter = Some(dc.id); opt.filter_world = None; })))} {
                                     ((dc.name))
                                   }
                                 }
