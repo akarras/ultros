@@ -24,8 +24,7 @@ a:hover {
 }
 
 body {
-  transition-property: background-image;
-  transition: 1s;
+  background-image: url('/static/images/flower_4.webp');
   color: #fff;
   font-family: Jaldi, sans-serif;
   opacity: 1;
@@ -36,126 +35,6 @@ body {
   min-height: 100vh;
 }
 
-body::before {
-  content: '';
-  position: fixed;
-  top: -10%;
-  left: -10%;
-  width: 120%;
-  height: 120%;
-  background: url('./images/flower_1.webp');
-  background-size: 512px;
-  background-repeat: repeat;
-  background-color: #000;
-  background-origin: content-box;
-  animation: animateBackgrounds 50s linear 0s infinite;
-  z-index: -10000;
-}
-
-body::after {
-  content: '';
-  position: fixed;
-  top: -10%;
-  left: -10%;
-  width: 120%;
-  height: 120%;
-  opacity: 0%;
-  background: url('./images/flower_4.webp');
-  background-size: 512px;
-  background-repeat: repeat;
-  background-color: #000;
-  background-origin: content-box;
-  animation: animateBackgrounds2 50s linear 0s infinite;
-  z-index: -10000;
-}
-
-@keyframes animateBackgrounds {
-  0% {
-    background: url("./images/flower_1.webp");
-    display: inline;
-    opacity: 1.0; 
-  }
-  23% {
-    opacity: 1.0;
-  }
-  25% {
-    opacity: 0.0;
-  }
-  27% {
-    display: none;
-    opacity: 0.0;
-    background: url("./images/flower_3.webp");
-  }
-  48% {
-    opacity: 0.0;
-    display: inline;
-    background: url("./images/flower_3.webp");
-  }
-  50% {
-    opacity: 1.0;
-  }
-  73% {
-    opacity: 1.0;
-  }
-  75% {
-    opacity: 0.0;
-  }
-  90% {
-    display: none;
-    background: url("./images/flower_1.webp");
-  }
-  98% {
-    background: url("./images/flower_1.webp");
-    display: inline;
-    opacity: 0.0;
-  }
-  99% {
-    opacity: 1.0;
-  }
-}
-
-@keyframes animateBackgrounds2 {
-  0% {
-    display: none;
-    opacity: 0.0;
-    background: url("./images/flower_4.webp");
-  }
-  23% {
-    opacity: 0.0;
-    background: url("./images/flower_4.webp");
-  }
-  25% {
-    
-    opacity: 1.0;
-  }
-  48% {
-    opacity: 1.0;
-  }
-  50% {
-    opacity: 0.0;
-    
-  }
-  51% {
-    background: url("./images/flower_2.webp");
-    display: none;
-  }
-  73% {
-    background: url("./images/flower_2.webp");
-    display: inline;
-    opacity: 0.0;
-  }
-  75% {
-    opacity: 1.0;
-    
-  }
-  98% {
-    opacity: 1.0;
-  }
-  99% {
-    display: none;
-    opacity: 0.0;
-  }
-}
 
 @keyframes fadeInAnimation {
   0% {
@@ -297,12 +176,20 @@ body::after {
   flex-direction: column;
   font-family: inherit;
   font-size: large;
-  background-color: #eee;
-  color: #000;
+  color: #fff;
+  background-color: #18003470;
+  border: solid grey 2px;
+  transition: .5s 0s cubic-bezier(0.075, 0.82, 0.165, 1) background-color;
+}
+
+.search-box:hover {
+  background-color: #44304daa;
+  transition: .5s 0s cubic-bezier(0.075, 0.82, 0.165, 1) background-color;
 }
 
 .search-box.active {
-  color: #222;
+  background-color: #48394F;
+  transition: .5s 0s cubic-bezier(0.075, 0.82, 0.165, 1) background-color;
 }
 
 .search-box.active ~ .search-results {
@@ -449,7 +336,7 @@ body::after {
 }
 
 .btn-secondary:hover {
-  background-color: #3A2B7E;
+  background-color: #312537;
   transition: background-color .5s;
 }
 
@@ -601,25 +488,19 @@ th {
 }
 
 input {
-  border: solid #3B2B9E;
-  border-radius: 8px;
+  border: solid #3B2B9E 2px;
+  border-radius: 5px;
   font-size: 16px;
   font-family: Jaldi, sans-serif;
   width: 100px;
   color: #3A2B7E;
-  background-color: #e7d0f2;
+  background-color: #18003470;
+  color: #fff;
+  margin: 5px;
 }
 
 input[type=number] {
   appearance: textfield;
-}
-
-input[type=number]::before {
-  content: '<button click="this.previousElementSibling.stepDown()">\></button>';
-}
-
-input[type=number]::after {
-  content: '<button click="this.previousElementSibling.stepUp()">\<</button>';
 }
 
 select {
@@ -628,8 +509,8 @@ select {
   font-size: 16px;
   font-family: Jaldi, sans-serif;
   width: 240px;
-  color: #3A2B7E;
-  background-color: #e7d0f2;
+  color: #fff;
+  background-color: #18003470;
 }
 
 .clipboard {

@@ -29,49 +29,62 @@ impl Page for GenericRetainerPage {
             div class="container" {
                 div class="content-nav nav" {
                   a class="btn-secondary" href={"/retainers/add/" ((self.retainer_id)) } {
-                    "Claim Retainer"
+                    "Add Retainer"
                   }
                 }
                 div class="main-content" {
-                    span {
-                        ((self.retainer_name))
-                    }
-                    span {
-                        ((self.world_name))
-                    }
-                    hr {}
-                    table {
-                        tr {
-                            th {
-                                "Item"
+                    div class="flex-wrap" {
+                        div class="flex-column" {
+                            h1 {
+                                "Retainer details"
                             }
-                            th {
-                                "Price Per Unit"
+                            span class="content-title" {
+                                "Name: "
+                                ((self.retainer_name))
                             }
-                            th {
-                                "Quantity"
-                            }
-                            th {
-                                "Total"
+                            span class="content-title" {
+                                "World: "
+                                ((self.world_name))
                             }
                         }
-                        @for listing in &self.listings {
-                            tr {
-                                td {
-                                    img class="small-icon" src=((utils::get_item_icon_url(listing.item_id))) {}
-                                    ((utils::get_item_name(listing.item_id)))
+                        div class="flex-column" {
+                            h3 {
+                                "listings"
+                            }
+                            table {
+                                tr {
+                                    th {
+                                        "Item"
+                                    }
+                                    th {
+                                        "Price Per Unit"
+                                    }
+                                    th {
+                                        "Quantity"
+                                    }
+                                    th {
+                                        "Total"
+                                    }
                                 }
-                                td {
-                                    ((listing.price_per_unit))
-                                }
-                                td {
-                                    ((listing.quantity))
-                                }
-                                td {
-                                    ((listing.quantity * listing.price_per_unit))
-                                }
+                                @for listing in &self.listings {
+                                    tr {
+                                        td {
+                                            img class="small-icon" src=((utils::get_item_icon_url(listing.item_id))) {}
+                                            ((utils::get_item_name(listing.item_id)))
+                                        }
+                                        td {
+                                            ((listing.price_per_unit))
+                                        }
+                                        td {
+                                            ((listing.quantity))
+                                        }
+                                        td {
+                                            ((listing.quantity * listing.price_per_unit))
+                                        }
 
 
+                                    }
+                                }
                             }
                         }
                     }
