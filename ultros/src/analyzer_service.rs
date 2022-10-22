@@ -220,13 +220,13 @@ impl AnalyzerService {
         world_cache: Arc<WorldCache>,
     ) {
         // on startup we should try to read through the database to get the spiciest of item listings
-        info!("priming worker");
+        info!("worker starting");
         let listings = ultros_db.cheapest_listings().await;
         info!("starting item listings");
         match listings {
             Ok(mut listings) => {
-                let mut writer = self.cheapest_items.write().await;
                 while let Some(Ok(value)) = listings.next().await {
+                    let mut writer = self.cheapest_items.write().await;
                     let world = world_cache.lookup_selector(&AnySelector::World(value.world_id)).unwrap();
                     let region = world_cache.get_region(&world).unwrap();
                     let region_listings =
@@ -446,7 +446,6 @@ impl AnalyzerService {
         }
 
         for listing in listings.iter() {
-            let mut lock_guard = self.cheapest_items.write().await;
             let world = lock_guard
                 .entry(AnySelector::World(listing.world_id))
                 .or_default();
