@@ -153,7 +153,7 @@ impl CheapestListings {
     async fn remove_listing(
         &mut self,
         listing: &active_listing::Model,
-        region_id: i32,
+        id: AnySelector,
         world_cache: &WorldCache,
         ultros_db: &UltrosDb,
     ) {
@@ -162,7 +162,7 @@ impl CheapestListings {
         if let Some(entry) = self.item_map.remove(&key) {
             if entry.price == listing.price_per_unit {
                 let worlds = world_cache
-                    .lookup_selector(&AnySelector::Region(region_id))
+                    .lookup_selector(&id)
                     .map(|r| world_cache.get_all_worlds_in(&r))
                     .ok()
                     .flatten()
@@ -189,7 +189,7 @@ pub(crate) struct AnalyzerService {
     /// world_id -> TopSellers
     recent_sale_history: Arc<RwLock<HashMap<i32, SaleHistory>>>,
     /// Cheapest items by region. Not catering to slackers.
-    cheapest_items: Arc<RwLock<HashMap<i32, CheapestListings>>>,
+    cheapest_items: Arc<RwLock<HashMap<AnySelector, CheapestListings>>>,
 }
 
 impl AnalyzerService {
@@ -221,19 +221,23 @@ impl AnalyzerService {
     ) {
         // on startup we should try to read through the database to get the spiciest of item listings
         info!("priming worker");
+        let items = &xiv_gen_db::decompress_data().items;
+        let item_ids : Vec<_> = items.keys().map(|i| i.0).collect();
         for region in world_cache.get_all_regions() {
             info!("starting region {region:?}");
             if let Some(worlds) = world_cache.get_all_worlds_in(&AnyResult::Region(region)) {
                 for world in &worlds {
                     // lets keep a lock on our local service for the duration that we have a stream to the database
-                    let listings = ultros_db
-                        .cheapest_listings_on_world(*world)
-                        .await;
+                    let listings = ultros_db.cheapest_listings_on_world(*world).await;
                     match listings {
                         Ok(listings) => {
                             let mut writer = self.cheapest_items.write().await;
                             for value in listings {
-                                let world_listings = writer.entry(region.id).or_default();
+                                let region_listings =
+                                    writer.entry(AnySelector::Region(region.id)).or_default();
+                                region_listings.add_listing(&value);
+                                let world_listings =
+                                    writer.entry(AnySelector::World(*world)).or_default();
                                 world_listings.add_listing(&value);
                             }
                         }
@@ -243,11 +247,9 @@ impl AnalyzerService {
                     }
                 }
                 // now prime sale history
-
+                
                 for world in &worlds {
-                    let sale_data = ultros_db
-                        .last_n_sales_by_world(*world, 10)
-                        .await;
+                    let sale_data = ultros_db.last_n_sales_by_world(*world, 10).await;
                     match sale_data {
                         Ok(history_stream) => {
                             let mut writer = self.recent_sale_history.write().await;
@@ -334,9 +336,16 @@ impl AnalyzerService {
         world_cache: &Arc<WorldCache>,
     ) -> Option<Vec<ResaleStats>> {
         let recent_sale = self.recent_sale_history.read().await;
-        let datacenter_filters_worlds = resale_options.filter_datacenter.map(|w| {
-            world_cache.lookup_selector(&AnySelector::Datacenter(w)).ok().map(|w| world_cache.get_all_worlds_in(&w)).flatten()
-        }).flatten();
+        let datacenter_filters_worlds = resale_options
+            .filter_datacenter
+            .map(|w| {
+                world_cache
+                    .lookup_selector(&AnySelector::Datacenter(w))
+                    .ok()
+                    .map(|w| world_cache.get_all_worlds_in(&w))
+                    .flatten()
+            })
+            .flatten();
         // figure out what items are selling best on our world first, then figure out what items are available in the region that complement that.
         let sale = recent_sale.get(&world_id)?;
         let sale_history: BTreeMap<_, _> = sale
@@ -359,18 +368,26 @@ impl AnalyzerService {
         drop(recent_sale);
 
         let items = self.cheapest_items.read().await;
-        let region = items.get(&region_id)?;
+        let region = items.get(&AnySelector::Region(region_id))?;
+        let sale_world_listings = items.get(&AnySelector::World(world_id))?;
         let possible_sales: Vec<_> = region
             .item_map
             .iter()
             .flat_map(|(item_key, cheapest_price)| {
                 let history = sale_history.get(item_key)?;
+                let current_cheapest_on_sale_world = sale_world_listings
+                    .item_map
+                    .get(item_key)
+                    .map(|l| l.price)
+                    .unwrap_or(*history);
+                let est_sale_price = (*history).min(current_cheapest_on_sale_world);
+                let profit = est_sale_price - cheapest_price.price;
                 Some(ResaleStats {
-                    profit: *history - cheapest_price.price,
+                    profit,
                     cheapest: cheapest_price.price,
                     item_id: item_key.item_id,
                     hq: item_key.hq,
-                    return_on_investment: ((*history as f32) / (cheapest_price.price as f32)
+                    return_on_investment: ((est_sale_price as f32) / (cheapest_price.price as f32)
                         * 100.0)
                         - 100.0,
                     world_id: cheapest_price.world_id,
@@ -383,12 +400,16 @@ impl AnalyzerService {
                     .unwrap_or(true)
             })
             .filter(|sale| {
-                resale_options.filter_world.map(|w| sale.world_id.eq(&w)).unwrap_or(true)
+                resale_options
+                    .filter_world
+                    .map(|w| sale.world_id.eq(&w))
+                    .unwrap_or(true)
             })
             .filter(|sale| {
-                datacenter_filters_worlds.as_ref().map(|dc| {
-                    dc.contains(&sale.world_id)
-                }).unwrap_or(true)
+                datacenter_filters_worlds
+                    .as_ref()
+                    .map(|dc| dc.contains(&sale.world_id))
+                    .unwrap_or(true)
             })
             .collect();
         drop(items);
@@ -399,9 +420,15 @@ impl AnalyzerService {
     /// process listings in bulk. can handle multiple item types, but must have only one region.
     async fn add_listings(&self, region_id: i32, listings: &[active_listing::Model]) {
         let mut lock_guard = self.cheapest_items.write().await;
-        let entry = lock_guard.entry(region_id).or_default();
+        let entry = lock_guard
+            .entry(AnySelector::Region(region_id))
+            .or_default();
         for listing in listings {
             entry.add_listing(listing);
+        }
+        for listing in listings {
+            let world_entry = lock_guard.entry(AnySelector::World(region_id)).or_default();
+            world_entry.add_listing(listing);
         }
     }
 
@@ -414,10 +441,32 @@ impl AnalyzerService {
         ultros_db: &UltrosDb,
     ) {
         let mut lock_guard = self.cheapest_items.write().await;
-        let entry = lock_guard.entry(region_id).or_default();
+        let entry = lock_guard
+            .entry(AnySelector::Region(region_id))
+            .or_default();
         for listing in listings.iter() {
             entry
-                .remove_listing(listing, region_id, &world_cache, &ultros_db)
+                .remove_listing(
+                    listing,
+                    AnySelector::Region(region_id),
+                    &world_cache,
+                    &ultros_db,
+                )
+                .await;
+        }
+
+        for listing in listings.iter() {
+            let mut lock_guard = self.cheapest_items.write().await;
+            let world = lock_guard
+                .entry(AnySelector::World(listing.world_id))
+                .or_default();
+            world
+                .remove_listing(
+                    listing,
+                    AnySelector::World(listing.world_id),
+                    &world_cache,
+                    &ultros_db,
+                )
                 .await;
         }
     }
@@ -443,5 +492,5 @@ pub(crate) struct ResaleOptions {
     pub(crate) days: i32,
     pub(crate) minimum_profit: Option<i32>,
     pub(crate) filter_world: Option<i32>,
-    pub(crate) filter_datacenter: Option<i32>
+    pub(crate) filter_datacenter: Option<i32>,
 }

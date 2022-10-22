@@ -8,7 +8,7 @@ use ultros_db::{
 };
 use yoke::{Yoke, Yokeable};
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash)]
 pub enum AnySelector {
     World(i32),
     Datacenter(i32),
