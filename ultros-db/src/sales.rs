@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use crate::{
     entity::{
+        active_listing,
         sale_history::{self, Model},
         unknown_final_fantasy_character,
     },
@@ -9,10 +10,11 @@ use crate::{
 };
 use anyhow::Result;
 use chrono::NaiveDateTime;
+
 use futures::Stream;
 use migration::{
     sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter, Set},
-    DbErr, Query, Value,
+    Value,
 };
 use sea_orm::{
     DbBackend, FromQueryResult, Paginator, PaginatorTrait, QueryOrder, QuerySelect, Statement,
@@ -177,7 +179,8 @@ impl UltrosDb {
         anyhow::Error,
     > {
         let all = futures::future::join_all(
-            world_ids.map(|world_id| self.get_sale_history_from_world(world_id, item_id, limit)),
+            world_ids
+                .map(|world_id| self.get_sale_history_with_character(world_id, item_id, limit)),
         )
         .await;
         let val: Result<Vec<_>, _> = all.into_iter().map(|w| w.map(|w| w)).collect();
@@ -190,7 +193,7 @@ impl UltrosDb {
         Ok(val)
     }
 
-    pub async fn get_sale_history_from_world(
+    pub async fn get_sale_history_with_character(
         &self,
         world_id: i32,
         item_id: i32,
@@ -207,6 +210,37 @@ impl UltrosDb {
             .filter(sale_history::Column::WorldId.eq(world_id))
             .order_by_desc(sale_history::Column::SoldDate)
             .find_also_related(unknown_final_fantasy_character::Entity)
+            .limit(limit)
+            .all(&self.db)
+            .await?)
+    }
+
+    pub async fn get_sale_history_for_multiple_items_worlds_joined_future(
+        &self,
+        world_ids: &[i32],
+        item_ids: &[i32],
+        limit: u64,
+    ) -> Result<Vec<Vec<sale_history::Model>>, anyhow::Error> {
+        let all = futures::future::join_all(world_ids.iter().map(|world_id| {
+            item_ids
+                .iter()
+                .map(|item_id| self.get_sale_history_for_item(*world_id, *item_id, limit))
+        }).flatten())
+        .await;
+        let result = all.into_iter().collect::<Result<Vec<Vec<sale_history::Model>>, anyhow::Error>>()?;
+        Ok(result)
+    }
+
+    pub async fn get_sale_history_for_item(
+        &self,
+        world_id: i32,
+        item_id: i32,
+        limit: u64,
+    ) -> Result<Vec<sale_history::Model>, anyhow::Error> {
+        Ok(sale_history::Entity::find()
+            .filter(sale_history::Column::SoldItemId.eq(item_id))
+            .filter(sale_history::Column::WorldId.eq(world_id))
+            .order_by_desc(sale_history::Column::SoldDate)
             .limit(limit)
             .all(&self.db)
             .await?)
