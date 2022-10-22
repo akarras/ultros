@@ -14,7 +14,7 @@ use chrono::NaiveDateTime;
 use futures::Stream;
 use migration::{
     sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter, Set},
-    Value, DbErr,
+    DbErr, Value,
 };
 use sea_orm::{
     DbBackend, FromQueryResult, Paginator, PaginatorTrait, QueryOrder, QuerySelect, Statement,
@@ -217,17 +217,23 @@ impl UltrosDb {
 
     pub async fn get_sale_history_for_multiple_items_worlds_joined_future(
         &self,
-        world_ids: impl Iterator<Item=i32>,
-        item_ids: impl Iterator<Item=i32> + Clone,
+        world_ids: impl Iterator<Item = i32>,
+        item_ids: impl Iterator<Item = i32> + Clone,
         limit: u64,
     ) -> Result<Vec<Vec<sale_history::Model>>, anyhow::Error> {
-        let all = futures::future::join_all(world_ids.map(|world_id| {
-            item_ids
-                .clone()
-                .map(move |item_id| self.get_sale_history_for_item(world_id, item_id, limit))
-        }).flatten())
+        let all = futures::future::join_all(
+            world_ids
+                .map(|world_id| {
+                    item_ids.clone().map(move |item_id| {
+                        self.get_sale_history_for_item(world_id, item_id, limit)
+                    })
+                })
+                .flatten(),
+        )
         .await;
-        let result = all.into_iter().collect::<Result<Vec<Vec<sale_history::Model>>, anyhow::Error>>()?;
+        let result = all
+            .into_iter()
+            .collect::<Result<Vec<Vec<sale_history::Model>>, anyhow::Error>>()?;
         Ok(result)
     }
 
@@ -250,8 +256,7 @@ impl UltrosDb {
         &self,
         n_sales: i32,
     ) -> Result<impl Stream<Item = Result<AbbreviatedSaleData, DbErr>> + '_, DbErr> {
-        
-            Ok(AbbreviatedSaleData::find_by_statement(Statement::from_sql_and_values(
+        Ok(AbbreviatedSaleData::find_by_statement(Statement::from_sql_and_values(
                 DbBackend::Postgres,
                 r#"SELECT filter.* FROM (SELECT h.sold_item_id, h.hq, h.price_per_item, h.sold_date, h.world_id,
                 RANK() OVER (PARTITION BY h.sold_item_id, h.hq, h.world_id ORDER BY h.sold_date DESC) sale_rank
@@ -262,7 +267,6 @@ impl UltrosDb {
             ))
             .stream(&self.db)
             .await?)
-        
     }
 }
 
@@ -272,5 +276,5 @@ pub struct AbbreviatedSaleData {
     pub hq: bool,
     pub price_per_item: i32,
     pub sold_date: NaiveDateTime,
-    pub world_id: i32
+    pub world_id: i32,
 }

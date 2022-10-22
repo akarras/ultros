@@ -4,7 +4,7 @@ use std::{
 };
 
 use chrono::{Duration, Local, NaiveDateTime};
-use futures::{TryStreamExt, StreamExt};
+use futures::{StreamExt, TryStreamExt};
 use tracing::log::info;
 use ultros_db::{
     entity::{active_listing, sale_history},
@@ -206,8 +206,8 @@ impl AnalyzerService {
 
         let task_self = temp.clone();
         tokio::spawn(async move {
-            task_self.
-                run_worker(ultros_db, event_receivers, world_cache)
+            task_self
+                .run_worker(ultros_db, event_receivers, world_cache)
                 .await;
         });
         temp
@@ -227,13 +227,15 @@ impl AnalyzerService {
             Ok(mut listings) => {
                 while let Some(Ok(value)) = listings.next().await {
                     let mut writer = self.cheapest_items.write().await;
-                    let world = world_cache.lookup_selector(&AnySelector::World(value.world_id)).unwrap();
+                    let world = world_cache
+                        .lookup_selector(&AnySelector::World(value.world_id))
+                        .unwrap();
                     let region = world_cache.get_region(&world).unwrap();
-                    let region_listings =
-                        writer.entry(AnySelector::Region(region.id)).or_default();
+                    let region_listings = writer.entry(AnySelector::Region(region.id)).or_default();
                     region_listings.add_listing(&value);
-                    let world_listings =
-                        writer.entry(AnySelector::World(value.world_id)).or_default();
+                    let world_listings = writer
+                        .entry(AnySelector::World(value.world_id))
+                        .or_default();
                     world_listings.add_listing(&value);
                 }
             }
