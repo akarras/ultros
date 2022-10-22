@@ -112,18 +112,50 @@ impl Page for AnalyzerPage {
                           "="
                         }
                         th {
-                          a title="sort this table by profit" href={"?" ((profit_query))} { "profit" }
+                          @if self.options.sort.map(|w| w == AnalyzerSort::Margin).unwrap_or_default() {
+                            div class="tooltip" {
+                              a href={"?" ((profit_query))} { "profit" }
+                              span class="tooltip-text" {"sort this table by profit"}
+                            }
+                          } @else {
+                            "profit"
+                          }
                         }
                         th {
-                          a title="sort this table by return on investment" href={"?" ((margin_query))} { "roi" }
+                          @if self.options.sort.map(|w| w == AnalyzerSort::Profit).unwrap_or(true) {
+                            div class="tooltip" {
+                              a href={"?" ((margin_query))} { "ROI" }
+                              span class="tooltip-text" {"sort this table by return on investment"}
+                            }
+                          } @else {
+                            "ROI"
+                          }
                         }
-                        th title="world this item is cheapest on" {
-                          a href={"?" ((generate_temp_query(&self.options, |o| o.filter_world = None)))} {
+                        th {
+                          @if self.options.filter_world.is_some() {
+                            div class="tooltip" {
+                              a href={"?" ((generate_temp_query(&self.options, |o| o.filter_world = None)))} {
+                                "world"
+                              }
+                              span class="tooltip-text" {
+                                "clear world filter"
+                              }
+                            }
+                          } @else {
                             "world"
                           }
                         }
-                        th title="datacenter this item is cheapest on" {
-                          a href={"?" ((generate_temp_query(&self.options, |o| o.filter_datacenter = None)))} {
+                        th {
+                          @if self.options.filter_datacenter.is_some() {
+                            div class="tooltip" {
+                              a href={"?" ((generate_temp_query(&self.options, |o| o.filter_datacenter = None)))} {
+                                "datacenter"
+                              }
+                              span class="tooltip-text" {
+                                "clear datacanter filter"
+                              }
+                            }
+                          } @else {
                             "datacenter"
                           }
                         }
@@ -163,14 +195,28 @@ impl Page for AnalyzerPage {
                           }
                           @if let Ok(world) = self.world_cache.lookup_selector(&AnySelector::World(result.world_id)) {
                             td {
-                              a href={"?" ((generate_temp_query(&self.options, |opt| { opt.filter_world = Some(result.world_id); opt.filter_datacenter = None; })))} {((world.get_name())) }
+                              @if self.options.filter_world.is_none() {
+                                div class="tooltip" {
+                                  a href={"?" ((generate_temp_query(&self.options, |opt| { opt.filter_world = Some(result.world_id); opt.filter_datacenter = None; })))} {((world.get_name())) }
+                                  span class="tooltip-text" {"only show best sales on " ((world.get_name()))}
+                                }
+                              } @else {
+                                ((world.get_name()))
+                              }
                             }
                             td {
                               // this will have one dc, but I just ran a loop because lazy
                               @if let Some(dcs) = self.world_cache.get_datacenters(&world) {
                                 @for dc in dcs {
-                                  a href={"?" ((generate_temp_query(&self.options, |opt| { opt.filter_datacenter = Some(dc.id); opt.filter_world = None; })))} {
-                                    ((dc.name))
+                                  div class="tooltip" {
+                                    @if self.options.filter_datacenter.is_none() {
+                                      a href={"?" ((generate_temp_query(&self.options, |opt| { opt.filter_datacenter = Some(dc.id); opt.filter_world = None; })))} {
+                                        ((dc.name))
+                                      }
+                                      span class="tooltip-text" {"only show best sales in " ((dc.name))}
+                                    } @else {
+                                      ((dc.name))
+                                    }
                                   }
                                 }
                               }

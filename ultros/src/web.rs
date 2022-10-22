@@ -288,7 +288,7 @@ async fn alerts(discord_user: AuthDiscordUser) -> Result<RenderPage<AlertsPage>,
     Ok(RenderPage(AlertsPage { discord_user }))
 }
 
-#[derive(Deserialize, Serialize, Copy, Clone)]
+#[derive(Deserialize, Serialize, Copy, Clone, PartialEq, PartialOrd, Eq, Ord)]
 #[serde(rename_all = "camelCase")]
 pub enum AnalyzerSort {
     Profit,
