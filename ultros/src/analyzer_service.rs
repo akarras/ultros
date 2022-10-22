@@ -4,7 +4,7 @@ use std::{
 };
 
 use chrono::{Duration, Local, NaiveDateTime};
-use futures::TryStreamExt;
+use futures::{TryStreamExt, StreamExt};
 use tracing::log::info;
 use ultros_db::{
     entity::{active_listing, sale_history},
@@ -206,8 +206,8 @@ impl AnalyzerService {
 
         let task_self = temp.clone();
         tokio::spawn(async move {
-            task_self
-                .run_worker(ultros_db, event_receivers, world_cache)
+            task_self.
+                run_worker(ultros_db, event_receivers, world_cache)
                 .await;
         });
         temp
@@ -221,48 +221,38 @@ impl AnalyzerService {
     ) {
         // on startup we should try to read through the database to get the spiciest of item listings
         info!("priming worker");
-        let items = &xiv_gen_db::decompress_data().items;
-        let item_ids : Vec<_> = items.keys().map(|i| i.0).collect();
-        for region in world_cache.get_all_regions() {
-            info!("starting region {region:?}");
-            if let Some(worlds) = world_cache.get_all_worlds_in(&AnyResult::Region(region)) {
-                for world in &worlds {
-                    // lets keep a lock on our local service for the duration that we have a stream to the database
-                    let listings = ultros_db.cheapest_listings_on_world(*world).await;
-                    match listings {
-                        Ok(listings) => {
-                            let mut writer = self.cheapest_items.write().await;
-                            for value in listings {
-                                let region_listings =
-                                    writer.entry(AnySelector::Region(region.id)).or_default();
-                                region_listings.add_listing(&value);
-                                let world_listings =
-                                    writer.entry(AnySelector::World(*world)).or_default();
-                                world_listings.add_listing(&value);
-                            }
-                        }
-                        Err(e) => {
-                            error!("Streaming item listings failed {e:?}");
-                        }
-                    }
+        let listings = ultros_db.cheapest_listings().await;
+        info!("starting item listings");
+        match listings {
+            Ok(mut listings) => {
+                let mut writer = self.cheapest_items.write().await;
+                while let Some(Ok(value)) = listings.next().await {
+                    let world = world_cache.lookup_selector(&AnySelector::World(value.world_id)).unwrap();
+                    let region = world_cache.get_region(&world).unwrap();
+                    let region_listings =
+                        writer.entry(AnySelector::Region(region.id)).or_default();
+                    region_listings.add_listing(&value);
+                    let world_listings =
+                        writer.entry(AnySelector::World(value.world_id)).or_default();
+                    world_listings.add_listing(&value);
                 }
-                // now prime sale history
-                
-                for world in &worlds {
-                    let sale_data = ultros_db.last_n_sales_by_world(*world, 10).await;
-                    match sale_data {
-                        Ok(history_stream) => {
-                            let mut writer = self.recent_sale_history.write().await;
-                            let history = writer.entry(*world).or_default();
-                            for value in history_stream {
-                                history.add_sale(&value);
-                            }
-                        }
-                        Err(e) => {
-                            error!("Streaming item listings failed {e:?}");
-                        }
-                    }
+            }
+            Err(e) => {
+                error!("Streaming item listings failed {e:?}");
+            }
+        }
+        info!("starting sale data");
+        let sale_data = ultros_db.last_n_sales(3).await;
+        match sale_data {
+            Ok(mut history_stream) => {
+                while let Some(Ok(value)) = history_stream.next().await {
+                    let mut writer = self.recent_sale_history.write().await;
+                    let history = writer.entry(value.world_id).or_default();
+                    history.add_sale(&value);
                 }
+            }
+            Err(e) => {
+                error!("Streaming item listings failed {e:?}");
             }
         }
         info!("worker primed, now using live data");
