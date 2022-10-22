@@ -631,3 +631,47 @@ select {
   color: #3A2B7E;
   background-color: #e7d0f2;
 }
+
+.clipboard {
+
+}
+
+.clipboard:hover {
+  color: #ccc;
+}
+
+.clipboard:active {
+  color: #444;
+}
+
+.tooltip {
+  position: relative;
+  display: inline-block;
+  
+}
+
+.tooltip-text {
+  background-color: #000;
+  color: #fff;
+  text-align: center;
+  padding: 5px 0px;
+  border-radius: 3px;
+  position: absolute;
+  z-index: 1;
+  visibility: hidden;
+  font-size: 16px;
+  font-family: Jaldi, sans-serif;
+}
+
+.tooltip .tooltip-text {
+  width: 120px;
+  bottom: 100%;
+  left: 50%;
+  margin-left: -60px;
+}
+
+.tooltip:hover .tooltip-text {
+  visibility: visible;
+}
+
+

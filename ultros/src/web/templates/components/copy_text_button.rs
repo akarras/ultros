@@ -7,7 +7,10 @@ pub(crate) struct CopyTextButton<'a> {
 impl<'a> Render for CopyTextButton<'a> {
     fn render(&self) -> maud::Markup {
         html! {
-            i class="fa-regular fa-clipboard" title="copy text" onclick={"navigator.clipboard.writeText(\"" ((self.text)) "\"); this.title = \"copied\";"} {}
+            div class="tooltip" {
+                i class="fa-regular fa-clipboard clipboard" onclick={"navigator.clipboard.writeText(\"" ((self.text)) "\"); this.nextSibling.innerHTML = \"Copied!\";"} {}
+                span class="tooltip-text" {"Copy to Clipboard"}
+            }
         }
     }
 }
