@@ -32,7 +32,9 @@ pub(crate) struct AnalyzerPage {
 }
 
 fn generate_temp_query<T>(options: &AnalyzerOptions, update: T) -> String
-  where T: FnOnce(&mut AnalyzerOptions) -> () {
+where
+    T: FnOnce(&mut AnalyzerOptions) -> (),
+{
     let mut value = options.clone();
     update(&mut value);
     serde_urlencoded::to_string(&value).unwrap_or_default()
@@ -46,11 +48,15 @@ impl Page for AnalyzerPage {
     fn draw_body(&self) -> maud::Markup {
         let items = &xiv_gen_db::decompress_data().items;
         let page = self.options.page.unwrap_or_default();
-        let options_str = generate_temp_query(&self.options, |options| options.page=None );
+        let options_str = generate_temp_query(&self.options, |options| options.page = None);
         let paginate = Paginate::new(&self.analyzer_results, 75, page, options_str);
-        let margin_query = generate_temp_query(&self.options, |options| options.sort = Some(crate::web::AnalyzerSort::Margin));
-        let profit_query = generate_temp_query(&self.options, |options| options.sort = Some(crate::web::AnalyzerSort::Profit));
-        
+        let margin_query = generate_temp_query(&self.options, |options| {
+            options.sort = Some(crate::web::AnalyzerSort::Margin)
+        });
+        let profit_query = generate_temp_query(&self.options, |options| {
+            options.sort = Some(crate::web::AnalyzerSort::Profit)
+        });
+
         let results = paginate.get_page();
         html! {
           ((Header {
@@ -106,7 +112,7 @@ impl Page for AnalyzerPage {
                           a title="sort this table by return on investment" href={"?" ((margin_query))} { "roi" }
                         }
                         th title="world this item is cheapest on" {
-                          a href={"?" ((generate_temp_query(&self.options, |o| o.filter_world = None)))} { 
+                          a href={"?" ((generate_temp_query(&self.options, |o| o.filter_world = None)))} {
                             "world"
                           }
                         }

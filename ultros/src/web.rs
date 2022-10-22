@@ -316,7 +316,7 @@ pub struct AnalyzerOptions {
     minimum_profit: Option<i32>,
     sale_world: Option<i32>,
     filter_world: Option<i32>,
-    filter_datacenter: Option<i32>
+    filter_datacenter: Option<i32>,
 }
 
 async fn analyze_profits(
@@ -365,7 +365,7 @@ async fn analyze_profits(
                 filter_world: options.filter_world,
                 filter_datacenter: options.filter_datacenter,
             },
-            &world_cache
+            &world_cache,
         )
         .await
         .ok_or(anyhow::Error::msg(
