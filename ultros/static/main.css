@@ -633,15 +633,25 @@ select {
 }
 
 .clipboard {
-
+  margin:5px;
+  background-color: #150e1b;
+  transition-duration: .5s;
+  transition-timing-function: cubic-bezier(0.075, 0.82, 0.165, 1);
+  transition-property: color;
 }
 
 .clipboard:hover {
   color: #ccc;
+  transition-duration: .5s;
+  transition-timing-function: cubic-bezier(0.075, 0.82, 0.165, 1);
+  transition-property: color;
 }
 
 .clipboard:active {
   color: #444;
+  transition-duration: .5s;
+  transition-timing-function: cubic-bezier(0.075, 0.82, 0.165, 1);
+  transition-property: color;
 }
 
 .tooltip {
@@ -672,6 +682,7 @@ select {
 
 .tooltip:hover .tooltip-text {
   visibility: visible;
+  animation: fadeInAnimation cubic-bezier(0.11, 0, 0.5, 0) .25s;
 }
 
 
