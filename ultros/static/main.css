@@ -119,6 +119,7 @@ body {
 input.btn {
   color: #fff;
   background-color: #18003470;
+  padding: 0px;
 }
 
 .nav-item {
@@ -508,7 +509,12 @@ input[type=number] {
   appearance: textfield;
 }
 
+input[type=submit] {
+  margin: 5px;
+}
+
 select {
+  margin: 5px;
   border-radius: 8px;
   border: solid #3B2B9E;
   font-size: 16px;
@@ -517,6 +523,15 @@ select {
   color: #fff;
   background-color: #18003470;
 }
+
+select option {
+  background-color: #150824;
+}
+
+select optgroup {
+  background-color: #150824;
+}
+
 
 .clipboard {
   margin:5px;

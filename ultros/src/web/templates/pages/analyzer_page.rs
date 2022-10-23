@@ -66,14 +66,13 @@ impl Page for AnalyzerPage {
             div class="main-content" {
               div class="content-well" {
                 ((paginate))
-                form {
+                form class="flex-row" {
                   
                   div class="flex-column" {
                     label for="days" {
                       "sale within days:"
                     }
                     input id="days" name="days" type="number" value=((self.options.days.unwrap_or(100))) {}
-                    
                   }
                   div class="flex-column" {
                     label for="minimum_profit" {
@@ -94,7 +93,9 @@ impl Page for AnalyzerPage {
                   @if let Some(filter_datacenter) = self.options.filter_datacenter {
                     input type="hidden" name="filter_datacenter" id="filter_datacenter" value=((filter_datacenter)) {}
                   }
-                  input class="btn" type="submit" value="update" {}
+                  div class="flex-column flex-end" {
+                    input class="btn" type="submit" value="update" {}
+                  }
                 }
                 @if let Some((world, region)) = self.world.as_ref().map(|w| self.region.as_ref().map(|r| (&w.name, &r.name))).flatten() {
                     span class="content-title" {
