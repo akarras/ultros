@@ -98,7 +98,7 @@ body {
   background-color: #3B2B9E;
   color: #fff;
   border-radius: 11px;
-  padding-right: 20px;
+  padding: 5px 10px;
   text-decoration: none;
   transition: 0.3s;
   transition-property: background-color;
@@ -112,8 +112,13 @@ body {
 }x
 
 .main-content .btn {
-  padding-left: 20px;
   color: #fff;
+  background-color: #18003470;
+}
+
+input.btn {
+  color: #fff;
+  background-color: #18003470;
 }
 
 .nav-item {
@@ -126,7 +131,6 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding-left: 20px;
   transition: .25s;
 }
 .nav-item > * {
@@ -329,6 +333,7 @@ body {
   padding-left: 10px;
   text-decoration: none;
   border: 1px solid #000;
+  text-align: center;
 }
 
 .btn-secondary > * {
@@ -567,4 +572,18 @@ select {
   animation: fadeInAnimation cubic-bezier(0.11, 0, 0.5, 0) .25s;
 }
 
+.page-btn {
+  border: solid #3B2B9E 2px;
+  border-radius: 5px;
+  background-color: #18003470;
+  padding: 5px 5px;
+  margin: 5px;
+  min-width: 25px;
+  text-align: center;
+}
 
+
+.page-btn.active {
+  background-color: #111;
+  color: #aaa;
+}

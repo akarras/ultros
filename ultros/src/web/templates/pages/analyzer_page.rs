@@ -47,7 +47,7 @@ impl Page for AnalyzerPage {
 
     fn draw_body(&self) -> maud::Markup {
         let items = &xiv_gen_db::decompress_data().items;
-        let page = self.options.page.unwrap_or_default();
+        let page = self.options.page.unwrap_or(1);
         let options_str = generate_temp_query(&self.options, |options| options.page = None);
         let paginate = Paginate::new(&self.analyzer_results, 75, page, options_str);
         let margin_query = generate_temp_query(&self.options, |options| {
@@ -67,18 +67,26 @@ impl Page for AnalyzerPage {
               div class="content-well" {
                 ((paginate))
                 form {
-                  label for="days" {
-                    "sale within days:"
+                  
+                  div class="flex-column" {
+                    label for="days" {
+                      "sale within days:"
+                    }
+                    input id="days" name="days" type="number" value=((self.options.days.unwrap_or(100))) {}
+                    
                   }
-                  input id="days" name="days" type="number" value=((self.options.days.unwrap_or(100))) {}
-                  label for="minimum_profit" {
-                    "minimum profit:"
+                  div class="flex-column" {
+                    label for="minimum_profit" {
+                      "minimum profit:"
+                    }
+                    input id="minimum_profit" name="minimum_profit" type="number" value=((self.options.minimum_profit.unwrap_or(0))) {}
                   }
-                  input id="minimum_profit" name="minimum_profit" type="number" value=((self.options.minimum_profit.unwrap_or(0))) {}
-                  label for="world" {
-                    "sell world:"
+                  div class="flex-column" {
+                    label for="world" {
+                      "sell world:"
+                    }
+                    ((WorldDropdown { world_id: self.world.as_ref().map(|i| i.id), world_cache: &self.world_cache}))
                   }
-                  ((WorldDropdown { world_id: self.world.as_ref().map(|i| i.id), world_cache: &self.world_cache}))
                   input type="hidden" name="sort" id="sort" value=((self.options.sort.unwrap_or(AnalyzerSort::Margin))) {}
                   @if let Some(filter_world) = self.options.filter_world {
                     input type="hidden" name="filter_world" id="filter_world" value=((filter_world)) {}

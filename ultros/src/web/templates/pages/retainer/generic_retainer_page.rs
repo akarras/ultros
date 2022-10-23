@@ -34,7 +34,7 @@ impl Page for GenericRetainerPage {
                 }
                 div class="main-content" {
                     div class="flex-wrap" {
-                        div class="flex-column" {
+                        div class="flex-column content-well" {
                             h1 {
                                 "Retainer details"
                             }
@@ -47,8 +47,8 @@ impl Page for GenericRetainerPage {
                                 ((self.world_name))
                             }
                         }
-                        div class="flex-column" {
-                            h3 {
+                        div class="flex-column content-well" {
+                            h2 {
                                 "listings"
                             }
                             table {

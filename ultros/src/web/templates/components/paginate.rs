@@ -50,7 +50,7 @@ impl<'a, T> Render for Paginate<'a, T> {
            div class="flex-row" {
             @for page in 1..=num_pages {
                 @if page == 1 || (page >= self.current_page.saturating_sub(5) && page <= self.current_page.saturating_add(5)) || page == num_pages {
-                    a href={((query_prefix)) ((page))} class={ @if self.current_page == page { "btn-secondary" } @else { "btn" } } {
+                    a href={((query_prefix)) ((page))} class={ @if self.current_page == page { "page-btn active" } @else { "page-btn" } } {
                         ((page))
                     }
                 }
