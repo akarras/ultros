@@ -505,7 +505,7 @@ async fn get_file(path: &str) -> Result<impl IntoResponse, WebError> {
             .header(
                 header::CACHE_CONTROL,
                 #[cfg(not(debug_assertions))]
-                HeaderValue::from_str("max-age=3600").unwrap(),
+                HeaderValue::from_str("max-age=86400").unwrap(),
                 #[cfg(debug_assertions)]
                 HeaderValue::from_str("none").unwrap(),
             )
