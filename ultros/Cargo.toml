@@ -41,3 +41,4 @@ yoke = "0.6.2"
 thousands = "0.2.0"
 serde_urlencoded = "0.7.1"
 serde_with = "2.0.1"
+image = {version = "0.24.4", features = ["webp-encoder"]}

@@ -11,7 +11,7 @@ use crate::{
         home_world_cookie::HomeWorld,
         oauth::AuthDiscordUser,
         templates::{
-            components::{copy_text_button::CopyTextButton, gil::Gil, header::Header},
+            components::{copy_text_button::CopyTextButton, gil::Gil, header::Header, item_icon::{ItemIcon, IconSize}},
             page::Page,
         },
     },
@@ -68,7 +68,7 @@ impl Page for ListingsPage {
             div class="flex-row flex-space" {
               div class="flex-column" {
                 div class="search-result" {
-                  img src={"https://universalis-ffxiv.github.io/universalis-assets/icon2x/" (self.item_id) ".png"};
+                  ((ItemIcon{ item_id: self.item_id, icon_size: IconSize::Large }))
                   div class="search-result-details" {
                     span class="item-name" {
                       (&self.item.name)

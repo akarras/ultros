@@ -1,6 +1,7 @@
 use crate::web::oauth::AuthDiscordUser;
 use crate::web::templates::components::gil::Gil;
 use crate::web::templates::components::header::Header;
+use crate::web::templates::components::item_icon::{ItemIcon, IconSize};
 use crate::web::templates::page::Page;
 use maud::html;
 use ultros_db::entity::{active_listing, owned_retainers, retainer};
@@ -91,7 +92,7 @@ impl Page for UserRetainersPage {
                           @for (listing, undercut) in listings {
                             tr {
                               td {
-                                img class="small-icon" src={"https://universalis-ffxiv.github.io/universalis-assets/icon2x/" (listing.item_id) ".png"};
+                                ((ItemIcon { item_id: listing.item_id, icon_size: IconSize::Small }))
                                 ((items.get(&ItemId(listing.item_id)).map(|i| i.name.as_str()).unwrap_or_default()))
                               } td {
                                 ((Gil(listing.price_per_unit)))
@@ -125,39 +126,43 @@ impl Page for UserRetainersPage {
                         a class="btn align-right" href={"/retainers/remove/" ((owned.id))} {
                           "Remove"
                         }
-                        table {
-                          tr {
-                            th {
-                              "Item Name"
-                            } th {
-                              "Price Per Unit"
-                            } th {
-                              "Quantity"
-                            } th {
-                              "Total"
-                            } th {
-                              "HQ"
-                            } th {
-                              "Retainer"
-                            }
-                          }
-                          @for listing in listings {
+                        @if listings.is_empty() {
+                          "No listings"
+                        } @ else {
+                          table {
                             tr {
-                              td {
-                                img class="small-icon" src={"https://universalis-ffxiv.github.io/universalis-assets/icon2x/" (listing.item_id) ".png"};
-                                ((items.get(&ItemId(listing.item_id)).map(|i| i.name.as_str()).unwrap_or_default()))
-                              } td {
-                                ((Gil(listing.price_per_unit)))
-                              } td {
-                                ((listing.quantity))
-                              } td {
-                                ((Gil(listing.quantity * listing.price_per_unit)))
-                              } td {
-                                @if listing.hq {
-                                  "✔️"
+                              th {
+                                "Item Name"
+                              } th {
+                                "Price Per Unit"
+                              } th {
+                                "Quantity"
+                              } th {
+                                "Total"
+                              } th {
+                                "HQ"
+                              } th {
+                                "Retainer"
+                              }
+                            }
+                            @for listing in listings {
+                              tr {
+                                td {
+                                  ((ItemIcon { item_id: listing.item_id, icon_size: IconSize::Small }))
+                                  ((items.get(&ItemId(listing.item_id)).map(|i| i.name.as_str()).unwrap_or_default()))
+                                } td {
+                                  ((Gil(listing.price_per_unit)))
+                                } td {
+                                  ((listing.quantity))
+                                } td {
+                                  ((Gil(listing.quantity * listing.price_per_unit)))
+                                } td {
+                                  @if listing.hq {
+                                    "✔️"
+                                  }
+                                } td {
+                                  ((retainer.name))
                                 }
-                              } td {
-                                ((retainer.name))
                               }
                             }
                           }

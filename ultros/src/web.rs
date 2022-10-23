@@ -7,7 +7,7 @@ pub mod oauth;
 mod templates;
 
 use anyhow::Error;
-use axum::body::{Empty, Full};
+use axum::body::{Bytes, Empty, Full};
 use axum::extract::{FromRef, Path, Query, State};
 use axum::http::{HeaderValue, Response, StatusCode};
 use axum::response::{IntoResponse, Redirect};
@@ -16,6 +16,8 @@ use axum::{body, Router};
 use axum_extra::extract::cookie::{Cookie, Key, SameSite};
 use axum_extra::extract::CookieJar;
 use futures::future::join;
+use image::ImageOutputFormat;
+use image::imageops::FilterType;
 use maud::Render;
 use opentelemetry_prometheus::PrometheusExporter;
 use reqwest::header;
@@ -52,6 +54,8 @@ use crate::web::alerts_websocket::connect_websocket;
 use crate::web::oauth::{begin_login, logout};
 use crate::web::templates::pages::profile::profile;
 use crate::world_cache::{AnySelector, WorldCache};
+use std::io::Cursor;
+use image::io::Reader as ImageReader;
 
 // basic handler that responds with a static string
 async fn root(user: Option<AuthDiscordUser>) -> RenderPage<HomePage> {
@@ -486,14 +490,14 @@ fn get_static_file(path: &str) -> Option<Vec<u8>> {
     Some(vec)
 }
 
-async fn get_file(path: &str) -> impl IntoResponse {
+async fn get_file(path: &str) -> Result<impl IntoResponse, WebError> {
     let mime_type = mime_guess::from_path(path).first_or_text_plain();
     match get_static_file(&path) {
-        None => Response::builder()
+        None => Ok(Response::builder()
             .status(StatusCode::NOT_FOUND)
-            .body(body::boxed(Empty::new()))
-            .unwrap(),
-        Some(file) => Response::builder()
+            .body(body::boxed(Empty::new()))?)
+            ,
+        Some(file) => Ok(Response::builder()
             .status(StatusCode::OK)
             .header(
                 header::CONTENT_TYPE,
@@ -506,8 +510,8 @@ async fn get_file(path: &str) -> impl IntoResponse {
                 #[cfg(debug_assertions)]
                 HeaderValue::from_str("none").unwrap(),
             )
-            .body(body::boxed(Full::from(file)))
-            .unwrap(),
+            .body(body::boxed(Full::from(file)))?)
+            ,
     }
 }
 
@@ -522,6 +526,29 @@ async fn robots() -> impl IntoResponse {
 async fn static_path(Path(path): Path<String>) -> impl IntoResponse {
     let path = path.trim_start_matches('/');
     get_file(&path).await
+}
+
+#[derive(Deserialize)]
+struct IconQuery {
+    size: u32
+}
+
+async fn get_item_icon(Path(item_id): Path<u32>, Query(query): Query<IconQuery>) -> Result<impl IntoResponse, WebError> {
+    let url = format!("https://universalis-ffxiv.github.io/universalis-assets/icon2x/{item_id}.png");
+    let image = reqwest::get(url).await?;
+    let bytes = image.bytes().await?;
+    let mime_type = mime_guess::from_path("icon.webp").first_or_text_plain();
+    let age_header = HeaderValue::from_str("max-age=86400").unwrap();
+    let img = ImageReader::new(Cursor::new(bytes)).with_guessed_format()?.decode()?;
+    let smaller_image = img.resize(query.size, query.size, FilterType::Lanczos3);
+    let file = vec![];
+    let mut cursor = Cursor::new(file);
+    smaller_image.write_to(&mut cursor, ImageOutputFormat::WebP)?;
+    let bytes = cursor.into_inner();
+    Ok(Response::builder()
+        .header(header::CACHE_CONTROL, age_header)
+        .header(header::CONTENT_TYPE, mime_type.as_ref())
+        .body(body::boxed(Full::from(bytes)))?)
 }
 
 pub(crate) async fn invite() -> Redirect {
@@ -550,6 +577,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/analyzer", get(analyze_profits))
         .route("/items/:search", get(fuzzy_item_search::search_items))
         .route("/static/*path", get(static_path))
+        .route("/static/itemicon/:path", get(get_item_icon))
         .route("/redirect", get(self::oauth::redirect))
         .route("/profile", get(profile))
         .route("/login", get(begin_login))

@@ -11,7 +11,7 @@ use crate::{
         templates::{
             components::{
                 copy_text_button::CopyTextButton, gil::Gil, header::Header, paginate::Paginate,
-                world_dropdown::WorldDropdown,
+                world_dropdown::WorldDropdown, item_icon::{ItemIcon, IconSize},
             },
             page::Page,
         },
@@ -67,7 +67,7 @@ impl Page for AnalyzerPage {
               div class="content-well" {
                 ((paginate))
                 form class="flex-row" {
-                  
+
                   div class="flex-column" {
                     label for="days" {
                       "sale within days:"
@@ -174,7 +174,7 @@ impl Page for AnalyzerPage {
                           td{
                             @let item_name = items.get(&ItemId(result.item_id)).map(|i| i.name.as_str()).unwrap_or_default();
                             a href={"/listings/" ((region)) "/" ((result.item_id))}{
-                              img class="small-icon" src={"https://universalis-ffxiv.github.io/universalis-assets/icon2x/" (result.item_id) ".png"};
+                              ((ItemIcon { item_id: result.item_id, icon_size: IconSize::Small }))
                               ((item_name))
                             }
                             ((CopyTextButton { text: item_name }))
