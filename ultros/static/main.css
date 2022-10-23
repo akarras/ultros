@@ -1,16 +1,22 @@
 @font-face {
   font-family: Jaldi;
+  font-weight: regular;
   src: url('Jaldi-Regular.ttf');
+  font-display: swap;
 }
 
 @font-face {
   font-family: Jaldi-Bold;
+  font-weight: bold;
   src: url('Jaldi-Bold.ttf');
+  font-display: swap;
 }
 
 @font-face {
   font-family: Pacifico-Regular;
-  src: url("Pacifico-Regular.ttf")
+  font-weight: regular;
+  src: url("Pacifico-Regular.ttf");
+  font-display: swap;
 }
 
 a {
@@ -35,23 +41,12 @@ body {
   min-height: 100vh;
 }
 
-
 @keyframes fadeInAnimation {
   0% {
     opacity: 0;
   }
   100% {
     opacity: 1;
-  }
-}
-
-
-@keyframes slowSlide {
-  0% {
-    background-position: -100px;
-  }
-  100% {
-    background-position: 0px;
   }
 }
 
