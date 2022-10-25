@@ -152,7 +152,7 @@ impl UltrosDb {
         &self,
         world_ids: impl Iterator<Item = i32>,
         item_id: i32,
-        page_size: usize,
+        page_size: u64,
     ) -> Paginator<
         sea_orm::DatabaseConnection,
         sea_orm::SelectTwoModel<sale_history::Model, unknown_final_fantasy_character::Model>,

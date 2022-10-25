@@ -13,6 +13,6 @@ serde = {version = "1.0.144", features = ["derive"]}
 futures = "^0"
 tracing = "0.1.36"
 migration = {path = "../migration"}
-sea-query = {version = "0.26.4"}
+sea-query = {version = "0.27.1"}
 chrono = "0.4.22"
 itertools = "0.10.3"
