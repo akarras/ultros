@@ -53,12 +53,22 @@ impl UltrosDb {
         // fill in the rest of the characters
         for name in buyer_names {
             if !characters.iter().any(|m| m.name == name) {
-                let character = unknown_final_fantasy_character::ActiveModel {
+                let insert = unknown_final_fantasy_character::ActiveModel {
                     id: ActiveValue::default(),
-                    name: Set(name),
+                    name: Set(name.clone()),
                 }
                 .insert(&self.db)
-                .await?;
+                .await;
+                let character = match insert {
+                    Ok(c) => c,
+                    Err(e) => {
+                        // assume that this probably failed because it existed, so try querying again. we can't rely on upserts.
+                        unknown_final_fantasy_character::Entity::find()
+                            .filter(unknown_final_fantasy_character::Column::Name.eq(name))
+                            .one(&self.db)
+                            .await?.ok_or(anyhow::Error::msg("Unable to insert or find final fantasy character."))?
+                    }
+                };
                 characters.push(character);
             }
         }
