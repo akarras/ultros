@@ -11,7 +11,12 @@ use crate::{
         home_world_cookie::HomeWorld,
         oauth::AuthDiscordUser,
         templates::{
-            components::{copy_text_button::CopyTextButton, gil::Gil, header::Header, item_icon::{ItemIcon, IconSize}},
+            components::{
+                copy_text_button::CopyTextButton,
+                gil::Gil,
+                header::Header,
+                item_icon::{IconSize, ItemIcon},
+            },
             page::Page,
         },
     },

@@ -53,7 +53,7 @@ pub enum WebError {
     #[error("Image error {0}")]
     Image(#[from] ImageError),
     #[error("IO Error {0}")]
-    StdError(#[from] std::io::Error)
+    StdError(#[from] std::io::Error),
 }
 
 impl WebError {

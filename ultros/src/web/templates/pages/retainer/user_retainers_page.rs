@@ -1,7 +1,7 @@
 use crate::web::oauth::AuthDiscordUser;
 use crate::web::templates::components::gil::Gil;
 use crate::web::templates::components::header::Header;
-use crate::web::templates::components::item_icon::{ItemIcon, IconSize};
+use crate::web::templates::components::item_icon::{IconSize, ItemIcon};
 use crate::web::templates::page::Page;
 use maud::html;
 use ultros_db::entity::{active_listing, owned_retainers, retainer};

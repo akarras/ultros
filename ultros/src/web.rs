@@ -16,8 +16,8 @@ use axum::{body, Router};
 use axum_extra::extract::cookie::{Cookie, Key, SameSite};
 use axum_extra::extract::CookieJar;
 use futures::future::join;
-use image::ImageOutputFormat;
 use image::imageops::FilterType;
+use image::ImageOutputFormat;
 use maud::Render;
 use opentelemetry_prometheus::PrometheusExporter;
 use reqwest::header;
@@ -54,8 +54,8 @@ use crate::web::alerts_websocket::connect_websocket;
 use crate::web::oauth::{begin_login, logout};
 use crate::web::templates::pages::profile::profile;
 use crate::world_cache::{AnySelector, WorldCache};
-use std::io::Cursor;
 use image::io::Reader as ImageReader;
+use std::io::Cursor;
 
 // basic handler that responds with a static string
 async fn root(user: Option<AuthDiscordUser>) -> RenderPage<HomePage> {
@@ -495,8 +495,7 @@ async fn get_file(path: &str) -> Result<impl IntoResponse, WebError> {
     match get_static_file(&path) {
         None => Ok(Response::builder()
             .status(StatusCode::NOT_FOUND)
-            .body(body::boxed(Empty::new()))?)
-            ,
+            .body(body::boxed(Empty::new()))?),
         Some(file) => Ok(Response::builder()
             .status(StatusCode::OK)
             .header(
@@ -510,8 +509,7 @@ async fn get_file(path: &str) -> Result<impl IntoResponse, WebError> {
                 #[cfg(debug_assertions)]
                 HeaderValue::from_str("none").unwrap(),
             )
-            .body(body::boxed(Full::from(file)))?)
-            ,
+            .body(body::boxed(Full::from(file)))?),
     }
 }
 
@@ -530,16 +528,22 @@ async fn static_path(Path(path): Path<String>) -> impl IntoResponse {
 
 #[derive(Deserialize)]
 struct IconQuery {
-    size: u32
+    size: u32,
 }
 
-async fn get_item_icon(Path(item_id): Path<u32>, Query(query): Query<IconQuery>) -> Result<impl IntoResponse, WebError> {
-    let url = format!("https://universalis-ffxiv.github.io/universalis-assets/icon2x/{item_id}.png");
+async fn get_item_icon(
+    Path(item_id): Path<u32>,
+    Query(query): Query<IconQuery>,
+) -> Result<impl IntoResponse, WebError> {
+    let url =
+        format!("https://universalis-ffxiv.github.io/universalis-assets/icon2x/{item_id}.png");
     let image = reqwest::get(url).await?;
     let bytes = image.bytes().await?;
     let mime_type = mime_guess::from_path("icon.webp").first_or_text_plain();
     let age_header = HeaderValue::from_str("max-age=86400").unwrap();
-    let img = ImageReader::new(Cursor::new(bytes)).with_guessed_format()?.decode()?;
+    let img = ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()?
+        .decode()?;
     let smaller_image = img.resize(query.size, query.size, FilterType::Lanczos3);
     let file = vec![];
     let mut cursor = Cursor::new(file);

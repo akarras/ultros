@@ -297,8 +297,7 @@ impl AnalyzerService {
                             .await;
                     }
                     crate::event::EventType::Add(add) => {
-                        self.add_listings( &add).await;
-                        
+                        self.add_listings(&add, &world_cache).await;
                     }
                     crate::event::EventType::Update(_) => todo!(),
                 }
@@ -396,18 +395,26 @@ impl AnalyzerService {
     }
 
     /// process listings in bulk.
-    async fn add_listings(&self, listings: &[active_listing::Model], world_cache: &Arc<WorldCache>) {
+    async fn add_listings(
+        &self,
+        listings: &[active_listing::Model],
+        world_cache: &Arc<WorldCache>,
+    ) {
         let mut lock_guard = self.cheapest_items.write().await;
         // process all listings from one world at a time
         let listings = listings.iter().flat_map(|l| {
-            let result = world_cache.lookup_selector(&AnySelector::World(l.world_id)).ok()?;
-            Some((AnySelector::World(l.world_id), AnySelector::Region(world_cache.get_region(&result)?.id), l))
+            let result = world_cache
+                .lookup_selector(&AnySelector::World(l.world_id))
+                .ok()?;
+            Some((
+                AnySelector::World(l.world_id),
+                AnySelector::Region(world_cache.get_region(&result)?.id),
+                l,
+            ))
         });
-        
+
         for (world_selector, region_selector, listing) in listings {
-            let entry = lock_guard
-            .entry(region_selector)
-            .or_default();
+            let entry = lock_guard.entry(region_selector).or_default();
             entry.add_listing(listing);
             let entry = lock_guard.entry(world_selector).or_default();
             entry.add_listing(listing);

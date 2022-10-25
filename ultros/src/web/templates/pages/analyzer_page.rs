@@ -10,8 +10,12 @@ use crate::{
         oauth::AuthDiscordUser,
         templates::{
             components::{
-                copy_text_button::CopyTextButton, gil::Gil, header::Header, paginate::Paginate,
-                world_dropdown::WorldDropdown, item_icon::{ItemIcon, IconSize},
+                copy_text_button::CopyTextButton,
+                gil::Gil,
+                header::Header,
+                item_icon::{IconSize, ItemIcon},
+                paginate::Paginate,
+                world_dropdown::WorldDropdown,
             },
             page::Page,
         },
