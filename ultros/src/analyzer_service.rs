@@ -297,22 +297,8 @@ impl AnalyzerService {
                             .await;
                     }
                     crate::event::EventType::Add(add) => {
-                        let region = if let Some(region) = add
-                            .iter()
-                            .map(|w| {
-                                world_cache
-                                    .lookup_selector(&AnySelector::World(w.world_id))
-                                    .map(|w| world_cache.get_region(&w).map(|r| r.id))
-                            })
-                            .flatten()
-                            .flatten()
-                            .next()
-                        {
-                            region
-                        } else {
-                            continue;
-                        };
-                        self.add_listings(region, &add).await;
+                        self.add_listings( &add).await;
+                        
                     }
                     crate::event::EventType::Update(_) => todo!(),
                 }
@@ -409,18 +395,22 @@ impl AnalyzerService {
         Some(possible_sales)
     }
 
-    /// process listings in bulk. can handle multiple item types, but must have only one region.
-    async fn add_listings(&self, region_id: i32, listings: &[active_listing::Model]) {
+    /// process listings in bulk.
+    async fn add_listings(&self, listings: &[active_listing::Model], world_cache: &Arc<WorldCache>) {
         let mut lock_guard = self.cheapest_items.write().await;
-        let entry = lock_guard
-            .entry(AnySelector::Region(region_id))
+        // process all listings from one world at a time
+        let listings = listings.iter().flat_map(|l| {
+            let result = world_cache.lookup_selector(&AnySelector::World(l.world_id)).ok()?;
+            Some((AnySelector::World(l.world_id), AnySelector::Region(world_cache.get_region(&result)?.id), l))
+        });
+        
+        for (world_selector, region_selector, listing) in listings {
+            let entry = lock_guard
+            .entry(region_selector)
             .or_default();
-        for listing in listings {
             entry.add_listing(listing);
-        }
-        for listing in listings {
-            let world_entry = lock_guard.entry(AnySelector::World(region_id)).or_default();
-            world_entry.add_listing(listing);
+            let entry = lock_guard.entry(world_selector).or_default();
+            entry.add_listing(listing);
         }
     }
 
