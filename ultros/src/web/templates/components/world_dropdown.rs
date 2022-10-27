@@ -26,7 +26,7 @@ impl<'a> Render for WorldDropdown<'a> {
             .ok()
             .flatten();
         html! {
-            select name="world" id="name" {
+            select name="world" id="worlddropdown" {
                 @if let Some(world) = world {
                     option value=((world.id)) active {
                         ((world.name))
