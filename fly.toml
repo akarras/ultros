@@ -19,9 +19,9 @@ kill_timeout = 5
   protocol = "tcp"
   script_checks = []
   [services.concurrency]
-    hard_limit = 10000
-    soft_limit = 1000
-    type = "connections"
+    hard_limit = 2000000
+    soft_limit = 1000000
+    type = "requests"
 
   [[services.ports]]
     force_https = true
