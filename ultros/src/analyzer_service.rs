@@ -1,10 +1,13 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 
 use chrono::{Duration, Local, NaiveDateTime};
-use futures::{StreamExt, TryStreamExt};
+use futures::StreamExt;
 use tracing::log::info;
 use ultros_db::{
     entity::{active_listing, sale_history},
@@ -14,7 +17,7 @@ use universalis::ItemId;
 
 use crate::{
     event::EventReceivers,
-    world_cache::{AnyResult, AnySelector, WorldCache},
+    world_cache::{AnySelector, WorldCache},
 };
 use tokio::sync::RwLock;
 use tracing::log::error;
@@ -190,6 +193,7 @@ pub(crate) struct AnalyzerService {
     recent_sale_history: Arc<RwLock<HashMap<i32, SaleHistory>>>,
     /// Cheapest items by region. Not catering to slackers.
     cheapest_items: Arc<RwLock<HashMap<AnySelector, CheapestListings>>>,
+    initiated: Arc<AtomicBool>,
 }
 
 impl AnalyzerService {
@@ -202,6 +206,7 @@ impl AnalyzerService {
         let temp = Self {
             recent_sale_history: Default::default(),
             cheapest_items: Default::default(),
+            initiated: Arc::default(),
         };
 
         let task_self = temp.clone();
@@ -225,8 +230,8 @@ impl AnalyzerService {
         info!("starting item listings");
         match listings {
             Ok(mut listings) => {
+                let mut writer = self.cheapest_items.write().await;
                 while let Some(Ok(value)) = listings.next().await {
-                    let mut writer = self.cheapest_items.write().await;
                     let world = world_cache
                         .lookup_selector(&AnySelector::World(value.world_id))
                         .unwrap();
@@ -247,8 +252,8 @@ impl AnalyzerService {
         let sale_data = ultros_db.last_n_sales(3).await;
         match sale_data {
             Ok(mut history_stream) => {
+                let mut writer = self.recent_sale_history.write().await;
                 while let Some(Ok(value)) = history_stream.next().await {
-                    let mut writer = self.recent_sale_history.write().await;
                     let history = writer.entry(value.world_id).or_default();
                     history.add_sale(&value);
                 }
@@ -257,6 +262,7 @@ impl AnalyzerService {
                 error!("Streaming item listings failed {e:?}");
             }
         }
+        self.initiated.store(true, Ordering::Relaxed);
         info!("worker primed, now using live data");
         let second_worker_instance = self.clone();
         tokio::spawn(async move {
@@ -312,6 +318,9 @@ impl AnalyzerService {
         resale_options: ResaleOptions,
         world_cache: &Arc<WorldCache>,
     ) -> Option<Vec<ResaleStats>> {
+        if !self.initiated.load(Ordering::Relaxed) {
+            return None;
+        }
         let recent_sale = self.recent_sale_history.read().await;
         let datacenter_filters_worlds = resale_options
             .filter_datacenter
@@ -332,6 +341,7 @@ impl AnalyzerService {
                 values
                     .iter()
                     .filter(|sale| {
+                        // TODO this date doesn't seem correct
                         Local::now()
                             .naive_utc()
                             .signed_duration_since(sale.sale_date)

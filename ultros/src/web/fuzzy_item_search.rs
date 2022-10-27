@@ -3,10 +3,7 @@ use axum_extra::extract::CookieJar;
 use maud::{html, Render};
 use reqwest::StatusCode;
 
-use crate::{
-    utils,
-    web::templates::components::item_icon::{IconSize, ItemIcon},
-};
+use crate::web::templates::components::item_icon::{IconSize, ItemIcon};
 
 use super::item_search_index::do_query;
 

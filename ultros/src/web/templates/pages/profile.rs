@@ -14,7 +14,7 @@ use crate::{
             page::{Page, RenderPage},
         },
     },
-    world_cache::{AnySelector, WorldCache},
+    world_cache::WorldCache,
 };
 
 #[derive(Deserialize)]

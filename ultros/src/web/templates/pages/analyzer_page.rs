@@ -165,7 +165,7 @@ impl Page for AnalyzerPage {
                                 "datacenter"
                               }
                               span class="tooltip-text" {
-                                "clear datacanter filter"
+                                "clear datacenter filter"
                               }
                             }
                           } @else {

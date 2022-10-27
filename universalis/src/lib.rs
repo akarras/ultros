@@ -360,7 +360,7 @@ mod test {
     async fn test_marketboard() {
         let client = UniversalisClient::new();
         let items = client
-            .marketboard_current_data("Aether", &[3i32])
+            .marketboard_current_data("Aether", &[24144])
             .await
             .unwrap();
         match items {

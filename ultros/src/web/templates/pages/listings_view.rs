@@ -1,9 +1,7 @@
 use std::sync::Arc;
 
 use maud::html;
-use ultros_db::entity::{
-    active_listing, region, retainer, sale_history, unknown_final_fantasy_character,
-};
+use ultros_db::entity::{active_listing, retainer, sale_history, unknown_final_fantasy_character};
 use xiv_gen::ItemId;
 
 use crate::{

@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use maud::{html, Render};
 
 pub(crate) struct Paginate<'a, T> {

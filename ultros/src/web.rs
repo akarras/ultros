@@ -7,7 +7,7 @@ pub mod oauth;
 mod templates;
 
 use anyhow::Error;
-use axum::body::{Bytes, Empty, Full};
+use axum::body::{Empty, Full};
 use axum::extract::{FromRef, Path, Query, State};
 use axum::http::{HeaderValue, Response, StatusCode};
 use axum::response::{IntoResponse, Redirect};
@@ -267,15 +267,25 @@ async fn refresh_world_item_listings(
     // now ensure we insert all worlds into the map to account for empty worlds
     let listings_by_world: HashMap<u8, Vec<ListingView>> =
         all_worlds.into_iter().map(|w| (w as u8, vec![])).collect();
-
+    let first_key = if listings_by_world.len() == 1 {
+        listings_by_world.keys().next().map(|w| *w)
+    } else {
+        None
+    };
     let listings_by_world = listings
         .into_iter()
-        .flat_map(|l| l.world_id.map(|w| (w, l)))
+        .flat_map(|l| {
+            if let Some(key) = first_key {
+                Some((key, l))
+            } else {
+                l.world_id.map(|w| (w, l))
+            }
+        })
         .fold(listings_by_world, |mut m, (w, l)| {
             m.entry(w).or_default().push(l);
             m
         });
-
+    println!("worlds: {listings_by_world:?}");
     for (world_id, listings) in listings_by_world {
         let (added, removed) = db
             .update_listings(listings, ItemId(item_id), WorldId(world_id as i32))
