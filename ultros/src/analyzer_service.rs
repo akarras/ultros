@@ -13,7 +13,7 @@ use ultros_db::{
     entity::{active_listing, sale_history},
     UltrosDb,
 };
-use universalis::ItemId;
+use universalis::{ItemId, WorldId};
 
 use crate::{
     event::EventReceivers,
@@ -111,7 +111,7 @@ impl SaleHistory {
     }
 }
 
-#[derive(Debug, Copy, Clone, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Debug, Copy, Clone, Eq)]
 struct CheapestListingValue {
     price: i32,
     world_id: i32,
@@ -135,6 +135,25 @@ impl From<&ultros_db::listings::ListingSummary> for CheapestListingValue {
     }
 }
 
+impl PartialEq for CheapestListingValue {
+    fn eq(&self, other: &Self) -> bool {
+        self.price == other.price
+    }
+}
+
+impl PartialOrd for CheapestListingValue {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.price.partial_cmp(&other.price)
+    }
+}
+
+impl Ord for CheapestListingValue {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.price.cmp(&other.price)
+    }
+}
+
+
 #[derive(Debug, Default)]
 struct CheapestListings {
     item_map: HashMap<ItemKey, CheapestListingValue>,
@@ -150,7 +169,7 @@ impl CheapestListings {
             .item_map
             .entry(listing.into())
             .or_insert(cheapest_listing);
-        *entry = (*entry).min(cheapest_listing);
+        *entry = cheapest_listing.min(*entry);
     }
 
     async fn remove_listing(
@@ -163,7 +182,7 @@ impl CheapestListings {
         // if this was the cheapest listing we need to ask the database for the new cheapest item
         let key = listing.into();
         if let Some(entry) = self.item_map.remove(&key) {
-            if entry.price == listing.price_per_unit {
+            if listing.price_per_unit <= entry.price {
                 let worlds = world_cache
                     .lookup_selector(&id)
                     .map(|r| world_cache.get_all_worlds_in(&r))
@@ -171,10 +190,10 @@ impl CheapestListings {
                     .flatten()
                     .expect("Should have worlds");
                 if let Ok(listings) = ultros_db
-                    .get_all_listings_in_worlds_with_retainers(&worlds, ItemId(listing.item_id))
+                    .get_multiple_listings_for_worlds(worlds.iter().map(|w| WorldId(*w)), [ItemId(listing.item_id)].into_iter(), 1)
                     .await
                 {
-                    for (db_listing, _) in &listings {
+                    for db_listing in &listings {
                         if key == ItemKey::from(db_listing) {
                             self.add_listing(db_listing);
                         }

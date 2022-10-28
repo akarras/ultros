@@ -1,35 +1,27 @@
-use crate::entity::active_listing::Model as Listing;
+use std::collections::{HashMap, BTreeMap};
 
-#[derive(Debug)]
-pub struct ListingStat {
-    /// Numeric percentile representation. Ranges from 0-99
-    pub percentile: i8,
+use chrono::{Date, Utc};
+use universalis::ItemId;
+
+
+
+
+struct SmallData {
+    number_sold: i32,
+    price: i32,
 }
 
-pub struct ListingStats<'a> {
-    pub listings: Vec<(ListingStat, &'a Listing)>,
+struct DayDataPoint {
+    data_points: Vec<SmallData>,
 }
 
-impl<'a> ListingStats<'a> {
-    pub fn calculate_stats(listings: &mut [&'a Listing]) -> Self {
-        listings.sort_by(|a, b| {
-            a.price_per_unit
-                .cmp(&b.price_per_unit)
-                .then_with(|| a.quantity.cmp(&b.quantity))
-        });
-        let total = listings.len();
-        let listings: Vec<_> = listings
-            .iter()
-            .enumerate()
-            .map(|(i, l)| {
-                let percentile = (i as f64 / total as f64 * 100.0) as i8;
-                (ListingStat { percentile }, *l)
-            })
-            .collect();
+struct HistoricalStatistics(BTreeMap<(ItemId, Date<Utc>), Vec<DayDataPoint>>);
 
-        Self { listings }
-    }
+struct Stat {
+    percentile: u8
 }
+
+struct Statistics<T>(Vec<(T, Stat)>);
 
 #[cfg(test)]
 mod test {
@@ -81,5 +73,7 @@ mod test {
                 timestamp: NaiveDateTime::default(),
             },
         ];
+        let mut list : Vec<_> = listings.iter().collect();
+        let stats = ListingStats::calculate_stats(&mut list);
     }
 }

@@ -3,7 +3,6 @@ mod discord;
 pub mod entity;
 mod ffxiv_character;
 pub mod listings;
-mod listings_stats;
 pub(crate) mod partial_diff_iterator;
 pub mod price_optimizer;
 mod regions_and_datacenters;
@@ -180,13 +179,15 @@ impl UltrosDb {
         &self,
         world_id: impl Iterator<Item = WorldId>,
         item: impl Iterator<Item = ItemId>,
+        limit: u64,
     ) -> Result<Vec<active_listing::Model>> {
         use active_listing::*;
 
         Ok(Entity::find()
             .filter(Column::WorldId.is_in(world_id.map(|m| Value::Int(Some(m.0)))))
             .filter(Column::ItemId.is_in(item.map(|i| Value::Int(Some(i.0)))))
-            .limit(50)
+            .order_by_asc(Column::PricePerUnit)
+            .limit(limit)
             .all(&self.db)
             .await?)
     }
