@@ -244,9 +244,8 @@ impl WorldCache {
     pub fn get_datacenters(&self, result: &AnyResult) -> Option<Vec<&datacenter::Model>> {
         let cart = self.yoke.backing_cart();
         let RawData {
-            worlds,
             datacenters: datacenter,
-            regions,
+            ..
         } = cart.borrow();
         match result {
             AnyResult::World(world) => datacenter.get(&world.datacenter_id).map(|i| vec![i]),
