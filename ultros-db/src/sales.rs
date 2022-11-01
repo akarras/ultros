@@ -66,7 +66,10 @@ impl UltrosDb {
                         unknown_final_fantasy_character::Entity::find()
                             .filter(unknown_final_fantasy_character::Column::Name.eq(name))
                             .one(&self.db)
-                            .await?.ok_or(anyhow::Error::msg("Unable to insert or find final fantasy character."))?
+                            .await?
+                            .ok_or(anyhow::Error::msg(
+                                "Unable to insert or find final fantasy character.",
+                            ))?
                     }
                 };
                 characters.push(character);

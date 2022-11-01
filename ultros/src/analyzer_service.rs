@@ -153,7 +153,6 @@ impl Ord for CheapestListingValue {
     }
 }
 
-
 #[derive(Debug, Default)]
 struct CheapestListings {
     item_map: HashMap<ItemKey, CheapestListingValue>,
@@ -190,7 +189,11 @@ impl CheapestListings {
                     .flatten()
                     .expect("Should have worlds");
                 if let Ok(listings) = ultros_db
-                    .get_multiple_listings_for_worlds(worlds.iter().map(|w| WorldId(*w)), [ItemId(listing.item_id)].into_iter(), 1)
+                    .get_multiple_listings_for_worlds(
+                        worlds.iter().map(|w| WorldId(*w)),
+                        [ItemId(listing.item_id)].into_iter(),
+                        1,
+                    )
                     .await
                 {
                     for db_listing in &listings {

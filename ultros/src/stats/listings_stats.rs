@@ -3,9 +3,6 @@ use std::collections::{HashMap, BTreeMap};
 use chrono::{Date, Utc};
 use universalis::ItemId;
 
-
-
-
 struct SmallData {
     number_sold: i32,
     price: i32,
@@ -15,7 +12,7 @@ struct DayDataPoint {
     data_points: Vec<SmallData>,
 }
 
-struct HistoricalStatistics(BTreeMap<(ItemId, Date<Utc>), Vec<DayDataPoint>>);
+struct HistoricalStatistics(Vec<(ItemId), Vec<DayDataPoint>>);
 
 struct Stat {
     percentile: u8
