@@ -11,6 +11,7 @@ pub struct Model {
     pub retainer_id: i32,
     pub discord_id: i64,
     pub character_id: Option<i32>,
+    pub weight: Option<i32>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
