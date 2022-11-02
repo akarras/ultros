@@ -85,8 +85,6 @@ impl Page for UserRetainersPage {
                               "Quantity"
                             } th {
                               "HQ"
-                            } th {
-                              "Retainer"
                             }
                           }
                           @for (listing, undercut) in listings {
@@ -108,8 +106,6 @@ impl Page for UserRetainersPage {
                                 @if listing.hq {
                                   "✔️"
                                 }
-                              } td {
-                                ((retainer.name))
                               }
                             }
                           }
@@ -141,8 +137,6 @@ impl Page for UserRetainersPage {
                                 "Total"
                               } th {
                                 "HQ"
-                              } th {
-                                "Retainer"
                               }
                             }
                             @for listing in listings {
@@ -160,8 +154,6 @@ impl Page for UserRetainersPage {
                                   @if listing.hq {
                                     "✔️"
                                   }
-                                } td {
-                                  ((retainer.name))
                                 }
                               }
                             }
