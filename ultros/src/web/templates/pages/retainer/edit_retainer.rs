@@ -44,21 +44,21 @@ impl Page for EditRetainers {
         html! {
             ((Header { user: self.user.as_ref() }))
             div class="container" {
-                div class="main-content" {
-                    div class="content-nav nav" {
-                        a href="/retainers/edit" class="btn-secondary" {
-                            i class="fa-solid fa-pen-to-square" {}
-                            "Edit Retainers"
-                        }
-                        a class="btn-secondary listings" href="/retainers/listings" {
-                            i class="fa-solid fa-sack-dollar" {}
-                            "Listings"
-                        }
-                        a class="btn-secondary undercuts" href="/retainers/undercuts" {
-                            i class="fa-solid fa-exclamation" {}
-                            "Undercuts"
-                        };
+                div class="content-nav nav" {
+                    a href="/retainers/Add" class="btn-secondary" {
+                        i class="fa-solid fa-pen-to-square" {}
+                        "Add"
                     }
+                    a class="btn-secondary listings" href="/retainers/listings" {
+                        i class="fa-solid fa-sack-dollar" {}
+                        "Listings"
+                    }
+                    a class="btn-secondary undercuts" href="/retainers/undercuts" {
+                        i class="fa-solid fa-exclamation" {}
+                        "Undercuts"
+                    };
+                }
+                div class="main-content" {
                     @for (character, retainers) in &self.retainers {
                         div class="content-well" {
                             span class="content-title" {
@@ -81,8 +81,8 @@ impl Page for EditRetainers {
                                             ""
                                         }
                                     }
-                                    tr {
-                                        @for (owned_data, retainer) in retainers {
+                                    @for (owned_data, retainer) in retainers {
+                                        tr {
                                             td {
                                                 ((retainer.name))
                                             }
