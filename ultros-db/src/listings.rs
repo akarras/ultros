@@ -1,7 +1,6 @@
 use anyhow::Result;
 use futures::Stream;
 use migration::{
-    sea_orm::{QueryOrder, QuerySelect},
     DbErr, Value,
 };
 use sea_orm::{ColumnTrait, DbBackend, EntityTrait, FromQueryResult, QueryFilter, Statement};

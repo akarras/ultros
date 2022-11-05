@@ -44,6 +44,7 @@ impl UltrosDb {
             retainer_id: Set(retainer.id),
             character_id: ActiveValue::default(),
             discord_id: Set(discord_user_id as i64),
+            weight: ActiveValue::default(),
         }
         .insert(&self.db)
         .await?)

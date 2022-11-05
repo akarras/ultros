@@ -2,7 +2,6 @@ use std::collections::HashSet;
 
 use crate::{
     entity::{
-        active_listing,
         sale_history::{self, Model},
         unknown_final_fantasy_character,
     },
@@ -19,7 +18,7 @@ use migration::{
 use sea_orm::{
     DbBackend, FromQueryResult, Paginator, PaginatorTrait, QueryOrder, QuerySelect, Statement,
 };
-use tracing::instrument;
+use tracing::{instrument, warn};
 use universalis::{websocket::event_types::SaleView, ItemId, WorldId};
 
 impl UltrosDb {
@@ -63,6 +62,7 @@ impl UltrosDb {
                     Ok(c) => c,
                     Err(e) => {
                         // assume that this probably failed because it existed, so try querying again. we can't rely on upserts.
+                        warn!("failed to insert character, error {e:?}");
                         unknown_final_fantasy_character::Entity::find()
                             .filter(unknown_final_fantasy_character::Column::Name.eq(name))
                             .one(&self.db)
