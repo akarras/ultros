@@ -3,7 +3,6 @@ use std::sync::Arc;
 use maud::{html, Render};
 
 use crate::{
-    web::home_world_cookie::HomeWorld,
     world_cache::{AnySelector, WorldCache},
 };
 

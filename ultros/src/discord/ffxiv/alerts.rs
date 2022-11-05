@@ -7,7 +7,7 @@ use anyhow::Result;
 use futures::future::{self, Either};
 use poise::serenity_prelude::{self, Color, UserId};
 use serde::Serialize;
-use tracing::{debug, error, info, instrument};
+use tracing::{debug, error, instrument};
 use ultros_db::{entity::*, UltrosDb};
 
 use crate::event::{EventBus, EventType};
@@ -260,7 +260,7 @@ impl UndercutTracker {
         ultros_db: &UltrosDb,
         margin: i32,
     ) -> Result<Self, anyhow::Error> {
-        let (mut user_retainer_ids, mut user_lowest_listings) =
+        let (user_retainer_ids, user_lowest_listings) =
             get_user_unique_retainer_ids_and_listing_ids_by_price(ultros_db, discord_user).await?;
 
         Ok(Self {
@@ -289,6 +289,7 @@ impl UndercutTracker {
                                 world_id: removed.world_id,
                                 hq: removed.hq,
                             })
+                            .filter(|v| v.lowest_price >= removed.price_per_unit)
                             .copied()
                         {
                             if value.lowest_price >= removed.price_per_unit {
@@ -352,7 +353,7 @@ impl UndercutTracker {
                                     .db
                                     .get_retainer_listings_for_discord_user(self.discord_user_id)
                                     .await
-                                    .map(|(o, i)| {
+                                    .map(|(_o, i)| {
                                         i.into_iter()
                                             .flat_map(|(r, listings)| {
                                                 listings
@@ -394,11 +395,11 @@ impl UndercutTracker {
 }
 
 impl RetainerAlertListener {
-    // #[instrument(skip(ultros_db, listings, ctx))]
+    #[instrument(skip(ultros_db, listings, ctx))]
     pub(crate) async fn create_listener(
         retainer_alert_id: i32,
         alert_id: i32,
-        mut margin: i32,
+        margin: i32,
         ultros_db: UltrosDb,
         mut listings: EventBus<Vec<active_listing::Model>>,
         active_retainers: EventBus<retainer::Model>,
@@ -424,7 +425,7 @@ impl RetainerAlertListener {
                                     break;
                                 }
                                 RetainerAlertTx::UpdateMargin(m) => {
-                                    margin = m;
+                                    undercut_tracker.margin = m;
                                 }
                             }
                         } else {
@@ -455,14 +456,16 @@ impl RetainerAlertListener {
                                             .join(", ");
                                         let item_name = &item.name;
                                         let undercut_msg = format!("Your retainers {retainer_names} have been undercut on {item_name}");
-                                        send_discord_alerts(
+                                        if let Err(e) = send_discord_alerts(
                                             alert_id,
                                             discord_user,
                                             &ultros_db,
                                             &ctx,
                                             &undercut_msg,
                                         )
-                                        .await;
+                                        .await {
+                                            error!("Error sending discord alerts {e}");
+                                        }
                                     }
                                 }
                             },

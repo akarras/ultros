@@ -6,7 +6,6 @@ use ultros_db::entity::{region, world};
 use crate::{
     analyzer_service::ResaleStats,
     web::{
-        home_world_cookie::HomeWorld,
         oauth::AuthDiscordUser,
         templates::{
             components::{
@@ -29,7 +28,6 @@ pub(crate) struct AnalyzerPage {
     pub user: Option<AuthDiscordUser>,
     pub analyzer_results: Vec<ResaleStats>,
     pub world: Option<world::Model>,
-    pub home_world: Option<HomeWorld>,
     pub region: Option<region::Model>,
     pub options: AnalyzerOptions,
     pub world_cache: Arc<WorldCache>,
