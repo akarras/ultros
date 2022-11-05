@@ -142,7 +142,7 @@ input.btn {
 .hero-title {
   margin-top: 15%;
   margin-left: 10%;
-  text-shadow: 15px 17px 22px #000;
+  text-shadow: -5px -5px 10px #000;
   font-size: 76px;
   margin-bottom: 10%;
   font-family: 'Pacifico-Regular';
@@ -150,12 +150,12 @@ input.btn {
 
 .hero-title::before {
   content: '';
-  position: absolute;
+  position: fixed;
   top: 0px;
   bottom: 0px;
   left: 0px;
   right: 0px;
-  background: linear-gradient(transparent, rgba(0, 0, 0, 0.75), transparent);
+  background: rgba(0,0,0,0.5);
   
   z-index: -1;
 }
