@@ -52,7 +52,7 @@ pub(crate) struct Profile {
 }
 
 impl Page for Profile {
-    fn get_name<'a>(&'a self) -> &'a str {
+    fn get_name(&'_ self) -> &'_ str {
         "Profile"
     }
 

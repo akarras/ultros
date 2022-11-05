@@ -148,7 +148,7 @@ impl UltrosDb {
             .filter(Column::Name.eq(world_name))
             .one(&self.db)
             .await?
-            .ok_or(anyhow::Error::msg("World not found"))?;
+            .ok_or_else(|| anyhow::Error::msg("World not found"))?;
         Ok(worlds)
     }
 
@@ -157,10 +157,10 @@ impl UltrosDb {
         &self,
         world: &world::Model,
     ) -> Result<datacenter::Model> {
-        Ok(datacenter::Entity::find_by_id(world.datacenter_id)
+        datacenter::Entity::find_by_id(world.datacenter_id)
             .one(&self.db)
             .await?
-            .ok_or(anyhow::Error::msg("Datacenter not found"))?)
+            .ok_or_else(|| anyhow::Error::msg("Datacenter not found"))
     }
 
     #[instrument(skip(self))]
@@ -168,10 +168,10 @@ impl UltrosDb {
         &self,
         datacenter: &datacenter::Model,
     ) -> Result<region::Model> {
-        Ok(region::Entity::find_by_id(datacenter.region_id)
+        region::Entity::find_by_id(datacenter.region_id)
             .one(&self.db)
             .await?
-            .ok_or(anyhow::Error::msg("Region not found"))?)
+            .ok_or_else(|| anyhow::Error::msg("Region not found"))
     }
 
     #[instrument(skip(self, world_id, item))]
@@ -462,7 +462,7 @@ impl UltrosDb {
             .filter(region::Column::Name.eq(region_name))
             .one(&self.db)
             .await?
-            .ok_or(anyhow::Error::msg("Region not found"))?;
+            .ok_or_else(|| anyhow::Error::msg("Region not found"))?;
         if let Some(dc) = datacenter::Entity::find()
             .filter(datacenter::Column::Name.eq(datacenter_name))
             .one(&self.db)
@@ -500,9 +500,7 @@ impl UltrosDb {
             .filter(datacenter::Column::Name.eq(datacenter_name))
             .one(&self.db)
             .await?
-            .ok_or(anyhow::Error::msg(
-                "Datacenter required for world insertion",
-            ))?;
+            .ok_or_else(|| anyhow::Error::msg("Datacenter required for world insertion"))?;
         if let Some(world) = world::Entity::find()
             .filter(world::Column::Name.eq(world_name))
             .one(&self.db)

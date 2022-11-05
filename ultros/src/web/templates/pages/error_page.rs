@@ -5,7 +5,7 @@ use crate::web::templates::{components::header::Header, page::Page};
 pub struct ErrorPage {}
 
 impl Page for ErrorPage {
-    fn get_name<'a>(&'a self) -> &'a str {
+    fn get_name(&'_ self) -> &'_ str {
         "Error"
     }
 

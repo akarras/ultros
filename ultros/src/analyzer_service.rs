@@ -102,7 +102,7 @@ impl SaleHistory {
         let entries = self
             .item_map
             .entry(sale.into())
-            .or_insert(Vec::with_capacity(4));
+            .or_insert_with(|| Vec::with_capacity(4));
 
         entries.push(sale.into());
         entries.sort();
@@ -308,12 +308,11 @@ impl AnalyzerService {
                     crate::event::EventType::Remove(remove) => {
                         let region = if let Some(region) = remove
                             .iter()
-                            .map(|w| {
+                            .flat_map(|w| {
                                 world_cache
                                     .lookup_selector(&AnySelector::World(w.world_id))
                                     .map(|w| world_cache.get_region(&w))
                             })
-                            .flatten()
                             .flatten()
                             .next()
                         {
@@ -344,16 +343,12 @@ impl AnalyzerService {
             return None;
         }
         let recent_sale = self.recent_sale_history.read().await;
-        let datacenter_filters_worlds = resale_options
-            .filter_datacenter
-            .map(|w| {
-                world_cache
-                    .lookup_selector(&AnySelector::Datacenter(w))
-                    .ok()
-                    .map(|w| world_cache.get_all_worlds_in(&w))
-                    .flatten()
-            })
-            .flatten();
+        let datacenter_filters_worlds = resale_options.filter_datacenter.and_then(|w| {
+            world_cache
+                .lookup_selector(&AnySelector::Datacenter(w))
+                .ok()
+                .and_then(|w| world_cache.get_all_worlds_in(&w))
+        });
         // figure out what items are selling best on our world first, then figure out what items are available in the region that complement that.
         let sale = recent_sale.get(&world_id)?;
         let sale_history: BTreeMap<_, _> = sale
@@ -470,8 +465,8 @@ impl AnalyzerService {
                 .remove_listing(
                     listing,
                     AnySelector::Region(region_id),
-                    &world_cache,
-                    &ultros_db,
+                    world_cache,
+                    ultros_db,
                 )
                 .await;
         }
@@ -484,8 +479,8 @@ impl AnalyzerService {
                 .remove_listing(
                     listing,
                     AnySelector::World(listing.world_id),
-                    &world_cache,
-                    &ultros_db,
+                    world_cache,
+                    ultros_db,
                 )
                 .await;
         }

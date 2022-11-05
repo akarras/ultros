@@ -37,20 +37,14 @@ impl PriceAlertService {
             item_map: Default::default(),
         };
         let i = instance.clone();
-        let e = event_receiver.clone();
-        tokio::spawn(async move { i.start_listener(e).await });
+        tokio::spawn(async move { i.start_listener(event_receiver).await });
         instance
     }
 
     async fn start_listener(&self, mut event_receiver: EventReceivers) {
         loop {
-            if let Ok(listing) = event_receiver.listings.recv().await {
-                match listing {
-                    crate::event::EventType::Add(l) => {
-                        self.check_listings(&l).await;
-                    }
-                    _ => {}
-                }
+            if let Ok(crate::event::EventType::Add(l)) = event_receiver.listings.recv().await {
+                self.check_listings(&l).await;
             }
         }
     }

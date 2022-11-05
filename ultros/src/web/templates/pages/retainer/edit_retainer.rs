@@ -2,10 +2,7 @@ use std::sync::Arc;
 
 use axum::extract::State;
 use maud::html;
-use ultros_db::{
-    entity::{final_fantasy_character, owned_retainers, retainer},
-    UltrosDb,
-};
+use ultros_db::{retainers::FullRetainersList, UltrosDb};
 
 use crate::{
     web::{
@@ -21,10 +18,7 @@ use crate::{
 
 pub(crate) struct EditRetainers {
     user: Option<AuthDiscordUser>,
-    retainers: Vec<(
-        Option<final_fantasy_character::Model>,
-        Vec<(owned_retainers::Model, retainer::Model)>,
-    )>,
+    retainers: FullRetainersList,
     world_cache: Arc<WorldCache>,
 }
 
@@ -42,8 +36,8 @@ pub(crate) async fn edit_retainer(
 }
 
 impl Page for EditRetainers {
-    fn get_name<'a>(&'a self) -> &'a str {
-        todo!()
+    fn get_name(&'_ self) -> &'_ str {
+        "Edit retainers"
     }
 
     fn draw_body(&self) -> maud::Markup {
@@ -68,7 +62,7 @@ impl Page for EditRetainers {
                     @for (character, retainers) in &self.retainers {
                         div class="content-well" {
                             span class="content-title" {
-                                ((character.as_ref().map(|c| format!("{} {}", c.first_name, c.last_name))).unwrap_or("No Character".to_string()))
+                                ((character.as_ref().map(|c| format!("{} {}", c.first_name, c.last_name))).unwrap_or_else(|| "No Character".to_string()))
                                 table {
                                     th {
                                         td {

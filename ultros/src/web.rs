@@ -212,7 +212,7 @@ async fn world_item_listings(
     let selected_value = world_cache.lookup_value_by_name(&world)?;
     let worlds = world_cache
         .get_all_worlds_in(&selected_value)
-        .ok_or(Error::msg("Unable to get worlds"))?;
+        .ok_or_else(|| Error::msg("Unable to get worlds"))?;
     let db_clone = db.clone();
     let world_iter = worlds.iter().copied();
     let (listings, sale_history) = join(
@@ -254,7 +254,7 @@ async fn refresh_world_item_listings(
     let lookup = world_cache.lookup_value_by_name(&world)?;
     let all_worlds = world_cache
         .get_all_worlds_in(&lookup)
-        .ok_or(anyhow::Error::msg("Unable to get worlds"))?;
+        .ok_or_else(|| anyhow::Error::msg("Unable to get worlds"))?;
     let client = UniversalisClient::new();
     let current_data = client.marketboard_current_data(&world, &[item_id]).await?;
     // we can potentially get listings from multiple worlds from this call so we should group listings by world
@@ -270,7 +270,7 @@ async fn refresh_world_item_listings(
     let listings_by_world: HashMap<u16, Vec<ListingView>> =
         all_worlds.into_iter().map(|w| (w as u16, vec![])).collect();
     let first_key = if listings_by_world.len() == 1 {
-        listings_by_world.keys().next().map(|w| *w)
+        listings_by_world.keys().next().copied()
     } else {
         None
     };
@@ -360,7 +360,7 @@ async fn analyze_profits(
     let world = world_cache.lookup_selector(&AnySelector::World(world))?;
     let region = world_cache
         .get_region(&world)
-        .ok_or(anyhow::Error::msg("Unable to get region"))?;
+        .ok_or_else(|| anyhow::Error::msg("Unable to get region"))?;
     let world = match world {
         crate::world_cache::AnyResult::World(w) => w,
         crate::world_cache::AnyResult::Datacenter(_) => {
@@ -383,9 +383,7 @@ async fn analyze_profits(
             &world_cache,
         )
         .await
-        .ok_or(anyhow::Error::msg(
-            "Couldn't find items. Might need more warm up time",
-        ))?;
+        .ok_or_else(|| anyhow::Error::msg("Couldn't find items. Might need more warm up time"))?;
     match options.sort.as_ref().unwrap_or(&AnalyzerSort::Profit) {
         AnalyzerSort::Profit => {
             analyzer_results.sort_by(|a, b| {
@@ -504,7 +502,7 @@ fn get_static_file(path: &str) -> Option<Vec<u8>> {
 
 async fn get_file(path: &str) -> Result<impl IntoResponse, WebError> {
     let mime_type = mime_guess::from_path(path).first_or_text_plain();
-    match get_static_file(&path) {
+    match get_static_file(path) {
         None => Ok(Response::builder()
             .status(StatusCode::NOT_FOUND)
             .body(body::boxed(Empty::new()))?),
@@ -535,7 +533,7 @@ async fn robots() -> impl IntoResponse {
 
 async fn static_path(Path(path): Path<String>) -> impl IntoResponse {
     let path = path.trim_start_matches('/');
-    get_file(&path).await
+    get_file(path).await
 }
 
 #[derive(Deserialize)]

@@ -141,13 +141,12 @@ impl UltrosDb {
                             .0
                             .iter()
                             .find(|d| d.worlds.iter().any(|w| *w == left.id))
-                            .map(|m| {
+                            .and_then(|m| {
                                 datacenters
                                     .iter()
                                     .find(|dc| dc.name == m.name.0)
                                     .map(|m| m.id)
                             })
-                            .flatten()
                             .expect("Should have a valid datacenter id available")),
                     }),
                     crate::partial_diff_iterator::Diff::Right(_right) => None,

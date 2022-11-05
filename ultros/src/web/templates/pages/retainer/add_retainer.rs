@@ -13,7 +13,7 @@ pub(crate) struct AddRetainer {
 }
 
 impl Page for AddRetainer {
-    fn get_name<'a>(&'a self) -> &'a str {
+    fn get_name(&'_ self) -> &'_ str {
         "Home page"
     }
 

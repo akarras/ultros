@@ -18,7 +18,7 @@ pub(crate) struct GenericRetainerPage {
 }
 
 impl Page for GenericRetainerPage {
-    fn get_name<'a>(&'a self) -> &'a str {
+    fn get_name(&'_ self) -> &'_ str {
         &self.retainer_name
     }
 

@@ -26,7 +26,7 @@ pub(crate) struct UserRetainersPage {
 }
 
 impl Page for UserRetainersPage {
-    fn get_name<'a>(&'a self) -> &'a str {
+    fn get_name(&'_ self) -> &'_ str {
         "Your Retainers"
     }
 
@@ -61,7 +61,7 @@ impl Page for UserRetainersPage {
               }
               div class="main-content" {
                 @if let RetainerViewType::Undercuts(undercuts) = &self.view_type {
-                  @for ((retainer, listings), owned) in undercuts.iter().zip(self.owned_retainers.iter()) {
+                  @for ((retainer, listings), _owned) in undercuts.iter().zip(self.owned_retainers.iter()) {
                     div class="content-well" {
                         span class="content-title" {
                           ((retainer.name))
@@ -111,7 +111,7 @@ impl Page for UserRetainersPage {
                     }
                   }
                 @if let RetainerViewType::Listings(active) = &self.view_type {
-                    @for ((retainer, listings), owned) in active.iter().zip(self.owned_retainers.iter()) {
+                    @for ((retainer, listings), _owned) in active.iter().zip(self.owned_retainers.iter()) {
                       div class="content-well" {
                         span class="content-title" {
                           ((retainer.name))

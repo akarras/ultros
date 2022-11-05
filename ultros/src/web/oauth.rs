@@ -269,7 +269,7 @@ where
         })?;
         let avatar_url = user
             .static_avatar_url()
-            .unwrap_or(user.default_avatar_url());
+            .unwrap_or_else(|| user.default_avatar_url());
         let user = AuthDiscordUser {
             id: user.id.0,
             name: user.name,
@@ -313,7 +313,7 @@ impl DiscordAuthConfig {
         )
         .set_redirect_uri(
             RedirectUrl::new(redirect_url.clone())
-                .expect(&format!("Failed to parse redirect URL {}", redirect_url)),
+                .unwrap_or_else(|_| panic!("Failed to parse redirect URL {}", redirect_url)),
         )
         .set_revocation_uri(
             RevocationUrl::new("https://discord.com/api/oauth2/token/revoke".to_string())

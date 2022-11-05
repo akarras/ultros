@@ -84,7 +84,7 @@ async fn check_undercuts(ctx: Context<'_>) -> Result<(), Error> {
     let item_db = &data.items;
     ctx.send(|r| {
         for (retainer, items) in &under_cut_items {
-            if items.len() > 0 {
+            if !items.is_empty() {
                 r.embed(|e| {
                     let item = items.iter().fold(
                         format!(
@@ -141,13 +141,6 @@ async fn check_listings(ctx: Context<'_>) -> Result<(), Error> {
                 .map(|listing| (listing.item_id, listing.world_id))
         })
         .collect();
-    for (item, world) in item_and_world_ids {
-        let world_listings = ctx
-            .data()
-            .db
-            .get_listings_for_world(universalis::WorldId(world), universalis::ItemId(item))
-            .await?;
-    }
     if retainers.is_empty() {
         ctx.say("No retainers found :(").await?;
     }
@@ -176,7 +169,7 @@ async fn check_listings(ctx: Context<'_>) -> Result<(), Error> {
                     ..
                 } = &listing;
                 let hq = if *hq { '✅' } else { ' ' };
-                let _ = writeln!(
+                writeln!(
                     msg_contents,
                     "{item_name:<30} {price_per_unit:>9} {quantity:<4} {hq}"
                 )
@@ -245,7 +238,7 @@ async fn owned_retainer_auto_complete(
         .flat_map(|(owned, retainer)| {
             let retainer = retainer?;
             Some(poise::AutocompleteChoice {
-                name: format!("{}", retainer.name),
+                name: retainer.name,
                 value: owned.id,
             })
         })

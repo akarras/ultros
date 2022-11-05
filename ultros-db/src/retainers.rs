@@ -18,6 +18,24 @@ use crate::entity::*;
 use crate::UltrosDb;
 use anyhow::Result;
 
+pub type FullRetainersList = Vec<(
+    Option<final_fantasy_character::Model>,
+    Vec<(owned_retainers::Model, retainer::Model)>,
+)>;
+
+pub type DiscordUserRetainerListings = (
+    Vec<owned_retainers::Model>,
+    Vec<(retainer::Model, Vec<active_listing::Model>)>,
+);
+
+pub type DiscordUserUndercutListings = (
+    Vec<owned_retainers::Model>,
+    Vec<(
+        retainer::Model,
+        Vec<(active_listing::Model, ListingUndercutData)>,
+    )>,
+);
+
 #[derive(Debug)]
 pub struct ListingUndercutData {
     pub number_behind: usize,
@@ -39,7 +57,7 @@ impl UltrosDb {
         let retainer = retainer::Entity::find_by_id(retainer_id)
             .one(&self.db)
             .await?
-            .ok_or(anyhow::Error::msg("Retainer not found"))?;
+            .ok_or_else(|| anyhow::Error::msg("Retainer not found"))?;
         Ok(owned_retainers::ActiveModel {
             id: ActiveValue::default(),
             retainer_id: Set(retainer.id),
@@ -77,7 +95,7 @@ impl UltrosDb {
         let owned_retainer = owned_retainers::Entity::find_by_id(owned_retainer_id)
             .one(&self.db)
             .await?
-            .ok_or(anyhow::Error::msg(
+            .ok_or_else(|| anyhow::Error::msg(
                 "Coulnd't find the given record of ownership",
             ))?;
         if discord_owner as i64 != owned_retainer.discord_id {
@@ -95,13 +113,7 @@ impl UltrosDb {
     pub async fn get_retainer_undercut_items(
         &self,
         discord_user: u64,
-    ) -> Result<(
-        Vec<owned_retainers::Model>,
-        Vec<(
-            retainer::Model,
-            Vec<(active_listing::Model, ListingUndercutData)>,
-        )>,
-    )> {
+    ) -> Result<DiscordUserUndercutListings> {
         // get the user's active listings from the retainers
         let (owned_retainers, retainer_listings) = self
             .get_retainer_listings_for_discord_user(discord_user)
@@ -118,7 +130,7 @@ impl UltrosDb {
         let results = futures::future::join_all(
             items_by_world
                 .into_iter()
-                .map(|(world, item_ids)| {
+                .flat_map(|(world, item_ids)| {
                     item_ids.into_iter().map(move |i| async move {
                         (
                             world,
@@ -126,8 +138,7 @@ impl UltrosDb {
                             self.get_listings_for_world(WorldId(world), ItemId(i)).await,
                         )
                     })
-                })
-                .flatten(),
+                }),
         )
         .await;
         // now filter the retainer queries down to just the ones that don't have our
@@ -187,10 +198,7 @@ impl UltrosDb {
     pub async fn get_retainer_listings_for_discord_user(
         &self,
         discord_user: u64,
-    ) -> Result<(
-        Vec<owned_retainers::Model>,
-        Vec<(retainer::Model, Vec<active_listing::Model>)>,
-    )> {
+    ) -> Result<DiscordUserRetainerListings> {
         let owned_retainers = owned_retainers::Entity::find()
             .filter(owned_retainers::Column::DiscordId.eq(discord_user as i64))
             .all(&self.db)
@@ -209,12 +217,7 @@ impl UltrosDb {
     pub async fn get_all_owned_retainers_and_character(
         &self,
         discord_user_id: u64,
-    ) -> Result<
-        Vec<(
-            Option<final_fantasy_character::Model>,
-            Vec<(owned_retainers::Model, retainer::Model)>,
-        )>,
-    > {
+    ) -> Result<FullRetainersList> {
         let owned_retainers = owned_retainers::Entity::find()
             .find_also_related(retainer::Entity)
             .filter(owned_retainers::Column::DiscordId.eq(discord_user_id))

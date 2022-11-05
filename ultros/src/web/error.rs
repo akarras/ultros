@@ -68,9 +68,8 @@ impl WebError {
 
 impl IntoResponse for WebError {
     fn into_response(self) -> Response {
-        match self {
-            WebError::HomeWorldNotSet => return Redirect::to("/profile").into_response(),
-            _ => {}
+        if let WebError::HomeWorldNotSet = self {
+            return Redirect::to("/profile").into_response();
         }
         (self.as_status_code(), format!("{self}")).into_response()
     }

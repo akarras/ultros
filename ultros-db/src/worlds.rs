@@ -27,12 +27,12 @@ impl UltrosDb {
             .find_related(datacenter::Entity)
             .one(&self.db)
             .await?
-            .ok_or(anyhow::Error::msg("Datacenter not found"))?;
+            .ok_or_else(|| anyhow::Error::msg("Datacenter not found"))?;
         let region = datacenter
             .find_related(region::Entity)
             .one(&self.db)
             .await?
-            .ok_or(anyhow::Error::msg("Region not found"))?;
+            .ok_or_else(|| anyhow::Error::msg("Region not found"))?;
         let worlds = datacenter.find_related(world::Entity).all(&self.db).await?;
         Ok((worlds, datacenter, region))
     }

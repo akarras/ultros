@@ -296,7 +296,7 @@ fn create_struct(
                     let db_field_key = format!("HashMap<{key_name}, {csv_name}>");
                     args.db
                         .field(&db_field_name, &db_field_key).vis("pub");
-                    args.read_data.line(format!("data.{db_field_name} = read_csv::<{csv_name}>(r#\"{path}\"#).into_iter().map(|m| (m.key_id, m)).collect();"));
+                    args.read_data.line(format!("{db_field_name}: read_csv::<{csv_name}>(r#\"{path}\"#).into_iter().map(|m| (m.key_id, m)).collect(),"));
                     local_data.known_structs.insert(key_name.clone());
                 }
                 (line_one, line_two)
@@ -507,7 +507,7 @@ fn main() {
     };
 
     // Start the read function with the data header
-    args.read_data.line("let mut data = Data::default();");
+    args.read_data.line("Data {");
     args.recurse_directories = false;
     let out_dir = env::var_os("OUT_DIR").unwrap();
     let dest_path = Path::new(&out_dir).join("types.rs");
@@ -522,7 +522,7 @@ fn main() {
 
     let conversion_files = Path::new(&out_dir).join("serialization.rs");
 
-    args.read_data.line("data").ret("Data").vis("pub");
+    args.read_data.line("}").ret("Data").vis("pub");
 
     let mut ser_scope = Scope::new();
     ser_scope.push_fn(args.read_data);

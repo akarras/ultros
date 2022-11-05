@@ -32,7 +32,7 @@ impl UltrosDb {
         discord_user_id: i64,
         challenge: T,
     ) {
-        ffxiv_character_verification::ActiveModel {
+        let _ = ffxiv_character_verification::ActiveModel {
             id: ActiveValue::default(),
             discord_user_id: Set(discord_user_id),
             ffxiv_character_id: Set(lodestone_id),

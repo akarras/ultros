@@ -8,6 +8,11 @@ use ultros_db::{
 };
 use yoke::{Yoke, Yokeable};
 
+pub type AllWorldsAndRegions<'a> = Vec<(
+    &'a region::Model,
+    Vec<(&'a datacenter::Model, Vec<&'a world::Model>)>,
+)>;
+
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash)]
 pub enum AnySelector {
     World(i32),
@@ -61,10 +66,7 @@ pub struct WorldCache {
 #[derive(Debug)]
 struct VirtualData<'a> {
     /// Represents a Vec with a list to all worlds
-    all: Vec<(
-        &'a region::Model,
-        Vec<(&'a datacenter::Model, Vec<&'a world::Model>)>,
-    )>,
+    all: AllWorldsAndRegions<'a>,
 }
 
 unsafe impl<'a> Yokeable<'a> for VirtualData<'static> {
@@ -94,7 +96,7 @@ unsafe impl<'a> Yokeable<'a> for VirtualData<'static> {
 
 fn yoke(raw_data: Box<RawData>) -> Yoke<VirtualData<'static>, Box<RawData>> {
     Yoke::<VirtualData<'static>, Box<RawData>>::attach_to_cart(raw_data, |r: &RawData| {
-        VirtualData::new(&r)
+        VirtualData::new(r)
     })
 }
 
@@ -225,19 +227,17 @@ impl WorldCache {
     pub fn lookup_value_by_name(&self, name: &str) -> Result<AnyResult, WorldCacheError> {
         self.name_map
             .get(name)
-            .map(|selector| self.lookup_selector(selector).ok())
-            .flatten()
-            .ok_or(WorldCacheError::NameLookupError(name.to_string()))
+            .and_then(|selector| self.lookup_selector(selector).ok())
+            .ok_or_else(|| WorldCacheError::NameLookupError(name.to_string()))
     }
 
     pub fn get_all_worlds_in(&self, result: &AnyResult) -> Option<Vec<i32>> {
         match result {
             AnyResult::World(world) => Some(vec![world.id]),
-            AnyResult::Datacenter(datacenter) => self
-                .datacenter_to_world
-                .get(&datacenter.id)
-                .map(|i| i.clone()),
-            AnyResult::Region(region) => self.region_to_worlds.get(&region.id).map(|i| i.clone()),
+            AnyResult::Datacenter(datacenter) => {
+                self.datacenter_to_world.get(&datacenter.id).cloned()
+            }
+            AnyResult::Region(region) => self.region_to_worlds.get(&region.id).cloned(),
         }
     }
 
@@ -262,9 +262,9 @@ impl WorldCache {
     pub fn get_region(&self, result: &AnyResult) -> Option<&region::Model> {
         let cart = self.yoke.backing_cart();
         let RawData {
-            worlds,
             datacenters: datacenter,
             regions,
+            ..
         } = cart.borrow();
         match result {
             AnyResult::World(world) => {
@@ -282,12 +282,7 @@ impl WorldCache {
         regions.values().collect()
     }
 
-    pub fn get_all(
-        &self,
-    ) -> &Vec<(
-        &region::Model,
-        Vec<(&datacenter::Model, Vec<&world::Model>)>,
-    )> {
+    pub fn get_all(&self) -> &AllWorldsAndRegions {
         &self.yoke.get().all
     }
 }

@@ -36,7 +36,7 @@ pub(crate) struct ListingsPage {
 }
 
 impl Page for ListingsPage {
-    fn get_name<'b>(&'b self) -> &'b str {
+    fn get_name(&'_ self) -> &'_ str {
         xiv_gen_db::decompress_data()
             .items
             .get(&ItemId(self.item_id))
@@ -47,9 +47,9 @@ impl Page for ListingsPage {
     fn draw_body(&self) -> maud::Markup {
         let categories = &xiv_gen_db::decompress_data().item_ui_categorys;
         let mut low_quality_listings: Vec<_> =
-            self.listings.iter().filter(|(l, r)| !l.hq).collect();
+            self.listings.iter().filter(|(l, _r)| !l.hq).collect();
         let mut high_quality_listings: Vec<_> =
-            self.listings.iter().filter(|(l, r)| l.hq).collect();
+            self.listings.iter().filter(|(l, _r)| l.hq).collect();
         low_quality_listings.sort_by_key(|(l, _)| l.price_per_unit);
         high_quality_listings.sort_by_key(|(l, _)| l.price_per_unit);
         let value = self.world_cache.lookup_value_by_name(&self.selected_world);

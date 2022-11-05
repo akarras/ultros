@@ -45,11 +45,11 @@ pub fn do_query(query_str: &str) -> Result<Vec<(i32, &'static Item)>> {
     let name = ITEM_INDEX
         .schema()
         .get_field("name")
-        .ok_or(anyhow::Error::msg("Unable to get name field"))?;
+        .ok_or_else(|| anyhow::Error::msg("Unable to get name field"))?;
     let category = ITEM_INDEX
         .schema()
         .get_field("category")
-        .ok_or(anyhow::Error::msg("Unable to get category field"))?;
+        .ok_or_else(|| anyhow::Error::msg("Unable to get category field"))?;
     let parser = QueryParser::for_index(&ITEM_INDEX, vec![name, category]);
 
     let query = parser.parse_query(query_str)?;
@@ -70,12 +70,12 @@ pub fn do_query(query_str: &str) -> Result<Vec<(i32, &'static Item)>> {
             let item_id = doc.field_values()[0]
                 .value
                 .as_i64()
-                .ok_or(anyhow::Error::msg("Unexpected field data type"))?
+                .ok_or_else(|| anyhow::Error::msg("Unexpected field data type"))?
                 as i32;
             let item = xiv_gen::ItemId(item_id);
             let item = items
                 .get(&item)
-                .ok_or(anyhow::Error::msg("Item not found"))?;
+                .ok_or_else(|| anyhow::Error::msg("Item not found"))?;
             Ok((item_id, item))
         })
         .collect()

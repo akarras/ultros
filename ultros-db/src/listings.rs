@@ -196,14 +196,14 @@ impl UltrosDb {
     pub async fn cheapest_listings(
         &self,
     ) -> Result<impl Stream<Item = Result<ListingSummary, DbErr>> + '_, DbErr> {
-        Ok(ListingSummary::find_by_statement(Statement::from_sql_and_values(
+        ListingSummary::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r#"SELECT ranks.* FROM (SELECT l.item_id, l.hq, l.price_per_unit, l.world_id,
                 RANK() OVER (PARTITION BY l.item_id, l.hq, l.world_id ORDER BY l.price_per_unit ASC) listing_rank
                 FROM active_listing l) ranks
                 WHERE ranks.listing_rank = 1"#,
             vec![],
-        )).stream(&self.db).await?)
+        )).stream(&self.db).await
     }
 }
 

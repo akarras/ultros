@@ -67,9 +67,11 @@ impl UltrosDb {
                             .filter(unknown_final_fantasy_character::Column::Name.eq(name))
                             .one(&self.db)
                             .await?
-                            .ok_or(anyhow::Error::msg(
-                                "Unable to insert or find final fantasy character.",
-                            ))?
+                            .ok_or_else(|| {
+                                anyhow::Error::msg(
+                                    "Unable to insert or find final fantasy character.",
+                                )
+                            })?
                     }
                 };
                 characters.push(character);
@@ -101,22 +103,19 @@ impl UltrosDb {
             .reduce(|a, b| a.or(b));
         if let Some(filter) = filter {
             let already_recorded_sales = Entity::find().filter(filter).all(&self.db).await?;
-            sales = sales
-                .into_iter()
-                .filter(|sale| {
-                    !already_recorded_sales.iter().any(|recorded| {
-                        let buyer_id = characters
-                            .iter()
-                            .find(|c| c.name == sale.buyer_name)
-                            .map(|m| m.id)
-                            .expect("Should know all characters");
-                        sale.hq == recorded.hq
-                            && buyer_id == recorded.buying_character_id
-                            && sale.quantity == recorded.quantity
-                            && sale.timestamp.timestamp() == recorded.sold_date.timestamp()
-                    })
+            sales.retain(|sale| {
+                !already_recorded_sales.iter().any(|recorded| {
+                    let buyer_id = characters
+                        .iter()
+                        .find(|c| c.name == sale.buyer_name)
+                        .map(|m| m.id)
+                        .expect("Should know all characters");
+                    sale.hq == recorded.hq
+                        && buyer_id == recorded.buying_character_id
+                        && sale.quantity == recorded.quantity
+                        && sale.timestamp.timestamp() == recorded.sold_date.timestamp()
                 })
-                .collect();
+            });
         }
         if sales.is_empty() {
             return Ok(vec![]);
@@ -170,13 +169,12 @@ impl UltrosDb {
         sea_orm::DatabaseConnection,
         sea_orm::SelectTwoModel<sale_history::Model, unknown_final_fantasy_character::Model>,
     > {
-        let paginator = sale_history::Entity::find()
+        sale_history::Entity::find()
             .filter(sale_history::Column::WorldId.is_in(world_ids.map(|w| Value::Int(Some(w)))))
             .filter(sale_history::Column::SoldItemId.eq(item_id))
             .order_by_desc(sale_history::Column::SoldDate)
             .find_also_related(unknown_final_fantasy_character::Entity)
-            .paginate(&self.db, page_size);
-        paginator
+            .paginate(&self.db, page_size)
     }
 
     pub async fn get_sale_history_with_characters_from_multiple_worlds_single(
@@ -196,11 +194,11 @@ impl UltrosDb {
                 .map(|world_id| self.get_sale_history_with_character(world_id, item_id, limit)),
         )
         .await;
-        let val: Result<Vec<_>, _> = all.into_iter().map(|w| w.map(|w| w)).collect();
+        let val: Result<Vec<_>, _> = all.into_iter().collect();
         let mut val: Vec<(
             sale_history::Model,
             Option<unknown_final_fantasy_character::Model>,
-        )> = val?.into_iter().map(|w| w.into_iter()).flatten().collect();
+        )> = val?.into_iter().flat_map(|w| w.into_iter()).collect();
         val.sort_by_key(|(sale, _)| std::cmp::Reverse(sale.sold_date));
         val.truncate(limit as usize);
         Ok(val)
@@ -234,15 +232,11 @@ impl UltrosDb {
         item_ids: impl Iterator<Item = i32> + Clone,
         limit: u64,
     ) -> Result<Vec<Vec<sale_history::Model>>, anyhow::Error> {
-        let all = futures::future::join_all(
-            world_ids
-                .map(|world_id| {
-                    item_ids.clone().map(move |item_id| {
-                        self.get_sale_history_for_item(world_id, item_id, limit)
-                    })
-                })
-                .flatten(),
-        )
+        let all = futures::future::join_all(world_ids.flat_map(|world_id| {
+            item_ids
+                .clone()
+                .map(move |item_id| self.get_sale_history_for_item(world_id, item_id, limit))
+        }))
         .await;
         let result = all
             .into_iter()
@@ -269,7 +263,7 @@ impl UltrosDb {
         &self,
         n_sales: i32,
     ) -> Result<impl Stream<Item = Result<AbbreviatedSaleData, DbErr>> + '_, DbErr> {
-        Ok(AbbreviatedSaleData::find_by_statement(Statement::from_sql_and_values(
+        AbbreviatedSaleData::find_by_statement(Statement::from_sql_and_values(
                 DbBackend::Postgres,
                 r#"SELECT filter.* FROM (SELECT h.sold_item_id, h.hq, h.price_per_item, h.sold_date, h.world_id,
                 RANK() OVER (PARTITION BY h.sold_item_id, h.hq, h.world_id ORDER BY h.sold_date DESC) sale_rank
@@ -279,7 +273,7 @@ impl UltrosDb {
                 vec![n_sales.into()],
             ))
             .stream(&self.db)
-            .await?)
+            .await
     }
 }
 

@@ -70,12 +70,12 @@ impl AlertManager {
                     if let Ok(retainer) = &retainer_alert_create {
                         match retainer {
                             EventType::Remove(removed) => {
-                                manager.remove_retainer_alert(&removed).await;
+                                manager.remove_retainer_alert(removed).await;
                             }
                             EventType::Add(retainer_alert) => {
                                 manager
                                     .create_retainer_alert_listener(
-                                        &retainer_alert,
+                                        retainer_alert,
                                         &ultros_db,
                                         &ctx,
                                         listings.resubscribe(),
@@ -84,7 +84,7 @@ impl AlertManager {
                                     .await;
                             }
                             EventType::Update(m) => {
-                                manager.update_alert(&m, m.margin_percent).await;
+                                manager.update_alert(m, m.margin_percent).await;
                             }
                         }
                     }
@@ -408,7 +408,7 @@ impl RetainerAlertListener {
         let alert = ultros_db
             .get_alert(alert_id)
             .await?
-            .ok_or(anyhow::Error::msg("Unable to find retainer"))?;
+            .ok_or_else(|| anyhow::Error::msg("Unable to find retainer"))?;
         let discord_user = alert.owner as u64;
 
         let (cancellation_sender, mut receiver) = tokio::sync::mpsc::channel::<RetainerAlertTx>(10);

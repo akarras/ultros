@@ -35,7 +35,7 @@ pub(crate) struct AnalyzerPage {
 
 fn generate_temp_query<T>(options: &AnalyzerOptions, update: T) -> String
 where
-    T: FnOnce(&mut AnalyzerOptions) -> (),
+    T: FnOnce(&mut AnalyzerOptions),
 {
     let mut value = options.clone();
     update(&mut value);
@@ -43,7 +43,7 @@ where
 }
 
 impl Page for AnalyzerPage {
-    fn get_name<'a>(&'a self) -> &'a str {
+    fn get_name(&'_ self) -> &'_ str {
         "Analyzer"
     }
 
@@ -99,7 +99,7 @@ impl Page for AnalyzerPage {
                     input class="btn" type="submit" value="update" {}
                   }
                 }
-                @if let Some((world, region)) = self.world.as_ref().map(|w| self.region.as_ref().map(|r| (&w.name, &r.name))).flatten() {
+                @if let Some((world, region)) = self.world.as_ref().and_then(|w| self.region.as_ref().map(|r| (&w.name, &r.name))) {
                     span class="content-title" {
                     "resale analysis for " ((world)) " traveling within " ((region))
                     table {
