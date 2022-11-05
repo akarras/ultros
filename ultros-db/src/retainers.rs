@@ -95,9 +95,7 @@ impl UltrosDb {
         let owned_retainer = owned_retainers::Entity::find_by_id(owned_retainer_id)
             .one(&self.db)
             .await?
-            .ok_or_else(|| anyhow::Error::msg(
-                "Coulnd't find the given record of ownership",
-            ))?;
+            .ok_or_else(|| anyhow::Error::msg("Coulnd't find the given record of ownership"))?;
         if discord_owner as i64 != owned_retainer.discord_id {
             return Err(anyhow::Error::msg("You do not own this retainer record"));
         }
@@ -127,20 +125,17 @@ impl UltrosDb {
                 map
             });
         // execute multiple queries for world item listings at once
-        let results = futures::future::join_all(
-            items_by_world
-                .into_iter()
-                .flat_map(|(world, item_ids)| {
-                    item_ids.into_iter().map(move |i| async move {
-                        (
-                            world,
-                            i,
-                            self.get_listings_for_world(WorldId(world), ItemId(i)).await,
-                        )
-                    })
-                }),
-        )
-        .await;
+        let results =
+            futures::future::join_all(items_by_world.into_iter().flat_map(|(world, item_ids)| {
+                item_ids.into_iter().map(move |i| async move {
+                    (
+                        world,
+                        i,
+                        self.get_listings_for_world(WorldId(world), ItemId(i)).await,
+                    )
+                })
+            }))
+            .await;
         // now filter the retainer queries down to just the ones that don't have our
         Ok((
             owned_retainers,
