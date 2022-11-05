@@ -41,9 +41,9 @@ impl Page for UserRetainersPage {
             ((Header { user: Some(&self.current_user) }))
             div class="container" {
               div class="content-nav nav" {
-                a href="/retainers/add" class="btn-secondary" {
-                  i class="fa-solid fa-plus" {}
-                  "Add Retainer"
+                a href="/retainers/edit" class="btn-secondary" {
+                  i class="fa-solid fa-pen-to-square" {}
+                  "Edit Retainers"
                 }
                 @for (id, name) in &self.character_names {
                   a class="btn-secondary" href={"/retainers/" ((current_route_type)) "/" ((id)) } {
@@ -65,9 +65,6 @@ impl Page for UserRetainersPage {
                     div class="content-well" {
                         span class="content-title" {
                           ((retainer.name))
-                        }
-                        a class="btn align-right" href={"/retainers/remove/" ((owned.id))} {
-                          "Remove"
                         }
                         table {
                           tr {
@@ -118,9 +115,6 @@ impl Page for UserRetainersPage {
                       div class="content-well" {
                         span class="content-title" {
                           ((retainer.name))
-                        }
-                        a class="btn align-right" href={"/retainers/remove/" ((owned.id))} {
-                          "Remove"
                         }
                         @if listings.is_empty() {
                           "No listings"

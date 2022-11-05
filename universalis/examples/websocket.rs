@@ -1,5 +1,5 @@
 use clap::Parser;
-use log::info;
+use log::{info, LevelFilter};
 use universalis::websocket::event_types::{EventChannel, SubscribeMode};
 use universalis::websocket::SocketRx;
 use universalis::{ItemId, UniversalisClient, WebsocketClient};
@@ -16,7 +16,9 @@ struct Args {
 #[tokio::main]
 async fn main() {
     // subscribe to several items
-    pretty_env_logger::init();
+    pretty_env_logger::formatted_builder()
+        .filter_level(LevelFilter::Info)
+        .build();
     let universalis_client = UniversalisClient::new();
     let worlds = universalis_client.get_worlds().await.unwrap();
     let args = Args::parse();

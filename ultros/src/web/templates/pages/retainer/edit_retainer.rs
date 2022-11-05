@@ -1,9 +1,119 @@
-use maud::Render;
+use std::sync::Arc;
 
-use crate::web::oauth::AuthDiscordUser;
+use axum::extract::State;
+use maud::html;
+use ultros_db::{
+    entity::{final_fantasy_character, owned_retainers, retainer},
+    UltrosDb,
+};
 
-struct EditRetainers {
+use crate::{
+    web::{
+        error::WebError,
+        oauth::AuthDiscordUser,
+        templates::{
+            components::header::Header,
+            page::{Page, RenderPage},
+        },
+    },
+    world_cache::{AnySelector, WorldCache},
+};
+
+pub(crate) struct EditRetainers {
     user: Option<AuthDiscordUser>,
+    retainers: Vec<(
+        Option<final_fantasy_character::Model>,
+        Vec<(owned_retainers::Model, retainer::Model)>,
+    )>,
+    world_cache: Arc<WorldCache>,
 }
 
-impl Render for EditRetainers {}
+pub(crate) async fn edit_retainer(
+    State(db): State<UltrosDb>,
+    State(world_cache): State<Arc<WorldCache>>,
+    user: AuthDiscordUser,
+) -> Result<RenderPage<EditRetainers>, WebError> {
+    let retainers = db.get_all_owned_retainers_and_character(user.id).await?;
+    Ok(RenderPage(EditRetainers {
+        user: Some(user),
+        retainers,
+        world_cache,
+    }))
+}
+
+impl Page for EditRetainers {
+    fn get_name<'a>(&'a self) -> &'a str {
+        todo!()
+    }
+
+    fn draw_body(&self) -> maud::Markup {
+        html! {
+            ((Header { user: self.user.as_ref() }))
+            div class="container" {
+                div class="main-content" {
+                    div class="content-nav nav" {
+                        a href="/retainers/edit" class="btn-secondary" {
+                            i class="fa-solid fa-pen-to-square" {}
+                            "Edit Retainers"
+                        }
+                        a class="btn-secondary listings" href="/retainers/listings" {
+                            i class="fa-solid fa-sack-dollar" {}
+                            "Listings"
+                        }
+                        a class="btn-secondary undercuts" href="/retainers/undercuts" {
+                            i class="fa-solid fa-exclamation" {}
+                            "Undercuts"
+                        };
+                    }
+                    @for (character, retainers) in &self.retainers {
+                        div class="content-well" {
+                            span class="content-title" {
+                                ((character.as_ref().map(|c| format!("{} {}", c.first_name, c.last_name))).unwrap_or("No Character".to_string()))
+                                table {
+                                    th {
+                                        td {
+                                            "Retainer Name"
+                                        }
+                                        td {
+                                            "world"
+                                        }
+                                        td {
+                                            "retainer city"
+                                        }
+                                        td {
+                                            "sort order"
+                                        }
+                                        td {
+                                            ""
+                                        }
+                                    }
+                                    tr {
+                                        @for (owned_data, retainer) in retainers {
+                                            td {
+                                                ((retainer.name))
+                                            }
+                                            td {
+                                                ((self.world_cache.lookup_selector(&AnySelector::World(retainer.world_id)).as_ref().map(|world| world.get_name()).unwrap_or_default()))
+                                            }
+                                            td {
+                                                ((retainer.retainer_city_id))
+                                            }
+                                            td {
+                                                ((owned_data.weight.map(|w| w.to_string()).unwrap_or_default()))
+                                            }
+                                            td {
+                                                a class="btn align-right" href={"/retainers/remove/" ((owned_data.id))} {
+                                                    "Remove"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -2,9 +2,7 @@ use std::sync::Arc;
 
 use maud::{html, Render};
 
-use crate::{
-    world_cache::{AnySelector, WorldCache},
-};
+use crate::world_cache::{AnySelector, WorldCache};
 
 pub(crate) struct WorldDropdown<'a> {
     pub(crate) world_id: Option<i32>,

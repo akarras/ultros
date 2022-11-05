@@ -463,7 +463,8 @@ impl RetainerAlertListener {
                                             &ctx,
                                             &undercut_msg,
                                         )
-                                        .await {
+                                        .await
+                                        {
                                             error!("Error sending discord alerts {e}");
                                         }
                                     }

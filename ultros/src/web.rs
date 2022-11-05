@@ -25,9 +25,7 @@ use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
 use std::collections::HashMap;
-use std::io::Read;
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::sync::Arc;
 use ultros_db::UltrosDb;
 use universalis::{ItemId, ListingView, UniversalisClient, WorldId};
@@ -50,10 +48,14 @@ use self::templates::{
 use crate::analyzer_service::{AnalyzerService, ResaleOptions};
 use crate::event::{EventReceivers, EventSenders, EventType};
 use crate::metrics::metrics;
-use crate::web::alerts_websocket::connect_websocket;
-use crate::web::oauth::{begin_login, logout};
-use crate::web::templates::pages::profile::profile;
-use crate::world_cache::{AnySelector, WorldCache};
+use crate::{
+    web::{
+        alerts_websocket::connect_websocket,
+        oauth::{begin_login, logout},
+        templates::pages::{profile::profile, retainer::edit_retainer::edit_retainer},
+    },
+    world_cache::{AnySelector, WorldCache},
+};
 use image::io::Reader as ImageReader;
 use std::io::Cursor;
 
@@ -265,8 +267,8 @@ async fn refresh_world_item_listings(
     };
 
     // now ensure we insert all worlds into the map to account for empty worlds
-    let listings_by_world: HashMap<u8, Vec<ListingView>> =
-        all_worlds.into_iter().map(|w| (w as u8, vec![])).collect();
+    let listings_by_world: HashMap<u16, Vec<ListingView>> =
+        all_worlds.into_iter().map(|w| (w as u16, vec![])).collect();
     let first_key = if listings_by_world.len() == 1 {
         listings_by_world.keys().next().map(|w| *w)
     } else {
@@ -350,7 +352,6 @@ async fn analyze_profits(
             user,
             analyzer_results: vec![],
             world: None,
-            home_world,
             region: None,
             options,
             world_cache,
@@ -409,7 +410,6 @@ async fn analyze_profits(
         world: Some(world.clone()),
         options,
         world_cache,
-        home_world,
     }))
 }
 
@@ -493,6 +493,8 @@ fn get_static_file(path: &str) -> Option<&'static [u8]> {
 /// In debug mode, just load the files from disk
 #[cfg(debug_assertions)]
 fn get_static_file(path: &str) -> Option<Vec<u8>> {
+    use std::{io::Read, path::PathBuf};
+
     let file = PathBuf::from("./ultros/static").join(path);
     let mut file = std::fs::File::open(file).ok()?;
     let mut vec = Vec::new();
@@ -587,6 +589,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/retainers/add", get(add_retainer_page))
         .route("/retainers/add/:id", get(add_retainer))
         .route("/retainers/remove/:id", get(remove_owned_retainer))
+        .route("/retainers/edit", get(edit_retainer))
         .route("/retainers", get(user_retainers_listings))
         .route("/analyzer", get(analyze_profits))
         .route("/items/:search", get(fuzzy_item_search::search_items))
