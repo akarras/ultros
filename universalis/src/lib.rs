@@ -97,7 +97,7 @@ pub struct ListingView {
     pub stain_id: Option<u32>,
     pub world_name: Option<String>,
     #[serde(rename = "worldID")]
-    pub world_id: Option<u8>,
+    pub world_id: Option<u16>,
     pub creator_name: Option<String>,
     /// UUID
     #[serde(rename = "creatorID")]
