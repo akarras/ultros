@@ -51,6 +51,17 @@ impl From<&WSMessage> for EventChannel {
     }
 }
 
+impl From<&WSMessage> for ItemId {
+    fn from(ws: &WSMessage) -> Self {
+        match ws {
+            WSMessage::ListingsAdd { item, .. } => *item,
+            WSMessage::ListingsRemove { item, .. } => *item,
+            WSMessage::SalesAdd { item, .. } => *item,
+            WSMessage::SalesRemove { item, .. } => *item,
+        }
+    }
+}
+
 #[serde_as]
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]

@@ -1,76 +1,65 @@
-use log::{debug, info};
-use std::borrow::Borrow;
-use std::time::Instant;
-use universalis::websocket::event_types::{EventChannel, SubscribeMode, WSMessage};
+use clap::Parser;
+use log::info;
+use universalis::websocket::event_types::{EventChannel, SubscribeMode};
 use universalis::websocket::SocketRx;
-use universalis::{UniversalisClient, WebsocketClient};
+use universalis::{ItemId, UniversalisClient, WebsocketClient};
+
+#[derive(Parser)]
+#[command(version, about)]
+struct Args {
+    #[arg(short, long)]
+    world_name: Option<String>,
+    #[arg(short, long)]
+    item_ids: Option<Vec<i32>>,
+}
 
 #[tokio::main]
 async fn main() {
     // subscribe to several items
-    tracing_subscriber::fmt::init();
+    pretty_env_logger::init();
     let universalis_client = UniversalisClient::new();
     let worlds = universalis_client.get_worlds().await.unwrap();
-    let sargatanas = worlds.0.iter().find(|w| w.name.0 == "Sargatanas").unwrap();
+    let args = Args::parse();
+    let world = args
+        .world_name
+        .map(|world| {
+            worlds
+                .0
+                .iter()
+                .find(|w| w.name.0.eq_ignore_ascii_case(&world))
+                .expect("Unable to find a world matching name specfied")
+        })
+        .map(|w| w.id);
     let mut ws = WebsocketClient::connect().await;
-    ws.update_subscription(
-        SubscribeMode::Subscribe,
-        EventChannel::ListingsAdd,
-        Some(sargatanas.id),
-    )
-    .await;
+    ws.update_subscription(SubscribeMode::Subscribe, EventChannel::ListingsAdd, world)
+        .await;
     ws.update_subscription(
         SubscribeMode::Subscribe,
         EventChannel::ListingsRemove,
-        Some(sargatanas.id),
+        world,
     )
     .await;
-    // .await;
-    // ws.subscribe(
-    //     SubscribeMode::Subscribe,
-    //     EventChannel::SalesAdd,
-    //     Some(sargatanas.id),
-    // )
-    // .await;
-    // ws.subscribe(
-    //     SubscribeMode::Subscribe,
-    //     EventChannel::SalesRemove,
-    //     Some(sargatanas.id),
-    // )
-    // .await;
-    // let receiver = ws.get_receiver();
-    let mut last_message_received = Instant::now();
+    ws.update_subscription(SubscribeMode::Subscribe, EventChannel::SalesAdd, world)
+        .await;
+    ws.update_subscription(SubscribeMode::Subscribe, EventChannel::SalesRemove, world)
+        .await;
     loop {
         if let Some(next) = ws.get_receiver().recv().await {
-            if let universalis::websocket::SocketRx::Event(Ok(WSMessage::ListingsAdd {
-                item,
-                world,
-                listings,
-            })) = &next
-            {
-                if item.0 == 27842 || item.0 == 10592 {
-                    info!("added {listings:?}");
-                }
-            }
-            match &next {
-                SocketRx::Event(Ok(WSMessage::ListingsRemove {
-                    item,
-                    world,
-                    listings,
-                })) => {
-                    if item.0 == 27842 || item.0 == 10592 {
-                        info!("removed {listings:?}");
+            match next {
+                SocketRx::Event(Ok(e)) => {
+                    let item_id = ItemId::from(&e);
+
+                    if args
+                        .item_ids
+                        .as_ref()
+                        .map(|i| i.contains(&item_id.0))
+                        .unwrap_or(true)
+                    {
+                        info!("Received event {e:?}");
                     }
                 }
                 _ => {}
             }
-            // print one example of each event, so lets unsubscribe from the channel
-            /*ws.subscribe(SubscribeMode::Unsubscribe, match next {
-                universalis::websocket::SocketRx::Event(Ok(msg)) => {
-                    EventChannel::from(&msg)
-                },
-                _ => {panic!("unexpected error")}
-            }, Some(sargatanas.id)).await;*/
         } else {
             break;
         }
