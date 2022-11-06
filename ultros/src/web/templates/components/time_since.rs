@@ -1,9 +1,9 @@
-use chrono::{Utc, DateTime};
+use chrono::{Utc, NaiveDateTime, TimeZone};
 use maud::{Render, PreEscaped};
 use lazy_static::lazy_static;
 use timeago::{Formatter, English};
 
-struct TimeSince(DateTime<Utc>);
+pub(crate) struct TimeSince(pub(crate) NaiveDateTime);
 
 impl Render for TimeSince {
     fn render(&self) -> maud::Markup {
@@ -11,7 +11,8 @@ impl Render for TimeSince {
         lazy_static! {
           static ref FORMATTER: Formatter<English> = Formatter::new();
         };
-        PreEscaped(FORMATTER.convert_chrono(self.0, now))
+        let start = Utc.from_utc_datetime(&self.0);
+        PreEscaped(FORMATTER.convert_chrono(start, now))
     }
 }
 

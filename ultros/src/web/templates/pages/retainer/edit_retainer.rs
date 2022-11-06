@@ -66,7 +66,7 @@ impl Page for EditRetainers {
                                 table {
                                     th {
                                         td {
-                                            "Retainer Name"
+                                            "retainer name"
                                         }
                                         td {
                                             "world"

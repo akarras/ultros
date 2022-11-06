@@ -398,6 +398,17 @@ input.btn {
 .main-content td {
   padding-left: 10px;
   padding-right: 10px;
+  
+}
+
+.width-limited-text {
+  text-overflow: ellipsis;
+  overflow: hidden;
+  padding-left: 10px;
+  display: inline-block;
+  word-break: break-all;
+  margin-bottom: -15px;
+  max-width: 500px;
 }
 
 .main-content a {
@@ -472,6 +483,11 @@ footer {
   text-decoration: wavy;
 }
 
+.gil img {
+  height: 1.2em;
+  margin-bottom: -.2em;
+}
+
 th {
   word-wrap: normal;
   height: 46px;
@@ -480,6 +496,16 @@ th {
   background-color: #11051e;
   z-index: 10;
   min-width: 25px;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+@media screen and (max-width: 1200px) {
+  tr {
+    display: flex;
+    flex-direction: wrap;
+    flex-wrap: wrap;
+  }
 }
 
 .homeworld {

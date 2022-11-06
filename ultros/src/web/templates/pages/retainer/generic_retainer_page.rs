@@ -5,7 +5,7 @@ use crate::{
     utils,
     web::{
         oauth::AuthDiscordUser,
-        templates::{components::header::Header, page::Page},
+        templates::{components::{header::Header, item_icon::{ItemIcon, IconSize}}, page::Page},
     },
 };
 
@@ -54,22 +54,22 @@ impl Page for GenericRetainerPage {
                             table {
                                 tr {
                                     th {
-                                        "Item"
+                                        "item"
                                     }
                                     th {
-                                        "Price Per Unit"
+                                        "price"
                                     }
                                     th {
                                         "qty."
                                     }
                                     th {
-                                        "Total"
+                                        "total"
                                     }
                                 }
                                 @for listing in &self.listings {
                                     tr {
                                         td {
-                                            img class="small-icon" src=((utils::get_item_icon_url(listing.item_id))) {}
+                                            ((ItemIcon { item_id: listing.item_id, icon_size: IconSize::Small }))
                                             ((utils::get_item_name(listing.item_id)))
                                         }
                                         td {

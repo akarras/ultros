@@ -735,7 +735,7 @@ impl eframe::App for CraftersToolbox {
                                             .num_columns(4)
                                             .show(ui, |ui| {
                                                 ui.label("world name");
-                                                ui.label("price per unit");
+                                                ui.label("price");
                                                 ui.label("quantity");
                                                 ui.label("hq");
                                                 ui.label("total");

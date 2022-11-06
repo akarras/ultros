@@ -105,10 +105,10 @@ impl Page for AnalyzerPage {
                     table {
                       tr{
                         th {
-                          "item"
+                          "hq"
                         }
                         th {
-                          "hq"
+                          "item"
                         }
                         th {
                           "sale price"
@@ -173,17 +173,19 @@ impl Page for AnalyzerPage {
                       }
                       @for result in results {
                         tr {
-                          td{
-                            @let item_name = items.get(&ItemId(result.item_id)).map(|i| i.name.as_str()).unwrap_or_default();
-                            a href={"/listings/" ((region)) "/" ((result.item_id))}{
-                              ((ItemIcon { item_id: result.item_id, icon_size: IconSize::Small }))
-                              ((item_name))
-                            }
-                            ((CopyTextButton { text: item_name }))
-                          }
                           td {
                             @if result.hq {
                               "✔️"
+                            }
+                          }
+                          td{
+                            div class="flex-row" {
+                              @let item_name = items.get(&ItemId(result.item_id)).map(|i| i.name.as_str()).unwrap_or_default();
+                              a href={"/listings/" ((region)) "/" ((result.item_id))}{
+                                ((ItemIcon { item_id: result.item_id, icon_size: IconSize::Small }))
+                                span class="width-limited-text" {((item_name))}
+                              }
+                              ((CopyTextButton { text: item_name }))
                             }
                           }
                           td {

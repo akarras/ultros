@@ -69,23 +69,29 @@ impl Page for UserRetainersPage {
                         table {
                           tr {
                             th {
-                              "Item Name"
+                              "hq"
+                            }
+                            th {
+                              "item"
                             } th {
-                              "Price Per Unit"
+                              "price"
                             } th {
-                              "Price to beat"
+                              "price to beat"
                             } th {
-                              "Loss"
+                              "loss"
                             } th {
                               "# behind"
                             } th {
-                              "Qty."
-                            } th {
-                              "HQ"
+                              "qty."
                             }
                           }
                           @for (listing, undercut) in listings {
                             tr {
+                              td {
+                                @if listing.hq {
+                                  "✔️"
+                                }
+                              }
                               td {
                                 ((ItemIcon { item_id: listing.item_id, icon_size: IconSize::Small }))
                                 ((items.get(&ItemId(listing.item_id)).map(|i| i.name.as_str()).unwrap_or_default()))
@@ -99,10 +105,6 @@ impl Page for UserRetainersPage {
                                 ((undercut.number_behind))
                               } td {
                                 ((listing.quantity))
-                              } td {
-                                @if listing.hq {
-                                  "✔️"
-                                }
                               }
                             }
                           }
@@ -122,19 +124,25 @@ impl Page for UserRetainersPage {
                           table {
                             tr {
                               th {
-                                "Item Name"
-                              } th {
-                                "Price Per Unit"
-                              } th {
-                                "Qty."
-                              } th {
-                                "Total"
-                              } th {
-                                "HQ"
+                                "hq"
                               }
+                              th {
+                                "item"
+                              } th {
+                                "price"
+                              } th {
+                                "qty."
+                              } th {
+                                "total"
+                              } 
                             }
                             @for listing in listings {
                               tr {
+                                td {
+                                  @if listing.hq {
+                                    "✔️"
+                                  }
+                                }
                                 td {
                                   ((ItemIcon { item_id: listing.item_id, icon_size: IconSize::Small }))
                                   ((items.get(&ItemId(listing.item_id)).map(|i| i.name.as_str()).unwrap_or_default()))
@@ -144,10 +152,6 @@ impl Page for UserRetainersPage {
                                   ((listing.quantity))
                                 } td {
                                   ((Gil(listing.quantity * listing.price_per_unit)))
-                                } td {
-                                  @if listing.hq {
-                                    "✔️"
-                                  }
                                 }
                               }
                             }

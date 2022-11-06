@@ -13,7 +13,7 @@ use crate::{
                 copy_text_button::CopyTextButton,
                 gil::Gil,
                 header::Header,
-                item_icon::{IconSize, ItemIcon},
+                item_icon::{IconSize, ItemIcon}, time_since::TimeSince,
             },
             page::Page,
         },
@@ -144,7 +144,7 @@ impl Page for ListingsPage {
                   table {
                     tr {
                       th {
-                        "price per unit"
+                        "price"
                       }
                       th {
                         "qty."
@@ -192,9 +192,8 @@ impl Page for ListingsPage {
                           }
                         }
                         td {
-                          ((listing.timestamp.to_string()))
+                          ((TimeSince(listing.timestamp)))
                         }
-
                       }
                     }
                   }
@@ -208,7 +207,7 @@ impl Page for ListingsPage {
                   table {
                     tr {
                       th {
-                        "price per unit"
+                        "price"
                       }
                       th {
                         "qty."
@@ -256,7 +255,7 @@ impl Page for ListingsPage {
                           }
                         }
                         td {
-                          ((listing.timestamp.to_string()))
+                          ((TimeSince(listing.timestamp)))
                         }
                       }
                     }
@@ -271,7 +270,9 @@ impl Page for ListingsPage {
                 }
                 table {
                   tr {
-                    
+                    th {
+                      "hq"
+                    }
                     th {
                       "price per item"
                     }
@@ -280,9 +281,6 @@ impl Page for ListingsPage {
                     }
                     th {
                       "total"
-                    }
-                    th {
-                      "hq"
                     }
                     th {
                       "character name"
@@ -300,6 +298,11 @@ impl Page for ListingsPage {
                   @for (sale, character) in &self.sale_history {
                     tr {
                       td {
+                        @if sale.hq {
+                          "✔️"
+                        }
+                      }
+                      td {
                         ((Gil(sale.price_per_item)))
                       }
                       td {
@@ -307,11 +310,6 @@ impl Page for ListingsPage {
                       }
                       td {
                         ((Gil(sale.price_per_item * sale.quantity)))
-                      }
-                      td {
-                        @if sale.hq {
-                          "✔️"
-                        }
                       }
                       td {
                         @if let Some(character) = character {
@@ -329,7 +327,7 @@ impl Page for ListingsPage {
                         }
                       }
                       td {
-                        ((sale.sold_date.to_string()))
+                        ((TimeSince(sale.sold_date)))
                       }
                     }
                   }
