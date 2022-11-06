@@ -390,7 +390,9 @@ input.btn {
 
 .main-content table {
   white-space: nowrap;
-  
+  text-align: left;
+  position: relative;
+  border-collapse: collapse;
 }
 
 .main-content td {
@@ -470,14 +472,14 @@ footer {
   text-decoration: wavy;
 }
 
-.gil::before {
-  content: '🪙';
-  padding-right: 3px;
-}
-
 th {
   word-wrap: normal;
   height: 46px;
+  position: sticky;
+  top: 0px;
+  background-color: #11051e;
+  z-index: 10;
+  min-width: 25px;
 }
 
 .homeworld {

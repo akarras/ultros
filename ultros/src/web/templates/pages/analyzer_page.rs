@@ -181,7 +181,7 @@ impl Page for AnalyzerPage {
                             }
                             ((CopyTextButton { text: item_name }))
                           }
-                          th {
+                          td {
                             @if result.hq {
                               "✔️"
                             }

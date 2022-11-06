@@ -147,7 +147,7 @@ impl Page for ListingsPage {
                         "price per unit"
                       }
                       th {
-                        "quantity"
+                        "qty."
                       }
                       th {
                         "total"
@@ -211,7 +211,7 @@ impl Page for ListingsPage {
                         "price per unit"
                       }
                       th {
-                        "quantity"
+                        "qty."
                       }
                       th {
                         "total"
@@ -271,11 +271,12 @@ impl Page for ListingsPage {
                 }
                 table {
                   tr {
-                    th {
-                      "quantity"
-                    }
+                    
                     th {
                       "price per item"
+                    }
+                    th {
+                      "qty."
                     }
                     th {
                       "total"
@@ -299,10 +300,10 @@ impl Page for ListingsPage {
                   @for (sale, character) in &self.sale_history {
                     tr {
                       td {
-                        ((sale.quantity))
+                        ((Gil(sale.price_per_item)))
                       }
                       td {
-                        ((Gil(sale.price_per_item)))
+                        ((sale.quantity))
                       }
                       td {
                         ((Gil(sale.price_per_item * sale.quantity)))

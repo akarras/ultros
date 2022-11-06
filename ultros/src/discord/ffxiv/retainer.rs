@@ -153,7 +153,7 @@ async fn check_listings(ctx: Context<'_>) -> Result<(), Error> {
             writeln!(
                 msg_contents,
                 "{:<30} {:>9} {:>4} {:>1}",
-                "Item name", "price per item", "quantity", "hq"
+                "Item name", "price per item", "Qty.", "hq"
             )
             .unwrap();
             for listing in listings {

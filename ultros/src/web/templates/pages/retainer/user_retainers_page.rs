@@ -79,7 +79,7 @@ impl Page for UserRetainersPage {
                             } th {
                               "# behind"
                             } th {
-                              "Quantity"
+                              "Qty."
                             } th {
                               "HQ"
                             }
@@ -126,7 +126,7 @@ impl Page for UserRetainersPage {
                               } th {
                                 "Price Per Unit"
                               } th {
-                                "Quantity"
+                                "Qty."
                               } th {
                                 "Total"
                               } th {

@@ -805,7 +805,7 @@ impl eframe::App for CraftersToolbox {
                 .show(ctx, |ui| {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 10.0;
-                        ui.label("Quantity: ");
+                        ui.label("Qty.: ");
                         if ui
                             .add(
                                 egui::DragValue::new(&mut buddy.pricing_args.craft_quantity)

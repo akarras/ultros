@@ -60,7 +60,7 @@ impl Page for GenericRetainerPage {
                                         "Price Per Unit"
                                     }
                                     th {
-                                        "Quantity"
+                                        "qty."
                                     }
                                     th {
                                         "Total"
