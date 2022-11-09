@@ -1,4 +1,5 @@
 mod alerts_websocket;
+pub(crate) mod character_verifier_service;
 pub mod error;
 mod fuzzy_item_search;
 mod home_world_cookie;
@@ -30,6 +31,7 @@ use std::sync::Arc;
 use ultros_db::UltrosDb;
 use universalis::{ItemId, ListingView, UniversalisClient, WorldId};
 
+use self::character_verifier_service::CharacterVerifierService;
 use self::error::WebError;
 use self::home_world_cookie::HomeWorld;
 use self::oauth::{AuthDiscordUser, AuthUserCache, DiscordAuthConfig};
@@ -48,6 +50,7 @@ use self::templates::{
 use crate::analyzer_service::{AnalyzerService, ResaleOptions};
 use crate::event::{EventReceivers, EventSenders, EventType};
 use crate::metrics::metrics;
+use crate::web::templates::pages::character::add_character::add_character;
 use crate::{
     web::{
         alerts_websocket::connect_websocket,
@@ -422,6 +425,7 @@ pub(crate) struct WebState {
     pub(crate) world_cache: Arc<WorldCache>,
     pub(crate) analyzer_service: AnalyzerService,
     pub(crate) analytics_exporter: Arc<PrometheusExporter>,
+    pub(crate) character_verification: CharacterVerifierService
 }
 
 impl FromRef<WebState> for UltrosDb {
@@ -475,6 +479,12 @@ impl FromRef<WebState> for Arc<PrometheusExporter> {
 impl FromRef<WebState> for EventSenders {
     fn from_ref(input: &WebState) -> Self {
         input.event_senders.clone()
+    }
+}
+
+impl FromRef<WebState> for CharacterVerifierService {
+    fn from_ref(input: &WebState) -> Self {
+        input.character_verification.clone()
     }
 }
 
@@ -581,6 +591,7 @@ pub(crate) async fn start_web(state: WebState) {
             "/listings/refresh/:worldid/:itemid",
             get(refresh_world_item_listings),
         )
+        .route("/characters/add", get(add_character))
         .route("/retainers/listings/:id", get(get_retainer_listings))
         .route("/retainers/undercuts", get(user_retainers_undercuts))
         .route("/retainers/listings", get(user_retainers_listings))

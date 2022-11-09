@@ -134,7 +134,7 @@ impl Page for UserRetainersPage {
                                 "qty."
                               } th {
                                 "total"
-                              } 
+                              }
                             }
                             @for listing in listings {
                               tr {

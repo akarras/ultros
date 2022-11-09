@@ -5,6 +5,6 @@ pub(crate) mod header;
 pub mod item_icon;
 pub mod paginate;
 mod search;
-pub mod world_dropdown;
 pub mod time_since;
+pub mod world_dropdown;
 pub(crate) use search::SearchBox;

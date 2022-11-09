@@ -5,7 +5,13 @@ use crate::{
     utils,
     web::{
         oauth::AuthDiscordUser,
-        templates::{components::{header::Header, item_icon::{ItemIcon, IconSize}}, page::Page},
+        templates::{
+            components::{
+                header::Header,
+                item_icon::{IconSize, ItemIcon},
+            },
+            page::Page,
+        },
     },
 };
 

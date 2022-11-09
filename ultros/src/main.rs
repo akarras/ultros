@@ -25,6 +25,7 @@ use ultros_db::UltrosDb;
 use universalis::websocket::event_types::{EventChannel, SubscribeMode, WSMessage};
 use universalis::websocket::SocketRx;
 use universalis::{DataCentersView, UniversalisClient, WebsocketClient, WorldsView};
+use web::character_verifier_service::CharacterVerifierService;
 use web::oauth::{AuthUserCache, DiscordAuthConfig, OAuthScope};
 use world_cache::WorldCache;
 
@@ -146,10 +147,12 @@ async fn main() -> Result<()> {
     let key = env::var("KEY").expect("environment variable KEY not found");
     let analyzer_service =
         AnalyzerService::start_analyzer(db.clone(), receivers.clone(), world_cache.clone()).await;
+    let character_verification = CharacterVerifierService { client: reqwest::Client::new(), db: db.clone() };
     let web_state = WebState {
         analyzer_service,
         db,
         key: Key::from(key.as_bytes()),
+        character_verification,
         oauth_config: DiscordAuthConfig::new(
             client_id,
             client_secret,

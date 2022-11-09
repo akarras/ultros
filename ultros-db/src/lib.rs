@@ -224,26 +224,6 @@ impl UltrosDb {
     }
 
     #[instrument(skip(self))]
-    pub async fn add_owned_character(
-        &self,
-        character_id: i32,
-        first_name: &str,
-        last_name: &str,
-        world_id: WorldId,
-    ) -> Result<final_fantasy_character::Model> {
-        use final_fantasy_character::ActiveModel;
-        let model = ActiveModel {
-            id: Set(character_id),
-            first_name: Set(first_name.to_string()),
-            last_name: Set(last_name.to_string()),
-            world_id: Set(world_id.0),
-        }
-        .insert(&self.db)
-        .await?;
-        Ok(model)
-    }
-
-    #[instrument(skip(self))]
     pub async fn create_alert(&self, owner: discord_user::Model) -> Result<alert::Model> {
         use alert::ActiveModel;
         Ok(ActiveModel {

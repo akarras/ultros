@@ -8,6 +8,7 @@ use oauth2::{
 use reqwest::StatusCode;
 use thiserror::Error;
 use tokio::sync::broadcast::error::SendError;
+use tracing::log::error;
 use ultros_db::SeaDbErr;
 
 use crate::{event, world_cache::WorldCacheError};
@@ -54,6 +55,10 @@ pub enum WebError {
     Image(#[from] ImageError),
     #[error("IO Error {0}")]
     StdError(#[from] std::io::Error),
+    #[error("Error reading lodestone server name {0}")]
+    LodestoneServerParse(#[from] lodestone::model::server::ServerParseError),
+    #[error("Lodestone error {0}")]
+    LodestoneError(#[from] lodestone::LodestoneError),
 }
 
 impl WebError {
@@ -68,6 +73,7 @@ impl WebError {
 
 impl IntoResponse for WebError {
     fn into_response(self) -> Response {
+        error!("Error returned {self:?}");
         if let WebError::HomeWorldNotSet = self {
             return Redirect::to("/profile").into_response();
         }
