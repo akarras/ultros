@@ -191,7 +191,9 @@ impl WebsocketClient {
                             SocketTx::Subscription(s) => {
                                 info!("Subscription update {s:?}");
                                 let bson = bson::to_vec(&s).unwrap();
-                                websocket.send(Message::Binary(bson)).await.unwrap();
+                                if let Err(e) = websocket.send(Message::Binary(bson)).await {
+                                    error!("Error sending websocket message {e:?}");
+                                }
                                 // keep track of the subscriptions so if the socket closes we can update accordingly
                                 let WebSocketSubscriptionUpdate { event, channel } = s;
                                 match event {
@@ -204,10 +206,15 @@ impl WebsocketClient {
                                 }
                             }
                             SocketTx::Ping => {
-                                websocket
+                                if let Err(e) = websocket
                                     .send(Message::Ping(vec![1, 2, 3, 4]))
-                                    .await
-                                    .unwrap();
+                                    .await {
+                                        error!("WS Ping Send Error {e:?}");
+                                        if let Err(e) = websocket.close(None).await {
+                                            error!("Error closing websocket");
+                                        }
+                                    }
+                            
                             }
                         },
                         None => {
@@ -233,12 +240,16 @@ impl WebsocketClient {
                                     }
                                     e.into()
                                 });
-                                    sender.send(SocketRx::Event(b)).await.unwrap();
+                                    if let Err(e) = sender.send(SocketRx::Event(b)).await {
+                                        error!("Error sending websocket data {e:?}");
+                                    }
                                 });
                             }
                             Message::Ping(p) => {
                                 info!("responding to ping with payload: {p:?}");
-                                websocket.send(Message::Pong(p.clone())).await.unwrap();
+                                if let Err(e) = websocket.send(Message::Pong(p.clone())).await {
+                                    error!("Error sending ping! {e:?}");
+                                }
                             }
                             Message::Pong(pong) => {
                                 info!("got pong! {pong:?}");

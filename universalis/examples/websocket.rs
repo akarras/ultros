@@ -49,13 +49,15 @@ async fn main() {
                 SocketRx::Event(Ok(e)) => {
                     let item_id = ItemId::from(&e);
 
-                    if args.item_ids.is_some() && args
-                        .item_ids
-                        .as_ref()
-                        .map(|i| i.contains(&item_id.0))
-                        .unwrap_or(true)
-                    {
-                        info!("Received event {e:?}");
+                    if args.item_ids.is_some() {
+                        if args
+                            .item_ids
+                            .as_ref()
+                            .map(|i| i.contains(&item_id.0))
+                            .unwrap_or(true)
+                        {
+                            info!("Received event {e:?}");
+                        }
                     } else {
                         info!("Received event {e:?}");
                     }
