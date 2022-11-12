@@ -24,10 +24,13 @@ use opentelemetry_prometheus::PrometheusExporter;
 use reqwest::header;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
+use tokio::time::timeout;
+use tracing::debug;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use ultros_db::UltrosDb;
 use universalis::{ItemId, ListingView, UniversalisClient, WorldId};
 
@@ -258,48 +261,56 @@ async fn refresh_world_item_listings(
     let all_worlds = world_cache
         .get_all_worlds_in(&lookup)
         .ok_or_else(|| anyhow::Error::msg("Unable to get worlds"))?;
-    let client = UniversalisClient::new();
-    let current_data = client.marketboard_current_data(&world, &[item_id]).await?;
-    // we can potentially get listings from multiple worlds from this call so we should group listings by world
-
-    let listings = match current_data {
-        universalis::MarketView::SingleView(v) => v.listings,
-        universalis::MarketView::MultiView(_) => {
-            return Err(anyhow::Error::msg("multiple listings returned?").into())
-        }
-    };
-
-    // now ensure we insert all worlds into the map to account for empty worlds
-    let listings_by_world: HashMap<u16, Vec<ListingView>> =
-        all_worlds.into_iter().map(|w| (w as u16, vec![])).collect();
-    let first_key = if listings_by_world.len() == 1 {
-        listings_by_world.keys().next().copied()
-    } else {
-        None
-    };
-    let listings_by_world = listings
-        .into_iter()
-        .flat_map(|l| {
-            if let Some(key) = first_key {
-                Some((key, l))
-            } else {
-                l.world_id.map(|w| (w, l))
-            }
-        })
-        .fold(listings_by_world, |mut m, (w, l)| {
-            m.entry(w).or_default().push(l);
-            m
-        });
-    println!("worlds: {listings_by_world:?}");
-    for (world_id, listings) in listings_by_world {
-        let (added, removed) = db
-            .update_listings(listings, ItemId(item_id), WorldId(world_id as i32))
+    let world_clone = world.clone();
+    let future = tokio::spawn(async move {
+        let client = UniversalisClient::new();
+        let current_data = client
+            .marketboard_current_data(&world_clone, &[item_id])
             .await?;
-        senders.listings.send(EventType::Add(Arc::new(added)))?;
-        senders
-            .listings
-            .send(EventType::Remove(Arc::new(removed)))?;
-    }
+        // we can potentially get listings from multiple worlds from this call so we should group listings by world
+        let listings = match current_data {
+            universalis::MarketView::SingleView(v) => v.listings,
+            universalis::MarketView::MultiView(_) => {
+                return Result::<_, anyhow::Error>::Err(
+                    anyhow::Error::msg("multiple listings returned?").into(),
+                )
+            }
+        };
+
+        // now ensure we insert all worlds into the map to account for empty worlds
+        let listings_by_world: HashMap<u16, Vec<ListingView>> =
+            all_worlds.into_iter().map(|w| (w as u16, vec![])).collect();
+        let first_key = if listings_by_world.len() == 1 {
+            listings_by_world.keys().next().copied()
+        } else {
+            None
+        };
+        let listings_by_world = listings
+            .into_iter()
+            .flat_map(|l| {
+                if let Some(key) = first_key {
+                    Some((key, l))
+                } else {
+                    l.world_id.map(|w| (w, l))
+                }
+            })
+            .fold(listings_by_world, |mut m, (w, l)| {
+                m.entry(w).or_default().push(l);
+                m
+            });
+        debug!("manually refreshed worlds: {listings_by_world:?}");
+        for (world_id, listings) in listings_by_world {
+            let (added, removed) = db
+                .update_listings(listings, ItemId(item_id), WorldId(world_id as i32))
+                .await?;
+            senders.listings.send(EventType::Add(Arc::new(added)))?;
+            senders
+                .listings
+                .send(EventType::Remove(Arc::new(removed)))?;
+        }
+        Ok(())
+    });
+    let _ = timeout(Duration::from_secs(1), future).await?;
     Ok(Redirect::to(&format!("/listings/{world}/{item_id}")))
 }
 
@@ -425,7 +436,7 @@ pub(crate) struct WebState {
     pub(crate) world_cache: Arc<WorldCache>,
     pub(crate) analyzer_service: AnalyzerService,
     pub(crate) analytics_exporter: Arc<PrometheusExporter>,
-    pub(crate) character_verification: CharacterVerifierService
+    pub(crate) character_verification: CharacterVerifierService,
 }
 
 impl FromRef<WebState> for UltrosDb {

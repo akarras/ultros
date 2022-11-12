@@ -7,12 +7,13 @@ use serde::Deserialize;
 
 use crate::{
     web::{
+        character_verifier_service::{self, CharacterVerifierService},
         error::WebError,
         oauth::AuthDiscordUser,
         templates::{
             components::{header::Header, world_dropdown::WorldDropdown},
             page::{Page, RenderPage},
-        }, character_verifier_service::{self, CharacterVerifierService},
+        },
     },
     world_cache::WorldCache,
 };
@@ -46,19 +47,17 @@ pub(crate) async fn add_character(
         search_results,
         world_cache,
         user: Some(user),
-        query
+        query,
     }))
 }
 
-pub(crate) async fn claim_character(State(verification_service): State<CharacterVerifierService>) {
-    
-}
+pub(crate) async fn claim_character(State(verification_service): State<CharacterVerifierService>) {}
 
 pub(crate) struct AddCharacter {
     search_results: Option<Vec<lodestone::search::ProfileSearchResult>>,
     world_cache: Arc<WorldCache>,
     user: Option<AuthDiscordUser>,
-    query: CharacterQueryParameters
+    query: CharacterQueryParameters,
 }
 
 impl Page for AddCharacter {

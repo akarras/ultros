@@ -7,7 +7,7 @@ use oauth2::{
 };
 use reqwest::StatusCode;
 use thiserror::Error;
-use tokio::sync::broadcast::error::SendError;
+use tokio::{sync::broadcast::error::SendError, time::error::Elapsed};
 use tracing::log::error;
 use ultros_db::SeaDbErr;
 
@@ -59,6 +59,9 @@ pub enum WebError {
     LodestoneServerParse(#[from] lodestone::model::server::ServerParseError),
     #[error("Lodestone error {0}")]
     LodestoneError(#[from] lodestone::LodestoneError),
+    // this is kind of bad if I ever use the elapsed error for something else but I'll pretend
+    #[error("Timed out reading from Universalis {0}")]
+    TimeoutElapsed(#[from] Elapsed),
 }
 
 impl WebError {

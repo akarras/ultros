@@ -1,6 +1,9 @@
 use lodestone::{model::profile::Profile, LodestoneError};
 use thiserror::Error;
-use ultros_db::{entity::{ffxiv_character_verification, discord_user}, UltrosDb};
+use ultros_db::{
+    entity::{discord_user, ffxiv_character_verification},
+    UltrosDb,
+};
 
 #[derive(Debug, Clone)]
 pub(crate) struct CharacterVerifierService {
@@ -19,8 +22,11 @@ pub(crate) enum VerifierError {
 }
 
 impl CharacterVerifierService {
-
-    pub(crate) async fn start_verification(&self, character_id: u32, discord_user_id: i64) -> String {
+    pub(crate) async fn start_verification(
+        &self,
+        character_id: u32,
+        discord_user_id: i64,
+    ) -> String {
         unimplemented!("Need to implement verification");
     }
 
