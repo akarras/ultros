@@ -102,13 +102,15 @@ async fn run_socket_listener(db: UltrosDb, listings_tx: EventProducer<Vec<active
     }
 }
 
-async fn init_db(worlds_view: &WorldsView, datacenters: &DataCentersView) -> Result<UltrosDb> {
+async fn init_db(worlds_view: Result<WorldsView, universalis::Error>, datacenters: Result<DataCentersView, universalis::Error>) -> Result<UltrosDb> {
     info!("db starting");
     let db = UltrosDb::connect().await?;
     db.insert_default_retainer_cities().await.unwrap();
     info!("DB connected & ffxiv world data primed");
     {
-        db.update_datacenters(datacenters, worlds_view).await?;
+        if let (Ok(worlds), Ok(datacenters)) = (worlds_view, datacenters) {
+            db.update_datacenters(&datacenters, &worlds).await?;
+        }
     }
     Ok(db)
 }
@@ -124,9 +126,7 @@ async fn main() -> Result<()> {
         universalis_client.get_worlds(),
     )
     .await;
-    let worlds = worlds?;
-    let datacenters = datacenters?;
-    let db = init_db(&worlds, &datacenters).await.unwrap();
+    let db = init_db(worlds, datacenters).await.unwrap();
     let world_cache = Arc::new(WorldCache::new(&db).await);
     let (senders, receivers) = create_event_busses();
     // begin listening to universalis events
@@ -147,7 +147,10 @@ async fn main() -> Result<()> {
     let key = env::var("KEY").expect("environment variable KEY not found");
     let analyzer_service =
         AnalyzerService::start_analyzer(db.clone(), receivers.clone(), world_cache.clone()).await;
-    let character_verification = CharacterVerifierService { client: reqwest::Client::new(), db: db.clone() };
+    let character_verification = CharacterVerifierService {
+        client: reqwest::Client::new(),
+        db: db.clone(),
+    };
     let web_state = WebState {
         analyzer_service,
         db,
