@@ -42,11 +42,15 @@ pub(crate) async fn profile(
         home_world = Some(HomeWorld { home_world: world })
     }
 
-    let characters = if let Some(discord_user) = &user {
-        db.get_all_characters_for_discord_user(discord_user.id as i64)
-            .await?
+    let (challenges, characters) = if let Some(discord_user) = &user {
+        let (challenges, characters) = futures::future::join(
+            db.get_pending_character_challenges_for_discord_user(discord_user.id as i64),
+            db.get_all_characters_for_discord_user(discord_user.id as i64),
+        )
+        .await;
+        (challenges?, characters?)
     } else {
-        vec![]
+        (vec![], vec![])
     };
     Ok((
         cookie_jar,
@@ -54,6 +58,7 @@ pub(crate) async fn profile(
             user,
             home_world,
             world_cache,
+            challenges,
             characters,
         }),
     ))
@@ -65,6 +70,10 @@ pub(crate) struct Profile {
     world_cache: Arc<WorldCache>,
     characters: Vec<(
         owned_ffxiv_character::Model,
+        Option<final_fantasy_character::Model>,
+    )>,
+    challenges: Vec<(
+        ultros_db::entity::ffxiv_character_verification::Model,
         Option<final_fantasy_character::Model>,
     )>,
 }
@@ -80,6 +89,7 @@ impl Page for Profile {
             home_world,
             world_cache,
             characters,
+            challenges,
         } = self;
         html! {
             ((Header { user: user.as_ref() }))
@@ -90,6 +100,20 @@ impl Page for Profile {
                     }
                     label {
                         "Home word:"
+                    }
+                    @if !self.challenges.is_empty() {
+                        div class="content-well" {
+                            @for (challenge, character) in &self.challenges {
+                                @if let Some(character) = character {
+                                    span {
+                                        ((character.first_name))" "((character.last_name))
+                                    }
+                                }
+                                a href={"/characters/verify/" ((challenge.id)) } {
+                                    "Verify"
+                                }
+                            }
+                        }
                     }
                     div class="content-well" {
                         span class="content-title" {

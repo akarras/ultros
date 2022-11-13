@@ -67,9 +67,15 @@ impl UltrosDb {
     pub async fn get_pending_character_challenges_for_discord_user(
         &self,
         discord_user_id: i64,
-    ) -> Result<Vec<ffxiv_character_verification::Model>> {
+    ) -> Result<
+        Vec<(
+            ffxiv_character_verification::Model,
+            Option<final_fantasy_character::Model>,
+        )>,
+    > {
         Ok(ffxiv_character_verification::Entity::find()
             .filter(ffxiv_character_verification::Column::DiscordUserId.eq(discord_user_id))
+            .find_also_related(final_fantasy_character::Entity)
             .all(&self.db)
             .await?)
     }
