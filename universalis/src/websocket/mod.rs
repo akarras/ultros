@@ -211,7 +211,7 @@ impl WebsocketClient {
                                     .await {
                                         error!("WS Ping Send Error {e:?}");
                                         if let Err(e) = websocket.close(None).await {
-                                            error!("Error closing websocket");
+                                            error!("Error closing websocket {e:?}");
                                         }
                                     }
                             
