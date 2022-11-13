@@ -1,3 +1,4 @@
+use sea_orm::IntoActiveModel;
 use sea_orm::{ActiveValue, EntityTrait, Set};
 use tracing::instrument;
 
@@ -74,7 +75,35 @@ impl UltrosDb {
     }
 
     #[instrument(skip(self))]
-    pub async fn get_character_challenge(
+    pub async fn create_verification_challenge(
+        &self,
+        challenge_string: &str,
+        discord_user_id: i64,
+        ffxiv_character_id: i32,
+    ) -> Result<ffxiv_character_verification::Model> {
+        use ffxiv_character_verification::*;
+        let model = ActiveModel {
+            id: ActiveValue::default(),
+            challenge: Set(challenge_string.to_string()),
+            discord_user_id: Set(discord_user_id),
+            ffxiv_character_id: Set(ffxiv_character_id),
+        };
+        Ok(Entity::insert(model).exec_with_returning(&self.db).await?)
+    }
+
+    pub async fn remove_verification_challenge(
+        &self,
+        challenge: ffxiv_character_verification::Model,
+    ) -> Result<()> {
+        let challenge = challenge.into_active_model();
+        ffxiv_character_verification::Entity::delete(challenge)
+            .exec(&self.db)
+            .await?;
+        Ok(())
+    }
+
+    #[instrument(skip(self))]
+    pub async fn get_verification_challenge(
         &self,
         id: i32,
     ) -> Result<ffxiv_character_verification::Model> {

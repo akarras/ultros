@@ -13,6 +13,8 @@ use ultros_db::SeaDbErr;
 
 use crate::{analyzer_service::AnalyzerError, event, world_cache::WorldCacheError};
 
+use super::character_verifier_service::VerifierError;
+
 #[derive(Debug, Error)]
 pub enum WebError {
     #[error("Not authorized to view this page")]
@@ -64,6 +66,8 @@ pub enum WebError {
     TimeoutElapsed(#[from] Elapsed),
     #[error("Analyzer Error: {0}")]
     AnalyzerError(#[from] AnalyzerError),
+    #[error("Verifier error {0}")]
+    VerificationError(#[from] VerifierError),
 }
 
 impl WebError {
