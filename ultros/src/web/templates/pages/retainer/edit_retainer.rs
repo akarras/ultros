@@ -45,7 +45,7 @@ impl Page for EditRetainers {
             ((Header { user: self.user.as_ref() }))
             div class="container" {
                 div class="content-nav nav" {
-                    a href="/retainers/Add" class="btn-secondary" {
+                    a href="/retainers/add" class="btn-secondary" {
                         i class="fa-solid fa-pen-to-square" {}
                         "Add"
                     }
