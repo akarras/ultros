@@ -153,6 +153,7 @@ async fn main() -> Result<()> {
     let character_verification = CharacterVerifierService {
         client: reqwest::Client::new(),
         db: db.clone(),
+        world_cache: world_cache.clone(),
     };
     let web_state = WebState {
         analyzer_service,

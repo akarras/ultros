@@ -94,62 +94,64 @@ impl Page for Profile {
         html! {
             ((Header { user: user.as_ref() }))
             div class="container" {
-                div class="main-content" {
+                div class="main-content flex flex-column" {
                     h1 {
                         "Profile"
                     }
-                    label {
-                        "Home word:"
-                    }
-                    @if !self.challenges.is_empty() {
-                        div class="content-well" {
-                            @for (challenge, character) in &self.challenges {
-                                @if let Some(character) = character {
-                                    span {
-                                        ((character.first_name))" "((character.last_name))
-                                    }
-                                }
-                                a href={"/characters/verify/" ((challenge.id)) } {
-                                    "Verify"
-                                }
-                            }
-                        }
-                    }
-                    div class="content-well" {
-                        span class="content-title" {
-                            "Characters"
-                        }
-                        a class="btn" href="/characters/add" {
-                            "Add"
-                        }
-                        @for (owned, character) in characters {
+                    div class="flex flex-wrap" {
+                        @if !self.challenges.is_empty() {
                             div class="content-well" {
-                                @if let Some(character) = character {
-                                    span class="content-title" {
-                                        ((character.first_name)) ((character.last_name))
-                                    }
-                                    span class="content-title" {
-                                        @if let Ok(world) = world_cache.lookup_selector(&AnySelector::World(character.id)) {
-                                            ((world.get_name()))
+                                @for (challenge, character) in &self.challenges {
+                                    @if let Some(character) = character {
+                                        span {
+                                            ((character.first_name))" "((character.last_name))
                                         }
                                     }
-                                    a class="btn btn-secondary" href={ "/character/refresh/" ((character.id)) } {
-                                        span class="fa fa-refresh" {}
-                                    }
-                                    a classs="btn btn-danger" {
-                                        span class="fa fa-trash" href={ "/character/unclaim/" ((owned.ffxiv_character_id))} {}
+                                    a href={"/characters/verify/" ((challenge.id)) } {
+                                        "Verify"
                                     }
                                 }
                             }
                         }
-                    }
-                    div class="content-well" {
-                        form action="/profile" {
-                            span class="content-well" {
-                                "Home world"
+                        div class="content-well flex flex-column" {
+                            div class="flex flex-row" {
+                                span class="content-title" {
+                                    "Characters"
+                                }
+                                a class="btn" href="/characters/add" {
+                                    "Add"
+                                }
                             }
-                            ((WorldDropdown { world_id: home_world.map(|h| h.home_world), world_cache }))
-                            input type="submit" value="Update";
+                            @for (owned, character) in characters {
+                                @if let Some(character) = character {
+                                    div class="flex-row" {
+                                        span class="content-title" {
+                                            ((character.first_name))" "((character.last_name))
+                                        }
+                                        span class="content-title" {
+                                            @if let Ok(world) = world_cache.lookup_selector(&AnySelector::World(character.id)) {
+                                                ((world.get_name()))
+                                            }
+                                        }
+                                        a class="btn btn-secondary" href={ "/character/refresh/" ((character.id)) } {
+                                            span class="fa fa-refresh" {}
+                                        }
+                                        a class="btn btn-secondary" {
+                                            span class="fa fa-trash" href={ "/character/unclaim/" ((owned.ffxiv_character_id))} {}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        div class="content-well" {
+                            form action="/profile" {
+                                span class="content-well" {
+                                    "Home world"
+                                }
+                                br {}
+                                ((WorldDropdown { world_id: home_world.map(|h| h.home_world), world_cache }))
+                                input type="submit" value="Update";
+                            }
                         }
                     }
                 }

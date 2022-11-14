@@ -16,19 +16,19 @@ pub(crate) async fn claim_character(
     Path(character_id): Path<i32>,
     user: AuthDiscordUser,
 ) -> Result<RenderPage<ClaimCharacter>, WebError> {
-    let verification_string = verification_service
+    let (id, verification_string) = verification_service
         .start_verification(character_id as u32, user.id as i64)
         .await?;
     Ok(RenderPage(ClaimCharacter {
         verification_string,
-        character_id,
+        verificiation_id: id,
         user,
     }))
 }
 
 pub(crate) struct ClaimCharacter {
     verification_string: String,
-    character_id: i32,
+    verificiation_id: i32,
     user: AuthDiscordUser,
 }
 
@@ -51,7 +51,7 @@ impl Page for ClaimCharacter {
                         span {
                             "Add " ((self.verification_string)) " to your profile and come back here to verify your account"
                         }
-                        a href={ "/characters/check/" ((self.character_id)) } {
+                        a href={ "/characters/check/" ((self.verificiation_id)) } {
                             "Verify Character"
                         }
                     }

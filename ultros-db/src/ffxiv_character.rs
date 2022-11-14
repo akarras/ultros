@@ -1,6 +1,8 @@
+use migration::OnConflict;
 use sea_orm::IntoActiveModel;
 use sea_orm::{ActiveValue, EntityTrait, Set};
 use tracing::instrument;
+use tracing::log::warn;
 
 use super::UltrosDb;
 use crate::entity::*;
@@ -25,6 +27,14 @@ impl UltrosDb {
             last_name: Set(last_name.to_string()),
             world_id: Set(world_id),
         })
+        .on_conflict(
+            OnConflict::column(final_fantasy_character::Column::Id)
+                .update_columns([
+                    final_fantasy_character::Column::FirstName,
+                    final_fantasy_character::Column::LastName,
+                ])
+                .to_owned(),
+        )
         .exec_with_returning(&self.db)
         .await?)
     }
@@ -94,6 +104,7 @@ impl UltrosDb {
             discord_user_id: Set(discord_user_id),
             ffxiv_character_id: Set(ffxiv_character_id),
         };
+        warn!("creating challenge {model:?}");
         Ok(Entity::insert(model).exec_with_returning(&self.db).await?)
     }
 

@@ -2,7 +2,11 @@ use std::sync::Arc;
 
 use axum::extract::State;
 use maud::html;
-use ultros_db::{retainers::FullRetainersList, UltrosDb};
+use ultros_db::{
+    entity::{final_fantasy_character, owned_ffxiv_character},
+    retainers::FullRetainersList,
+    UltrosDb,
+};
 
 use crate::{
     web::{
@@ -19,6 +23,10 @@ use crate::{
 pub(crate) struct EditRetainers {
     user: Option<AuthDiscordUser>,
     retainers: FullRetainersList,
+    characters: Vec<(
+        owned_ffxiv_character::Model,
+        Option<final_fantasy_character::Model>,
+    )>,
     world_cache: Arc<WorldCache>,
 }
 
@@ -27,10 +35,14 @@ pub(crate) async fn edit_retainer(
     State(world_cache): State<Arc<WorldCache>>,
     user: AuthDiscordUser,
 ) -> Result<RenderPage<EditRetainers>, WebError> {
+    let characters = db
+        .get_all_characters_for_discord_user(user.id as i64)
+        .await?;
     let retainers = db.get_all_owned_retainers_and_character(user.id).await?;
     Ok(RenderPage(EditRetainers {
         user: Some(user),
         retainers,
+        characters,
         world_cache,
     }))
 }
@@ -64,20 +76,14 @@ impl Page for EditRetainers {
                             span class="content-title" {
                                 ((character.as_ref().map(|c| format!("{} {}", c.first_name, c.last_name))).unwrap_or_else(|| "No Character".to_string()))
                                 table {
-                                    th {
-                                        td {
+                                    tr {
+                                        th {
                                             "retainer name"
                                         }
-                                        td {
+                                        th {
                                             "world"
                                         }
-                                        td {
-                                            "retainer city"
-                                        }
-                                        td {
-                                            "sort order"
-                                        }
-                                        td {
+                                        th {
                                             ""
                                         }
                                     }
@@ -90,14 +96,35 @@ impl Page for EditRetainers {
                                                 ((self.world_cache.lookup_selector(&AnySelector::World(retainer.world_id)).as_ref().map(|world| world.get_name()).unwrap_or_default()))
                                             }
                                             td {
-                                                ((retainer.retainer_city_id))
-                                            }
-                                            td {
-                                                ((owned_data.weight.map(|w| w.to_string()).unwrap_or_default()))
-                                            }
-                                            td {
-                                                a class="btn align-right" href={"/retainers/remove/" ((owned_data.id))} {
-                                                    "Remove"
+                                                a class="btn" href={"/retainer/upsort/" ((retainer.id))} {
+                                                    i class="fa fa-arrow-up" {
+                                                    }
+                                                }
+                                                a class="btn" href={"/retainer/downsort/" ((retainer.id))} {
+                                                    i class="fa fa-arrow-down" {
+                                                    }
+                                                }
+                                                a class="btn" href={"/retainers/remove/" ((owned_data.id))} {
+                                                    i class="fa fa-trash" {}
+                                                }
+                                                @if character.is_none() {
+                                                    form {
+                                                        input type="hidden" name="retainer" value=((retainer.id)) {}
+                                                        select name="character" {
+                                                            @for (_, c) in &self.characters {
+                                                                @if let Some(c) = c {
+                                                                    option value={((c.id))} {
+                                                                        ((c.first_name))" "((c.last_name))
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        input type="submit" value="add to character" {}
+                                                    }
+                                                } @else {
+                                                    a class="btn" href={"/retainers/character/remove/" ((retainer.id)) } {
+                                                        i class="fa fa-person" {}
+                                                    }
                                                 }
                                             }
                                         }

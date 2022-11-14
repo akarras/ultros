@@ -37,6 +37,15 @@ impl<'a> From<&'a AnyResult<'a>> for AnySelector {
     }
 }
 
+impl<'a> AnyResult<'a> {
+    pub fn as_world(&self) -> Result<&'a world::Model, WorldCacheError> {
+        match self {
+            AnyResult::World(w) => Ok(w),
+            _ => Err(WorldCacheError::NotWorld),
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum WorldCacheError {
     #[error("Failed to get world by id {0}")]
@@ -47,6 +56,8 @@ pub enum WorldCacheError {
     Region(i32),
     #[error("Name lookup error {0}")]
     NameLookupError(String),
+    #[error("Not a world")]
+    NotWorld,
 }
 
 impl<'a> AnyResult<'a> {
@@ -71,6 +82,16 @@ pub struct WorldCache {
     datacenter_to_world: HashMap<i32, Vec<i32>>,
     region_to_worlds: HashMap<i32, Vec<i32>>,
     name_map: HashMap<String, AnySelector>,
+}
+
+impl std::fmt::Debug for WorldCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WorldCache")
+            .field("datacenter_to_world", &self.datacenter_to_world)
+            .field("region_to_worlds", &self.region_to_worlds)
+            .field("name_map", &self.name_map)
+            .finish()
+    }
 }
 
 #[derive(Debug)]
