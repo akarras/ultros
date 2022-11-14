@@ -43,3 +43,4 @@ serde_urlencoded = "0.7.1"
 serde_with = "2.0.1"
 image = {version = "0.24.4", features = ["webp-encoder"]}
 timeago = {version = "0.3.1", features = ["chrono"]}
+tower-http = {version = "0.3", features = ["compression-gzip"]}

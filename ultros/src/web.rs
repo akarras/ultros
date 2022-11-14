@@ -26,6 +26,7 @@ use reqwest::header;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use tokio::time::timeout;
+use tower_http::compression::CompressionLayer;
 use tracing::debug;
 
 use std::collections::HashMap;
@@ -626,6 +627,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/metrics", get(metrics))
         .route("/favicon.ico", get(favicon))
         .route("/robots.txt", get(robots))
+        .layer(CompressionLayer::new())
         .fallback(fallback);
 
     // run our app with hyper
