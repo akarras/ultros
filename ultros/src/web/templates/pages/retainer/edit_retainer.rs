@@ -107,19 +107,18 @@ impl Page for EditRetainers {
                                                 a class="btn" href={"/retainers/remove/" ((owned_data.id))} {
                                                     i class="fa fa-trash" {}
                                                 }
-                                                @if character.is_none() {
-                                                    form {
-                                                        input type="hidden" name="retainer" value=((retainer.id)) {}
-                                                        select name="character" {
+                                                @if character.is_none() && !self.characters.is_empty() {
+                                                    div class="dropdown" {
+                                                        span class="btn" {"Add Character"}
+                                                        div class="dropdown-content" {
                                                             @for (_, c) in &self.characters {
                                                                 @if let Some(c) = c {
-                                                                    option value={((c.id))} {
+                                                                    a href={"/retainers/character/add/"((c.id))} {
                                                                         ((c.first_name))" "((c.last_name))
                                                                     }
                                                                 }
                                                             }
                                                         }
-                                                        input type="submit" value="add to character" {}
                                                     }
                                                 } @else {
                                                     a class="btn" href={"/retainers/character/remove/" ((retainer.id)) } {

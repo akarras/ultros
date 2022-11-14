@@ -56,6 +56,7 @@ use crate::analyzer_service::{AnalyzerService, ResaleOptions};
 use crate::event::{EventReceivers, EventSenders, EventType};
 use crate::metrics::metrics;
 use crate::web::api::cheapest_per_world;
+use crate::web::templates::pages::character::refresh_character;
 use crate::web::templates::pages::character::{add_character::add_character, verify_character::verify_character, claim_character::claim_character};
 use crate::{
     web::{
@@ -609,6 +610,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/characters/add", get(add_character))
         .route("/characters/claim/:id", get(claim_character))
         .route("/characters/verify/:id", get(verify_character))
+        .route("/characters/refresh/:id", get(refresh_character))
         .route("/retainers/listings/:id", get(get_retainer_listings))
         .route("/retainers/undercuts", get(user_retainers_undercuts))
         .route("/retainers/listings", get(user_retainers_listings))

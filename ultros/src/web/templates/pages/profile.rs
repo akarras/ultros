@@ -99,7 +99,7 @@ impl Page for Profile {
                         "Profile"
                     }
                     div class="flex flex-wrap" {
-                        @if !self.challenges.is_empty() {
+                        @if !challenges.is_empty() {
                             div class="content-well" {
                                 @for (challenge, character) in &self.challenges {
                                     @if let Some(character) = character {
@@ -133,11 +133,11 @@ impl Page for Profile {
                                                 ((world.get_name()))
                                             }
                                         }
-                                        a class="btn btn-secondary" href={ "/character/refresh/" ((character.id)) } {
+                                        a class="btn btn-secondary" href={ "/characters/refresh/" ((character.id)) } {
                                             span class="fa fa-refresh" {}
                                         }
                                         a class="btn btn-secondary" {
-                                            span class="fa fa-trash" href={ "/character/unclaim/" ((owned.ffxiv_character_id))} {}
+                                            span class="fa fa-trash" href={ "/characters/unclaim/" ((owned.ffxiv_character_id))} {}
                                         }
                                     }
                                 }
