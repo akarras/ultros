@@ -90,10 +90,10 @@ body {
 }
 
 .btn {
-  padding: 10px 15px;
+  margin: 10px 15px;
   border: solid #3B2B9E 2px;
   border-radius: 5px;
-  font-size: 16px;
+  font-size: 1.2em;
   font-family: Jaldi, sans-serif;
   width: 100px;
   color: #3A2B7E;
