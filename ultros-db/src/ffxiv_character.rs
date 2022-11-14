@@ -39,11 +39,21 @@ impl UltrosDb {
         .await?)
     }
 
-    pub async fn get_character(&self, lodestone_id: i32) -> Result<Option<final_fantasy_character::Model>> {
-        Ok(final_fantasy_character::Entity::find_by_id(lodestone_id).one(&self.db).await?)
+    pub async fn get_character(
+        &self,
+        lodestone_id: i32,
+    ) -> Result<Option<final_fantasy_character::Model>> {
+        Ok(final_fantasy_character::Entity::find_by_id(lodestone_id)
+            .one(&self.db)
+            .await?)
     }
 
-    pub async fn update_character_name(&self, model: final_fantasy_character::Model, first_name: &str, last_name: &str) -> Result<final_fantasy_character::Model> {
+    pub async fn update_character_name(
+        &self,
+        model: final_fantasy_character::Model,
+        first_name: &str,
+        last_name: &str,
+    ) -> Result<final_fantasy_character::Model> {
         let mut model = model.into_active_model();
         model.first_name = ActiveValue::Set(first_name.to_string());
         model.last_name = ActiveValue::Set(last_name.to_string());

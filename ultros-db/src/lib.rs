@@ -11,6 +11,7 @@ pub mod sales;
 mod worlds;
 
 pub use sea_orm::error::DbErr as SeaDbErr;
+pub use sea_orm::ActiveValue;
 
 use anyhow::Result;
 use chrono::{Duration, Utc};

@@ -189,15 +189,34 @@ impl UltrosDb {
         ))
     }
 
+    #[instrument(skip(update))]
+    pub async fn update_owned_retainer<T>(&self, owner_id: i64, owned_retainer_id: i32, update: T) -> Result<()>
+    where
+        T: Fn(owned_retainers::ActiveModel) -> owned_retainers::ActiveModel,
+    {
+        let model = owned_retainers::Entity::find_by_id(owned_retainer_id)
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| anyhow::Error::msg("Retainer with id not found"))?;
+        if model.discord_id != owner_id {
+            return Err(anyhow::Error::msg("Unauthorized to edit this character"));
+        }
+        let model = model.into_active_model();
+        let model = update(model);
+        model.update(&self.db).await?;
+        Ok(())
+    }
+
     #[instrument]
     pub async fn get_retainer_listings_for_discord_user(
         &self,
         discord_user: u64,
     ) -> Result<DiscordUserRetainerListings> {
-        let owned_retainers = owned_retainers::Entity::find()
+        let mut owned_retainers = owned_retainers::Entity::find()
             .filter(owned_retainers::Column::DiscordId.eq(discord_user as i64))
             .all(&self.db)
             .await?;
+        owned_retainers.sort_by_key(|o| o.weight);
         let retainer_ids = owned_retainers.iter().map(|r| r.retainer_id);
         let retainers = retainer::Entity::find()
             .filter(retainer::Column::Id.is_in(retainer_ids))
@@ -230,7 +249,7 @@ impl UltrosDb {
         } else {
             vec![]
         };
-        let value = owned_retainers
+        let mut value = owned_retainers
             .into_iter()
             .flat_map(|(retainer, owned)| owned.map(|o| (retainer.character_id, retainer, o)))
             .fold(
@@ -259,7 +278,7 @@ impl UltrosDb {
                     v
                 },
             );
-
+        value.iter_mut().for_each(|(_, i)| i.sort_by_key(|(o, _)| o.weight));
         Ok(value)
     }
 }

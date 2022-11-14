@@ -96,16 +96,37 @@ impl Page for EditRetainers {
                                                 ((self.world_cache.lookup_selector(&AnySelector::World(retainer.world_id)).as_ref().map(|world| world.get_name()).unwrap_or_default()))
                                             }
                                             td {
-                                                a class="btn" href={"/retainer/upsort/" ((retainer.id))} {
-                                                    i class="fa fa-arrow-up" {
+                                                div class="tooltip" {
+                                                    "order: " ((owned_data.weight.unwrap_or_default()))
+                                                    div class="tooltip-text" {
+                                                        "Retainers will be sorted by this #."
                                                     }
                                                 }
-                                                a class="btn" href={"/retainer/downsort/" ((retainer.id))} {
-                                                    i class="fa fa-arrow-down" {
+                                                div class="tooltip" {
+                                                    a class="btn" href={"/retainers/upsort/" ((owned_data.id))} {
+                                                        i class="fa fa-arrow-up" {
+                                                        }
+                                                    }
+                                                    div class="tooltip-text" {
+                                                        "Increase retainer sort order"
                                                     }
                                                 }
-                                                a class="btn" href={"/retainers/remove/" ((owned_data.id))} {
-                                                    i class="fa fa-trash" {}
+                                                div class="tooltip" {
+                                                    a class="btn" href={"/retainers/downsort/" ((owned_data.id))} {
+                                                        i class="fa fa-arrow-down" {
+                                                        }
+                                                    }
+                                                    div class="tooltip-text" {
+                                                        "Decrease retainer sort order"
+                                                    }
+                                                }
+                                                div class="tooltip" {
+                                                    a class="btn" href={"/retainers/remove/" ((owned_data.id))} {
+                                                        i class="fa fa-trash" {}
+                                                    }
+                                                    div class="tooltip-text" {
+                                                        "Remove retainer"
+                                                    }
                                                 }
                                                 @if character.is_none() && !self.characters.is_empty() {
                                                     div class="dropdown" {
@@ -113,7 +134,7 @@ impl Page for EditRetainers {
                                                         div class="dropdown-content" {
                                                             @for (_, c) in &self.characters {
                                                                 @if let Some(c) = c {
-                                                                    a href={"/retainers/character/add/"((c.id))} {
+                                                                    a href={"/retainers/character/add/"((owned_data.id))"/"((c.id))} {
                                                                         ((c.first_name))" "((c.last_name))
                                                                     }
                                                                 }
@@ -121,8 +142,13 @@ impl Page for EditRetainers {
                                                         }
                                                     }
                                                 } @else {
-                                                    a class="btn" href={"/retainers/character/remove/" ((retainer.id)) } {
-                                                        i class="fa fa-person" {}
+                                                    div class="tooltip" {
+                                                        a class="btn" href={"/retainers/character/remove/" ((owned_data.id)) } {
+                                                            i class="fa fa-person" {}
+                                                        }
+                                                        div class="tooltip-text" {
+                                                            "Remove character"
+                                                        }
                                                     }
                                                 }
                                             }

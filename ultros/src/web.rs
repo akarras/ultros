@@ -57,7 +57,11 @@ use crate::event::{EventReceivers, EventSenders, EventType};
 use crate::metrics::metrics;
 use crate::web::api::cheapest_per_world;
 use crate::web::templates::pages::character::refresh_character;
-use crate::web::templates::pages::character::{add_character::add_character, verify_character::verify_character, claim_character::claim_character};
+use crate::web::templates::pages::character::{
+    add_character::add_character, claim_character::claim_character,
+    verify_character::verify_character,
+};
+use crate::web::templates::pages::retainer::{add_retainer_to_character, remove_retainer_from_character, increase_weight_retainer, decrease_weight_retainer};
 use crate::{
     web::{
         alerts_websocket::connect_websocket,
@@ -198,7 +202,7 @@ async fn add_retainer(
     let _register_retainer = db
         .register_retainer(retainer_id, current_user.id, current_user.name)
         .await?;
-    Ok(Redirect::to("/retainers"))
+    Ok(Redirect::to("/retainers/edit"))
 }
 
 async fn remove_owned_retainer(
@@ -208,7 +212,7 @@ async fn remove_owned_retainer(
 ) -> Result<Redirect, WebError> {
     db.remove_owned_retainer(current_user.id, retainer_id)
         .await?;
-    Ok(Redirect::to("/retainers"))
+    Ok(Redirect::to("/retainers/edit"))
 }
 
 async fn world_item_listings(
@@ -618,6 +622,16 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/retainers/add/:id", get(add_retainer))
         .route("/retainers/remove/:id", get(remove_owned_retainer))
         .route("/retainers/edit", get(edit_retainer))
+        .route(
+            "/retainers/character/add/:retainer/:character",
+            get(add_retainer_to_character),
+        )
+        .route(
+            "/retainers/character/remove/:retainer",
+            get(remove_retainer_from_character),
+        )
+        .route("/retainers/upsort/:retainerid", get(increase_weight_retainer))
+        .route("/retainers/downsort/:retainerid", get(decrease_weight_retainer))
         .route("/retainers", get(user_retainers_listings))
         .route("/analyzer", get(analyze_profits))
         .route("/items/:search", get(fuzzy_item_search::search_items))

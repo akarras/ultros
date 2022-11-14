@@ -90,6 +90,7 @@ body {
 }
 
 .btn {
+  padding: 10px 15px;
   border: solid #3B2B9E 2px;
   border-radius: 5px;
   font-size: 16px;
@@ -498,7 +499,7 @@ th {
   position: sticky;
   top: 0px;
   background-color: #11051e;
-  z-index: 10;
+  z-index: 5;
   min-width: 25px;
   padding-left: 10px;
   padding-right: 10px;
@@ -595,7 +596,7 @@ select optgroup {
   padding: 5px 0px;
   border-radius: 8px;
   position: absolute;
-  z-index: 1;
+  z-index: 10;
   visibility: hidden;
   font-size: 16px;
   font-family: Jaldi, sans-serif;

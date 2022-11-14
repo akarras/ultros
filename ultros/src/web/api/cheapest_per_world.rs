@@ -1,11 +1,10 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{sync::Arc};
 
 use axum::{
     extract::{Path, State},
     Json,
 };
 use serde::Serialize;
-use tracing::log::warn;
 
 use crate::{
     analyzer_service::AnalyzerService,
