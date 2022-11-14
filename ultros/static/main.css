@@ -90,21 +90,26 @@ body {
 }
 
 .btn {
-  background-color: #3B2B9E;
+  border: solid #3B2B9E 2px;
+  border-radius: 5px;
+  font-size: 16px;
+  font-family: Jaldi, sans-serif;
+  width: 100px;
+  color: #3A2B7E;
+  background-color: #18003470;
   color: #fff;
-  border-radius: 11px;
-  padding: 5px 10px;
-  text-decoration: none;
-  transition: 0.3s;
-  transition-property: background-color;
+  margin: 5px;
 }
 
 .btn:hover {
-  background-color: #3A2B7E;
+  background-color: #0f0a28;
+  border-color: #281f66;
   transition: 0.3s;
   transition-property: background-color, box-shadow;
-  box-shadow: inset 0px 0px 0px 2px #3B2B9E;
-}x
+  box-shadow: inset 0px 0px 0px 2px #00000023;
+  color: #000;
+  text-decoration: none;
+}
 
 .main-content .btn {
   color: #fff;
@@ -135,7 +140,6 @@ input.btn {
 
 .nav-item:hover {
   color: #846D8F;
-  text-decoration: underline;
   transition: .25s;
 }
 
@@ -398,7 +402,7 @@ input.btn {
 .main-content td {
   padding-left: 10px;
   padding-right: 10px;
-  
+  font-size: 1.1em;
 }
 
 .width-limited-text {
@@ -624,4 +628,23 @@ select optgroup {
 .page-btn.active {
   background-color: #111;
   color: #aaa;
+}
+
+.dropdown {
+  position: relative;
+  display: inline-block;
+}
+
+.dropdown-content {
+  display: none;
+  position: absolute;
+  background-color: #312537;
+  min-width: 160px;
+  box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
+  padding: 10px 10px;
+  z-index: 1;
+}
+
+.dropdown:hover .dropdown-content {
+  display: block;
 }
