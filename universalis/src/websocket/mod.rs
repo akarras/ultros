@@ -206,15 +206,14 @@ impl WebsocketClient {
                                 }
                             }
                             SocketTx::Ping => {
-                                if let Err(e) = websocket
-                                    .send(Message::Ping(vec![1, 2, 3, 4]))
-                                    .await {
-                                        error!("WS Ping Send Error {e:?}");
-                                        if let Err(e) = websocket.close(None).await {
-                                            error!("Error closing websocket {e:?}");
-                                        }
+                                if let Err(e) =
+                                    websocket.send(Message::Ping(vec![1, 2, 3, 4])).await
+                                {
+                                    error!("WS Ping Send Error {e:?}");
+                                    if let Err(e) = websocket.close(None).await {
+                                        error!("Error closing websocket {e:?}");
                                     }
-                            
+                                }
                             }
                         },
                         None => {
