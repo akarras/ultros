@@ -1,4 +1,5 @@
 mod alerts_websocket;
+pub mod api;
 pub(crate) mod character_verifier_service;
 pub mod error;
 mod fuzzy_item_search;
@@ -53,6 +54,7 @@ use self::templates::{
 use crate::analyzer_service::{AnalyzerService, ResaleOptions};
 use crate::event::{EventReceivers, EventSenders, EventType};
 use crate::metrics::metrics;
+use crate::web::api::cheapest_per_world;
 use crate::web::templates::pages::character::add_character::add_character;
 use crate::{
     web::{
@@ -597,6 +599,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/", get(root))
         .route("/alerts", get(alerts))
         .route("/alerts/websocket", get(connect_websocket))
+        .route("/api/v1/cheapest/:world", get(cheapest_per_world))
         .route("/listings/:world/:itemid", get(world_item_listings))
         .route(
             "/listings/refresh/:worldid/:itemid",

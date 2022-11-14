@@ -125,13 +125,12 @@ pub async fn begin_login(
     let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
     // todo: send redirect handler for discord
 
-    let cookies = cookies.add(Cookie::build(
-        "pkce_challenge",
-        pkce_challenge.as_str().to_string(),
-    )
-    .same_site(SameSite::Strict)
-    .secure(true)
-    .finish());
+    let cookies = cookies.add(
+        Cookie::build("pkce_challenge", pkce_challenge.as_str().to_string())
+            .same_site(SameSite::Strict)
+            .secure(true)
+            .finish(),
+    );
     let cookies = cookies.add(Cookie::new("pkce_verifier", pkce_verifier.secret().clone()));
 
     let mut request = config.inner.client.authorize_url(CsrfToken::new_random);

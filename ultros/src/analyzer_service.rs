@@ -8,6 +8,7 @@ use std::{
 
 use chrono::{Duration, Local, NaiveDateTime};
 use futures::StreamExt;
+use serde::Serialize;
 use tracing::log::info;
 use ultros_db::{
     entity::{active_listing, sale_history},
@@ -19,13 +20,20 @@ use crate::{
     event::EventReceivers,
     world_cache::{AnySelector, WorldCache},
 };
+use thiserror::Error;
 use tokio::sync::RwLock;
 use tracing::log::error;
 
-#[derive(Hash, Eq, PartialEq, PartialOrd, Ord, Debug, Copy, Clone)]
-struct ItemKey {
-    item_id: i32,
-    hq: bool,
+#[derive(Debug, Error)]
+pub enum AnalyzerError {
+    #[error("Still warming up with data, unable to serve requests.")]
+    Uninitialized,
+}
+
+#[derive(Hash, Eq, PartialEq, PartialOrd, Ord, Debug, Copy, Clone, Serialize)]
+pub(crate) struct ItemKey {
+    pub(crate) item_id: i32,
+    pub(crate) hq: bool,
 }
 
 impl From<&active_listing::Model> for ItemKey {
@@ -67,8 +75,8 @@ impl From<&ultros_db::listings::ListingSummary> for ItemKey {
 
 #[derive(Debug, PartialEq, PartialOrd, Eq, Ord, Clone, Copy)]
 struct SaleSummary {
-    price_per_item: i32,
-    sale_date: NaiveDateTime,
+    pub(crate) price_per_item: i32,
+    pub(crate) sale_date: NaiveDateTime,
 }
 
 impl From<&ultros_db::sales::AbbreviatedSaleData> for SaleSummary {
@@ -111,10 +119,10 @@ impl SaleHistory {
     }
 }
 
-#[derive(Debug, Copy, Clone, Eq)]
-struct CheapestListingValue {
-    price: i32,
-    world_id: i32,
+#[derive(Debug, Copy, Clone, Eq, Serialize)]
+pub(crate) struct CheapestListingValue {
+    pub(crate) price: i32,
+    pub(crate) world_id: i32,
 }
 
 impl From<&ultros_db::entity::active_listing::Model> for CheapestListingValue {
@@ -154,8 +162,8 @@ impl Ord for CheapestListingValue {
 }
 
 #[derive(Debug, Default)]
-struct CheapestListings {
-    item_map: HashMap<ItemKey, CheapestListingValue>,
+pub(crate) struct CheapestListings {
+    pub(crate) item_map: HashMap<ItemKey, CheapestListingValue>,
 }
 
 impl CheapestListings {
@@ -490,6 +498,18 @@ impl AnalyzerService {
         let mut lock_guard = self.recent_sale_history.write().await;
         let entry = lock_guard.entry(sale.world_id).or_default();
         entry.add_sale(sale);
+    }
+
+    pub(crate) async fn read_cheapest_items<T, O>(&self, extract: T) -> Result<O, AnalyzerError>
+    where
+        T: FnOnce(&HashMap<AnySelector, CheapestListings>) -> O,
+    {
+        if self.initiated.load(Ordering::Relaxed) {
+            let read = self.cheapest_items.read().await;
+            Ok(extract(&read))
+        } else {
+            return Err(AnalyzerError::Uninitialized);
+        }
     }
 }
 

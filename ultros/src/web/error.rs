@@ -11,7 +11,7 @@ use tokio::{sync::broadcast::error::SendError, time::error::Elapsed};
 use tracing::log::error;
 use ultros_db::SeaDbErr;
 
-use crate::{event, world_cache::WorldCacheError};
+use crate::{analyzer_service::AnalyzerError, event, world_cache::WorldCacheError};
 
 #[derive(Debug, Error)]
 pub enum WebError {
@@ -62,6 +62,8 @@ pub enum WebError {
     // this is kind of bad if I ever use the elapsed error for something else but I'll pretend
     #[error("Timed out reading from Universalis {0}")]
     TimeoutElapsed(#[from] Elapsed),
+    #[error("Analyzer Error: {0}")]
+    AnalyzerError(#[from] AnalyzerError),
 }
 
 impl WebError {

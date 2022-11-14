@@ -102,7 +102,10 @@ async fn run_socket_listener(db: UltrosDb, listings_tx: EventProducer<Vec<active
     }
 }
 
-async fn init_db(worlds_view: Result<WorldsView, universalis::Error>, datacenters: Result<DataCentersView, universalis::Error>) -> Result<UltrosDb> {
+async fn init_db(
+    worlds_view: Result<WorldsView, universalis::Error>,
+    datacenters: Result<DataCentersView, universalis::Error>,
+) -> Result<UltrosDb> {
     info!("db starting");
     let db = UltrosDb::connect().await?;
     db.insert_default_retainer_cities().await.unwrap();

@@ -1,9 +1,6 @@
 use lodestone::{model::profile::Profile, LodestoneError};
 use thiserror::Error;
-use ultros_db::{
-    entity::{discord_user, ffxiv_character_verification},
-    UltrosDb,
-};
+use ultros_db::{entity::ffxiv_character_verification, UltrosDb};
 
 #[derive(Debug, Clone)]
 pub(crate) struct CharacterVerifierService {

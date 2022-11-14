@@ -27,6 +27,16 @@ pub enum AnyResult<'a> {
     Region(&'a region::Model),
 }
 
+impl<'a> From<&'a AnyResult<'a>> for AnySelector {
+    fn from(result: &AnyResult) -> Self {
+        match result {
+            AnyResult::World(world) => Self::World(world.id),
+            AnyResult::Datacenter(dc) => Self::Datacenter(dc.id),
+            AnyResult::Region(region) => Self::Region(region.id),
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum WorldCacheError {
     #[error("Failed to get world by id {0}")]
