@@ -51,7 +51,7 @@ impl Page for ClaimCharacter {
                         span {
                             "Add " ((self.verification_string)) " to your profile and come back here to verify your account"
                         }
-                        a href={ "/characters/check/" ((self.verificiation_id)) } {
+                        a href={ "/characters/verify/" ((self.verificiation_id)) } {
                             "Verify Character"
                         }
                     }
