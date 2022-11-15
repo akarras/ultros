@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use axum::{
     extract::{FromRef, FromRequestParts, Query, State},
     http::request::Parts,
-    response::Redirect,
+    response::{Redirect, IntoResponse},
 };
 use axum_extra::extract::{
     cookie::{Cookie, Key, SameSite},
@@ -151,6 +151,7 @@ pub struct RedirectParameters {
 pub async fn redirect(
     mut cookies: PrivateCookieJar,
     State(config): State<DiscordAuthConfig>,
+    State(db): State<UltrosDb>,
     Query(RedirectParameters { code, state }): Query<RedirectParameters>,
 ) -> Result<(PrivateCookieJar, Redirect), (StatusCode, RenderPage<ErrorPage>)> {
     let code = AuthorizationCode::new(code);
@@ -254,7 +255,7 @@ where
             }
         };
         // get the discord user
-        // let State(ultros): State<UltrosDb> = State::from_request_parts(parts, state).await.unwrap();
+        let State(ultros): State<UltrosDb> = State::from_request_parts(parts, state).await.unwrap();
         let State(user_cache): State<AuthUserCache> =
             State::from_request_parts(parts, state).await.unwrap();
 
@@ -278,6 +279,16 @@ where
             name: user.name,
             avatar_url,
         };
+        match ultros.get_or_create_discord_user(user.id, user.name.clone()).await {
+            Ok(_) => {},
+            Err(e) => {
+                error!("{e:?}");
+                return Err((
+                StatusCode::UNAUTHORIZED,
+                RenderPage(Box::new(UnauthorizedPage {})),
+            ))
+        },
+        }
         user_cache
             .store_user(discord_auth.value(), user.clone())
             .await;
