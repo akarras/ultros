@@ -61,7 +61,10 @@ use crate::web::templates::pages::character::{
     add_character::add_character, claim_character::claim_character,
     verify_character::verify_character,
 };
-use crate::web::templates::pages::retainer::{add_retainer_to_character, remove_retainer_from_character, increase_weight_retainer, decrease_weight_retainer};
+use crate::web::templates::pages::retainer::{
+    add_retainer_to_character, decrease_weight_retainer, increase_weight_retainer,
+    remove_retainer_from_character,
+};
 use crate::{
     web::{
         alerts_websocket::connect_websocket,
@@ -630,8 +633,14 @@ pub(crate) async fn start_web(state: WebState) {
             "/retainers/character/remove/:retainer",
             get(remove_retainer_from_character),
         )
-        .route("/retainers/upsort/:retainerid", get(increase_weight_retainer))
-        .route("/retainers/downsort/:retainerid", get(decrease_weight_retainer))
+        .route(
+            "/retainers/upsort/:retainerid",
+            get(increase_weight_retainer),
+        )
+        .route(
+            "/retainers/downsort/:retainerid",
+            get(decrease_weight_retainer),
+        )
         .route("/retainers", get(user_retainers_listings))
         .route("/analyzer", get(analyze_profits))
         .route("/items/:search", get(fuzzy_item_search::search_items))

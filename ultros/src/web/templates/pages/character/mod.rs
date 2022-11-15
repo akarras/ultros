@@ -22,6 +22,7 @@ pub(crate) async fn refresh_character(
     let client = reqwest::Client::new();
     let profile = Profile::get_async(&client, character_id as u32).await?;
     let (first_name, last_name) = profile.name.split_once(" ").unwrap();
-    db.update_character_name(character, first_name, last_name).await?;
+    db.update_character_name(character, first_name, last_name)
+        .await?;
     Ok(Redirect::to("/profile"))
 }

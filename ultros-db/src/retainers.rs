@@ -190,7 +190,12 @@ impl UltrosDb {
     }
 
     #[instrument(skip(update))]
-    pub async fn update_owned_retainer<T>(&self, owner_id: i64, owned_retainer_id: i32, update: T) -> Result<()>
+    pub async fn update_owned_retainer<T>(
+        &self,
+        owner_id: i64,
+        owned_retainer_id: i32,
+        update: T,
+    ) -> Result<()>
     where
         T: Fn(owned_retainers::ActiveModel) -> owned_retainers::ActiveModel,
     {
@@ -278,7 +283,9 @@ impl UltrosDb {
                     v
                 },
             );
-        value.iter_mut().for_each(|(_, i)| i.sort_by_key(|(o, _)| o.weight));
+        value
+            .iter_mut()
+            .for_each(|(_, i)| i.sort_by_key(|(o, _)| o.weight));
         Ok(value)
     }
 }
