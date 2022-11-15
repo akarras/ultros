@@ -184,7 +184,7 @@ pub async fn redirect(
 pub async fn logout(
     cookie_jar: PrivateCookieJar,
     State(config): State<DiscordAuthConfig>,
-) -> Result<Redirect, WebError> {
+) -> Result<(PrivateCookieJar, Redirect), WebError> {
     let cookie = cookie_jar
         .get("discord_auth")
         .ok_or(WebError::NotAuthenticated)?;
@@ -196,7 +196,8 @@ pub async fn logout(
         .revoke_token(StandardRevocableToken::AccessToken(token))?
         .request_async(oauth2::reqwest::async_http_client)
         .await?;
-    Ok(Redirect::to("/"))
+    let cookie_jar = cookie_jar.remove(cookie);
+    Ok((cookie_jar, Redirect::to("/")))
 }
 
 #[derive(Debug, Clone)]
