@@ -506,10 +506,19 @@ th {
 }
 
 @media screen and (max-width: 1200px) {
-  tr {
-    display: flex;
-    flex-direction: wrap;
-    flex-wrap: wrap;
+  .content-well {
+    overflow-x: scroll;
+  }
+
+  .main-content {
+    padding: 10px 5px;
+  }
+}
+
+@media screen and (max-width: 800px) {
+  .container {
+    margin-left: 0px;
+    margin-right: 0px;
   }
 }
 
