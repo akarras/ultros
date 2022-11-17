@@ -79,11 +79,11 @@ async fn add_undercut_alert(
 async fn check_undercuts(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     let user_id = ctx.author().id.0;
-    let (_, under_cut_items) = ctx.data().db.get_retainer_undercut_items(user_id).await?;
+    let under_cut_items = ctx.data().db.get_retainer_undercut_items(user_id).await?;
     let data = xiv_gen_db::decompress_data();
     let item_db = &data.items;
     ctx.send(|r| {
-        for (retainer, items) in &under_cut_items {
+        for (_, retainer, items) in &under_cut_items {
             if !items.is_empty() {
                 r.embed(|e| {
                     let item = items.iter().fold(
@@ -127,7 +127,7 @@ async fn check_undercuts(ctx: Context<'_>) -> Result<(), Error> {
 #[poise::command(slash_command)]
 async fn check_listings(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
-    let (_, retainers) = ctx
+    let retainers = ctx
         .data()
         .db
         .get_retainer_listings_for_discord_user(ctx.author().id.0)
@@ -135,7 +135,7 @@ async fn check_listings(ctx: Context<'_>) -> Result<(), Error> {
     // get data on how well each of the listings for the retainer are performing
     let item_and_world_ids: HashSet<(i32, i32)> = retainers
         .iter()
-        .flat_map(|(_, listing)| {
+        .flat_map(|(_, _, listing)| {
             listing
                 .iter()
                 .map(|listing| (listing.item_id, listing.world_id))
@@ -147,7 +147,7 @@ async fn check_listings(ctx: Context<'_>) -> Result<(), Error> {
     let data = xiv_gen_db::decompress_data();
     let items = &data.items;
     ctx.send(|r| {
-        for (retainer, listings) in retainers {
+        for (_, retainer, listings) in retainers {
             let mut msg_contents = String::new();
             msg_contents += "```";
             writeln!(

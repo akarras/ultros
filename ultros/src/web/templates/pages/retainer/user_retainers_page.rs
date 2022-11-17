@@ -4,24 +4,17 @@ use crate::web::templates::components::header::Header;
 use crate::web::templates::components::item_icon::{IconSize, ItemIcon};
 use crate::web::templates::page::Page;
 use maud::html;
-use ultros_db::entity::{active_listing, owned_retainers, retainer};
-use ultros_db::retainers::ListingUndercutData;
+use ultros_db::retainers::{DiscordUserRetainerListings, DiscordUserUndercutListings};
 use xiv_gen::ItemId;
 
 pub(crate) enum RetainerViewType {
-    Undercuts(
-        Vec<(
-            retainer::Model,
-            Vec<(active_listing::Model, ListingUndercutData)>,
-        )>,
-    ),
-    Listings(Vec<(retainer::Model, Vec<active_listing::Model>)>),
+    Undercuts(DiscordUserUndercutListings),
+    Listings(DiscordUserRetainerListings),
 }
 
 pub(crate) struct UserRetainersPage {
     pub(crate) character_names: Vec<(i32, String)>,
     pub(crate) view_type: RetainerViewType,
-    pub(crate) owned_retainers: Vec<owned_retainers::Model>,
     pub(crate) current_user: AuthDiscordUser,
 }
 
@@ -61,7 +54,7 @@ impl Page for UserRetainersPage {
               }
               div class="main-content" {
                 @if let RetainerViewType::Undercuts(undercuts) = &self.view_type {
-                  @for ((retainer, listings), _owned) in undercuts.iter().zip(self.owned_retainers.iter()) {
+                  @for (_owned, retainer, listings) in undercuts.iter() {
                     div class="content-well" {
                         span class="content-title" {
                           ((retainer.name))
@@ -113,7 +106,7 @@ impl Page for UserRetainersPage {
                     }
                   }
                 @if let RetainerViewType::Listings(active) = &self.view_type {
-                    @for ((retainer, listings), _owned) in active.iter().zip(self.owned_retainers.iter()) {
+                    @for (_owned, retainer, listings) in active.iter() {
                       div class="content-well" {
                         span class="content-title" {
                           ((retainer.name))

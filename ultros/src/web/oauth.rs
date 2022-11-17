@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use axum::{
     extract::{FromRef, FromRequestParts, Query, State},
     http::request::Parts,
-    response::{Redirect, IntoResponse},
+    response::Redirect,
 };
 use axum_extra::extract::{
     cookie::{Cookie, Key, SameSite},
@@ -279,15 +279,18 @@ where
             name: user.name,
             avatar_url,
         };
-        match ultros.get_or_create_discord_user(user.id, user.name.clone()).await {
-            Ok(_) => {},
+        match ultros
+            .get_or_create_discord_user(user.id, user.name.clone())
+            .await
+        {
+            Ok(_) => {}
             Err(e) => {
                 error!("{e:?}");
                 return Err((
-                StatusCode::UNAUTHORIZED,
-                RenderPage(Box::new(UnauthorizedPage {})),
-            ))
-        },
+                    StatusCode::UNAUTHORIZED,
+                    RenderPage(Box::new(UnauthorizedPage {})),
+                ));
+            }
         }
         user_cache
             .store_user(discord_auth.value(), user.clone())

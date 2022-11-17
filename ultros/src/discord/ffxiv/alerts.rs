@@ -154,15 +154,15 @@ async fn get_user_unique_retainer_ids_and_listing_ids_by_price(
     discord_user: u64,
 ) -> Result<(HashSet<i32>, HashMap<ListingKey, ListingValue>)> {
     // this might be better as a sql query
-    let (_, retainer_listings) = ultros_db
+    let retainer_listings = ultros_db
         .get_retainer_listings_for_discord_user(discord_user)
         .await?;
     // get a list of what retainers and items the users have
-    let user_retainer_ids: HashSet<i32> = retainer_listings.iter().map(|(r, _)| r.id).collect();
+    let user_retainer_ids: HashSet<i32> = retainer_listings.iter().map(|(_, r, _)| r.id).collect();
     // map item id -> min(price_per_unit)
     let user_lowest_listings: HashMap<_, _> = retainer_listings
         .into_iter()
-        .flat_map(|(_, listings)| {
+        .flat_map(|(_, _, listings)| {
             listings.into_iter().map(|l| {
                 (
                     ListingKey {
@@ -353,9 +353,9 @@ impl UndercutTracker {
                                     .db
                                     .get_retainer_listings_for_discord_user(self.discord_user_id)
                                     .await
-                                    .map(|(_o, i)| {
+                                    .map(|i| {
                                         i.into_iter()
-                                            .flat_map(|(r, listings)| {
+                                            .flat_map(|(_, r, listings)| {
                                                 listings
                                                     .iter()
                                                     .find(|i| {
