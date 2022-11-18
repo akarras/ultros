@@ -7,6 +7,7 @@ use sea_orm::ActiveModelTrait;
 use sea_orm::ActiveValue;
 use sea_orm::ColumnTrait;
 use sea_orm::EntityTrait;
+use sea_orm::ModelTrait;
 use sea_orm::QueryFilter;
 use sea_orm::Set;
 use tracing::info;
@@ -23,18 +24,17 @@ pub type FullRetainersList = Vec<(
     Vec<(owned_retainers::Model, retainer::Model)>,
 )>;
 
-pub type DiscordUserRetainerListings = (
-    Vec<owned_retainers::Model>,
-    Vec<(retainer::Model, Vec<active_listing::Model>)>,
-);
+pub type DiscordUserRetainerListings = Vec<(
+    owned_retainers::Model,
+    retainer::Model,
+    Vec<active_listing::Model>,
+)>;
 
-pub type DiscordUserUndercutListings = (
-    Vec<owned_retainers::Model>,
-    Vec<(
-        retainer::Model,
-        Vec<(active_listing::Model, ListingUndercutData)>,
-    )>,
-);
+pub type DiscordUserUndercutListings = Vec<(
+    owned_retainers::Model,
+    retainer::Model,
+    Vec<(active_listing::Model, ListingUndercutData)>,
+)>;
 
 #[derive(Debug)]
 pub struct ListingUndercutData {
@@ -113,13 +113,13 @@ impl UltrosDb {
         discord_user: u64,
     ) -> Result<DiscordUserUndercutListings> {
         // get the user's active listings from the retainers
-        let (owned_retainers, retainer_listings) = self
+        let retainers = self
             .get_retainer_listings_for_discord_user(discord_user)
             .await?;
-        let retainer_ids: BTreeSet<_> = retainer_listings.iter().map(|(i, _)| i.id).collect();
-        let items_by_world: BTreeMap<i32, Vec<i32>> = retainer_listings
+        let retainer_ids: BTreeSet<_> = retainers.iter().map(|(_, r, _)| r.id).collect();
+        let items_by_world: BTreeMap<i32, Vec<i32>> = retainers
             .iter()
-            .flat_map(|(_, listings)| listings.iter().map(|m| (m.world_id, m.item_id)))
+            .flat_map(|(_, _, listings)| listings.iter().map(|m| (m.world_id, m.item_id)))
             .fold(BTreeMap::new(), |mut map, (world_id, item_id)| {
                 map.entry(world_id).or_default().push(item_id);
                 map
@@ -136,57 +136,55 @@ impl UltrosDb {
                 })
             }))
             .await;
-        // now filter the retainer queries down to just the ones that don't have our
-        Ok((
-            owned_retainers,
-            retainer_listings
-                .into_iter()
-                .map(|(retainer, listings)| {
-                    (
-                        retainer,
-                        listings
-                            .into_iter()
-                            .flat_map(|listing| {
-                                let l = &listing;
-                                // find the item in the main listings set that matches this item
-                                let number_of_listings_undercutting =
-                                    results.iter().find_map(|(world_id, item_id, listings)| {
-                                        if let Ok(listings) = listings {
-                                            if listings.is_empty() {
-                                                return None;
-                                            }
-                                            if l.world_id == *world_id && l.item_id == *item_id {
-                                                // now check if the given listing is UNDERCUTTING than our given listing
-                                                let listings_in_range: Vec<_> = listings
-                                                    .iter()
-                                                    .filter(|all_l| {
-                                                        all_l.price_per_unit < l.price_per_unit
+        // now filter the retainer queries down to just listings that beat our retainer's listings
+        Ok(retainers
+            .into_iter()
+            .map(|(owned, retainer, listings)| {
+                (
+                    owned,
+                    retainer,
+                    listings
+                        .into_iter()
+                        .flat_map(|listing| {
+                            let l = &listing;
+                            // find the item in the main listings set that matches this item
+                            let number_of_listings_undercutting =
+                                results.iter().find_map(|(world_id, item_id, listings)| {
+                                    if let Ok(listings) = listings {
+                                        if listings.is_empty() {
+                                            return None;
+                                        }
+                                        if l.world_id == *world_id && l.item_id == *item_id {
+                                            // now check if the given listing is UNDERCUTTING than our given listing
+                                            let listings_in_range: Vec<_> = listings
+                                                .iter()
+                                                .filter(|all_l| {
+                                                    all_l.price_per_unit < l.price_per_unit
                                                         && (!l.hq || l.hq == all_l.hq)
                                                         // filter our own retainer listings
                                                         && !retainer_ids
                                                             .contains(&all_l.retainer_id)
-                                                    })
-                                                    .collect();
-                                                return Some(ListingUndercutData {
-                                                    number_behind: listings_in_range.len(),
-                                                    price_to_beat: listings_in_range
-                                                        .iter()
-                                                        .map(|x| x.price_per_unit)
-                                                        .min()
-                                                        .unwrap_or_default(),
-                                                });
-                                            }
+                                                })
+                                                .collect();
+                                            return Some(ListingUndercutData {
+                                                number_behind: listings_in_range.len(),
+                                                price_to_beat: listings_in_range
+                                                    .iter()
+                                                    .map(|x| x.price_per_unit)
+                                                    .min()
+                                                    .unwrap_or_default(),
+                                            });
                                         }
-                                        None
-                                    });
-                                number_of_listings_undercutting.map(|num| (listing, num))
-                            })
-                            .filter(|(_, data)| data.number_behind > 0)
-                            .collect::<Vec<_>>(),
-                    )
-                })
-                .collect::<Vec<_>>(),
-        ))
+                                    }
+                                    None
+                                });
+                            number_of_listings_undercutting.map(|num| (listing, num))
+                        })
+                        .filter(|(_, data)| data.number_behind > 0)
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>())
     }
 
     #[instrument(skip(update))]
@@ -223,13 +221,48 @@ impl UltrosDb {
             .await?;
         owned_retainers.sort_by_key(|o| o.weight);
         let retainer_ids = owned_retainers.iter().map(|r| r.retainer_id);
-        let retainers = retainer::Entity::find()
-            .filter(retainer::Column::Id.is_in(retainer_ids))
-            .find_with_related(active_listing::Entity)
+        let retainers: Vec<(
+            owned_retainers::Model,
+            Result<(retainer::Model, Vec<active_listing::Model>), anyhow::Error>,
+        )> = futures::future::join_all(owned_retainers.into_iter().map(|r| async move {
+            let listings = self.get_retainer_and_listings_for_owned(&r).await;
+            (r, listings)
+        }))
+        .await;
+        let retainers: Result<DiscordUserRetainerListings> = retainers
+            .into_iter()
+            .map(|(o, r)| r.map(|(r, d)| (o, r, d)))
+            .collect();
+        let mut retainers = retainers?;
+        retainers.sort_by(|(a, _, _), (b, _, _)| {
+            a.character_id
+                .cmp(&b.character_id)
+                .then_with(|| a.weight.cmp(&b.weight))
+        });
+        Ok(retainers)
+    }
+
+    async fn get_retainer_and_listings_for_owned(
+        &self,
+        owned_retainer: &owned_retainers::Model,
+    ) -> Result<(retainer::Model, Vec<active_listing::Model>)> {
+        let retainer = owned_retainer
+            .find_related(retainer::Entity)
+            .one(&self.db)
+            .await?
+            .ok_or(anyhow::Error::msg("Retainer not found"))?;
+        let listings = self.get_listings_for_retainer(&retainer).await?;
+        Ok((retainer, listings))
+    }
+
+    async fn get_listings_for_retainer(
+        &self,
+        retainer: &retainer::Model,
+    ) -> Result<Vec<active_listing::Model>> {
+        Ok(retainer
+            .find_related(active_listing::Entity)
             .all(&self.db)
-            .await?;
-        // TODO add heuristics for retainers
-        Ok((owned_retainers, retainers))
+            .await?)
     }
 
     #[instrument]
