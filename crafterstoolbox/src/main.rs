@@ -38,7 +38,7 @@ fn main() {
                                 recipe_id,
                                 region_datacenter_or_server: datacenter,
                             } => {
-                                let recipes = data.get_recipes();
+                                let recipes = &data.recipes;
                                 let recipe = recipes.get(&recipe_id).unwrap();
                                 let pricing = recipepricecheck::get_ingredient_prices(
                                     &client,
@@ -58,7 +58,7 @@ fn main() {
                                 item_id,
                                 region_datacenter_or_server,
                             } => {
-                                let item_ids = [item_id.inner()];
+                                let item_ids = [item_id.0];
                                 let (market_view, history_view) = futures::future::join(
                                     client.marketboard_current_data(
                                         &region_datacenter_or_server,

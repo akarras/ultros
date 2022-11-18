@@ -86,19 +86,19 @@ impl ItemPanel {
 
     fn get_item_data() -> Vec<(ItemId, String, String)> {
         let data = xiv_gen_db::decompress_data();
-        let items = data.get_items();
-        let ui_category_ids = data.get_item_ui_categorys();
+        let items = &data.items;
+        let ui_category_ids = &data.item_ui_categorys;
 
         items
             .iter()
-            .filter(|(_, item)| !item.get_is_untradable())
+            .filter(|(_, item)| !item.is_untradable)
             .map(|(item_id, item)| {
                 (
                     *item_id,
-                    item.get_name(),
+                    item.name.clone(),
                     ui_category_ids
-                        .get(&item.get_item_ui_category())
-                        .map(|category| category.get_name())
+                        .get(&item.item_ui_category)
+                        .map(|category| category.name.clone())
                         .unwrap_or_default(),
                 )
             })

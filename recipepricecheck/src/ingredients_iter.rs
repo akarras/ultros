@@ -26,48 +26,48 @@ impl<'a> IngredientsIter<'a> {
     fn get_ingredient(&self, id: usize) -> Option<ItemIngredient> {
         let ingredient = match id {
             0 => ItemIngredient {
-                item_id: self.recipe.get_item_ingredient_0(),
-                amount: self.recipe.get_amount_ingredient_0(),
+                item_id: self.recipe.item_ingredient_0,
+                amount: self.recipe.amount_ingredient_0,
             },
             1 => ItemIngredient {
-                item_id: self.recipe.get_item_ingredient_1(),
-                amount: self.recipe.get_amount_ingredient_1(),
+                item_id: self.recipe.item_ingredient_1,
+                amount: self.recipe.amount_ingredient_1,
             },
             2 => ItemIngredient {
-                item_id: self.recipe.get_item_ingredient_2(),
-                amount: self.recipe.get_amount_ingredient_2(),
+                item_id: self.recipe.item_ingredient_2,
+                amount: self.recipe.amount_ingredient_2,
             },
             3 => ItemIngredient {
-                item_id: self.recipe.get_item_ingredient_3(),
-                amount: self.recipe.get_amount_ingredient_3(),
+                item_id: self.recipe.item_ingredient_3,
+                amount: self.recipe.amount_ingredient_3,
             },
             4 => ItemIngredient {
-                item_id: self.recipe.get_item_ingredient_4(),
-                amount: self.recipe.get_amount_ingredient_4(),
+                item_id: self.recipe.item_ingredient_4,
+                amount: self.recipe.amount_ingredient_4,
             },
             5 => ItemIngredient {
-                item_id: self.recipe.get_item_ingredient_5(),
-                amount: self.recipe.get_amount_ingredient_5(),
+                item_id: self.recipe.item_ingredient_5,
+                amount: self.recipe.amount_ingredient_5,
             },
             6 => ItemIngredient {
-                item_id: self.recipe.get_item_ingredient_6(),
-                amount: self.recipe.get_amount_ingredient_6(),
+                item_id: self.recipe.item_ingredient_6,
+                amount: self.recipe.amount_ingredient_6,
             },
             7 => ItemIngredient {
-                item_id: self.recipe.get_item_ingredient_7(),
-                amount: self.recipe.get_amount_ingredient_7(),
+                item_id: self.recipe.item_ingredient_7,
+                amount: self.recipe.amount_ingredient_7,
             },
             8 => ItemIngredient {
-                item_id: self.recipe.get_item_ingredient_8(),
-                amount: self.recipe.get_amount_ingredient_8(),
+                item_id: self.recipe.item_ingredient_8,
+                amount: self.recipe.amount_ingredient_8,
             },
             9 => ItemIngredient {
-                item_id: self.recipe.get_item_ingredient_9(),
-                amount: self.recipe.get_amount_ingredient_9(),
+                item_id: self.recipe.item_ingredient_9,
+                amount: self.recipe.amount_ingredient_9,
             },
             _ => return None,
         };
-        if ingredient.item_id.inner() == 0 || ingredient.amount == 0 {
+        if ingredient.item_id.0 == 0 || ingredient.amount == 0 {
             return None;
         }
         Some(ingredient)

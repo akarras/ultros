@@ -101,39 +101,39 @@ impl RecipeSearchPanel {
     fn create_recipe_list() -> Vec<(RecipeId, String, Vec<CraftJob>)> {
         // this might be good to store somewhere
         let game_data = xiv_gen_db::decompress_data();
-        let recipes = game_data.get_recipes();
-        let items = game_data.get_items();
-        let recipe_lookup = game_data.get_recipe_lookups();
+        let recipes = &game_data.recipes;
+        let items = &game_data.items;
+        let recipe_lookup = &game_data.recipe_lookups;
         let mut jobs: HashMap<RecipeId, Vec<CraftJob>> =
             recipe_lookup
                 .values()
                 .fold(HashMap::new(), |mut map, lookup| {
-                    Self::try_insert_recipe(&mut map, lookup.get_crp(), CraftJob::Carpenter);
-                    Self::try_insert_recipe(&mut map, lookup.get_bsm(), CraftJob::Blacksmith);
-                    Self::try_insert_recipe(&mut map, lookup.get_arm(), CraftJob::Armorer);
-                    Self::try_insert_recipe(&mut map, lookup.get_gsm(), CraftJob::Goldsmith);
-                    Self::try_insert_recipe(&mut map, lookup.get_ltw(), CraftJob::Leatherworker);
-                    Self::try_insert_recipe(&mut map, lookup.get_wvr(), CraftJob::Weaver);
-                    Self::try_insert_recipe(&mut map, lookup.get_alc(), CraftJob::Alchemist);
-                    Self::try_insert_recipe(&mut map, lookup.get_cul(), CraftJob::Culinarian);
+                    Self::try_insert_recipe(&mut map, lookup.crp, CraftJob::Carpenter);
+                    Self::try_insert_recipe(&mut map, lookup.bsm, CraftJob::Blacksmith);
+                    Self::try_insert_recipe(&mut map, lookup.arm, CraftJob::Armorer);
+                    Self::try_insert_recipe(&mut map, lookup.gsm, CraftJob::Goldsmith);
+                    Self::try_insert_recipe(&mut map, lookup.ltw, CraftJob::Leatherworker);
+                    Self::try_insert_recipe(&mut map, lookup.wvr, CraftJob::Weaver);
+                    Self::try_insert_recipe(&mut map, lookup.alc, CraftJob::Alchemist);
+                    Self::try_insert_recipe(&mut map, lookup.cul, CraftJob::Culinarian);
                     map
                 });
         recipes
             .values()
-            .map(|r| (r.get_key_id(), r.get_item_result()))
-            .filter(|(_id, result)| result.inner() != 0)
+            .map(|r| (r.key_id, r.item_result))
+            .filter(|(_id, result)| result.0 != 0)
             .map(|(recipe_id, item_id)| {
                 (
                     recipe_id,
                     items
                         .get(&item_id)
-                        .unwrap_or_else(|| panic!("unable to get item_id: {}", item_id.inner())),
+                        .unwrap_or_else(|| panic!("unable to get item_id: {}", item_id.0)),
                 )
             })
             .map(|(recipe_id, item)| {
                 (
                     recipe_id,
-                    item.get_name(),
+                    item.name.clone(),
                     jobs.remove(&recipe_id).unwrap_or_default(),
                 )
             })
@@ -146,7 +146,7 @@ impl RecipeSearchPanel {
         recipe_id: RecipeId,
         crafter: CraftJob,
     ) {
-        if recipe_id.inner() == 0 {
+        if recipe_id.0 == 0 {
             return;
         }
         map.entry(recipe_id).or_default().push(crafter);

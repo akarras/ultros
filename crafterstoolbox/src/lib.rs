@@ -4,7 +4,7 @@ mod app;
 mod crafting_types;
 mod plots;
 mod sidepanel;
-mod simulator;
+// mod simulator;
 mod universalis;
 
 pub use crate::universalis::UniversalisData;

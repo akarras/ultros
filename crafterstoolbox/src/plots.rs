@@ -79,7 +79,7 @@ impl TryFrom<&HistorySingleView> for HistoryLine {
         let history_data = HistoryData(entries.as_slice(), &formatter);
 
         Ok(Self {
-            item_id: ItemId::new(view.item_id as i32),
+            item_id: ItemId(view.item_id as i32),
             plot_points: history_data.into(),
             date_axis: formatter,
         })
@@ -99,7 +99,7 @@ impl CandleStickHistoryPlot {
             "CandleStick:{}",
             self.item_ids
                 .iter()
-                .map(|m| m.inner().to_string())
+                .map(|m| m.0.to_string())
                 .collect::<Vec<_>>()
                 .join(",")
         ))
@@ -319,7 +319,7 @@ impl HistoryPlot {
             "PLOT: {}",
             self.lines
                 .iter()
-                .map(|m| m.item_id.inner().to_string())
+                .map(|m| m.item_id.0.to_string())
                 .collect::<Vec<String>>()
                 .join(",")
         ))

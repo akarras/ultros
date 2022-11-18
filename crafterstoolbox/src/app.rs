@@ -25,8 +25,7 @@ use std::collections::{BTreeMap, HashMap};
 use tokio::sync::mpsc::{Receiver, Sender};
 use universalis::{DataCenterName, HistoryView, ListingView, MarketView, RegionName, WorldName};
 use writeable::Writeable;
-use xiv_crafting_sim::simulator::SimStep;
-use xiv_crafting_sim::Synth;
+
 use xiv_gen::ItemId;
 
 use crate::plots::{CandleStickHistoryPlot, HistoryPlot};
@@ -100,7 +99,7 @@ impl ItemData {
         } = &mut self.state
         {
             *query_view = item_data
-                .get_listings_for_item_id(self.item_id.inner() as u32)
+                .get_listings_for_item_id(self.item_id.0 as u32)
                 .map(|m| {
                     m.iter()
                         .filter(|item| !self.hq_only || item.hq)
@@ -189,16 +188,16 @@ pub(crate) struct WindowsList {
     pub(crate) item_windows: Vec<ItemData>,
 }
 
-#[derive(Debug)]
-pub enum CraftingSimControl {
-    Start(RecipeId, CrafterDetails, Synth),
-    Stop(RecipeId),
-}
+// #[derive(Debug)]
+// pub enum CraftingSimControl {
+//     Start(RecipeId, CrafterDetails, Synth),
+//     Stop(RecipeId),
+// }
 
-#[derive(Debug)]
-pub enum CraftingSimStatus {
-    Progress(SimStep),
-}
+// #[derive(Debug)]
+// pub enum CraftingSimStatus {
+//     Progress(SimStep),
+// }
 
 #[derive(Debug)]
 pub enum AppTx {
@@ -357,10 +356,10 @@ impl eframe::App for CraftersToolbox {
             crafters,
         } = user_data;
         // ICU
-        let provider = icu_testdata::get_provider();
+        let provider = icu_testdata::any();
         let mut fixed_decimal = FixedDecimalFormatterOptions::default();
         fixed_decimal.grouping_strategy = GroupingStrategy::Auto;
-        let decimal_format = FixedDecimalFormatter::try_new_with_buffer_provider(
+        let decimal_format = FixedDecimalFormatter::try_new_with_any_provider(
             &provider,
             &locale!("en").into(),
             fixed_decimal,
@@ -591,11 +590,11 @@ impl eframe::App for CraftersToolbox {
         let mut remove_item_window = None;
         let mut open_recipe_window = None;
         for (i, item_window) in windows.item_windows.iter_mut().enumerate() {
-            let items = game_data.get_items();
+            let items = &game_data.items;
             let item = items.get(&item_window.item_id).unwrap_or_else(|| {
                 panic!("item missing from static data {:?}", item_window.item_id)
             });
-            let item_name = item.get_name();
+            let item_name = &item.name;
             egui::Window::new(&format!("{item_name} Pricing"))
                 .default_width(400.0)
                 .show(ctx, |ui| {
@@ -607,10 +606,10 @@ impl eframe::App for CraftersToolbox {
                             item_window.update_query();
                         }
                         // Check if there's a recipe for this item
-                        let recipes = game_data.get_recipes();
+                        let recipes = &game_data.recipes;
                         if let Some(recipe_id) = recipes
                             .iter()
-                            .find(|(_, recipe)| recipe.get_item_result() == item_window.item_id)
+                            .find(|(_, recipe)| recipe.item_result == item_window.item_id)
                             .map(|(recipe_id, _)| recipe_id)
                         {
                             ui.scope(|ui| {
@@ -659,9 +658,8 @@ impl eframe::App for CraftersToolbox {
                                             Color32::from_rgb(189, 120, 40),
                                         ];
                                         // let entries = s.entries.iter().group_by(|m| m.hq);
-                                        let items = game_data.get_items();
-                                        let item =
-                                            items.get(&ItemId::new(s.item_id as i32)).unwrap();
+                                        let items = &game_data.items;
+                                        let item = items.get(&ItemId(s.item_id as i32)).unwrap();
                                         let map: BTreeMap<String, Vec<_>> = s.entries.iter().fold(
                                             BTreeMap::new(),
                                             |mut acc, value| {
@@ -709,7 +707,7 @@ impl eframe::App for CraftersToolbox {
                                             [(
                                                 s.entries.iter(),
                                                 Color32::from_rgb(255, 0, 0),
-                                                item.get_name(),
+                                                item.name.clone(),
                                             )]
                                             .iter(),
                                         );
@@ -795,12 +793,12 @@ impl eframe::App for CraftersToolbox {
         let mut remove_id = None;
         let mut delayed_open_item_window = None;
         for (i, buddy) in windows.recipe_windows.iter_mut().enumerate() {
-            let items = game_data.get_items();
-            let recipes = game_data.get_recipes();
+            let items = &game_data.items;
+            let recipes = &game_data.recipes;
             let recipe = recipes.get(&buddy.recipe_id).unwrap();
-            let item_id = recipe.get_item_result();
+            let item_id = recipe.item_result;
             let item = items.get(&item_id).unwrap();
-            egui::Window::new(&format!("craft price: {}", item.get_name()))
+            egui::Window::new(&format!("craft price: {}", item.name))
                 .default_width(400.0)
                 .show(ctx, |ui| {
                     ui.horizontal(|ui| {
@@ -952,7 +950,7 @@ impl eframe::App for CraftersToolbox {
                                         ui.with_layout(
                                             egui::Layout::right_to_left(Align::RIGHT),
                                             |ui| {
-                                                let item_id = recipe.get_item_result();
+                                                let item_id = recipe.item_result;
                                                 ui.set_enabled(
                                                     !windows
                                                         .item_windows

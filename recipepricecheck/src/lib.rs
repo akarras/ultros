@@ -199,9 +199,9 @@ pub async fn get_ingredient_prices<'a>(
     let ingredients: Vec<ItemIngredient> = IngredientsIter::from(recipe).collect();
     let mut ids: Vec<_> = ingredients
         .iter()
-        .map(|ingredient| ingredient.item_id.inner())
+        .map(|ingredient| ingredient.item_id.0)
         .collect();
-    let recipe_item = recipe.get_item_result().inner();
+    let recipe_item = recipe.item_result.0;
     ids.push(recipe_item);
     let market_view = client
         .marketboard_current_data(world_or_datacenter, ids.as_slice())
@@ -242,7 +242,7 @@ impl RecipePricingRawData {
         data: &xiv_gen::Data,
     ) -> Result<BestPricingSummary, Error> {
         let number_to_craft = args.craft_quantity;
-        let items = data.get_items();
+        let items = &data.items;
         let items: Vec<_> = self
             .ingredients
             .iter()
@@ -251,7 +251,7 @@ impl RecipePricingRawData {
                     "Static data didn't have item id {:?}",
                     ingredient.item_id
                 ));
-                if !(args.filter_shards && is_shard(&item.get_name())) {
+                if !(args.filter_shards && is_shard(&item.name)) {
                     Some((item, ingredient))
                 } else {
                     None
@@ -261,12 +261,12 @@ impl RecipePricingRawData {
                 let empty = vec![];
                 let item = self
                     .market_view
-                    .get_listings_for_item_id(ingredient.item_id.inner() as u32)
+                    .get_listings_for_item_id(ingredient.item_id.0 as u32)
                     .unwrap_or(&empty);
                 if item.is_empty() {
                     eprintln!(
                         "warning: no listings found for item {}",
-                        ingredient.item_id.inner()
+                        ingredient.item_id.0
                     );
                 }
                 let mut remaining_quantity = ingredient.amount as i64 * number_to_craft;
@@ -310,8 +310,8 @@ impl RecipePricingRawData {
                 };
 
                 BestPricingForItem {
-                    name: item_data.get_name(),
-                    item: ingredient.item_id.inner() as u32,
+                    name: item_data.name.clone(),
+                    item: ingredient.item_id.0 as u32,
                     amount_needed: ingredient.amount as i64 * number_to_craft as i64,
                     market_ingredients,
                     query_start_world: self.world_name.clone(),
