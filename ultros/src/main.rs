@@ -23,7 +23,7 @@ use ultros_db::entity::active_listing;
 use ultros_db::UltrosDb;
 use universalis::websocket::event_types::{EventChannel, SubscribeMode, WSMessage};
 use universalis::websocket::SocketRx;
-use universalis::{DataCentersView, UniversalisClient, WebsocketClient, WorldsView};
+use universalis::{DataCentersView, UniversalisClient, WebsocketClient, WorldsView, WorldId};
 use web::character_verifier_service::CharacterVerifierService;
 use web::oauth::{AuthUserCache, DiscordAuthConfig, OAuthScope};
 use world_cache::WorldCache;
@@ -46,6 +46,10 @@ async fn run_socket_listener(db: UltrosDb, listings_tx: EventProducer<Vec<active
             let db = db.clone();
             // hopefully this is cheap to clone
             let listings_tx = listings_tx.clone();
+            if let SocketRx::Event(Ok(e)) = &msg {
+                let world_id = WorldId::from(e);
+                metrics::counter!("ultros_websocket_rx", 1, "WorldId" => world_id.0.to_string());
+            }
             tokio::spawn(async move {
                 let db = &db;
                 match msg {
