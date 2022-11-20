@@ -2,7 +2,7 @@ pub(crate) mod alerts;
 pub(crate) mod analyzer_service;
 mod discord;
 pub(crate) mod event;
-mod metrics;
+mod web_metrics;
 pub(crate) mod utils;
 mod web;
 pub(crate) mod world_cache;
@@ -18,7 +18,6 @@ use anyhow::Result;
 use axum_extra::extract::cookie::Key;
 use discord::start_discord;
 use event::{create_event_busses, EventProducer, EventType};
-use metrics::init_meter;
 use tracing::{error, info};
 use ultros_db::entity::active_listing;
 use ultros_db::UltrosDb;
@@ -122,7 +121,7 @@ async fn init_db(
 async fn main() -> Result<()> {
     // Create the db before we proceed
     tracing_subscriber::fmt::init();
-    // init_telemetry();
+    
     let universalis_client = UniversalisClient::new();
     let (datacenters, worlds) = futures::future::join(
         universalis_client.get_data_centers(),
@@ -175,7 +174,6 @@ async fn main() -> Result<()> {
         event_receivers: receivers,
         event_senders: senders,
         world_cache,
-        analytics_exporter: Arc::new(init_meter()),
     };
     web::start_web(web_state).await;
     Ok(())

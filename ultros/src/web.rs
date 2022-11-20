@@ -14,14 +14,13 @@ use axum::extract::{FromRef, Path, Query, State};
 use axum::http::{HeaderValue, Response, StatusCode};
 use axum::response::{IntoResponse, Redirect};
 use axum::routing::get;
-use axum::{body, Router};
+use axum::{body, Router, middleware};
 use axum_extra::extract::cookie::{Cookie, Key, SameSite};
 use axum_extra::extract::CookieJar;
 use futures::future::join;
 use image::imageops::FilterType;
 use image::ImageOutputFormat;
 use maud::Render;
-use opentelemetry_prometheus::PrometheusExporter;
 use reqwest::header;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
@@ -54,7 +53,7 @@ use self::templates::{
 };
 use crate::analyzer_service::{AnalyzerService, ResaleOptions};
 use crate::event::{EventReceivers, EventSenders, EventType};
-use crate::metrics::metrics;
+use crate::web_metrics::{track_metrics, start_metrics_server};
 use crate::web::api::cheapest_per_world;
 use crate::web::templates::pages::character::refresh_character;
 use crate::web::templates::pages::character::{
@@ -443,7 +442,6 @@ pub(crate) struct WebState {
     pub(crate) event_senders: EventSenders,
     pub(crate) world_cache: Arc<WorldCache>,
     pub(crate) analyzer_service: AnalyzerService,
-    pub(crate) analytics_exporter: Arc<PrometheusExporter>,
     pub(crate) character_verification: CharacterVerifierService,
 }
 
@@ -486,12 +484,6 @@ impl FromRef<WebState> for Arc<WorldCache> {
 impl FromRef<WebState> for AnalyzerService {
     fn from_ref(input: &WebState) -> Self {
         input.analyzer_service.clone()
-    }
-}
-
-impl FromRef<WebState> for Arc<PrometheusExporter> {
-    fn from_ref(input: &WebState) -> Self {
-        input.analytics_exporter.clone()
     }
 }
 
@@ -648,9 +640,9 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/login", get(begin_login))
         .route("/logout", get(logout))
         .route("/invitebot", get(invite))
-        .route("/metrics", get(metrics))
         .route("/favicon.ico", get(favicon))
         .route("/robots.txt", get(robots))
+        .route_layer(middleware::from_fn(track_metrics))
         .layer(CompressionLayer::new())
         .fallback(fallback);
 
@@ -663,10 +655,8 @@ pub(crate) async fn start_web(state: WebState) {
         .unwrap_or(8080);
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     tracing::info!("listening on {}", addr);
-    axum::Server::bind(&addr)
-        .serve(app.into_make_service())
-        .await
-        .unwrap();
+    let (_main_app, _metrics_app) = futures::future::join(axum::Server::bind(&addr)
+        .serve(app.into_make_service()), start_metrics_server()).await;
 }
 
 async fn fallback() -> (StatusCode, &'static str) {
