@@ -1,8 +1,10 @@
-use std::{time::Instant, future::ready, net::SocketAddr};
+use std::{future::ready, net::SocketAddr, time::Instant};
 
-use axum::{extract::{MatchedPath}, http::Request, middleware::Next, response::IntoResponse, Router, routing::get};
-use metrics_exporter_prometheus::{PrometheusBuilder, Matcher, PrometheusHandle};
-
+use axum::{
+    extract::MatchedPath, http::Request, middleware::Next, response::IntoResponse, routing::get,
+    Router,
+};
+use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
 
 pub(crate) async fn track_metrics<B>(req: Request<B>, next: Next<B>) -> impl IntoResponse {
     let start = Instant::now();
@@ -61,4 +63,3 @@ pub(crate) async fn start_metrics_server() {
         .await
         .unwrap()
 }
-

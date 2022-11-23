@@ -65,7 +65,7 @@ impl From<&WSMessage> for ItemId {
 impl From<&WSMessage> for WorldId {
     fn from(ws: &WSMessage) -> Self {
         match ws {
-            WSMessage::ListingsAdd {world, .. } => *world,
+            WSMessage::ListingsAdd { world, .. } => *world,
             WSMessage::ListingsRemove { world, .. } => *world,
             WSMessage::SalesAdd { world, .. } => *world,
             WSMessage::SalesRemove { world, .. } => *world,

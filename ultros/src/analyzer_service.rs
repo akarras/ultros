@@ -1,9 +1,11 @@
 use std::{
+    cmp::Reverse,
     collections::{BTreeMap, HashMap},
+    fmt::Display,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
-    }, fmt::Display, cmp::Reverse,
+    },
 };
 
 use chrono::{Duration, Local, NaiveDateTime};
@@ -27,7 +29,7 @@ use thiserror::Error;
 use tokio::sync::RwLock;
 use tracing::log::error;
 
-pub const SALE_HISTORY_SIZE : usize = 4;
+pub const SALE_HISTORY_SIZE: usize = 4;
 
 #[derive(Debug, Error)]
 pub enum AnalyzerError {
@@ -539,7 +541,7 @@ pub(crate) enum SoldWithin {
     Week(SoldAmount),
     Month(SoldAmount),
     Year(SoldAmount),
-    YearsAgo(u8, SoldAmount)
+    YearsAgo(u8, SoldAmount),
 }
 
 impl Display for SoldWithin {
@@ -551,7 +553,6 @@ impl Display for SoldWithin {
             SoldWithin::Month(m) => write!(f, "{m} sold this month"),
             SoldWithin::Year(y) => write!(f, "{y} sold this year"),
             SoldWithin::YearsAgo(i, y) => write!(f, "{y} sold {i} years ago"),
-
         }
     }
 }
@@ -576,19 +577,28 @@ impl<'a> FromIterator<&'a SaleSummary> for SoldWithin {
             Week,
             Month,
             Year,
-            YearsAgo(i64)
+            YearsAgo(i64),
         }
         let (marker, duration) = if duration_since.num_days() < 1 {
             (SaleMarker::Today, now.checked_add_signed(Duration::days(1)))
         } else if duration_since.num_weeks() < 1 {
             (SaleMarker::Week, now.checked_add_signed(Duration::weeks(1)))
         } else if duration_since.num_weeks() < 4 {
-            (SaleMarker::Month, now.checked_add_signed(Duration::weeks(4)))
+            (
+                SaleMarker::Month,
+                now.checked_add_signed(Duration::weeks(4)),
+            )
         } else if duration_since.num_weeks() < 52 {
-            (SaleMarker::Year, now.checked_add_signed(Duration::weeks(52)))
+            (
+                SaleMarker::Year,
+                now.checked_add_signed(Duration::weeks(52)),
+            )
         } else {
             let years = duration_since.num_days() / 365;
-            (SaleMarker::YearsAgo(years), now.checked_add_signed(Duration::days(years * 365)))
+            (
+                SaleMarker::YearsAgo(years),
+                now.checked_add_signed(Duration::days(years * 365)),
+            )
         };
         let duration = match duration {
             Some(d) => d,
@@ -605,7 +615,6 @@ impl<'a> FromIterator<&'a SaleSummary> for SoldWithin {
         }
     }
 }
-
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ResaleStats {

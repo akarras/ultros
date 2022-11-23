@@ -2,9 +2,9 @@ pub(crate) mod alerts;
 pub(crate) mod analyzer_service;
 mod discord;
 pub(crate) mod event;
-mod web_metrics;
 pub(crate) mod utils;
 mod web;
+mod web_metrics;
 pub(crate) mod world_cache;
 
 use std::collections::HashSet;
@@ -23,7 +23,7 @@ use ultros_db::entity::active_listing;
 use ultros_db::UltrosDb;
 use universalis::websocket::event_types::{EventChannel, SubscribeMode, WSMessage};
 use universalis::websocket::SocketRx;
-use universalis::{DataCentersView, UniversalisClient, WebsocketClient, WorldsView, WorldId};
+use universalis::{DataCentersView, UniversalisClient, WebsocketClient, WorldId, WorldsView};
 use web::character_verifier_service::CharacterVerifierService;
 use web::oauth::{AuthUserCache, DiscordAuthConfig, OAuthScope};
 use world_cache::WorldCache;
@@ -125,7 +125,7 @@ async fn init_db(
 async fn main() -> Result<()> {
     // Create the db before we proceed
     tracing_subscriber::fmt::init();
-    
+
     let universalis_client = UniversalisClient::new();
     let (datacenters, worlds) = futures::future::join(
         universalis_client.get_data_centers(),

@@ -14,7 +14,7 @@ use axum::extract::{FromRef, Path, Query, State};
 use axum::http::{HeaderValue, Response, StatusCode};
 use axum::response::{IntoResponse, Redirect};
 use axum::routing::get;
-use axum::{body, Router, middleware};
+use axum::{body, middleware, Router};
 use axum_extra::extract::cookie::{Cookie, Key, SameSite};
 use axum_extra::extract::CookieJar;
 use futures::future::join;
@@ -53,7 +53,6 @@ use self::templates::{
 };
 use crate::analyzer_service::{AnalyzerService, ResaleOptions};
 use crate::event::{EventReceivers, EventSenders, EventType};
-use crate::web_metrics::{track_metrics, start_metrics_server};
 use crate::web::api::cheapest_per_world;
 use crate::web::templates::pages::character::refresh_character;
 use crate::web::templates::pages::character::{
@@ -64,6 +63,7 @@ use crate::web::templates::pages::retainer::{
     add_retainer_to_character, decrease_weight_retainer, increase_weight_retainer,
     remove_retainer_from_character,
 };
+use crate::web_metrics::{start_metrics_server, track_metrics};
 use crate::{
     web::{
         alerts_websocket::connect_websocket,
@@ -655,8 +655,11 @@ pub(crate) async fn start_web(state: WebState) {
         .unwrap_or(8080);
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     tracing::info!("listening on {}", addr);
-    let (_main_app, _metrics_app) = futures::future::join(axum::Server::bind(&addr)
-        .serve(app.into_make_service()), start_metrics_server()).await;
+    let (_main_app, _metrics_app) = futures::future::join(
+        axum::Server::bind(&addr).serve(app.into_make_service()),
+        start_metrics_server(),
+    )
+    .await;
 }
 
 async fn fallback() -> (StatusCode, &'static str) {
