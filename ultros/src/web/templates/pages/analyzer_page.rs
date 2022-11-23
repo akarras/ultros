@@ -111,6 +111,9 @@ impl Page for AnalyzerPage {
                           "item"
                         }
                         th {
+                          "recently sold"
+                        }
+                        th {
                           "sale price"
                         }
                         th {
@@ -187,6 +190,9 @@ impl Page for AnalyzerPage {
                               }
                               ((CopyTextButton { text: item_name }))
                             }
+                          }
+                          td {
+                            ((result.sold_within))
                           }
                           td {
                             ((Gil(result.profit + result.cheapest)))

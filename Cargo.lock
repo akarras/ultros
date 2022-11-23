@@ -5725,6 +5725,7 @@ dependencies = [
  "serde_urlencoded",
  "serde_with",
  "sha2",
+ "smallvec",
  "tantivy",
  "thiserror",
  "thousands",

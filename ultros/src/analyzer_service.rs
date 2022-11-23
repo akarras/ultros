@@ -3,12 +3,15 @@ use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
-    },
+    }, fmt::Display, cmp::Reverse,
 };
 
 use chrono::{Duration, Local, NaiveDateTime};
 use futures::StreamExt;
+use maud::Render;
+use poise::serenity_prelude::Timestamp;
 use serde::Serialize;
+use smallvec::SmallVec;
 use tracing::log::info;
 use ultros_db::{
     entity::{active_listing, sale_history},
@@ -23,6 +26,8 @@ use crate::{
 use thiserror::Error;
 use tokio::sync::RwLock;
 use tracing::log::error;
+
+pub const SALE_HISTORY_SIZE : usize = 4;
 
 #[derive(Debug, Error)]
 pub enum AnalyzerError {
@@ -99,7 +104,7 @@ impl From<&ultros_db::entity::sale_history::Model> for SaleSummary {
 
 #[derive(Debug, Default)]
 struct SaleHistory {
-    item_map: HashMap<ItemKey, Vec<SaleSummary>>,
+    item_map: HashMap<ItemKey, SmallVec<[SaleSummary; SALE_HISTORY_SIZE]>>,
 }
 
 impl SaleHistory {
@@ -110,12 +115,12 @@ impl SaleHistory {
         let entries = self
             .item_map
             .entry(sale.into())
-            .or_insert_with(|| Vec::with_capacity(4));
-
+            .or_insert_with(|| SmallVec::new_const());
+        if entries.len() == SALE_HISTORY_SIZE {
+            let _ = entries.pop();
+        }
         entries.push(sale.into());
-        entries.sort();
-        entries.truncate(3);
-        entries.shrink_to(4);
+        entries.sort_by_key(|sale| Reverse(sale.sale_date));
     }
 }
 
@@ -279,7 +284,7 @@ impl AnalyzerService {
             }
         }
         info!("starting sale data");
-        let sale_data = ultros_db.last_n_sales(3).await;
+        let sale_data = ultros_db.last_n_sales(SALE_HISTORY_SIZE as i32).await;
         match sale_data {
             Ok(mut history_stream) => {
                 let mut writer = self.recent_sale_history.write().await;
@@ -362,11 +367,11 @@ impl AnalyzerService {
         let sale_history: BTreeMap<_, _> = sale
             .item_map
             .iter()
-            .flat_map(|(item, values)| {
+            .map(|(i, values)| (i, values, values.iter().collect::<SoldWithin>()))
+            .flat_map(|(item, values, sold_within)| {
                 values
                     .iter()
                     .filter(|sale| {
-                        // TODO this date doesn't seem correct
                         Local::now()
                             .naive_utc()
                             .signed_duration_since(sale.sale_date)
@@ -374,7 +379,7 @@ impl AnalyzerService {
                     })
                     .map(|sale| sale.price_per_item)
                     .min()
-                    .map(|price| (*item, price))
+                    .map(|price| (*item, (price, sold_within)))
             })
             .collect();
         drop(recent_sale);
@@ -386,13 +391,13 @@ impl AnalyzerService {
             .item_map
             .iter()
             .flat_map(|(item_key, cheapest_price)| {
-                let history = sale_history.get(item_key)?;
+                let (cheapest_history, sold_within) = *sale_history.get(item_key)?;
                 let current_cheapest_on_sale_world = sale_world_listings
                     .item_map
                     .get(item_key)
                     .map(|l| l.price)
-                    .unwrap_or(*history);
-                let est_sale_price = (*history).min(current_cheapest_on_sale_world);
+                    .unwrap_or(cheapest_history);
+                let est_sale_price = (cheapest_history).min(current_cheapest_on_sale_world);
                 let profit = est_sale_price - cheapest_price.price;
                 Some(ResaleStats {
                     profit,
@@ -403,6 +408,7 @@ impl AnalyzerService {
                         * 100.0)
                         - 100.0,
                     world_id: cheapest_price.world_id,
+                    sold_within,
                 })
             })
             .filter(|w| {
@@ -514,10 +520,99 @@ impl AnalyzerService {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub(crate) struct SoldAmount(u8);
+
+impl Display for SoldAmount {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.0 >= SALE_HISTORY_SIZE as u8 {
+            write!(f, "{}+", SALE_HISTORY_SIZE)
+        } else {
+            write!(f, "{}", self.0)
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum SoldWithin {
+    NoSales,
+    Today(SoldAmount),
+    Week(SoldAmount),
+    Month(SoldAmount),
+    Year(SoldAmount),
+    YearsAgo(u8, SoldAmount)
+}
+
+impl Display for SoldWithin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SoldWithin::NoSales => write!(f, "No sales"),
+            SoldWithin::Today(d) => write!(f, "{d} sold today"),
+            SoldWithin::Week(w) => write!(f, "{w} sold this week"),
+            SoldWithin::Month(m) => write!(f, "{m} sold this month"),
+            SoldWithin::Year(y) => write!(f, "{y} sold this year"),
+            SoldWithin::YearsAgo(i, y) => write!(f, "{y} sold {i} years ago"),
+
+        }
+    }
+}
+
+impl Render for SoldWithin {
+    fn render(&self) -> maud::Markup {
+        maud::PreEscaped(self.to_string())
+    }
+}
+
+impl<'a> FromIterator<&'a SaleSummary> for SoldWithin {
+    fn from_iter<T: IntoIterator<Item = &'a SaleSummary>>(iter: T) -> Self {
+        let mut iter = iter.into_iter().peekable();
+        let first_sale = match iter.peek() {
+            Some(s) => s,
+            None => return SoldWithin::NoSales,
+        };
+        let now = Timestamp::now().naive_utc();
+        let duration_since = now.signed_duration_since(first_sale.sale_date);
+        enum SaleMarker {
+            Today,
+            Week,
+            Month,
+            Year,
+            YearsAgo(i64)
+        }
+        let (marker, duration) = if duration_since.num_days() < 1 {
+            (SaleMarker::Today, now.checked_add_signed(Duration::days(1)))
+        } else if duration_since.num_weeks() < 1 {
+            (SaleMarker::Week, now.checked_add_signed(Duration::weeks(1)))
+        } else if duration_since.num_weeks() < 4 {
+            (SaleMarker::Month, now.checked_add_signed(Duration::weeks(4)))
+        } else if duration_since.num_weeks() < 52 {
+            (SaleMarker::Year, now.checked_add_signed(Duration::weeks(52)))
+        } else {
+            let years = duration_since.num_days() / 365;
+            (SaleMarker::YearsAgo(years), now.checked_add_signed(Duration::days(years * 365)))
+        };
+        let duration = match duration {
+            Some(d) => d,
+            None => return SoldWithin::NoSales,
+        };
+        let sold_amount = iter.filter(|sale| sale.sale_date.lt(&duration)).count() as u8;
+        let sold_amount = SoldAmount(sold_amount);
+        match marker {
+            SaleMarker::Today => SoldWithin::Today(sold_amount),
+            SaleMarker::Week => SoldWithin::Week(sold_amount),
+            SaleMarker::Month => SoldWithin::Month(sold_amount),
+            SaleMarker::Year => SoldWithin::Year(sold_amount),
+            SaleMarker::YearsAgo(year) => SoldWithin::YearsAgo(year as u8, sold_amount),
+        }
+    }
+}
+
+
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct ResaleStats {
     pub(crate) profit: i32,
     pub(crate) cheapest: i32,
     pub(crate) item_id: i32,
+    pub(crate) sold_within: SoldWithin,
     pub(crate) return_on_investment: f32,
     pub(crate) hq: bool,
     pub(crate) world_id: i32,
