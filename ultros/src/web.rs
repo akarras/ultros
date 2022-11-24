@@ -13,7 +13,7 @@ use axum::body::{Empty, Full};
 use axum::extract::{FromRef, Path, Query, State};
 use axum::http::{HeaderValue, Response, StatusCode};
 use axum::response::{IntoResponse, Redirect};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{body, middleware, Router};
 use axum_extra::extract::cookie::{Cookie, Key, SameSite};
 use axum_extra::extract::CookieJar;
@@ -60,8 +60,7 @@ use crate::web::templates::pages::character::{
     verify_character::verify_character,
 };
 use crate::web::templates::pages::retainer::{
-    add_retainer_to_character, decrease_weight_retainer, increase_weight_retainer,
-    remove_retainer_from_character,
+    add_retainer_to_character, remove_retainer_from_character, reorder_retainer,
 };
 use crate::web_metrics::{start_metrics_server, track_metrics};
 use crate::{
@@ -593,7 +592,7 @@ pub(crate) async fn invite() -> Redirect {
 
 pub(crate) async fn start_web(state: WebState) {
     // build our application with a route
-    let app = Router::with_state(state)
+    let app = Router::new()
         .route("/", get(root))
         .route("/alerts", get(alerts))
         .route("/alerts/websocket", get(connect_websocket))
@@ -622,14 +621,7 @@ pub(crate) async fn start_web(state: WebState) {
             "/retainers/character/remove/:retainer",
             get(remove_retainer_from_character),
         )
-        .route(
-            "/retainers/upsort/:retainerid",
-            get(increase_weight_retainer),
-        )
-        .route(
-            "/retainers/downsort/:retainerid",
-            get(decrease_weight_retainer),
-        )
+        .route("/retainers/reorder", post(reorder_retainer))
         .route("/retainers", get(user_retainers_listings))
         .route("/analyzer", get(analyze_profits))
         .route("/items/:search", get(fuzzy_item_search::search_items))
@@ -644,7 +636,8 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/robots.txt", get(robots))
         .route_layer(middleware::from_fn(track_metrics))
         .layer(CompressionLayer::new())
-        .fallback(fallback);
+        .fallback(fallback)
+        .with_state(state);
 
     // run our app with hyper
     // `axum::Server` is a re-export of `hyper::Server`

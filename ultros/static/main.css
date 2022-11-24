@@ -481,7 +481,6 @@ input.btn {
   margin: 15px;
   background-color: rgba(0, 0, 0, 0.08);
   border-radius: 8px;
-  overflow-x: scroll;
 }
 
 .content-title {
@@ -702,7 +701,7 @@ select optgroup {
 .dropdown-content {
   display: none;
   position: absolute;
-  background-color: #312537;
+  background-color: #160c1b;
   min-width: 160px;
   box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
   padding: 10px 10px;
@@ -711,4 +710,17 @@ select optgroup {
 
 .dropdown:hover .dropdown-content {
   display: block;
+}
+
+.drop-hint {
+  background-color: #48394F;
+  border: #fff solid 1px;
+}
+
+.drag-active {
+  background-color: #b996ca;
+}
+
+.horizontal-scroll {
+  overflow-x: scroll;
 }

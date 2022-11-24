@@ -65,7 +65,7 @@ impl Page for AnalyzerPage {
             user: self.user.as_ref()
           }))
           div class="container" {
-            div class="main-content" {
+            div class="main-content horizontal-scroll" {
               div class="content-well" {
                 ((paginate))
                 form class="flex-row" {

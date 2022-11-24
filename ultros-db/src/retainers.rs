@@ -220,7 +220,6 @@ impl UltrosDb {
             .all(&self.db)
             .await?;
         owned_retainers.sort_by_key(|o| o.weight);
-        let retainer_ids = owned_retainers.iter().map(|r| r.retainer_id);
         let retainers: Vec<(
             owned_retainers::Model,
             Result<(retainer::Model, Vec<active_listing::Model>), anyhow::Error>,
@@ -319,6 +318,7 @@ impl UltrosDb {
         value
             .iter_mut()
             .for_each(|(_, i)| i.sort_by_key(|(o, _)| o.weight));
+        value.sort_by_key(|(o, _)| o.as_ref().map(|o| o.id).unwrap_or_default());
         Ok(value)
     }
 }

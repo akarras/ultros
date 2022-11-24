@@ -1,7 +1,10 @@
 use axum::{
-    extract::{Path, State},
+    extract::{self, Path, State},
     response::Redirect,
+    Json,
 };
+use serde::Deserialize;
+use serde_with::{serde_as, DisplayFromStr};
 use ultros_db::{ActiveValue, UltrosDb};
 
 use crate::web::{error::WebError, oauth::AuthDiscordUser};
@@ -39,30 +42,31 @@ pub(crate) async fn remove_retainer_from_character(
     Ok(Redirect::to("/retainers/edit"))
 }
 
-pub(crate) async fn increase_weight_retainer(
-    Path(owned_retainer_id): Path<i32>,
-    State(db): State<UltrosDb>,
-    user: AuthDiscordUser,
-) -> Result<Redirect, WebError> {
-    db.update_owned_retainer(user.id as i64, owned_retainer_id, move |mut u| {
-        let current_weight = u.weight.take().unwrap_or_default().unwrap_or_default();
-        u.weight = ActiveValue::Set(Some(current_weight + 1));
-        u
-    })
-    .await?;
-    Ok(Redirect::to("/retainers/edit"))
+#[serde_as]
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RetainerData {
+    #[serde_as(as = "DisplayFromStr")]
+    owned_retainer_id: i32,
+    #[serde_as(as = "DisplayFromStr")]
+    order: i32,
 }
 
-pub(crate) async fn decrease_weight_retainer(
-    Path(owned_retainer_id): Path<i32>,
-    State(db): State<UltrosDb>,
+#[derive(Deserialize, Debug, Clone)]
+pub(crate) struct Retainers(Vec<RetainerData>);
+
+pub(crate) async fn reorder_retainer(
+    State(ultros_db): State<UltrosDb>,
     user: AuthDiscordUser,
-) -> Result<Redirect, WebError> {
-    db.update_owned_retainer(user.id as i64, owned_retainer_id, move |mut u| {
-        let current_weight = u.weight.take().unwrap_or_default().unwrap_or_default();
-        u.weight = ActiveValue::Set(Some(current_weight - 1));
-        u
-    })
+    extract::Json(retainers): extract::Json<Retainers>,
+) -> Result<(), WebError> {
+    futures::future::try_join_all(retainers.0.into_iter().map(|r| {
+        ultros_db.update_owned_retainer(user.id as i64, r.owned_retainer_id, move |mut u| {
+            u.weight = ActiveValue::Set(Some(r.order));
+            u
+        })
+    }))
     .await?;
-    Ok(Redirect::to("/retainers/edit"))
+
+    Ok(())
 }
