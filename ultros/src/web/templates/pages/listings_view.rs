@@ -105,19 +105,24 @@ impl Page for ListingsPage {
                       }
                     }
                     @for (datacenter, worlds) in datacenters {
-                      div class="flex-row" {
+                      @let focus_text = if datacenter.name == self.selected_world || worlds.iter().any(|world| world.name.eq(&self.selected_world)) {
+                        " focus"
+                      } else {
+                        ""
+                      };
+                      div class={ "world-row" ((focus_text)) } {
                         @if datacenter.name == self.selected_world {
-                          a class="btn-secondary active" {
+                          a class="world-button datacenter active" {
                             ((datacenter.name))
                           }
                         } @else {
-                          a class="btn-secondary" href={"/listings/" ((datacenter.name)) "/" ((self.item_id))} {
+                          a class="world-button datacenter" href={"/listings/" ((datacenter.name)) "/" ((self.item_id))} {
                             ((datacenter.name))
                           }
                         }
                         @for world in worlds {
                           a class={
-                            "btn-secondary"
+                            "world-button"
                             @if world.name == self.selected_world {
                               " active"
                             }

@@ -325,6 +325,58 @@ input.btn {
   flex-wrap: wrap;
 }
 
+.world-button {
+  border-radius: 1px;
+  background-color: #100817;
+  border: solid #3B2B9E 0px;
+  color: #100817;
+  text-decoration: none;
+  padding: 5px;
+  transition: 1s;
+}
+
+.focus > .world-button,
+.world-row:focus > .world-button,
+.world-row:hover > .world-button {
+  color: rgb(154, 154, 154);
+  transition: .5s;
+}
+
+.world-button.active {
+  color: #fff;
+  background-color: #150e1b;
+}
+
+.datacenter {
+  color: rgb(154, 154, 154);
+}
+
+
+.world-row.focus,
+.world-row:focus,
+.world-row:focus-within,
+.world-row:hover {
+  display: flex;
+  flex-direction: row;
+}
+
+.world-row {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  background-color: #100817;
+}
+
+.world-row:last-of-type {
+  border-bottom-left-radius: 10px;
+  border-bottom-right-radius: 10px;
+}
+
+.world-button:hover,
+.world-button:focus {
+  color: #fff !important;
+}
+
 .btn-secondary {
   background-color: #48394F;
   color: #fff;
@@ -398,10 +450,11 @@ input.btn {
   text-align: left;
   position: relative;
   border-collapse: collapse;
+  min-width: 700px;
 }
 
 .main-content td {
-  padding-left: 10px;
+  padding-left: 5px;
   padding-right: 10px;
   font-size: 1.1em;
 }
@@ -428,6 +481,7 @@ input.btn {
   margin: 15px;
   background-color: rgba(0, 0, 0, 0.08);
   border-radius: 8px;
+  overflow-x: scroll;
 }
 
 .content-title {
@@ -523,7 +577,7 @@ th {
 }
 
 .homeworld {
-  background-color: #3A2B7E;
+  background-color: #3a2b7e25;
 }
 
 .homeworld::before {
