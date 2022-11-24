@@ -132,15 +132,6 @@ async fn check_listings(ctx: Context<'_>) -> Result<(), Error> {
         .db
         .get_retainer_listings_for_discord_user(ctx.author().id.0)
         .await?;
-    // get data on how well each of the listings for the retainer are performing
-    let item_and_world_ids: HashSet<(i32, i32)> = retainers
-        .iter()
-        .flat_map(|(_, _, listing)| {
-            listing
-                .iter()
-                .map(|listing| (listing.item_id, listing.world_id))
-        })
-        .collect();
     if retainers.is_empty() {
         ctx.say("No retainers found :(").await?;
     }

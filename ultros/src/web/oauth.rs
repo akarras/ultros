@@ -151,7 +151,6 @@ pub struct RedirectParameters {
 pub async fn redirect(
     mut cookies: PrivateCookieJar,
     State(config): State<DiscordAuthConfig>,
-    State(db): State<UltrosDb>,
     Query(RedirectParameters { code, state }): Query<RedirectParameters>,
 ) -> Result<(PrivateCookieJar, Redirect), (StatusCode, RenderPage<ErrorPage>)> {
     let code = AuthorizationCode::new(code);
