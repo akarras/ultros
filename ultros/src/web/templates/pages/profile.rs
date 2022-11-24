@@ -98,7 +98,7 @@ impl Page for Profile {
                     h1 {
                         "Profile"
                     }
-                    div class="flex flex-wrap" {
+                    div class="profile-grid" {
                         @if !challenges.is_empty() {
                             div class="content-well" {
                                 @for (challenge, character) in &self.challenges {
@@ -115,29 +115,44 @@ impl Page for Profile {
                         }
                         div class="content-well flex flex-column" {
                             div class="flex flex-row" {
-                                span class="content-title" {
+                                span class="content-title flex-grow" {
                                     "Characters"
                                 }
-                                a class="btn" href="/characters/add" {
-                                    "Add"
+                                div class="tooltip" {
+                                    a class="btn btn-secondary" href="/characters/add" {
+                                        span class="fa fa-plus" {}
+                                    }
+                                    div class="tooltip-text" {
+                                        "Add character"
+                                    }
                                 }
                             }
                             @for (owned, character) in characters {
                                 @if let Some(character) = character {
                                     div class="flex-row" {
-                                        span class="content-title" {
+                                        span class="content-title flex-grow" {
                                             ((character.first_name))" "((character.last_name))
                                         }
-                                        span class="content-title" {
+                                        span class="content-title flex-grow" {
                                             @if let Ok(world) = world_cache.lookup_selector(&AnySelector::World(character.id)) {
                                                 ((world.get_name()))
                                             }
                                         }
-                                        a class="btn btn-secondary" href={ "/characters/refresh/" ((character.id)) } {
-                                            span class="fa fa-refresh" {}
+                                        div class="tooltip" {
+                                            a class="btn btn-secondary" href={ "/characters/refresh/" ((character.id)) } {
+                                                span class="fa fa-refresh" {}
+                                            }
+                                            div class="tooltip-text" {
+                                                "Refresh Character"
+                                            }
                                         }
-                                        a class="btn btn-secondary" {
-                                            span class="fa fa-trash" href={ "/characters/unclaim/" ((owned.ffxiv_character_id))} {}
+                                        div class="tooltip" {
+                                            a class="btn btn-secondary" {
+                                                span class="fa fa-trash" href={ "/characters/unclaim/" ((owned.ffxiv_character_id))} {}
+                                            }
+                                            div class="tooltip-text" {
+                                                "Delete Character"
+                                            }
                                         }
                                     }
                                 }

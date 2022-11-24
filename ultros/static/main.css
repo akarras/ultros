@@ -724,3 +724,13 @@ select optgroup {
 .horizontal-scroll {
   overflow-x: scroll;
 }
+
+.profile-grid {
+  display: grid;
+  grid-template-areas: '1 1 2'
+                       '1 1 3';
+}
+
+.flex-grow {
+  flex-grow: 3;
+}
