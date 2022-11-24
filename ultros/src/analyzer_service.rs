@@ -12,7 +12,7 @@ use chrono::{Duration, Local, NaiveDateTime};
 use futures::StreamExt;
 use maud::Render;
 use poise::serenity_prelude::Timestamp;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use tracing::log::info;
 use ultros_db::{
@@ -374,10 +374,17 @@ impl AnalyzerService {
                 values
                     .iter()
                     .filter(|sale| {
-                        Local::now()
-                            .naive_utc()
-                            .signed_duration_since(sale.sale_date)
-                            .lt(&Duration::days(resale_options.days as i64))
+                        resale_options
+                            .filter_sale
+                            .as_ref()
+                            .map(|sale_within| {
+                                let sale_within = Duration::from(sale_within);
+                                Local::now()
+                                    .naive_utc()
+                                    .signed_duration_since(sale.sale_date)
+                                    .lt(&sale_within)
+                            })
+                            .unwrap_or(true)
                     })
                     .map(|sale| sale.price_per_item)
                     .min()
@@ -429,6 +436,17 @@ impl AnalyzerService {
                 datacenter_filters_worlds
                     .as_ref()
                     .map(|dc| dc.contains(&sale.world_id))
+                    .unwrap_or(true)
+            })
+            .filter(|sale| {
+                resale_options
+                    .filter_sale
+                    .as_ref()
+                    .map(|sold| {
+                        sold.partial_cmp(&sale.sold_within)
+                            .map(|c| c.is_gt() || c.is_eq())
+                    })
+                    .flatten()
                     .unwrap_or(true)
             })
             .collect();
@@ -521,8 +539,8 @@ impl AnalyzerService {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct SoldAmount(u8);
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct SoldAmount(pub(crate) u8);
 
 impl Display for SoldAmount {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -534,7 +552,7 @@ impl Display for SoldAmount {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub(crate) enum SoldWithin {
     NoSales,
     Today(SoldAmount),
@@ -542,6 +560,38 @@ pub(crate) enum SoldWithin {
     Month(SoldAmount),
     Year(SoldAmount),
     YearsAgo(u8, SoldAmount),
+}
+
+impl PartialOrd for SoldWithin {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        match (self, other) {
+            (SoldWithin::NoSales, SoldWithin::NoSales) => Some(std::cmp::Ordering::Equal),
+            (SoldWithin::NoSales, _) => None,
+            (_, SoldWithin::NoSales) => None,
+            (SoldWithin::Today(a), SoldWithin::Today(b)) => Some(b.cmp(a)),
+            (SoldWithin::Today(_), _) => Some(std::cmp::Ordering::Less),
+            (SoldWithin::Week(_), SoldWithin::Today(_)) => Some(std::cmp::Ordering::Greater),
+            (SoldWithin::Week(a), SoldWithin::Week(b)) => Some(b.cmp(a)),
+            (SoldWithin::Week(_), _) => Some(std::cmp::Ordering::Less),
+            (SoldWithin::Month(_), SoldWithin::Today(_) | SoldWithin::Week(_)) => {
+                Some(std::cmp::Ordering::Greater)
+            }
+            (SoldWithin::Month(a), SoldWithin::Month(b)) => Some(b.cmp(a)),
+            (SoldWithin::Month(_), SoldWithin::Year(_) | SoldWithin::YearsAgo(_, _)) => {
+                Some(std::cmp::Ordering::Less)
+            }
+            (
+                SoldWithin::Year(_),
+                SoldWithin::Today(_) | SoldWithin::Week(_) | SoldWithin::Month(_),
+            ) => Some(std::cmp::Ordering::Greater),
+            (SoldWithin::Year(a), SoldWithin::Year(b)) => Some(b.cmp(a)),
+            (SoldWithin::Year(_), SoldWithin::YearsAgo(_, _)) => Some(std::cmp::Ordering::Less),
+            (SoldWithin::YearsAgo(a, aa), SoldWithin::YearsAgo(b, bb)) => {
+                Some(a.cmp(b).then_with(|| aa.cmp(bb)))
+            }
+            (SoldWithin::YearsAgo(_, _), _) => Some(std::cmp::Ordering::Greater),
+        }
+    }
 }
 
 impl Display for SoldWithin {
@@ -560,6 +610,19 @@ impl Display for SoldWithin {
 impl Render for SoldWithin {
     fn render(&self) -> maud::Markup {
         maud::PreEscaped(self.to_string())
+    }
+}
+
+impl From<&SoldWithin> for Duration {
+    fn from(sold: &SoldWithin) -> Self {
+        match sold {
+            SoldWithin::NoSales => Duration::days(0),
+            SoldWithin::Today(_) => Duration::days(1),
+            SoldWithin::Week(_) => Duration::weeks(1),
+            SoldWithin::Month(_) => Duration::weeks(4),
+            SoldWithin::Year(_) => Duration::weeks(52),
+            SoldWithin::YearsAgo(_, _) => Duration::weeks(1000),
+        }
     }
 }
 
@@ -628,8 +691,23 @@ pub(crate) struct ResaleStats {
 }
 
 pub(crate) struct ResaleOptions {
-    pub(crate) days: i32,
     pub(crate) minimum_profit: Option<i32>,
     pub(crate) filter_world: Option<i32>,
     pub(crate) filter_datacenter: Option<i32>,
+    pub(crate) filter_sale: Option<SoldWithin>,
+}
+
+#[cfg(test)]
+mod test {
+    use crate::analyzer_service::SoldAmount;
+
+    use super::SoldWithin;
+
+    #[test]
+    fn sold_within_serialize() {
+        let sold = SoldWithin::Month(SoldAmount(5));
+        assert_eq!(serde_json::to_string(&sold).unwrap(), "{\"Month\":5}");
+        let sold_year = SoldWithin::YearsAgo(5, SoldAmount(5));
+        assert_eq!(serde_json::to_string(&sold_year).unwrap(), "");
+    }
 }

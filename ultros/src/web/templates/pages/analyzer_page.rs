@@ -69,12 +69,36 @@ impl Page for AnalyzerPage {
               div class="content-well" {
                 ((paginate))
                 form class="flex-row" {
-
                   div class="flex-column" {
-                    label for="days" {
-                      "sale within days:"
+                    label for="filter-sale" {
+                      "Minimum sold within duration"
                     }
-                    input id="days" name="days" type="number" value=((self.options.days.unwrap_or(100))) {}
+                    div class="flex-row" {
+                      input name="sale_value" id="sale_value" type="number" value=((self.options.sale_value.unwrap_or_default())) {
+                      }
+                      select name="sale_label" {
+                        @if let Some(label) = &self.options.sale_label {
+                          option value=((label)) {
+                            ((label))
+                          }
+                        }
+                        option value="" {
+                          "None"
+                        }
+                        option value="Today" {
+                          "Today"
+                        }
+                        option value="Week" {
+                          "Week"
+                        }
+                        option value="Month" {
+                          "Month"
+                        }
+                        option value="Year" {
+                          "Year"
+                        }
+                      }
+                    }
                   }
                   div class="flex-column" {
                     label for="minimum_profit" {

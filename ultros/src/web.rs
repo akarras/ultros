@@ -51,7 +51,7 @@ use self::templates::{
         retainer::user_retainers_page::{RetainerViewType, UserRetainersPage},
     },
 };
-use crate::analyzer_service::{AnalyzerService, ResaleOptions};
+use crate::analyzer_service::{AnalyzerService, ResaleOptions, SoldAmount, SoldWithin};
 use crate::event::{EventReceivers, EventSenders, EventType};
 use crate::web::api::cheapest_per_world;
 use crate::web::templates::pages::character::refresh_character;
@@ -343,16 +343,36 @@ impl Render for AnalyzerSort {
     }
 }
 
+#[derive(Deserialize, Serialize, Clone)]
+pub enum SaleTimeLabel {
+    Today,
+    Week,
+    Month,
+    Year,
+}
+
+impl Render for SaleTimeLabel {
+    fn render(&self) -> maud::Markup {
+        maud::PreEscaped(match self {
+            SaleTimeLabel::Today => "Today".to_string(),
+            SaleTimeLabel::Week => "Week".to_string(),
+            SaleTimeLabel::Month => "Month".to_string(),
+            SaleTimeLabel::Year => "Year".to_string(),
+        })
+    }
+}
+
 #[serde_as]
 #[derive(Deserialize, Serialize, Clone)]
 pub struct AnalyzerOptions {
     sort: Option<AnalyzerSort>,
     page: Option<usize>,
-    days: Option<i32>,
     minimum_profit: Option<i32>,
     world: Option<i32>,
     filter_world: Option<i32>,
     filter_datacenter: Option<i32>,
+    sale_label: Option<SaleTimeLabel>,
+    sale_value: Option<u8>,
 }
 
 async fn analyze_profits(
@@ -395,10 +415,24 @@ async fn analyze_profits(
             world.id,
             region.id,
             ResaleOptions {
-                days: options.days.unwrap_or(10),
                 minimum_profit: options.minimum_profit,
                 filter_world: options.filter_world,
                 filter_datacenter: options.filter_datacenter,
+                filter_sale: options
+                    .sale_label
+                    .as_ref()
+                    .map(|sale| {
+                        options.sale_value.as_ref().map(|value| {
+                            let value = SoldAmount(*value);
+                            match sale {
+                                SaleTimeLabel::Today => SoldWithin::Today(value),
+                                SaleTimeLabel::Week => SoldWithin::Week(value),
+                                SaleTimeLabel::Month => SoldWithin::Month(value),
+                                SaleTimeLabel::Year => SoldWithin::Year(value),
+                            }
+                        })
+                    })
+                    .flatten(),
             },
             &world_cache,
         )
