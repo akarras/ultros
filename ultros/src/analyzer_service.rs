@@ -678,10 +678,10 @@ impl<'a> FromIterator<&'a SaleSummary> for SoldWithin {
             Year,
             YearsAgo(i64),
         }
-        let (marker, duration) = if duration_since.num_days() < 1 {
-            (SaleMarker::Today, now.checked_add_signed(Duration::days(1)))
+        let (marker, end_date) = if duration_since.num_days() < 1 {
+            (SaleMarker::Today, now.checked_sub_signed(Duration::days(1)))
         } else if duration_since.num_weeks() < 1 {
-            (SaleMarker::Week, now.checked_add_signed(Duration::weeks(1)))
+            (SaleMarker::Week, now.checked_sub_signed(Duration::weeks(1)))
         } else if duration_since.num_weeks() < 4 {
             (
                 SaleMarker::Month,
@@ -690,20 +690,20 @@ impl<'a> FromIterator<&'a SaleSummary> for SoldWithin {
         } else if duration_since.num_weeks() < 52 {
             (
                 SaleMarker::Year,
-                now.checked_add_signed(Duration::weeks(52)),
+                now.checked_sub_signed(Duration::weeks(52)),
             )
         } else {
             let years = duration_since.num_days() / 365;
             (
                 SaleMarker::YearsAgo(years),
-                now.checked_add_signed(Duration::days(years * 365)),
+                now.checked_sub_signed(Duration::days(years * 365)),
             )
         };
-        let duration = match duration {
+        let end_date = match end_date {
             Some(d) => d,
             None => return SoldWithin::NoSales,
         };
-        let sold_amount = iter.filter(|sale| sale.sale_date.lt(&duration)).count() as u8;
+        let sold_amount = iter.filter(|sale| sale.sale_date.gt(&end_date)).count() as u8;
         let sold_amount = SoldAmount(sold_amount);
         match marker {
             SaleMarker::Today => SoldWithin::Today(sold_amount),
