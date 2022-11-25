@@ -229,7 +229,7 @@ impl CheapestListings {
 #[derive(Debug, Clone)]
 pub(crate) struct AnalyzerService {
     /// world_id -> TopSellers
-    recent_sale_history: Arc<RwLock<HashMap<i32, SaleHistory>>>,
+    recent_sale_history: Arc<HashMap<i32, RwLock<SaleHistory>>>,
     /// Cheapest items get stored as any anyselector. Currently exists for WorldID/RegionID, but not datacenter.
     cheapest_items: Arc<HashMap<AnySelector, RwLock<CheapestListings>>>,
     initiated: Arc<AtomicBool>,
@@ -255,8 +255,16 @@ impl AnalyzerService {
             .map(|s| (s, RwLock::default()))
             .collect();
         let cheapest_items = Arc::new(cheapest_items);
+        let recent_sale_history = Arc::new(
+            world_cache
+                .get_all()
+                .iter()
+                .flat_map(|(_, dcs)| dcs.iter().flat_map(|(_, w)| w.iter().map(|w| w.id)))
+                .map(|w| (w, RwLock::default()))
+                .collect::<HashMap<i32, RwLock<SaleHistory>>>(),
+        );
         let temp = Self {
-            recent_sale_history: Default::default(),
+            recent_sale_history,
             cheapest_items,
             initiated: Arc::default(),
         };
@@ -306,10 +314,12 @@ impl AnalyzerService {
         let sale_data = ultros_db.last_n_sales(SALE_HISTORY_SIZE as i32).await;
         match sale_data {
             Ok(mut history_stream) => {
-                let mut writer = self.recent_sale_history.write().await;
                 while let Some(Ok(value)) = history_stream.next().await {
-                    let history = writer.entry(value.world_id).or_default();
-                    history.add_sale(&value);
+                    let history = self
+                        .recent_sale_history
+                        .get(&value.world_id)
+                        .expect("Unable to get world");
+                    history.write().await.add_sale(&value);
                 }
             }
             Err(e) => {
@@ -374,7 +384,6 @@ impl AnalyzerService {
         if !self.initiated.load(Ordering::Relaxed) {
             return None;
         }
-        let recent_sale = self.recent_sale_history.read().await;
         let datacenter_filters_worlds = resale_options.filter_datacenter.and_then(|w| {
             world_cache
                 .lookup_selector(&AnySelector::Datacenter(w))
@@ -382,8 +391,10 @@ impl AnalyzerService {
                 .and_then(|w| world_cache.get_all_worlds_in(&w))
         });
         // figure out what items are selling best on our world first, then figure out what items are available in the region that complement that.
-        let sale = recent_sale.get(&world_id)?;
+        let sale = self.recent_sale_history.get(&world_id)?;
         let sale_history: BTreeMap<_, _> = sale
+            .read()
+            .await
             .item_map
             .iter()
             .map(|(i, values)| (i, values, values.iter().collect::<SoldWithin>()))
@@ -408,7 +419,6 @@ impl AnalyzerService {
                     .map(|price| (*item, (price, sold_within)))
             })
             .collect();
-        drop(recent_sale);
 
         let region = self
             .cheapest_items
@@ -533,7 +543,6 @@ impl AnalyzerService {
                 )
                 .await;
         }
-        drop(entry);
         for listing in listings.iter() {
             let world = self
                 .cheapest_items
@@ -553,9 +562,11 @@ impl AnalyzerService {
     }
 
     async fn add_sale(&self, sale: &sale_history::Model) {
-        let mut lock_guard = self.recent_sale_history.write().await;
-        let entry = lock_guard.entry(sale.world_id).or_default();
-        entry.add_sale(sale);
+        let entry = self
+            .recent_sale_history
+            .get(&sale.world_id)
+            .expect("Unknown world");
+        entry.write().await.add_sale(sale);
     }
 
     pub(crate) async fn read_cheapest_items<T, O>(
