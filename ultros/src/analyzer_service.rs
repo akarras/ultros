@@ -242,13 +242,18 @@ impl AnalyzerService {
         event_receivers: EventReceivers,
         world_cache: Arc<WorldCache>,
     ) -> Self {
-        let cheapest_items : HashMap<AnySelector, RwLock<CheapestListings>> = world_cache.get_all().iter().flat_map(|(region, dcs)| {
+        let cheapest_items: HashMap<AnySelector, RwLock<CheapestListings>> = world_cache
+            .get_all()
+            .iter()
+            .flat_map(|(region, dcs)| {
                 [AnySelector::Region(region.id)].into_iter().chain(
-                dcs.iter()
-                    .map(|(_dc, worlds)| worlds.iter().map(|w| AnySelector::World(w.id))).flatten())
-        })
-        .map(|s| (s, RwLock::default()))
-        .collect();
+                    dcs.iter()
+                        .map(|(_dc, worlds)| worlds.iter().map(|w| AnySelector::World(w.id)))
+                        .flatten(),
+                )
+            })
+            .map(|s| (s, RwLock::default()))
+            .collect();
         let cheapest_items = Arc::new(cheapest_items);
         let temp = Self {
             recent_sale_history: Default::default(),
