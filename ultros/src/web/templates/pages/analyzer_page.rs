@@ -74,7 +74,7 @@ impl Page for AnalyzerPage {
                       "Minimum sold within duration"
                     }
                     div class="flex-row" {
-                      input name="sale_value" id="sale_value" type="number" value=((self.options.sale_value.unwrap_or_default())) {
+                      input name="sale_value" id="sale_value" type="number" max=((4)) value=((self.options.sale_value.unwrap_or_default())) {
                       }
                       select name="sale_label" {
                         @if let Some(label) = &self.options.sale_label {
@@ -82,7 +82,7 @@ impl Page for AnalyzerPage {
                             ((label))
                           }
                         }
-                        option value="" {
+                        option value="NoFilter" {
                           "None"
                         }
                         option value="Today" {

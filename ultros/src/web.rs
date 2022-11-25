@@ -345,6 +345,7 @@ impl Render for AnalyzerSort {
 
 #[derive(Deserialize, Serialize, Clone)]
 pub enum SaleTimeLabel {
+    NoFilter,
     Today,
     Week,
     Month,
@@ -354,6 +355,7 @@ pub enum SaleTimeLabel {
 impl Render for SaleTimeLabel {
     fn render(&self) -> maud::Markup {
         maud::PreEscaped(match self {
+            SaleTimeLabel::NoFilter => "No Filter".to_string(),
             SaleTimeLabel::Today => "Today".to_string(),
             SaleTimeLabel::Week => "Week".to_string(),
             SaleTimeLabel::Month => "Month".to_string(),
@@ -425,14 +427,15 @@ async fn analyze_profits(
                         options.sale_value.as_ref().map(|value| {
                             let value = SoldAmount(*value);
                             match sale {
-                                SaleTimeLabel::Today => SoldWithin::Today(value),
-                                SaleTimeLabel::Week => SoldWithin::Week(value),
-                                SaleTimeLabel::Month => SoldWithin::Month(value),
-                                SaleTimeLabel::Year => SoldWithin::Year(value),
+                                SaleTimeLabel::Today => Some(SoldWithin::Today(value)),
+                                SaleTimeLabel::Week => Some(SoldWithin::Week(value)),
+                                SaleTimeLabel::Month => Some(SoldWithin::Month(value)),
+                                SaleTimeLabel::Year => Some(SoldWithin::Year(value)),
+                                SaleTimeLabel::NoFilter => None,
                             }
                         })
                     })
-                    .flatten(),
+                    .flatten().flatten(),
             },
             &world_cache,
         )
