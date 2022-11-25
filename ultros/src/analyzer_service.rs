@@ -35,6 +35,8 @@ pub const SALE_HISTORY_SIZE: usize = 4;
 pub enum AnalyzerError {
     #[error("Still warming up with data, unable to serve requests.")]
     Uninitialized,
+    #[error("This endpoint currently does not support datacenters")]
+    DatacenterNotAvailable,
 }
 
 #[derive(Hash, Eq, PartialEq, PartialOrd, Ord, Debug, Copy, Clone, Serialize)]
@@ -228,8 +230,8 @@ impl CheapestListings {
 pub(crate) struct AnalyzerService {
     /// world_id -> TopSellers
     recent_sale_history: Arc<RwLock<HashMap<i32, SaleHistory>>>,
-    /// Cheapest items by region. Not catering to slackers.
-    cheapest_items: Arc<RwLock<HashMap<AnySelector, CheapestListings>>>,
+    /// Cheapest items get stored as any anyselector. Currently exists for WorldID/RegionID, but not datacenter.
+    cheapest_items: Arc<HashMap<AnySelector, RwLock<CheapestListings>>>,
     initiated: Arc<AtomicBool>,
 }
 
@@ -240,9 +242,17 @@ impl AnalyzerService {
         event_receivers: EventReceivers,
         world_cache: Arc<WorldCache>,
     ) -> Self {
+        let cheapest_items : HashMap<AnySelector, RwLock<CheapestListings>> = world_cache.get_all().iter().flat_map(|(region, dcs)| {
+                [AnySelector::Region(region.id)].into_iter().chain(
+                dcs.iter()
+                    .map(|(_dc, worlds)| worlds.iter().map(|w| AnySelector::World(w.id))).flatten())
+        })
+        .map(|s| (s, RwLock::default()))
+        .collect();
+        let cheapest_items = Arc::new(cheapest_items);
         let temp = Self {
             recent_sale_history: Default::default(),
-            cheapest_items: Default::default(),
+            cheapest_items,
             initiated: Arc::default(),
         };
 
@@ -267,18 +277,20 @@ impl AnalyzerService {
         info!("starting item listings");
         match listings {
             Ok(mut listings) => {
-                let mut writer = self.cheapest_items.write().await;
+                let writer = &self.cheapest_items;
                 while let Some(Ok(value)) = listings.next().await {
                     let world = world_cache
                         .lookup_selector(&AnySelector::World(value.world_id))
                         .unwrap();
                     let region = world_cache.get_region(&world).unwrap();
-                    let region_listings = writer.entry(AnySelector::Region(region.id)).or_default();
-                    region_listings.add_listing(&value);
+                    let region_listings = writer
+                        .get(&AnySelector::Region(region.id))
+                        .expect("Region not found");
+                    region_listings.write().await.add_listing(&value);
                     let world_listings = writer
-                        .entry(AnySelector::World(value.world_id))
-                        .or_default();
-                    world_listings.add_listing(&value);
+                        .get(&AnySelector::World(value.world_id))
+                        .expect("Unable to get world");
+                    world_listings.write().await.add_listing(&value);
                 }
             }
             Err(e) => {
@@ -393,9 +405,16 @@ impl AnalyzerService {
             .collect();
         drop(recent_sale);
 
-        let items = self.cheapest_items.read().await;
-        let region = items.get(&AnySelector::Region(region_id))?;
-        let sale_world_listings = items.get(&AnySelector::World(world_id))?;
+        let region = self
+            .cheapest_items
+            .get(&AnySelector::Region(region_id))?
+            .read()
+            .await;
+        let sale_world_listings = self
+            .cheapest_items
+            .get(&AnySelector::World(world_id))?
+            .read()
+            .await;
         let possible_sales: Vec<_> = region
             .item_map
             .iter()
@@ -450,7 +469,6 @@ impl AnalyzerService {
                     .unwrap_or(true)
             })
             .collect();
-        drop(items);
 
         Some(possible_sales)
     }
@@ -461,7 +479,6 @@ impl AnalyzerService {
         listings: &[active_listing::Model],
         world_cache: &Arc<WorldCache>,
     ) {
-        let mut lock_guard = self.cheapest_items.write().await;
         // process all listings from one world at a time
         let listings = listings.iter().flat_map(|l| {
             let result = world_cache
@@ -475,10 +492,16 @@ impl AnalyzerService {
         });
 
         for (world_selector, region_selector, listing) in listings {
-            let entry = lock_guard.entry(region_selector).or_default();
-            entry.add_listing(listing);
-            let entry = lock_guard.entry(world_selector).or_default();
-            entry.add_listing(listing);
+            let entry = self
+                .cheapest_items
+                .get(&region_selector)
+                .expect("Unable to get region");
+            entry.write().await.add_listing(listing);
+            let entry = self
+                .cheapest_items
+                .get(&world_selector)
+                .expect("Unable to get world");
+            entry.write().await.add_listing(listing);
         }
     }
 
@@ -490,10 +513,11 @@ impl AnalyzerService {
         world_cache: &WorldCache,
         ultros_db: &UltrosDb,
     ) {
-        let mut lock_guard = self.cheapest_items.write().await;
-        let entry = lock_guard
-            .entry(AnySelector::Region(region_id))
-            .or_default();
+        let entry = self
+            .cheapest_items
+            .get(&AnySelector::Region(region_id))
+            .expect("Unable to get region");
+        let mut entry = entry.write().await;
         for listing in listings.iter() {
             entry
                 .remove_listing(
@@ -504,12 +528,15 @@ impl AnalyzerService {
                 )
                 .await;
         }
-
+        drop(entry);
         for listing in listings.iter() {
-            let world = lock_guard
-                .entry(AnySelector::World(listing.world_id))
-                .or_default();
+            let world = self
+                .cheapest_items
+                .get(&AnySelector::World(listing.world_id))
+                .expect("Unable to find world");
             world
+                .write()
+                .await
                 .remove_listing(
                     listing,
                     AnySelector::World(listing.world_id),
@@ -526,12 +553,21 @@ impl AnalyzerService {
         entry.add_sale(sale);
     }
 
-    pub(crate) async fn read_cheapest_items<T, O>(&self, extract: T) -> Result<O, AnalyzerError>
+    pub(crate) async fn read_cheapest_items<T, O>(
+        &self,
+        selector: &AnySelector,
+        extract: T,
+    ) -> Result<O, AnalyzerError>
     where
-        T: FnOnce(&HashMap<AnySelector, CheapestListings>) -> O,
+        T: FnOnce(&CheapestListings) -> O,
     {
         if self.initiated.load(Ordering::Relaxed) {
-            let read = self.cheapest_items.read().await;
+            let read = self
+                .cheapest_items
+                .get(&selector)
+                .ok_or(AnalyzerError::DatacenterNotAvailable)?
+                .read()
+                .await;
             Ok(extract(&read))
         } else {
             return Err(AnalyzerError::Uninitialized);
@@ -649,7 +685,7 @@ impl<'a> FromIterator<&'a SaleSummary> for SoldWithin {
         } else if duration_since.num_weeks() < 4 {
             (
                 SaleMarker::Month,
-                now.checked_add_signed(Duration::weeks(4)),
+                now.checked_sub_signed(Duration::weeks(4)),
             )
         } else if duration_since.num_weeks() < 52 {
             (

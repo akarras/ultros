@@ -33,22 +33,17 @@ pub(crate) async fn cheapest_per_world(
     let value = world_cache.lookup_value_by_name(&world)?;
     let selector = AnySelector::from(&value);
     let cheapest_listings = analyzer
-        .read_cheapest_items(|listings| {
+        .read_cheapest_items(&selector, |listings| {
             listings
-                .get(&selector)
-                .map(|listing| {
-                    listing
-                        .item_map
-                        .iter()
-                        .map(|(i, v)| CheapestListingData {
-                            item_id: i.item_id,
-                            hq: i.hq,
-                            cheapest_price: v.price,
-                            world_id: v.world_id,
-                        })
-                        .collect::<Vec<_>>()
+                .item_map
+                .iter()
+                .map(|(i, v)| CheapestListingData {
+                    item_id: i.item_id,
+                    hq: i.hq,
+                    cheapest_price: v.price,
+                    world_id: v.world_id,
                 })
-                .unwrap_or_default()
+                .collect::<Vec<_>>()
         })
         .await?;
     Ok(Json(CheapestPerWorld { cheapest_listings }))
