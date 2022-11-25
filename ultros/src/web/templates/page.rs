@@ -7,6 +7,12 @@ use maud::{html, Markup, Render};
 
 pub trait Page {
     fn get_name(&'_ self) -> &'_ str;
+    fn get_description(&'_ self) -> Option<&'_ str> {
+        None
+    }
+    fn get_tags(&'_ self) -> Option<&'_ str> {
+        None
+    }
     fn draw_body(&self) -> Markup;
 }
 
