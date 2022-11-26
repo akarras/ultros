@@ -1,9 +1,8 @@
 use super::oauth::AuthDiscordUser;
 use crate::{
-    discord::ffxiv::alerts::{UndercutRetainer, UndercutTracker},
     event::EventReceivers,
     utils,
-    world_cache::AnySelector,
+    world_cache::AnySelector, alerts::undercut_alert::{UndercutTracker, UndercutRetainer, UndercutResult},
 };
 use axum::{
     extract::{
@@ -148,10 +147,10 @@ async fn handle_upgrade(
                         .await
                     {
                         Ok(ok) => match ok {
-                            crate::discord::ffxiv::alerts::UndercutResult::None => {
+                            UndercutResult::None => {
                                 continue;
                             }
-                            crate::discord::ffxiv::alerts::UndercutResult::Undercut {
+                            UndercutResult::Undercut {
                                 item_id,
                                 undercut_retainers,
                             } => {

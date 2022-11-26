@@ -4,9 +4,8 @@ use chrono::Local;
 use poise::{builtins::HelpConfiguration, serenity_prelude as serenity};
 use ultros_db::UltrosDb;
 
-use crate::event::{EventReceivers, EventSenders};
+use crate::{event::{EventReceivers, EventSenders}, alerts::alert_manager::AlertManager};
 
-use self::ffxiv::alerts::AlertManager;
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Context<'a> = poise::Context<'a, Data, Error>;

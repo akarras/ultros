@@ -1,5 +1,4 @@
 use super::{Context, Error};
-pub(crate) mod alerts;
 mod analyze;
 mod character;
 mod retainer;
