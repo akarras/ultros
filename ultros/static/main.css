@@ -445,6 +445,14 @@ input.btn {
   flex-direction: column;
 }
 
+.flex-center {
+  align-items: center;
+}
+
+.column-pad {
+  column-gap: 10px;
+}
+
 .main-content table {
   white-space: nowrap;
   text-align: left;

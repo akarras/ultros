@@ -62,7 +62,7 @@ where
           (header)
           body {
             (self.0.draw_body())
-            ((Footer{}))
+            ((Footer))
           }
         }
     }

@@ -15,7 +15,7 @@ impl Page for HomePage {
     }
 
     fn get_description(&'_ self) -> Option<String> {
-        Some("Ultros is a ffxiv marketboard analysis tool that enables users to engage in abritrage, keep listings lowest, and get real time alerts".to_string())
+        Some("Ultros is a ffxiv marketboard analysis tool that enables users to engage in abritrage, keep up to date with all of your retainers and ensure you've got the best prices! Also COMING SOON™ real time alerts".to_string())
     }
 
     fn get_tags(&'_ self) -> Option<String> {
