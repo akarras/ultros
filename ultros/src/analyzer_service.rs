@@ -8,7 +8,7 @@ use std::{
     },
 };
 
-use chrono::{Duration, Local, NaiveDateTime};
+use chrono::{Duration, NaiveDateTime, Utc};
 use futures::StreamExt;
 use maud::Render;
 use poise::serenity_prelude::Timestamp;
@@ -407,7 +407,7 @@ impl AnalyzerService {
                             .as_ref()
                             .map(|sale_within| {
                                 let sale_within = Duration::from(sale_within);
-                                Local::now()
+                                Utc::now()
                                     .naive_utc()
                                     .signed_duration_since(sale.sale_date)
                                     .lt(&sale_within)
@@ -751,9 +751,12 @@ pub(crate) struct ResaleOptions {
 
 #[cfg(test)]
 mod test {
-    use crate::analyzer_service::SoldAmount;
+    use chrono::{Utc, Duration};
+    use ultros_db::sales::AbbreviatedSaleData;
 
-    use super::SoldWithin;
+    use crate::analyzer_service::{SoldAmount, ItemKey};
+
+    use super::{SoldWithin, SaleHistory};
 
     #[test]
     fn sold_within_serialize() {
@@ -761,5 +764,16 @@ mod test {
         assert_eq!(serde_json::to_string(&sold).unwrap(), "{\"Month\":5}");
         let sold_year = SoldWithin::YearsAgo(5, SoldAmount(5));
         assert_eq!(serde_json::to_string(&sold_year).unwrap(), "");
+    }
+
+    #[test]
+    fn test_sale_history_sort() {
+        let mut sale_history = SaleHistory::default();
+        for i in 0..10 {
+            sale_history.add_sale(&AbbreviatedSaleData { sold_item_id: 101, hq: true, price_per_item: i, sold_date: Utc::now().naive_utc().checked_add_signed(Duration::seconds(i as i64)).unwrap(), world_id: 0 });
+        }
+        let map = sale_history.item_map.get(&ItemKey{ item_id: 101, hq: true}).unwrap();
+        assert_eq!(map[0].price_per_item, 9);
+        assert_eq!(map[1].price_per_item, 8);
     }
 }
