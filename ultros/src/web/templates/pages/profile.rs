@@ -79,8 +79,8 @@ pub(crate) struct Profile {
 }
 
 impl Page for Profile {
-    fn get_name(&'_ self) -> &'_ str {
-        "Profile"
+    fn get_name(&'_ self) -> String {
+        "Profile".to_string()
     }
 
     fn draw_body(&self) -> maud::Markup {

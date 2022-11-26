@@ -10,8 +10,8 @@ pub(crate) struct AlertsPage {
 }
 
 impl Page for AlertsPage {
-    fn get_name(&'_ self) -> &'_ str {
-        "Alerts"
+    fn get_name(&self) -> String {
+        "Alerts".to_string()
     }
 
     fn draw_body(&self) -> maud::Markup {

@@ -33,8 +33,8 @@ pub(crate) struct ClaimCharacter {
 }
 
 impl Page for ClaimCharacter {
-    fn get_name(&'_ self) -> &'_ str {
-        "Verification Page"
+    fn get_name(&'_ self) -> String {
+        "Verification Page".to_string()
     }
 
     fn draw_body(&self) -> maud::Markup {

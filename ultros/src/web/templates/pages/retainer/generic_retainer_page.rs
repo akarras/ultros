@@ -24,8 +24,19 @@ pub(crate) struct GenericRetainerPage {
 }
 
 impl Page for GenericRetainerPage {
-    fn get_name(&'_ self) -> &'_ str {
-        &self.retainer_name
+    fn get_name(&'_ self) -> String {
+        format!("Retainer: {}@{}", self.retainer_name, self.world_name)
+    }
+
+    fn get_description(&'_ self) -> Option<String> {
+        Some(format!(
+            "Listings for the retainer {} on world {}",
+            self.retainer_name, self.world_name
+        ))
+    }
+
+    fn get_tags(&'_ self) -> Option<String> {
+        Some("ffxiv, marketboard, listings, retainer".to_string())
     }
 
     fn draw_body(&self) -> maud::Markup {

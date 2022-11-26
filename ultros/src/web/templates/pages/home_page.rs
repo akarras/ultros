@@ -10,8 +10,16 @@ pub(crate) struct HomePage {
 }
 
 impl Page for HomePage {
-    fn get_name(&'_ self) -> &'_ str {
-        "Home page"
+    fn get_name(&'_ self) -> String {
+        "Ultros Home".to_string()
+    }
+
+    fn get_description(&'_ self) -> Option<String> {
+        Some("Ultros is a ffxiv marketboard analysis tool that enables users to engage in abritrage, keep listings lowest, and get real time alerts".to_string())
+    }
+
+    fn get_tags(&'_ self) -> Option<String> {
+        Some("ffxiv, final fantasy 14, marketboard, realtime, listings, fast".to_string())
     }
 
     fn draw_body(&self) -> Markup {

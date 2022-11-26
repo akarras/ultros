@@ -13,8 +13,8 @@ pub(crate) struct AddRetainer {
 }
 
 impl Page for AddRetainer {
-    fn get_name(&'_ self) -> &'_ str {
-        "Home page"
+    fn get_name(&self) -> String {
+        "Home page".to_string()
     }
 
     fn draw_body(&self) -> Markup {

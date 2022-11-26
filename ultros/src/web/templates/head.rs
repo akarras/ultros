@@ -6,16 +6,6 @@ pub(crate) struct HtmlHead<'a> {
     pub(crate) keywords: Option<&'a str>,
 }
 
-impl<'a> HtmlHead<'a> {
-    pub(crate) fn new(title: &'a str) -> Self {
-        Self {
-            title,
-            description: None,
-            keywords: None,
-        }
-    }
-}
-
 impl<'a> Render for HtmlHead<'a> {
     fn render(&self) -> maud::Markup {
         html! {

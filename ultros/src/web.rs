@@ -435,7 +435,8 @@ async fn analyze_profits(
                             }
                         })
                     })
-                    .flatten().flatten(),
+                    .flatten()
+                    .flatten(),
             },
             &world_cache,
         )

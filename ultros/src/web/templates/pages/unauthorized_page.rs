@@ -5,8 +5,8 @@ use crate::web::templates::{components::header::Header, page::Page};
 pub(crate) struct UnauthorizedPage {}
 
 impl Page for UnauthorizedPage {
-    fn get_name(&'_ self) -> &'_ str {
-        "Unauthorized"
+    fn get_name(&'_ self) -> String {
+        "Unauthorized".to_string()
     }
 
     fn draw_body(&self) -> maud::Markup {

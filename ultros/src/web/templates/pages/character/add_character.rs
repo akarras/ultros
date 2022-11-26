@@ -58,8 +58,8 @@ pub(crate) struct AddCharacter {
 }
 
 impl Page for AddCharacter {
-    fn get_name(&self) -> &str {
-        "Add Character"
+    fn get_name(&self) -> String {
+        "Add Character".to_string()
     }
 
     fn draw_body(&self) -> maud::Markup {

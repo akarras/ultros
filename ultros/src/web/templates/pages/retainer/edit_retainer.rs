@@ -48,8 +48,8 @@ pub(crate) async fn edit_retainer(
 }
 
 impl Page for EditRetainers {
-    fn get_name(&'_ self) -> &'_ str {
-        "Edit retainers"
+    fn get_name(&'_ self) -> String {
+        "Edit retainers".to_string()
     }
 
     fn draw_body(&self) -> maud::Markup {

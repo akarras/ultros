@@ -43,8 +43,24 @@ where
 }
 
 impl Page for AnalyzerPage {
-    fn get_name(&'_ self) -> &'_ str {
-        "Analyzer"
+    fn get_name(&self) -> String {
+        "Analyzer".to_string()
+    }
+
+    fn get_description(&self) -> Option<String> {
+        Some(format!(
+            "ffxiv marketboard analysis for {}",
+            self.world
+                .as_ref()
+                .map(|w| w.name.as_str())
+                .unwrap_or("Unknown world")
+        ))
+    }
+
+    fn get_tags(&self) -> Option<String> {
+        Some(format!(
+            "ffxiv, marketboard, analysis, abritrage, tool, final fantasy 14"
+        ))
     }
 
     fn draw_body(&self) -> maud::Markup {

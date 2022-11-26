@@ -5,8 +5,8 @@ use crate::web::templates::{components::header::Header, page::Page};
 pub struct ErrorPage {}
 
 impl Page for ErrorPage {
-    fn get_name(&'_ self) -> &'_ str {
-        "Error"
+    fn get_name(&'_ self) -> String {
+        "Error".to_string()
     }
 
     fn draw_body(&self) -> maud::Markup {

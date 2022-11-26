@@ -25,8 +25,8 @@ pub(crate) struct VerifyCharacter {
 }
 
 impl Page for VerifyCharacter {
-    fn get_name(&'_ self) -> &'_ str {
-        "Verify Character"
+    fn get_name(&'_ self) -> String {
+        "Verify Character".to_string()
     }
 
     fn draw_body(&self) -> maud::Markup {

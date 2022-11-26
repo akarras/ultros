@@ -19,8 +19,8 @@ pub(crate) struct UserRetainersPage {
 }
 
 impl Page for UserRetainersPage {
-    fn get_name(&'_ self) -> &'_ str {
-        "Your Retainers"
+    fn get_name(&'_ self) -> String {
+        "Your Retainers".to_string()
     }
 
     fn draw_body(&self) -> maud::Markup {

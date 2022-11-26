@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use maud::html;
 use ultros_db::entity::{active_listing, retainer, sale_history, unknown_final_fantasy_character};
-use xiv_gen::ItemId;
 
 use crate::{
     web::{
@@ -37,12 +36,26 @@ pub(crate) struct ListingsPage {
 }
 
 impl Page for ListingsPage {
-    fn get_name(&'_ self) -> &'_ str {
-        xiv_gen_db::decompress_data()
-            .items
-            .get(&ItemId(self.item_id))
-            .map(|i| i.name.as_str())
-            .unwrap_or_default()
+    fn get_name(&'_ self) -> String {
+        format!(
+            "{} | {} listings",
+            self.item.name.as_str(),
+            &self.selected_world
+        )
+    }
+
+    fn get_description(&'_ self) -> Option<String> {
+        Some(format!(
+            "Real time marketboard listings and sale history for {} on {}",
+            &self.item.name, &self.selected_world
+        ))
+    }
+
+    fn get_tags(&'_ self) -> Option<String> {
+        Some(format!(
+            "{}, ffxiv, marketboard, listings, realtime, sale history, fast",
+            self.item.name
+        ))
     }
 
     fn draw_body(&self) -> maud::Markup {

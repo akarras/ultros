@@ -6,11 +6,11 @@ use lazy_static::__Deref;
 use maud::{html, Markup, Render};
 
 pub trait Page {
-    fn get_name(&'_ self) -> &'_ str;
-    fn get_description(&'_ self) -> Option<&'_ str> {
+    fn get_name(&'_ self) -> String;
+    fn get_description(&'_ self) -> Option<String> {
         None
     }
-    fn get_tags(&'_ self) -> Option<&'_ str> {
+    fn get_tags(&'_ self) -> Option<String> {
         None
     }
     fn draw_body(&self) -> Markup;
@@ -23,8 +23,16 @@ impl<P: Page + ?Sized> Page for Box<P> {
         self.deref().draw_body()
     }
 
-    fn get_name(&'_ self) -> &'_ str {
+    fn get_name(&'_ self) -> String {
         self.deref().get_name()
+    }
+
+    fn get_description(&'_ self) -> Option<String> {
+        self.deref().get_description()
+    }
+
+    fn get_tags(&'_ self) -> Option<String> {
+        self.deref().get_tags()
     }
 }
 
@@ -42,7 +50,14 @@ where
     T: Page,
 {
     fn render(&self) -> Markup {
-        let header = HtmlHead::new(self.0.get_name());
+        let page = &self.0;
+        let description = page.get_description();
+        let keywords = page.get_tags();
+        let header = HtmlHead {
+            title: &page.get_name(),
+            description: description.as_ref().map(|s| s.as_str()),
+            keywords: keywords.as_ref().map(|s| s.as_str()),
+        };
         html! {
           (header)
           body {
