@@ -673,7 +673,7 @@ impl From<&SoldWithin> for Duration {
             SoldWithin::Week(_) => Duration::weeks(1),
             SoldWithin::Month(_) => Duration::weeks(4),
             SoldWithin::Year(_) => Duration::weeks(52),
-            SoldWithin::YearsAgo(_, _) => Duration::weeks(1000),
+            SoldWithin::YearsAgo(year, _) => Duration::weeks((*year as i64) * 52),
         }
     }
 }
@@ -709,10 +709,10 @@ impl<'a> FromIterator<&'a SaleSummary> for SoldWithin {
                 now.checked_sub_signed(Duration::weeks(52)),
             )
         } else {
-            let years = duration_since.num_days() / 365;
+            let years = duration_since.num_weeks() / 52;
             (
                 SaleMarker::YearsAgo(years),
-                now.checked_sub_signed(Duration::days(years * 365)),
+                now.checked_sub_signed(Duration::weeks(years * 52)),
             )
         };
         let end_date = match end_date {
