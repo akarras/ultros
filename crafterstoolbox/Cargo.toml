@@ -27,7 +27,7 @@ writeable = "0.5.0"
 log = "0.4.17"
 
 itertools = "0.10.3"
-chrono = "0.4.22"
+chrono = "0.4.23"
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

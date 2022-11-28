@@ -51,19 +51,6 @@ impl MigrationTrait for Migration {
                     .to_owned(),
             )
             .await?;
-        manager
-            .alter_table(
-                TableAlterStatement::new()
-                    .table(FfxivCharacterVerification::Table)
-                    .modify_column(
-                        ColumnDef::new(FfxivCharacterVerification::Id)
-                            .primary_key()
-                            .auto_increment()
-                            .integer(),
-                    )
-                    .to_owned(),
-            )
-            .await?;
 
         Ok(())
     }

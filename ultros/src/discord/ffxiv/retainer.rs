@@ -20,12 +20,15 @@ use super::{Context, Error};
     )
 )]
 pub(crate) async fn retainer(ctx: Context<'_>) -> Result<(), Error> {
-    ctx.say("Use one of the subcommands `list`,
+    ctx.say(
+        "Use one of the subcommands `list`,
         `add`,
         `remove`,
         `check_listings`,
         `check_undercuts`,
-        `add_undercut_alert`").await?;
+        `add_undercut_alert`",
+    )
+    .await?;
     Ok(())
 }
 

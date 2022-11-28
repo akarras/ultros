@@ -751,12 +751,12 @@ pub(crate) struct ResaleOptions {
 
 #[cfg(test)]
 mod test {
-    use chrono::{Utc, Duration};
+    use chrono::{Duration, Utc};
     use ultros_db::sales::AbbreviatedSaleData;
 
-    use crate::analyzer_service::{SoldAmount, ItemKey};
+    use crate::analyzer_service::{ItemKey, SoldAmount};
 
-    use super::{SoldWithin, SaleHistory};
+    use super::{SaleHistory, SoldWithin};
 
     #[test]
     fn sold_within_serialize() {
@@ -770,9 +770,24 @@ mod test {
     fn test_sale_history_sort() {
         let mut sale_history = SaleHistory::default();
         for i in 0..10 {
-            sale_history.add_sale(&AbbreviatedSaleData { sold_item_id: 101, hq: true, price_per_item: i, sold_date: Utc::now().naive_utc().checked_add_signed(Duration::seconds(i as i64)).unwrap(), world_id: 0 });
+            sale_history.add_sale(&AbbreviatedSaleData {
+                sold_item_id: 101,
+                hq: true,
+                price_per_item: i,
+                sold_date: Utc::now()
+                    .naive_utc()
+                    .checked_add_signed(Duration::seconds(i as i64))
+                    .unwrap(),
+                world_id: 0,
+            });
         }
-        let map = sale_history.item_map.get(&ItemKey{ item_id: 101, hq: true}).unwrap();
+        let map = sale_history
+            .item_map
+            .get(&ItemKey {
+                item_id: 101,
+                hq: true,
+            })
+            .unwrap();
         assert_eq!(map[0].price_per_item, 9);
         assert_eq!(map[1].price_per_item, 8);
     }

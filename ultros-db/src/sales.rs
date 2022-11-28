@@ -8,7 +8,7 @@ use crate::{
     UltrosDb,
 };
 use anyhow::Result;
-use chrono::NaiveDateTime;
+use chrono::{Duration, NaiveDateTime};
 
 use futures::Stream;
 use migration::{
@@ -48,6 +48,19 @@ impl UltrosDb {
             .filter(filter_expression)
             .all(&self.db)
             .await?;
+        // just nudge the timestamps to not be exactly aligned...
+        let mut last_timestamp = None;
+        for sale in &mut sales {
+            if let Some(t) = last_timestamp {
+                if t >= sale.timestamp {
+                    sale.timestamp = t;
+                    sale.timestamp += Duration::microseconds(1);
+                    assert!(sale.timestamp != last_timestamp.unwrap());
+                }
+            }
+
+            last_timestamp = Some(sale.timestamp.clone());
+        }
 
         // fill in the rest of the characters
         for name in buyer_names {
@@ -135,17 +148,16 @@ impl UltrosDb {
                 .map(|c| c.id)
                 .expect("Shouldn't be able to have a character not in the list");
             recorded_sales.push(Model {
-                id: 0,
                 quantity,
                 price_per_item: price_per_unit,
                 buying_character_id: character_id,
                 hq,
                 sold_item_id: item_id.0,
                 sold_date: sale.timestamp.naive_utc(),
+                buyer_name: Some(buyer_name.clone()),
                 world_id: world_id.0,
             });
             ActiveModel {
-                id: ActiveValue::default(),
                 quantity: Set(quantity),
                 price_per_item: Set(price_per_unit),
                 buying_character_id: Set(character_id),
@@ -153,6 +165,7 @@ impl UltrosDb {
                 sold_item_id: Set(item_id.0),
                 sold_date: Set(sale.timestamp.naive_utc()),
                 world_id: Set(world_id.0),
+                buyer_name: Set(Some(buyer_name)),
             }
         }))
         .exec(&self.db)

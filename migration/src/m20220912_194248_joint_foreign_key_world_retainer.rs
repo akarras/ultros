@@ -50,7 +50,16 @@ impl MigrationTrait for Migration {
         manager
             .drop_index(
                 IndexDropStatement::new()
+                    .table(Retainer::Table)
                     .name("UniqueRetainerNamePerWorld")
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .drop_foreign_key(
+                ForeignKeyDropStatement::new()
+                    .table(ActiveListing::Table)
+                    .name("active_listing_retainer_world_id_fkey")
                     .to_owned(),
             )
             .await?;
@@ -62,12 +71,6 @@ impl MigrationTrait for Migration {
                     .to_owned(),
             )
             .await?;
-        manager
-            .drop_foreign_key(
-                ForeignKeyDropStatement::new()
-                    .name("active_listing_retainer_world_id_fkey")
-                    .to_owned(),
-            )
-            .await
+        Ok(())
     }
 }

@@ -4,8 +4,10 @@ use chrono::Local;
 use poise::{builtins::HelpConfiguration, serenity_prelude as serenity};
 use ultros_db::UltrosDb;
 
-use crate::{event::{EventReceivers, EventSenders}, alerts::alert_manager::AlertManager};
-
+use crate::{
+    alerts::alert_manager::AlertManager,
+    event::{EventReceivers, EventSenders},
+};
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Context<'a> = poise::Context<'a, Data, Error>;

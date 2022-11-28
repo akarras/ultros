@@ -1,8 +1,9 @@
 use super::oauth::AuthDiscordUser;
 use crate::{
+    alerts::undercut_alert::{UndercutResult, UndercutRetainer, UndercutTracker},
     event::EventReceivers,
     utils,
-    world_cache::AnySelector, alerts::undercut_alert::{UndercutTracker, UndercutRetainer, UndercutResult},
+    world_cache::AnySelector,
 };
 use axum::{
     extract::{
