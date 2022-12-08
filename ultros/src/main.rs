@@ -19,7 +19,7 @@ use axum_extra::extract::cookie::Key;
 use discord::start_discord;
 use event::{create_event_busses, EventProducer, EventType};
 use tracing::{error, info};
-use ultros_db::entity::active_listing;
+use ultros_db::entity::{active_listing, sale_history};
 use ultros_db::UltrosDb;
 use universalis::websocket::event_types::{EventChannel, SubscribeMode, WSMessage};
 use universalis::websocket::SocketRx;
@@ -28,7 +28,7 @@ use web::character_verifier_service::CharacterVerifierService;
 use web::oauth::{AuthUserCache, DiscordAuthConfig, OAuthScope};
 use world_cache::WorldCache;
 
-async fn run_socket_listener(db: UltrosDb, listings_tx: EventProducer<Vec<active_listing::Model>>) {
+async fn run_socket_listener(db: UltrosDb, listings_tx: EventProducer<Vec<active_listing::Model>>, sales_tx: EventProducer<Vec<sale_history::Model>>) {
     let mut socket = WebsocketClient::connect().await;
     socket
         .update_subscription(SubscribeMode::Subscribe, EventChannel::ListingsAdd, None)
@@ -46,6 +46,7 @@ async fn run_socket_listener(db: UltrosDb, listings_tx: EventProducer<Vec<active
             let db = db.clone();
             // hopefully this is cheap to clone
             let listings_tx = listings_tx.clone();
+            let sales_tx = sales_tx.clone();
             if let SocketRx::Event(Ok(e)) = &msg {
                 let world_id = WorldId::from(e);
                 metrics::counter!("ultros_websocket_rx", 1, "WorldId" => world_id.0.to_string());
@@ -87,8 +88,12 @@ async fn run_socket_listener(db: UltrosDb, listings_tx: EventProducer<Vec<active
                     SocketRx::Event(Ok(WSMessage::SalesAdd { item, world, sales })) => {
 
                         match db.store_sale(sales.clone(), item, world).await {
-                            Ok(sale) => {
-                                info!("Stored sale data. Last id: {sale:?} {item:?} {world:?}");
+                            Ok(added_sales) => {
+                                info!("Stored sale data. Last id: {added_sales:?} {item:?} {world:?}");
+                                match sales_tx.send(EventType::Add(Arc::new(added_sales))) {
+                                    Ok(o) => info!("Sent sale {o} updates"),
+                                    Err(e) => error!("Error sending sale update {e:?}"),
+                                }
                             },
                             Err(e) => error!("Error inserting sale {e}. {sales:?} {item:?} {world:?}")
                         }
@@ -136,7 +141,7 @@ async fn main() -> Result<()> {
     let world_cache = Arc::new(WorldCache::new(&db).await);
     let (senders, receivers) = create_event_busses();
     // begin listening to universalis events
-    tokio::spawn(run_socket_listener(db.clone(), senders.listings.clone()));
+    tokio::spawn(run_socket_listener(db.clone(), senders.listings.clone(), senders.history.clone()));
     tokio::spawn(start_discord(
         db.clone(),
         senders.clone(),
