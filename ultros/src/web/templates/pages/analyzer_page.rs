@@ -141,7 +141,8 @@ impl Page for AnalyzerPage {
                 }
                 @if let Some((world, region)) = self.world.as_ref().and_then(|w| self.region.as_ref().map(|r| (&w.name, &r.name))) {
                     span class="content-title" {
-                    "resale analysis for " ((world)) " traveling within " ((region))
+                      "resale analysis for " ((world)) " traveling within " ((region))
+                    }
                     table {
                       tr{
                         th {
@@ -284,7 +285,6 @@ impl Page for AnalyzerPage {
                         }
                       }
                     }
-                  }
                 }
               }
             }
