@@ -28,7 +28,11 @@ use web::character_verifier_service::CharacterVerifierService;
 use web::oauth::{AuthUserCache, DiscordAuthConfig, OAuthScope};
 use world_cache::WorldCache;
 
-async fn run_socket_listener(db: UltrosDb, listings_tx: EventProducer<Vec<active_listing::Model>>, sales_tx: EventProducer<Vec<sale_history::Model>>) {
+async fn run_socket_listener(
+    db: UltrosDb,
+    listings_tx: EventProducer<Vec<active_listing::Model>>,
+    sales_tx: EventProducer<Vec<sale_history::Model>>,
+) {
     let mut socket = WebsocketClient::connect().await;
     socket
         .update_subscription(SubscribeMode::Subscribe, EventChannel::ListingsAdd, None)
@@ -141,7 +145,11 @@ async fn main() -> Result<()> {
     let world_cache = Arc::new(WorldCache::new(&db).await);
     let (senders, receivers) = create_event_busses();
     // begin listening to universalis events
-    tokio::spawn(run_socket_listener(db.clone(), senders.listings.clone(), senders.history.clone()));
+    tokio::spawn(run_socket_listener(
+        db.clone(),
+        senders.listings.clone(),
+        senders.history.clone(),
+    ));
     tokio::spawn(start_discord(
         db.clone(),
         senders.clone(),

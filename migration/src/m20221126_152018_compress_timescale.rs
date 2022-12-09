@@ -54,6 +54,12 @@ impl MigrationTrait for Migration {
             SELECT world_id, sold_item_id, hq, time_bucket('1day', sold_date), min(price_per_item) AS minp, percentile_disc(0.5) WITHIN GROUP (order by price_per_item) AS medianp, max(price_per_item) maxp, FIRST(price_per_item, sold_date) AS start_price, LAST(price_per_item, sold_date) AS end_price, COUNT(*) as number_sold
             FROM sale_history
             GROUP BY time_bucket('1day', sold_date), hq, sold_item_id, world_id".to_string()}).await?;
+        manager
+            .exec_stmt(RawPostgresStatement {
+                statement: "SELECT add_compression_policy('sale_history', INTERVAL '4 weeks');"
+                    .to_string(),
+            })
+            .await?;
         Ok(())
         //
     }

@@ -92,30 +92,14 @@ impl UltrosDb {
         }
 
         // check for any sales that have already been posted
-        let filter = sales
-            .iter()
-            .filter(|sale| sale.timestamp.timestamp_millis() != 0)
-            .map(|sale| {
-                let id = characters
-                    .iter()
-                    .find(|character| character.name == sale.buyer_name)
-                    .map(|c| c.id)
-                    .expect("Should know all characters");
-                Column::WorldId
-                    .eq(world_id.0)
-                    .and(Column::SoldDate.eq(sale.timestamp))
-                    .and(
-                        Column::BuyingCharacterId
-                            .eq(id)
-                            .and(Column::SoldItemId.eq(item_id.0)),
-                    )
-                    .and(Column::PricePerItem.eq(sale.price_per_unit))
-                    .and(Column::Quantity.eq(sale.quantity))
-                    .and(Column::Hq.eq(sale.hq))
-            })
-            .reduce(|a, b| a.or(b));
-        if let Some(filter) = filter {
-            let already_recorded_sales = Entity::find().filter(filter).all(&self.db).await?;
+        let last_sale = sales.last().map(|date| date.timestamp);
+        if let Some(filter) = last_sale {
+            let already_recorded_sales = Entity::find()
+                .filter(sale_history::Column::SoldDate.gte(filter))
+                .filter(sale_history::Column::WorldId.eq(world_id.0))
+                .filter(sale_history::Column::SoldItemId.eq(item_id.0))
+                .all(&self.db)
+                .await?;
             sales.retain(|sale| {
                 !already_recorded_sales.iter().any(|recorded| {
                     let buyer_id = characters
