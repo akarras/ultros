@@ -17,5 +17,4 @@ pub mod region;
 pub mod retainer;
 pub mod retainer_city;
 pub mod sale_history;
-pub mod unknown_final_fantasy_character;
 pub mod world;

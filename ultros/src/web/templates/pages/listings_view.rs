@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use maud::html;
-use ultros_db::entity::{active_listing, retainer, sale_history, unknown_final_fantasy_character};
+use ultros_db::entity::{active_listing, retainer, sale_history};
 
 use crate::{
     web::{
@@ -23,10 +23,8 @@ use crate::{
 
 pub(crate) struct ListingsPage {
     pub(crate) listings: Vec<(active_listing::Model, Option<retainer::Model>)>,
-    pub(crate) sale_history: Vec<(
-        sale_history::Model,
-        Option<unknown_final_fantasy_character::Model>,
-    )>,
+    pub(crate) sale_history: Vec<
+        sale_history::Model>,
     pub(crate) selected_world: String,
     pub(crate) home_world: Option<HomeWorld>,
     pub(crate) item_id: i32,
@@ -314,7 +312,7 @@ impl Page for ListingsPage {
                       "date"
                     }
                   }
-                  @for (sale, character) in &self.sale_history {
+                  @for sale in &self.sale_history {
                     tr {
                       td {
                         @if sale.hq {
@@ -331,8 +329,8 @@ impl Page for ListingsPage {
                         ((Gil(sale.price_per_item * sale.quantity)))
                       }
                       td {
-                        @if let Some(character) = character {
-                          ((character.name))
+                        @if let Some(character) = &sale.buyer_name {
+                          ((character))
                         }
                       }
                       @if let Ok(world) = self.world_cache.lookup_selector(&AnySelector::World(sale.world_id)) {

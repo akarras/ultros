@@ -15,5 +15,4 @@ pub use super::region::Entity as Region;
 pub use super::retainer::Entity as Retainer;
 pub use super::retainer_city::Entity as RetainerCity;
 pub use super::sale_history::Entity as SaleHistory;
-pub use super::unknown_final_fantasy_character::Entity as UnknownFinalFantasyCharacter;
 pub use super::world::Entity as World;

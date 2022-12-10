@@ -1,9 +1,6 @@
-use std::collections::HashSet;
-
 use crate::{
     entity::{
         sale_history::{self, Model},
-        unknown_final_fantasy_character,
     },
     UltrosDb,
 };
@@ -12,13 +9,13 @@ use chrono::{Duration, NaiveDateTime};
 
 use futures::Stream;
 use migration::{
-    sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter, Set},
-    DbErr, Value,
+    sea_orm::{ColumnTrait, EntityTrait, QueryFilter, Set},
+    DbErr,
 };
 use sea_orm::{
-    DbBackend, FromQueryResult, Paginator, PaginatorTrait, QueryOrder, QuerySelect, Statement,
+    DbBackend, FromQueryResult, QueryOrder, QuerySelect, Statement,
 };
-use tracing::{instrument, warn};
+use tracing::{instrument};
 use universalis::{websocket::event_types::SaleView, ItemId, WorldId};
 
 impl UltrosDb {
@@ -32,22 +29,10 @@ impl UltrosDb {
         world_id: WorldId,
     ) -> Result<Vec<Model>> {
         use sale_history::*;
-        use unknown_final_fantasy_character::Column as FFColumn;
         // check if the sales have already been logged
         if sales.is_empty() {
             return Ok(vec![]);
         }
-        // first upsert characters for each of the sales
-        let buyer_names: HashSet<_> = sales.iter().map(|m| m.buyer_name.to_string()).collect();
-        let filter_expression = buyer_names
-            .iter()
-            .map(|name| FFColumn::Name.eq(name.as_str()))
-            .reduce(|inc, out| inc.or(out))
-            .ok_or_else(|| anyhow::Error::msg("No characters inserted?"))?;
-        let mut characters = unknown_final_fantasy_character::Entity::find()
-            .filter(filter_expression)
-            .all(&self.db)
-            .await?;
         // just nudge the timestamps to not be exactly aligned...
         let mut last_timestamp = None;
         for sale in &mut sales {
@@ -62,35 +47,6 @@ impl UltrosDb {
             last_timestamp = Some(sale.timestamp.clone());
         }
 
-        // fill in the rest of the characters
-        for name in buyer_names {
-            if !characters.iter().any(|m| m.name == name) {
-                let insert = unknown_final_fantasy_character::ActiveModel {
-                    id: ActiveValue::default(),
-                    name: Set(name.clone()),
-                }
-                .insert(&self.db)
-                .await;
-                let character = match insert {
-                    Ok(c) => c,
-                    Err(e) => {
-                        // assume that this probably failed because it existed, so try querying again. we can't rely on upserts.
-                        warn!("failed to insert character, error {e:?}");
-                        unknown_final_fantasy_character::Entity::find()
-                            .filter(unknown_final_fantasy_character::Column::Name.eq(name))
-                            .one(&self.db)
-                            .await?
-                            .ok_or_else(|| {
-                                anyhow::Error::msg(
-                                    "Unable to insert or find final fantasy character.",
-                                )
-                            })?
-                    }
-                };
-                characters.push(character);
-            }
-        }
-
         // check for any sales that have already been posted
         let last_sale = sales.last().map(|date| date.timestamp);
         if let Some(filter) = last_sale {
@@ -102,13 +58,9 @@ impl UltrosDb {
                 .await?;
             sales.retain(|sale| {
                 !already_recorded_sales.iter().any(|recorded| {
-                    let buyer_id = characters
-                        .iter()
-                        .find(|c| c.name == sale.buyer_name)
-                        .map(|m| m.id)
-                        .expect("Should know all characters");
+                    
                     sale.hq == recorded.hq
-                        && buyer_id == recorded.buying_character_id
+                        && sale.buyer_name == recorded.buyer_name.as_ref().map(|s| s.as_str()).unwrap_or_default()
                         && sale.quantity == recorded.quantity
                         && sale.timestamp.timestamp() == recorded.sold_date.timestamp()
                 })
@@ -126,15 +78,10 @@ impl UltrosDb {
                 buyer_name,
                 ..
             } = sale;
-            let character_id = characters
-                .iter()
-                .find(|character| character.name == buyer_name)
-                .map(|c| c.id)
-                .expect("Shouldn't be able to have a character not in the list");
             recorded_sales.push(Model {
                 quantity,
                 price_per_item: price_per_unit,
-                buying_character_id: character_id,
+                buying_character_id: 0,
                 hq,
                 sold_item_id: item_id.0,
                 sold_date: sale.timestamp.naive_utc(),
@@ -144,7 +91,7 @@ impl UltrosDb {
             ActiveModel {
                 quantity: Set(quantity),
                 price_per_item: Set(price_per_unit),
-                buying_character_id: Set(character_id),
+                buying_character_id: Set(0),
                 hq: Set(hq),
                 sold_item_id: Set(item_id.0),
                 sold_date: Set(sale.timestamp.naive_utc()),
@@ -152,51 +99,30 @@ impl UltrosDb {
                 buyer_name: Set(Some(buyer_name)),
             }
         }))
-        .exec(&self.db)
+        .exec_without_returning(&self.db)
         .await?;
         Ok(recorded_sales)
     }
 
-    pub fn get_sale_history_with_characters_from_multiple_worlds_paginated(
-        &self,
-        world_ids: impl Iterator<Item = i32>,
-        item_id: i32,
-        page_size: u64,
-    ) -> Paginator<
-        sea_orm::DatabaseConnection,
-        sea_orm::SelectTwoModel<sale_history::Model, unknown_final_fantasy_character::Model>,
-    > {
-        sale_history::Entity::find()
-            .filter(sale_history::Column::WorldId.is_in(world_ids.map(|w| Value::Int(Some(w)))))
-            .filter(sale_history::Column::SoldItemId.eq(item_id))
-            .order_by_desc(sale_history::Column::SoldDate)
-            .find_also_related(unknown_final_fantasy_character::Entity)
-            .paginate(&self.db, page_size)
-    }
-
-    pub async fn get_sale_history_with_characters_from_multiple_worlds_single(
+    pub async fn get_sale_history_from_multiple_worlds(
         &self,
         world_ids: impl Iterator<Item = i32>,
         item_id: i32,
         limit: u64,
     ) -> Result<
-        Vec<(
-            sale_history::Model,
-            Option<unknown_final_fantasy_character::Model>,
-        )>,
+        Vec<sale_history::Model>,
         anyhow::Error,
     > {
-        let all = futures::future::join_all(
+        let all = futures::future::try_join_all(
             world_ids
                 .map(|world_id| self.get_sale_history_with_character(world_id, item_id, limit)),
         )
         .await;
-        let val: Result<Vec<_>, _> = all.into_iter().collect();
-        let mut val: Vec<(
+        
+        let mut val: Vec<
             sale_history::Model,
-            Option<unknown_final_fantasy_character::Model>,
-        )> = val?.into_iter().flat_map(|w| w.into_iter()).collect();
-        val.sort_by_key(|(sale, _)| std::cmp::Reverse(sale.sold_date));
+        > = all?.into_iter().flat_map(|w| w.into_iter()).collect();
+        val.sort_by_key(|sale| std::cmp::Reverse(sale.sold_date));
         val.truncate(limit as usize);
         Ok(val)
     }
@@ -206,18 +132,12 @@ impl UltrosDb {
         world_id: i32,
         item_id: i32,
         limit: u64,
-    ) -> Result<
-        Vec<(
-            sale_history::Model,
-            Option<unknown_final_fantasy_character::Model>,
-        )>,
-        anyhow::Error,
-    > {
+    ) -> Result<Vec<sale_history::Model>,
+        anyhow::Error> {
         Ok(sale_history::Entity::find()
             .filter(sale_history::Column::SoldItemId.eq(item_id))
             .filter(sale_history::Column::WorldId.eq(world_id))
             .order_by_desc(sale_history::Column::SoldDate)
-            .find_also_related(unknown_final_fantasy_character::Entity)
             .limit(limit)
             .all(&self.db)
             .await?)

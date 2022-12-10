@@ -23,14 +23,6 @@ pub struct Model {
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
     #[sea_orm(
-        belongs_to = "super::unknown_final_fantasy_character::Entity",
-        from = "Column::BuyingCharacterId",
-        to = "super::unknown_final_fantasy_character::Column::Id",
-        on_update = "Cascade",
-        on_delete = "Cascade"
-    )]
-    UnknownFinalFantasyCharacter,
-    #[sea_orm(
         belongs_to = "super::world::Entity",
         from = "Column::WorldId",
         to = "super::world::Column::Id",
@@ -40,11 +32,6 @@ pub enum Relation {
     World,
 }
 
-impl Related<super::unknown_final_fantasy_character::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::UnknownFinalFantasyCharacter.def()
-    }
-}
 
 impl Related<super::world::Entity> for Entity {
     fn to() -> RelationDef {
