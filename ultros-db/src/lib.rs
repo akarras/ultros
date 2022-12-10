@@ -15,7 +15,7 @@ pub use sea_orm::ActiveValue;
 
 use anyhow::Result;
 use chrono::{Duration, Utc};
-use futures::Stream;
+use futures::{future::try_join_all, Stream};
 use migration::{sea_orm::QueryOrder, DbErr, Migrator, MigratorTrait, Value};
 
 use sea_orm::{
@@ -179,18 +179,15 @@ impl UltrosDb {
     pub async fn get_multiple_listings_for_worlds(
         &self,
         world_id: impl Iterator<Item = WorldId>,
-        item: impl Iterator<Item = ItemId>,
+        item: impl Iterator<Item = ItemId> + Clone,
         limit: u64,
     ) -> Result<Vec<active_listing::Model>> {
-        use active_listing::*;
-
-        Ok(Entity::find()
-            .filter(Column::WorldId.is_in(world_id.map(|m| Value::Int(Some(m.0)))))
-            .filter(Column::ItemId.is_in(item.map(|i| Value::Int(Some(i.0)))))
-            .order_by_asc(Column::PricePerUnit)
-            .limit(limit)
-            .all(&self.db)
-            .await?)
+        let join = futures::future::try_join_all(world_id.flat_map(|world| {
+            item.clone()
+                .map(move |i| self.get_listings_for_world(world, i))
+        }))
+        .await?;
+        Ok(join.into_iter().flat_map(|l| l.into_iter()).collect())
     }
 
     #[instrument(skip(self))]
@@ -203,6 +200,7 @@ impl UltrosDb {
         Ok(Entity::find()
             .filter(Column::ItemId.eq(item.0))
             .filter(Column::WorldId.eq(world.0))
+            .order_by_asc(Column::PricePerUnit)
             .all(&self.db)
             .await?)
     }
@@ -334,14 +332,16 @@ impl UltrosDb {
         world_id: i32,
     ) -> Result<Vec<retainer::Model>> {
         use retainer::*;
-        let retainers = Entity::find()
-            .filter(
-                Column::Name
-                    .is_in(names.map(|name| Value::String(Some(Box::new(name.to_string()))))),
-            )
-            .filter(Column::WorldId.eq(world_id))
-            .all(&self.db)
-            .await?;
+        let retainers = try_join_all(names.map(|name| {
+            Entity::find()
+                .filter(Column::Name.eq(name))
+                .filter(Column::WorldId.eq(world_id))
+                .one(&self.db)
+        }))
+        .await?
+        .into_iter()
+        .flatten()
+        .collect();
         Ok(retainers)
     }
 

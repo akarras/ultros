@@ -1,7 +1,9 @@
 use anyhow::Result;
-use futures::Stream;
-use migration::{DbErr, Value};
-use sea_orm::{ColumnTrait, DbBackend, EntityTrait, FromQueryResult, QueryFilter, Statement};
+use futures::{future::try_join_all, Stream};
+use migration::DbErr;
+use sea_orm::{
+    ColumnTrait, DbBackend, EntityTrait, FromQueryResult, ModelTrait, QueryFilter, Statement,
+};
 use std::collections::HashSet;
 use tracing::instrument;
 use universalis::{ItemId, ListingView, WorldId};
@@ -18,10 +20,26 @@ impl UltrosDb {
         worlds: &Vec<i32>,
         item: ItemId,
     ) -> Result<Vec<(active_listing::Model, Option<retainer::Model>)>> {
+        let result = try_join_all(
+            worlds
+                .into_iter()
+                .map(|world| self.get_all_listings_with_retainers(*world, item)),
+        )
+        .await?;
+        let data = result.into_iter().flat_map(|s| s.into_iter()).collect();
+        Ok(data)
+    }
+
+    #[instrument(skip(self))]
+    pub async fn get_all_listings_with_retainers(
+        &self,
+        world: i32,
+        item: ItemId,
+    ) -> Result<Vec<(active_listing::Model, Option<retainer::Model>)>> {
         use active_listing::*;
         Ok(Entity::find()
             .filter(Column::ItemId.eq(item.0))
-            .filter(Column::WorldId.is_in(worlds.iter().copied()))
+            .filter(Column::WorldId.eq(world))
             .find_also_related(retainer::Entity)
             .all(&self.db)
             .await?)
@@ -152,11 +170,7 @@ impl UltrosDb {
                 }
             }
         }
-        let is_in = if removed.is_empty() {
-            None
-        } else {
-            Some(Column::Id.is_in(removed.iter().map(|(m, _)| Value::Int(Some(m.id)))))
-        };
+        let remove_iter = removed.iter();
         let added = added.iter().map(|m| {
             let retainer_id = retainers
                 .iter()
@@ -167,15 +181,11 @@ impl UltrosDb {
         });
         let (added, _removed_result) =
             futures::future::join(futures::future::join_all(added), async move {
-                if let Some(is_in) = is_in {
-                    Entity::delete_many()
-                        .filter(is_in)
-                        .exec(&self.db)
-                        .await
-                        .map(|i| i.rows_affected)
-                } else {
-                    Ok(0)
-                }
+                let remove_result = futures::future::try_join_all(remove_iter.map(|(l, _)| {
+                    active_listing::Entity::delete_by_id((l.id, l.timestamp)).exec(&self.db)
+                }))
+                .await?;
+                Result::<usize>::Ok(remove_result.len())
             })
             .await;
 

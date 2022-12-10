@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashSet;
 
+use futures::future::try_join_all;
 use migration::sea_orm::IntoActiveModel;
 use sea_orm::ActiveModelTrait;
 use sea_orm::ActiveValue;
@@ -279,10 +280,15 @@ impl UltrosDb {
             .flat_map(|(owned, _)| owned.character_id)
             .collect();
         let mut characters = if !character_ids.is_empty() {
-            final_fantasy_character::Entity::find()
-                .filter(final_fantasy_character::Column::Id.is_in(character_ids))
-                .all(&self.db)
-                .await?
+            try_join_all(character_ids.into_iter().map(|character| {
+                final_fantasy_character::Entity::find()
+                    .filter(final_fantasy_character::Column::Id.eq(character))
+                    .one(&self.db)
+            }))
+            .await?
+            .into_iter()
+            .flatten()
+            .collect()
         } else {
             vec![]
         };
