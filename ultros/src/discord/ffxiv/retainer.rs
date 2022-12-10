@@ -161,7 +161,6 @@ async fn check_listings(ctx: Context<'_>) -> Result<(), Error> {
                     .map(|i| i.name.as_str())
                     .unwrap_or_default();
                 let active_listing::Model {
-                    id,
                     price_per_unit,
                     quantity,
                     hq,
