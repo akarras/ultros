@@ -67,18 +67,8 @@ body {
   top: 0px;
   opacity: 1.0;
   z-index: -10000;
-  animation: fadeGradient cubic-bezier(0.12, 0, 0.39, 0) .25s;
 }
 
-@keyframes fadeGradient {
-  0% {
-    position:absolute;
-    transform: translate(0px, 100px) scale(1, 2.5);
-  }
-  100% {
-    transform: translate(0px, 0px) scale(1, 1);
-  }
-}
 .header {
   display: flex;
   flex-direction: row;
