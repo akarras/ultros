@@ -60,7 +60,7 @@ pub enum WebError {
     #[error("Lodestone error {0}")]
     LodestoneError(#[from] lodestone::LodestoneError),
     // this is kind of bad if I ever use the elapsed error for something else but I'll pretend
-    #[error("Timed out reading from Universalis {0}")]
+    #[error("Universalis is being slow. {0}. Will continue waiting")]
     TimeoutElapsed(#[from] Elapsed),
     #[error("Analyzer Error: {0}")]
     AnalyzerError(#[from] AnalyzerError),

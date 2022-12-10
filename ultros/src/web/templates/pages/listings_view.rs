@@ -18,7 +18,7 @@ use crate::{
             page::Page,
         },
     },
-    world_cache::{AnySelector, WorldCache},
+    world_cache::{AnySelector, WorldCache, AnyResult},
 };
 
 pub(crate) struct ListingsPage {
@@ -65,9 +65,9 @@ impl Page for ListingsPage {
         high_quality_listings.sort_by_key(|(l, _)| l.price_per_unit);
         let value = self.world_cache.lookup_value_by_name(&self.selected_world);
         let all = self.world_cache.get_all();
-        let region = value
+        let region = value.as_ref()
             .map(|w| {
-                let region = self.world_cache.get_region(&w)?;
+                let region = self.world_cache.get_region(w)?;
                 let region = all.iter().find(|(r, _)| r.id == region.id)?;
                 Some(region)
             })
@@ -97,30 +97,31 @@ impl Page for ListingsPage {
               div class="content-nav nav" {
                 @if let Some((region, datacenters)) = region {
                   div class="flex-column flex-end" {
-                    div class="flex-row" {
+                    div class="flex-row flex-end" {
                       @if region.name == self.selected_world {
-                        a class="btn-secondary active" {
+                        a class="world-button datacenter active" {
                           ((region.name))
                         }
                       } @else {
-                        a class="btn-secondary" href={"/listings/" ((region.name)) "/" ((self.item_id))} {
+                        a class="world-button datacenter" href={"/listings/" ((region.name)) "/" ((self.item_id))} {
                           ((region.name))
                         }
                       }
-                      a class="btn-secondary" title="view on universalis" href={"https://universalis.app/market/" ((self.item_id))} {
+                      a class="world-button datacenter" title="view on universalis" href={"https://universalis.app/market/" ((self.item_id))} {
                         "Universalis"
                       }
-                      a class="btn-secondary" title="manually recheck universalis for updated data. usually unnecessary" href={"/listings/refresh/" ((self.selected_world)) "/" (self.item_id)} {
+                      a class="world-button datacenter" title="manually recheck universalis for updated data. usually unnecessary" href={"/listings/refresh/" ((self.selected_world)) "/" (self.item_id)} {
                         "Manual Refresh"
                       }
                     }
-                    @for (datacenter, worlds) in datacenters {
-                      @let focus_text = if datacenter.name == self.selected_world || worlds.iter().any(|world| world.name.eq(&self.selected_world)) {
-                        " focus"
-                      } else {
-                        ""
-                      };
-                      div class={ "world-row" ((focus_text)) } {
+                    div class="flex-row flex-end" {
+                      @for (datacenter, worlds) in datacenters {
+                        @let focus_text = if datacenter.name == self.selected_world || worlds.iter().any(|world| world.name.eq(&self.selected_world)) {
+                          " focus"
+                        } else {
+                          ""
+                        };
+                        
                         @if datacenter.name == self.selected_world {
                           a class="world-button datacenter active" {
                             ((datacenter.name))
@@ -130,6 +131,10 @@ impl Page for ListingsPage {
                             ((datacenter.name))
                           }
                         }
+                      }  
+                    }
+                    div class="flex-row flex-end" {
+                      @if let Some((_, worlds)) = datacenters.iter().find(|(datacenter, _)| value.as_ref().map(|value| self.world_cache.is_child(value, &AnyResult::Datacenter(datacenter))).unwrap_or_default()) {
                         @for world in worlds {
                           a class={
                             "world-button"

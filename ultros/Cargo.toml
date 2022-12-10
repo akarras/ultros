@@ -40,7 +40,7 @@ thousands = "0.2.0"
 serde_urlencoded = "0.7.1"
 serde_with = "2.1.0"
 image = {version = "0.24.4", features = ["webp-encoder"]}
-timeago = {git = "https://github.com/akarras/timeago", branch = "update-isolang", features = ["chrono"]}
+timeago = "0.4"
 tower-http = {version = "0.3", features = ["compression-gzip"]}
 sha2 = "0.10.6"
 base64 = "0.13.1"

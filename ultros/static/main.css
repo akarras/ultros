@@ -319,7 +319,7 @@ input.btn {
   border-radius: 1px;
   background-color: #100817;
   border: solid #3B2B9E 0px;
-  color: #100817;
+  color: #5b5461;
   text-decoration: none;
   padding: 5px;
   transition: 1s;
@@ -338,7 +338,7 @@ input.btn {
 }
 
 .datacenter {
-  color: rgb(154, 154, 154);
+  color: rgb(151, 79, 151);
 }
 
 
@@ -574,7 +574,8 @@ th {
 }
 
 .homeworld {
-  background-color: #3a2b7e25;
+  background-color: #2a153c;
+  color: #aaa;
 }
 
 .homeworld::before {

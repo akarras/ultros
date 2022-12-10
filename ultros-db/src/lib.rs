@@ -396,6 +396,7 @@ impl UltrosDb {
                 .ok_or_else(|| anyhow::Error::msg("No retainers"))?,
         );
         let count = Entity::delete_many().filter(filter).exec(&self.db).await?;
+
         Ok(count.rows_affected)
     }
 

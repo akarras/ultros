@@ -20,7 +20,7 @@ pub enum AnySelector {
     Region(i32),
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, PartialEq)]
 pub enum AnyResult<'a> {
     World(&'a world::Model),
     Datacenter(&'a datacenter::Model),
@@ -66,6 +66,34 @@ impl<'a> AnyResult<'a> {
             AnyResult::World(world) => &world.name,
             AnyResult::Datacenter(datacenter) => &datacenter.name,
             AnyResult::Region(region) => &region.name,
+        }
+    }
+}
+
+impl WorldCache {
+    /// Return true if this is a child of other, or is other
+    pub(crate) fn is_child(&self, this: &AnyResult, other: &AnyResult) -> bool {
+        if this == other {
+            return true;
+        }
+        match this {
+            AnyResult::World(world) => match other {
+                AnyResult::World(other) => world == other,
+                AnyResult::Datacenter(dc) => world.datacenter_id == dc.id,
+                AnyResult::Region(r) => self
+                    .get_region(other)
+                    .map(|other| *r == other)
+                    .unwrap_or_default(),
+            },
+            AnyResult::Datacenter(dc) => {
+                if let AnyResult::Region(r) = other {
+                    dc.region_id == r.id
+                } else {
+                    false
+                }
+            }
+            // region should be handled by same check
+            _ => false,
         }
     }
 }

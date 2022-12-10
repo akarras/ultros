@@ -62,23 +62,21 @@ async fn run_socket_listener(
                         item,
                         world,
                         listings,
-                    })) => {
-                        match db.update_listings(listings.clone(), item, world).await {
-                            Ok((listings, removed)) => {
-                                let listings = Arc::new(listings);
-                                let removed = Arc::new(removed);
-                                match listings_tx.send(EventType::Remove(removed)) {
-                                    Ok(o) => info!("sent removed listings {o} updates"),
-                                    Err(e) => error!("Error removing listings {e}")
-                                }
-                                match listings_tx.send(EventType::Add(listings)) {
-                                    Ok(o) => info!("updated listings, sent {o:?} updates"),
-                                    Err(e) => error!("Error adding listings {e}")
-                                };
-                            },
-                            Err(e) => error!("Listing add failed {e} {listings:?}")
+                    })) => match db.update_listings(listings.clone(), item, world).await {
+                        Ok((listings, removed)) => {
+                            let listings = Arc::new(listings);
+                            let removed = Arc::new(removed);
+                            match listings_tx.send(EventType::Remove(removed)) {
+                                Ok(o) => info!("sent removed listings {o} updates"),
+                                Err(e) => error!("Error removing listings {e}"),
+                            }
+                            match listings_tx.send(EventType::Add(listings)) {
+                                Ok(o) => info!("updated listings, sent {o:?} updates"),
+                                Err(e) => error!("Error adding listings {e}"),
+                            };
                         }
-                    }
+                        Err(e) => error!("Listing add failed {e} {listings:?}"),
+                    },
                     SocketRx::Event(Ok(WSMessage::ListingsRemove {
                         item,
                         world,
@@ -90,16 +88,19 @@ async fn run_socket_listener(
                         //}
                     }
                     SocketRx::Event(Ok(WSMessage::SalesAdd { item, world, sales })) => {
-
                         match db.store_sale(sales.clone(), item, world).await {
                             Ok(added_sales) => {
-                                info!("Stored sale data. Last id: {added_sales:?} {item:?} {world:?}");
+                                info!(
+                                    "Stored sale data. Last id: {added_sales:?} {item:?} {world:?}"
+                                );
                                 match sales_tx.send(EventType::Add(Arc::new(added_sales))) {
                                     Ok(o) => info!("Sent sale {o} updates"),
                                     Err(e) => error!("Error sending sale update {e:?}"),
                                 }
-                            },
-                            Err(e) => error!("Error inserting sale {e}. {sales:?} {item:?} {world:?}")
+                            }
+                            Err(e) => {
+                                error!("Error inserting sale {e}. {sales:?} {item:?} {world:?}")
+                            }
                         }
                     }
                     SocketRx::Event(Ok(WSMessage::SalesRemove { item, world, sales })) => {

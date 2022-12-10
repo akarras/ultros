@@ -5427,8 +5427,9 @@ dependencies = [
 
 [[package]]
 name = "timeago"
-version = "0.3.1"
-source = "git+https://github.com/akarras/timeago?branch=update-isolang#657cb966923bc7f15f5e60d45839df3f54cd6ef7"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "71bd60ed74255d99458a01fae2df715562d4806ceabfedd8130a82ae6b834993"
 dependencies = [
  "chrono",
  "isolang",
