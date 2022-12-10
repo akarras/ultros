@@ -23,8 +23,7 @@ use crate::{
 
 pub(crate) struct ListingsPage {
     pub(crate) listings: Vec<(active_listing::Model, Option<retainer::Model>)>,
-    pub(crate) sale_history: Vec<
-        sale_history::Model>,
+    pub(crate) sale_history: Vec<sale_history::Model>,
     pub(crate) selected_world: String,
     pub(crate) home_world: Option<HomeWorld>,
     pub(crate) item_id: i32,

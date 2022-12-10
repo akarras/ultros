@@ -1,7 +1,5 @@
 use crate::{
-    entity::{
-        sale_history::{self, Model},
-    },
+    entity::sale_history::{self, Model},
     UltrosDb,
 };
 use anyhow::Result;
@@ -12,10 +10,8 @@ use migration::{
     sea_orm::{ColumnTrait, EntityTrait, QueryFilter, Set},
     DbErr,
 };
-use sea_orm::{
-    DbBackend, FromQueryResult, QueryOrder, QuerySelect, Statement,
-};
-use tracing::{instrument};
+use sea_orm::{DbBackend, FromQueryResult, QueryOrder, QuerySelect, Statement};
+use tracing::instrument;
 use universalis::{websocket::event_types::SaleView, ItemId, WorldId};
 
 impl UltrosDb {
@@ -54,13 +50,18 @@ impl UltrosDb {
                 .filter(sale_history::Column::SoldDate.gte(filter))
                 .filter(sale_history::Column::WorldId.eq(world_id.0))
                 .filter(sale_history::Column::SoldItemId.eq(item_id.0))
+                .order_by_desc(sale_history::Column::SoldDate)
                 .all(&self.db)
                 .await?;
             sales.retain(|sale| {
                 !already_recorded_sales.iter().any(|recorded| {
-                    
                     sale.hq == recorded.hq
-                        && sale.buyer_name == recorded.buyer_name.as_ref().map(|s| s.as_str()).unwrap_or_default()
+                        && sale.buyer_name
+                            == recorded
+                                .buyer_name
+                                .as_ref()
+                                .map(|s| s.as_str())
+                                .unwrap_or_default()
                         && sale.quantity == recorded.quantity
                         && sale.timestamp.timestamp() == recorded.sold_date.timestamp()
                 })
@@ -109,19 +110,15 @@ impl UltrosDb {
         world_ids: impl Iterator<Item = i32>,
         item_id: i32,
         limit: u64,
-    ) -> Result<
-        Vec<sale_history::Model>,
-        anyhow::Error,
-    > {
+    ) -> Result<Vec<sale_history::Model>, anyhow::Error> {
         let all = futures::future::try_join_all(
             world_ids
                 .map(|world_id| self.get_sale_history_with_character(world_id, item_id, limit)),
         )
         .await;
-        
-        let mut val: Vec<
-            sale_history::Model,
-        > = all?.into_iter().flat_map(|w| w.into_iter()).collect();
+
+        let mut val: Vec<sale_history::Model> =
+            all?.into_iter().flat_map(|w| w.into_iter()).collect();
         val.sort_by_key(|sale| std::cmp::Reverse(sale.sold_date));
         val.truncate(limit as usize);
         Ok(val)
@@ -132,8 +129,7 @@ impl UltrosDb {
         world_id: i32,
         item_id: i32,
         limit: u64,
-    ) -> Result<Vec<sale_history::Model>,
-        anyhow::Error> {
+    ) -> Result<Vec<sale_history::Model>, anyhow::Error> {
         Ok(sale_history::Entity::find()
             .filter(sale_history::Column::SoldItemId.eq(item_id))
             .filter(sale_history::Column::WorldId.eq(world_id))
@@ -149,16 +145,12 @@ impl UltrosDb {
         item_ids: impl Iterator<Item = i32> + Clone,
         limit: u64,
     ) -> Result<Vec<Vec<sale_history::Model>>, anyhow::Error> {
-        let all = futures::future::join_all(world_ids.flat_map(|world_id| {
+        futures::future::try_join_all(world_ids.flat_map(|world_id| {
             item_ids
                 .clone()
                 .map(move |item_id| self.get_sale_history_for_item(world_id, item_id, limit))
         }))
-        .await;
-        let result = all
-            .into_iter()
-            .collect::<Result<Vec<Vec<sale_history::Model>>, anyhow::Error>>()?;
-        Ok(result)
+        .await
     }
 
     pub async fn get_sale_history_for_item(

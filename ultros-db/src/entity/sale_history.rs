@@ -32,7 +32,6 @@ pub enum Relation {
     World,
 }
 
-
 impl Related<super::world::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::World.def()

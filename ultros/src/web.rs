@@ -229,7 +229,7 @@ async fn world_item_listings(
     let world_iter = worlds.iter().copied();
     let (listings, sale_history) = join(
         db_clone.get_all_listings_in_worlds_with_retainers(&worlds, ItemId(item_id)),
-        db.get_sale_history_from_multiple_worlds(world_iter, item_id, 25),
+        db.get_sale_history_from_multiple_worlds(world_iter, item_id, 10),
     )
     .await;
     let listings = listings?;
