@@ -11,7 +11,7 @@ use migration::{
     DbErr,
 };
 use sea_orm::{DbBackend, FromQueryResult, QueryOrder, QuerySelect, Statement};
-use tracing::instrument;
+use tracing::{instrument, log::warn};
 use universalis::{websocket::event_types::SaleView, ItemId, WorldId};
 
 impl UltrosDb {
@@ -44,29 +44,27 @@ impl UltrosDb {
         }
 
         // check for any sales that have already been posted
-        let last_sale = sales.last().map(|date| date.timestamp);
-        if let Some(filter) = last_sale {
-            let already_recorded_sales = Entity::find()
-                .filter(sale_history::Column::SoldDate.gte(filter))
-                .filter(sale_history::Column::WorldId.eq(world_id.0))
+        warn!("reading sales {:?}", sales);
+        let already_recorded_sales = Entity::find()
                 .filter(sale_history::Column::SoldItemId.eq(item_id.0))
+                .filter(sale_history::Column::WorldId.eq(world_id.0))
                 .order_by_desc(sale_history::Column::SoldDate)
+                .limit(sales.len() as u64)
                 .all(&self.db)
                 .await?;
-            sales.retain(|sale| {
-                !already_recorded_sales.iter().any(|recorded| {
-                    sale.hq == recorded.hq
-                        && sale.buyer_name
-                            == recorded
-                                .buyer_name
-                                .as_ref()
-                                .map(|s| s.as_str())
-                                .unwrap_or_default()
-                        && sale.quantity == recorded.quantity
-                        && sale.timestamp.timestamp() == recorded.sold_date.timestamp()
-                })
-            });
-        }
+        sales.retain(|sale| {
+            !already_recorded_sales.iter().any(|recorded| {
+                sale.hq == recorded.hq
+                    && sale.buyer_name
+                        == recorded
+                            .buyer_name
+                            .as_ref()
+                            .map(|s| s.as_str())
+                            .unwrap_or_default()
+                    && sale.quantity == recorded.quantity
+                    && sale.timestamp.timestamp() == recorded.sold_date.timestamp()
+            })
+        });
         if sales.is_empty() {
             return Ok(vec![]);
         }

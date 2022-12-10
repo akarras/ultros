@@ -37,9 +37,9 @@ async fn run_socket_listener(
     socket
         .update_subscription(SubscribeMode::Subscribe, EventChannel::ListingsAdd, None)
         .await;
-    socket
-        .update_subscription(SubscribeMode::Subscribe, EventChannel::ListingsRemove, None)
-        .await;
+    //socket
+    //    .update_subscription(SubscribeMode::Subscribe, EventChannel::ListingsRemove, None)
+    //    .await;
     socket
         .update_subscription(SubscribeMode::Subscribe, EventChannel::SalesAdd, None)
         .await;
@@ -84,10 +84,10 @@ async fn run_socket_listener(
                         world,
                         listings,
                     })) => {
-                        match db.remove_listings(listings.clone(), item, world).await {
-                            Ok(listings) => info!("Removed listings {listings} {item:?} {world:?}"),
-                            Err(e) => error!("Error removing listings {e:?}. Listings set {listings:?} {item:?} {world:?}")
-                        }
+                        //match db.remove_listings(listings.clone(), item, world).await {
+                        //    Ok(listings) => info!("Removed listings {listings} {item:?} {world:?}"),
+                        //    Err(e) => error!("Error removing listings {e:?}. Listings set {listings:?} {item:?} {world:?}")
+                        //}
                     }
                     SocketRx::Event(Ok(WSMessage::SalesAdd { item, world, sales })) => {
 
