@@ -1,0 +1,9 @@
+[package]
+name = "ultros-analysis"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+arrow2 = "0.15.0"

@@ -6,17 +6,13 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tokio = {version = "1.21.0", features = ["full"]}
 universalis = {path = "../universalis", features = ["websocket"]}
 ultros-db = {path = "../ultros-db"}
-tracing = "0.1.36"
-tracing-subscriber = "0.3"
-futures = "0.3.24"
-anyhow = "1.0.64"
+anyhow = {workspace = true}
 axum = {version = "0.6.0-rc.5", features = ["ws", "headers", "json"]}
 axum-extra = {version = "0.4.0-rc.3", features = ["cookie", "cookie-private"]}
 xiv-gen-db = {path = "../xiv-gen-db"}
-poise = {version = "0.3"}
+poise = {version = "0.5.2"}
 chrono = "0.4.23"
 lodestone = {git = "https://github.com/akarras/lodestone.git", branch = 'async', default-features = false, features = ["rustls-tls"]}
 reqwest = {version = "0.11", default-features = false, features = ["rustls-tls"]}
@@ -26,7 +22,11 @@ maud = {version = "0.24.0", features = ["axum"]}
 aho-corasick = "0.7.19"
 include_dir = "0.7.2"
 mime_guess = "2.0.4"
-tantivy = "0.18.0"
+tantivy = "0.19.0"
+tokio = {workspace = true}
+tracing = {workspace = true}
+tracing-subscriber = "0.3"
+futures = {workspace = true}
 lazy_static = "1.4.0"
 oauth2 = "4.1"
 async-trait = '0.1'

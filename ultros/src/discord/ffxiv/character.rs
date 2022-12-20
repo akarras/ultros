@@ -48,7 +48,7 @@ pub(crate) async fn register(
     if let Some(msg) = msg
         .message()
         .await?
-        .await_component_interaction(ctx.discord())
+        .await_component_interaction(ctx.serenity_context())
         .timeout(Duration::from_secs(5 * 60))
         .await
     {

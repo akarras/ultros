@@ -2,7 +2,7 @@ use anyhow::Result;
 use futures::{future::try_join_all, Stream};
 use migration::DbErr;
 use sea_orm::{
-    ColumnTrait, DbBackend, EntityTrait, FromQueryResult, ModelTrait, QueryFilter, Statement,
+    ColumnTrait, DbBackend, EntityTrait, FromQueryResult, QueryFilter, Statement,
 };
 use std::collections::HashSet;
 use tracing::instrument;

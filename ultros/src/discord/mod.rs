@@ -74,7 +74,7 @@ pub(crate) async fn start_discord(
         })
         .token(std::env::var("DISCORD_TOKEN").expect("missing DISCORD_TOKEN"))
         .intents(serenity::GatewayIntents::non_privileged())
-        .user_data_setup(move |ctx, _ready, _framework| {
+        .setup(move |ctx, _ready, _framework| {
             Box::pin(async move {
                 // start the alert monitor
                 let (item_events, alert_events) = (

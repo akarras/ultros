@@ -543,6 +543,7 @@ impl AnalyzerService {
                 )
                 .await;
         }
+        drop(entry);
         for listing in listings.iter() {
             let world = self
                 .cheapest_items

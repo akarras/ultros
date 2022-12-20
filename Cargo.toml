@@ -2,6 +2,13 @@
 members = ["universalis", "xivapi", "recipepricecheck", "crafterstoolbox", "xiv-gen", "xiv-gen-db", "ultros", "ultros-db", "migration"]
 
 
+[workspace.dependencies]
+tokio = {version = "1.21.0", features = ["full"]}
+tracing = "0.1.36"
+tracing-subscriber = "0.3"
+futures = "0.3.24"
+anyhow = "1.0.64"
+
 [profile.release]
 lto = true
 opt-level = 3

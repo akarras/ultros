@@ -6,13 +6,11 @@ use crate::UniversalisData;
 use egui::{Align, Color32, Grid, Layout, ScrollArea, Visuals};
 
 use egui::plot::{Line, Plot, PlotPoints};
-use flate2::FlushDecompress;
 use icu::decimal::options::{FixedDecimalFormatterOptions, GroupingStrategy};
 use icu::decimal::FixedDecimalFormatter;
 use icu::locid::locale;
 use itertools::Itertools;
-use lazy_static::lazy_static;
-use log::{debug, error, info, warn};
+use log::{error, info, warn};
 use recipepricecheck::{
     BestPricingForItem, BestPricingSummary, ItemListingsSummary, PricingArguments,
     RecipePricingRawData,
@@ -20,7 +18,7 @@ use recipepricecheck::{
 use serde::{Deserialize, Serialize};
 use serde_error::Error;
 use std::borrow::Borrow;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use tokio::sync::mpsc::{Receiver, Sender};
 use universalis::{DataCenterName, HistoryView, ListingView, MarketView, RegionName, WorldName};
@@ -28,7 +26,7 @@ use writeable::Writeable;
 
 use xiv_gen::ItemId;
 
-use crate::plots::{CandleStickHistoryPlot, HistoryPlot};
+use crate::plots::CandleStickHistoryPlot;
 use xiv_gen::RecipeId;
 
 pub type Result<T> = core::result::Result<T, Error>;

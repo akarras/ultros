@@ -1,10 +1,7 @@
-use chrono::{Date, DateTime, Datelike, Duration, Local, TimeZone, Timelike};
+use chrono::{DateTime, Datelike, Duration, Local, TimeZone, Timelike};
 use egui::plot::{BoxElem, BoxPlot, BoxSpread, Legend, Line, Plot, PlotPoints};
 use egui::{Color32, Stroke, Ui};
-use futures::StreamExt;
-use itertools::{Itertools, MinMaxResult};
-use log::info;
-use std::borrow::Borrow;
+use itertools::Itertools;
 use std::collections::HashMap;
 use std::ops::{Add, Div};
 use universalis::{HistoryEntry, HistorySingleView, HistoryView};
