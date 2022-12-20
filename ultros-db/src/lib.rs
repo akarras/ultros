@@ -353,8 +353,6 @@ impl UltrosDb {
         world_id: WorldId,
     ) -> Result<u64> {
         use active_listing::*;
-        use retainer::Column as RColumn;
-        use retainer::Entity as REntity;
         if listings.is_empty() {
             return Ok(0);
         }
@@ -362,20 +360,14 @@ impl UltrosDb {
             .iter()
             .map(|l| l.retainer_name.to_string())
             .collect();
-        let mut iter = retainer_names.iter().map(|name| {
-            RColumn::Name
-                .eq(name.as_str())
-                .and(RColumn::WorldId.eq(world_id.0))
-        });
-        let filter = if let Some(filter) = iter.clone().reduce(|a, b| a.or(b)) {
-            filter
-        } else {
-            iter.next().unwrap()
-        };
-        let retainers = REntity::find().filter(filter).all(&self.db).await?;
+
+        let retainers = self
+            .get_retainer_ids_from_name(retainer_names.iter().map(|s| s.as_str()), world_id.0)
+            .await?;
         if retainers.is_empty() {
             return Ok(0);
         }
+
         let mut retainer_iter = listings.iter().flat_map(|m| {
             let retainer_id = retainers
                 .iter()
@@ -395,6 +387,7 @@ impl UltrosDb {
                 .next()
                 .ok_or_else(|| anyhow::Error::msg("No retainers"))?,
         );
+
         let count = Entity::delete_many().filter(filter).exec(&self.db).await?;
 
         Ok(count.rows_affected)

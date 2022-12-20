@@ -18,7 +18,7 @@ use crate::{
             page::Page,
         },
     },
-    world_cache::{AnySelector, WorldCache, AnyResult},
+    world_cache::{AnyResult, AnySelector, WorldCache},
 };
 
 pub(crate) struct ListingsPage {
@@ -65,7 +65,8 @@ impl Page for ListingsPage {
         high_quality_listings.sort_by_key(|(l, _)| l.price_per_unit);
         let value = self.world_cache.lookup_value_by_name(&self.selected_world);
         let all = self.world_cache.get_all();
-        let region = value.as_ref()
+        let region = value
+            .as_ref()
             .map(|w| {
                 let region = self.world_cache.get_region(w)?;
                 let region = all.iter().find(|(r, _)| r.id == region.id)?;
@@ -121,7 +122,7 @@ impl Page for ListingsPage {
                         } else {
                           ""
                         };
-                        
+
                         @if datacenter.name == self.selected_world {
                           a class="world-button datacenter active" {
                             ((datacenter.name))
@@ -131,7 +132,7 @@ impl Page for ListingsPage {
                             ((datacenter.name))
                           }
                         }
-                      }  
+                      }
                     }
                     div class="flex-row flex-end" {
                       @if let Some((_, worlds)) = datacenters.iter().find(|(datacenter, _)| value.as_ref().map(|value| self.world_cache.is_child(value, &AnyResult::Datacenter(datacenter))).unwrap_or_default()) {
