@@ -1,19 +1,93 @@
 use anyhow::Result;
-use futures::{future::try_join_all, Stream};
-use migration::DbErr;
-use sea_orm::{
-    ColumnTrait, DbBackend, EntityTrait, FromQueryResult, QueryFilter, Statement,
+use futures::{
+    future::{join_all, try_join_all},
+    Stream,
 };
+use migration::DbErr;
+use sea_orm::{ColumnTrait, DbBackend, EntityTrait, FromQueryResult, QueryFilter, Statement};
 use std::collections::HashSet;
 use tracing::instrument;
 use universalis::{ItemId, ListingView, WorldId};
 
 use crate::{
     entity::{active_listing, retainer},
+    partial_diff_iterator::PartialDiffIterator,
     UltrosDb,
 };
 
+impl PartialEq<ListingView> for ListingData {
+    fn eq(&self, other: &ListingView) -> bool {
+        self.0.world_id == other.world_id.unwrap_or_default() as i32
+            && self.0.price_per_unit == other.price_per_unit.unwrap_or_default() as i32
+            && self.0.quantity == other.quantity.unwrap_or_default() as i32
+            && self.0.hq == other.hq
+            && self.1.name == other.retainer_name
+        // timestamp intentionally ignored
+    }
+}
+
+struct ListingData(active_listing::Model, retainer::Model);
+
+impl PartialOrd<ListingView> for ListingData {
+    fn partial_cmp(&self, other: &ListingView) -> Option<std::cmp::Ordering> {
+        let ListingData(listing, retainer) = self;
+        match (listing.world_id as u16).partial_cmp(&other.world_id.unwrap_or_default()) {
+            Some(core::cmp::Ordering::Equal) => {}
+            ord => return ord,
+        }
+        match retainer.name.partial_cmp(&other.retainer_name) {
+            Some(core::cmp::Ordering::Equal) => {}
+            ord => return ord,
+        }
+        match listing
+            .price_per_unit
+            .partial_cmp(&(other.price_per_unit.unwrap_or_default() as i32))
+        {
+            Some(core::cmp::Ordering::Equal) => {}
+            ord => return ord,
+        }
+        match listing
+            .quantity
+            .partial_cmp(&(other.quantity.unwrap_or_default() as i32))
+        {
+            Some(core::cmp::Ordering::Equal) => {}
+            ord => return ord,
+        }
+        listing.hq.partial_cmp(&other.hq)
+    }
+}
+
 impl UltrosDb {
+    pub async fn remove_listings(
+        &self,
+        remove_listings: Vec<ListingView>,
+        item_id: ItemId,
+        world_id: WorldId,
+    ) -> Result<u64> {
+        let listings = self
+            .get_all_listings_with_retainers(world_id.0, item_id)
+            .await?;
+
+        let items = join_all(
+            PartialDiffIterator::new(
+                listings
+                    .into_iter()
+                    .flat_map(|(listing, retainer)| retainer.map(|r| ListingData(listing, r))),
+                remove_listings.into_iter(),
+            )
+            .flat_map(|listing| match listing {
+                crate::partial_diff_iterator::Diff::Same(listing, _) => Some(listing.0),
+                _ => None,
+            })
+            .map(|listing| {
+                active_listing::Entity::delete_by_id((listing.id, listing.timestamp)).exec(&self.db)
+            }),
+        )
+        .await;
+
+        Ok(items.len() as u64)
+    }
+
     #[instrument(skip(self))]
     pub async fn get_all_listings_in_worlds_with_retainers(
         &self,

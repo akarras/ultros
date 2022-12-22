@@ -25,7 +25,7 @@ where
     C: PartialOrd<D>,
 {
     fn from((a, b): (A, B)) -> Self {
-        PartialDiffIterator::diff_iter(a, b)
+        PartialDiffIterator::new(a, b)
     }
 }
 
@@ -35,7 +35,7 @@ where
     B: Iterator<Item = D>,
     C: PartialOrd<D>,
 {
-    pub fn diff_iter(iter1: A, iter2: B) -> Self {
+    pub fn new(iter1: A, iter2: B) -> Self {
         Self {
             left: iter1,
             right: iter2,

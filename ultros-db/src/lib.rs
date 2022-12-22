@@ -22,7 +22,6 @@ use sea_orm::{
     ActiveModelTrait, ActiveValue::NotSet, ColumnTrait, ConnectOptions, Database,
     DatabaseConnection, EntityTrait, IntoActiveModel, ModelTrait, QueryFilter, QuerySelect, Set,
 };
-use std::collections::HashSet;
 
 use tracing::{info, instrument};
 use universalis::{ItemId, ListingView, WorldId};
@@ -197,12 +196,12 @@ impl UltrosDb {
         item: ItemId,
     ) -> Result<Vec<active_listing::Model>> {
         use active_listing::*;
-        Ok(Entity::find()
+        let mut listings = Entity::find()
             .filter(Column::ItemId.eq(item.0))
             .filter(Column::WorldId.eq(world.0))
-            .order_by_asc(Column::PricePerUnit)
             .all(&self.db)
-            .await?)
+            .await?;
+        Ok(listings)
     }
 
     #[instrument(skip(self))]
@@ -343,54 +342,6 @@ impl UltrosDb {
         .flatten()
         .collect();
         Ok(retainers)
-    }
-
-    #[instrument(skip(self))]
-    pub async fn remove_listings(
-        &self,
-        listings: Vec<ListingView>,
-        item_id: ItemId,
-        world_id: WorldId,
-    ) -> Result<u64> {
-        use active_listing::*;
-        if listings.is_empty() {
-            return Ok(0);
-        }
-        let retainer_names: HashSet<String> = listings
-            .iter()
-            .map(|l| l.retainer_name.to_string())
-            .collect();
-
-        let retainers = self
-            .get_retainer_ids_from_name(retainer_names.iter().map(|s| s.as_str()), world_id.0)
-            .await?;
-        if retainers.is_empty() {
-            return Ok(0);
-        }
-
-        let mut retainer_iter = listings.iter().flat_map(|m| {
-            let retainer_id = retainers
-                .iter()
-                .find(|r| r.name == m.retainer_name)
-                .map(|r| r.id)?;
-            Some(
-                Column::Hq
-                    .eq(m.hq)
-                    .and(Column::WorldId.eq(world_id.0))
-                    .and(Column::ItemId.eq(item_id.0))
-                    .and(Column::Id.eq(retainer_id)),
-            )
-        });
-
-        let filter = retainer_iter.clone().reduce(|a, b| a.or(b)).unwrap_or(
-            retainer_iter
-                .next()
-                .ok_or_else(|| anyhow::Error::msg("No retainers"))?,
-        );
-
-        let count = Entity::delete_many().filter(filter).exec(&self.db).await?;
-
-        Ok(count.rows_affected)
     }
 
     #[instrument(skip(self))]
