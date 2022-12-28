@@ -17,6 +17,7 @@ mod m20221015_143611_sale_history_index;
 mod m20221031_185333_add_order_column;
 mod m20221112_211028_add_final_fantasy_character_relation_to_verification;
 mod m20221126_152018_compress_timescale;
+mod m20221227_164853_price_alert;
 
 pub struct Migrator;
 
@@ -43,6 +44,7 @@ impl MigratorTrait for Migrator {
                 m20221112_211028_add_final_fantasy_character_relation_to_verification::Migration,
             ),
             Box::new(m20221126_152018_compress_timescale::Migration),
+            Box::new(m20221227_164853_price_alert::Migration),
         ]
     }
 }

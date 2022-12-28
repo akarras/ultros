@@ -4,23 +4,15 @@ use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq, Serialize, Deserialize)]
-#[sea_orm(table_name = "retainer_city")]
+#[sea_orm(table_name = "list_item")]
 pub struct Model {
-    #[sea_orm(primary_key, auto_increment = false)]
+    #[sea_orm(primary_key)]
     pub id: i32,
-    pub name: String,
+    pub item_id: i32,
+    pub list_id: i32,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-pub enum Relation {
-    #[sea_orm(has_many = "super::retainer::Entity")]
-    Retainer,
-}
-
-impl Related<super::retainer::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::Retainer.def()
-    }
-}
+pub enum Relation {}
 
 impl ActiveModelBehavior for ActiveModel {}

@@ -174,10 +174,13 @@ async fn handle_upgrade(
             }
         };
 
-        let value = match result {
+        if let Err(value) = match result {
             Action::Tx(tx) => ws.send(Message::Text(serde_json::to_string(&tx).unwrap())),
             Action::Pong(pong) => ws.send(Message::Pong(pong)),
         }
-        .await;
+        .await
+        {
+            error!("Error sending from {value:?}");
+        }
     }
 }

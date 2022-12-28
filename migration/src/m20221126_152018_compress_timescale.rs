@@ -65,16 +65,16 @@ impl MigrationTrait for Migration {
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        // manager
-        //     .alter_table(
-        //         TableAlterStatement::new()
-        //             .table(SaleHistory::Table)
-        //             .add_column_if_not_exists(
-        //                 ColumnDef::new(SaleHistory::Id).auto_increment().integer(),
-        //             )
-        //             .to_owned(),
-        //     )
-        //     .await?;
+        manager
+            .alter_table(
+                TableAlterStatement::new()
+                    .table(SaleHistory::Table)
+                    .add_column_if_not_exists(
+                        ColumnDef::new(SaleHistory::Id).auto_increment().integer(),
+                    )
+                    .to_owned(),
+            )
+            .await?;
 
         // manager.exec_stmt(RawPostgresStatement{ statement: "ALTER TABLE sale_history SET (timescaledb.compress = false, timescaledb.compress_orderby = '',
         // timescaledb.compress_segmentby = 'world_id, sold_item_id'

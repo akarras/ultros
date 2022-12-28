@@ -82,6 +82,20 @@ async fn add_undercut_alert(
     Ok(())
 }
 
+#[poise::command(slash_command)]
+async fn remove_undercut_alert(ctx: Context<'_>) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    // find the alert for this channel and then delete it
+    let channel_id = ctx.channel_id();
+    let discord_id = ctx.author().id;
+    let (alert, undercuts) = ctx.data().db.delete_discord_alert(channel_id.0 as i64, discord_id.0 as i64).await?;
+    ctx.data().event_senders.alerts.send(EventType::Remove(Arc::new(alert)))?;
+    for undercut in undercuts {
+        ctx.data().event_senders.retainer_undercut.send(EventType::Remove(Arc::new(undercut)))?;
+    }
+    Ok(())
+}
+
 /// Shows only listings where your retainers listing has been undercut by someone else
 #[poise::command(slash_command)]
 async fn check_undercuts(ctx: Context<'_>) -> Result<(), Error> {
