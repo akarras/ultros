@@ -22,7 +22,8 @@ use migration::{sea_orm::QueryOrder, DbErr, Migrator, MigratorTrait};
 
 use sea_orm::{
     ActiveModelTrait, ActiveValue::NotSet, ColumnTrait, ConnectOptions, Database,
-    DatabaseConnection, EntityTrait, IntoActiveModel, ModelTrait, QueryFilter, QuerySelect, Set,
+    DatabaseConnection, EntityTrait, FromQueryResult, IntoActiveModel, ModelTrait, QueryFilter,
+    QuerySelect, Set,
 };
 
 use tracing::{info, instrument};
@@ -452,4 +453,21 @@ impl UltrosDb {
         .insert(&self.db)
         .await?)
     }
+
+    #[instrument(skip(self))]
+    pub async fn get_unique_item_ids(&self) -> Result<Vec<i32>> {
+        let items = active_listing::Entity::find()
+            .select_only()
+            .column(active_listing::Column::ItemId)
+            .distinct()
+            .into_model::<UniqueItemId>()
+            .all(&self.db)
+            .await?;
+
+        Ok(items.into_iter().map(|i| i.item).collect())
+    }
+}
+#[derive(Debug, FromQueryResult)]
+pub struct UniqueItemId {
+    pub item: i32,
 }

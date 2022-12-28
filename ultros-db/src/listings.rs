@@ -1,6 +1,6 @@
 use anyhow::Result;
 use futures::{
-    future::{join_all, try_join_all},
+    future::{try_join_all},
     Stream,
 };
 use migration::DbErr;
@@ -63,12 +63,12 @@ impl UltrosDb {
         remove_listings: Vec<ListingView>,
         item_id: ItemId,
         world_id: WorldId,
-    ) -> Result<u64> {
+    ) -> Result<Vec<active_listing::Model>> {
         let listings = self
             .get_all_listings_with_retainers(world_id.0, item_id)
             .await?;
 
-        let items = join_all(
+        let items = try_join_all(
             PartialDiffIterator::new(
                 listings
                     .into_iter()
@@ -79,13 +79,13 @@ impl UltrosDb {
                 crate::partial_diff_iterator::Diff::Same(listing, _) => Some(listing.0),
                 _ => None,
             })
-            .map(|listing| {
-                active_listing::Entity::delete_by_id((listing.id, listing.timestamp)).exec(&self.db)
+            .map(|listing| async move {
+                active_listing::Entity::delete_by_id((listing.id, listing.timestamp)).exec(&self.db).await.map(|_| listing)
             }),
         )
-        .await;
+        .await?;
 
-        Ok(items.len() as u64)
+        Ok(items)
     }
 
     #[instrument(skip(self))]
