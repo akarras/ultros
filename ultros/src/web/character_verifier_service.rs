@@ -4,9 +4,11 @@ use lodestone::{model::profile::Profile, LodestoneError};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tracing::log::warn;
-use ultros_db::{entity::ffxiv_character_verification, UltrosDb};
-
-use crate::world_cache::{self, WorldCacheError};
+use ultros_db::{
+    entity::ffxiv_character_verification,
+    world_cache::{self, WorldCacheError},
+    UltrosDb,
+};
 
 #[derive(Debug, Clone)]
 pub(crate) struct CharacterVerifierService {

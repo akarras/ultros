@@ -24,15 +24,18 @@ use maud::Render;
 use reqwest::header;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
-use tokio::time::timeout;
-use tower_http::compression::CompressionLayer;
-use tracing::debug;
-
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use ultros_db::UltrosDb;
+use tokio::time::timeout;
+use tower_http::compression::CompressionLayer;
+use tracing::debug;
+use ultros_db::world_cache::AnyResult;
+use ultros_db::{
+    world_cache::{AnySelector, WorldCache},
+    UltrosDb,
+};
 use universalis::{ItemId, ListingView, UniversalisClient, WorldId};
 
 use self::character_verifier_service::CharacterVerifierService;
@@ -62,15 +65,12 @@ use crate::web::templates::pages::character::{
 use crate::web::templates::pages::retainer::{
     add_retainer_to_character, remove_retainer_from_character, reorder_retainer,
 };
-use crate::web_metrics::{start_metrics_server, track_metrics};
-use crate::{
-    web::{
-        alerts_websocket::connect_websocket,
-        oauth::{begin_login, logout},
-        templates::pages::{profile::profile, retainer::edit_retainer::edit_retainer},
-    },
-    world_cache::{AnySelector, WorldCache},
+use crate::web::{
+    alerts_websocket::connect_websocket,
+    oauth::{begin_login, logout},
+    templates::pages::{profile::profile, retainer::edit_retainer::edit_retainer},
 };
+use crate::web_metrics::{start_metrics_server, track_metrics};
 use image::io::Reader as ImageReader;
 use std::io::Cursor;
 
@@ -404,13 +404,9 @@ async fn analyze_profits(
         .get_region(&world)
         .ok_or_else(|| anyhow::Error::msg("Unable to get region"))?;
     let world = match world {
-        crate::world_cache::AnyResult::World(w) => w,
-        crate::world_cache::AnyResult::Datacenter(_) => {
-            return Err(Error::msg("Datacenter found?").into())
-        }
-        crate::world_cache::AnyResult::Region(_) => {
-            return Err(Error::msg("Region not found").into())
-        }
+        AnyResult::World(w) => w,
+        AnyResult::Datacenter(_) => return Err(Error::msg("Datacenter found?").into()),
+        AnyResult::Region(_) => return Err(Error::msg("Region not found").into()),
     };
     let mut analyzer_results = analyzer
         .get_best_resale(

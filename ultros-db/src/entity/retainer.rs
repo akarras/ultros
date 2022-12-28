@@ -31,10 +31,10 @@ pub enum Relation {
         on_delete = "Cascade"
     )]
     World,
-    #[sea_orm(has_many = "super::owned_retainers::Entity")]
-    OwnedRetainers,
     #[sea_orm(has_many = "super::active_listing::Entity")]
     ActiveListing,
+    #[sea_orm(has_many = "super::owned_retainers::Entity")]
+    OwnedRetainers,
 }
 
 impl Related<super::retainer_city::Entity> for Entity {
@@ -49,15 +49,15 @@ impl Related<super::world::Entity> for Entity {
     }
 }
 
-impl Related<super::owned_retainers::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::OwnedRetainers.def()
-    }
-}
-
 impl Related<super::active_listing::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::ActiveListing.def()
+    }
+}
+
+impl Related<super::owned_retainers::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::OwnedRetainers.def()
     }
 }
 

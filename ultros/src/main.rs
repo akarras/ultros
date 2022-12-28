@@ -5,7 +5,6 @@ pub(crate) mod event;
 pub(crate) mod utils;
 mod web;
 mod web_metrics;
-pub(crate) mod world_cache;
 
 use std::collections::HashSet;
 use std::env;
@@ -20,13 +19,13 @@ use discord::start_discord;
 use event::{create_event_busses, EventProducer, EventType};
 use tracing::{error, info};
 use ultros_db::entity::{active_listing, sale_history};
+use ultros_db::world_cache::WorldCache;
 use ultros_db::UltrosDb;
 use universalis::websocket::event_types::{EventChannel, SubscribeMode, WSMessage};
 use universalis::websocket::SocketRx;
 use universalis::{DataCentersView, UniversalisClient, WebsocketClient, WorldId, WorldsView};
 use web::character_verifier_service::CharacterVerifierService;
 use web::oauth::{AuthUserCache, DiscordAuthConfig, OAuthScope};
-use world_cache::WorldCache;
 
 async fn run_socket_listener(
     db: UltrosDb,

@@ -9,9 +9,9 @@ use reqwest::StatusCode;
 use thiserror::Error;
 use tokio::{sync::broadcast::error::SendError, time::error::Elapsed};
 use tracing::log::error;
-use ultros_db::SeaDbErr;
+use ultros_db::{world_cache::WorldCacheError, SeaDbErr};
 
-use crate::{analyzer_service::AnalyzerError, event, world_cache::WorldCacheError};
+use crate::{analyzer_service::AnalyzerError, event};
 
 use super::character_verifier_service::VerifierError;
 

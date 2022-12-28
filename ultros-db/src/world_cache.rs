@@ -1,11 +1,11 @@
 use std::{borrow::Borrow, collections::HashMap, mem};
 
-use serde::{Deserialize, Serialize};
-use thiserror::Error;
-use ultros_db::{
+use crate::{
     entity::{datacenter, region, world},
     UltrosDb,
 };
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use yoke::{Yoke, Yokeable};
 
 pub type AllWorldsAndRegions<'a> = Vec<(
@@ -61,7 +61,7 @@ pub enum WorldCacheError {
 }
 
 impl<'a> AnyResult<'a> {
-    pub(crate) fn get_name(&self) -> &str {
+    pub fn get_name(&self) -> &str {
         match self {
             AnyResult::World(world) => &world.name,
             AnyResult::Datacenter(datacenter) => &datacenter.name,
@@ -72,7 +72,7 @@ impl<'a> AnyResult<'a> {
 
 impl WorldCache {
     /// Return true if this is a child of other, or is other
-    pub(crate) fn is_child(&self, this: &AnyResult, other: &AnyResult) -> bool {
+    pub fn is_child(&self, this: &AnyResult, other: &AnyResult) -> bool {
         if this == other {
             return true;
         }

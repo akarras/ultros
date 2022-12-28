@@ -3,9 +3,9 @@ use tokio::sync::{
     mpsc::{self, Receiver},
     RwLock,
 };
-use ultros_db::entity::active_listing;
+use ultros_db::{entity::active_listing, world_cache::AnySelector};
 
-use crate::{event::EventReceivers, world_cache::AnySelector};
+use crate::event::EventReceivers;
 
 pub(crate) struct PriceUndercutData {
     pub(crate) item_id: i32,

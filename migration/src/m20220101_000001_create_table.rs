@@ -1,4 +1,3 @@
-use crate::{SelectStatement, SimpleExpr};
 use sea_orm_migration::{prelude::*, sea_orm::StatementBuilder, sea_query::ColumnDef};
 
 #[derive(DeriveMigrationName)]
@@ -548,19 +547,19 @@ impl MigrationTrait for Migration {
             )
             .await?;
         // create hypertable from sale history data. This can be compressed & aggregated instead of removed after a threshold
-        println!(
-            "{:?}",
-            manager
-                .exec_stmt(
-                    SelectStatement::new()
-                        .expr(Func::cust(CreateHypertable).args(vec![
-                            SimpleExpr::Custom("'sale_history'".to_string()),
-                            SimpleExpr::Custom("'sold_date'".to_string()),
-                        ]))
-                        .to_owned(),
-                )
-                .await
-        );
+        // println!(
+        //     "{:?}",
+        //     manager
+        //         .exec_stmt(
+        //             SelectStatement::new()
+        //                 .expr(Func::cust(CreateHypertable).args(vec![
+        //                     SimpleExpr::Custom("'sale_history'".to_string()),
+        //                     SimpleExpr::Custom("'sold_date'".to_string()),
+        //                 ]))
+        //                 .to_owned(),
+        //         )
+        //         .await
+        // );
 
         Ok(())
     }
@@ -773,7 +772,7 @@ pub(crate) enum SaleHistory {
 }
 
 #[derive(Iden)]
-enum World {
+pub(crate) enum World {
     Table,
     Id,
     Name,
@@ -781,7 +780,7 @@ enum World {
 }
 
 #[derive(Iden)]
-enum Datacenter {
+pub(crate) enum Datacenter {
     Table,
     Id,
     Name,
@@ -789,7 +788,7 @@ enum Datacenter {
 }
 
 #[derive(Iden)]
-enum Region {
+pub(crate) enum Region {
     Table,
     Id,
     Name,

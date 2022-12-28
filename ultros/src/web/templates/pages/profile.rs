@@ -6,20 +6,18 @@ use maud::html;
 use serde::Deserialize;
 use ultros_db::{
     entity::{final_fantasy_character, owned_ffxiv_character},
+    world_cache::{AnySelector, WorldCache},
     UltrosDb,
 };
 
-use crate::{
-    web::{
-        error::WebError,
-        home_world_cookie::{self, HomeWorld},
-        oauth::AuthDiscordUser,
-        templates::{
-            components::{header::Header, world_dropdown::WorldDropdown},
-            page::{Page, RenderPage},
-        },
+use crate::web::{
+    error::WebError,
+    home_world_cookie::{self, HomeWorld},
+    oauth::AuthDiscordUser,
+    templates::{
+        components::{header::Header, world_dropdown::WorldDropdown},
+        page::{Page, RenderPage},
     },
-    world_cache::{AnySelector, WorldCache},
 };
 
 #[derive(Deserialize)]

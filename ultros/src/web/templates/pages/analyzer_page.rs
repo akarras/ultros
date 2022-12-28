@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use maud::html;
-use ultros_db::entity::{region, world};
+use ultros_db::{
+    entity::{region, world},
+    world_cache::{AnySelector, WorldCache},
+};
 
 use crate::{
     analyzer_service::ResaleStats,
@@ -20,7 +23,6 @@ use crate::{
         },
         AnalyzerOptions, AnalyzerSort,
     },
-    world_cache::{AnySelector, WorldCache},
 };
 use xiv_gen::ItemId;
 

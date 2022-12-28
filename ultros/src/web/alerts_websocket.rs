@@ -3,7 +3,6 @@ use crate::{
     alerts::undercut_alert::{UndercutResult, UndercutRetainer, UndercutTracker},
     event::EventReceivers,
     utils,
-    world_cache::AnySelector,
 };
 use axum::{
     extract::{
@@ -18,7 +17,7 @@ use tracing::{
     instrument,
     log::{debug, error, info},
 };
-use ultros_db::UltrosDb;
+use ultros_db::{world_cache::AnySelector, UltrosDb};
 
 #[derive(Debug, Deserialize)]
 pub(crate) enum AlertsRx {

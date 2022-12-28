@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
 use maud::{html, Render};
-
-use crate::world_cache::{AnySelector, WorldCache};
+use ultros_db::world_cache::{AnyResult, AnySelector, WorldCache};
 
 pub(crate) struct WorldDropdown<'a> {
     pub(crate) world_id: Option<i32>,
@@ -17,7 +16,7 @@ impl<'a> Render for WorldDropdown<'a> {
             .world_cache
             .lookup_selector(&AnySelector::World(home_world))
             .map(|w| match w {
-                crate::world_cache::AnyResult::World(world) => Some(world),
+                AnyResult::World(world) => Some(world),
                 _ => None,
             })
             .ok()

@@ -3,11 +3,13 @@ mod discord;
 pub mod entity;
 mod ffxiv_character;
 pub mod listings;
+pub mod lists;
 pub(crate) mod partial_diff_iterator;
 pub mod price_optimizer;
 mod regions_and_datacenters;
 pub mod retainers;
 pub mod sales;
+pub mod world_cache;
 mod worlds;
 
 pub use sea_orm::error::DbErr as SeaDbErr;
@@ -196,7 +198,7 @@ impl UltrosDb {
         item: ItemId,
     ) -> Result<Vec<active_listing::Model>> {
         use active_listing::*;
-        let mut listings = Entity::find()
+        let listings = Entity::find()
             .filter(Column::ItemId.eq(item.0))
             .filter(Column::WorldId.eq(world.0))
             .all(&self.db)

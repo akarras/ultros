@@ -4,17 +4,15 @@ use axum::extract::{Query, State};
 use lodestone::model::server::Server;
 use maud::html;
 use serde::Deserialize;
+use ultros_db::world_cache::{AnySelector, WorldCache};
 
-use crate::{
-    web::{
-        error::WebError,
-        oauth::AuthDiscordUser,
-        templates::{
-            components::{header::Header, world_dropdown::WorldDropdown},
-            page::{Page, RenderPage},
-        },
+use crate::web::{
+    error::WebError,
+    oauth::AuthDiscordUser,
+    templates::{
+        components::{header::Header, world_dropdown::WorldDropdown},
+        page::{Page, RenderPage},
     },
-    world_cache::WorldCache,
 };
 
 #[derive(Deserialize)]
@@ -31,8 +29,7 @@ pub(crate) async fn add_character(
     let search_results = if let Some(name) = &query.name {
         let mut builder = lodestone::search::SearchBuilder::new().character(&name);
         if let Some(world) = query.world {
-            let world =
-                world_cache.lookup_selector(&crate::world_cache::AnySelector::World(world))?;
+            let world = world_cache.lookup_selector(&AnySelector::World(world))?;
             let world_name = world.get_name();
             builder = builder.server(Server::from_str(world_name)?);
         }

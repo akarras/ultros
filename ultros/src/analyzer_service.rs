@@ -21,13 +21,11 @@ use ultros_db::{
 };
 use universalis::{ItemId, WorldId};
 
-use crate::{
-    event::EventReceivers,
-    world_cache::{AnySelector, WorldCache},
-};
+use crate::event::EventReceivers;
 use thiserror::Error;
 use tokio::sync::RwLock;
 use tracing::log::error;
+use ultros_db::world_cache::{AnySelector, WorldCache};
 
 pub const SALE_HISTORY_SIZE: usize = 4;
 

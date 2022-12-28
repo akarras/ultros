@@ -16,6 +16,63 @@ pub struct Model {
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-pub enum Relation {}
+pub enum Relation {
+    #[sea_orm(
+        belongs_to = "super::datacenter::Entity",
+        from = "Column::DatacenterId",
+        to = "super::datacenter::Column::Id",
+        on_update = "NoAction",
+        on_delete = "NoAction"
+    )]
+    Datacenter,
+    #[sea_orm(
+        belongs_to = "super::list::Entity",
+        from = "Column::ListId",
+        to = "super::list::Column::Id",
+        on_update = "NoAction",
+        on_delete = "NoAction"
+    )]
+    List,
+    #[sea_orm(
+        belongs_to = "super::region::Entity",
+        from = "Column::RegionId",
+        to = "super::region::Column::Id",
+        on_update = "NoAction",
+        on_delete = "NoAction"
+    )]
+    Region,
+    #[sea_orm(
+        belongs_to = "super::world::Entity",
+        from = "Column::WorldId",
+        to = "super::world::Column::Id",
+        on_update = "NoAction",
+        on_delete = "NoAction"
+    )]
+    World,
+}
+
+impl Related<super::datacenter::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Datacenter.def()
+    }
+}
+
+impl Related<super::list::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::List.def()
+    }
+}
+
+impl Related<super::region::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Region.def()
+    }
+}
+
+impl Related<super::world::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::World.def()
+    }
+}
 
 impl ActiveModelBehavior for ActiveModel {}

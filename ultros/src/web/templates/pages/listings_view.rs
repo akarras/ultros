@@ -1,24 +1,24 @@
 use std::sync::Arc;
 
 use maud::html;
-use ultros_db::entity::{active_listing, retainer, sale_history};
-
-use crate::{
-    web::{
-        home_world_cookie::HomeWorld,
-        oauth::AuthDiscordUser,
-        templates::{
-            components::{
-                copy_text_button::CopyTextButton,
-                gil::Gil,
-                header::Header,
-                item_icon::{IconSize, ItemIcon},
-                time_since::TimeSince,
-            },
-            page::Page,
-        },
-    },
+use ultros_db::{
+    entity::{active_listing, retainer, sale_history},
     world_cache::{AnyResult, AnySelector, WorldCache},
+};
+
+use crate::web::{
+    home_world_cookie::HomeWorld,
+    oauth::AuthDiscordUser,
+    templates::{
+        components::{
+            copy_text_button::CopyTextButton,
+            gil::Gil,
+            header::Header,
+            item_icon::{IconSize, ItemIcon},
+            time_since::TimeSince,
+        },
+        page::Page,
+    },
 };
 
 pub(crate) struct ListingsPage {
@@ -116,13 +116,7 @@ impl Page for ListingsPage {
                       }
                     }
                     div class="flex-row flex-end" {
-                      @for (datacenter, worlds) in datacenters {
-                        @let focus_text = if datacenter.name == self.selected_world || worlds.iter().any(|world| world.name.eq(&self.selected_world)) {
-                          " focus"
-                        } else {
-                          ""
-                        };
-
+                      @for (datacenter, _) in datacenters {
                         @if datacenter.name == self.selected_world {
                           a class="world-button datacenter active" {
                             ((datacenter.name))

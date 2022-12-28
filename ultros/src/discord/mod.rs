@@ -3,13 +3,12 @@ pub(crate) mod ffxiv;
 use chrono::Local;
 use poise::{builtins::HelpConfiguration, serenity_prelude as serenity};
 use std::sync::Arc;
-use ultros_db::UltrosDb;
+use ultros_db::{world_cache::WorldCache, UltrosDb};
 
 use crate::{
     alerts::alert_manager::AlertManager,
     analyzer_service::AnalyzerService,
     event::{EventReceivers, EventSenders},
-    world_cache::WorldCache,
 };
 
 type Error = Box<dyn std::error::Error + Send + Sync>;

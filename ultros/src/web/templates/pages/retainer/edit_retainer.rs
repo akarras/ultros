@@ -5,19 +5,17 @@ use maud::html;
 use ultros_db::{
     entity::{final_fantasy_character, owned_ffxiv_character},
     retainers::FullRetainersList,
+    world_cache::{AnySelector, WorldCache},
     UltrosDb,
 };
 
-use crate::{
-    web::{
-        error::WebError,
-        oauth::AuthDiscordUser,
-        templates::{
-            components::header::Header,
-            page::{Page, RenderPage},
-        },
+use crate::web::{
+    error::WebError,
+    oauth::AuthDiscordUser,
+    templates::{
+        components::header::Header,
+        page::{Page, RenderPage},
     },
-    world_cache::{AnySelector, WorldCache},
 };
 
 pub(crate) struct EditRetainers {

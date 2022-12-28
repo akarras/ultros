@@ -5,12 +5,9 @@ use axum::{
     Json,
 };
 use serde::Serialize;
+use ultros_db::world_cache::{AnySelector, WorldCache};
 
-use crate::{
-    analyzer_service::AnalyzerService,
-    web::error::WebError,
-    world_cache::{AnySelector, WorldCache},
-};
+use crate::{analyzer_service::AnalyzerService, web::error::WebError};
 
 #[derive(Serialize, Debug)]
 struct CheapestListingData {
