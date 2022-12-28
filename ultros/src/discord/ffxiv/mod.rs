@@ -1,6 +1,7 @@
 use super::{Context, Error};
 mod analyze;
 mod character;
+mod lists;
 mod retainer;
 
 use analyze::analyze;

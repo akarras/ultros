@@ -7,3 +7,4 @@ pub(crate) mod listings_view;
 pub(crate) mod profile;
 pub(crate) mod retainer;
 pub(crate) mod unauthorized_page;
+pub(crate) mod lists;

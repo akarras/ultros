@@ -20,6 +20,10 @@ impl<'a> Render for Header<'a> {
                 i class="fa-solid fa-money-bill-trend-up" {}
                 "Analyzer"
               };
+              a href="/list" class="nav-item" {
+                i class="fa-solid fa-list" {}
+                "Lists"
+              };
               a class="nav-item" href="/retainers" {
                 i class="fa-solid fa-user-group" {}
                 "Retainers"

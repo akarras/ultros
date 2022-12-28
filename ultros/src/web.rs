@@ -62,6 +62,9 @@ use crate::web::templates::pages::character::{
     add_character::add_character, claim_character::claim_character,
     verify_character::verify_character,
 };
+use crate::web::templates::pages::lists;
+use crate::web::templates::pages::lists::add::add_list;
+use crate::web::templates::pages::lists::overview::overview;
 use crate::web::templates::pages::retainer::{
     add_retainer_to_character, remove_retainer_from_character, reorder_retainer,
 };
@@ -90,13 +93,6 @@ async fn get_retainer_listings(
         .await?
         .ok_or(WebError::InvalidItem(retainer_id))?;
     let (retainer, listings) = data;
-    // get all listings from the retainer and calculate heuristics
-    //let multiple_listings = db
-    //    .get_multiple_listings_for_worlds(
-    //        [WorldId(retainer.world_id)].into_iter(),
-    //        listings.iter().map(|i| ItemId(i.item_id)),
-    //    )
-    //    .await?;
 
     Ok(RenderPage(GenericRetainerPage {
         retainer_name: retainer.name,
@@ -657,6 +653,8 @@ pub(crate) async fn start_web(state: WebState) {
         )
         .route("/retainers/reorder", post(reorder_retainer))
         .route("/retainers", get(user_retainers_listings))
+        .route("/list", get(overview))
+        .route("/list/add", get(add_list))
         .route("/analyzer", get(analyze_profits))
         .route("/items/:search", get(fuzzy_item_search::search_items))
         .route("/static/*path", get(static_path))
