@@ -88,10 +88,20 @@ async fn remove_undercut_alert(ctx: Context<'_>) -> Result<(), Error> {
     // find the alert for this channel and then delete it
     let channel_id = ctx.channel_id();
     let discord_id = ctx.author().id;
-    let (alert, undercuts) = ctx.data().db.delete_discord_alert(channel_id.0 as i64, discord_id.0 as i64).await?;
-    ctx.data().event_senders.alerts.send(EventType::Remove(Arc::new(alert)))?;
+    let (alert, undercuts) = ctx
+        .data()
+        .db
+        .delete_discord_alert(channel_id.0 as i64, discord_id.0 as i64)
+        .await?;
+    ctx.data()
+        .event_senders
+        .alerts
+        .send(EventType::Remove(Arc::new(alert)))?;
     for undercut in undercuts {
-        ctx.data().event_senders.retainer_undercut.send(EventType::Remove(Arc::new(undercut)))?;
+        ctx.data()
+            .event_senders
+            .retainer_undercut
+            .send(EventType::Remove(Arc::new(undercut)))?;
     }
     Ok(())
 }

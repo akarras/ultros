@@ -2,11 +2,14 @@ pub(crate) mod ffxiv;
 
 use chrono::Local;
 use poise::{builtins::HelpConfiguration, serenity_prelude as serenity};
+use std::sync::Arc;
 use ultros_db::UltrosDb;
 
 use crate::{
     alerts::alert_manager::AlertManager,
+    analyzer_service::AnalyzerService,
     event::{EventReceivers, EventSenders},
+    world_cache::WorldCache,
 };
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -17,7 +20,8 @@ pub(crate) struct Data {
     db: UltrosDb,
     lodestone_client: reqwest::Client,
     event_senders: EventSenders,
-    event_receivers: EventReceivers,
+    analyzer_service: AnalyzerService,
+    world_cache: Arc<WorldCache>,
 }
 
 #[poise::command(slash_command, prefix_command)]
@@ -66,6 +70,8 @@ pub(crate) async fn start_discord(
     db: UltrosDb,
     event_senders: EventSenders,
     event_receivers: EventReceivers,
+    analyzer_service: AnalyzerService,
+    world_cache: Arc<WorldCache>,
 ) {
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
@@ -74,9 +80,10 @@ pub(crate) async fn start_discord(
         })
         .token(std::env::var("DISCORD_TOKEN").expect("missing DISCORD_TOKEN"))
         .intents(serenity::GatewayIntents::non_privileged())
-        .setup(move |ctx, _ready, _framework| {
+        .setup(move |ctx, _ready, framework| {
             Box::pin(async move {
                 // start the alert monitor
+                poise::builtins::register_globally(ctx, &framework.options().commands).await?;
                 let (item_events, alert_events) = (
                     (
                         event_receivers.retainers.resubscribe(),
@@ -97,7 +104,8 @@ pub(crate) async fn start_discord(
                     db,
                     lodestone_client: reqwest::Client::new(),
                     event_senders,
-                    event_receivers,
+                    analyzer_service,
+                    world_cache,
                 })
             })
         });

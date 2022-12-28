@@ -743,6 +743,7 @@ pub(crate) struct ResaleStats {
     pub(crate) world_id: i32,
 }
 
+#[derive(Default)]
 pub(crate) struct ResaleOptions {
     pub(crate) minimum_profit: Option<i32>,
     pub(crate) filter_world: Option<i32>,

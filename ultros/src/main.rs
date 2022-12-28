@@ -145,6 +145,8 @@ async fn main() -> Result<()> {
     let db = init_db(worlds, datacenters).await.unwrap();
     let world_cache = Arc::new(WorldCache::new(&db).await);
     let (senders, receivers) = create_event_busses();
+    let analyzer_service =
+        AnalyzerService::start_analyzer(db.clone(), receivers.clone(), world_cache.clone()).await;
     // begin listening to universalis events
     tokio::spawn(run_socket_listener(
         db.clone(),
@@ -155,6 +157,8 @@ async fn main() -> Result<()> {
         db.clone(),
         senders.clone(),
         receivers.clone(),
+        analyzer_service.clone(),
+        world_cache.clone(),
     ));
     // create the oauth config
     let hostname = env::var("HOSTNAME").expect(
@@ -165,8 +169,6 @@ async fn main() -> Result<()> {
     let client_secret = env::var("DISCORD_CLIENT_SECRET")
         .expect("environment variable DISCORD_CLIENT_SECRET for OAuth missing");
     let key = env::var("KEY").expect("environment variable KEY not found");
-    let analyzer_service =
-        AnalyzerService::start_analyzer(db.clone(), receivers.clone(), world_cache.clone()).await;
     let character_verification = CharacterVerifierService {
         client: reqwest::Client::new(),
         db: db.clone(),
