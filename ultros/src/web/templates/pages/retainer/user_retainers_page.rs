@@ -54,6 +54,11 @@ impl Page for UserRetainersPage {
               }
               div class="main-content" {
                 @if let RetainerViewType::Undercuts(undercuts) = &self.view_type {
+                  @if undercuts.is_empty() {
+                    div {
+                      "No retainers found. Please " a href="/retainers/add" { "add" } " a retainer to use this page."
+                    }
+                  }
                   @for (_owned, retainer, listings) in undercuts.iter() {
                     div class="content-well" {
                         span class="content-title" {
@@ -106,6 +111,11 @@ impl Page for UserRetainersPage {
                     }
                   }
                 @if let RetainerViewType::Listings(active) = &self.view_type {
+                    @if active.is_empty() {
+                      div {
+                        "No retainers found. Please " a href="/retainers/add" { "add" } " a retainer to use this page."
+                      }
+                    }
                     @for (_owned, retainer, listings) in active.iter() {
                       div class="content-well" {
                         span class="content-title" {
