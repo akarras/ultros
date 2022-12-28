@@ -84,7 +84,9 @@ async fn run_socket_listener(
                         match db.remove_listings(listings.clone(), item, world).await {
                             Ok(listings) => {
                                 info!("Removed listings {listings:?} {item:?} {world:?}");
-                                listings_tx.send(EventType::Remove(Arc::new(listings)));
+                                if let Err(e) = listings_tx.send(EventType::Remove(Arc::new(listings))) {
+                                    error!("Error sending remove listings {e:?}");
+                                }
                             },
                             Err(e) => error!("Error removing listings {e:?}. Listings set {listings:?} {item:?} {world:?}")
                         }

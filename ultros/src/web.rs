@@ -65,9 +65,10 @@ use crate::web::templates::pages::character::{
 use crate::web::templates::pages::lists::delete_list;
 use crate::web::templates::pages::lists::item_add::list_item_add;
 use crate::web::templates::pages::lists::view::delete_item;
-use crate::web::templates::pages::{lists::{add::add_list, overview::overview, view::list_details}, retainer::{
-    add_retainer_to_character, remove_retainer_from_character, reorder_retainer,
-}};
+use crate::web::templates::pages::{
+    lists::{add::add_list, overview::overview, view::list_details},
+    retainer::{add_retainer_to_character, remove_retainer_from_character, reorder_retainer},
+};
 use crate::web::{
     alerts_websocket::connect_websocket,
     oauth::{begin_login, logout},

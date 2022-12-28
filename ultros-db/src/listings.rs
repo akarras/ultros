@@ -1,8 +1,5 @@
 use anyhow::Result;
-use futures::{
-    future::{try_join_all},
-    Stream,
-};
+use futures::{future::try_join_all, Stream};
 use migration::DbErr;
 use sea_orm::{ColumnTrait, DbBackend, EntityTrait, FromQueryResult, QueryFilter, Statement};
 use std::collections::HashSet;
@@ -80,7 +77,10 @@ impl UltrosDb {
                 _ => None,
             })
             .map(|listing| async move {
-                active_listing::Entity::delete_by_id((listing.id, listing.timestamp)).exec(&self.db).await.map(|_| listing)
+                active_listing::Entity::delete_by_id((listing.id, listing.timestamp))
+                    .exec(&self.db)
+                    .await
+                    .map(|_| listing)
             }),
         )
         .await?;

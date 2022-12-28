@@ -44,6 +44,7 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(ListItem::ItemId).integer().not_null())
                     .col(ColumnDef::new(ListItem::ListId).integer().not_null())
                     .col(ColumnDef::new(ListItem::Hq).boolean())
+                    .col(ColumnDef::new(ListItem::Quantity).integer())
                     .to_owned(),
             )
             .await?;
@@ -146,6 +147,7 @@ enum ListItem {
     ListId,
     ItemId,
     Hq,
+    Quantity,
 }
 
 #[derive(Iden)]

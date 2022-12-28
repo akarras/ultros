@@ -86,6 +86,9 @@ async fn add_item(
     ctx: Context<'_>,
     #[description = "name of the list to add an item to"] list_name: String,
     #[description = "item to add"] item_name: String,
+    #[description = "quantity of the item to add. Leave blank for no quantity"] quantity: Option<
+        i32,
+    >,
     #[description = "hq? Leave blank for no filter"] hq: Option<bool>,
 ) -> Result<(), Error> {
     let author_id = ctx.author().id.0 as i64;
@@ -104,7 +107,7 @@ async fn add_item(
         .ok_or(anyhow!("List not found"))?;
     ctx.data()
         .db
-        .add_item_to_list(&list, author_id, i.0, hq)
+        .add_item_to_list(&list, author_id, i.0, hq, quantity)
         .await?;
     ctx.send(|s| {
         s.embed(|e| {

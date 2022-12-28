@@ -2,7 +2,11 @@ use std::sync::Arc;
 
 use axum::extract::State;
 use maud::html;
-use ultros_db::{entity::list, UltrosDb, world_cache::{WorldCache, AnySelector}};
+use ultros_db::{
+    entity::list,
+    world_cache::{AnySelector, WorldCache},
+    UltrosDb,
+};
 
 use crate::web::{
     error::WebError,
@@ -19,13 +23,17 @@ pub(crate) async fn overview(
     State(world_cache): State<Arc<WorldCache>>,
 ) -> Result<RenderPage<ListsOverview>, WebError> {
     let lists = db.get_lists_for_user(user.id as i64).await?;
-    Ok(RenderPage(ListsOverview { user, lists, world_cache }))
+    Ok(RenderPage(ListsOverview {
+        user,
+        lists,
+        world_cache,
+    }))
 }
 
 pub(crate) struct ListsOverview {
     user: AuthDiscordUser,
     lists: Vec<list::Model>,
-    world_cache: Arc<WorldCache>
+    world_cache: Arc<WorldCache>,
 }
 
 impl Page for ListsOverview {
@@ -87,12 +95,12 @@ impl Page for ListsOverview {
                                             }
                                             a class="btn" href={"/list/" ((list.id)) "/delete"} {
                                                 span class="fa-solid fa-trash" {
-                                                    
+
                                                 }
                                             }
                                         }
                                     }
-                                }   
+                                }
                             }
                         }
                     }

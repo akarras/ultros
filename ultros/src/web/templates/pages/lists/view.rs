@@ -1,10 +1,13 @@
 use std::sync::Arc;
 
-use axum::{extract::{Path, State}, response::Redirect};
+use axum::{
+    extract::{Path, State},
+    response::Redirect,
+};
 use maud::html;
 use ultros_db::{
     entity::{active_listing, list, list_item, retainer},
-    world_cache::{WorldCache, AnySelector},
+    world_cache::{AnySelector, WorldCache},
     UltrosDb,
 };
 use xiv_gen::ItemId;
@@ -13,7 +16,10 @@ use crate::web::{
     error::WebError,
     oauth::AuthDiscordUser,
     templates::{
-        components::{header::Header, item_icon::{ItemIcon, IconSize}},
+        components::{
+            header::Header,
+            item_icon::{IconSize, ItemIcon},
+        },
         page::{Page, RenderPage},
     },
 };
@@ -39,7 +45,11 @@ pub(crate) async fn list_details(
     }))
 }
 
-pub(crate) async fn delete_item(user: AuthDiscordUser, State(db): State<UltrosDb>, Path(id): Path<i32>) -> Result<Redirect, WebError> {
+pub(crate) async fn delete_item(
+    user: AuthDiscordUser,
+    State(db): State<UltrosDb>,
+    Path(id): Path<i32>,
+) -> Result<Redirect, WebError> {
     let item = db.remove_item_from_list(user.id as i64, id).await?;
     Ok(Redirect::to(&format!("/list/{}", item.list_id)))
 }
@@ -51,7 +61,7 @@ pub(crate) struct ListView {
         list_item::Model,
         Vec<(active_listing::Model, Option<retainer::Model>)>,
     )>,
-    world_cache: Arc<WorldCache>
+    world_cache: Arc<WorldCache>,
 }
 
 impl Page for ListView {
@@ -111,7 +121,7 @@ impl Page for ListView {
                                             a class="btn" href={"/list/edit/item/delete/"((item.id))} {
                                                 div class="tooltip" {
                                                     span class="fa-solid fa-trash" {
-                                                        
+
                                                     }
                                                     span class="tooltip-text" {"Delete this item from the list"}
                                                 }
