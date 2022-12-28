@@ -23,16 +23,16 @@ pub enum Relation {
         on_delete = "Cascade"
     )]
     Datacenter,
-    #[sea_orm(has_many = "super::active_listing::Entity")]
-    ActiveListing,
+    #[sea_orm(has_many = "super::list::Entity")]
+    List,
     #[sea_orm(has_many = "super::retainer::Entity")]
     Retainer,
+    #[sea_orm(has_many = "super::active_listing::Entity")]
+    ActiveListing,
     #[sea_orm(has_many = "super::final_fantasy_character::Entity")]
     FinalFantasyCharacter,
     #[sea_orm(has_many = "super::sale_history::Entity")]
     SaleHistory,
-    #[sea_orm(has_many = "super::price_alert::Entity")]
-    PriceAlert,
 }
 
 impl Related<super::datacenter::Entity> for Entity {
@@ -41,15 +41,21 @@ impl Related<super::datacenter::Entity> for Entity {
     }
 }
 
-impl Related<super::active_listing::Entity> for Entity {
+impl Related<super::list::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::ActiveListing.def()
+        Relation::List.def()
     }
 }
 
 impl Related<super::retainer::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Retainer.def()
+    }
+}
+
+impl Related<super::active_listing::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::ActiveListing.def()
     }
 }
 
@@ -62,12 +68,6 @@ impl Related<super::final_fantasy_character::Entity> for Entity {
 impl Related<super::sale_history::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::SaleHistory.def()
-    }
-}
-
-impl Related<super::price_alert::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::PriceAlert.def()
     }
 }
 

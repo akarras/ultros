@@ -23,10 +23,10 @@ pub enum Relation {
         on_delete = "Cascade"
     )]
     Region,
+    #[sea_orm(has_many = "super::list::Entity")]
+    List,
     #[sea_orm(has_many = "super::world::Entity")]
     World,
-    #[sea_orm(has_many = "super::price_alert::Entity")]
-    PriceAlert,
 }
 
 impl Related<super::region::Entity> for Entity {
@@ -35,15 +35,15 @@ impl Related<super::region::Entity> for Entity {
     }
 }
 
-impl Related<super::world::Entity> for Entity {
+impl Related<super::list::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::World.def()
+        Relation::List.def()
     }
 }
 
-impl Related<super::price_alert::Entity> for Entity {
+impl Related<super::world::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::PriceAlert.def()
+        Relation::World.def()
     }
 }
 

@@ -10,25 +10,70 @@ pub struct Model {
     pub id: i32,
     pub owner: i64,
     pub name: String,
+    pub world_id: Option<i32>,
+    pub datacenter_id: Option<i32>,
+    pub region_id: Option<i32>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
-    #[sea_orm(has_many = "super::list_item::Entity")]
-    ListItem,
+    #[sea_orm(
+        belongs_to = "super::datacenter::Entity",
+        from = "Column::DatacenterId",
+        to = "super::datacenter::Column::Id",
+        on_update = "NoAction",
+        on_delete = "NoAction"
+    )]
+    Datacenter,
+    #[sea_orm(
+        belongs_to = "super::region::Entity",
+        from = "Column::RegionId",
+        to = "super::region::Column::Id",
+        on_update = "NoAction",
+        on_delete = "NoAction"
+    )]
+    Region,
+    #[sea_orm(
+        belongs_to = "super::world::Entity",
+        from = "Column::WorldId",
+        to = "super::world::Column::Id",
+        on_update = "NoAction",
+        on_delete = "NoAction"
+    )]
+    World,
     #[sea_orm(has_many = "super::price_alert::Entity")]
     PriceAlert,
+    #[sea_orm(has_many = "super::list_item::Entity")]
+    ListItem,
 }
 
-impl Related<super::list_item::Entity> for Entity {
+impl Related<super::datacenter::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::ListItem.def()
+        Relation::Datacenter.def()
+    }
+}
+
+impl Related<super::region::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Region.def()
+    }
+}
+
+impl Related<super::world::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::World.def()
     }
 }
 
 impl Related<super::price_alert::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::PriceAlert.def()
+    }
+}
+
+impl Related<super::list_item::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::ListItem.def()
     }
 }
 

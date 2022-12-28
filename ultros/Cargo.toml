@@ -44,3 +44,4 @@ tower-http = {version = "0.3", features = ["compression-gzip"]}
 sha2 = "0.10.6"
 base64 = "0.13.1"
 smallvec = {version = "1.10.0", features = ["const_generics", "const_new", "union"]}
+itertools = "0.10.5"

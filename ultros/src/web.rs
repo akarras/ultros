@@ -62,12 +62,12 @@ use crate::web::templates::pages::character::{
     add_character::add_character, claim_character::claim_character,
     verify_character::verify_character,
 };
-use crate::web::templates::pages::lists;
-use crate::web::templates::pages::lists::add::add_list;
-use crate::web::templates::pages::lists::overview::overview;
-use crate::web::templates::pages::retainer::{
+use crate::web::templates::pages::lists::delete_list;
+use crate::web::templates::pages::lists::item_add::list_item_add;
+use crate::web::templates::pages::lists::view::delete_item;
+use crate::web::templates::pages::{lists::{add::add_list, overview::overview, view::list_details}, retainer::{
     add_retainer_to_character, remove_retainer_from_character, reorder_retainer,
-};
+}};
 use crate::web::{
     alerts_websocket::connect_websocket,
     oauth::{begin_login, logout},
@@ -655,6 +655,10 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/retainers", get(user_retainers_listings))
         .route("/list", get(overview))
         .route("/list/add", get(add_list))
+        .route("/list/:id", get(list_details))
+        .route("/list/:id/item/add", get(list_item_add))
+        .route("/list/edit/item/delete/:id", get(delete_item))
+        .route("/list/:id/delete", get(delete_list))
         .route("/analyzer", get(analyze_profits))
         .route("/items/:search", get(fuzzy_item_search::search_items))
         .route("/static/*path", get(static_path))

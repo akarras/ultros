@@ -23,12 +23,12 @@ pub enum Relation {
         on_delete = "Cascade"
     )]
     World,
-    #[sea_orm(has_many = "super::owned_retainers::Entity")]
-    OwnedRetainers,
-    #[sea_orm(has_many = "super::owned_ffxiv_character::Entity")]
-    OwnedFfxivCharacter,
     #[sea_orm(has_many = "super::ffxiv_character_verification::Entity")]
     FfxivCharacterVerification,
+    #[sea_orm(has_many = "super::owned_ffxiv_character::Entity")]
+    OwnedFfxivCharacter,
+    #[sea_orm(has_many = "super::owned_retainers::Entity")]
+    OwnedRetainers,
 }
 
 impl Related<super::world::Entity> for Entity {
@@ -37,9 +37,9 @@ impl Related<super::world::Entity> for Entity {
     }
 }
 
-impl Related<super::owned_retainers::Entity> for Entity {
+impl Related<super::ffxiv_character_verification::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::OwnedRetainers.def()
+        Relation::FfxivCharacterVerification.def()
     }
 }
 
@@ -49,9 +49,9 @@ impl Related<super::owned_ffxiv_character::Entity> for Entity {
     }
 }
 
-impl Related<super::ffxiv_character_verification::Entity> for Entity {
+impl Related<super::owned_retainers::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::FfxivCharacterVerification.def()
+        Relation::OwnedRetainers.def()
     }
 }
 

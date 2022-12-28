@@ -4,7 +4,7 @@ pub(crate) mod character;
 pub(crate) mod error_page;
 pub(crate) mod home_page;
 pub(crate) mod listings_view;
+pub(crate) mod lists;
 pub(crate) mod profile;
 pub(crate) mod retainer;
 pub(crate) mod unauthorized_page;
-pub(crate) mod lists;
