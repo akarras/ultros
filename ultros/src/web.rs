@@ -75,6 +75,7 @@ use crate::web::{
 };
 use crate::web_metrics::{start_metrics_server, track_metrics};
 use image::io::Reader as ImageReader;
+use include_dir::include_dir;
 use std::io::Cursor;
 
 // basic handler that responds with a static string
@@ -595,10 +596,12 @@ async fn get_item_icon(
     Path(item_id): Path<u32>,
     Query(query): Query<IconQuery>,
 ) -> Result<impl IntoResponse, WebError> {
-    let url =
-        format!("https://universalis-ffxiv.github.io/universalis-assets/icon2x/{item_id}.png");
-    let image = reqwest::get(url).await?;
-    let bytes = image.bytes().await?;
+    static IMAGES: include_dir::Dir =
+        include_dir!("$CARGO_MANIFEST_DIR/../universalis-assets/icon2x");
+    let file = IMAGES
+        .get_file(format!("{item_id}.png"))
+        .ok_or(WebError::InvalidItem(item_id as i32))?;
+    let bytes = file.contents();
     let mime_type = mime_guess::from_path("icon.webp").first_or_text_plain();
     let age_header = HeaderValue::from_str("max-age=86400").unwrap();
     let img = ImageReader::new(Cursor::new(bytes))
