@@ -2,5 +2,5 @@
 	path = xiv-gen/ffxiv-datamining
 	url = https://github.com/xivapi/ffxiv-datamining.git
 [submodule "universalis-assets"]
-	path = universalis-assets
+	path = ultros-frontend/universalis-assets
 	url = https://github.com/Universalis-FFXIV/universalis-assets.git

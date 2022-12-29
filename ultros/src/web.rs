@@ -37,6 +37,7 @@ use ultros_db::{
     world_cache::{AnySelector, WorldCache},
     UltrosDb,
 };
+use ultros_ui_server::create_leptos_app;
 use universalis::{ItemId, ListingView, UniversalisClient, WorldId};
 
 use self::character_verifier_service::CharacterVerifierService;
@@ -627,7 +628,7 @@ async fn get_item_icon(
 ) -> Result<impl IntoResponse, WebError> {
     use include_dir::include_dir;
     static IMAGES: include_dir::Dir =
-        include_dir!("$CARGO_MANIFEST_DIR/../universalis-assets/icon2x");
+        include_dir!("$CARGO_MANIFEST_DIR/../ultros-frontend/universalis-assets/icon2x");
     let file = IMAGES
         .get_file(format!("{item_id}.png"))
         .ok_or(WebError::InvalidItem(item_id as i32))?;
@@ -656,8 +657,6 @@ pub(crate) async fn invite() -> Redirect {
 pub(crate) async fn start_web(state: WebState) {
     // build our application with a route
     let app = Router::new()
-        .route("/", get(root))
-        .route("/alerts", get(alerts))
         .route("/alerts/websocket", get(connect_websocket))
         .route("/api/v1/cheapest/:world", get(cheapest_per_world))
         .route("/listings/:world/:itemid", get(world_item_listings))
@@ -684,15 +683,6 @@ pub(crate) async fn start_web(state: WebState) {
             "/retainers/character/remove/:retainer",
             get(remove_retainer_from_character),
         )
-        .route("/retainers/reorder", post(reorder_retainer))
-        .route("/retainers", get(user_retainers_listings))
-        .route("/list", get(overview))
-        .route("/list/add", get(add_list))
-        .route("/list/:id", get(list_details))
-        .route("/list/:id/item/add", get(list_item_add))
-        .route("/list/edit/item/delete/:id", get(delete_item))
-        .route("/list/:id/delete", get(delete_list))
-        .route("/analyzer", get(analyze_profits))
         .route("/items/:search", get(fuzzy_item_search::search_items))
         .route("/static/*path", get(static_path))
         .route("/static/itemicon/:path", get(get_item_icon))
@@ -707,8 +697,8 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/sitemap.xml", get(sitemap_index))
         .route_layer(middleware::from_fn(track_metrics))
         .layer(CompressionLayer::new())
-        .fallback(fallback)
-        .with_state(state);
+        .with_state(state)
+        .nest("/", create_leptos_app().await);
 
     // run our app with hyper
     // `axum::Server` is a re-export of `hyper::Server`
@@ -724,8 +714,4 @@ pub(crate) async fn start_web(state: WebState) {
         start_metrics_server(),
     )
     .await;
-}
-
-async fn fallback() -> (StatusCode, &'static str) {
-    (StatusCode::NOT_FOUND, "Not found")
 }

@@ -46,3 +46,4 @@ base64 = "0.13.1"
 smallvec = {version = "1.10.0", features = ["const_generics", "const_new", "union"]}
 itertools = "0.10.5"
 sitemap-rs = "0.2.0"
+ultros-ui-server = {path = "../ultros-frontend/ultros-ui-server"}
