@@ -6,6 +6,7 @@ mod fuzzy_item_search;
 mod home_world_cookie;
 pub mod item_search_index;
 pub mod oauth;
+pub mod sitemap;
 mod templates;
 
 use anyhow::Error;
@@ -57,6 +58,7 @@ use self::templates::{
 use crate::analyzer_service::{AnalyzerService, ResaleOptions, SoldAmount, SoldWithin};
 use crate::event::{EventReceivers, EventSenders, EventType};
 use crate::web::api::cheapest_per_world;
+use crate::web::sitemap::world_sitemap;
 use crate::web::templates::pages::character::refresh_character;
 use crate::web::templates::pages::character::{
     add_character::add_character, claim_character::claim_character,
@@ -674,6 +676,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/invitebot", get(invite))
         .route("/favicon.ico", get(favicon))
         .route("/robots.txt", get(robots))
+        .route("/sitemap/world/:s", get(world_sitemap))
         .route_layer(middleware::from_fn(track_metrics))
         .layer(CompressionLayer::new())
         .fallback(fallback)
