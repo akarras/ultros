@@ -595,6 +595,33 @@ struct IconQuery {
     size: u32,
 }
 
+#[cfg(debug_assertions)]
+async fn get_item_icon(
+    Path(item_id): Path<u32>,
+    Query(query): Query<IconQuery>,
+) -> Result<impl IntoResponse, WebError> {
+    use std::{io::Read, path::PathBuf};
+    let file = PathBuf::from("./universalis-assets/icon2x").join(format!("{item_id}.png"));
+    let mut file = std::fs::File::open(file)?;
+    let mut vec = Vec::new();
+    file.read_to_end(&mut vec)?;
+    let mime_type = mime_guess::from_path("icon.webp").first_or_text_plain();
+    let age_header = HeaderValue::from_str("max-age=86400").unwrap();
+    let img = ImageReader::new(Cursor::new(vec))
+        .with_guessed_format()?
+        .decode()?;
+    let smaller_image = img.resize(query.size, query.size, FilterType::Lanczos3);
+    let file = vec![];
+    let mut cursor = Cursor::new(file);
+    smaller_image.write_to(&mut cursor, ImageOutputFormat::WebP)?;
+    let bytes = cursor.into_inner();
+    Ok(Response::builder()
+        .header(header::CACHE_CONTROL, age_header)
+        .header(header::CONTENT_TYPE, mime_type.as_ref())
+        .body(body::boxed(Full::from(bytes)))?)
+}
+
+#[cfg(not(debug_assertions))]
 async fn get_item_icon(
     Path(item_id): Path<u32>,
     Query(query): Query<IconQuery>,
