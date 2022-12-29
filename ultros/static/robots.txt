@@ -1,2 +1,3 @@
 User-agent: *
 Allow: /
+Sitemap: https://ultros.app/sitemap.xml

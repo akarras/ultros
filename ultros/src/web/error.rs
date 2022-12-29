@@ -6,6 +6,7 @@ use oauth2::{
     ConfigurationError, RequestTokenError, RevocationErrorResponseType, StandardErrorResponse,
 };
 use reqwest::StatusCode;
+use sitemap_rs::sitemap_index_error::SitemapIndexError;
 use thiserror::Error;
 use tokio::{sync::broadcast::error::SendError, time::error::Elapsed};
 use tracing::log::error;
@@ -66,6 +67,8 @@ pub enum WebError {
     AnalyzerError(#[from] AnalyzerError),
     #[error("Verifier error {0}")]
     VerificationError(#[from] VerifierError),
+    #[error("Error generating sitemap {0}")]
+    SiteMapError(#[from] SitemapIndexError),
 }
 
 impl WebError {

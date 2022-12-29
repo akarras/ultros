@@ -58,7 +58,7 @@ use self::templates::{
 use crate::analyzer_service::{AnalyzerService, ResaleOptions, SoldAmount, SoldWithin};
 use crate::event::{EventReceivers, EventSenders, EventType};
 use crate::web::api::cheapest_per_world;
-use crate::web::sitemap::world_sitemap;
+use crate::web::sitemap::{sitemap_index, world_sitemap};
 use crate::web::templates::pages::character::refresh_character;
 use crate::web::templates::pages::character::{
     add_character::add_character, claim_character::claim_character,
@@ -78,7 +78,6 @@ use crate::web::{
 };
 use crate::web_metrics::{start_metrics_server, track_metrics};
 use image::io::Reader as ImageReader;
-use include_dir::include_dir;
 use std::io::Cursor;
 
 // basic handler that responds with a static string
@@ -626,6 +625,7 @@ async fn get_item_icon(
     Path(item_id): Path<u32>,
     Query(query): Query<IconQuery>,
 ) -> Result<impl IntoResponse, WebError> {
+    use include_dir::include_dir;
     static IMAGES: include_dir::Dir =
         include_dir!("$CARGO_MANIFEST_DIR/../universalis-assets/icon2x");
     let file = IMAGES
@@ -703,7 +703,8 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/invitebot", get(invite))
         .route("/favicon.ico", get(favicon))
         .route("/robots.txt", get(robots))
-        .route("/sitemap/world/:s", get(world_sitemap))
+        .route("/sitemap/world/:s.xml", get(world_sitemap))
+        .route("/sitemap.xml", get(sitemap_index))
         .route_layer(middleware::from_fn(track_metrics))
         .layer(CompressionLayer::new())
         .fallback(fallback)
