@@ -51,16 +51,17 @@ impl MigrationTrait for Migration {
         manager
             .create_table(
                 Table::create()
-                    .table(PriceAlert::Table)
+                    .table(AlertPrice::Table)
                     .col(
-                        ColumnDef::new(PriceAlert::Id)
+                        ColumnDef::new(AlertPrice::Id)
                             .integer()
                             .not_null()
                             .primary_key()
                             .auto_increment(),
                     )
-                    .col(ColumnDef::new(PriceAlert::ListId).integer().not_null())
-                    .col(ColumnDef::new(PriceAlert::AlertId).integer().not_null())
+                    .col(ColumnDef::new(AlertPrice::ListId).integer().not_null())
+                    .col(ColumnDef::new(AlertPrice::AlertId).integer().not_null())
+                    .col(ColumnDef::new(AlertPrice::Price).integer().not_null())
                     .to_owned(),
             )
             .await?;
@@ -75,7 +76,7 @@ impl MigrationTrait for Migration {
         manager
             .create_foreign_key(
                 ForeignKeyCreateStatement::new()
-                    .from(PriceAlert::Table, PriceAlert::ListId)
+                    .from(AlertPrice::Table, AlertPrice::ListId)
                     .to(List::Table, List::Id)
                     .to_owned(),
             )
@@ -117,7 +118,7 @@ impl MigrationTrait for Migration {
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager
-            .drop_table(Table::drop().table(PriceAlert::Table).to_owned())
+            .drop_table(Table::drop().table(AlertPrice::Table).to_owned())
             .await?;
         manager
             .drop_table(Table::drop().table(ListItem::Table).to_owned())
@@ -151,9 +152,10 @@ enum ListItem {
 }
 
 #[derive(Iden)]
-enum PriceAlert {
+enum AlertPrice {
     Table,
     Id,
     AlertId,
     ListId,
+    Price
 }
