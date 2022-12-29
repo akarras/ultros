@@ -12,6 +12,7 @@ impl<'a> Render for Header<'a> {
           div class="gradient-outer"{div class="gradient"{}};
           header {
             div class="header" {
+              i {b {"ULTROS IS STILL UNDER ACTIVE DEVELOPMENT"}}
               a class="nav-item" href="/alerts" {
                 i class="fa-solid fa-bell" {}
                 "Alerts"

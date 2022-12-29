@@ -71,6 +71,7 @@ impl Page for ListItemAdd {
                             "Successfully added item "((name))
                         }
                     }
+                    b {"This page kind of sucks at the moment, but does work if you type the item name exactly correct."}
                     div class="content-well" {
                         form {
                             label for="item_name" {"Item name"}
