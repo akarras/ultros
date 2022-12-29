@@ -1,5 +1,5 @@
 [workspace]
-members = ["universalis", "xivapi", "recipepricecheck", "crafterstoolbox", "xiv-gen", "xiv-gen-db", "ultros", "ultros-db", "migration"]
+members = ["universalis", "xivapi", "recipepricecheck", "crafterstoolbox", "xiv-gen", "xiv-gen-db", "ultros", "ultros-db", "migration", "ultros-frontend/ultros-client", "ultros-frontend/ultros-common", "ultros-frontend/ultros-app", "ultros-frontend/ultros-ui-server"]
 
 
 [workspace.dependencies]
@@ -22,3 +22,57 @@ lto = false
 [profile.fastdev]
 inherits = "dev"
 opt-level = 1
+
+[[workspace.metadata.leptos]]
+name = "ultros"
+bin-package = "ultros"
+lib-package = "ultros-client"
+output-name = "ultros"
+# The site root folder is where cargo-leptos generate all output.
+# NOTE: It is relative to the workspace root when running in a workspace.
+# WARNING: all content of this folder will be erased on a rebuild.
+#
+# Optional, defaults to "target/site". Env: LEPTOS_SITE_ROOT.
+site-root = "target/site"
+
+# The site-root relative folder where all compiled output (JS, WASM and CSS) is written.
+#
+# Optional, defaults to "pkg". Env: LEPTOS_SITE_PKG_DIR.
+site-pkg-dir = "pkg"
+
+# The source style file. If it ends with _.sass_ or _.scss_ then it will be compiled by `dart-sass`
+# into CSS and processed by lightning css. When release is set, then it will also be minified.
+#
+# Optional. Env: LEPTOS_STYLE_FILE.
+style-file = "./static/main.css"
+
+# The browserlist https://browsersl.ist query used for optimizing the CSS.
+#
+# Optional, defaults to "defaults". Env: LEPTOS_BROWSERQUERY.
+browserquery = "defaults"
+
+# Assets source dir. All files found here will be copied and synchronized to site-root.
+# The assets-dir cannot have a sub directory with the same name/path as site-pkg-dir.
+#
+# Optional. Env: LEPTOS_ASSETS_DIR.
+# assets-dir = "assets"
+
+# The IP and port where the server serves the content. Use it in your server setup.
+#
+# Optional, defaults to 127.0.0.1:3000. Env: LEPTOS_SITE_ADDR.
+site-addr = "127.0.0.1:8080"
+
+# The port number used by the reload server (only used in watch mode).
+#
+# Optional, defaults 3001. Env: LEPTOS_RELOAD_PORT
+reload-port = 3001
+
+# The command used for running end-to-end tests.
+#
+# Optional. Env: LEPTOS_END2END_CMD.
+end2end-cmd = "npx playwright test"
+
+# The directory from which the end-to-end tests are run.
+#
+# Optional. Env: LEPTOS_END2END_DIR
+end2end-dir = "integration"
