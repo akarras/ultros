@@ -3,7 +3,7 @@ use crate::analyzer_service::AnalyzerService;
 use anyhow::anyhow;
 use axum::extract::{Path, State};
 use itertools::Itertools;
-use sitemap_rs::{sitemap::Sitemap, sitemap_index::SitemapIndex};
+use sitemap_rs::{sitemap::Sitemap, sitemap_index::SitemapIndex, url::Url, url_set::UrlSet};
 use std::{collections::HashSet, sync::Arc};
 use ultros_db::world_cache::{AnyResult, AnySelector, WorldCache};
 
@@ -42,7 +42,7 @@ pub(crate) async fn world_sitemap(
     State(db): State<AnalyzerService>,
     State(world_cache): State<Arc<WorldCache>>,
     Path(world_name): Path<String>,
-) -> Result<String, WebError> {
+) -> Result<Vec<u8>, WebError> {
     // validate that this is a valid world name, then repeat back a sitemap using all the item ids
 
     // handle .xml being in the path potentially
@@ -58,13 +58,20 @@ pub(crate) async fn world_sitemap(
             items.item_map.keys().map(|k| k.item_id).collect()
         })
         .await?;
-    // format those item ids into paths based on the world name for this sitemap
-    Ok(items
-        .iter()
-        .format_with("\n", |i, f| {
-            f(&format_args!(
-                "https://ultros.app/listings/{world_name}/{i}"
-            ))
-        })
-        .to_string())
+    // format those item ids into urls based on the world name and generate a url set
+    let url_set = UrlSet::new(
+        items
+            .iter()
+            .map(|i| {
+                Url::builder(format!("https://ultros.app/listings/{world_name}/{i}"))
+                    .build()
+                    .unwrap()
+            })
+            .collect(),
+    )?;
+    let mut url_set_string = Vec::new();
+    url_set
+        .write(&mut url_set_string)
+        .map_err(|_| anyhow!("Error creating sitemap"))?;
+    Ok(url_set_string)
 }
