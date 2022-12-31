@@ -157,5 +157,5 @@ enum AlertPrice {
     Id,
     AlertId,
     ListId,
-    Price
+    Price,
 }
