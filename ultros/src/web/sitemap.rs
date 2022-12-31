@@ -12,7 +12,7 @@ use sitemap_rs::{sitemap::Sitemap, sitemap_index::SitemapIndex, url::Url, url_se
 use std::{collections::HashSet, sync::Arc};
 use ultros_db::world_cache::{AnyResult, AnySelector, WorldCache};
 
-struct Xml(Vec<u8>);
+pub(crate) struct Xml(Vec<u8>);
 
 impl IntoResponse for Xml {
     fn into_response(self) -> Response {
@@ -49,11 +49,11 @@ pub(crate) async fn sitemap_index(
         })
         .collect();
     let index = SitemapIndex::new(listings_sitemaps)?;
-    let mut index_string = Vec::new();
+    let mut index_xml = Vec::new();
     index
-        .write(&mut index_string)
+        .write(&mut index_xml)
         .map_err(|_| anyhow!("Error creating sitemap"))?;
-    Ok(index_string)
+    Ok(Xml(index_xml))
 }
 
 pub(crate) async fn world_sitemap(
@@ -87,9 +87,9 @@ pub(crate) async fn world_sitemap(
             })
             .collect(),
     )?;
-    let mut url_set_string = Vec::new();
+    let mut url_xml = Vec::new();
     url_set
-        .write(&mut url_set_string)
+        .write(&mut url_xml)
         .map_err(|_| anyhow!("Error creating sitemap"))?;
-    Ok(url_set_string)
+    Ok(Xml(url_xml))
 }
