@@ -1,15 +1,33 @@
 use super::error::WebError;
 use crate::analyzer_service::AnalyzerService;
 use anyhow::anyhow;
-use axum::extract::{Path, State};
-use itertools::Itertools;
+use axum::{
+    extract::{Path, State},
+    http::HeaderValue,
+    response::{IntoResponse, Response},
+};
+use mime_guess::mime;
+use reqwest::header;
 use sitemap_rs::{sitemap::Sitemap, sitemap_index::SitemapIndex, url::Url, url_set::UrlSet};
 use std::{collections::HashSet, sync::Arc};
 use ultros_db::world_cache::{AnyResult, AnySelector, WorldCache};
 
+struct Xml(Vec<u8>);
+
+impl IntoResponse for Xml {
+    fn into_response(self) -> Response {
+        let mut response = self.0.into_response();
+        response.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static(mime::XML.as_ref()),
+        );
+        response
+    }
+}
+
 pub(crate) async fn sitemap_index(
     State(world_cache): State<Arc<WorldCache>>,
-) -> Result<Vec<u8>, WebError> {
+) -> Result<Xml, WebError> {
     // Get all the worlds from the world cache and then populate the listings sitemap to point to all the world subsitemaps
     let listings_sitemaps: Vec<_> = world_cache
         .get_all()
@@ -42,7 +60,7 @@ pub(crate) async fn world_sitemap(
     State(db): State<AnalyzerService>,
     State(world_cache): State<Arc<WorldCache>>,
     Path(world_name): Path<String>,
-) -> Result<Vec<u8>, WebError> {
+) -> Result<Xml, WebError> {
     // validate that this is a valid world name, then repeat back a sitemap using all the item ids
 
     // handle .xml being in the path potentially
