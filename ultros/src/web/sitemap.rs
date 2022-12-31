@@ -44,12 +44,21 @@ pub(crate) async fn world_sitemap(
     Path(world_name): Path<String>,
 ) -> Result<String, WebError> {
     // validate that this is a valid world name, then repeat back a sitemap using all the item ids
-    world_cache.lookup_value_by_name(&world_name)?;
+
+    // handle .xml being in the path potentially
+    let world_name = match world_name.split_once(".") {
+        Some((left, _)) => left,
+        None => &world_name,
+    };
+
+    let result = world_cache.lookup_value_by_name(&world_name)?;
+    // Create a unique list of item ids
     let items: HashSet<_> = db
-        .read_cheapest_items(&AnySelector::World(99), |items| {
+        .read_cheapest_items(&AnySelector::from(&result), |items| {
             items.item_map.keys().map(|k| k.item_id).collect()
         })
         .await?;
+    // format those item ids into paths based on the world name for this sitemap
     Ok(items
         .iter()
         .format_with("\n", |i, f| {
