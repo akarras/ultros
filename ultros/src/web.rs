@@ -12,13 +12,13 @@ mod templates;
 use anyhow::Error;
 use axum::body::{Empty, Full};
 use axum::extract::{FromRef, Path, Query, State};
-use axum::http::{HeaderValue, Response, StatusCode};
+use axum::http::{HeaderValue, Response, StatusCode, response};
 use axum::response::{IntoResponse, Redirect};
 use axum::routing::{get, post};
-use axum::{body, middleware, Router};
+use axum::{body, middleware, Json, Router};
 use axum_extra::extract::cookie::{Cookie, Key, SameSite};
 use axum_extra::extract::CookieJar;
-use futures::future::join;
+use futures::future::{join, try_join};
 use image::imageops::FilterType;
 use image::ImageOutputFormat;
 use maud::Render;
@@ -32,6 +32,7 @@ use std::time::Duration;
 use tokio::time::timeout;
 use tower_http::compression::CompressionLayer;
 use tracing::debug;
+use ultros_api_types::{ActiveListing, CurrentlyShownItem};
 use ultros_db::world_cache::AnyResult;
 use ultros_db::{
     world_cache::{AnySelector, WorldCache},
@@ -217,44 +218,28 @@ async fn world_item_listings(
     State(db): State<UltrosDb>,
     State(world_cache): State<Arc<WorldCache>>,
     Path((world, item_id)): Path<(String, i32)>,
-    user: Option<AuthDiscordUser>,
-    home_world: Option<HomeWorld>,
-    cookie_jar: CookieJar,
-) -> Result<(CookieJar, RenderPage<ListingsPage>), WebError> {
+) -> Result<axum::Json<CurrentlyShownItem>, WebError> {
     let selected_value = world_cache.lookup_value_by_name(&world)?;
     let worlds = world_cache
         .get_all_worlds_in(&selected_value)
         .ok_or_else(|| Error::msg("Unable to get worlds"))?;
     let db_clone = db.clone();
     let world_iter = worlds.iter().copied();
-    let (listings, sale_history) = join(
+    let (listings, sales) = try_join(
         db_clone.get_all_listings_in_worlds_with_retainers(&worlds, ItemId(item_id)),
         db.get_sale_history_from_multiple_worlds(world_iter, item_id, 10),
     )
-    .await;
-    let listings = listings?;
-    let sale_history = sale_history?;
-    let item = xiv_gen_db::decompress_data()
-        .items
-        .get(&xiv_gen::ItemId(item_id))
-        .ok_or(WebError::InvalidItem(item_id))?;
-    let page = ListingsPage {
-        listings,
-        selected_world: selected_value.get_name().to_string(),
-        item_id,
-        item,
-        user,
-        world_cache,
-        sale_history,
-        home_world,
+    .await?;
+    let currently_shown =  CurrentlyShownItem {
+        listings: listings
+            .into_iter()
+            .flat_map(|(l, r)| r.map(|r| (l.into(), r.into())))
+            .collect(),
+        sales: sales.into_iter().map(|s| s.into()).collect(),
     };
-    let cookie = Cookie::build("last_listing_view", world)
-        .permanent()
-        .path("/")
-        .same_site(SameSite::Lax)
-        .finish();
-    let cookie_jar = cookie_jar.add(cookie);
-    Ok((cookie_jar, RenderPage(page)))
+    Ok(axum::Json(
+       currently_shown
+    ))
 }
 
 async fn refresh_world_item_listings(
@@ -601,7 +586,8 @@ async fn get_item_icon(
     Query(query): Query<IconQuery>,
 ) -> Result<impl IntoResponse, WebError> {
     use std::{io::Read, path::PathBuf};
-    let file = PathBuf::from("./ultros-frontend/universalis-assets/icon2x").join(format!("{item_id}.png"));
+    let file =
+        PathBuf::from("./ultros-frontend/universalis-assets/icon2x").join(format!("{item_id}.png"));
     let mut file = std::fs::File::open(file)?;
     let mut vec = Vec::new();
     file.read_to_end(&mut vec)?;
@@ -659,7 +645,7 @@ pub(crate) async fn start_web(state: WebState) {
     let app = Router::new()
         .route("/alerts/websocket", get(connect_websocket))
         .route("/api/v1/cheapest/:world", get(cheapest_per_world))
-        .route("/listings/:world/:itemid", get(world_item_listings))
+        .route("/api/v1/listings/:world/:itemid", get(world_item_listings))
         .route(
             "/listings/refresh/:worldid/:itemid",
             get(refresh_world_item_listings),
@@ -669,8 +655,6 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/characters/verify/:id", get(verify_character))
         .route("/characters/refresh/:id", get(refresh_character))
         .route("/retainers/listings/:id", get(get_retainer_listings))
-        .route("/retainers/undercuts", get(user_retainers_undercuts))
-        .route("/retainers/listings", get(user_retainers_listings))
         .route("/retainers/add", get(add_retainer_page))
         .route("/retainers/add/:id", get(add_retainer))
         .route("/retainers/remove/:id", get(remove_owned_retainer))

@@ -3,9 +3,8 @@ use leptos::*;
 pub enum IconSize {
     Small,
     Medium,
-    Large
+    Large,
 }
-
 
 impl IconSize {
     fn get_class(&self) -> &str {

@@ -1,11 +1,13 @@
-pub(crate) mod search_result;
+pub(crate) mod api;
+pub(crate) mod item_icon;
 pub(crate) mod main_nav;
-pub mod routes;
+pub(crate) mod routes;
 pub(crate) mod search_box;
-pub mod item_icon;
+pub(crate) mod search_result;
 
 use crate::routes::analyzer::*;
 use crate::search_box::*;
+use crate::routes::listings::*;
 use leptos::*;
 use leptos_meta::*;
 use leptos_router::*;
@@ -45,16 +47,25 @@ pub fn App(cx: Scope) -> impl IntoView {
             </A>
             </nav>
             <Routes>
-                <Route path="retainers" view=move |cx| view! { cx, <h1>"Retainers root"</h1>}>
-                    <Route path="undercuts" view=move |cx| view! { cx, <h1>"Undercuts"</h1>}/>
-                    <Route path="" view=move |cx| view! {cx, <h1>"Retainers"</h1>}/>
+                <Route path="retainers/undercuts" view=move |cx| view! { cx, <h1>"Undercuts"</h1>}/>
+                <Route path="*retainers" view=move |cx| view! { cx, <h1>"Retainers root"</h1>}>
+                    <Route path="listings" view=move |cx| view! {cx, <h1>"Retainer Listings"</h1>}/>
                 </Route>
                 <Route path="list" view=move |cx| view!{cx, <h1>"List"</h1>}/>
-                <Route path="listings" view=move |cx| view! { cx, <h1>"Listings"</h1>}>
-                    <Route path=":world/:id" view=move |cx| view! { cx, <h1>"Listings for world"</h1>}/>
-                </Route>
+                <Route path="listings/:world/:id" view=move |cx| view! { cx, <Listings />}/>
+                <Route path="*listings" view=move |cx| view! { cx, <h1>"Listings"</h1>}/>
                 <Route path="analyzer" view=move |cx| view! { cx, <Analyzer/>}/>
             </Routes>
         </Router>
+        <footer class="flex-column flex-space flex-center">
+            <div class="flex-row column-pad">
+                <a href="https://discord.gg/pgdq9nGUP2">"Discord"</a>"|"
+                <a href="https://github.com/akarras/ultros">"GitHub"</a>"|"
+                <a href="https://leekspin.com">"Patreon"</a>
+            </div>
+            <span>"Made using "<a href="https://universalis.app/">"universalis"</a>"' API.Please contribute to Universalis to help this site stay up to date."</span>
+            <span></span>
+            <span>"FINAL FANTASY XIV © 2010 - 2020 SQUARE ENIX CO., LTD. All Rights Reserved."</span>
+        </footer>
     }
 }

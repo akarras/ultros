@@ -1,5 +1,5 @@
-use leptos::*;
 use crate::item_icon::*;
+use leptos::*;
 
 #[component]
 pub fn ItemSearchResult(cx: Scope, item_id: i32, item: &'static xiv_gen::Item) -> impl IntoView {

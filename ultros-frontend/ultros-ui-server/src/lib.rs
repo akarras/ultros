@@ -2,7 +2,7 @@
 /// # Building
 /// I recommend you use cargo-leptos, once you go through the steps to install cargo-leptos
 /// you should be able to build and serve leptos with one install step.
-/// 
+///
 #[cfg(feature = "ssr")]
 use axum::Router;
 #[cfg(feature = "ssr")]

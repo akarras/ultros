@@ -14,7 +14,12 @@ leptos_router = { git = "https://github.com/gbj/leptos", default-features = fals
 xiv-gen-db = {path = "../../xiv-gen-db"}
 xiv-gen = {path = "../../xiv-gen", features = ["item", "item_ui_category"]}
 sublime_fuzzy = "0.7"
+reqwest = {version = "0.11.0", optional = true}
+gloo-net = {version = "0.2", optional = true, features = ["http"]}
+gloo = {version = "0.8.0", optional = true}
+web-sys = {version = "0.3", optional = true, features = ["AbortController"]}
+ultros-api-types = {path = "../../ultros-api-types"}
 
 [features]
-hydrate = ["leptos/hydrate", "leptos_meta/hydrate", "leptos_router/hydrate"]
-ssr = ["leptos/ssr", "leptos_meta/ssr", "leptos_router/ssr"]
+hydrate = ["leptos/hydrate", "leptos_meta/hydrate", "leptos_router/hydrate", "gloo", "gloo-net", "web-sys"]
+ssr = ["leptos/ssr", "leptos_meta/ssr", "leptos_router/ssr", "reqwest"]
