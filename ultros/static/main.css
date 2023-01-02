@@ -113,7 +113,7 @@ input.btn {
   padding: 0px;
 }
 
-.nav-item {
+nav > a {
   color: #fff;
   margin: 5px;
   text-decoration: none;
@@ -125,7 +125,8 @@ input.btn {
   justify-content: center;
   transition: .25s;
 }
-.nav-item > * {
+
+nav > a > * {
   padding: 5px;
 }
 
@@ -266,13 +267,14 @@ input.btn {
 
 .item-name {
   font-size: 16px;
-  margin-bottom: -10px;
+  margin-top: -10px;
   text-align: left;
 }
 
 .item-type {
   font-size: 11px;
   text-align: left;
+  margin-bottom: -10px;
 }
 
 .container .search-result {

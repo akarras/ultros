@@ -601,7 +601,7 @@ async fn get_item_icon(
     Query(query): Query<IconQuery>,
 ) -> Result<impl IntoResponse, WebError> {
     use std::{io::Read, path::PathBuf};
-    let file = PathBuf::from("./universalis-assets/icon2x").join(format!("{item_id}.png"));
+    let file = PathBuf::from("./ultros-frontend/universalis-assets/icon2x").join(format!("{item_id}.png"));
     let mut file = std::fs::File::open(file)?;
     let mut vec = Vec::new();
     file.read_to_end(&mut vec)?;

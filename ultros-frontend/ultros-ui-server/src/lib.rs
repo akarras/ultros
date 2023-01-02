@@ -1,3 +1,8 @@
+/// Ultros UI server contains all the axum routes required to serve and bundle leptos wasm files
+/// # Building
+/// I recommend you use cargo-leptos, once you go through the steps to install cargo-leptos
+/// you should be able to build and serve leptos with one install step.
+/// 
 #[cfg(feature = "ssr")]
 use axum::Router;
 #[cfg(feature = "ssr")]
@@ -28,8 +33,8 @@ pub async fn create_leptos_app() -> Router {
     // These are Tower Services that will serve files from the static and pkg repos.
     // HandleError is needed as Axum requires services to implement Infallible Errors
     // because all Errors are converted into Responses
-    let static_service = HandleError::new(ServeDir::new("./static"), handle_file_error);
-    let pkg_service = HandleError::new(ServeDir::new("./pkg"), handle_file_error);
+    // let static_service = HandleError::new(ServeDir::new("./static"), handle_file_error);
+    //let pkg_service = HandleError::new(ServeDir::new("./pkg"), handle_file_error);
     let cargo_leptos_service = HandleError::new(ServeDir::new(&bundle_filepath), handle_file_error);
 
     /// Convert the Errors from ServeDir to a type that implements IntoResponse
@@ -40,9 +45,9 @@ pub async fn create_leptos_app() -> Router {
     // build our application with a route
     Router::new()
         // `GET /` goes to `root`
-        .nest_service("/pkg", pkg_service) // Only need if using wasm-pack. Can be deleted if using cargo-leptos
+        //.nest_service("/pkg", pkg_service) // Only need if using wasm-pack. Can be deleted if using cargo-leptos
         .nest_service(&bundle_path, cargo_leptos_service) // Only needed if using cargo-leptos. Can be deleted if using wasm-pack and cargo-run
-        .nest_service("/static", static_service)
+        //.nest_service("/static", static_service)
         .fallback(leptos_axum::render_app_to_stream(
             leptos_options,
             |cx| view! { cx, <App/> },

@@ -44,12 +44,14 @@ site-pkg-dir = "pkg"
 # into CSS and processed by lightning css. When release is set, then it will also be minified.
 #
 # Optional. Env: LEPTOS_STYLE_FILE.
-style-file = "./static/main.css"
+style-file = "./ultros/static/main.css"
 
 # The browserlist https://browsersl.ist query used for optimizing the CSS.
 #
 # Optional, defaults to "defaults". Env: LEPTOS_BROWSERQUERY.
 browserquery = "defaults"
+
+env = "DEV"
 
 # Assets source dir. All files found here will be copied and synchronized to site-root.
 # The assets-dir cannot have a sub directory with the same name/path as site-pkg-dir.
@@ -60,7 +62,7 @@ browserquery = "defaults"
 # The IP and port where the server serves the content. Use it in your server setup.
 #
 # Optional, defaults to 127.0.0.1:3000. Env: LEPTOS_SITE_ADDR.
-site-addr = "127.0.0.1:8080"
+site-address = "127.0.0.1:8080"
 
 # The port number used by the reload server (only used in watch mode).
 #
