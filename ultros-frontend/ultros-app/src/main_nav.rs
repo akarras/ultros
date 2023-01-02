@@ -1,6 +1,5 @@
 use crate::search_box::*;
 use leptos::*;
-use leptos_meta::*;
 
 #[component]
 pub fn MainNav(cx: Scope) -> impl IntoView {

@@ -1,4 +1,4 @@
-use crate::item::*;
+use crate::search_result::*;
 use leptos::*;
 
 #[component]
@@ -9,34 +9,32 @@ pub fn SearchBox(cx: Scope) -> impl IntoView {
         set_search(event_target_value(&ev));
         set_active(true);
     };
-    let focus_in = move |ev: web_sys::FocusEvent| set_active(true);
-    leptos::log!("creating search");
+    let focus_in = move |_| set_active(true);
+    let focus_out = move |_| set_active(false);
     let items = &xiv_gen_db::decompress_data().items;
-    leptos::log!("decompressed xiv_gen_db");
-    // let items : Vec<(&xiv_gen::ItemId, &xiv_gen::Item)> = Vec::new();
-    // let items = &items;
     let item_search = move || {
         search.with(|s| {
             items
                 .into_iter()
-                .filter(|(_, i)| i.name.contains(s))
+                .filter(|(_, i)| i.item_search_category.0 > 0)
+                .filter(|(_, i)| i.name.to_lowercase().contains(&s.to_lowercase()))
+                .take(25)
                 .collect::<Vec<_>>()
         })
     };
     view! {
         cx,
-        <div>
-            <input class="search-box" type="text" value=search on:input=on_input on:focus=focus_in/>
-            <div class="search-results" class:active={move || active.get()}>
-            // <For
-            //     each=item_search
-            //     key=|(id, _)| id.0
-            //     view=move |(id, item): (&xiv_gen::ItemId, &xiv_gen::Item)| {
-            //             let item_id = id.0;
-            //             let item_name = item.name.clone();
-            //             view! { cx,  <Item item_id item_name /> }
-            //         }
-            // />
+        <div on:focus=focus_in on:focusout=focus_out >
+            <input on:input=on_input class="search-box" type="text" value=search class:active={move || active.get()}/>
+            <div class="search-results" on:focus=focus_in> // on:focusout=focus_out // TODO Figure out how to replicate search.js's timer
+            <For
+                each=item_search
+                key=|(id, _)| id.0
+                view=move |(id, item): (&xiv_gen::ItemId, &xiv_gen::Item)| {
+                        let item_id = id.0;
+                        view! { cx,  <ItemSearchResult item_id item /> }
+                    }
+            />
             </div>
         </div>
     }

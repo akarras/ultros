@@ -1,3 +1,4 @@
+use leptos_meta::MetaContext;
 use wasm_bindgen::prelude::wasm_bindgen;
 
 use leptos::*;
@@ -11,6 +12,7 @@ pub fn hydrate() {
     log::info!("hydrate mode - hydrating");
 
     leptos::mount_to_body(move |cx| {
+        provide_context(cx, MetaContext::default());
         view! { cx, <App/> }
     });
 }
