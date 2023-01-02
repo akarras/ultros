@@ -47,3 +47,4 @@ smallvec = {version = "1.10.0", features = ["const_generics", "const_new", "unio
 itertools = "0.10.5"
 sitemap-rs = "0.2.0"
 ultros-ui-server = {path = "../ultros-frontend/ultros-ui-server"}
+ultros-api-types = {path = "../ultros-api-types"}
