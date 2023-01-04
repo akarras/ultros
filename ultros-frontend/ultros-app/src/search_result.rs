@@ -2,7 +2,7 @@ use crate::item_icon::*;
 use leptos::*;
 
 #[component]
-pub fn ItemSearchResult(cx: Scope, item_id: i32, item: &'static xiv_gen::Item) -> impl IntoView {
+pub fn ItemSearchResult(cx: Scope, item_id: i32, item: &'static xiv_gen::Item, set_search: WriteSignal<String>) -> impl IntoView {
     let item_name = &item.name;
     let categories = &xiv_gen_db::decompress_data().item_ui_categorys;
     let icon_size = IconSize::Medium;

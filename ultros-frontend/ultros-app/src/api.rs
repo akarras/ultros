@@ -14,7 +14,7 @@ where
     let abort_controller = web_sys::AbortController::new().ok();
     let abort_signal = abort_controller.as_ref().map(|a| a.signal());
 
-    let json : String = gloo_net::http::Request::get(path)
+    let json: String = gloo_net::http::Request::get(path)
         .abort_signal(abort_signal.as_ref())
         .send()
         .await

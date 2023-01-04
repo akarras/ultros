@@ -1,45 +1,62 @@
 use leptos::*;
+use leptos_meta::*;
 use leptos_router::use_params_map;
 use xiv_gen::ItemId;
-use leptos_meta::*;
+use crate::item_icon::*;
 
-use crate::api::get_listings;
+use crate::{api::get_listings, item_icon::IconSize};
 
 #[component]
 pub fn Listings(cx: Scope) -> impl IntoView {
     // get world and item id from scope
     let params = use_params_map(cx);
-    
-    let item_id : i32 = params.get().get("id").map(|id| id.parse().ok()).flatten().unwrap_or_default();
+
+    let item_id: i32 = params
+        .get()
+        .get("id")
+        .map(|id| id.parse().ok())
+        .flatten()
+        .unwrap_or_default();
     let item = &xiv_gen_db::decompress_data().items;
     let item = match item.get(&ItemId(item_id)) {
         Some(i) => i,
-        None => panic!("unsupported item id") //return view!{cx, <div>"Unable to get item!"</div>},
+        None => panic!("unsupported item id"), //return view!{cx, <div>"Unable to get item!"</div>},
     };
 
-    let listings = create_resource(cx, move || {
-        let map = params.get();
-        let world = map.get("world").cloned().unwrap_or_default();
-        world
-    }, move |world| async move {
-        get_listings(cx, item_id, &world).await
-    });
+    let listings = create_resource(
+        cx,
+        move || {
+            let map = params.get();
+            let world = map.get("world").cloned().unwrap_or_default();
+            world
+        },
+        move |world| async move { get_listings(cx, item_id, &world).await },
+    );
     let world = params.get().get("world").cloned().unwrap_or_default();
     let description = format!("Current listings for world {world} for {}", item.name);
+    let icon_size = IconSize::Large;
+    let item_name = &item.name;
     view! {
         cx,
         <Meta name="description" content=description/>
         <div class="container">
             <div class="flex-row">
-                
+                <ItemIcon item_id icon_size />
+                <span>{item_name}</span>
             </div>
             <div class="main-content flex-wrap">
                 <div class="content-well">
                     <Suspense fallback=|| view!{ cx, "Loading"}>
                         {move || listings.read().map(|listings| {
                             match listings {
-                                None => view!{ cx, "No listing"},
-                                Some(listings) => view! { cx, "Listings {listings:?}"}
+                                None => view!{ cx, <div>"No listing"</div>},
+                                Some(currently_shown) => view!{ cx,  <div><For each=move || currently_shown.listings.clone()
+                                 key=move |(listing, _retainer)| listing.id
+                                 view=move |(listing, retainer)| {
+                                    view! { cx, <tr><td>{listing.price_per_unit}</td><td>{retainer.name}</td></tr> }
+                                }
+                                /></div>
+                                }
                             }
                         })}
                     </Suspense>

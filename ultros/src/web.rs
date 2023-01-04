@@ -12,7 +12,7 @@ mod templates;
 use anyhow::Error;
 use axum::body::{Empty, Full};
 use axum::extract::{FromRef, Path, Query, State};
-use axum::http::{HeaderValue, Response, StatusCode, response};
+use axum::http::{response, HeaderValue, Response, StatusCode};
 use axum::response::{IntoResponse, Redirect};
 use axum::routing::{get, post};
 use axum::{body, middleware, Json, Router};
@@ -230,16 +230,14 @@ async fn world_item_listings(
         db.get_sale_history_from_multiple_worlds(world_iter, item_id, 10),
     )
     .await?;
-    let currently_shown =  CurrentlyShownItem {
+    let currently_shown = CurrentlyShownItem {
         listings: listings
             .into_iter()
             .flat_map(|(l, r)| r.map(|r| (l.into(), r.into())))
             .collect(),
         sales: sales.into_iter().map(|s| s.into()).collect(),
     };
-    Ok(axum::Json(
-       currently_shown
-    ))
+    Ok(axum::Json(currently_shown))
 }
 
 async fn refresh_world_item_listings(

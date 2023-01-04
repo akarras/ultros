@@ -22,17 +22,20 @@ pub fn SearchBox(cx: Scope) -> impl IntoView {
                 .collect::<Vec<_>>()
         })
     };
+    let clear_search = move || {
+        set_search.set("".to_string());
+    };
     view! {
         cx,
         <div on:focus=focus_in on:focusout=focus_out >
-            <input on:input=on_input class="search-box" type="text" value=search class:active={move || active.get()}/>
+            <input on:input=on_input class="search-box" type="text" value=search class:active={move || !search.get().is_empty()}/>
             <div class="search-results" on:focus=focus_in> // on:focusout=focus_out // TODO Figure out how to replicate search.js's timer
             <For
                 each=item_search
                 key=|(id, _)| id.0
                 view=move |(id, item): (&xiv_gen::ItemId, &xiv_gen::Item)| {
                         let item_id = id.0;
-                        view! { cx,  <ItemSearchResult item_id item /> }
+                        view! { cx,  <ItemSearchResult item_id item set_search /> }
                     }
             />
             </div>
