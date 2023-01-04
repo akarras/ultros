@@ -1,4 +1,5 @@
 pub(crate) mod api;
+pub(crate) mod components;
 pub(crate) mod item_icon;
 pub(crate) mod main_nav;
 pub(crate) mod routes;
@@ -6,8 +7,8 @@ pub(crate) mod search_box;
 pub(crate) mod search_result;
 
 use crate::routes::analyzer::*;
-use crate::search_box::*;
 use crate::routes::listings::*;
+use crate::search_box::*;
 use leptos::*;
 use leptos_meta::*;
 use leptos_router::*;
@@ -53,8 +54,9 @@ pub fn App(cx: Scope) -> impl IntoView {
                 </Route>
                 <Route path="list" view=move |cx| view!{cx, <h1>"List"</h1>}/>
                 <Route path="listings/:world/:id" view=move |cx| view! { cx, <Listings />}/>
-                <Route path="*listings" view=move |cx| view! { cx, <h1>"Listings"</h1>}/>
+                // <Route path="*listings" view=move |cx| view! { cx, <h1>"Listings"</h1>}/>
                 <Route path="analyzer" view=move |cx| view! { cx, <Analyzer/>}/>
+                <Route path="" view=move |cx| view! {cx, <div class="container"><div class="hero-title">"Dominate the marketboard"</div></div>}/>
             </Routes>
         </Router>
         <footer class="flex-column flex-space flex-center">
