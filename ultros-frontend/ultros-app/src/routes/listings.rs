@@ -1,8 +1,9 @@
+use crate::components::{listings_table::*, sale_history_table::*};
+use crate::item_icon::*;
 use leptos::*;
 use leptos_meta::*;
 use leptos_router::use_params_map;
 use xiv_gen::ItemId;
-use crate::item_icon::*;
 
 use crate::{api::get_listings, item_icon::IconSize};
 
@@ -50,12 +51,20 @@ pub fn Listings(cx: Scope) -> impl IntoView {
                         {move || listings.read().map(|listings| {
                             match listings {
                                 None => view!{ cx, <div>"No listing"</div>},
-                                Some(currently_shown) => view!{ cx,  <div><For each=move || currently_shown.listings.clone()
-                                 key=move |(listing, _retainer)| listing.id
-                                 view=move |(listing, retainer)| {
-                                    view! { cx, <tr><td>{listing.price_per_unit}</td><td>{retainer.name}</td></tr> }
-                                }
-                                /></div>
+                                Some(currently_shown) => {
+                                    let hq_listings : Vec<_> = currently_shown.listings.iter().cloned().filter(|(listing, _)| listing.hq).collect();
+                                    let lq_listings : Vec<_> = currently_shown.listings.iter().cloned().filter(|(listing, _)| !listing.hq).collect();
+                                    view! { cx,
+                                        <div class="flex flex-wrap">
+                                            {if !hq_listings.is_empty() {
+                                                view!{ cx, <div class="content-well"><span class="content-title">"high quality listings"</span><ListingsTable listings=hq_listings /></div> }.into_any()
+                                            } else {
+                                                view!{ cx, <div></div> }.into_any()
+                                            }}
+                                            <div class="content-well"><span class="content-title">"low quality listings"</span><ListingsTable listings=lq_listings /></div>
+                                            <div class="content-well"><span class="content-title">"sale history"</span><SaleHistoryTable sale_history=currently_shown.sales /></div>
+                                        </div>
+                                    }
                                 }
                             }
                         })}
