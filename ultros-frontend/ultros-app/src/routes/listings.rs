@@ -19,10 +19,13 @@ pub fn Listings(cx: Scope) -> impl IntoView {
         .flatten()
         .unwrap_or_default();
     let item = &xiv_gen_db::decompress_data().items;
+    let item_search_category = &xiv_gen_db::decompress_data().item_ui_categorys;
+    
     let item = match item.get(&ItemId(item_id)) {
         Some(i) => i,
         None => panic!("unsupported item id"), //return view!{cx, <div>"Unable to get item!"</div>},
     };
+    let item_category = item_search_category.get(&item.item_ui_category).map(|category| category.name.as_str()).unwrap_or_default();
 
     let listings = create_resource(
         cx,
@@ -42,8 +45,13 @@ pub fn Listings(cx: Scope) -> impl IntoView {
         <Meta name="description" content=description/>
         <div class="container">
             <div class="flex-row">
-                <ItemIcon item_id icon_size />
-                <span>{item_name}</span>
+                <div class="search-result">
+                    <ItemIcon item_id icon_size />
+                    <div class="search-result-details">
+                        <span class="item-name">{item_name}</span>
+                        <span class="item-description">{item_category}</span>
+                    </div>
+                </div>
             </div>
             <div class="main-content flex-wrap">
                 <div class="content-well">

@@ -4,9 +4,11 @@ use leptos::*;
 pub fn Analyzer(cx: Scope) -> impl IntoView {
     view! {
         cx,
-        <div>
-            <h1>"Analyzer"</h1>
-            "Todo: implement analyzer"
+        <div class="container">
+            <div class="main-content">
+                <span class="content-title">"Analyzer"</span>
+                
+            </div>
         </div>
     }
 }

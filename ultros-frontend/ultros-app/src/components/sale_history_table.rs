@@ -18,7 +18,7 @@ pub fn SaleHistoryTable(cx: Scope, sale_history: Vec<SaleHistory>) -> impl IntoV
             </tr>
         </thead>
         <tbody>
-            <div>
+            // todo figure out why sale history isn't working
             <For each=move || sale_history.clone()
                 key=move |sale| sale.sold_date.timestamp()
                 view=move |sale| {
@@ -33,12 +33,12 @@ pub fn SaleHistoryTable(cx: Scope, sale_history: Vec<SaleHistory>) -> impl IntoV
                             <td><Gil amount=total /></td>
                             <td>{sale.buyer_name}</td>
                             <td>{sale.world_id}</td>
+                            <td>"datacenter"</td>
                             <td>{sale.sold_date.to_string()}</td>
                         </tr>
                     }
                 }
             />
-            </div>
         </tbody>
     </table>
     }
