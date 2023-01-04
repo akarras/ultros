@@ -24,6 +24,7 @@ pub fn ListingsTable(cx: Scope, listings: Vec<(ActiveListing, Retainer)>) -> imp
                 <td><Gil amount=total /></td>
                 <td>{retainer.name}</td>
                 <td>{listing.world_id}</td>
+                <td>"datacenter"</td>
                 <td>{listing.timestamp.to_string()}</td>
                 </tr> }
         }
