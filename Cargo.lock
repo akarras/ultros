@@ -1598,12 +1598,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0688c2a7f92e427f44895cd63841bff7b29f8d7a1648b9e7e07a4a365b2e1257"
 
 [[package]]
-name = "doc-comment"
-version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fea41bba32d969b513997752735605054bc0dfa92b4c56bf1189f2e174be7a10"
-
-[[package]]
 name = "dotenvy"
 version = "0.15.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3322,7 +3316,7 @@ checksum = "03087c2bad5e1034e8cace5926dec053fb3790248370865f5117a7d0213354c8"
 [[package]]
 name = "leptos"
 version = "0.1.0-beta"
-source = "git+https://github.com/gbj/leptos#927fe0949fbe4f8fd541e40d967db221e8b43136"
+source = "git+https://github.com/gbj/leptos#632267c13ab19ff32d16197ad8954f8532d63c36"
 dependencies = [
  "cfg-if",
  "leptos_config",
@@ -3337,7 +3331,7 @@ dependencies = [
 [[package]]
 name = "leptos_axum"
 version = "0.1.0-beta"
-source = "git+https://github.com/gbj/leptos#927fe0949fbe4f8fd541e40d967db221e8b43136"
+source = "git+https://github.com/gbj/leptos#632267c13ab19ff32d16197ad8954f8532d63c36"
 dependencies = [
  "axum",
  "derive_builder",
@@ -3355,7 +3349,7 @@ dependencies = [
 [[package]]
 name = "leptos_config"
 version = "0.1.0-beta"
-source = "git+https://github.com/gbj/leptos#927fe0949fbe4f8fd541e40d967db221e8b43136"
+source = "git+https://github.com/gbj/leptos#632267c13ab19ff32d16197ad8954f8532d63c36"
 dependencies = [
  "config",
  "fs",
@@ -3368,7 +3362,7 @@ dependencies = [
 [[package]]
 name = "leptos_dom"
 version = "0.1.0-beta"
-source = "git+https://github.com/gbj/leptos#927fe0949fbe4f8fd541e40d967db221e8b43136"
+source = "git+https://github.com/gbj/leptos#632267c13ab19ff32d16197ad8954f8532d63c36"
 dependencies = [
  "cfg-if",
  "drain_filter_polyfill",
@@ -3395,10 +3389,9 @@ dependencies = [
 [[package]]
 name = "leptos_macro"
 version = "0.1.0-beta"
-source = "git+https://github.com/gbj/leptos#927fe0949fbe4f8fd541e40d967db221e8b43136"
+source = "git+https://github.com/gbj/leptos#632267c13ab19ff32d16197ad8954f8532d63c36"
 dependencies = [
  "cfg-if",
- "doc-comment",
  "itertools",
  "lazy_static",
  "leptos_dom",
@@ -3417,7 +3410,7 @@ dependencies = [
 [[package]]
 name = "leptos_meta"
 version = "0.1.0-beta"
-source = "git+https://github.com/gbj/leptos#927fe0949fbe4f8fd541e40d967db221e8b43136"
+source = "git+https://github.com/gbj/leptos#632267c13ab19ff32d16197ad8954f8532d63c36"
 dependencies = [
  "cfg-if",
  "leptos",
@@ -3428,7 +3421,7 @@ dependencies = [
 [[package]]
 name = "leptos_reactive"
 version = "0.1.0-beta"
-source = "git+https://github.com/gbj/leptos#927fe0949fbe4f8fd541e40d967db221e8b43136"
+source = "git+https://github.com/gbj/leptos#632267c13ab19ff32d16197ad8954f8532d63c36"
 dependencies = [
  "base64 0.13.1",
  "cfg-if",
@@ -3449,7 +3442,7 @@ dependencies = [
 [[package]]
 name = "leptos_router"
 version = "0.1.0-beta"
-source = "git+https://github.com/gbj/leptos#927fe0949fbe4f8fd541e40d967db221e8b43136"
+source = "git+https://github.com/gbj/leptos#632267c13ab19ff32d16197ad8954f8532d63c36"
 dependencies = [
  "bincode 1.3.3",
  "cfg-if",
@@ -3475,7 +3468,7 @@ dependencies = [
 [[package]]
 name = "leptos_server"
 version = "0.1.0-beta"
-source = "git+https://github.com/gbj/leptos#927fe0949fbe4f8fd541e40d967db221e8b43136"
+source = "git+https://github.com/gbj/leptos#632267c13ab19ff32d16197ad8954f8532d63c36"
 dependencies = [
  "ciborium",
  "form_urlencoded",
@@ -6390,9 +6383,9 @@ checksum = "cda74da7e1a664f795bb1f8a87ec406fb89a02522cf6e50620d016add6dbbf5c"
 
 [[package]]
 name = "tokio"
-version = "1.23.1"
+version = "1.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38a54aca0c15d014013256222ba0ebed095673f89345dd79119d912eb561b7a8"
+checksum = "eab6d665857cc6ca78d6e80303a02cea7a7851e85dfbd77cbdc09bd129f1ef46"
 dependencies = [
  "autocfg",
  "bytes 1.3.0",
@@ -6730,6 +6723,8 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "serde",
+ "thiserror",
+ "yoke",
 ]
 
 [[package]]
