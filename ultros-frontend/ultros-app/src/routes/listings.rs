@@ -45,16 +45,14 @@ pub fn Listings(cx: Scope) -> impl IntoView {
         cx,
         <Meta name="description" content=move || description()/>
         <div class="container">
-            <div class="flex-row">
-                
-            <div class="search-result">
-                // <ItemIcon item_id=move || item_id() icon_size=IconSize::Large />
-                <div class="search-result-details">
-                    <span class="item-name">{move || item_name()}</span>
-                    <span class="item-type">{move || items.get(&ItemId(item_id())).map(|item| categories.get(&item.item_ui_category)).flatten().map(|i| i.name.as_str()).unwrap_or_default()}</span>
+            <div class="flex-row"> 
+                <div class="search-result">
+                {move || view!{cx, <ItemIcon item_id=item_id() icon_size=IconSize::Large />}}
+                    <div class="search-result-details">
+                        <span class="item-name">{move || item_name()}</span>
+                        <span class="item-type">{move || items.get(&ItemId(item_id())).map(|item| categories.get(&item.item_ui_category)).flatten().map(|i| i.name.as_str()).unwrap_or_default()}</span>
+                    </div>
                 </div>
-            </div>
-                // <ItemSearchResult item_id=(move || item_id())  icon_size=IconSize::Large />
             </div>
             <div class="main-content flex-wrap">
                 <div class="content-well">
