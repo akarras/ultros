@@ -1,4 +1,4 @@
-use crate::search_result::*;
+use crate::{components::search_result::*, item_icon::IconSize};
 use leptos::*;
 
 #[component]
@@ -35,7 +35,7 @@ pub fn SearchBox(cx: Scope) -> impl IntoView {
                 key=|(id, _)| id.0
                 view=move |(id, item): (&xiv_gen::ItemId, &xiv_gen::Item)| {
                         let item_id = id.0;
-                        view! { cx,  <ItemSearchResult item_id item set_search /> }
+                        view! { cx,  <ItemSearchResult item_id icon_size=IconSize::Medium /> }
                     }
             />
             </div>

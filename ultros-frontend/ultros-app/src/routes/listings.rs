@@ -1,9 +1,9 @@
 use crate::components::{listings_table::*, sale_history_table::*};
-use crate::item_icon::*;
 use leptos::*;
 use leptos_meta::*;
 use leptos_router::use_params_map;
 use xiv_gen::ItemId;
+use crate::item_icon::*;
 
 use crate::{api::get_listings, item_icon::IconSize};
 
@@ -12,46 +12,49 @@ pub fn Listings(cx: Scope) -> impl IntoView {
     // get world and item id from scope
     let params = use_params_map(cx);
 
-    let item_id: i32 = params
-        .get()
-        .get("id")
-        .map(|id| id.parse().ok())
-        .flatten()
-        .unwrap_or_default();
-    let item = &xiv_gen_db::decompress_data().items;
-    let item_search_category = &xiv_gen_db::decompress_data().item_ui_categorys;
-    
-    let item = match item.get(&ItemId(item_id)) {
-        Some(i) => i,
-        None => panic!("unsupported item id"), //return view!{cx, <div>"Unable to get item!"</div>},
-    };
-    let item_category = item_search_category.get(&item.item_ui_category).map(|category| category.name.as_str()).unwrap_or_default();
-
+    let item_id = create_memo(cx, move |_| params().get("id")
+                .map(|id| id.parse::<i32>().ok())
+                .flatten()
+                .unwrap_or_default());
+    let items = &xiv_gen_db::decompress_data().items;
     let listings = create_resource(
         cx,
         move || {
-            let map = params.get();
-            let world = map.get("world").cloned().unwrap_or_default();
-            world
+            params.with(|p| {
+                let item_id = p
+                    .get("id")
+                    .map(|id| id.parse::<i32>().ok())
+                    .flatten()
+                    .unwrap_or_default();
+                let world = p.get("world").cloned().unwrap_or_default();
+                (item_id, world)
+            })
         },
-        move |world| async move { get_listings(cx, item_id, &world).await },
+        move |(item_id, world)| async move { get_listings(cx, item_id, &world).await },
     );
-    let world = params.get().get("world").cloned().unwrap_or_default();
-    let description = format!("Current listings for world {world} for {}", item.name);
-    let icon_size = IconSize::Large;
-    let item_name = &item.name;
+    let world = create_memo(cx, move |_| {
+        params.with(|p| p.get("world").cloned().unwrap_or_default())
+    });
+    let item_name = move || items.get(&ItemId(item_id())).map(|item| item.name.as_str()).unwrap_or_default();
+    let categories = &xiv_gen_db::decompress_data().item_ui_categorys;
+    
+    let description = create_memo(cx, move |_|
+        format!("Current listings for world {} for {}", world(), item_name())
+    );
     view! {
         cx,
-        <Meta name="description" content=description/>
+        <Meta name="description" content=move || description()/>
         <div class="container">
             <div class="flex-row">
-                <div class="search-result">
-                    <ItemIcon item_id icon_size />
-                    <div class="search-result-details">
-                        <span class="item-name">{item_name}</span>
-                        <span class="item-description">{item_category}</span>
-                    </div>
+                
+            <div class="search-result">
+                // <ItemIcon item_id=move || item_id() icon_size=IconSize::Large />
+                <div class="search-result-details">
+                    <span class="item-name">{move || item_name()}</span>
+                    <span class="item-type">{move || items.get(&ItemId(item_id())).map(|item| categories.get(&item.item_ui_category)).flatten().map(|i| i.name.as_str()).unwrap_or_default()}</span>
                 </div>
+            </div>
+                // <ItemSearchResult item_id=(move || item_id())  icon_size=IconSize::Large />
             </div>
             <div class="main-content flex-wrap">
                 <div class="content-well">
