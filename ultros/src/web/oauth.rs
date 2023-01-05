@@ -240,7 +240,6 @@ where
 {
     type Rejection = (StatusCode, RenderPage<Box<dyn Page>>);
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        // let Extension(key) = Extension::from_request_parts(parts, state).await?;
         let cookie_jar: PrivateCookieJar<Key> = PrivateCookieJar::from_request_parts(parts, state)
             .await
             .unwrap();
