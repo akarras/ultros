@@ -4,7 +4,6 @@ pub(crate) mod item_icon;
 pub(crate) mod main_nav;
 pub(crate) mod routes;
 pub(crate) mod search_box;
-pub(crate) mod search_result;
 
 use crate::routes::analyzer::*;
 use crate::routes::listings::*;
