@@ -1,21 +1,21 @@
 @font-face {
   font-family: Jaldi;
   font-weight: regular;
-  src: url('Jaldi-Regular.ttf');
+  src: url('/static/Jaldi-Regular.ttf');
   font-display: swap;
 }
 
 @font-face {
   font-family: Jaldi-Bold;
   font-weight: bold;
-  src: url('Jaldi-Bold.ttf');
+  src: url('/static/Jaldi-Bold.ttf');
   font-display: swap;
 }
 
 @font-face {
   font-family: Pacifico-Regular;
   font-weight: regular;
-  src: url("Pacifico-Regular.ttf");
+  src: url("/static/Pacifico-Regular.ttf");
   font-display: swap;
 }
 
