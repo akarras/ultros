@@ -125,7 +125,6 @@ impl UltrosDb {
             discord_user_id: Set(discord_user_id),
             ffxiv_character_id: Set(ffxiv_character_id),
         };
-        warn!("creating challenge {model:?}");
         Ok(Entity::insert(model).exec_with_returning(&self.db).await?)
     }
 

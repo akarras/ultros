@@ -11,10 +11,11 @@ use leptos::*;
 use ultros_app::*;
 
 #[cfg(feature = "ssr")]
-pub async fn create_leptos_app() -> Router {
+pub async fn create_leptos_app(db: ultros_db::UltrosDb) -> Router {
     use axum::{error_handling::HandleError, http::StatusCode};
     use leptos::tracing::log;
     use tower_http::services::ServeDir;
+    use ultros_db::UltrosDb;
 
     let conf = get_configuration(Some("Cargo.toml")).await.unwrap();
     let leptos_options = conf.leptos_options;
@@ -50,6 +51,9 @@ pub async fn create_leptos_app() -> Router {
         //.nest_service("/static", static_service)
         .fallback(leptos_axum::render_app_to_stream(
             leptos_options,
-            |cx| view! { cx, <App/> },
+            move |cx| {
+                provide_context(cx, db.clone());
+                view! { cx, <App/> }
+            },
         ))
 }

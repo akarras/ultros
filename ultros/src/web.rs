@@ -32,6 +32,7 @@ use std::time::Duration;
 use tokio::time::timeout;
 use tower_http::compression::CompressionLayer;
 use tracing::debug;
+use ultros_api_types::user_data::UserData;
 use ultros_api_types::world::WorldData;
 use ultros_api_types::{ActiveListing, CurrentlyShownItem};
 use ultros_db::world_cache::AnyResult;
@@ -643,13 +644,23 @@ pub(crate) async fn world_data(State(world_cache): State<Arc<WorldCache>>) -> Js
     Json(WorldData::from(world_cache.as_ref()))
 }
 
+pub(crate) async fn current_user(user: AuthDiscordUser) -> Json<UserData> {
+    Json(UserData {
+        id: user.id,
+        username: user.name,
+        avatar: user.avatar_url,
+    })
+}
+
 pub(crate) async fn start_web(state: WebState) {
+    let db = state.db.clone();
     // build our application with a route
     let app = Router::new()
         .route("/alerts/websocket", get(connect_websocket))
         .route("/api/v1/cheapest/:world", get(cheapest_per_world))
         .route("/api/v1/listings/:world/:itemid", get(world_item_listings))
         .route("/api/v1/world_data", get(world_data))
+        .route("/api/v1/current_user", get(current_user))
         .route(
             "/listings/refresh/:worldid/:itemid",
             get(refresh_world_item_listings),
@@ -686,7 +697,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route_layer(middleware::from_fn(track_metrics))
         .layer(CompressionLayer::new())
         .with_state(state)
-        .nest("/", create_leptos_app().await);
+        .nest("/", create_leptos_app(db).await);
 
     // run our app with hyper
     // `axum::Server` is a re-export of `hyper::Server`

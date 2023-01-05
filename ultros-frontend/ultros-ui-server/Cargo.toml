@@ -11,6 +11,7 @@ leptos = {git = "https://github.com/gbj/leptos", default-features = false}
 leptos_axum = {git = "https://github.com/gbj/leptos"}
 ultros-app = {path = "../ultros-app"}
 tower-http = { version = "0.3.4", features = ["fs"] }
+ultros-db = {path = "../../ultros-db"}
 
 [features]
 default = ["ssr"]

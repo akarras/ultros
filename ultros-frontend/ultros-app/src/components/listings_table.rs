@@ -5,6 +5,18 @@ use ultros_api_types::{world_helper::AnySelector, ActiveListing, Retainer};
 
 #[component]
 pub fn ListingsTable(cx: Scope, listings: Vec<(ActiveListing, Retainer)>) -> impl IntoView {
+    let (show_more, set_show_more) = create_signal(cx, false);
+    let listing_count = listings.len();
+    let show_click = move |_| set_show_more(true);
+    let listings = create_memo(cx, move |_| {
+        let mut listings = listings.clone();
+        listings.sort_by_key(|(listing, _)| listing.price_per_unit);
+        if show_more() {
+            listings.clone()
+        } else {
+            listings.iter().cloned().take(10).collect()
+        }
+    });
     view! { cx,  <table>
             <tr>
                 <th>"price"</th>
@@ -15,9 +27,8 @@ pub fn ListingsTable(cx: Scope, listings: Vec<(ActiveListing, Retainer)>) -> imp
                 <th>"datacenter"</th>
                 <th>"first seen"</th>
             </tr>
-            <tbody>
-            // todo figure out why tf the for each gets moved outside the scope of tbody
-        <For each=move || listings.clone()
+        <tbody>
+        <For each=listings
         key=move |(listing, _retainer)| listing.id
         view=move |(listing, retainer)| {
             let total = listing.price_per_unit * listing.quantity;
@@ -32,6 +43,11 @@ pub fn ListingsTable(cx: Scope, listings: Vec<(ActiveListing, Retainer)>) -> imp
                 </tr> }
         }
         />
+        <tr on:click=show_click class:hidden=move || {listing_count < 10 || show_more() }>
+            <td colspan=7>
+                <button on:click=show_click style="width: 100%;" class="btn">"Show More"</button>
+            </td>
+        </tr>
         </tbody>
     </table>
     }

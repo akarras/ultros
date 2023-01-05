@@ -2,10 +2,10 @@ pub(crate) mod api;
 pub(crate) mod components;
 pub(crate) mod global_state;
 pub(crate) mod item_icon;
-pub(crate) mod main_nav;
 pub(crate) mod routes;
 pub(crate) mod search_box;
 
+use crate::global_state::AuthenticationState;
 use crate::global_state::LocalWorldData;
 use crate::routes::analyzer::*;
 use crate::routes::listings::*;
@@ -17,7 +17,9 @@ use leptos_router::*;
 #[component]
 pub fn App(cx: Scope) -> impl IntoView {
     let world_data = LocalWorldData::new(cx);
+    let auth_state = AuthenticationState::new(cx);
     provide_context(cx, world_data);
+    provide_context(cx, auth_state.clone());
     view! {
         cx,
         <Stylesheet id="leptos" href="/target/site/pkg/ultros.css"/>
@@ -28,27 +30,45 @@ pub fn App(cx: Scope) -> impl IntoView {
         </div>
         <Router>
             <nav class="header">
-            <i><b>"ULTROS IS STILL UNDER ACTIVE DEVELOPMENT"</b></i>
-            <A href="alerts">
-                <i class="fa-solid fa-bell"></i>
-                "Alerts"
-            </A>
-            <A href="analyzer">
-                <i class="fa-solid fa-money-bill-trend-up"></i>
-                "Analyzer"
-            </A>
-            <A href="list">
-                <i class="fa-solid fa-list"></i>
-                "Lists"
-            </A>
-            <A href="retainers">
-                <i class="fa-solid fa-user-group"></i>
-                "Retainers"
-            </A>
-            <SearchBox/>
-            <A href="invitebot">
-                "Invite Bot"
-            </A>
+                <i><b>"ULTROS IS STILL UNDER ACTIVE DEVELOPMENT"</b></i>
+                <A href="alerts">
+                    <i class="fa-solid fa-bell"></i>
+                    "Alerts"
+                </A>
+                <A href="analyzer">
+                    <i class="fa-solid fa-money-bill-trend-up"></i>
+                    "Analyzer"
+                </A>
+                <A href="list">
+                    <i class="fa-solid fa-list"></i>
+                    "Lists"
+                </A>
+                <A href="retainers">
+                    <i class="fa-solid fa-user-group"></i>
+                    "Retainers"
+                </A>
+                <SearchBox/>
+                <a class="btn nav-item" href="invitebot">
+                    "Invite Bot"
+                </a>
+                // {move || {
+                //     match auth_state.0.read() {
+                //         Some(Some(auth)) => {
+                //             view!{cx,
+                //                 <a class="btn nav-item" href="profile">
+                //                     <img class="avatar" src=&auth.avatar alt=&auth.username/>
+                //                 </a>
+                //                 <a class="btn nav-item" href="/logout">
+                //                     "Logout"
+                //                 </a>}.into_view(cx)
+                //         }
+                //         _ => {
+                //             view!{cx, <a class="btn nav-item" href="/login">
+                //                 "Login"
+                //             </a>}.into_view(cx)
+                //         }
+                //     }
+                // }}
             </nav>
             <Routes>
                 <Route path="retainers/undercuts" view=move |cx| view! { cx, <h1>"Undercuts"</h1>}/>

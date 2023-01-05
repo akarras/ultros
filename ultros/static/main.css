@@ -737,3 +737,7 @@ select optgroup {
 .flex-grow {
   flex-grow: 3;
 }
+
+.hidden {
+  display: none;
+}

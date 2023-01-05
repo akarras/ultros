@@ -1,6 +1,7 @@
 mod listings;
 mod retainer;
 mod sale_history;
+pub mod user_data;
 pub mod world;
 pub mod world_helper;
 
