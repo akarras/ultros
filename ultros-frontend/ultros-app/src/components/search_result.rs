@@ -3,11 +3,7 @@ use leptos::*;
 use xiv_gen::ItemId;
 
 #[component]
-pub fn ItemSearchResult(
-    cx: Scope,
-    item_id: i32,
-    icon_size: IconSize
-) -> impl IntoView {
+pub fn ItemSearchResult(cx: Scope, item_id: i32, icon_size: IconSize) -> impl IntoView {
     let data = xiv_gen_db::decompress_data();
     let categories = &data.item_ui_categorys;
     let items = &data.items;

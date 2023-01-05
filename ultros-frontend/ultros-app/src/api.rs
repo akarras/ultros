@@ -1,8 +1,13 @@
+use leptos::{Scope, Serializable};
+use ultros_api_types::{world::WorldData, CurrentlyShownItem};
+
 pub async fn get_listings(cx: Scope, item_id: i32, world: &str) -> Option<CurrentlyShownItem> {
     fetch_api(cx, &format!("/api/v1/listings/{world}/{item_id}")).await
 }
-use leptos::{Scope, Serializable};
-use ultros_api_types::CurrentlyShownItem;
+
+pub async fn get_worlds(cx: Scope) -> Option<WorldData> {
+    fetch_api(cx, "/api/v1/world_data").await
+}
 
 #[cfg(not(feature = "ssr"))]
 pub async fn fetch_api<T>(cx: Scope, path: &str) -> Option<T>
@@ -35,12 +40,10 @@ where
 }
 
 #[cfg(feature = "ssr")]
-pub async fn fetch_api<T>(cx: Scope, path: &str) -> Option<T>
+pub async fn fetch_api<T>(_cx: Scope, path: &str) -> Option<T>
 where
     T: Serializable,
 {
-    use std::path::PathBuf;
-
     use leptos::tracing::log;
     // add the hostname when using the ssr path.
     let hostname = "http://localhost:8080";

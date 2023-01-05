@@ -1,21 +1,27 @@
 use crate::components::{listings_table::*, sale_history_table::*};
+use crate::global_state::LocalWorldData;
+use crate::item_icon::*;
 use leptos::*;
 use leptos_meta::*;
 use leptos_router::use_params_map;
 use xiv_gen::ItemId;
-use crate::item_icon::*;
 
 use crate::{api::get_listings, item_icon::IconSize};
 
 #[component]
 pub fn Listings(cx: Scope) -> impl IntoView {
     // get world and item id from scope
+    let worlds =
+        use_context::<LocalWorldData>(cx).expect("Local world data should be always provided");
     let params = use_params_map(cx);
 
-    let item_id = create_memo(cx, move |_| params().get("id")
-                .map(|id| id.parse::<i32>().ok())
-                .flatten()
-                .unwrap_or_default());
+    let item_id = create_memo(cx, move |_| {
+        params()
+            .get("id")
+            .map(|id| id.parse::<i32>().ok())
+            .flatten()
+            .unwrap_or_default()
+    });
     let items = &xiv_gen_db::decompress_data().items;
     let listings = create_resource(
         cx,
@@ -35,17 +41,22 @@ pub fn Listings(cx: Scope) -> impl IntoView {
     let world = create_memo(cx, move |_| {
         params.with(|p| p.get("world").cloned().unwrap_or_default())
     });
-    let item_name = move || items.get(&ItemId(item_id())).map(|item| item.name.as_str()).unwrap_or_default();
+    let item_name = move || {
+        items
+            .get(&ItemId(item_id()))
+            .map(|item| item.name.as_str())
+            .unwrap_or_default()
+    };
     let categories = &xiv_gen_db::decompress_data().item_ui_categorys;
-    
-    let description = create_memo(cx, move |_|
+
+    let description = create_memo(cx, move |_| {
         format!("Current listings for world {} for {}", world(), item_name())
-    );
+    });
     view! {
         cx,
         <Meta name="description" content=move || description()/>
         <div class="container">
-            <div class="flex-row"> 
+            <div class="flex-row">
                 <div class="search-result">
                 {move || view!{cx, <ItemIcon item_id=item_id() icon_size=IconSize::Large />}}
                     <div class="search-result-details">
