@@ -1,6 +1,7 @@
 use super::gil::*;
+use super::{datacenter_name::*, world_name::*};
 use leptos::*;
-use ultros_api_types::SaleHistory;
+use ultros_api_types::{world_helper::AnySelector, SaleHistory};
 
 #[component]
 pub fn SaleHistoryTable(cx: Scope, sale_history: Vec<SaleHistory>) -> impl IntoView {
@@ -18,7 +19,6 @@ pub fn SaleHistoryTable(cx: Scope, sale_history: Vec<SaleHistory>) -> impl IntoV
             </tr>
         </thead>
         <tbody>
-            // todo figure out why sale history isn't working
             <For each=move || sale_history.clone()
                 key=move |sale| sale.sold_date.timestamp()
                 view=move |sale| {
@@ -32,8 +32,8 @@ pub fn SaleHistoryTable(cx: Scope, sale_history: Vec<SaleHistory>) -> impl IntoV
                             <td>{sale.quantity}</td>
                             <td><Gil amount=total /></td>
                             <td>{sale.buyer_name}</td>
-                            <td>{sale.world_id}</td>
-                            <td>"datacenter"</td>
+                            <td><WorldName id=AnySelector::World(sale.world_id)/></td>
+                            <td><DatacenterName world_id=sale.world_id/></td>
                             <td>{sale.sold_date.to_string()}</td>
                         </tr>
                     }
