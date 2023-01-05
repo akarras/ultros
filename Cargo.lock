@@ -6741,6 +6741,7 @@ dependencies = [
  "reqwest",
  "serde",
  "sublime_fuzzy",
+ "thousands",
  "ultros-api-types",
  "web-sys",
  "xiv-gen",
