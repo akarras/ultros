@@ -1,10 +1,12 @@
 pub(crate) mod api;
 pub(crate) mod components;
+pub(crate) mod global_state;
 pub(crate) mod item_icon;
 pub(crate) mod main_nav;
 pub(crate) mod routes;
 pub(crate) mod search_box;
 
+use crate::global_state::LocalWorldData;
 use crate::routes::analyzer::*;
 use crate::routes::listings::*;
 use crate::search_box::*;
@@ -14,6 +16,8 @@ use leptos_router::*;
 
 #[component]
 pub fn App(cx: Scope) -> impl IntoView {
+    let world_data = LocalWorldData::new(cx);
+    provide_context(cx, world_data);
     view! {
         cx,
         <Stylesheet id="leptos" href="/target/site/pkg/ultros.css"/>

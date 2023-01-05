@@ -32,6 +32,7 @@ use std::time::Duration;
 use tokio::time::timeout;
 use tower_http::compression::CompressionLayer;
 use tracing::debug;
+use ultros_api_types::world::WorldData;
 use ultros_api_types::{ActiveListing, CurrentlyShownItem};
 use ultros_db::world_cache::AnyResult;
 use ultros_db::{
@@ -638,12 +639,17 @@ pub(crate) async fn invite() -> Redirect {
     Redirect::to(&format!("https://discord.com/oauth2/authorize?client_id={client_id}&scope=bot&permissions=2147483648"))
 }
 
+pub(crate) async fn world_data(State(world_cache): State<Arc<WorldCache>>) -> Json<WorldData> {
+    Json(WorldData::from(world_cache.as_ref()))
+}
+
 pub(crate) async fn start_web(state: WebState) {
     // build our application with a route
     let app = Router::new()
         .route("/alerts/websocket", get(connect_websocket))
         .route("/api/v1/cheapest/:world", get(cheapest_per_world))
         .route("/api/v1/listings/:world/:itemid", get(world_item_listings))
+        .route("/api/v1/world_data", get(world_data))
         .route(
             "/listings/refresh/:worldid/:itemid",
             get(refresh_world_item_listings),

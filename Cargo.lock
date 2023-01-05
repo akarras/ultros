@@ -6724,6 +6724,8 @@ dependencies = [
  "chrono",
  "serde",
  "thiserror",
+ "xiv-gen",
+ "xiv-gen-db",
  "yoke",
 ]
 
@@ -6737,6 +6739,7 @@ dependencies = [
  "leptos_meta",
  "leptos_router",
  "reqwest",
+ "serde",
  "sublime_fuzzy",
  "ultros-api-types",
  "web-sys",

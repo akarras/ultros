@@ -1,6 +1,7 @@
 use super::gil::*;
+use crate::components::{datacenter_name::*, world_name::*};
 use leptos::*;
-use ultros_api_types::{ActiveListing, Retainer};
+use ultros_api_types::{world_helper::AnySelector, ActiveListing, Retainer};
 
 #[component]
 pub fn ListingsTable(cx: Scope, listings: Vec<(ActiveListing, Retainer)>) -> impl IntoView {
@@ -14,6 +15,8 @@ pub fn ListingsTable(cx: Scope, listings: Vec<(ActiveListing, Retainer)>) -> imp
                 <th>"datacenter"</th>
                 <th>"first seen"</th>
             </tr>
+            <tbody>
+            // todo figure out why tf the for each gets moved outside the scope of tbody
         <For each=move || listings.clone()
         key=move |(listing, _retainer)| listing.id
         view=move |(listing, retainer)| {
@@ -23,12 +26,13 @@ pub fn ListingsTable(cx: Scope, listings: Vec<(ActiveListing, Retainer)>) -> imp
                 <td>{listing.quantity}</td>
                 <td><Gil amount=total /></td>
                 <td>{retainer.name}</td>
-                <td>{listing.world_id}</td>
-                <td>"datacenter"</td>
+                <td><WorldName id=AnySelector::World(listing.world_id) /></td>
+                <td><DatacenterName world_id=listing.world_id/> </td>
                 <td>{listing.timestamp.to_string()}</td>
                 </tr> }
         }
         />
+        </tbody>
     </table>
     }
 }

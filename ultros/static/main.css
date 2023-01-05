@@ -32,7 +32,8 @@ a:hover {
 body {
   background-image: url('/static/images/flower_4.webp');
   background-size: 500px;
-  background-position: 0px 0px;
+  background-position: top;
+
   color: #fff;
   font-family: Jaldi, sans-serif;
   opacity: 1;

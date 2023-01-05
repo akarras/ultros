@@ -22,9 +22,6 @@ pub fn SearchBox(cx: Scope) -> impl IntoView {
                 .collect::<Vec<_>>()
         })
     };
-    let clear_search = move || {
-        set_search.set("".to_string());
-    };
     view! {
         cx,
         <div on:focus=focus_in on:focusout=focus_out >

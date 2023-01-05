@@ -19,6 +19,7 @@ gloo-net = {version = "0.2", optional = true, features = ["http"]}
 gloo = {version = "0.8.0", optional = true}
 web-sys = {version = "0.3", optional = true, features = ["AbortController"]}
 ultros-api-types = {path = "../../ultros-api-types"}
+serde = {version = "1", features = ["rc"]}
 
 [features]
 hydrate = ["leptos/hydrate", "leptos_meta/hydrate", "leptos_router/hydrate", "gloo", "gloo-net", "web-sys"]
