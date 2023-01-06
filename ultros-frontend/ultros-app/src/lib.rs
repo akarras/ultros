@@ -19,7 +19,8 @@ pub fn App(cx: Scope) -> impl IntoView {
     let world_data = LocalWorldData::new(cx);
     let auth_state = AuthenticationState::new(cx);
     provide_context(cx, world_data);
-    provide_context(cx, auth_state.clone());
+    provide_context(cx, auth_state);
+    let auth_state = use_context::<AuthenticationState>(cx).expect("Auth state should always be present");
     view! {
         cx,
         <Stylesheet id="leptos" href="/target/site/pkg/ultros.css"/>
@@ -60,12 +61,13 @@ pub fn App(cx: Scope) -> impl IntoView {
                 //                 </a>
                 //                 <a class="btn nav-item" href="/logout">
                 //                     "Logout"
-                //                 </a>}.into_view(cx)
+                //                 </a>}
                 //         }
                 //         _ => {
                 //             view!{cx, <a class="btn nav-item" href="/login">
                 //                 "Login"
-                //             </a>}.into_view(cx)
+                //             </a>
+                //             }
                 //         }
                 //     }
                 // }}

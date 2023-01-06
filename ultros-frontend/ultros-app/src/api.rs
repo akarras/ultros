@@ -15,54 +15,9 @@ pub(crate) async fn get_worlds(cx: Scope) -> Option<WorldData> {
 }
 
 /// This is okay because the client will send our login cookie
-#[cfg(not(feature = "ssr"))]
 pub(crate) async fn get_login(cx: Scope) -> Option<UserData> {
     leptos::log!("login get");
     fetch_api(cx, "/api/v1/current_user").await
-}
-
-/// On the server we need to use the cookie that the client already requested
-#[cfg(feature = "ssr")]
-pub(crate) async fn get_login(cx: Scope) -> Option<UserData> {
-    use std::env;
-    // get the cookie from axum for discord user logins
-    use axum_extra::extract::{cookie::Key, PrivateCookieJar};
-    use leptos::tracing::log::warn;
-    use serenity::http::Http;
-    use ultros_db::UltrosDb;
-    let key = env::var("KEY").expect("environment variable KEY not found");
-    let req_parts = use_context::<leptos_axum::RequestParts>(cx).unwrap();
-    let cookie_jar = PrivateCookieJar::from_headers(&req_parts.headers, Key::from(key.as_bytes()));
-
-    let discord_auth = cookie_jar.get("discord_auth")?;
-    let db = use_context::<UltrosDb>(cx).expect("Must have db on server");
-    let http = Http::new(&format!("Bearer {}", discord_auth.value()));
-    let user = http
-        .get_current_user()
-        .await
-        .map_err(|e| {
-            error!("error accessing logged in user {e}");
-        })
-        .ok()?;
-    let avatar_url = user
-        .static_avatar_url()
-        .unwrap_or_else(|| user.default_avatar_url());
-    let user = UserData {
-        id: user.id.0,
-        username: user.name,
-        avatar: avatar_url,
-    };
-    match db
-        .get_or_create_discord_user(user.id, user.username.clone())
-        .await
-    {
-        Ok(_) => {}
-        Err(e) => {
-            error!("{e:?}");
-            return None;
-        }
-    }
-    Some(user)
 }
 
 #[cfg(not(feature = "ssr"))]
@@ -96,20 +51,27 @@ where
 }
 
 #[cfg(feature = "ssr")]
-pub async fn fetch_api<T>(_cx: Scope, path: &str) -> Option<T>
+pub async fn fetch_api<T>(cx: Scope, path: &str) -> Option<T>
 where
     T: Serializable,
 {
     use leptos::tracing::log;
+    use reqwest::header::HeaderMap;
+    // use the original headers of the scope 
     // add the hostname when using the ssr path.
+    let req_parts = use_context::<leptos_axum::RequestParts>(cx).unwrap();
+    let mut headers = req_parts.headers;
     let hostname = "http://localhost:8080";
     let path = format!("{hostname}{path}");
-    let json = reqwest::get(path)
+    headers.remove("Accept-Encoding");
+    let client = reqwest::Client::builder().default_headers(headers).build().ok()?;
+    let request = client.get(&path).build().ok()?;
+    let json = client.execute(request)
         .await
-        .map_err(|e| log::error!("{e}"))
+        .map_err(|e| log::error!("Response {e}. {path}"))
         .ok()?
         .text()
         .await
         .ok()?;
-    T::from_json(&json).map_err(|e| log::error!("{e}")).ok()
+    T::from_json(&json).map_err(|e| log::error!("{e} {path} returned: json text {json}")).ok()
 }
