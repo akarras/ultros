@@ -18,6 +18,7 @@ pub fn SearchBox(cx: Scope) -> impl IntoView {
                 .into_iter()
                 .filter(|(_, i)| i.item_search_category.0 > 0)
                 .filter(|(_, i)| i.name.to_lowercase().contains(&s.to_lowercase()))
+                .filter(|_| !s.is_empty())
                 .take(25)
                 .collect::<Vec<_>>()
         })
