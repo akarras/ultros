@@ -4,9 +4,10 @@ use crate::item_icon::*;
 use leptos::*;
 use leptos_meta::*;
 use leptos_router::use_params_map;
-use xiv_gen::ItemId;
+use xiv_gen::{ItemId, Item};
 
 use crate::{api::get_listings, item_icon::IconSize};
+
 
 #[component]
 pub fn Listings(cx: Scope) -> impl IntoView {
@@ -47,6 +48,12 @@ pub fn Listings(cx: Scope) -> impl IntoView {
             .map(|item| item.name.as_str())
             .unwrap_or_default()
     };
+    let item_description = move || {
+        items
+            .get(&ItemId(item_id()))
+            .map(|item| item.description.as_str())
+            .unwrap_or_default()
+    };
     let categories = &xiv_gen_db::decompress_data().item_ui_categorys;
 
     let description = create_memo(cx, move |_| {
@@ -57,11 +64,14 @@ pub fn Listings(cx: Scope) -> impl IntoView {
         <Meta name="description" content=move || description()/>
         <div class="container">
             <div class="flex-row">
-                <div class="search-result">
+                <div class="flex-row" style="background-color: rgb(16, 10, 18); margin-bottom: 15px; border-radius: 12px; padding: 14px; line-height: .9;">
                 {move || view!{cx, <ItemIcon item_id=item_id() icon_size=IconSize::Large />}}
-                    <div class="search-result-details">
-                        <span class="item-name">{move || item_name()}</span>
-                        <span class="item-type">{move || items.get(&ItemId(item_id())).map(|item| categories.get(&item.item_ui_category)).flatten().map(|i| i.name.as_str()).unwrap_or_default()}</span>
+                <div style="padding: 5px">
+                        <div class="flex-row" style="padding: 5px">
+                            <span style="font-size: 36px; padding: 5px">{move || item_name()}</span>
+                            <span style="font-size: 16px; padding: 5px">{move || items.get(&ItemId(item_id())).map(|item| categories.get(&item.item_ui_category)).flatten().map(|i| i.name.as_str()).unwrap_or_default()}</span>
+                        </div>
+                        <span>{move || item_description()}</span>
                     </div>
                 </div>
             </div>
