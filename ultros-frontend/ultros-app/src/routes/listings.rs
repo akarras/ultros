@@ -4,10 +4,9 @@ use crate::item_icon::*;
 use leptos::*;
 use leptos_meta::*;
 use leptos_router::use_params_map;
-use xiv_gen::{ItemId, Item};
+use xiv_gen::{Item, ItemId};
 
 use crate::{api::get_listings, item_icon::IconSize};
-
 
 #[component]
 pub fn Listings(cx: Scope) -> impl IntoView {

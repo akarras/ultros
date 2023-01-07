@@ -57,21 +57,27 @@ where
 {
     use leptos::tracing::log;
     use reqwest::header::HeaderMap;
-    // use the original headers of the scope 
+    // use the original headers of the scope
     // add the hostname when using the ssr path.
     let req_parts = use_context::<leptos_axum::RequestParts>(cx).unwrap();
     let mut headers = req_parts.headers;
     let hostname = "http://localhost:8080";
     let path = format!("{hostname}{path}");
     headers.remove("Accept-Encoding");
-    let client = reqwest::Client::builder().default_headers(headers).build().ok()?;
+    let client = reqwest::Client::builder()
+        .default_headers(headers)
+        .build()
+        .ok()?;
     let request = client.get(&path).build().ok()?;
-    let json = client.execute(request)
+    let json = client
+        .execute(request)
         .await
         .map_err(|e| log::error!("Response {e}. {path}"))
         .ok()?
         .text()
         .await
         .ok()?;
-    T::from_json(&json).map_err(|e| log::error!("{e} {path} returned: json text {json}")).ok()
+    T::from_json(&json)
+        .map_err(|e| log::error!("{e} {path} returned: json text {json}"))
+        .ok()
 }
