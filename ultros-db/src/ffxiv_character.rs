@@ -2,7 +2,6 @@ use migration::OnConflict;
 use sea_orm::IntoActiveModel;
 use sea_orm::{ActiveValue, EntityTrait, Set};
 use tracing::instrument;
-use tracing::log::warn;
 
 use super::UltrosDb;
 use crate::entity::*;
