@@ -20,7 +20,8 @@ pub fn App(cx: Scope) -> impl IntoView {
     let auth_state = AuthenticationState::new(cx);
     provide_context(cx, world_data);
     provide_context(cx, auth_state);
-    let auth_state = use_context::<AuthenticationState>(cx).expect("Auth state should always be present");
+    let auth_state =
+        use_context::<AuthenticationState>(cx).expect("Auth state should always be present");
     view! {
         cx,
         <Stylesheet id="leptos" href="/target/site/pkg/ultros.css"/>
