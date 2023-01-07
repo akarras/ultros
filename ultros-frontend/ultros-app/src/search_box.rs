@@ -7,7 +7,6 @@ pub fn SearchBox(cx: Scope) -> impl IntoView {
     let (active, set_active) = create_signal(cx, false);
     let on_input = move |ev| {
         set_search(event_target_value(&ev));
-        set_active(true);
     };
     let focus_in = move |_| set_active(true);
     let focus_out = move |_| set_active(false);
@@ -25,15 +24,15 @@ pub fn SearchBox(cx: Scope) -> impl IntoView {
     };
     view! {
         cx,
-        <div on:focus=focus_in on:focusout=focus_out >
-            <input on:input=on_input class="search-box" type="text" value=search class:active={move || !search.get().is_empty()}/>
-            <div class="search-results" on:focus=focus_in> // on:focusout=focus_out // TODO Figure out how to replicate search.js's timer
+        <div>
+            <input on:input=on_input on:focusin=focus_in on:focusout=focus_out class="search-box" type="text" prop:value=search class:active={move || active()}/>
+            <div class="search-results">
             <For
                 each=item_search
                 key=|(id, _)| id.0
                 view=move |(id, item): (&xiv_gen::ItemId, &xiv_gen::Item)| {
                         let item_id = id.0;
-                        view! { cx,  <ItemSearchResult item_id icon_size=IconSize::Medium /> }
+                        view! { cx,  <ItemSearchResult item_id set_search /> }
                     }
             />
             </div>
