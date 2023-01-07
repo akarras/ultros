@@ -2,7 +2,7 @@ use crate::world::{Datacenter, Region, World, WorldData};
 use serde::{Deserialize, Serialize};
 
 /// Like world_cache but built for use in wasm
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct WorldHelper {
     world_data: WorldData,
 }
@@ -32,6 +32,27 @@ impl<'a> AnyResult<'a> {
             AnyResult::World(world) => Box::new([*world].into_iter()),
         };
         iterator
+    }
+
+    pub fn as_region(&'_ self) -> Option<&'a Region> {
+        match self {
+            AnyResult::Region(r) => Some(r),
+            _ => None,
+        }
+    }
+
+    pub fn as_datacenter(&'_ self) -> Option<&'a Datacenter> {
+        match self {
+            AnyResult::Datacenter(dc) => Some(dc),
+            _ => None,
+        }
+    }
+
+    pub fn as_world(&'_ self) -> Option<&'a World> {
+        match self {
+            AnyResult::World(w) => Some(w),
+            _ => None,
+        }
     }
 }
 
@@ -63,8 +84,10 @@ impl WorldHelper {
         });
         worlds.find(|any| any.get_name().eq_ignore_ascii_case(name))
     }
+}
 
-    pub fn lookup_selector<'a>(&'a self, selector: AnySelector) -> Option<AnyResult<'a>> {
+impl<'a> WorldHelper {
+    pub fn lookup_selector(&'a self, selector: AnySelector) -> Option<AnyResult<'a>> {
         match selector {
             AnySelector::Region(r) => self
                 .world_data
@@ -86,6 +109,44 @@ impl WorldHelper {
                 .flat_map(|r| r.datacenters.iter().flat_map(|dc| dc.worlds.iter()))
                 .find(|world| world.id == w)
                 .map(|w| AnyResult::World(w)),
+        }
+    }
+
+    /// Returns all datacenters associated with the result.
+    /// For a world or a datacenter this will basically always be *one*
+    pub fn get_datacenters(&'a self, any_result: &AnyResult<'a>) -> Vec<&'a Datacenter> {
+        match any_result {
+            AnyResult::Region(region) => region.datacenters.iter().collect(),
+            AnyResult::Datacenter(datacenter) => vec![datacenter],
+            AnyResult::World(world) => {
+                let datacenter: AnyResult<'a> = self
+                    .lookup_selector(AnySelector::Datacenter(world.datacenter_id))
+                    .unwrap();
+                let datacenter: &Datacenter = datacenter.as_datacenter().unwrap();
+                vec![datacenter]
+            }
+        }
+    }
+
+    pub fn get_region(&'a self, any_result: AnyResult<'a>) -> &'a Region {
+        match any_result {
+            AnyResult::Region(region) => region,
+            AnyResult::Datacenter(datacenter) => {
+                let region = self
+                    .lookup_selector(AnySelector::Region(datacenter.region_id))
+                    .unwrap();
+                region.as_region().unwrap()
+            }
+            AnyResult::World(world) => {
+                let datacenter: AnyResult<'a> = self
+                    .lookup_selector(AnySelector::Datacenter(world.datacenter_id))
+                    .unwrap();
+                let datacenter: &Datacenter = datacenter.as_datacenter().unwrap();
+                let region: AnyResult<'_> = self
+                    .lookup_selector(AnySelector::Region(datacenter.region_id))
+                    .unwrap();
+                region.as_region().unwrap()
+            }
         }
     }
 }

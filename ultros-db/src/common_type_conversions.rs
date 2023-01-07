@@ -82,9 +82,12 @@ impl From<&WorldCache> for WorldData {
                 .get_all()
                 .iter()
                 .map(|(region, datacenters)| {
-                    let region::Model { id, name } = region;
+                    let region::Model {
+                        id: region_id,
+                        name,
+                    } = region;
                     Region {
-                        id: *id,
+                        id: *region_id,
                         name: name.to_string(),
                         datacenters: datacenters
                             .into_iter()
@@ -97,7 +100,7 @@ impl From<&WorldCache> for WorldData {
                                         .into_iter()
                                         .map(|world| World::from(*world))
                                         .collect(),
-                                    region_id: *id,
+                                    region_id: *region_id,
                                 }
                             })
                             .collect(),
