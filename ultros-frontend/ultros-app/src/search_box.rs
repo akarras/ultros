@@ -1,4 +1,4 @@
-use crate::{components::search_result::*, item_icon::IconSize};
+use crate::components::search_result::*;
 use leptos::*;
 
 #[component]

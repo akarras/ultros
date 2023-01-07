@@ -5,9 +5,8 @@ use crate::item_icon::*;
 use leptos::*;
 use leptos_meta::*;
 use leptos_router::use_params_map;
-use std::rc::Rc;
-use ultros_api_types::world_helper::{self, AnyResult, WorldHelper};
-use xiv_gen::{Item, ItemId};
+use ultros_api_types::world_helper::{AnyResult, WorldHelper};
+use xiv_gen::ItemId;
 
 use crate::{api::get_listings, item_icon::IconSize};
 
@@ -18,12 +17,12 @@ fn WorldButton(cx: Scope, world_name: String, item_id: i32) -> impl IntoView {
 
 #[component]
 fn WorldMenu(cx: Scope, world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
+    // for some reason the context version doesn't work
     let worlds = create_resource(
         cx,
         move || {},
         move |_| async move {
             let world_data = get_worlds(cx).await;
-            leptos::log!("World data fetched");
             world_data.map(|data| WorldHelper::new(data))
         },
     );

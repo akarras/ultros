@@ -1,3 +1,2 @@
-mod authentication_state;
-
-pub(crate) use authentication_state::AuthenticationState;
+mod local_world_data;
+pub(crate) use local_world_data::LocalWorldData;

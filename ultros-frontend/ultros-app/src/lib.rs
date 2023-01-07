@@ -5,7 +5,10 @@ pub(crate) mod item_icon;
 pub(crate) mod routes;
 pub(crate) mod search_box;
 
-use crate::global_state::AuthenticationState;
+use std::rc::Rc;
+
+use crate::api::get_worlds;
+use crate::components::profile_display::*;
 use crate::global_state::LocalWorldData;
 use crate::routes::analyzer::*;
 use crate::routes::listings::*;
@@ -13,15 +16,19 @@ use crate::search_box::*;
 use leptos::*;
 use leptos_meta::*;
 use leptos_router::*;
+use ultros_api_types::world_helper::WorldHelper;
 
 #[component]
 pub fn App(cx: Scope) -> impl IntoView {
-    let world_data = LocalWorldData::new(cx);
-    let auth_state = AuthenticationState::new(cx);
-    provide_context(cx, world_data);
-    provide_context(cx, auth_state);
-    let auth_state =
-        use_context::<AuthenticationState>(cx).expect("Auth state should always be present");
+    let worlds = create_resource(
+        cx,
+        move || {},
+        move |_| async move {
+            let world_data = get_worlds(cx).await;
+            world_data.map(|data| Rc::new(WorldHelper::new(data)))
+        },
+    );
+    provide_context(cx, LocalWorldData(worlds));
     view! {
         cx,
         <Stylesheet id="leptos" href="/target/site/pkg/ultros.css"/>
@@ -49,29 +56,15 @@ pub fn App(cx: Scope) -> impl IntoView {
                     <i class="fa-solid fa-user-group"></i>
                     "Retainers"
                 </A>
-                <SearchBox/>
+                <div>
+                    <SearchBox/>
+                </div>
                 <a class="btn nav-item" href="invitebot">
                     "Invite Bot"
                 </a>
-                // {move || {
-                //     match auth_state.0.read() {
-                //         Some(Some(auth)) => {
-                //             view!{cx,
-                //                 <a class="btn nav-item" href="profile">
-                //                     <img class="avatar" src=&auth.avatar alt=&auth.username/>
-                //                 </a>
-                //                 <a class="btn nav-item" href="/logout">
-                //                     "Logout"
-                //                 </a>}
-                //         }
-                //         _ => {
-                //             view!{cx, <a class="btn nav-item" href="/login">
-                //                 "Login"
-                //             </a>
-                //             }
-                //         }
-                //     }
-                // }}
+                // <div>
+                //     <ProfileDisplay/>
+                // </div>
             </nav>
             <Routes>
                 <Route path="retainers/undercuts" view=move |cx| view! { cx, <h1>"Undercuts"</h1>}/>
