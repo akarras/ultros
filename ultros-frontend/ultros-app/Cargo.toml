@@ -22,6 +22,8 @@ web-sys = {version = "0.3", optional = true, features = ["AbortController", "Cli
 ultros-api-types = {path = "../../ultros-api-types"}
 serde = {version = "1", features = ["rc"]}
 thousands = "0.2.0"
+timeago = "0.4.0"
+chrono = "0.4.23"
 
 [features]
 hydrate = ["leptos/hydrate", "leptos_meta/hydrate", "leptos_router/hydrate", "gloo", "gloo-net", "web-sys"]

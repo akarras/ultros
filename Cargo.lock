@@ -6781,6 +6781,7 @@ dependencies = [
 name = "ultros-app"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "gloo",
  "gloo-net",
  "leptos",
@@ -6791,6 +6792,7 @@ dependencies = [
  "serde",
  "sublime_fuzzy",
  "thousands",
+ "timeago",
  "ultros-api-types",
  "web-sys",
  "xiv-gen",
