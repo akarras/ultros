@@ -161,7 +161,7 @@ pub fn Listings(cx: Scope) -> impl IntoView {
                         <span>{move || item_description()}</span>
                     </div>
                 </div>
-                <div class="flex-wrap">
+                <div class="flex-wrap content-nav">
                     <WorldMenu world_name=world item_id />
                 </div>
             </div>

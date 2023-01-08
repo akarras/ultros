@@ -467,6 +467,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/listings/:world/:itemid", get(world_item_listings))
         .route("/api/v1/world_data", get(world_data))
         .route("/api/v1/current_user", get(current_user))
+        .route("/api/v1/user/retainers", get(user_retainers))
         .route(
             "/listings/refresh/:worldid/:itemid",
             get(refresh_world_item_listings),

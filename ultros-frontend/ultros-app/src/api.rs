@@ -1,5 +1,9 @@
 use leptos::*;
-use ultros_api_types::{user::UserData, world::WorldData, CurrentlyShownItem};
+use ultros_api_types::{
+    user::{UserData, UserRetainers},
+    world::WorldData,
+    CurrentlyShownItem,
+};
 
 pub(crate) async fn get_listings(
     cx: Scope,
@@ -16,6 +20,11 @@ pub(crate) async fn get_worlds(cx: Scope) -> Option<WorldData> {
 /// This is okay because the client will send our login cookie
 pub(crate) async fn get_login(cx: Scope) -> Option<UserData> {
     fetch_api(cx, "/api/v1/current_user").await
+}
+
+/// Returns a list of the logged in user's retainers
+pub(crate) async fn get_retainers(cx: Scope) -> Option<UserRetainers> {
+    fetch_api(cx, "/api/v1/user/retainers").await
 }
 
 #[cfg(not(feature = "ssr"))]

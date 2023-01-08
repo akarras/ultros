@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{FfxivCharacter, Retainer};
 
-#[derive(Deserialize, Serialize)]
+#[derive(Serialize, Deserialize, Default, Debug, PartialEq, PartialOrd, Eq, Ord, Clone)]
 pub struct OwnedRetainer {
     pub id: i32,
     pub retainer_id: i32,
@@ -12,7 +12,7 @@ pub struct OwnedRetainer {
 }
 
 /// List of all user retainers. User retainer are grouped by character
-#[derive(Deserialize, Serialize)]
+#[derive(Serialize, Deserialize, Default, Debug, PartialEq, PartialOrd, Eq, Ord, Clone)]
 pub struct UserRetainers {
     /// List of all the user's retainers. If no character is associated, it will be placed into the None.
     pub retainers: Vec<(Option<FfxivCharacter>, Vec<(OwnedRetainer, Retainer)>)>,
