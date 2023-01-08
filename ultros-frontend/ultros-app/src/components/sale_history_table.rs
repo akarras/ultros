@@ -1,5 +1,4 @@
-use super::gil::*;
-use super::{datacenter_name::*, world_name::*};
+use super::{datacenter_name::*, gil::*, relative_time::*, world_name::*};
 use leptos::*;
 use ultros_api_types::{world_helper::AnySelector, SaleHistory};
 
@@ -34,7 +33,7 @@ pub fn SaleHistoryTable(cx: Scope, sale_history: Vec<SaleHistory>) -> impl IntoV
                             <td>{sale.buyer_name}</td>
                             <td><WorldName id=AnySelector::World(sale.world_id)/></td>
                             <td><DatacenterName world_id=sale.world_id/></td>
-                            <td>{sale.sold_date.to_string()}</td>
+                            <td><RelativeToNow timestamp=sale.sold_date/></td>
                         </tr>
                     }
                 }

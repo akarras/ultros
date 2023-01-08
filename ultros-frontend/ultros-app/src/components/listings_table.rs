@@ -1,4 +1,5 @@
 use super::gil::*;
+use super::relative_time::*;
 use crate::components::{datacenter_name::*, world_name::*};
 use leptos::*;
 use ultros_api_types::{world_helper::AnySelector, ActiveListing, Retainer};
@@ -39,7 +40,7 @@ pub fn ListingsTable(cx: Scope, listings: Vec<(ActiveListing, Retainer)>) -> imp
                 <td>{retainer.name}</td>
                 <td><WorldName id=AnySelector::World(listing.world_id) /></td>
                 <td><DatacenterName world_id=listing.world_id/> </td>
-                <td>{listing.timestamp.to_string()}</td>
+                <td><RelativeToNow timestamp=listing.timestamp/></td>
                 </tr> }
         }
         />
