@@ -21,5 +21,5 @@ console_error_panic_hook = "0.1"
 leptos_meta = { git = "https://github.com/gbj/leptos", default-features = false }
 
 [features]
-# default = ["hydrate"]
-# hydrate = ["leptos/hydrate", "ultros-app/hydrate"]
+default = ["hydrate"]
+hydrate = ["leptos/hydrate", "ultros-app/hydrate"]

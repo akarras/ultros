@@ -27,6 +27,8 @@ pub enum VerifierError {
     VerificationFailure,
     #[error("World error {0}")]
     WorldCacheError(#[from] WorldCacheError),
+    #[error("Unauthorized")]
+    Unauthorized,
 }
 
 impl CharacterVerifierService {
@@ -74,6 +76,7 @@ impl CharacterVerifierService {
     pub(crate) async fn check_verification(
         &self,
         verification_id: i32,
+        discord_user: i64,
     ) -> Result<(), VerifierError> {
         let verification = self.db.get_verification_challenge(verification_id).await?;
         let ffxiv_character_verification::Model {
@@ -82,6 +85,9 @@ impl CharacterVerifierService {
             challenge,
             ..
         } = &verification;
+        if discord_user == *discord_user_id {
+            return Err(VerifierError::VerificationFailure);
+        }
         self.compare_verification(&challenge, *ffxiv_character_id as u32)
             .await?;
         // verification success, now add the owned character
