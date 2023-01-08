@@ -1,5 +1,5 @@
 use crate::api::get_worlds;
-use crate::components::{listings_table::*, sale_history_table::*};
+use crate::components::{clipboard::*, listings_table::*, sale_history_table::*};
 use crate::item_icon::*;
 use leptos::*;
 use leptos_meta::*;
@@ -156,6 +156,7 @@ pub fn Listings(cx: Scope) -> impl IntoView {
                     <div style="padding: 5px">
                         <div class="flex-row" style="padding: 5px">
                             <span style="font-size: 36px; padding: 5px">{move || item_name()}</span>
+                            {move || view!{cx, <Clipboard clipboard_text=item_name().to_string()/>}}
                             <span style="font-size: 16px; padding: 5px">{move || items.get(&ItemId(item_id())).map(|item| categories.get(&item.item_ui_category)).flatten().map(|i| i.name.as_str()).unwrap_or_default()}</span>
                         </div>
                         <span>{move || item_description()}</span>
