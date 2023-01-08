@@ -1,6 +1,5 @@
 use leptos::*;
-use ultros_api_types::user_data::UserData;
-use ultros_api_types::{world::WorldData, CurrentlyShownItem};
+use ultros_api_types::{user::UserData, world::WorldData, CurrentlyShownItem};
 
 pub(crate) async fn get_listings(
     cx: Scope,
@@ -24,8 +23,6 @@ pub async fn fetch_api<T>(cx: Scope, path: &str) -> Option<T>
 where
     T: Serializable,
 {
-    use leptos::{log, on_cleanup};
-
     let abort_controller = web_sys::AbortController::new().ok();
     let abort_signal = abort_controller.as_ref().map(|a| a.signal());
 

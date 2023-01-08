@@ -1,6 +1,5 @@
 use crate::api::get_worlds;
 use crate::components::{listings_table::*, sale_history_table::*};
-use crate::global_state::LocalWorldData;
 use crate::item_icon::*;
 use leptos::*;
 use leptos_meta::*;

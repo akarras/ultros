@@ -2,23 +2,19 @@ mod alerts_websocket;
 pub mod api;
 pub(crate) mod character_verifier_service;
 pub mod error;
-mod fuzzy_item_search;
 mod home_world_cookie;
-pub mod item_search_index;
 pub mod oauth;
 pub mod sitemap;
-mod templates;
 
 use anyhow::Error;
 use axum::body::{Empty, Full};
 use axum::extract::{FromRef, Path, Query, State};
-use axum::http::{response, HeaderValue, Response, StatusCode};
+use axum::http::{HeaderValue, Response, StatusCode};
 use axum::response::{IntoResponse, Redirect};
-use axum::routing::{get, post};
+use axum::routing::get;
 use axum::{body, middleware, Json, Router};
-use axum_extra::extract::cookie::{Cookie, Key, SameSite};
-use axum_extra::extract::CookieJar;
-use futures::future::{join, try_join};
+use axum_extra::extract::cookie::Key;
+use futures::future::try_join;
 use image::imageops::FilterType;
 use image::ImageOutputFormat;
 use maud::Render;
@@ -32,168 +28,28 @@ use std::time::Duration;
 use tokio::time::timeout;
 use tower_http::compression::CompressionLayer;
 use tracing::debug;
-use ultros_api_types::user_data::UserData;
+use ultros_api_types::result::{ApiError, ApiResult};
+use ultros_api_types::user::{OwnedRetainer, UserData, UserRetainers};
 use ultros_api_types::world::WorldData;
-use ultros_api_types::{ActiveListing, CurrentlyShownItem};
-use ultros_db::world_cache::AnyResult;
-use ultros_db::{
-    world_cache::{AnySelector, WorldCache},
-    UltrosDb,
-};
+use ultros_api_types::{CurrentlyShownItem, FfxivCharacter, Retainer};
+use ultros_db::{world_cache::WorldCache, UltrosDb};
 use ultros_ui_server::create_leptos_app;
 use universalis::{ItemId, ListingView, UniversalisClient, WorldId};
 
 use self::character_verifier_service::CharacterVerifierService;
 use self::error::WebError;
-use self::home_world_cookie::HomeWorld;
 use self::oauth::{AuthDiscordUser, AuthUserCache, DiscordAuthConfig};
-use self::templates::pages::retainer::generic_retainer_page::GenericRetainerPage;
-use self::templates::pages::{
-    alerts::AlertsPage, analyzer_page::AnalyzerPage, retainer::add_retainer::AddRetainer,
-};
-use self::templates::{
-    page::RenderPage,
-    pages::{
-        home_page::HomePage,
-        listings_view::ListingsPage,
-        retainer::user_retainers_page::{RetainerViewType, UserRetainersPage},
-    },
-};
-use crate::analyzer_service::{AnalyzerService, ResaleOptions, SoldAmount, SoldWithin};
+use crate::analyzer_service::AnalyzerService;
 use crate::event::{EventReceivers, EventSenders, EventType};
 use crate::web::api::cheapest_per_world;
 use crate::web::sitemap::{sitemap_index, world_sitemap};
-use crate::web::templates::pages::character::refresh_character;
-use crate::web::templates::pages::character::{
-    add_character::add_character, claim_character::claim_character,
-    verify_character::verify_character,
-};
-use crate::web::templates::pages::lists::delete_list;
-use crate::web::templates::pages::lists::item_add::list_item_add;
-use crate::web::templates::pages::lists::view::delete_item;
-use crate::web::templates::pages::{
-    lists::{add::add_list, overview::overview, view::list_details},
-    retainer::{add_retainer_to_character, remove_retainer_from_character, reorder_retainer},
-};
 use crate::web::{
     alerts_websocket::connect_websocket,
     oauth::{begin_login, logout},
-    templates::pages::{profile::profile, retainer::edit_retainer::edit_retainer},
 };
 use crate::web_metrics::{start_metrics_server, track_metrics};
 use image::io::Reader as ImageReader;
 use std::io::Cursor;
-
-// basic handler that responds with a static string
-async fn root(user: Option<AuthDiscordUser>) -> RenderPage<HomePage> {
-    RenderPage(HomePage { user })
-}
-
-async fn get_retainer_listings(
-    State(db): State<ultros_db::UltrosDb>,
-    State(world_cache): State<Arc<WorldCache>>,
-    Path(retainer_id): Path<i32>,
-    user: Option<AuthDiscordUser>,
-) -> Result<RenderPage<GenericRetainerPage>, WebError> {
-    let data = db
-        .get_retainer_listings(retainer_id)
-        .await?
-        .ok_or(WebError::InvalidItem(retainer_id))?;
-    let (retainer, listings) = data;
-
-    Ok(RenderPage(GenericRetainerPage {
-        retainer_name: retainer.name,
-        retainer_id: retainer.id,
-        world_name: world_cache
-            .lookup_selector(&AnySelector::World(retainer.world_id))
-            .map(|w| w.get_name().to_string())
-            .unwrap_or_default(),
-        listings,
-        user,
-    }))
-}
-
-async fn user_retainers_listings(
-    State(db): State<UltrosDb>,
-    current_user: AuthDiscordUser,
-) -> Result<RenderPage<UserRetainersPage>, WebError> {
-    let mut retainer_listings = db
-        .get_retainer_listings_for_discord_user(current_user.id)
-        .await?;
-    let items = &xiv_gen_db::decompress_data().items;
-    // sort the undercut retainers by item sort ui category to match in game
-    for (_, _, listings) in &mut retainer_listings {
-        listings.sort_by(|a, b| {
-            let item_a = items
-                .get(&xiv_gen::ItemId(a.item_id))
-                .expect("Unknown item");
-            let item_b = items
-                .get(&xiv_gen::ItemId(b.item_id))
-                .expect("Unknown item");
-            item_a
-                .item_ui_category
-                .0
-                .cmp(&item_b.item_ui_category.0)
-                .then_with(|| item_a.name.cmp(&item_b.name))
-        });
-    }
-    Ok(RenderPage(UserRetainersPage {
-        character_names: Vec::new(),
-        view_type: RetainerViewType::Listings(retainer_listings),
-        current_user,
-    }))
-}
-
-async fn user_retainers_undercuts(
-    State(db): State<UltrosDb>,
-    current_user: AuthDiscordUser,
-) -> Result<RenderPage<UserRetainersPage>, WebError> {
-    let mut undercut_retainers = db.get_retainer_undercut_items(current_user.id).await?;
-    let items = &xiv_gen_db::decompress_data().items;
-    // sort the undercut retainers by item sort ui category to match in game
-    for (_, _, listings) in &mut undercut_retainers {
-        listings.sort_by(|(a, _), (b, _)| {
-            let item_a = items
-                .get(&xiv_gen::ItemId(a.item_id))
-                .expect("Unknown item");
-            let item_b = items
-                .get(&xiv_gen::ItemId(b.item_id))
-                .expect("Unknown item");
-            item_a
-                .item_sort_category
-                .0
-                .cmp(&item_b.item_sort_category.0)
-                .then_with(|| item_a.level_item.0.cmp(&item_b.level_item.0))
-        });
-    }
-    Ok(RenderPage(UserRetainersPage {
-        character_names: Vec::new(),
-        view_type: RetainerViewType::Undercuts(undercut_retainers),
-        current_user,
-    }))
-}
-
-#[derive(Deserialize)]
-struct RetainerAddQueryParams {
-    search: Option<String>,
-}
-
-async fn add_retainer_page(
-    State(db): State<UltrosDb>,
-    current_user: AuthDiscordUser,
-    Query(query_parameter): Query<RetainerAddQueryParams>,
-) -> Result<RenderPage<AddRetainer>, WebError> {
-    let mut results = None;
-    if let Some(search_str) = &query_parameter.search {
-        results = Some(db.search_retainers(search_str).await?);
-    }
-
-    Ok(RenderPage(AddRetainer {
-        user: Some(current_user),
-        search_results: results.unwrap_or_default(),
-        search_text: query_parameter.search.unwrap_or_default(),
-    }))
-}
 
 async fn add_retainer(
     State(db): State<UltrosDb>,
@@ -305,10 +161,6 @@ async fn refresh_world_item_listings(
     Ok(Redirect::to(&format!("/listings/{world}/{item_id}")))
 }
 
-async fn alerts(discord_user: AuthDiscordUser) -> Result<RenderPage<AlertsPage>, WebError> {
-    Ok(RenderPage(AlertsPage { discord_user }))
-}
-
 #[derive(Deserialize, Serialize, Copy, Clone, PartialEq, PartialOrd, Eq, Ord)]
 #[serde(rename_all = "camelCase")]
 pub enum AnalyzerSort {
@@ -360,94 +212,6 @@ pub struct AnalyzerOptions {
     filter_datacenter: Option<i32>,
     sale_label: Option<SaleTimeLabel>,
     sale_value: Option<u8>,
-}
-
-async fn analyze_profits(
-    State(analyzer): State<AnalyzerService>,
-    State(world_cache): State<Arc<WorldCache>>,
-    home_world: Option<HomeWorld>,
-    user: Option<AuthDiscordUser>,
-    Query(options): Query<AnalyzerOptions>,
-) -> Result<RenderPage<AnalyzerPage>, WebError> {
-    // this doesn't change often, could easily cache.
-    let world = if let Some(world) = options.world {
-        world
-    } else if let Some(home_world) = &home_world {
-        home_world.home_world
-    } else {
-        return Ok(RenderPage(AnalyzerPage {
-            user,
-            analyzer_results: vec![],
-            world: None,
-            region: None,
-            options,
-            world_cache,
-        }));
-    };
-    let world = world_cache.lookup_selector(&AnySelector::World(world))?;
-    let region = world_cache
-        .get_region(&world)
-        .ok_or_else(|| anyhow::Error::msg("Unable to get region"))?;
-    let world = match world {
-        AnyResult::World(w) => w,
-        AnyResult::Datacenter(_) => return Err(Error::msg("Datacenter found?").into()),
-        AnyResult::Region(_) => return Err(Error::msg("Region not found").into()),
-    };
-    let mut analyzer_results = analyzer
-        .get_best_resale(
-            world.id,
-            region.id,
-            ResaleOptions {
-                minimum_profit: options.minimum_profit,
-                filter_world: options.filter_world,
-                filter_datacenter: options.filter_datacenter,
-                filter_sale: options
-                    .sale_label
-                    .as_ref()
-                    .map(|sale| {
-                        options.sale_value.as_ref().map(|value| {
-                            let value = SoldAmount(*value);
-                            match sale {
-                                SaleTimeLabel::Today => Some(SoldWithin::Today(value)),
-                                SaleTimeLabel::Week => Some(SoldWithin::Week(value)),
-                                SaleTimeLabel::Month => Some(SoldWithin::Month(value)),
-                                SaleTimeLabel::Year => Some(SoldWithin::Year(value)),
-                                SaleTimeLabel::NoFilter => None,
-                            }
-                        })
-                    })
-                    .flatten()
-                    .flatten(),
-            },
-            &world_cache,
-        )
-        .await
-        .ok_or_else(|| anyhow::Error::msg("Couldn't find items. Might need more warm up time"))?;
-    match options.sort.as_ref().unwrap_or(&AnalyzerSort::Profit) {
-        AnalyzerSort::Profit => {
-            analyzer_results.sort_by(|a, b| {
-                b.profit
-                    .cmp(&a.profit)
-                    .then_with(|| a.cheapest.cmp(&b.cheapest))
-            });
-        }
-        AnalyzerSort::Margin => {
-            analyzer_results.sort_by(|a, b| {
-                b.return_on_investment
-                    .partial_cmp(&a.return_on_investment)
-                    .unwrap_or_else(|| a.cheapest.cmp(&b.cheapest))
-            });
-        }
-    }
-
-    Ok(RenderPage(AnalyzerPage {
-        user,
-        analyzer_results,
-        region: Some(region.clone()),
-        world: Some(world.clone()),
-        options,
-        world_cache,
-    }))
 }
 
 #[derive(Clone)]
@@ -652,6 +416,48 @@ pub(crate) async fn current_user(user: AuthDiscordUser) -> Json<UserData> {
     })
 }
 
+pub(crate) async fn user_retainers(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+) -> Json<Option<UserRetainers>> {
+    // load the retainer/character details from the database and then extract it into the shared API types.
+    let retainers = db
+        .get_all_owned_retainers_and_character(user.id)
+        .await
+        .ok()
+        .map(|c| UserRetainers {
+            retainers: c
+                .into_iter()
+                .map(|(character, retainers)| {
+                    (
+                        character.map(|character| FfxivCharacter::from(character)),
+                        retainers
+                            .into_iter()
+                            .map(|(owned, retainer)| {
+                                (OwnedRetainer::from(owned), Retainer::from(retainer))
+                            })
+                            .collect(),
+                    )
+                })
+                .collect(),
+        });
+    Json(retainers)
+}
+
+pub(crate) async fn verify_character(
+    State(character): State<CharacterVerifierService>,
+    Path(verification_id): Path<i32>,
+    user: AuthDiscordUser,
+) -> Json<ApiResult<bool>> {
+    if let Err(_) = character
+        .check_verification(verification_id, user.id as i64)
+        .await
+    {
+        return Json(ApiResult::Error(ApiError::Generic));
+    }
+    Json(ApiResult::Ok(true))
+}
+
 pub(crate) async fn start_web(state: WebState) {
     let db = state.db.clone();
     // build our application with a route
@@ -665,28 +471,12 @@ pub(crate) async fn start_web(state: WebState) {
             "/listings/refresh/:worldid/:itemid",
             get(refresh_world_item_listings),
         )
-        .route("/characters/add", get(add_character))
-        .route("/characters/claim/:id", get(claim_character))
         .route("/characters/verify/:id", get(verify_character))
-        .route("/characters/refresh/:id", get(refresh_character))
-        .route("/retainers/listings/:id", get(get_retainer_listings))
-        .route("/retainers/add", get(add_retainer_page))
         .route("/retainers/add/:id", get(add_retainer))
         .route("/retainers/remove/:id", get(remove_owned_retainer))
-        .route("/retainers/edit", get(edit_retainer))
-        .route(
-            "/retainers/character/add/:retainer/:character",
-            get(add_retainer_to_character),
-        )
-        .route(
-            "/retainers/character/remove/:retainer",
-            get(remove_retainer_from_character),
-        )
-        .route("/items/:search", get(fuzzy_item_search::search_items))
         .route("/static/*path", get(static_path))
         .route("/static/itemicon/:path", get(get_item_icon))
         .route("/redirect", get(self::oauth::redirect))
-        .route("/profile", get(profile))
         .route("/login", get(begin_login))
         .route("/logout", get(logout))
         .route("/invitebot", get(invite))

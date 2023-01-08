@@ -3,7 +3,8 @@ use std::{num::ParseIntError, sync::Arc};
 use axum::response::{IntoResponse, Redirect, Response};
 use image::ImageError;
 use oauth2::{
-    ConfigurationError, RequestTokenError, RevocationErrorResponseType, StandardErrorResponse,
+    basic::BasicErrorResponseType, ConfigurationError, RequestTokenError,
+    RevocationErrorResponseType, StandardErrorResponse,
 };
 use reqwest::StatusCode;
 use sitemap_rs::{sitemap_index_error::SitemapIndexError, url_set_error::UrlSetError};
@@ -30,8 +31,6 @@ pub enum WebError {
             StandardErrorResponse<RevocationErrorResponseType>,
         >,
     ),
-    #[error("Could not find an item with the ID of {0}")]
-    InvalidItem(i32),
     #[error("Generic error {0}")]
     AnyhowError(#[from] anyhow::Error),
     #[error("Home world has not been set")]
@@ -71,13 +70,20 @@ pub enum WebError {
     SiteMapError(#[from] SitemapIndexError),
     #[error("Error generating url set {0}")]
     UrlSetError(#[from] UrlSetError),
+    #[error("Token error {0}")]
+    TokenError(
+        #[from]
+        RequestTokenError<
+            oauth2::reqwest::Error<reqwest::Error>,
+            StandardErrorResponse<BasicErrorResponseType>,
+        >,
+    ),
 }
 
 impl WebError {
     fn as_status_code(&self) -> StatusCode {
         match self {
             WebError::NotAuthenticated => StatusCode::UNAUTHORIZED,
-            WebError::InvalidItem(_) => StatusCode::BAD_REQUEST,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
