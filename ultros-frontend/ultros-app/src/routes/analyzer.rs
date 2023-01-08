@@ -5,7 +5,7 @@ pub fn Analyzer(cx: Scope) -> impl IntoView {
     view! {
         cx,
         <div class="container">
-            <div class="main-content flex-center">
+            <div class="main-content flex flex-center">
                 <div>
                     <span class="content-title">"Analyzer"</span>
                     <div>
