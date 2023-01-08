@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{FfxivCharacter, Retainer};
+use crate::{FfxivCharacter, Retainer, ActiveListing};
 
 #[derive(Serialize, Deserialize, Default, Debug, PartialEq, PartialOrd, Eq, Ord, Clone)]
 pub struct OwnedRetainer {
@@ -17,3 +17,10 @@ pub struct UserRetainers {
     /// List of all the user's retainers. If no character is associated, it will be placed into the None.
     pub retainers: Vec<(Option<FfxivCharacter>, Vec<(OwnedRetainer, Retainer)>)>,
 }
+
+#[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone)]
+pub struct UserRetainerListings {
+    /// List of all the user's retainers. If no character is associated, it will be placed into the None.
+    pub retainers: Vec<(Option<FfxivCharacter>, Vec<(Retainer, Vec<ActiveListing>)>)>,
+}
+

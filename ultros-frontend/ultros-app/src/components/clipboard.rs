@@ -1,6 +1,5 @@
 use super::tooltip::*;
 use leptos::*;
-use std::rc::Rc;
 #[cfg(web_sys_unstable_apis)]
 use web_sys::{Clipboard, Navigator, Window};
 
