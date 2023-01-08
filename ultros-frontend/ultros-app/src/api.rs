@@ -1,6 +1,6 @@
 use leptos::*;
 use ultros_api_types::{
-    user::{UserData, UserRetainers},
+    user::{UserData, UserRetainerListings, UserRetainers},
     world::WorldData,
     CurrentlyShownItem,
 };
@@ -25,6 +25,10 @@ pub(crate) async fn get_login(cx: Scope) -> Option<UserData> {
 /// Returns a list of the logged in user's retainers
 pub(crate) async fn get_retainers(cx: Scope) -> Option<UserRetainers> {
     fetch_api(cx, "/api/v1/user/retainers").await
+}
+
+pub(crate) async fn get_retainer_listings(cx: Scope) -> Option<UserRetainerListings> {
+    fetch_api(cx, "/api/v1/user/retainers/listings").await
 }
 
 #[cfg(not(feature = "ssr"))]

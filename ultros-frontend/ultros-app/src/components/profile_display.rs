@@ -1,33 +1,32 @@
 use crate::api::get_login;
 use leptos::*;
-use leptos_router::*;
 
 #[component]
 pub fn ProfileDisplay(cx: Scope) -> impl IntoView {
-    let auth = create_resource(cx, || (), move |_| async move { get_login(cx).await });
+    let (login, set_login) = create_signal(cx, None);
+    spawn_local(async move {
+        let login = get_login(cx).await;
+        leptos::log!("login {login:?}");
+        set_login(login);
+    });
+    // let auth = create_resource(cx, || (), move |_| async move { get_login(cx).await });
     view! {cx,
-        <div>
-            <Suspense fallback=move || view!{cx, <div class="loading"></div>}>
-            {move || {
-                match auth.read() {
-                    Some(Some(auth)) => {
-                        view!{cx,
-                            <A href="profile">
-                                <img class="avatar" src=&auth.avatar alt=&auth.username/>
-                            </A>
-                            <A href="logout">
-                                "Logout"
-                            </A>}.into_view(cx)
-                    }
-                    _ => {
-                        view!{cx, <A href="login">
-                            "Login"
-                        </A>
-                        }.into_view(cx)
-                    }
-                }
-            }}
-            </Suspense>
-        </div>
+        {move || match login() {
+            Some(auth) => {
+                view!{cx,
+                    <html::a href="profile">
+                        <img class="avatar" src=&auth.avatar alt=&auth.username/>
+                    </html::a>
+                    <html::a class="btn" href="logout">
+                        "Logout"
+                    </html::a>}.into_view(cx)
+            }
+            _ => {
+                view!{cx, <html::a class="btn" href="login">
+                    "Login"
+                </html::a>
+                }.into_view(cx)
+            }
+        }}
     }
 }

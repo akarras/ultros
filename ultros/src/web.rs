@@ -29,7 +29,7 @@ use tokio::time::timeout;
 use tower_http::compression::CompressionLayer;
 use tracing::debug;
 use ultros_api_types::result::{ApiError, ApiResult};
-use ultros_api_types::user::{OwnedRetainer, UserData, UserRetainers, UserRetainerListings};
+use ultros_api_types::user::{OwnedRetainer, UserData, UserRetainerListings, UserRetainers};
 use ultros_api_types::world::WorldData;
 use ultros_api_types::{CurrentlyShownItem, FfxivCharacter, Retainer};
 use ultros_db::{world_cache::WorldCache, UltrosDb};
@@ -444,10 +444,15 @@ pub(crate) async fn user_retainers(
     Json(retainers)
 }
 
-pub(crate) async fn user_retainer_listings(State(db): State<UltrosDb>, user: AuthDiscordUser) -> Json<Option<UserRetainerListings>> {
-    let retainers = db.get_retainer_listings_for_discord_user(user.id).await
+pub(crate) async fn user_retainer_listings(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+) -> Json<Option<UserRetainerListings>> {
+    let retainers = db
+        .get_retainer_listings_for_discord_user(user.id)
+        .await
         .ok();
-        // .map(|character| );
+    // .map(|character| );
     unimplemented!("User listings");
     // Json()
 }
@@ -476,7 +481,10 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/world_data", get(world_data))
         .route("/api/v1/current_user", get(current_user))
         .route("/api/v1/user/retainers", get(user_retainers))
-        .route("/api/v1/user/retainer/listings", get(user_retainer_listings))
+        .route(
+            "/api/v1/user/retainer/listings",
+            get(user_retainer_listings),
+        )
         .route(
             "/listings/refresh/:worldid/:itemid",
             get(refresh_world_item_listings),

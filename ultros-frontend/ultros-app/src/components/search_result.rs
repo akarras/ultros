@@ -12,7 +12,7 @@ pub fn ItemSearchResult(cx: Scope, item_id: i32, set_search: WriteSignal<String>
         cx,
         {if let Some(item) = item {
             view!{cx,
-            <a on:click=move |_| set_search("".to_string()) href=format!("/listings/North-America/{item_id}")> // this needs to be updated to be able to point to any region
+            <html::a on:click=move |_| set_search("".to_string()) href=format!("/listings/North-America/{item_id}")> // this needs to be updated to be able to point to any region
                 <div class="search-result">
                     <ItemIcon item_id icon_size=IconSize::Small />
                     <div class="search-result-details">
@@ -20,10 +20,10 @@ pub fn ItemSearchResult(cx: Scope, item_id: i32, set_search: WriteSignal<String>
                         <span class="item-type">{categories.get(&item.item_ui_category).map(|i| i.name.as_str()).unwrap_or_default()}</span>
                     </div>
                 </div>
-            </a>
+            </html::a>
     }
         } else {
-            view!{cx, <a class="search-result">"Invalid result"</a>}
+            view!{cx, <html::a class="search-result">"Invalid result"</html::a>}
         }}
     }
 }
