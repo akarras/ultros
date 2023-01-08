@@ -74,7 +74,7 @@ pub fn App(cx: Scope) -> impl IntoView {
                 <Route path="list" view=move |cx| view!{cx, <h1>"List"</h1>}/>
                 <Route path="listings/:world/:id" view=move |cx| view! { cx, <Listings />}/>
                 // <Route path="*listings" view=move |cx| view! { cx, <h1>"Listings"</h1>}/>
-                <Route path="analyzer/:?world" view=move |cx| view! { cx, <Analyzer/>}/>
+                <Route path="analyzer" view=move |cx| view! { cx, <Analyzer/>}/>
                 <Route path="" view=move |cx| view! {cx, <div class="container"><div class="hero-title">"Dominate the marketboard"</div></div>}/>
             </Routes>
         </Router>

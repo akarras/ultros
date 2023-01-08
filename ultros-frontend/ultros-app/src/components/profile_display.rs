@@ -9,7 +9,7 @@ pub fn ProfileDisplay(cx: Scope) -> impl IntoView {
         <div>
             <Suspense fallback=move || view!{cx, <div class="loading"></div>}>
             {move || {
-                match auth() {
+                match auth.read() {
                     Some(Some(auth)) => {
                         view!{cx,
                             <A href="profile">
