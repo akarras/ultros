@@ -10,7 +10,7 @@ use std::rc::Rc;
 use crate::api::get_worlds;
 use crate::global_state::LocalWorldData;
 use crate::{
-    routes::{analyzer::*, listings::*, retainers::*},
+    routes::{analyzer::*, listings::*, retainers::*, lists::*},
     search_box::*,
 };
 use leptos::*;
@@ -67,11 +67,11 @@ pub fn App(cx: Scope) -> impl IntoView {
                 // </div>
             </nav>
             <Routes>
-                <Route path="retainers/undercuts" view=move |cx| view! { cx, <h1>"Undercuts"</h1>}/>
-                <Route path="retainers" view=move |cx| view! { cx, <Retainers/>}>
-                    <Route path="listings" view=move |cx| view! {cx, <h1>"Retainer Listings"</h1>}/>
-                </Route>
-                <Route path="list" view=move |cx| view!{cx, <h1>"List"</h1>}/>
+                // <Route path="retainers/undercuts" view=move |cx| view! { cx, <h1>"Undercuts"</h1>}/>
+                <Route path="retainers" view=move |cx| view! { cx, <Retainers/>} />
+                    // <Route path="listings" view=move |cx| view! {cx, <h1>"Retainer Listings"</h1>}/>
+                // </Route>
+                <Route path="list" view=move |cx| view!{cx, <Lists/>}/>
                 <Route path="listings/:world/:id" view=move |cx| view! { cx, <Listings />}/>
                 // <Route path="*listings" view=move |cx| view! { cx, <h1>"Listings"</h1>}/>
                 <Route path="analyzer" view=move |cx| view! { cx, <Analyzer/>}/>
