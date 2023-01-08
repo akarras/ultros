@@ -13,7 +13,7 @@ pub fn Clipboard(cx: Scope, clipboard_text: String) -> impl IntoView {
             {
                 let navigator = window.navigator();
                 if let Some(clipboard) = navigator.clipboard() {
-                    clipboard.write_text(&clipboard_text);
+                    let _ = clipboard.write_text(&clipboard_text);
                     set_tooltip("Text copied!".to_string());
                 }
             }

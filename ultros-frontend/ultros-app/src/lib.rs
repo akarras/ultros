@@ -10,7 +10,8 @@ use std::rc::Rc;
 use crate::api::get_worlds;
 use crate::global_state::LocalWorldData;
 use crate::{
-    routes::{analyzer::*, listings::*, retainers::*, lists::*},
+    components::profile_display::*,
+    routes::{analyzer::*, listings::*, lists::*, profile::*, retainers::*},
     search_box::*,
 };
 use leptos::*;
@@ -63,7 +64,7 @@ pub fn App(cx: Scope) -> impl IntoView {
                     "Invite Bot"
                 </a>
                 // <div>
-                // <ProfileDisplay/>
+                <ProfileDisplay/>
                 // </div>
             </nav>
             <Routes>
@@ -75,6 +76,7 @@ pub fn App(cx: Scope) -> impl IntoView {
                 <Route path="listings/:world/:id" view=move |cx| view! { cx, <Listings />}/>
                 // <Route path="*listings" view=move |cx| view! { cx, <h1>"Listings"</h1>}/>
                 <Route path="analyzer" view=move |cx| view! { cx, <Analyzer/>}/>
+                <Route path="profile" view=move |cx| view! { cx, <Profile/>}/>
                 <Route path="" view=move |cx| view! {cx, <div class="container"><div class="hero-title">"Dominate the marketboard"</div></div>}/>
             </Routes>
         </Router>
