@@ -607,7 +607,7 @@ select optgroup {
 
 
 .clipboard {
-  margin:5px;
+  margin: -.5rem -0.10rem .2rem .2rem;
   background-color: #150e1b;
   transition-duration: .5s;
   transition-timing-function: cubic-bezier(0.075, 0.82, 0.165, 1);
