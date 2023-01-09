@@ -153,12 +153,9 @@ pub fn Listings(cx: Scope) -> impl IntoView {
             <div class="flex-column">
                 <div class="flex-row" style="background-color: rgb(16, 10, 18); margin-bottom: 15px; border-radius: 12px; padding: 14px; line-height: .9;">
                     {move || view!{cx, <ItemIcon item_id=item_id() icon_size=IconSize::Large />}}
-                    <div style="padding: 5px">
-                        <div class="flex-row" style="padding: 5px">
-                            <span style="font-size: 36px; padding: 5px">{move || item_name()}</span>
-                            {move || view!{cx, <Clipboard clipboard_text=item_name().to_string()/>}}
-                            <span style="font-size: 16px; padding: 5px">{move || items.get(&ItemId(item_id())).map(|item| categories.get(&item.item_ui_category)).flatten().map(|i| i.name.as_str()).unwrap_or_default()}</span>
-                        </div>
+                    <div class="flex-column" style="padding: 5px">
+                        <span class="flex-row" style="font-size: 36px; line-height 0.5;">{move || item_name()}{move || view!{cx, <Clipboard clipboard_text=item_name().to_string()/>}}</span>
+                        <span style="font-size: 16px">{move || items.get(&ItemId(item_id())).map(|item| categories.get(&item.item_ui_category)).flatten().map(|i| i.name.as_str()).unwrap_or_default()}</span>
                         <span>{move || item_description()}</span>
                     </div>
                 </div>
