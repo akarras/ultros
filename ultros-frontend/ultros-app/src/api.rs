@@ -1,7 +1,10 @@
 use leptos::*;
 use ultros_api_types::{
+    cheapest_listings::CheapestListings,
+    recent_sales::RecentSales,
     user::{UserData, UserRetainerListings, UserRetainers},
     world::WorldData,
+    world_helper::AnyResult,
     CurrentlyShownItem,
 };
 
@@ -22,13 +25,26 @@ pub(crate) async fn get_login(cx: Scope) -> Option<UserData> {
     fetch_api(cx, "/api/v1/current_user").await
 }
 
+/// Get analyzer data
+pub(crate) async fn get_cheapest_listings(cx: Scope, world_name: &str) -> Option<CheapestListings> {
+    fetch_api(cx, &format!("/api/v1/cheapest/{}", world_name)).await
+}
+
+/// Get most expensive
+pub(crate) async fn get_recent_sales_for_world(
+    cx: Scope,
+    region_name: &str,
+) -> Option<RecentSales> {
+    fetch_api(cx, &format!("/api/v1/recentSales/{}", region_name)).await
+}
+
 /// Returns a list of the logged in user's retainers
 pub(crate) async fn get_retainers(cx: Scope) -> Option<UserRetainers> {
-    fetch_api(cx, "/api/v1/user/retainers").await
+    fetch_api(cx, "/api/v1/user/retainer").await
 }
 
 pub(crate) async fn get_retainer_listings(cx: Scope) -> Option<UserRetainerListings> {
-    fetch_api(cx, "/api/v1/user/retainers/listings").await
+    fetch_api(cx, "/api/v1/user/retainer/listings").await
 }
 
 #[cfg(not(feature = "ssr"))]
