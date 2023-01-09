@@ -14,7 +14,7 @@ use axum::response::{IntoResponse, Redirect};
 use axum::routing::get;
 use axum::{body, middleware, Json, Router};
 use axum_extra::extract::cookie::Key;
-use futures::future::{join_all, try_join, try_join_all};
+use futures::future::{try_join, try_join_all};
 use image::imageops::FilterType;
 use image::ImageOutputFormat;
 use maud::Render;
@@ -41,7 +41,7 @@ use self::error::WebError;
 use self::oauth::{AuthDiscordUser, AuthUserCache, DiscordAuthConfig};
 use crate::analyzer_service::AnalyzerService;
 use crate::event::{EventReceivers, EventSenders, EventType};
-use crate::web::api::cheapest_per_world;
+use crate::web::api::{cheapest_per_world, recent_sales};
 use crate::web::sitemap::{sitemap_index, world_sitemap};
 use crate::web::{
     alerts_websocket::connect_websocket,
@@ -506,6 +506,7 @@ pub(crate) async fn start_web(state: WebState) {
     let app = Router::new()
         .route("/alerts/websocket", get(connect_websocket))
         .route("/api/v1/cheapest/:world", get(cheapest_per_world))
+        .route("/api/v1/recentSales/:world", get(recent_sales))
         .route("/api/v1/listings/:world/:itemid", get(world_item_listings))
         .route("/api/v1/world_data", get(world_data))
         .route("/api/v1/current_user", get(current_user))

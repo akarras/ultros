@@ -3,6 +3,8 @@ mod listings;
 mod retainer;
 mod sale_history;
 
+pub mod cheapest_listings;
+pub mod recent_sales;
 pub mod result;
 pub mod user;
 pub mod world;

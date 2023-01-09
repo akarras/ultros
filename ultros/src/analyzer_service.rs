@@ -81,7 +81,7 @@ impl From<&ultros_db::listings::ListingSummary> for ItemKey {
 }
 
 #[derive(Debug, PartialEq, PartialOrd, Eq, Ord, Clone, Copy)]
-struct SaleSummary {
+pub(crate) struct SaleSummary {
     pub(crate) price_per_item: i32,
     pub(crate) sale_date: NaiveDateTime,
 }
@@ -105,8 +105,8 @@ impl From<&ultros_db::entity::sale_history::Model> for SaleSummary {
 }
 
 #[derive(Debug, Default)]
-struct SaleHistory {
-    item_map: HashMap<ItemKey, SmallVec<[SaleSummary; SALE_HISTORY_SIZE]>>,
+pub(crate) struct SaleHistory {
+    pub(crate) item_map: HashMap<ItemKey, SmallVec<[SaleSummary; SALE_HISTORY_SIZE]>>,
 }
 
 impl SaleHistory {
@@ -580,6 +580,30 @@ impl AnalyzerService {
             let read = self
                 .cheapest_items
                 .get(&selector)
+                .ok_or(AnalyzerError::DatacenterNotAvailable)?
+                .read()
+                .await;
+            Ok(extract(&read))
+        } else {
+            return Err(AnalyzerError::Uninitialized);
+        }
+    }
+
+    pub(crate) async fn read_sale_history<T, O>(
+        &self,
+        selector: &AnySelector,
+        extract: T,
+    ) -> Result<O, AnalyzerError>
+    where
+        T: FnOnce(&SaleHistory) -> O,
+    {
+        if self.initiated.load(Ordering::Relaxed) {
+            let read = self
+                .recent_sale_history
+                .get(&match selector {
+                    AnySelector::World(world) => *world,
+                    _ => return Err(AnalyzerError::DatacenterNotAvailable),
+                })
                 .ok_or(AnalyzerError::DatacenterNotAvailable)?
                 .read()
                 .await;
