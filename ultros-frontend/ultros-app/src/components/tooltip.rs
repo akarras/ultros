@@ -9,11 +9,7 @@ pub fn Tooltip(
     view! {
         cx,
         <div class="tooltip">
-            {children(cx)
-                .nodes
-                .into_iter()
-                .map(|child| view! { cx, <li>{child}</li> })
-                .collect::<Vec<_>>()}
+            {children(cx)}
             <div class="tooltip-text">{move || tooltip_text()}</div>
         </div>
     }
