@@ -1,8 +1,8 @@
-use std::{collections::HashMap};
-use futures::future::join;
 use chrono::Duration;
+use futures::future::join;
 use leptos::*;
 use leptos_router::use_params_map;
+use std::collections::HashMap;
 use ultros_api_types::{
     cheapest_listings::CheapestListings,
     recent_sales::{RecentSales, SaleData},
@@ -115,7 +115,7 @@ impl ProfitTable {
 #[component]
 fn AnalyzerTable(cx: Scope, sales: RecentSales, listings: CheapestListings) -> impl IntoView {
     let profits = ProfitTable::new(sales, listings);
-    
+
     // let sales_data : Vec<_> = sales.sales.into_iter().map(compute_summary).collect();
     view! { cx, <div></div> }
 }
@@ -135,7 +135,13 @@ pub fn Analyzer(cx: Scope) -> impl IntoView {
                     AnyResult::Region(region).get_name().to_string()
                 })
             })?;
-            Some(join(get_recent_sales_for_world(cx, &region), get_cheapest_listings(cx, &world)).await)
+            Some(
+                join(
+                    get_recent_sales_for_world(cx, &region),
+                    get_cheapest_listings(cx, &world),
+                )
+                .await,
+            )
         },
     );
     view! {
