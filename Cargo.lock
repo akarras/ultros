@@ -3360,7 +3360,7 @@ checksum = "03087c2bad5e1034e8cace5926dec053fb3790248370865f5117a7d0213354c8"
 [[package]]
 name = "leptos"
 version = "0.1.0-beta"
-source = "git+https://github.com/gbj/leptos#28ec3a6cda87ebb01c6dcfce92e858c389c28fb9"
+source = "git+https://github.com/gbj/leptos#b8cafeb650dab76abcc1c8de79c53ae68ce7b920"
 dependencies = [
  "cfg-if",
  "leptos_config",
@@ -3375,7 +3375,7 @@ dependencies = [
 [[package]]
 name = "leptos_axum"
 version = "0.1.0-beta"
-source = "git+https://github.com/gbj/leptos#28ec3a6cda87ebb01c6dcfce92e858c389c28fb9"
+source = "git+https://github.com/gbj/leptos#b8cafeb650dab76abcc1c8de79c53ae68ce7b920"
 dependencies = [
  "axum",
  "derive_builder",
@@ -3393,7 +3393,7 @@ dependencies = [
 [[package]]
 name = "leptos_config"
 version = "0.1.0-beta"
-source = "git+https://github.com/gbj/leptos#28ec3a6cda87ebb01c6dcfce92e858c389c28fb9"
+source = "git+https://github.com/gbj/leptos#b8cafeb650dab76abcc1c8de79c53ae68ce7b920"
 dependencies = [
  "config",
  "fs",
@@ -3406,7 +3406,7 @@ dependencies = [
 [[package]]
 name = "leptos_dom"
 version = "0.1.0-beta"
-source = "git+https://github.com/gbj/leptos#28ec3a6cda87ebb01c6dcfce92e858c389c28fb9"
+source = "git+https://github.com/gbj/leptos#b8cafeb650dab76abcc1c8de79c53ae68ce7b920"
 dependencies = [
  "cfg-if",
  "drain_filter_polyfill",
@@ -3433,7 +3433,7 @@ dependencies = [
 [[package]]
 name = "leptos_macro"
 version = "0.1.0-beta"
-source = "git+https://github.com/gbj/leptos#28ec3a6cda87ebb01c6dcfce92e858c389c28fb9"
+source = "git+https://github.com/gbj/leptos#b8cafeb650dab76abcc1c8de79c53ae68ce7b920"
 dependencies = [
  "cfg-if",
  "doc-comment",
@@ -3455,7 +3455,7 @@ dependencies = [
 [[package]]
 name = "leptos_meta"
 version = "0.1.0-beta"
-source = "git+https://github.com/gbj/leptos#28ec3a6cda87ebb01c6dcfce92e858c389c28fb9"
+source = "git+https://github.com/gbj/leptos#b8cafeb650dab76abcc1c8de79c53ae68ce7b920"
 dependencies = [
  "cfg-if",
  "leptos",
@@ -3467,7 +3467,7 @@ dependencies = [
 [[package]]
 name = "leptos_reactive"
 version = "0.1.0-beta"
-source = "git+https://github.com/gbj/leptos#28ec3a6cda87ebb01c6dcfce92e858c389c28fb9"
+source = "git+https://github.com/gbj/leptos#b8cafeb650dab76abcc1c8de79c53ae68ce7b920"
 dependencies = [
  "base64 0.13.1",
  "cfg-if",
@@ -3489,7 +3489,7 @@ dependencies = [
 [[package]]
 name = "leptos_router"
 version = "0.1.0-beta"
-source = "git+https://github.com/gbj/leptos#28ec3a6cda87ebb01c6dcfce92e858c389c28fb9"
+source = "git+https://github.com/gbj/leptos#b8cafeb650dab76abcc1c8de79c53ae68ce7b920"
 dependencies = [
  "bincode 1.3.3",
  "cfg-if",
@@ -3515,7 +3515,7 @@ dependencies = [
 [[package]]
 name = "leptos_server"
 version = "0.1.0-beta"
-source = "git+https://github.com/gbj/leptos#28ec3a6cda87ebb01c6dcfce92e858c389c28fb9"
+source = "git+https://github.com/gbj/leptos#b8cafeb650dab76abcc1c8de79c53ae68ce7b920"
 dependencies = [
  "ciborium",
  "form_urlencoded",
@@ -4189,18 +4189,18 @@ dependencies = [
 
 [[package]]
 name = "num_enum"
-version = "0.5.7"
+version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf5395665662ef45796a4ff5486c5d41d29e0c09640af4c5f17fd94ee2c119c9"
+checksum = "5826b7f970b71559e98460aafa900837a3ea29d533cb4d319f4968c1baec2d75"
 dependencies = [
  "num_enum_derive",
 ]
 
 [[package]]
 name = "num_enum_derive"
-version = "0.5.7"
+version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b0498641e53dd6ac1a4f22547548caa6864cc4933784319cd1775271c5a46ce"
+checksum = "bcf29f406cea75713169aeadb41f34a4d2afd2de46e8cd6c0120ac235a255ac3"
 dependencies = [
  "proc-macro-crate 1.2.1",
  "proc-macro2",
@@ -5683,9 +5683,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with"
-version = "2.1.0"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "25bf4a5a814902cd1014dbccfa4d4560fb8432c779471e96e035602519f82eef"
+checksum = "30d904179146de381af4c93d3af6ca4984b3152db687dacb9c3c35e86f39809c"
 dependencies = [
  "base64 0.13.1",
  "chrono",
@@ -5699,9 +5699,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with_macros"
-version = "2.1.0"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3452b4c0f6c1e357f73fdb87cd1efabaa12acf328c7a528e252893baeb3f4aa"
+checksum = "a1966009f3c05f095697c537312f5415d1e3ed31ce0a56942bac4c771c5c335e"
 dependencies = [
  "darling 0.14.2",
  "proc-macro2",
@@ -6662,9 +6662,9 @@ checksum = "3528ecfd12c466c6f163363caf2d02a71161dd5e1cc6ae7b34207ea2d42d81ed"
 
 [[package]]
 name = "ttf-parser"
-version = "0.18.0"
+version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dbf554b6e535f9a160b2ed4ea83f99000f21cbc0a693df26e258eaf2c226a151"
+checksum = "0609f771ad9c6155384897e1df4d948e692667cc0588548b68eb44d052b27633"
 
 [[package]]
 name = "tungstenite"
