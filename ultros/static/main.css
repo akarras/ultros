@@ -239,9 +239,12 @@ nav > a > * {
   border: solid #111 1px;
 }
 
-.search-result :hover {
-  background-color: rgba(0, 0, 0, 0.4);
-  transition: background-color 1s;
+.search-result:hover {
+  background-color: #48394F;
+}
+
+.item-name > b {
+  color: #846D8F;
 }
 
 @keyframes search-result-in {
