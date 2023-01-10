@@ -258,6 +258,7 @@ nav > a > * {
   align-items: left;
   justify-content: center;
   color: white;
+  width: 100%;
 }
 
 .search-result img {
@@ -272,7 +273,6 @@ nav > a > * {
 .item-type {
   font-size: 14px;
   text-align: left;
-  margin-top: -10px;
 }
 
 .container .search-result img {

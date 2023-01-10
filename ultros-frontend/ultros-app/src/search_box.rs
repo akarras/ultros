@@ -22,12 +22,12 @@ pub fn SearchBox(cx: Scope) -> impl IntoView {
                 .filter(|_| !s.is_empty())
                 .flat_map(|(id, i)| sublime_fuzzy::best_match(s, &i.name).map(|m| (id, i, m)))
                 .collect::<Vec<_>>();
-            score.sort_by_key(|(_, _, m)| Reverse(m.score()));
+            score.sort_by_key(|(_, i, m)| (Reverse(m.score()), Reverse(i.level_item.0)));
             score
                 .into_iter()
                 .filter(|(_, _, ma)| ma.score() > 0)
                 .map(|(id, item, ma)| (id, item, ma))
-                .take(50)
+                .take(100)
                 .collect::<Vec<_>>()
         })
     };

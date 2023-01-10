@@ -59,8 +59,10 @@ pub fn ItemSearchResult(
                     <ItemIcon item_id icon_size=IconSize::Small />
                     <div class="search-result-details">
                         <span class="item-name"><MatchFormatter m=matches target=item.name.to_string() /></span>
-                        <span class="item-type">{categories.get(&item.item_ui_category).map(|i| i.name.as_str()).unwrap_or_default()}</span>
-                        <span class="item-ilvl">"ITEM LEVEL " {item.level_item.0}</span>
+                        <div class="flex-row flex-space">
+                            <span class="item-type">{categories.get(&item.item_ui_category).map(|i| i.name.as_str()).unwrap_or_default()}</span>
+                            <span class="item-ilvl">"ITEM LEVEL " {item.level_item.0}</span>
+                        </div>
                     </div>
                 </div>
             </html::a>
