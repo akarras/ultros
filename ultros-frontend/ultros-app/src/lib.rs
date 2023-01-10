@@ -1,18 +1,15 @@
 pub(crate) mod api;
 pub(crate) mod components;
 pub(crate) mod global_state;
-pub(crate) mod item_icon;
 pub(crate) mod routes;
-pub(crate) mod search_box;
 
 use std::rc::Rc;
 
 use crate::api::get_worlds;
 use crate::global_state::LocalWorldData;
 use crate::{
-    components::profile_display::*,
+    components::{profile_display::*, search_box::*},
     routes::{analyzer::*, listings::*, lists::*, profile::*, retainers::*},
-    search_box::*,
 };
 use leptos::*;
 use leptos_meta::*;
@@ -75,7 +72,9 @@ pub fn App(cx: Scope) -> impl IntoView {
                 <Route path="list" view=move |cx| view!{cx, <Lists/>}/>
                 <Route path="listings/:world/:id" view=move |cx| view! { cx, <Listings />}/>
                 // <Route path="*listings" view=move |cx| view! { cx, <h1>"Listings"</h1>}/>
+
                 <Route path="analyzer" view=move |cx| view! { cx, <Analyzer/>}/>
+                <Route path="analyzer/:world" view=move |cx| view! { cx, <Analyzer/>}/>
                 <Route path="profile" view=move |cx| view! { cx, <Profile/>}/>
                 <Route path="" view=move |cx| view! {cx, <div class="container"><div class="hero-title">"Dominate the marketboard"</div></div>}/>
             </Routes>

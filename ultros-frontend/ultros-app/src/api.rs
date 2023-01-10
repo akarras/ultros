@@ -72,7 +72,12 @@ where
             abort_controller.abort()
         }
     });
-    T::from_json(&json).ok()
+    T::from_json(&json)
+        .map_err(|e| {
+            gloo::console::error!("Error receiving json error: {e:?}");
+            e
+        })
+        .ok()
 }
 
 #[cfg(feature = "ssr")]

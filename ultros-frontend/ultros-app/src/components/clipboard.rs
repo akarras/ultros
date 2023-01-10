@@ -23,9 +23,13 @@ pub fn Clipboard(cx: Scope, clipboard_text: String) -> impl IntoView {
             set_tooltip("Clipboard API unavailable".to_string())
         }
     }>
-        <Tooltip tooltip_text=tooltip >
-            <span class="fa-regular fa-clipboard clipboard"></span>
-        </Tooltip>
+        {move || {
+            view!{cx,
+                <Tooltip tooltip_text=tooltip() >
+                    <span class="fa-regular fa-clipboard clipboard"></span>
+                </Tooltip>
+            }
+        }}
     </div>
     }
 }
