@@ -7,8 +7,8 @@ edition = "2021"
 
 [dependencies]
 axum = "0.6.1"
-leptos = {git = "https://github.com/gbj/leptos", default-features = false}
-leptos_axum = {git = "https://github.com/gbj/leptos"}
+leptos = {git = "https://github.com/leptos-rs/leptos", default-features = false}
+leptos_axum = {git = "https://github.com/leptos-rs/leptos"}
 ultros-app = {path = "../ultros-app"}
 tower-http = { version = "0.3.4", features = ["fs"] }
 ultros-db = {path = "../../ultros-db"}

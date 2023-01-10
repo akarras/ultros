@@ -6,12 +6,12 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-leptos = { git = "https://github.com/gbj/leptos", default-features = false, features = [
+leptos = { git = "https://github.com/leptos-rs/leptos", default-features = false, features = [
   "serde",
 ] }
-leptos_meta = { git = "https://github.com/gbj/leptos", default-features = false }
-leptos_router = { git = "https://github.com/gbj/leptos", default-features = false }
-leptos_axum = { git = "https://github.com/gbj/leptos", default-features = false, optional = true }
+leptos_meta = { git = "https://github.com/leptos-rs/leptos", default-features = false }
+leptos_router = { git = "https://github.com/leptos-rs/leptos", default-features = false }
+leptos_axum = { git = "https://github.com/leptos-rs/leptos", default-features = false, optional = true }
 xiv-gen-db = {path = "../../xiv-gen-db"}
 xiv-gen = {path = "../../xiv-gen", features = ["item", "item_ui_category"]}
 sublime_fuzzy = "0.7"
