@@ -1,5 +1,8 @@
+use std::cmp::Reverse;
+
 use crate::components::search_result::*;
 use leptos::*;
+use sublime_fuzzy::Match;
 
 #[component]
 pub fn SearchBox(cx: Scope) -> impl IntoView {
@@ -13,12 +16,18 @@ pub fn SearchBox(cx: Scope) -> impl IntoView {
     let items = &xiv_gen_db::decompress_data().items;
     let item_search = move || {
         search.with(|s| {
-            items
+            let mut score = items
                 .into_iter()
                 .filter(|(_, i)| i.item_search_category.0 > 0)
-                .filter(|(_, i)| i.name.to_lowercase().contains(&s.to_lowercase()))
                 .filter(|_| !s.is_empty())
-                .take(25)
+                .flat_map(|(id, i)| sublime_fuzzy::best_match(s, &i.name).map(|m| (id, i, m)))
+                .collect::<Vec<_>>();
+            score.sort_by_key(|(_, _, m)| Reverse(m.score()));
+            score
+                .into_iter()
+                .filter(|(_, _, ma)| ma.score() > 0)
+                .map(|(id, item, ma)| (id, item, ma))
+                .take(50)
                 .collect::<Vec<_>>()
         })
     };
@@ -29,10 +38,10 @@ pub fn SearchBox(cx: Scope) -> impl IntoView {
             <div class="search-results">
             <For
                 each=item_search
-                key=|(id, _)| id.0
-                view=move |(id, item): (&xiv_gen::ItemId, &xiv_gen::Item)| {
+                key=move |(id, _, _)| (id.0, search())
+                view=move |(id, _, match_): (&xiv_gen::ItemId, &xiv_gen::Item, Match)| {
                         let item_id = id.0;
-                        view! { cx,  <ItemSearchResult item_id set_search /> }
+                        view! { cx,  <ItemSearchResult item_id set_search matches=match_ /> }
                     }
             />
             </div>
