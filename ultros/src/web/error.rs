@@ -70,6 +70,8 @@ pub enum WebError {
     SiteMapError(#[from] SitemapIndexError),
     #[error("Error generating url set {0}")]
     UrlSetError(#[from] UrlSetError),
+    #[error("Invalid item")]
+    InvalidItem(i32),
     #[error("Token error {0}")]
     TokenError(
         #[from]

@@ -36,7 +36,7 @@ pub async fn create_leptos_app(db: ultros_db::UltrosDb) -> Router {
     // let static_service = HandleError::new(ServeDir::new("./static"), handle_file_error);
     //let pkg_service = HandleError::new(ServeDir::new("./pkg"), handle_file_error);
     let cargo_leptos_service = HandleError::new(ServeDir::new(&bundle_filepath), handle_file_error);
-
+    tracing::warn!("Serving pkg dir: {bundle_filepath}");
     /// Convert the Errors from ServeDir to a type that implements IntoResponse
     async fn handle_file_error(err: std::io::Error) -> (StatusCode, String) {
         (StatusCode::NOT_FOUND, format!("File Not Found: {}", err))
@@ -45,7 +45,7 @@ pub async fn create_leptos_app(db: ultros_db::UltrosDb) -> Router {
     // build our application with a route
     Router::new()
         // `GET /` goes to `root`
-        //.nest_service("/pkg", pkg_service) // Only need if using wasm-pack. Can be deleted if using cargo-leptos
+        .nest_service("/pkg", cargo_leptos_service.clone()) // Only need if using wasm-pack. Can be deleted if using cargo-leptos
         .nest_service(&bundle_path, cargo_leptos_service) // Only needed if using cargo-leptos. Can be deleted if using wasm-pack and cargo-run
         //.nest_service("/static", static_service)
         .fallback(leptos_axum::render_app_to_stream(
