@@ -3360,7 +3360,7 @@ checksum = "03087c2bad5e1034e8cace5926dec053fb3790248370865f5117a7d0213354c8"
 [[package]]
 name = "leptos"
 version = "0.1.0-beta"
-source = "git+https://github.com/gbj/leptos#b8cafeb650dab76abcc1c8de79c53ae68ce7b920"
+source = "git+https://github.com/leptos-rs/leptos#ad34a5d9c6caf2335240a49df9a57ff10b5eabb2"
 dependencies = [
  "cfg-if",
  "leptos_config",
@@ -3375,7 +3375,7 @@ dependencies = [
 [[package]]
 name = "leptos_axum"
 version = "0.1.0-beta"
-source = "git+https://github.com/gbj/leptos#b8cafeb650dab76abcc1c8de79c53ae68ce7b920"
+source = "git+https://github.com/leptos-rs/leptos#ad34a5d9c6caf2335240a49df9a57ff10b5eabb2"
 dependencies = [
  "axum",
  "derive_builder",
@@ -3393,7 +3393,7 @@ dependencies = [
 [[package]]
 name = "leptos_config"
 version = "0.1.0-beta"
-source = "git+https://github.com/gbj/leptos#b8cafeb650dab76abcc1c8de79c53ae68ce7b920"
+source = "git+https://github.com/leptos-rs/leptos#ad34a5d9c6caf2335240a49df9a57ff10b5eabb2"
 dependencies = [
  "config",
  "fs",
@@ -3406,7 +3406,7 @@ dependencies = [
 [[package]]
 name = "leptos_dom"
 version = "0.1.0-beta"
-source = "git+https://github.com/gbj/leptos#b8cafeb650dab76abcc1c8de79c53ae68ce7b920"
+source = "git+https://github.com/leptos-rs/leptos#ad34a5d9c6caf2335240a49df9a57ff10b5eabb2"
 dependencies = [
  "cfg-if",
  "drain_filter_polyfill",
@@ -3433,7 +3433,7 @@ dependencies = [
 [[package]]
 name = "leptos_macro"
 version = "0.1.0-beta"
-source = "git+https://github.com/gbj/leptos#b8cafeb650dab76abcc1c8de79c53ae68ce7b920"
+source = "git+https://github.com/leptos-rs/leptos#ad34a5d9c6caf2335240a49df9a57ff10b5eabb2"
 dependencies = [
  "cfg-if",
  "doc-comment",
@@ -3455,7 +3455,7 @@ dependencies = [
 [[package]]
 name = "leptos_meta"
 version = "0.1.0-beta"
-source = "git+https://github.com/gbj/leptos#b8cafeb650dab76abcc1c8de79c53ae68ce7b920"
+source = "git+https://github.com/leptos-rs/leptos#ad34a5d9c6caf2335240a49df9a57ff10b5eabb2"
 dependencies = [
  "cfg-if",
  "leptos",
@@ -3467,7 +3467,7 @@ dependencies = [
 [[package]]
 name = "leptos_reactive"
 version = "0.1.0-beta"
-source = "git+https://github.com/gbj/leptos#b8cafeb650dab76abcc1c8de79c53ae68ce7b920"
+source = "git+https://github.com/leptos-rs/leptos#ad34a5d9c6caf2335240a49df9a57ff10b5eabb2"
 dependencies = [
  "base64 0.13.1",
  "cfg-if",
@@ -3489,7 +3489,7 @@ dependencies = [
 [[package]]
 name = "leptos_router"
 version = "0.1.0-beta"
-source = "git+https://github.com/gbj/leptos#b8cafeb650dab76abcc1c8de79c53ae68ce7b920"
+source = "git+https://github.com/leptos-rs/leptos#ad34a5d9c6caf2335240a49df9a57ff10b5eabb2"
 dependencies = [
  "bincode 1.3.3",
  "cfg-if",
@@ -3515,7 +3515,7 @@ dependencies = [
 [[package]]
 name = "leptos_server"
 version = "0.1.0-beta"
-source = "git+https://github.com/gbj/leptos#b8cafeb650dab76abcc1c8de79c53ae68ce7b920"
+source = "git+https://github.com/leptos-rs/leptos#ad34a5d9c6caf2335240a49df9a57ff10b5eabb2"
 dependencies = [
  "ciborium",
  "form_urlencoded",
