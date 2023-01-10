@@ -1,4 +1,4 @@
-use crate::item_icon::*;
+use crate::components::item_icon::*;
 use leptos::*;
 use sublime_fuzzy::Match;
 use xiv_gen::ItemId;

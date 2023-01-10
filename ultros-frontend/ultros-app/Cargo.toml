@@ -25,6 +25,7 @@ thousands = "0.2.0"
 timeago = "0.4.0"
 chrono = "0.4.23"
 futures = "0.3"
+timediff = "0.2.3"
 
 [features]
 hydrate = ["leptos/hydrate", "leptos_meta/hydrate", "leptos_router/hydrate", "gloo", "gloo-net", "web-sys"]

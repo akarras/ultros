@@ -1,10 +1,12 @@
 pub mod clipboard;
 pub mod datacenter_name;
 pub mod gil;
+pub mod item_icon;
 pub mod listings_table;
 pub mod profile_display;
 pub mod relative_time;
 pub mod sale_history_table;
+pub mod search_box;
 pub mod search_result;
 pub mod tooltip;
 pub mod world_name;
