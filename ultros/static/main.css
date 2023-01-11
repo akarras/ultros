@@ -610,8 +610,7 @@ select optgroup {
 
 
 .clipboard {
-  margin: -.5rem -0.10rem .2rem .2rem;
-  background-color: #150e1b;
+  margin: .1rem -0.1rem .2rem .2rem;
   transition-duration: .5s;
   transition-timing-function: cubic-bezier(0.075, 0.82, 0.165, 1);
   transition-property: color;
@@ -723,4 +722,42 @@ select optgroup {
 
 .hidden {
   display: none;
+}
+
+.slidecontainer {
+  width: 300px;
+}
+
+.slider {
+  -webkit-appearance: none;
+  width: 100%;
+  height: 15px;
+  border-radius: 5px;
+  background: #d3d3d3;
+  outline: none;
+  opacity: 0.7;
+  -webkit-transition: .2s;
+  transition: opacity .2s;
+}
+
+.slider:hover {
+  opacity: 1;
+}
+
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 25px;
+  height: 25px;
+  border-radius: 50%;
+  background: #b996ca;
+  cursor: pointer;
+}
+
+.slider::-moz-range-thumb {
+  width: 25px;
+  height: 25px;
+  border-radius: 50%;
+  background: #b996ca;
+  cursor: pointer;
 }

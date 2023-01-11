@@ -6818,6 +6818,7 @@ dependencies = [
  "futures 0.3.25",
  "gloo",
  "gloo-net",
+ "itertools",
  "leptos",
  "leptos_axum",
  "leptos_meta",
