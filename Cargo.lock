@@ -524,6 +524,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ea22880d78093b0cbe17c89f64a7d457941e65759157ec6cb31a31d652b05e5"
 
 [[package]]
+name = "base64"
+version = "0.21.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4a4ddaa51a5bc52a6948f74c06d20aaaddb71924eab79b8c97a8c556e942d6a"
+
+[[package]]
 name = "bincode"
 version = "1.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1036,6 +1042,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d7b894f5411737b7867f4827955924d7c254fc9f4d91a6aad6b097804b1018b"
 
 [[package]]
+name = "colorsys"
+version = "0.6.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52c2ad453c82bd637e3969dc52f06676610db0b20c607bf0634c7e9d840789e8"
+
+[[package]]
 name = "combine"
 version = "4.6.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1218,9 +1230,9 @@ dependencies = [
 
 [[package]]
 name = "crc-catalog"
-version = "2.1.0"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d0165d2900ae6778e36e80bbc4da3b5eefccee9ba939761f9c2882a5d9af3ff"
+checksum = "9cace84e55f07e7301bae1c519df89cdad8cc3cd868413d3fdbdeca9ff3db484"
 
 [[package]]
 name = "crc32fast"
@@ -1495,7 +1507,7 @@ dependencies = [
  "hashbrown 0.12.3",
  "lock_api",
  "once_cell",
- "parking_lot_core 0.9.5",
+ "parking_lot_core 0.9.6",
  "serde",
 ]
 
@@ -1516,37 +1528,6 @@ checksum = "fcc3dd5e9e9c0b295d6e1e4d811fb6f157d5ffd784b8d202fc62eac8035a770b"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
-]
-
-[[package]]
-name = "derive_builder"
-version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8d67778784b508018359cbc8696edb3db78160bab2c2a28ba7f56ef6932997f8"
-dependencies = [
- "derive_builder_macro",
-]
-
-[[package]]
-name = "derive_builder_core"
-version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c11bdc11a0c47bc7d37d582b5285da6849c96681023680b906673c5707af7b0f"
-dependencies = [
- "darling 0.14.2",
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
-name = "derive_builder_macro"
-version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ebcda35c7a396850a55ffeac740804b40ffec779b98fffbb1738f4033f0ee79e"
-dependencies = [
- "derive_builder_core",
  "syn",
 ]
 
@@ -3326,17 +3307,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "kdl"
-version = "4.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "062c875482ccb676fd40c804a40e3824d4464c18c364547456d1c8e8e951ae47"
-dependencies = [
- "miette",
- "nom",
- "thiserror",
-]
-
-[[package]]
 name = "khronos_api"
 version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3366,7 +3336,7 @@ checksum = "03087c2bad5e1034e8cace5926dec053fb3790248370865f5117a7d0213354c8"
 [[package]]
 name = "leptos"
 version = "0.1.0-beta"
-source = "git+https://github.com/leptos-rs/leptos#ad34a5d9c6caf2335240a49df9a57ff10b5eabb2"
+source = "git+https://github.com/leptos-rs/leptos#7eaa36812d7191b3b550acc6141706ab732d2c74"
 dependencies = [
  "cfg-if",
  "leptos_config",
@@ -3381,14 +3351,12 @@ dependencies = [
 [[package]]
 name = "leptos_axum"
 version = "0.1.0-beta"
-source = "git+https://github.com/leptos-rs/leptos#ad34a5d9c6caf2335240a49df9a57ff10b5eabb2"
+source = "git+https://github.com/leptos-rs/leptos#7eaa36812d7191b3b550acc6141706ab732d2c74"
 dependencies = [
  "axum",
- "derive_builder",
  "futures 0.3.25",
  "http",
  "hyper",
- "kdl",
  "leptos",
  "leptos_config",
  "leptos_meta",
@@ -3399,7 +3367,7 @@ dependencies = [
 [[package]]
 name = "leptos_config"
 version = "0.1.0-beta"
-source = "git+https://github.com/leptos-rs/leptos#ad34a5d9c6caf2335240a49df9a57ff10b5eabb2"
+source = "git+https://github.com/leptos-rs/leptos#7eaa36812d7191b3b550acc6141706ab732d2c74"
 dependencies = [
  "config",
  "fs",
@@ -3412,7 +3380,7 @@ dependencies = [
 [[package]]
 name = "leptos_dom"
 version = "0.1.0-beta"
-source = "git+https://github.com/leptos-rs/leptos#ad34a5d9c6caf2335240a49df9a57ff10b5eabb2"
+source = "git+https://github.com/leptos-rs/leptos#7eaa36812d7191b3b550acc6141706ab732d2c74"
 dependencies = [
  "cfg-if",
  "drain_filter_polyfill",
@@ -3439,7 +3407,7 @@ dependencies = [
 [[package]]
 name = "leptos_macro"
 version = "0.1.0-beta"
-source = "git+https://github.com/leptos-rs/leptos#ad34a5d9c6caf2335240a49df9a57ff10b5eabb2"
+source = "git+https://github.com/leptos-rs/leptos#7eaa36812d7191b3b550acc6141706ab732d2c74"
 dependencies = [
  "cfg-if",
  "doc-comment",
@@ -3461,7 +3429,7 @@ dependencies = [
 [[package]]
 name = "leptos_meta"
 version = "0.1.0-beta"
-source = "git+https://github.com/leptos-rs/leptos#ad34a5d9c6caf2335240a49df9a57ff10b5eabb2"
+source = "git+https://github.com/leptos-rs/leptos#7eaa36812d7191b3b550acc6141706ab732d2c74"
 dependencies = [
  "cfg-if",
  "leptos",
@@ -3473,7 +3441,7 @@ dependencies = [
 [[package]]
 name = "leptos_reactive"
 version = "0.1.0-beta"
-source = "git+https://github.com/leptos-rs/leptos#ad34a5d9c6caf2335240a49df9a57ff10b5eabb2"
+source = "git+https://github.com/leptos-rs/leptos#7eaa36812d7191b3b550acc6141706ab732d2c74"
 dependencies = [
  "base64 0.13.1",
  "cfg-if",
@@ -3495,7 +3463,7 @@ dependencies = [
 [[package]]
 name = "leptos_router"
 version = "0.1.0-beta"
-source = "git+https://github.com/leptos-rs/leptos#ad34a5d9c6caf2335240a49df9a57ff10b5eabb2"
+source = "git+https://github.com/leptos-rs/leptos#7eaa36812d7191b3b550acc6141706ab732d2c74"
 dependencies = [
  "bincode 1.3.3",
  "cfg-if",
@@ -3521,7 +3489,7 @@ dependencies = [
 [[package]]
 name = "leptos_server"
 version = "0.1.0-beta"
-source = "git+https://github.com/leptos-rs/leptos#ad34a5d9c6caf2335240a49df9a57ff10b5eabb2"
+source = "git+https://github.com/leptos-rs/leptos#7eaa36812d7191b3b550acc6141706ab732d2c74"
 dependencies = [
  "ciborium",
  "form_urlencoded",
@@ -3868,29 +3836,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "miette"
-version = "5.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4afd9b301defa984bbdbe112b4763e093ed191750a0d914a78c1106b2d0fe703"
-dependencies = [
- "miette-derive",
- "once_cell",
- "thiserror",
- "unicode-width",
-]
-
-[[package]]
-name = "miette-derive"
-version = "5.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97c2401ab7ac5282ca5c8b518a87635b1a93762b0b90b9990c509888eeccba29"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "migration"
 version = "0.1.0"
 dependencies = [
@@ -4195,18 +4140,18 @@ dependencies = [
 
 [[package]]
 name = "num_enum"
-version = "0.5.8"
+version = "0.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5826b7f970b71559e98460aafa900837a3ea29d533cb4d319f4968c1baec2d75"
+checksum = "cf5395665662ef45796a4ff5486c5d41d29e0c09640af4c5f17fd94ee2c119c9"
 dependencies = [
  "num_enum_derive",
 ]
 
 [[package]]
 name = "num_enum_derive"
-version = "0.5.8"
+version = "0.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bcf29f406cea75713169aeadb41f34a4d2afd2de46e8cd6c0120ac235a255ac3"
+checksum = "3b0498641e53dd6ac1a4f22547548caa6864cc4933784319cd1775271c5a46ce"
 dependencies = [
  "proc-macro-crate 1.2.1",
  "proc-macro2",
@@ -4440,7 +4385,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3742b2c103b9f06bc9fff0a37ff4912935851bee6d36f3c02bcc755bcfec228f"
 dependencies = [
  "lock_api",
- "parking_lot_core 0.9.5",
+ "parking_lot_core 0.9.6",
 ]
 
 [[package]]
@@ -4459,9 +4404,9 @@ dependencies = [
 
 [[package]]
 name = "parking_lot_core"
-version = "0.9.5"
+version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ff9f3fef3968a3ec5945535ed654cb38ff72d7495a25619e2247fb15a2ed9ba"
+checksum = "ba1ef8814b5c993410bb3adfad7a5ed269563e4a2f90c41f5d85be7fb47133bf"
 dependencies = [
  "cfg-if",
  "libc",
@@ -4490,9 +4435,9 @@ checksum = "478c572c3d73181ff3c2539045f6eb99e5491218eae919370993b890cdbdd98e"
 
 [[package]]
 name = "pest"
-version = "2.5.2"
+version = "2.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f6e86fb9e7026527a0d46bc308b841d73170ef8f443e1807f6ef88526a816d4"
+checksum = "4257b4a04d91f7e9e6290be5d3da4804dd5784fafde3a497d73eb2b4a158c30a"
 dependencies = [
  "thiserror",
  "ucd-trie",
@@ -4500,9 +4445,9 @@ dependencies = [
 
 [[package]]
 name = "pest_derive"
-version = "2.5.2"
+version = "2.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96504449aa860c8dcde14f9fba5c58dc6658688ca1fe363589d6327b8662c603"
+checksum = "241cda393b0cdd65e62e07e12454f1f25d57017dcc514b1514cd3c4645e3a0a6"
 dependencies = [
  "pest",
  "pest_generator",
@@ -4510,9 +4455,9 @@ dependencies = [
 
 [[package]]
 name = "pest_generator"
-version = "2.5.2"
+version = "2.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "798e0220d1111ae63d66cb66a5dcb3fc2d986d520b98e49e1852bfdb11d7c5e7"
+checksum = "46b53634d8c8196302953c74d5352f33d0c512a9499bd2ce468fc9f4128fa27c"
 dependencies = [
  "pest",
  "pest_meta",
@@ -4523,13 +4468,13 @@ dependencies = [
 
 [[package]]
 name = "pest_meta"
-version = "2.5.2"
+version = "2.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "984298b75898e30a843e278a9f2452c31e349a073a0ce6fd950a12a74464e065"
+checksum = "0ef4f1332a8d4678b41966bb4cc1d0676880e84183a1ecc3f4b69f03e99c7a51"
 dependencies = [
  "once_cell",
  "pest",
- "sha1",
+ "sha2",
 ]
 
 [[package]]
@@ -5274,11 +5219,11 @@ dependencies = [
 
 [[package]]
 name = "rustls-pemfile"
-version = "1.0.1"
+version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0864aeff53f8c05aa08d86e5ef839d3dfcf07aeba2db32f12db0ef716e87bd55"
+checksum = "d194b56d58803a43635bdc398cd17e383d6f71f9182b9a192c127ca42494a59b"
 dependencies = [
- "base64 0.13.1",
+ "base64 0.21.0",
 ]
 
 [[package]]
@@ -6815,6 +6760,7 @@ name = "ultros-app"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "colorsys",
  "futures 0.3.25",
  "gloo",
  "gloo-net",

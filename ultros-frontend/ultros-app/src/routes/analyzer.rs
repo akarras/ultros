@@ -124,11 +124,21 @@ impl ProfitTable {
     }
 
     fn min_max_profit(&self) -> (i32, i32) {
-        self.0.iter().map(|i| i.profit).minmax().into_option().unwrap_or((i32::MIN, i32::MAX))
+        self.0
+            .iter()
+            .map(|i| i.profit)
+            .minmax()
+            .into_option()
+            .unwrap_or((i32::MIN, i32::MAX))
     }
 
     fn min_max_roi(&self) -> (i32, i32) {
-        self.0.iter().map(|i| i.return_on_investment).minmax().into_option().unwrap_or((i32::MIN, i32::MAX))
+        self.0
+            .iter()
+            .map(|i| i.return_on_investment)
+            .minmax()
+            .into_option()
+            .unwrap_or((i32::MIN, i32::MAX))
     }
 }
 

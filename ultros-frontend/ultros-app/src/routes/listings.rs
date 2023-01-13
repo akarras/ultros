@@ -1,6 +1,8 @@
 use crate::api::get_listings;
 use crate::api::get_worlds;
-use crate::components::{clipboard::*, item_icon::*, listings_table::*, sale_history_table::*};
+use crate::components::{
+    clipboard::*, item_icon::*, listings_table::*, sale_history_table::*, ui_text::*,
+};
 use leptos::*;
 use leptos_meta::*;
 use leptos_router::use_params_map;
@@ -154,7 +156,7 @@ pub fn Listings(cx: Scope) -> impl IntoView {
                     <div class="flex-column" style="padding: 5px">
                         <span class="flex-row" style="font-size: 36px; line-height 0.5;">{move || item_name()}{move || view!{cx, <Clipboard clipboard_text=item_name().to_string()/>}}</span>
                         <span style="font-size: 16px">{move || items.get(&ItemId(item_id())).map(|item| categories.get(&item.item_ui_category)).flatten().map(|i| i.name.as_str()).unwrap_or_default()}</span>
-                        <span>{move || item_description()}</span>
+                        <span>{move || {let description = item_description(); view!{cx, <UIText text=description.to_string()/>}}}</span>
                     </div>
                 </div>
                 <div class="flex-wrap content-nav">

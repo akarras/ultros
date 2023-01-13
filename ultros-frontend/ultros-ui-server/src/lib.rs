@@ -16,7 +16,7 @@ pub async fn create_leptos_app(db: ultros_db::UltrosDb) -> Router {
     use leptos::tracing::log;
     use tower_http::services::ServeDir;
 
-    let conf = get_configuration(Some("Cargo.toml")).await.unwrap();
+    let conf = get_configuration(None).await.unwrap();
     let leptos_options = conf.leptos_options;
     let site_root = &leptos_options.site_root;
     let pkg_dir = &leptos_options.site_pkg_dir;

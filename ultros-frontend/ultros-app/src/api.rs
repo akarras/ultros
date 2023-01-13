@@ -47,7 +47,15 @@ pub(crate) async fn get_retainer_listings(cx: Scope) -> Option<UserRetainerListi
     fetch_api(cx, "/api/v1/user/retainer/listings").await
 }
 
-#[cfg(not(feature = "ssr"))]
+// #[cfg(not(all(feature = "hydrate", feature = "ssr")))]
+// pub async fn fetch_api<T>(cx: Scope, path: &str) -> Option<T>
+// where
+//     T: Serializable,
+// {
+//     unimplemented!("Must select a feature to use this API");
+// }
+
+#[cfg(feature = "hydrate")]
 pub async fn fetch_api<T>(cx: Scope, path: &str) -> Option<T>
 where
     T: Serializable,
