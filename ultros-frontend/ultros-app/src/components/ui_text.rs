@@ -52,6 +52,7 @@ impl<'a> TextSpan<'a> {
     fn next_span(&self, rest: &'a str) -> Result<(Option<Self>, Self, &'a str), Self> {
         let (previous_part, tag, rest) = TagData::find_tag(rest).ok_or_else(|| {
             let mut data = self.clone();
+            data.emphasis = false;
             data.text = rest;
             data
         })?;
@@ -119,7 +120,8 @@ impl<'a> TextSpan<'a> {
         .into_iter()
         .flatten()
         .collect::<Vec<String>>();
-        Some(view! {cx, <span style=styles.join(";")>{text.to_string()}</span>}.into_view(cx))
+        let text = text.to_string();
+        Some(view! {cx, <span style=styles.join(";")>{text}</span>}.into_view(cx))
     }
 }
 
@@ -140,22 +142,18 @@ fn BreakOnNewLine(cx: Scope, text: String) -> impl IntoView {
 /// For example: "This is unstyled <UIGlow>32113</UIGlow>blah blah<Emphasis>Hello world</Emphasis><UIGlow>01</UIGlow>" -> "This is unstyled <span style="color: #32113"><i>blah blah</i></span>"
 #[component]
 pub fn UIText(cx: Scope, text: String) -> impl IntoView {
-    log!("{text}");
     let mut text_parts = vec![];
     if let Some((begin, span, end)) = TextSpan::new(&text) {
-        log!("{begin} {span:?} {end}");
         if !begin.is_empty() {
             text_parts.push(view! {cx, {begin.to_owned()}}.into_view(cx));
         }
+        if let Some(view) = span.to_view(cx) {
+            text_parts.push(view);
+        }
         // now continue calling next_span until we reach the end of the rainbow
         let mut rest = end;
-        let mut loop_counter = 0;
         let mut next_span = span;
         loop {
-            loop_counter += 1;
-            if loop_counter >= 10 {
-                break;
-            }
             let span = next_span.next_span(rest);
             match span {
                 Ok((o, span, end)) => {
@@ -204,6 +202,18 @@ mod tests {
                     tag_content: "01"
                 },
                 " test 123 <Emphasis>Hello world</Emphasis>"
+            ))
+        );
+        let rest_string = " test 123 <Emphasis>Hello world</Emphasis>";
+        assert_eq!(
+            TagData::find_tag(rest_string),
+            Some((
+                " test 123 ",
+                TagData {
+                    tag_name: "Emphasis",
+                    tag_content: "Hello world"
+                },
+                ""
             ))
         );
     }
