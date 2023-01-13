@@ -139,19 +139,22 @@ async fn init_db(
 async fn main() -> Result<()> {
     // Create the db before we proceed
     tracing_subscriber::fmt::init();
-
+    info!("Ultros starting!");
+    info!("Fetching datacenters/worlds from universalis");
     let universalis_client = UniversalisClient::new();
     let (datacenters, worlds) = futures::future::join(
         universalis_client.get_data_centers(),
         universalis_client.get_worlds(),
     )
     .await;
+    info!("Initializing database");
     let db = init_db(worlds, datacenters).await.unwrap();
     let world_cache = Arc::new(WorldCache::new(&db).await);
     let (senders, receivers) = create_event_busses();
     let analyzer_service =
         AnalyzerService::start_analyzer(db.clone(), receivers.clone(), world_cache.clone()).await;
     // begin listening to universalis events
+    info!("Creating socket listener");
     tokio::spawn(run_socket_listener(
         db.clone(),
         senders.listings.clone(),

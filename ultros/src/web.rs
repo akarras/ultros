@@ -532,10 +532,10 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/robots.txt", get(robots))
         .route("/sitemap/world/:s.xml", get(world_sitemap))
         .route("/sitemap.xml", get(sitemap_index))
-        .route_layer(middleware::from_fn(track_metrics))
-        .layer(CompressionLayer::new())
         .with_state(state)
-        .nest("/", create_leptos_app(db).await);
+        .nest("/", create_leptos_app(db).await)
+        .route_layer(middleware::from_fn(track_metrics))
+        .layer(CompressionLayer::new());
 
     // run our app with hyper
     // `axum::Server` is a re-export of `hyper::Server`
