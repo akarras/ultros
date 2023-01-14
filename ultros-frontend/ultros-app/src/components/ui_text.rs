@@ -121,7 +121,7 @@ impl<'a> TextSpan<'a> {
         .flatten()
         .collect::<Vec<String>>();
         let text = text.to_string();
-        Some(view! {cx, <span style=styles.join(";")>{text}</span>}.into_view(cx))
+        Some(view! {cx, <span style=styles.join(";")><BreakOnNewLine text/></span>}.into_view(cx))
     }
 }
 
@@ -134,8 +134,8 @@ fn BreakOnNewLine(cx: Scope, text: String) -> impl IntoView {
         views.push(view! {cx, {line.to_string()}}.into_view(cx));
         views.push(line_break.clone());
     }
-    let _ = views.pop();
-    view! {cx, {views}};
+    // let _ = views.pop();
+    views
 }
 
 /// A UI component that takes the raw FFXIV text and converts it into HTML
@@ -145,7 +145,7 @@ pub fn UIText(cx: Scope, text: String) -> impl IntoView {
     let mut text_parts = vec![];
     if let Some((begin, span, end)) = TextSpan::new(&text) {
         if !begin.is_empty() {
-            text_parts.push(view! {cx, {begin.to_owned()}}.into_view(cx));
+            text_parts.push(view! {cx, <BreakOnNewLine text=begin.to_owned()/>}.into_view(cx));
         }
         if let Some(view) = span.to_view(cx) {
             text_parts.push(view);
@@ -180,7 +180,7 @@ pub fn UIText(cx: Scope, text: String) -> impl IntoView {
             }
         }
     } else {
-        text_parts.push(view! {cx, {text}}.into_view(cx))
+        text_parts.push(view! {cx, <BreakOnNewLine text=text/>}.into_view(cx))
     }
     view! {cx, <div class="ui-text">{text_parts}</div>}
 }

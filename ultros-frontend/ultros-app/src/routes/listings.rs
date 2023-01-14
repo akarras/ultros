@@ -84,7 +84,7 @@ fn ListingsContent(cx: Scope, item_id: Memo<i32>, world: Memo<String>) -> impl I
     );
     view! { cx,
         <div>
-            <Suspense fallback=|| view!{ cx, "Loading"}>
+            <Suspense fallback=move || view!{ cx, <div class="loading">"Loading"</div>}>
             {move || listing_resource().map(|listings| {
                 match listings {
                     None => view!{ cx, <div>"Error getting listings"</div>},

@@ -29,7 +29,7 @@ pub fn ListingsTable(cx: Scope, listings: Vec<(ActiveListing, Retainer)>) -> imp
                 <th>"first seen"</th>
             </tr>
         <tbody>
-        <For each=listings
+        {move || view!{cx, <For each=listings
         key=move |(listing, _retainer)| listing.id
         view=move |(listing, retainer)| {
             let total = listing.price_per_unit * listing.quantity;
@@ -43,7 +43,7 @@ pub fn ListingsTable(cx: Scope, listings: Vec<(ActiveListing, Retainer)>) -> imp
                 <td><RelativeToNow timestamp=listing.timestamp/></td>
                 </tr> }
         }
-        />
+        />}}
         <tr on:click=show_click class:hidden=move || {listing_count < 10 || show_more() }>
             <td colspan=7>
                 <button on:click=show_click style="width: 100%;" class="btn">"Show More"</button>

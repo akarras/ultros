@@ -484,6 +484,16 @@ nav > a > * {
   margin: 0px 5px -7px -5px;
 }
 
+.icon-medium {
+  height: 40px;
+  width: 40px;
+}
+
+.icon-large {
+  height: 80px;
+  width: 80px;
+}
+
 tr:nth-child(even) {
   background-color: #140F0F61; /* 38% */
 }
