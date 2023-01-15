@@ -14,15 +14,15 @@ pub fn ProfileDisplay(cx: Scope) -> impl IntoView {
         {move || match login() {
             Some(auth) => {
                 view!{cx,
-                    <html::a href="profile">
+                    <html::a href="/profile">
                         <img class="avatar" src=&auth.avatar alt=&auth.username/>
                     </html::a>
-                    <html::a class="btn" href="logout">
+                    <html::a class="btn" href="/logout">
                         "Logout"
                     </html::a>}.into_view(cx)
             }
             _ => {
-                view!{cx, <html::a class="btn" href="login">
+                view!{cx, <html::a class="btn" href="/login">
                     "Login"
                 </html::a>
                 }.into_view(cx)

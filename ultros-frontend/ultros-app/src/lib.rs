@@ -39,26 +39,26 @@ pub fn App(cx: Scope) -> impl IntoView {
         <Router>
             <nav class="header">
                 <i><b>"ULTROS IS STILL UNDER ACTIVE DEVELOPMENT"</b></i>
-                <A href="alerts">
+                <A href="/alerts">
                     <i class="fa-solid fa-bell"></i>
                     "Alerts"
                 </A>
-                <A href="analyzer">
+                <A href="/analyzer">
                     <i class="fa-solid fa-money-bill-trend-up"></i>
                     "Analyzer"
                 </A>
-                <A href="list">
+                <A href="/list">
                     <i class="fa-solid fa-list"></i>
                     "Lists"
                 </A>
-                <A href="retainers">
+                <A href="/retainers">
                     <i class="fa-solid fa-user-group"></i>
                     "Retainers"
                 </A>
                 <div>
                     <SearchBox/>
                 </div>
-                <a class="btn nav-item" href="invitebot">
+                <a class="btn nav-item" href="/invitebot">
                     "Invite Bot"
                 </a>
                 // <div>
