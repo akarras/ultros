@@ -26,7 +26,7 @@ use sea_orm::{
     QuerySelect, Set,
 };
 
-use tracing::{info, instrument};
+use tracing::{info, instrument, error};
 use universalis::{ItemId, ListingView, WorldId};
 
 use crate::entity::*;
@@ -42,7 +42,19 @@ impl UltrosDb {
     pub async fn connect() -> Result<Self> {
         let url = std::env::var("DATABASE_URL").expect("Missing DATABASE_URL environment variable");
         let mut opt = ConnectOptions::new(url);
-        opt.max_connections(90)
+        let max_connections = std::env::var("POSTGRES_MAX_CONNECTIONS")
+            .ok()
+            .and_then(|connections| {
+                connections
+                    .parse::<u32>()
+                    .map_err(|e| {
+                        error!(error = %e, "Unable to read POSTGRES_MAX_CONNECTIONS env variable");
+                        e
+                    })
+                    .ok()
+            })
+            .unwrap_or(300);
+        opt.max_connections(max_connections)
             .min_connections(0)
             // .connect_timeout(Duration::from_secs(8))
             // .idle_timeout(Duration::from_secs(8))
