@@ -27,7 +27,7 @@ use sea_orm::{
     QuerySelect, Set,
 };
 
-use tracing::{info, instrument, error};
+use tracing::{error, info, instrument};
 use universalis::{ItemId, ListingView, WorldId};
 
 use crate::entity::*;

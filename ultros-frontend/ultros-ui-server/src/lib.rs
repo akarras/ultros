@@ -3,14 +3,11 @@
 /// I recommend you use cargo-leptos, once you go through the steps to install cargo-leptos
 /// you should be able to build and serve leptos with one install step.
 ///
-#[cfg(feature = "ssr")]
 use axum::Router;
-#[cfg(feature = "ssr")]
 use leptos::*;
-
+use leptos_axum::{generate_route_list, LeptosRoutes};
 use ultros_app::*;
 
-#[cfg(feature = "ssr")]
 pub async fn create_leptos_app(db: ultros_db::UltrosDb) -> Router {
     use axum::{error_handling::HandleError, http::StatusCode};
     use leptos::tracing::log;
@@ -42,17 +39,15 @@ pub async fn create_leptos_app(db: ultros_db::UltrosDb) -> Router {
         (StatusCode::NOT_FOUND, format!("File Not Found: {}", err))
     }
 
+    let routes = generate_route_list(|cx| view! { cx, <App/> }).await;
+
+    // simple_logger::init_with_level(log::Level::Debug).expect("couldn't initialize logging");
+
     // build our application with a route
     Router::new()
         // `GET /` goes to `root`
         .nest_service("/pkg", cargo_leptos_service.clone()) // Only need if using wasm-pack. Can be deleted if using cargo-leptos
         .nest_service(&bundle_path, cargo_leptos_service) // Only needed if using cargo-leptos. Can be deleted if using wasm-pack and cargo-run
         //.nest_service("/static", static_service)
-        .fallback(leptos_axum::render_app_to_stream(
-            leptos_options,
-            move |cx| {
-                provide_context(cx, db.clone());
-                view! { cx, <App/> }
-            },
-        ))
+        .leptos_routes(leptos_options.clone(), routes, |cx| view! { cx, <App/> })
 }

@@ -18,6 +18,7 @@ use ultros_api_types::world_helper::WorldHelper;
 
 #[component]
 pub fn App(cx: Scope) -> impl IntoView {
+    provide_meta_context(cx);
     let worlds = create_resource(
         cx,
         move || {},
