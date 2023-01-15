@@ -51,6 +51,9 @@ pub fn Retainers(cx: Scope) -> impl IntoView {
     view! {
         cx,
         <div class="container">
+            <div class="nav-secondary">
+                <a class="btn btn-secondary" href="/retainers/edit"><span class="fa fa-pencil"></span>"Edit"</a>
+            </div>
             <div class="main-content">
                 <span class="content-title">"Retainers"</span>
                 <Suspense fallback=move || view!{cx, <span>"Loading..."</span>}>

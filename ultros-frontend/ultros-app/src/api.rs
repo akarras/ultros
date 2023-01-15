@@ -55,7 +55,7 @@ pub(crate) async fn get_retainer_listings(cx: Scope) -> Option<UserRetainerListi
 //     unimplemented!("Must select a feature to use this API");
 // }
 
-#[cfg(feature = "hydrate")]
+#[cfg(not(feature = "ssr"))]
 pub async fn fetch_api<T>(cx: Scope, path: &str) -> Option<T>
 where
     T: Serializable,
