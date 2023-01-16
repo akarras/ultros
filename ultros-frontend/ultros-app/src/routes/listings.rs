@@ -83,30 +83,37 @@ fn ListingsContent(cx: Scope, item_id: Memo<i32>, world: Memo<String>) -> impl I
         move |(item_id, world)| async move { get_listings(cx, item_id, &world).await },
     );
     view! { cx,
-        <div>
-            <Suspense fallback=move || view!{ cx, <div class="loading">"Loading"</div>}>
-            {move || listing_resource().map(|listings| {
-                match listings {
-                    None => view!{ cx, <div>"Error getting listings"</div>},
-                    Some(currently_shown) => {
-                        let hq_listings : Vec<_> = currently_shown.listings.iter().cloned().filter(|(listing, _)| listing.hq).collect();
-                        let lq_listings : Vec<_> = currently_shown.listings.iter().cloned().filter(|(listing, _)| !listing.hq).collect();
-                        view! { cx,
-                            <div class="flex flex-wrap">
-                                {if !hq_listings.is_empty() {
-                                    view!{ cx, <div class="content-well"><span class="content-title">"high quality listings"</span><ListingsTable listings=hq_listings /></div> }.into_any()
-                                } else {
-                                    view!{ cx, <div></div> }.into_any()
-                                }}
-                                <div class="content-well"><span class="content-title">"low quality listings"</span><ListingsTable listings=lq_listings /></div>
-                                <div class="content-well"><span class="content-title">"sale history"</span><SaleHistoryTable sale_history=currently_shown.sales /></div>
+        <Suspense fallback=move || view!{ cx, <div class="loading">"Loading"</div>}>
+        {move || listing_resource().map(|listings| {
+            match listings {
+                None => view!{ cx, <div>"Error getting listings"</div>},
+                Some(currently_shown) => {
+                    let hq_listings : Vec<_> = currently_shown.listings.iter().cloned().filter(|(listing, _)| listing.hq).collect();
+                    let lq_listings : Vec<_> = currently_shown.listings.iter().cloned().filter(|(listing, _)| !listing.hq).collect();
+                    view! { cx,
+                        <div class="flex flex-wrap">
+                            {if !hq_listings.is_empty() {
+                                view!{ cx, <div class="content-well">
+                                    <span class="content-title">"high quality listings"</span>
+                                    <ListingsTable listings=hq_listings />
+                                </div> }.into_any()
+                            } else {
+                                view!{ cx, <div></div> }.into_any()
+                            }}
+                            <div class="content-well">
+                                <span class="content-title">"low quality listings"</span>
+                                <ListingsTable listings=lq_listings />
                             </div>
-                        }
+                            <div class="content-well">
+                                <span class="content-title">"sale history"</span>
+                                <SaleHistoryTable sale_history=currently_shown.sales />
+                            </div>
+                        </div>
                     }
                 }
-            })}
-            </Suspense>
-        </div>
+            }
+        })}
+        </Suspense>
     }
 }
 

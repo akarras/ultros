@@ -51,8 +51,19 @@ pub fn Retainers(cx: Scope) -> impl IntoView {
     view! {
         cx,
         <div class="container">
-            <div class="nav-secondary">
-                <a class="btn btn-secondary" href="/retainers/edit"><span class="fa fa-pencil"></span>"Edit"</a>
+            <div class="content-nav">
+                <a class="btn-secondary" href="/retainers/edit">
+                    <span class="fa fa-pen-to-square"></span>
+                    "Edit"
+                </a>
+                <a class="btn-secondary active" href="/retainers/edit">
+                    <span class="fa fa-pencil"></span>
+                    "Undercuts"
+                </a>
+                <a class="btn-secondary" href="/retainers/edit">
+                    <span class="fa fa-exclamation"></span>
+                    "Undercuts"
+                </a>
             </div>
             <div class="main-content">
                 <span class="content-title">"Retainers"</span>

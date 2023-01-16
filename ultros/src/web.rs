@@ -27,8 +27,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
 use tower_http::compression::CompressionLayer;
-use tracing::{debug, error};
-use ultros_api_types::result::{ApiError, ApiResult};
+use tracing::debug;
 use ultros_api_types::user::{OwnedRetainer, UserData, UserRetainerListings, UserRetainers};
 use ultros_api_types::world::WorldData;
 use ultros_api_types::{ActiveListing, CurrentlyShownItem, FfxivCharacter, Retainer};
@@ -37,7 +36,7 @@ use ultros_ui_server::create_leptos_app;
 use universalis::{ItemId, ListingView, UniversalisClient, WorldId};
 
 use self::character_verifier_service::CharacterVerifierService;
-use self::error::WebError;
+use self::error::{ApiError, WebError};
 use self::oauth::{AuthDiscordUser, AuthUserCache, DiscordAuthConfig};
 use crate::analyzer_service::AnalyzerService;
 use crate::event::{EventReceivers, EventSenders, EventType};
@@ -447,57 +446,50 @@ pub(crate) async fn user_retainers(
 pub(crate) async fn user_retainer_listings(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
-) -> Json<Option<UserRetainerListings>> {
+) -> Result<Json<UserRetainerListings>, ApiError> {
     let db = &db;
     // Get a list of all the user's retainers, convert them to the appropriate type for our API call, and get listings for each retainer
-    let listings = if let Ok(retainers) = db.get_all_owned_retainers_and_character(user.id).await {
-        let listings_iter = retainers
-            .into_iter()
-            .map(|(character, retainers)| async move {
-                // collect intermediate results with try_join_all to cancel early if there's an error
-                let retainers_with_listings =
-                    try_join_all(retainers.into_iter().map(|(_owned, retainer)| async move {
-                        let listings = db.get_retainer_listings(retainer.id).await;
-                        listings.map(|listings| {
-                            (
-                                Retainer::from(retainer),
-                                listings
-                                    .map(|(_, listings)| {
-                                        listings
-                                            .into_iter()
-                                            .map(|l| ActiveListing::from(l))
-                                            .collect::<Vec<_>>()
-                                    })
-                                    .unwrap_or_default(),
-                            )
-                        })
-                    }))
-                    .await;
-                retainers_with_listings.map(|r| (character.map(|c| FfxivCharacter::from(c)), r))
-            });
-        let listings = try_join_all(listings_iter).await;
-        listings
-            .map_err(|e| error!(error = %e))
-            .ok()
-            .map(|retainers| UserRetainerListings { retainers })
-    } else {
-        return Json(None);
+    let retainers = db.get_all_owned_retainers_and_character(user.id).await?;
+    let listings_iter = retainers
+        .into_iter()
+        .map(|(character, retainers)| async move {
+            // collect intermediate results with try_join_all to cancel early if there's an error
+            let retainers_with_listings =
+                try_join_all(retainers.into_iter().map(|(_owned, retainer)| async move {
+                    let listings = db.get_retainer_listings(retainer.id).await;
+                    listings.map(|listings| {
+                        (
+                            Retainer::from(retainer),
+                            listings
+                                .map(|(_, listings)| {
+                                    listings
+                                        .into_iter()
+                                        .map(|l| ActiveListing::from(l))
+                                        .collect::<Vec<_>>()
+                                })
+                                .unwrap_or_default(),
+                        )
+                    })
+                }))
+                .await;
+            retainers_with_listings.map(|r| (character.map(|c| FfxivCharacter::from(c)), r))
+        });
+    let listings = try_join_all(listings_iter).await?;
+    let retainers = UserRetainerListings {
+        retainers: listings,
     };
-    Json(listings)
+    Ok(Json(retainers))
 }
 
 pub(crate) async fn verify_character(
     State(character): State<CharacterVerifierService>,
     Path(verification_id): Path<i32>,
     user: AuthDiscordUser,
-) -> Json<ApiResult<bool>> {
-    if let Err(_) = character
+) -> Result<Json<bool>, ApiError> {
+    character
         .check_verification(verification_id, user.id as i64)
-        .await
-    {
-        return Json(ApiResult::Error(ApiError::Generic));
-    }
-    Json(ApiResult::Ok(true))
+        .await?;
+    Ok(Json(true))
 }
 
 pub(crate) async fn start_web(state: WebState) {
