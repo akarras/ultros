@@ -36,7 +36,7 @@ fn MatchFormatter(cx: Scope, m: Match, target: String) -> impl IntoView {
         pieces.push(view! {cx, {target.chars().skip(last_end).collect::<String>()}}.into_view(cx));
     }
 
-    view! {cx, {pieces}}
+    pieces
 }
 
 #[component]
@@ -54,7 +54,7 @@ pub fn ItemSearchResult(
         cx,
         {if let Some(item) = item {
             view!{cx,
-            <html::a on:click=move |_| set_search("".to_string()) href=format!("/listings/North-America/{item_id}")> // this needs to be updated to be able to point to any region
+            <a on:click=move |_| set_search("".to_string()) href=format!("/listings/North-America/{item_id}")> // this needs to be updated to be able to point to any region
                 <div class="search-result">
                     <ItemIcon item_id icon_size=IconSize::Small />
                     <div class="search-result-details">
@@ -65,10 +65,10 @@ pub fn ItemSearchResult(
                         </div>
                     </div>
                 </div>
-            </html::a>
+            </a>
     }
         } else {
-            view!{cx, <html::a class="search-result">"Invalid result"</html::a>}
+            view!{cx, <a class="search-result">"Invalid result"</a>}
         }}
     }
 }

@@ -120,11 +120,12 @@ async fn run_socket_listener(
 }
 
 async fn init_db(
+    db: &UltrosDb,
     worlds_view: Result<WorldsView, universalis::Error>,
     datacenters: Result<DataCentersView, universalis::Error>,
-) -> Result<UltrosDb> {
+) -> Result<()> {
     info!("db starting");
-    let db = UltrosDb::connect().await?;
+    
     db.insert_default_retainer_cities().await.unwrap();
     info!("DB connected & ffxiv world data primed");
     {
@@ -132,7 +133,7 @@ async fn init_db(
             db.update_datacenters(&datacenters, &worlds).await?;
         }
     }
-    Ok(db)
+    Ok(())
 }
 
 #[tokio::main]
@@ -140,26 +141,35 @@ async fn main() -> Result<()> {
     // Create the db before we proceed
     tracing_subscriber::fmt::init();
     info!("Ultros starting!");
+    info!("Connecting DB");
+    let db = UltrosDb::connect().await?;
     info!("Fetching datacenters/worlds from universalis");
     let universalis_client = UniversalisClient::new();
-    let (datacenters, worlds) = futures::future::join(
-        universalis_client.get_data_centers(),
-        universalis_client.get_worlds(),
-    )
-    .await;
-    info!("Initializing database");
-    let db = init_db(worlds, datacenters).await.unwrap();
-    let world_cache = Arc::new(WorldCache::new(&db).await);
+    let init = db.clone();
     let (senders, receivers) = create_event_busses();
+    let listings_sender = senders.listings.clone();
+    let history_sender = senders.history.clone();
+    tokio::spawn(async move {
+        let (datacenters, worlds) = futures::future::join(
+            universalis_client.get_data_centers(),
+            universalis_client.get_worlds(),
+        )
+        .await;
+        info!("Initializing database with worlds/datacenters");
+        init_db(&init, worlds, datacenters).await.expect("Unable to populate worlds datacenters- is universalis down?");
+        info!("starting websocket");
+        run_socket_listener(
+            init,
+            listings_sender,
+            history_sender,
+        ).await;
+    });
+    // on first run, the world cache may be empty
+    let world_cache = Arc::new(WorldCache::new(&db).await);
+    
     let analyzer_service =
         AnalyzerService::start_analyzer(db.clone(), receivers.clone(), world_cache.clone()).await;
     // begin listening to universalis events
-    info!("Creating socket listener");
-    tokio::spawn(run_socket_listener(
-        db.clone(),
-        senders.listings.clone(),
-        senders.history.clone(),
-    ));
     tokio::spawn(start_discord(
         db.clone(),
         senders.clone(),
