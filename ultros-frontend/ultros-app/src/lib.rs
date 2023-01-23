@@ -61,9 +61,7 @@ pub fn App(cx: Scope) -> impl IntoView {
                 <a class="btn nav-item" href="/invitebot">
                     "Invite Bot"
                 </a>
-                <div>
-                    <ProfileDisplay/>
-                </div>
+                <ProfileDisplay/>
             </nav>
             <Routes>
                 <Route path="retainers/edit" view=move |cx| view! { cx, <EditRetainers />}/>

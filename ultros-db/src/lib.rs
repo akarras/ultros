@@ -19,7 +19,7 @@ pub use sea_orm::ActiveValue;
 use anyhow::Result;
 use chrono::{Duration, Utc};
 use futures::{future::try_join_all, Stream};
-use migration::{sea_orm::QueryOrder, DbErr, Migrator, MigratorTrait};
+use migration::{sea_orm::QueryOrder, DbErr, Migrator, MigratorTrait, Write};
 
 use sea_orm::{
     ActiveModelTrait, ActiveValue::NotSet, ColumnTrait, ConnectOptions, Database,
@@ -28,6 +28,7 @@ use sea_orm::{
 };
 
 use tracing::{error, info, instrument};
+use ultros_api_types::Retainer;
 use universalis::{ItemId, ListingView, WorldId};
 
 use crate::entity::*;
@@ -129,17 +130,16 @@ impl UltrosDb {
     }
 
     #[instrument(skip(self))]
-    pub async fn search_retainers(
-        &self,
-        retainer_name: &str,
-    ) -> Result<Vec<(retainer::Model, Option<world::Model>)>> {
+    pub async fn search_retainers(&self, retainer_name: &str) -> Result<Vec<Retainer>> {
+        // retainer names are forced to be lower except for the first character which will be uppercase.
+        let retainer_name : String = retainer_name.chars().enumerate().map(|(i, byte)| if i == 0 { byte.to_ascii_uppercase() } else { byte.to_ascii_lowercase()}).collect();
+        
         let val = retainer::Entity::find()
-            .find_also_related(world::Entity)
-            .filter(retainer::Column::Name.like(retainer_name))
+            .filter(retainer::Column::Name.like(&format!("{retainer_name}%")))
             .limit(10)
             .all(&self.db)
             .await?;
-        Ok(val)
+        Ok(val.into_iter().map(|val| Retainer::from(val)).collect())
     }
 
     #[instrument(skip(self))]

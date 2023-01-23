@@ -125,7 +125,7 @@ async fn init_db(
     datacenters: Result<DataCentersView, universalis::Error>,
 ) -> Result<()> {
     info!("db starting");
-    
+
     db.insert_default_retainer_cities().await.unwrap();
     info!("DB connected & ffxiv world data primed");
     {
@@ -156,17 +156,15 @@ async fn main() -> Result<()> {
         )
         .await;
         info!("Initializing database with worlds/datacenters");
-        init_db(&init, worlds, datacenters).await.expect("Unable to populate worlds datacenters- is universalis down?");
+        init_db(&init, worlds, datacenters)
+            .await
+            .expect("Unable to populate worlds datacenters- is universalis down?");
         info!("starting websocket");
-        run_socket_listener(
-            init,
-            listings_sender,
-            history_sender,
-        ).await;
+        run_socket_listener(init, listings_sender, history_sender).await;
     });
     // on first run, the world cache may be empty
     let world_cache = Arc::new(WorldCache::new(&db).await);
-    
+
     let analyzer_service =
         AnalyzerService::start_analyzer(db.clone(), receivers.clone(), world_cache.clone()).await;
     // begin listening to universalis events

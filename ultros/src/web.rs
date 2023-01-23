@@ -492,6 +492,18 @@ pub(crate) async fn verify_character(
     Ok(Json(true))
 }
 
+pub(crate) async fn retainer_search(
+    State(db): State<UltrosDb>,
+    Path(retainer_name): Path<String>,
+) -> Result<Json<Vec<Retainer>>, ApiError> {
+    let retainers = db.search_retainers(&retainer_name).await?;
+    let retainers = retainers
+        .into_iter()
+        .map(|retainers| retainers.into())
+        .collect();
+    Ok(Json(retainers))
+}
+
 pub(crate) async fn start_web(state: WebState) {
     let db = state.db.clone();
     // build our application with a route
@@ -507,6 +519,7 @@ pub(crate) async fn start_web(state: WebState) {
             "/api/v1/user/retainer/listings",
             get(user_retainer_listings),
         )
+        .route("/api/v1/retainer/search/:query", get(retainer_search))
         .route(
             "/listings/refresh/:worldid/:itemid",
             get(refresh_world_item_listings),

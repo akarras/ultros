@@ -2,7 +2,7 @@ use crate::EventType;
 use poise::serenity_prelude::Color;
 use std::fmt::Write;
 use std::sync::Arc;
-use ultros_db::entity::active_listing;
+use ultros_db::{entity::active_listing, world_cache::AnySelector};
 use xiv_gen::ItemId;
 
 use super::{Context, Error};
@@ -43,16 +43,23 @@ async fn autocomplete_retainer_id(
     ctx: Context<'_>,
     partial: &str,
 ) -> impl Iterator<Item = poise::AutocompleteChoice<i32>> {
+    let world_cache = ctx.data().world_cache.clone();
     ctx.data()
         .db
         .search_retainers(partial)
         .await
         .unwrap_or_default()
         .into_iter()
-        .flat_map(|(retainer, world)| {
-            let world = world?;
+        .flat_map(move |retainer| {
             Some(poise::AutocompleteChoice {
-                name: format!("{} - {}", retainer.name, world.name),
+                name: format!(
+                    "{} - {}",
+                    retainer.name,
+                    world_cache
+                        .lookup_selector(&AnySelector::World(retainer.world_id))
+                        .ok()?
+                        .get_name()
+                ),
                 value: retainer.id,
             })
         })
