@@ -1,6 +1,6 @@
 use crate::api::{get_retainer_listings, get_retainers};
 use crate::components::gil::*;
-use crate::components::{item_icon::*, world_name::*};
+use crate::components::{item_icon::*, world_name::*, retainer_nav::*};
 use leptos::*;
 use ultros_api_types::{world_helper::AnySelector, ActiveListing, FfxivCharacter, Retainer};
 use xiv_gen::ItemId;
@@ -17,17 +17,29 @@ fn RetainerTable(cx: Scope, retainer: Retainer, listings: Vec<ActiveListing>) ->
         .into_iter()
         .map(|listing| {
             let item = items.get(&ItemId(listing.item_id));
-            view! { cx, <tr><td>{if let Some(item) = item {
-                view!{cx, <ItemIcon icon_size=IconSize::Medium item_id=listing.item_id />{&item.name}}.into_view(cx)
+            let total = listing.quantity * listing.price_per_unit;
+            view! { cx, <tr>
+                <td>{if let Some(item) = item {
+                view!{cx, <ItemIcon icon_size=IconSize::Small item_id=listing.item_id />{&item.name}}.into_view(cx)
             } else {
                 view!{cx, "Item not found"}.into_view(cx)
-            }}</td><td><Gil amount=listing.price_per_unit/></td></tr>
+            }}</td>
+                <td><Gil amount=listing.price_per_unit/></td>
+                <td>{listing.quantity}</td>
+                <td><Gil amount=total /></td>
+            </tr>
         }})
         .collect();
     view! { cx,
         <div class="content-well">
             <span class="content-title">{retainer.name}" - "<WorldName id=AnySelector::World(retainer.world_id)/></span>
             <table>
+                <tr>
+                    <th>"Item"</th>
+                    <th>"Price Per Unit"</th>
+                    <th>"Quantity"</th>
+                    <th>"Total"</th>
+                </tr>
                 {listings}
             </table>
         </div>
@@ -62,20 +74,7 @@ pub fn Retainers(cx: Scope) -> impl IntoView {
     view! {
         cx,
         <div class="container">
-            <div class="content-nav">
-                <a class="btn-secondary" href="/retainers/edit">
-                    <span class="fa fa-pen-to-square"></span>
-                    "Edit"
-                </a>
-                <a class="btn-secondary active" href="/retainers/edit">
-                    <span class="fa fa-pencil"></span>
-                    "Undercuts"
-                </a>
-                <a class="btn-secondary" href="/retainers/edit">
-                    <span class="fa fa-exclamation"></span>
-                    "Undercuts"
-                </a>
-            </div>
+            <RetainerNav/>
             <div class="main-content">
                 <span class="content-title">"Retainers"</span>
                 <Suspense fallback=move || view!{cx, <span>"Loading..."</span>}>

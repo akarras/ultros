@@ -1,13 +1,6 @@
 use colorsys::{ColorTransform, Rgb};
 use leptos::*;
 
-#[derive(Debug, PartialEq)]
-enum Tag {
-    ForegroundColor,
-    BackgroundColor,
-    Emphasis,
-}
-
 #[derive(Debug, Clone, Default)]
 struct TextSpan<'a> {
     text: &'a str,

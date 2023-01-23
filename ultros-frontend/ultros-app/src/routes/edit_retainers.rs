@@ -2,7 +2,7 @@ use leptos::*;
 use ultros_api_types::world_helper::AnySelector;
 
 use crate::api::{claim_retainer, get_retainers, search_retainers, unclaim_retainer};
-use crate::components::{loading::*, world_name::*};
+use crate::components::{loading::*, world_name::*, retainer_nav::*};
 
 #[component]
 pub fn EditRetainers(cx: Scope) -> impl IntoView {
@@ -28,6 +28,7 @@ pub fn EditRetainers(cx: Scope) -> impl IntoView {
     );
     view! { cx,
     <div class="container">
+      <RetainerNav/>
       <div class="main-content flex-wrap">
         <div style="width: 500px;" class="retainer-list flex-column">
           <span class="content-title">"Retainers"</span>
