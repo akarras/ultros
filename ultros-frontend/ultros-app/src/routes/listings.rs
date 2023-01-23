@@ -26,7 +26,7 @@ fn WorldMenu(cx: Scope, world_name: Memo<String>, item_id: Memo<i32>) -> impl In
         },
     );
     view! {cx,
-        <Suspense fallback=move || view!{ cx, <p>"Loading worlds..."</p>}>
+        <Suspense fallback=move || view!{ cx, <Loading/>}>
         {move || {
             match worlds() {
                 Some(Some(worlds)) => {
@@ -68,7 +68,7 @@ fn WorldMenu(cx: Scope, world_name: Memo<String>, item_id: Memo<i32>) -> impl In
                         view!{cx, <div>"No worlds"</div>}.into_view(cx)
                     }
                 }
-                _ => view!{cx, <p>"Loading worlds..."</p>}.into_view(cx)
+                _ => view!{cx, <Loading/>}.into_view(cx)
             }
         }}
         </Suspense>

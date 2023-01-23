@@ -9,6 +9,7 @@ pub mod result;
 pub mod user;
 pub mod world;
 pub mod world_helper;
+pub mod list;
 
 pub use ffxiv_character::FfxivCharacter;
 pub use listings::ActiveListing;

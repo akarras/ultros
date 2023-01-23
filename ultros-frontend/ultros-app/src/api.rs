@@ -5,7 +5,7 @@ use ultros_api_types::{
     user::{UserData, UserRetainerListings, UserRetainers},
     world::WorldData,
     world_helper::AnyResult,
-    CurrentlyShownItem, Retainer,
+    CurrentlyShownItem, Retainer, list::{List, ListItem},
 };
 
 pub(crate) async fn get_listings(
@@ -55,13 +55,22 @@ pub(crate) async fn search_retainers(cx: Scope, name: String) -> Option<Vec<Reta
     fetch_api(cx, &format!("/api/v1/retainer/search/{name}")).await
 }
 
-/// Claims the given retainer based on their name
+/// Claims the given retainer based on their id
 pub(crate) async fn claim_retainer(cx: Scope, retainer_id: i32) -> Option<()> {
     fetch_api(cx, &format!("/api/v1/retainer/claim/{retainer_id}")).await
 }
 
+/// Unclaims the retainer based on the owned retainer id
 pub(crate) async fn unclaim_retainer(cx: Scope, owned_retainer_id: i32) -> Option<()> {
     fetch_api(cx, &format!("/api/v1/retainer/unclaim/{owned_retainer_id}")).await
+}
+
+pub(crate) async fn get_lists(cx: Scope) -> Option<Vec<List>> {
+    fetch_api(cx, &format!("/api/v1/lists")).await
+}
+
+pub(crate) async fn get_list_items(cx: Scope) -> Option<(List, Vec<ListItem>)> {
+    fetch_api(cx, &format!("/api/v1/lists/items")).await
 }
 
 #[cfg(not(feature = "ssr"))]

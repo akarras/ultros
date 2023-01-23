@@ -6,3 +6,4 @@ pub mod lists;
 pub mod profile;
 pub mod retainers;
 pub mod undercuts;
+pub mod list_view;
