@@ -1,7 +1,7 @@
 use crate::api::get_listings;
 use crate::api::get_worlds;
 use crate::components::{
-    clipboard::*, item_icon::*, listings_table::*, sale_history_table::*, ui_text::*,
+    clipboard::*, item_icon::*, listings_table::*, loading::*, sale_history_table::*, ui_text::*,
 };
 use leptos::*;
 use leptos_meta::*;
@@ -83,7 +83,7 @@ fn ListingsContent(cx: Scope, item_id: Memo<i32>, world: Memo<String>) -> impl I
         move |(item_id, world)| async move { get_listings(cx, item_id, &world).await },
     );
     view! { cx,
-        <Suspense fallback=move || view!{ cx, <div class="loading">"Loading"</div>}>
+        <Suspense fallback=move || view!{ cx, <Loading/>}>
         {move || listing_resource().map(|listings| {
             match listings {
                 None => view!{ cx, <div>"Error getting listings"</div>},

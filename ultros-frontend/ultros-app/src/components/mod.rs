@@ -3,6 +3,7 @@ pub mod datacenter_name;
 pub mod gil;
 pub mod item_icon;
 pub mod listings_table;
+pub mod loading;
 pub mod profile_display;
 pub mod relative_time;
 pub mod sale_history_table;

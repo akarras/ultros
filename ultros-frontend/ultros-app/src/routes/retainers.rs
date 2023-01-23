@@ -1,7 +1,9 @@
 use crate::api::{get_retainer_listings, get_retainers};
 use crate::components::gil::*;
+use crate::components::{item_icon::*, world_name::*};
 use leptos::*;
-use ultros_api_types::{ActiveListing, FfxivCharacter, Retainer};
+use ultros_api_types::{world_helper::AnySelector, ActiveListing, FfxivCharacter, Retainer};
+use xiv_gen::ItemId;
 
 #[component]
 fn RetainerView(cx: Scope) -> impl IntoView {
@@ -10,12 +12,21 @@ fn RetainerView(cx: Scope) -> impl IntoView {
 
 #[component]
 fn RetainerTable(cx: Scope, retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoView {
+    let items = &xiv_gen_db::decompress_data().items;
     let listings: Vec<_> = listings
         .into_iter()
-        .map(|listing| view! { cx, <tr><Gil amount=listing.price_per_unit/></tr> })
+        .map(|listing| {
+            let item = items.get(&ItemId(listing.item_id));
+            view! { cx, <tr><td>{if let Some(item) = item {
+                view!{cx, <ItemIcon icon_size=IconSize::Medium item_id=listing.item_id />{&item.name}}.into_view(cx)
+            } else {
+                view!{cx, "Item not found"}.into_view(cx)
+            }}</td><td><Gil amount=listing.price_per_unit/></td></tr>
+        }})
         .collect();
     view! { cx,
         <div class="content-well">
+            <span class="content-title">{retainer.name}" - "<WorldName id=AnySelector::World(retainer.world_id)/></span>
             <table>
                 {listings}
             </table>

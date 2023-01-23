@@ -504,6 +504,24 @@ pub(crate) async fn retainer_search(
     Ok(Json(retainers))
 }
 
+pub(crate) async fn claim_retainer(
+    State(db): State<UltrosDb>,
+    Path(id): Path<i32>,
+    user: AuthDiscordUser,
+) -> Result<(), ApiError> {
+    db.register_retainer(id, user.id, user.name).await?;
+    Ok(())
+}
+
+pub(crate) async fn unclaim_retainer(
+    State(db): State<UltrosDb>,
+    Path(id): Path<i32>,
+    user: AuthDiscordUser,
+) -> Result<(), ApiError> {
+    db.remove_owned_retainer(user.id, id).await?;
+    Ok(())
+}
+
 pub(crate) async fn start_web(state: WebState) {
     let db = state.db.clone();
     // build our application with a route
@@ -514,12 +532,14 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/listings/:world/:itemid", get(world_item_listings))
         .route("/api/v1/world_data", get(world_data))
         .route("/api/v1/current_user", get(current_user))
-        .route("/api/v1/user/retainers", get(user_retainers))
+        .route("/api/v1/user/retainer", get(user_retainers))
         .route(
             "/api/v1/user/retainer/listings",
             get(user_retainer_listings),
         )
         .route("/api/v1/retainer/search/:query", get(retainer_search))
+        .route("/api/v1/retainer/claim/:id", get(claim_retainer))
+        .route("/api/v1/retainer/unclaim/:id", get(unclaim_retainer))
         .route(
             "/listings/refresh/:worldid/:itemid",
             get(refresh_world_item_listings),

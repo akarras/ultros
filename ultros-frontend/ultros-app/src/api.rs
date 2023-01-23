@@ -49,12 +49,19 @@ pub(crate) async fn get_retainer_listings(cx: Scope) -> Option<UserRetainerListi
 
 /// Searches retainers based on their name
 pub(crate) async fn search_retainers(cx: Scope, name: String) -> Option<Vec<Retainer>> {
+    if name.is_empty() {
+        return None;
+    }
     fetch_api(cx, &format!("/api/v1/retainer/search/{name}")).await
 }
 
 /// Claims the given retainer based on their name
 pub(crate) async fn claim_retainer(cx: Scope, retainer_id: i32) -> Option<()> {
     fetch_api(cx, &format!("/api/v1/retainer/claim/{retainer_id}")).await
+}
+
+pub(crate) async fn unclaim_retainer(cx: Scope, owned_retainer_id: i32) -> Option<()> {
+    fetch_api(cx, &format!("/api/v1/retainer/unclaim/{owned_retainer_id}")).await
 }
 
 #[cfg(not(feature = "ssr"))]

@@ -13,7 +13,7 @@ use xiv_gen::ItemId;
 
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
-    components::{clipboard::*, gil::*, item_icon::*, tooltip::*},
+    components::{clipboard::*, gil::*, item_icon::*, loading::*, tooltip::*},
     global_state::LocalWorldData,
 };
 
@@ -321,7 +321,7 @@ pub fn Analyzer(cx: Scope) -> impl IntoView {
                         {if params.with(|p| p.get("world").is_none()) {
                             view!{cx, <a href="/analyzer/Gilgamesh" class="btn">"Gilgamesh"</a>}.into_view(cx)
                         } else {
-                            view!{cx, <Suspense fallback=move || view!{cx, <div class="loading">"Loading..."</div>}>
+                            view!{cx, <Suspense fallback=move || view!{cx, <Loading />}>
                             {move || {
                                 let sales = sales();
                                 let listings = listings();
@@ -334,7 +334,7 @@ pub fn Analyzer(cx: Scope) -> impl IntoView {
                                         view!{cx, "Failed to get listings/sales"}.into_view(cx)
                                     },
                                     _ => {
-                                        view!{cx, <div class="loading">"loading"</div>}.into_view(cx)
+                                        view!{cx, <Loading/>}.into_view(cx)
                                     }
                                 }
                             }}

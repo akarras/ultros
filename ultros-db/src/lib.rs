@@ -132,8 +132,18 @@ impl UltrosDb {
     #[instrument(skip(self))]
     pub async fn search_retainers(&self, retainer_name: &str) -> Result<Vec<Retainer>> {
         // retainer names are forced to be lower except for the first character which will be uppercase.
-        let retainer_name : String = retainer_name.chars().enumerate().map(|(i, byte)| if i == 0 { byte.to_ascii_uppercase() } else { byte.to_ascii_lowercase()}).collect();
-        
+        let retainer_name: String = retainer_name
+            .chars()
+            .enumerate()
+            .map(|(i, byte)| {
+                if i == 0 {
+                    byte.to_ascii_uppercase()
+                } else {
+                    byte.to_ascii_lowercase()
+                }
+            })
+            .collect();
+
         let val = retainer::Entity::find()
             .filter(retainer::Column::Name.like(&format!("{retainer_name}%")))
             .limit(10)
