@@ -607,6 +607,15 @@ pub(crate) async fn post_item_to_list(
     Ok(Json(()))
 }
 
+pub(crate) async fn delete_list_item(
+    State(db): State<UltrosDb>,
+    Path(id): Path<i32>,
+    user: AuthDiscordUser,
+) -> Result<Json<()>, ApiError> {
+    db.remove_item_from_list(user.id as i64, id).await?;
+    Ok(Json(()))
+}
+
 pub(crate) async fn start_web(state: WebState) {
     let db = state.db.clone();
     // build our application with a route
@@ -619,8 +628,9 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/list/create", post(create_list))
         .route("/api/v1/list/edit", post(edit_list))
         .route("/api/v1/list/:id", get(get_list))
-        .route("/api/v1/list/:id/add", post(post_item_to_list))
+        .route("/api/v1/list/:id/add/item", post(post_item_to_list))
         .route("/api/v1/list/:id/delete", get(delete_list))
+        .route("/api/v1/list/item/:id/delete", get(delete_list_item))
         .route("/api/v1/world_data", get(world_data))
         .route("/api/v1/current_user", get(current_user))
         .route("/api/v1/user/retainer", get(user_retainers))

@@ -1,4 +1,5 @@
 use leptos::*;
+use leptos_router::*;
 
 use crate::api::get_lists;
 use crate::components::{lists_nav::*, loading::*, world_name::*};
@@ -23,12 +24,14 @@ pub fn Lists(cx: Scope) -> impl IntoView {
                             <For each=move || lists.clone()
                             key=move |list| list.id
                             view=move |list| view!{cx, <div>
+                                    <A href=format!("/list/{}", list.id)>
                                     {list.name}
                                     {if let Some(world_id) = list.world_id {
                                         view!{cx, <WorldName id=AnySelector::World(world_id)/>}.into_view(cx)
                                     } else {
                                         ().into_view(cx)
                                     }}
+                                    </A>
                                 </div>}
                             />
                         </div>}.into_view(cx)

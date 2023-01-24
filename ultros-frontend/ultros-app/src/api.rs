@@ -74,7 +74,7 @@ pub(crate) async fn get_lists(cx: Scope) -> Option<Vec<List>> {
 }
 
 pub(crate) async fn get_list_items(cx: Scope, list_id: i32) -> Option<(List, Vec<ListItem>)> {
-    fetch_api(cx, &format!("/api/v1/list/items")).await
+    fetch_api(cx, &format!("/api/v1/list/{list_id}")).await
 }
 
 pub(crate) async fn delete_list(cx: Scope, list_id: i32) -> Option<()> {
@@ -90,7 +90,11 @@ pub(crate) async fn edit_list(cx: Scope, list: List) -> Option<()> {
 }
 
 pub(crate) async fn add_item_to_list(cx: Scope, list_id: i32, list_item: ListItem) -> Option<()> {
-    post_api(cx, &format!("/api/v1/list/add/item/{list_id}"), list_item).await
+    post_api(cx, &format!("/api/v1/list/{list_id}/add/item"), list_item).await
+}
+
+pub(crate) async fn delete_list_item(cx: Scope, list_id: i32) -> Option<()> {
+    fetch_api(cx, &format!("/api/v1/list/item/{list_id}/delete")).await
 }
 
 #[cfg(not(feature = "ssr"))]
