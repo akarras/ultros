@@ -1,12 +1,16 @@
 use leptos::*;
 use ultros_api_types::{
     cheapest_listings::CheapestListings,
+    list::{List, ListItem},
     recent_sales::RecentSales,
     user::{UserData, UserRetainerListings, UserRetainers},
     world::WorldData,
     world_helper::AnyResult,
-    CurrentlyShownItem, Retainer, list::{List, ListItem},
+    CurrentlyShownItem, Retainer,
 };
+
+#[cfg(not(feature = "ssr"))]
+use serde::Serialize;
 
 pub(crate) async fn get_listings(
     cx: Scope,
@@ -66,14 +70,28 @@ pub(crate) async fn unclaim_retainer(cx: Scope, owned_retainer_id: i32) -> Optio
 }
 
 pub(crate) async fn get_lists(cx: Scope) -> Option<Vec<List>> {
-    fetch_api(cx, &format!("/api/v1/lists")).await
+    fetch_api(cx, &format!("/api/v1/list")).await
 }
 
-pub(crate) async fn get_list_items(cx: Scope) -> Option<(List, Vec<ListItem>)> {
-    fetch_api(cx, &format!("/api/v1/lists/items")).await
+pub(crate) async fn get_list_items(cx: Scope, list_id: i32) -> Option<(List, Vec<ListItem>)> {
+    fetch_api(cx, &format!("/api/v1/list/items")).await
 }
 
+pub(crate) async fn delete_list(cx: Scope, list_id: i32) -> Option<()> {
+    fetch_api(cx, &format!("/api/v1/list/{list_id}/delete")).await
+}
 
+pub(crate) async fn create_list(cx: Scope, list: List) -> Option<()> {
+    post_api(cx, &format!("/api/v1/list/create"), list).await
+}
+
+pub(crate) async fn edit_list(cx: Scope, list: List) -> Option<()> {
+    post_api(cx, &format!("/api/v1/list/edit"), list).await
+}
+
+pub(crate) async fn add_item_to_list(cx: Scope, list_id: i32, list_item: ListItem) -> Option<()> {
+    post_api(cx, &format!("/api/v1/list/add/item/{list_id}"), list_item).await
+}
 
 #[cfg(not(feature = "ssr"))]
 pub async fn fetch_api<T>(cx: Scope, path: &str) -> Option<T>
@@ -139,11 +157,10 @@ where
         .ok()
 }
 
-
 #[cfg(not(feature = "ssr"))]
 pub async fn post_api<Y, T>(cx: Scope, path: &str, json: Y) -> Option<T>
 where
-    Y: Serializable,
+    Y: Serialize,
     T: Serializable,
 {
     let abort_controller = web_sys::AbortController::new().ok();
@@ -177,7 +194,7 @@ where
 }
 
 #[cfg(feature = "ssr")]
-pub async fn post_api<T>(cx: Scope, path: &str, json: Y) -> Option<T>
+pub async fn post_api<Y, T>(_cx: Scope, _path: &str, _json: Y) -> Option<T>
 where
     Y: Serializable,
     T: Serializable,

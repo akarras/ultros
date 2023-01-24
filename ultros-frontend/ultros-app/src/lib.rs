@@ -9,7 +9,10 @@ use crate::api::get_worlds;
 use crate::global_state::LocalWorldData;
 use crate::{
     components::{profile_display::*, search_box::*},
-    routes::{analyzer::*, edit_retainers::*, listings::*, lists::*, profile::*, retainers::*, undercuts::*},
+    routes::{
+        analyzer::*, edit_lists::*, edit_retainers::*, list_view::*, listings::*, lists::*,
+        profile::*, retainers::*, undercuts::*,
+    },
 };
 use leptos::*;
 use leptos_meta::*;
@@ -69,6 +72,8 @@ pub fn App(cx: Scope) -> impl IntoView {
                 <Route path="retainers" view=move |cx| view! { cx, <Retainers/>} />
                     // <Route path="listings" view=move |cx| view! {cx, <h1>"Retainer Listings"</h1>}/>
                 // </Route>
+                <Route path="list/edit" view=move |cx| view! {cx, <EditLists/>}/>
+                <Route path="list/:id" view=move |cx| view!{ cx, <ListView/>}/>
                 <Route path="list" view=move |cx| view!{cx, <Lists/>}/>
                 <Route path="listings/:world/:id" view=move |cx| view! { cx, <Listings />}/>
                 // <Route path="*listings" view=move |cx| view! { cx, <h1>"Listings"</h1>}/>

@@ -1,22 +1,17 @@
 use leptos::*;
 
 use crate::api::get_lists;
-use crate::components::{loading::*, world_name::*};
+use crate::components::{lists_nav::*, loading::*, world_name::*};
 use ultros_api_types::world_helper::AnySelector;
 
-
-pub fn AddItem(cx: Scope) -> impl IntoView {
-
-}
+pub fn AddItem(cx: Scope) -> impl IntoView {}
 
 #[component]
 pub fn Lists(cx: Scope) -> impl IntoView {
-    let create_list_open = create_signal(cx, false);
-    let lists = create_resource(cx, move || {}, move |_| {
-        get_lists(cx)
-    });
-    view! {cx, 
+    let lists = create_resource(cx, move || {}, move |_| get_lists(cx));
+    view! {cx,
     <div class="container">
+        <ListsNav />
         <div class="main-content flex-column">
             <span class="content-title">"Lists"</span>
             <Suspense fallback=move || view!{cx, <Loading/>}>

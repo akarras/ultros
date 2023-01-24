@@ -2,7 +2,7 @@ use leptos::*;
 use ultros_api_types::world_helper::AnySelector;
 
 use crate::api::{claim_retainer, get_retainers, search_retainers, unclaim_retainer};
-use crate::components::{loading::*, world_name::*, retainer_nav::*};
+use crate::components::{loading::*, retainer_nav::*, world_name::*};
 
 #[component]
 pub fn EditRetainers(cx: Scope) -> impl IntoView {

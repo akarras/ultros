@@ -11,7 +11,7 @@ use axum::body::{Empty, Full};
 use axum::extract::{FromRef, Path, Query, State};
 use axum::http::{HeaderValue, Response, StatusCode};
 use axum::response::{IntoResponse, Redirect};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{body, middleware, Json, Router};
 use axum_extra::extract::cookie::Key;
 use futures::future::{try_join, try_join_all};
@@ -28,9 +28,11 @@ use std::time::Duration;
 use tokio::time::timeout;
 use tower_http::compression::CompressionLayer;
 use tracing::debug;
+use ultros_api_types::list::{List, ListItem};
 use ultros_api_types::user::{OwnedRetainer, UserData, UserRetainerListings, UserRetainers};
 use ultros_api_types::world::WorldData;
 use ultros_api_types::{ActiveListing, CurrentlyShownItem, FfxivCharacter, Retainer};
+use ultros_db::ActiveValue;
 use ultros_db::{world_cache::WorldCache, UltrosDb};
 use ultros_ui_server::create_leptos_app;
 use universalis::{ItemId, ListingView, UniversalisClient, WorldId};
@@ -522,6 +524,89 @@ pub(crate) async fn unclaim_retainer(
     Ok(())
 }
 
+pub(crate) async fn get_lists(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+) -> Result<Json<Vec<List>>, ApiError> {
+    Ok(Json(
+        db.get_lists_for_user(user.id as i64)
+            .await?
+            .into_iter()
+            .map(|list| List::from(list))
+            .collect::<Vec<_>>(),
+    ))
+}
+
+pub(crate) async fn get_list(
+    State(db): State<UltrosDb>,
+    Path(id): Path<i32>,
+    user: AuthDiscordUser,
+) -> Result<Json<(List, Vec<ListItem>)>, ApiError> {
+    let (list, list_items) = futures::future::try_join(
+        db.get_list(id, user.id as i64),
+        db.get_list_items(id, user.id as i64),
+    )
+    .await?;
+    let list_items = list_items
+        .into_iter()
+        .map(|item| ListItem::from(item))
+        .collect::<Vec<_>>();
+    let list = List::from(list);
+    Ok(Json((list, list_items)))
+}
+
+pub(crate) async fn delete_list(
+    State(db): State<UltrosDb>,
+    Path(list_id): Path<i32>,
+    user: AuthDiscordUser,
+) -> Result<Json<()>, ApiError> {
+    db.delete_list(list_id, user.id as i64).await?;
+    Ok(Json(()))
+}
+
+pub(crate) async fn create_list(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Json(list): Json<List>,
+) -> Result<Json<()>, ApiError> {
+    let discord_user = db.get_or_create_discord_user(user.id, user.name).await?;
+    db.create_list(discord_user, list.name, None).await?;
+    Ok(Json(()))
+}
+
+pub(crate) async fn edit_list(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Json(list): Json<List>,
+) -> Result<Json<()>, ApiError> {
+    db.update_list(list.id, user.id as i64, |ulist| {
+        ulist.datacenter_id = ActiveValue::Set(list.datacenter_id);
+        ulist.region_id = ActiveValue::Set(list.region_id);
+        ulist.world_id = ActiveValue::Set(list.world_id);
+        ulist.name = ActiveValue::Set(list.name);
+    })
+    .await?;
+    Ok(Json(()))
+}
+
+pub(crate) async fn post_item_to_list(
+    State(db): State<UltrosDb>,
+    Path(id): Path<i32>,
+    user: AuthDiscordUser,
+    Json(item): Json<ListItem>,
+) -> Result<Json<()>, ApiError> {
+    let list = db.get_list(id, user.id as i64).await?;
+    let ListItem {
+        item_id,
+        hq,
+        quantity,
+        ..
+    } = item;
+    db.add_item_to_list(&list, user.id as i64, item_id, hq, quantity)
+        .await?;
+    Ok(Json(()))
+}
+
 pub(crate) async fn start_web(state: WebState) {
     let db = state.db.clone();
     // build our application with a route
@@ -530,6 +615,12 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/cheapest/:world", get(cheapest_per_world))
         .route("/api/v1/recentSales/:world", get(recent_sales))
         .route("/api/v1/listings/:world/:itemid", get(world_item_listings))
+        .route("/api/v1/list", get(get_lists))
+        .route("/api/v1/list/create", post(create_list))
+        .route("/api/v1/list/edit", post(edit_list))
+        .route("/api/v1/list/:id", get(get_list))
+        .route("/api/v1/list/:id/add", post(post_item_to_list))
+        .route("/api/v1/list/:id/delete", get(delete_list))
         .route("/api/v1/world_data", get(world_data))
         .route("/api/v1/current_user", get(current_user))
         .route("/api/v1/user/retainer", get(user_retainers))

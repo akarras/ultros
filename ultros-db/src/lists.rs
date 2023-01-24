@@ -40,22 +40,22 @@ impl UltrosDb {
         &self,
         discord_user: discord_user::Model,
         name: String,
-        selector: AnySelector,
+        selector: Option<AnySelector>,
     ) -> Result<list::Model> {
         let list = list::ActiveModel {
             id: Default::default(),
             owner: ActiveValue::Set(discord_user.id),
             name: ActiveValue::Set(name),
             world_id: match selector {
-                AnySelector::World(w) => ActiveValue::Set(Some(w)),
+                Some(AnySelector::World(w)) => ActiveValue::Set(Some(w)),
                 _ => Default::default(),
             },
             datacenter_id: match selector {
-                AnySelector::Datacenter(d) => ActiveValue::Set(Some(d)),
+                Some(AnySelector::Datacenter(d)) => ActiveValue::Set(Some(d)),
                 _ => Default::default(),
             },
             region_id: match selector {
-                AnySelector::Region(r) => ActiveValue::Set(Some(r)),
+                Some(AnySelector::Region(r)) => ActiveValue::Set(Some(r)),
                 _ => Default::default(),
             },
         }

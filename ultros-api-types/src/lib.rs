@@ -4,12 +4,12 @@ mod retainer;
 mod sale_history;
 
 pub mod cheapest_listings;
+pub mod list;
 pub mod recent_sales;
 pub mod result;
 pub mod user;
 pub mod world;
 pub mod world_helper;
-pub mod list;
 
 pub use ffxiv_character::FfxivCharacter;
 pub use listings::ActiveListing;

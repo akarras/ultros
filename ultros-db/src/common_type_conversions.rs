@@ -1,11 +1,12 @@
 use ultros_api_types::{
+    list::{List, ListItem},
     user::OwnedRetainer,
     world::{Datacenter, Region, World, WorldData},
     ActiveListing, FfxivCharacter, Retainer, SaleHistory,
 };
 
 use crate::{
-    entity::{self, datacenter, final_fantasy_character, owned_retainers, region},
+    entity::{self, datacenter, final_fantasy_character, list, list_item, owned_retainers, region},
     world_cache::WorldCache,
 };
 
@@ -160,6 +161,46 @@ impl From<owned_retainers::Model> for OwnedRetainer {
             discord_id,
             character_id,
             weight,
+        }
+    }
+}
+
+impl From<list::Model> for List {
+    fn from(value: list::Model) -> Self {
+        let list::Model {
+            id,
+            owner,
+            name,
+            world_id,
+            datacenter_id,
+            region_id,
+        } = value;
+        Self {
+            id,
+            owner,
+            name,
+            world_id,
+            datacenter_id,
+            region_id,
+        }
+    }
+}
+
+impl From<list_item::Model> for ListItem {
+    fn from(value: list_item::Model) -> Self {
+        let list_item::Model {
+            id,
+            item_id,
+            list_id,
+            hq,
+            quantity,
+        } = value;
+        Self {
+            id,
+            item_id,
+            list_id,
+            hq,
+            quantity,
         }
     }
 }

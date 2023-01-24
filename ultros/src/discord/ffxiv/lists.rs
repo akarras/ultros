@@ -59,7 +59,7 @@ async fn create(
     let list = ctx
         .data()
         .db
-        .create_list(user, list_name, AnySelector::from(&result))
+        .create_list(user, list_name, Some(AnySelector::from(&result)))
         .await?;
     ctx.send(|r| {
         r.embed(|e| {

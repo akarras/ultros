@@ -1,6 +1,6 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct List {
     pub id: i32,
     pub owner: i64,
@@ -10,7 +10,7 @@ pub struct List {
     pub region_id: Option<i32>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct ListItem {
     pub id: i32,
     pub item_id: i32,

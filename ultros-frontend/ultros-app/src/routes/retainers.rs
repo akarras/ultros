@@ -1,6 +1,6 @@
 use crate::api::{get_retainer_listings, get_retainers};
 use crate::components::gil::*;
-use crate::components::{item_icon::*, world_name::*, retainer_nav::*};
+use crate::components::{item_icon::*, retainer_nav::*, world_name::*};
 use leptos::*;
 use ultros_api_types::{world_helper::AnySelector, ActiveListing, FfxivCharacter, Retainer};
 use xiv_gen::ItemId;

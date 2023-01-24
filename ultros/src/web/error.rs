@@ -10,7 +10,6 @@ use oauth2::{
     RevocationErrorResponseType, StandardErrorResponse,
 };
 use reqwest::StatusCode;
-use serde::{Deserialize, Serialize};
 use sitemap_rs::{sitemap_index_error::SitemapIndexError, url_set_error::UrlSetError};
 use thiserror::Error;
 use tokio::{sync::broadcast::error::SendError, time::error::Elapsed};
