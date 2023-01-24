@@ -73,6 +73,8 @@ pub(crate) async fn get_list_items(cx: Scope) -> Option<(List, Vec<ListItem>)> {
     fetch_api(cx, &format!("/api/v1/lists/items")).await
 }
 
+
+
 #[cfg(not(feature = "ssr"))]
 pub async fn fetch_api<T>(cx: Scope, path: &str) -> Option<T>
 where
@@ -135,4 +137,51 @@ where
     T::from_json(&json)
         .map_err(|e| log::error!("{e} {path} returned: json text {json}"))
         .ok()
+}
+
+
+#[cfg(not(feature = "ssr"))]
+pub async fn post_api<Y, T>(cx: Scope, path: &str, json: Y) -> Option<T>
+where
+    Y: Serializable,
+    T: Serializable,
+{
+    let abort_controller = web_sys::AbortController::new().ok();
+    let abort_signal = abort_controller.as_ref().map(|a| a.signal());
+
+    let json: String = gloo_net::http::Request::post(path)
+        .abort_signal(abort_signal.as_ref())
+        .json(&json)
+        .ok()?
+        .send()
+        .await
+        .map_err(|e| log!("{e}"))
+        .ok()?
+        .text()
+        .await
+        .ok()?;
+
+    // abort in-flight requests if the Scope is disposed
+    // i.e., if we've navigated away from this page
+    on_cleanup(cx, move || {
+        if let Some(abort_controller) = abort_controller {
+            abort_controller.abort()
+        }
+    });
+    T::from_json(&json)
+        .map_err(|e| {
+            gloo::console::error!(format!("Error receiving json error: {e:?}"));
+            e
+        })
+        .ok()
+}
+
+#[cfg(feature = "ssr")]
+pub async fn post_api<T>(cx: Scope, path: &str, json: Y) -> Option<T>
+where
+    Y: Serializable,
+    T: Serializable,
+{
+    // This really only will be called by clients- I think.
+    unreachable!("post_api should only be called on clients? I think...")
 }

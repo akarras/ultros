@@ -19,7 +19,7 @@ pub fn Lists(cx: Scope) -> impl IntoView {
     <div class="container">
         <div class="main-content flex-column">
             <span class="content-title">"Lists"</span>
-            <Suspense fallback=view!{cx, <Loading/>}>
+            <Suspense fallback=move || view!{cx, <Loading/>}>
             {move || lists().map(move |lists| {
                 match lists {
                     Some(lists) => {
@@ -29,7 +29,11 @@ pub fn Lists(cx: Scope) -> impl IntoView {
                             key=move |list| list.id
                             view=move |list| view!{cx, <div>
                                     {list.name}
-                                    <WorldName id=AnySelector::World(list.world_id)/>
+                                    {if let Some(world_id) = list.world_id {
+                                        view!{cx, <WorldName id=AnySelector::World(world_id)/>}.into_view(cx)
+                                    } else {
+                                        ().into_view(cx)
+                                    }}
                                 </div>}
                             />
                         </div>}.into_view(cx)
