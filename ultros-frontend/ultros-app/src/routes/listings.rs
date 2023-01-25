@@ -1,7 +1,8 @@
 use crate::api::get_listings;
 use crate::api::get_worlds;
 use crate::components::{
-    clipboard::*, item_icon::*, listings_table::*, loading::*, sale_history_table::*, ui_text::*, price_history_chart::*
+    clipboard::*, item_icon::*, listings_table::*, loading::*, price_history_chart::*,
+    sale_history_table::*, ui_text::*,
 };
 use leptos::*;
 use leptos_meta::*;
@@ -83,33 +84,31 @@ fn ListingsContent(cx: Scope, item_id: Memo<i32>, world: Memo<String>) -> impl I
         move |(item_id, world)| async move { get_listings(cx, item_id, &world).await },
     );
     view! { cx,
+
         <Suspense fallback=move || view!{ cx, <Loading/>}>
         {move || listing_resource().map(|listings| {
             match listings {
-                None => view!{ cx, <div>"Error getting listings"</div>},
+                None => view!{ cx, <div>"Error getting listings"</div>}.into_view(cx),
                 Some(currently_shown) => {
-                    let hq_listings : Vec<_> = currently_shown.listings.iter().cloned().filter(|(listing, _)| listing.hq).collect();
-                    let lq_listings : Vec<_> = currently_shown.listings.iter().cloned().filter(|(listing, _)| !listing.hq).collect();
+                    let hq_listings = currently_shown.listings.iter().cloned().filter(|(listing, _)| listing.hq).collect::<Vec<_>>();
+                    let lq_listings = currently_shown.listings.iter().cloned().filter(|(listing, _)| !listing.hq).collect::<Vec<_>>();
                     view! { cx,
-                        <div class="flex flex-wrap">
-                            {if !hq_listings.is_empty() {
-                                view!{ cx, <div class="content-well">
-                                    <span class="content-title">"high quality listings"</span>
-                                    <ListingsTable listings=hq_listings />
-                                </div> }.into_any()
-                            } else {
-                                view!{ cx, <div></div> }.into_any()
-                            }}
-                            <div class="content-well">
-                                <span class="content-title">"low quality listings"</span>
-                                <ListingsTable listings=lq_listings />
-                            </div>
-                            <div class="content-well">
-                                <span class="content-title">"sale history"</span>
-                                <SaleHistoryTable sale_history=currently_shown.sales />
-                            </div>
+                        <PriceHistoryChart />
+                        {(!hq_listings.is_empty()).then(move || {
+                            view!{ cx, <div class="content-well">
+                                <span class="content-title">"high quality listings"</span>
+                                <ListingsTable listings=hq_listings.into() />
+                            </div> }.into_view(cx)
+                        })}
+                        <div class="content-well">
+                            <span class="content-title">"low quality listings"</span>
+                            <ListingsTable listings=lq_listings.into() />
                         </div>
-                    }
+                        <div class="content-well">
+                            <span class="content-title">"sale history"</span>
+                            <SaleHistoryTable sale_history=currently_shown.sales />
+                        </div>
+                    }.into_view(cx)
                 }
             }
         })}
@@ -170,11 +169,8 @@ pub fn Listings(cx: Scope) -> impl IntoView {
                     <WorldMenu world_name=world item_id />
                 </div>
             </div>
-            <PriceHistoryChart />
             <div class="main-content flex-wrap">
-                <div class="content-well">
-                    <ListingsContent item_id world />
-                </div>
+                <ListingsContent item_id world />
             </div>
         </div>
     }

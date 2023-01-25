@@ -1,5 +1,5 @@
 [workspace]
-members = ["universalis", "xivapi", "recipepricecheck", "crafterstoolbox", "xiv-gen", "xiv-gen-db", "ultros", "ultros-db", "migration", "ultros-frontend/ultros-client", "ultros-frontend/ultros-common", "ultros-frontend/ultros-app", "ultros-frontend/ultros-ui-server", "ultros-api-types"]
+members = ["universalis", "xivapi", "recipepricecheck", "crafterstoolbox", "xiv-gen", "xiv-gen-db", "ultros", "ultros-db", "migration", "ultros-frontend/ultros-client", "ultros-frontend/ultros-app", "ultros-frontend/ultros-ui-server", "ultros-api-types"]
 
 
 [workspace.dependencies]

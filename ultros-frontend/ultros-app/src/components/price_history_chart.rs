@@ -1,31 +1,30 @@
-
 use leptos::*;
 
 use super::loading::*;
 
-
-
-#[cfg(not(feature = "ssr"))]
 #[component]
 pub fn PriceHistoryChart(cx: Scope) -> impl IntoView {
-    use plotters::{prelude::*, style::{RGBAColor, RGBColor}};
-use plotters_canvas::CanvasBackend;
-use ultros_api_types::SaleHistory;
-use std::ops::Deref;
+    use plotters::{
+        prelude::*,
+        style::{RGBAColor, RGBColor},
+    };
+    use plotters_canvas::CanvasBackend;
+    use std::ops::Deref;
+    use ultros_api_types::SaleHistory;
 
-use chrono::{Local, Date, TimeZone, Duration};
-fn parse_time(t: &str) -> Date<Local> {
-    Local
-        .datetime_from_str(&format!("{} 0:0", t), "%Y-%m-%d %H:%M")
-        .unwrap()
-        .date()
-}
+    use chrono::{Date, Duration, Local, TimeZone};
+    fn parse_time(t: &str) -> Date<Local> {
+        Local
+            .datetime_from_str(&format!("{} 0:0", t), "%Y-%m-%d %H:%M")
+            .unwrap()
+            .date()
+    }
     let c = NodeRef::<HtmlElement<Canvas>>::new(cx);
-    create_effect(cx, move |_|
+    create_effect(cx, move |_| {
         if let Some(canvas) = c() {
             let data = get_data();
             let backend = CanvasBackend::with_canvas_object(canvas.deref().clone()).unwrap();
-            
+
             let root = backend.into_drawing_area();
             root.fill(&RGBColor(16, 10, 18).mix(0.93)).expect("Test");
 
@@ -33,36 +32,38 @@ fn parse_time(t: &str) -> Date<Local> {
                 parse_time(&data[0].0) + Duration::days(1),
                 parse_time(&data[29].0) - Duration::days(1),
             );
-        
+
             let mut chart = ChartBuilder::on(&root)
                 .x_label_area_size(40)
                 .y_label_area_size(40)
-                .caption("MSFT Stock Price", ("sans-serif", 50.0).into_font().color(&WHITE))
-                .build_cartesian_2d(from_date..to_date, 110f32..135f32).unwrap();
-            
-            chart.configure_mesh().label_style(&WHITE).light_line_style(&RGBColor(200,200,200).mix(0.2)).draw().unwrap();
-        
-            chart.draw_series(
-                data.iter().map(|x| {
+                .caption(
+                    "MSFT Stock Price",
+                    ("sans-serif", 50.0).into_font().color(&WHITE),
+                )
+                .build_cartesian_2d(from_date..to_date, 110f32..135f32)
+                .unwrap();
+
+            chart
+                .configure_mesh()
+                .label_style(&WHITE)
+                .light_line_style(&RGBColor(200, 200, 200).mix(0.2))
+                .draw()
+                .unwrap();
+
+            chart
+                .draw_series(data.iter().map(|x| {
                     CandleStick::new(parse_time(x.0), x.1, x.2, x.3, x.4, GREEN.filled(), RED, 15)
-                }),
-                
-            ).unwrap();
+                }))
+                .unwrap();
 
             // To avoid the IO failure being ignored silently, we manually call the present function
             root.present().expect("Unable to write result to file, please make sure 'plotters-doc-data' dir exists under current dir");
             // view!{cx, <p>"written"</p>}
         }
-    );
-    view!{cx, 
-        <canvas width=100% height=500 _ref=c>      
-        </canvas>}
-}
-
-#[cfg(feature = "ssr")]
-#[component]
-pub fn PriceHistoryChart(cx: Scope) -> impl IntoView {
-    view!{cx, <Loading/>}
+    });
+    view! {cx,
+    <canvas width="800" height="500" _ref=c>
+    </canvas>}
 }
 
 fn get_data() -> Vec<(&'static str, f32, f32, f32, f32)> {

@@ -7064,10 +7064,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ultros-common"
-version = "0.1.0"
-
-[[package]]
 name = "ultros-db"
 version = "0.1.0"
 dependencies = [
