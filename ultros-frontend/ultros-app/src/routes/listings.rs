@@ -1,7 +1,7 @@
 use crate::api::get_listings;
 use crate::api::get_worlds;
 use crate::components::{
-    clipboard::*, item_icon::*, listings_table::*, loading::*, sale_history_table::*, ui_text::*,
+    clipboard::*, item_icon::*, listings_table::*, loading::*, sale_history_table::*, ui_text::*, price_history_chart::*
 };
 use leptos::*;
 use leptos_meta::*;
@@ -170,6 +170,7 @@ pub fn Listings(cx: Scope) -> impl IntoView {
                     <WorldMenu world_name=world item_id />
                 </div>
             </div>
+            <PriceHistoryChart />
             <div class="main-content flex-wrap">
                 <div class="content-well">
                     <ListingsContent item_id world />

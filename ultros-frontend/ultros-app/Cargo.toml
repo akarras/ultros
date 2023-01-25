@@ -18,7 +18,7 @@ sublime_fuzzy = "0.7"
 reqwest = {version = "0.11.0", optional = true, features = ["brotli"]}
 gloo-net = {version = "0.2", optional = true, features = ["http"]}
 gloo = {version = "0.8.0", optional = true}
-web-sys = {version = "0.3", optional = true, features = ["AbortController", "Clipboard", "Window", "Navigator"]}
+web-sys = {version = "0.3", optional = true, features = ["AbortController", "Clipboard", "Window", "Navigator", "HtmlCanvasElement"]}
 ultros-api-types = {path = "../../ultros-api-types"}
 serde = {version = "1", features = ["rc"]}
 thousands = "0.2.0"
@@ -28,7 +28,9 @@ futures = "0.3"
 timediff = "0.2.3"
 itertools = "0.10.5"
 colorsys = "0.6.6"
+plotters = "0.3"
+plotters-canvas = "0.3"
 
 [features]
 hydrate = ["leptos/hydrate", "leptos_meta/hydrate", "leptos_router/hydrate", "gloo", "gloo-net", "web-sys"]
-ssr = ["leptos/ssr", "leptos_meta/ssr", "leptos_router/ssr", "reqwest", "leptos_axum"]
+ssr = ["leptos/ssr", "leptos_meta/ssr", "leptos_router/ssr", "reqwest", "leptos_axum", "web-sys"]

@@ -98,7 +98,7 @@ pub fn ListView(cx: Scope) -> impl IntoView {
                                 <For each=move || items.clone() key=|item| item.id view=move |item| view!{cx, <tr>
                                     <td>
                                         <ItemIcon item_id=item.item_id icon_size=IconSize::Small/>
-                                        {game_items.get(&ItemId(item.item_id)).map(|item| view!{cx, {&item.name}})}
+                                        {game_items.get(&ItemId(item.item_id)).map(|item| &item.name)}
                                     </td>
                                     <td>
                                         <button class="btn" on:click=move |_| {delete_item.dispatch(item.id)}>
