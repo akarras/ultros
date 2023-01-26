@@ -4,10 +4,7 @@ use super::loading::*;
 
 #[component]
 pub fn PriceHistoryChart(cx: Scope) -> impl IntoView {
-    use plotters::{
-        prelude::*,
-        style::{RGBAColor, RGBColor},
-    };
+    use plotters::{prelude::*, style::RGBColor};
     use plotters_canvas::CanvasBackend;
     use std::ops::Deref;
     use ultros_api_types::SaleHistory;

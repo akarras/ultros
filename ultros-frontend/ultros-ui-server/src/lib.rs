@@ -8,7 +8,7 @@ use leptos::*;
 use leptos_axum::{generate_route_list, LeptosRoutes};
 use ultros_app::*;
 
-pub async fn create_leptos_app(db: ultros_db::UltrosDb) -> Router {
+pub async fn create_leptos_app(_db: ultros_db::UltrosDb) -> Router {
     use axum::{error_handling::HandleError, http::StatusCode};
     use leptos::tracing::log;
     use tower_http::services::ServeDir;

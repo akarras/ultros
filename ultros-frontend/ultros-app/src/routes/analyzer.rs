@@ -1,9 +1,9 @@
 use chrono::{Duration, Utc};
+use humantime::{format_duration, parse_duration};
 use itertools::Itertools;
 use leptos::*;
 use leptos_router::*;
 use std::{cmp::Reverse, collections::HashMap, rc::Rc};
-use timediff::TimeDiff;
 use ultros_api_types::{
     cheapest_listings::CheapestListings,
     recent_sales::{RecentSales, SaleData},
@@ -163,18 +163,42 @@ fn AnalyzerTable(
 
     let items = &xiv_gen_db::decompress_data().items;
     let (sort_mode, set_sort_mode) = create_signal(cx, SortMode::Roi);
-    let (minimum_profit, set_minimum_profit) = create_signal(cx, 0);
-    let (minimum_roi, set_minimum_roi) = create_signal(cx, 0);
-    let (max_predicted_time, set_max_predicted_time) = create_signal(cx, i64::pow(10, 10));
-    let predicted_time = move || Duration::seconds(max_predicted_time());
+    let (minimum_profit, set_minimum_profit) = create_signal(cx, Ok(0));
+    let (minimum_roi, set_minimum_roi) = create_signal(cx, Ok(0));
+    let (max_predicted_time, set_max_predicted_time) = create_signal(cx, "1 week".to_string());
+    let (world_filter, set_world_filter) = create_signal(cx, None);
+    let (datacenter_filter, set_datacenter_filter) = create_signal(cx, None);
+    let predicted_time = create_memo(cx, move |_| parse_duration(&max_predicted_time()));
+    let predicted_time_string = move || {
+        predicted_time()
+            .map(|duration| format_duration(duration).to_string())
+            .unwrap_or_default()
+    };
     let sorted_data = create_memo(cx, move |_| {
         let mut sorted_data = profits
             .0
             .iter()
             .cloned()
-            .filter(move |data| data.profit > minimum_profit())
-            .filter(move |data| data.return_on_investment > minimum_roi())
-            .filter(move |data| data.sale_summary.avg_sale_duration < Some(predicted_time()))
+            .filter(move |data| {
+                minimum_profit()
+                    .map(|min| data.profit > min)
+                    .unwrap_or(true)
+            })
+            .filter(move |data| {
+                minimum_roi()
+                    .map(|roi| data.return_on_investment > roi)
+                    .unwrap_or(true)
+            })
+            .filter(move |data| {
+                predicted_time()
+                    .map(|time| {
+                        data.sale_summary
+                            .avg_sale_duration
+                            .map(|dur| dur.to_std().ok().map(|dur| dur < time).unwrap_or(false))
+                            .unwrap_or(false)
+                    })
+                    .unwrap_or(true)
+            })
             .collect::<Vec<_>>();
         match sort_mode() {
             SortMode::Roi => sorted_data.sort_by_key(|data| Reverse(data.return_on_investment)),
@@ -184,104 +208,107 @@ fn AnalyzerTable(
         sorted_data.truncate(100);
         sorted_data
     });
-
-    view! { cx, <div class="flex flex-wrap">
-        <div class="slidecontainer">
-            <p>"minimum profit:" <span>{move || view!{cx, <Gil amount=minimum_profit() />}}</span></p>
-            <input type="range" min=0 max=10 prop:value=minimum_profit class="slider" on:input=move |input| set_minimum_profit(i32::pow(10, event_target_value(&input).parse::<u32>().expect("Shouldn't have non integer"))) />
-        </div>
-        <div class="slidecontainer">
-            <p>"minimum ROI:" <span>{move || minimum_roi()}"%"</span></p>
-            <input type="range" min=0 max=10 prop:value=minimum_roi class="slider" on:input=move |input| set_minimum_roi(i32::pow(10, event_target_value(&input).parse::<u32>().expect("Shouldn't have non integer"))) />
-        </div>
-        <div class="slidecontainer">
-            <p>"minimum time:" <span>{move || predicted_time().to_std().ok().and_then(|duration| TimeDiff::to_diff_duration(duration).parse().ok()).unwrap_or_default()}</span></p>
-            <input type="range" min=0 max=10 prop:value=max_predicted_time class="slider" on:input=move |input| set_max_predicted_time(i64::pow(10, event_target_value(&input).parse::<u32>().expect("Shouldn't have non integer"))) />
-        </div>
-        </div>
-        <div>
-        <table>
-            <tr>
-                <th>"Item"</th>
-                <th on:click=move |_| set_sort_mode(SortMode::Profit)>
-                    <div class="flex-row flex-space">
-                    {move || {
-                        match sort_mode() {
-                            SortMode::Profit => {
-                                view!{cx, "Profit"<i class="fa-solid fa-sort-down"></i>}.into_view(cx)
-                            },
-                            _ => view!{cx, <Tooltip tooltip_text="Sort by profit".to_string()>"profit"</Tooltip>}.into_view(cx),
-                        }
-                    }}
-                    </div>
-                </th>
-                <th on:click=move |_| set_sort_mode(SortMode::Roi)>
-                    <div class="flex-row flex-space">
-                    {move || {
-                        match sort_mode() {
-                            SortMode::Roi => {
-                                view!{cx, "R.O.I"<i class="fa-solid fa-sort-down"></i>}.into_view(cx)
-                            },
-                            _ => view!{cx, <Tooltip tooltip_text="Sort by return on investment".to_string()>"R.O.I."</Tooltip>}.into_view(cx),
-                        }
-                    }}
-                    </div>
-                </th>
-                <th>"World"</th>
-                <th>"Datacenter"</th>
-                <th>"Next predicted sale"</th>
-            </tr>
-            <For each=sorted_data
-                 key=move |data| {
-                    (data.sale_summary.item_id, data.cheapest_world_id, data.sale_summary.hq)
-                 }
-                 view=move |data| {
-                    let world = worlds.lookup_selector(AnySelector::World(data.cheapest_world_id));
-                    let datacenter = world
-                        .as_ref()
-                        .and_then(|world| {
-                            let datacenters = worlds.get_datacenters(world);
-                            datacenters.first().map(|dc| dc.name.as_str())
-                        })
-                        .unwrap_or_default()
-                        .to_string();
-                    let world = world
-                        .as_ref()
-                        .map(|r| r.get_name())
-                        .unwrap_or_default()
-                        .to_string();
-                    let item_id = data.sale_summary.item_id;
-                    let item = items
-                        .get(&ItemId(item_id))
-                        .map(|item| item.name.as_str())
-                        .unwrap_or_default();
-                    view! {cx, <tr>
-                        <td class="flex flex-row">
-                            <a href=format!("/listings/{world}/{item_id}")>
-                                <ItemIcon item_id icon_size=IconSize::Small/>
-                                {item}
-                            </a>
-                            <Clipboard clipboard_text=item.to_string()/>
-                        </td>
-                        <td><Gil amount=data.profit /></td>
-                        <td>{data.return_on_investment}"%"</td>
-                        <td><Gil amount=data.cheapest_price/>" on "{world}</td>
-                        <td>{datacenter}</td>
-                        <td>{data.sale_summary
-                                .avg_sale_duration
-                                .and_then(|sale_duration| {
-                                    let duration = sale_duration.to_std().ok()?;
-                                    if sale_duration.num_minutes() < 1 {
-                                        None
-                                    } else {
-                                        TimeDiff::to_diff_duration(duration).parse().ok()
-                                    }
-                                })
-                        }</td>
-                        </tr>}
-                 }/>
-        </table>
-    </div> }
+    view! { cx,
+       <div class="flex flex-wrap flex-space">
+           <div>
+               {move || if let Ok(minimum_profit) = minimum_profit() {
+                   view!{cx, <p>"minimum profit:"<br/><Gil amount=minimum_profit/></p>}
+               } else {
+                   view!{cx, <p>"Minimum profit not set"</p>}
+               }}
+               <input min=0 max=100000 type="number" on:input=move |input| set_minimum_profit(event_target_value(&input).parse::<i32>()) />
+           </div>
+           <div>
+               {move || if let Ok(minimum_roi) = minimum_roi() {
+                   view!{cx, <p>"minimum ROI:"<br/>{minimum_roi}"%"</p>}
+               } else {
+                   view!{cx, <p>"Minimum ROI not set"</p>}
+               }}
+               <input min=0 max=100000 type="number" on:input=move |input| set_minimum_roi(event_target_value(&input).parse::<i32>()) />
+           </div>
+           <div>
+               <p>"minimum time:" <br/>{predicted_time_string}</p>
+               <input on:input=move |input| set_max_predicted_time(event_target_value(&input)) />
+           </div>
+       </div>
+       <table>
+           <tr>
+               <th style="width: 450px">"Item"</th>
+               <th on:click=move |_| set_sort_mode(SortMode::Profit)>
+                   <div class="flex-row flex-space">
+                   {move || {
+                       match sort_mode() {
+                           SortMode::Profit => {
+                               view!{cx, "Profit"<i class="fa-solid fa-sort-down"></i>}.into_view(cx)
+                           },
+                           _ => view!{cx, <Tooltip tooltip_text="Sort by profit".to_string()>"Profit"</Tooltip>}.into_view(cx),
+                       }
+                   }}
+                   </div>
+               </th>
+               <th on:click=move |_| set_sort_mode(SortMode::Roi)>
+                   <div class="flex-row flex-space">
+                   {move || {
+                       match sort_mode() {
+                           SortMode::Roi => {
+                               view!{cx, "R.O.I"<i class="fa-solid fa-sort-down"></i>}.into_view(cx)
+                           },
+                           _ => view!{cx, <Tooltip tooltip_text="Sort by return on investment".to_string()>"R.O.I."</Tooltip>}.into_view(cx),
+                       }
+                   }}
+                   </div>
+               </th>
+               <th style="width: 180px;">"World"</th>
+               <th>"Datacenter"</th>
+               <th>"Next sale"</th>
+           </tr>
+           <For each=sorted_data
+                key=move |data| {
+                   (data.sale_summary.item_id, data.cheapest_world_id, data.sale_summary.hq)
+                }
+                view=move |data| {
+                   let world = worlds.lookup_selector(AnySelector::World(data.cheapest_world_id));
+                   let datacenter = world
+                       .as_ref()
+                       .and_then(|world| {
+                           let datacenters = worlds.get_datacenters(world);
+                           datacenters.first().map(|dc| dc.name.as_str())
+                       })
+                       .unwrap_or_default()
+                       .to_string();
+                   let world = world
+                       .as_ref()
+                       .map(|r| r.get_name())
+                       .unwrap_or_default()
+                       .to_string();
+                   let item_id = data.sale_summary.item_id;
+                   let item = items
+                       .get(&ItemId(item_id))
+                       .map(|item| item.name.as_str())
+                       .unwrap_or_default();
+                   view! {cx, <tr>
+                       <td class="flex flex-row">
+                           <a href=format!("/listings/{world}/{item_id}")>
+                               <ItemIcon item_id icon_size=IconSize::Small/>
+                               {item}
+                           </a>
+                           <Clipboard clipboard_text=item.to_string()/>
+                       </td>
+                       <td><Gil amount=data.profit /></td>
+                       <td>{data.return_on_investment}"%"</td>
+                       <td><Gil amount=data.cheapest_price/>" on "{world}</td>
+                       <td><a on:click= move |_| set_datacenter_filter(Some(datacenter))>{datacenter}</a></td>
+                       <td>{data.sale_summary
+                               .avg_sale_duration
+                               .and_then(|sale_duration| {
+                                   let duration = sale_duration.to_std().ok()?;
+                                   Some(format_duration(duration).to_string())
+                               })
+                       }</td>
+                       </tr>}
+                }/>
+       </table>
+    }
 }
 
 #[component]
