@@ -121,8 +121,7 @@ impl UltrosDb {
         }
         {
             let datacenters = datacenter::Entity::find().all(&self.db).await?;
-            let existing_worlds = world::Entity::find()
-                .order_by_asc(world::Column::Name)
+            let mut existing_worlds = world::Entity::find()
                 .all(&self.db)
                 .await?;
             let worlds: Vec<_> = worlds
@@ -131,6 +130,7 @@ impl UltrosDb {
                 .sorted_by(|a, b| a.name.cmp(&b.name))
                 .cloned()
                 .collect();
+            existing_worlds.sort_by(|a, b| a.name.cmp(&b.name));
             let worlds: Vec<_> = PartialDiffIterator::from((worlds.iter(), existing_worlds.iter()))
                 .flat_map(|m| match m {
                     crate::partial_diff_iterator::Diff::Same(_, _) => None,
