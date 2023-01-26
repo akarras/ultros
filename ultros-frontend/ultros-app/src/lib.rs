@@ -24,7 +24,7 @@ pub fn App(cx: Scope) -> impl IntoView {
     provide_meta_context(cx);
     let worlds = create_resource(
         cx,
-        move || {},
+        move || "worlds",
         move |_| async move {
             let world_data = get_worlds(cx).await;
             world_data.map(|data| Rc::new(WorldHelper::new(data)))
@@ -61,7 +61,7 @@ pub fn App(cx: Scope) -> impl IntoView {
                 <div>
                     <SearchBox/>
                 </div>
-                <a class="btn nav-item" href="/invitebot">
+                <a rel="_external" class="btn nav-item" href="/invitebot">
                     "Invite Bot"
                 </a>
                 <ProfileDisplay/>

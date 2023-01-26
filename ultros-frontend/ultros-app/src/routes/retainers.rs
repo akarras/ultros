@@ -70,7 +70,7 @@ fn CharacterRetainerList(
 
 #[component]
 pub fn Retainers(cx: Scope) -> impl IntoView {
-    let retainers = create_resource(cx, || {}, move |()| get_retainer_listings(cx));
+    let retainers = create_resource(cx, || "retainers", move |_| get_retainer_listings(cx));
     view! {
         cx,
         <div class="container">

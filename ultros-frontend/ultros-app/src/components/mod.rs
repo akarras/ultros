@@ -6,6 +6,7 @@ pub mod listings_table;
 pub mod lists_nav;
 pub mod loading;
 pub mod price_history_chart;
+pub mod price_viewer;
 pub mod profile_display;
 pub mod relative_time;
 pub mod retainer_nav;

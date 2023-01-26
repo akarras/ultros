@@ -5,11 +5,9 @@ use crate::api::get_lists;
 use crate::components::{lists_nav::*, loading::*, world_name::*};
 use ultros_api_types::world_helper::AnySelector;
 
-pub fn AddItem(cx: Scope) -> impl IntoView {}
-
 #[component]
 pub fn Lists(cx: Scope) -> impl IntoView {
-    let lists = create_resource(cx, move || {}, move |_| get_lists(cx));
+    let lists = create_resource(cx, move || "lists", move |_| get_lists(cx));
     view! {cx,
     <div class="container">
         <ListsNav />
@@ -26,11 +24,9 @@ pub fn Lists(cx: Scope) -> impl IntoView {
                             view=move |list| view!{cx, <div>
                                     <A href=format!("/list/{}", list.id)>
                                     {list.name}
-                                    {if let Some(world_id) = list.world_id {
+                                    {list.world_id.map(move |world_id| {
                                         view!{cx, <WorldName id=AnySelector::World(world_id)/>}.into_view(cx)
-                                    } else {
-                                        ().into_view(cx)
-                                    }}
+                                    })}
                                     </A>
                                 </div>}
                             />

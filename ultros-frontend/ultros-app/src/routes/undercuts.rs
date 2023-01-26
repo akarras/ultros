@@ -66,7 +66,7 @@ fn UndercutCharacterRetainerList(
 
 #[component]
 pub fn RetainerUndercuts(cx: Scope) -> impl IntoView {
-    let retainers = create_resource(cx, || {}, move |()| get_retainer_listings(cx));
+    let retainers = create_resource(cx, || "undercuts", move |_| get_retainer_listings(cx));
     view! {
         cx,
         <div class="container">

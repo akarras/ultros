@@ -6573,15 +6573,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "timediff"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ec397e7943b73844bbf8329640375f30d62fc65ee0180489ccf54e0b32462cd"
-dependencies = [
- "humantime 2.1.0",
-]
-
-[[package]]
 name = "tiny-skia"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7031,6 +7022,7 @@ dependencies = [
  "futures 0.3.25",
  "gloo",
  "gloo-net",
+ "humantime 2.1.0",
  "itertools",
  "leptos",
  "leptos_axum",
@@ -7043,7 +7035,6 @@ dependencies = [
  "sublime_fuzzy",
  "thousands",
  "timeago",
- "timediff",
  "ultros-api-types",
  "web-sys",
  "xiv-gen",

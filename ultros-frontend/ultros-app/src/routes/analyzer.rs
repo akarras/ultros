@@ -158,16 +158,14 @@ fn AnalyzerTable(
     let profits = ProfitTable::new(sales, listings);
 
     // get ranges of possible values for our sliders
-    let (m_profit, max_profit) = profits.min_max_profit();
-    let (m_roi, max_roi) = profits.min_max_roi();
 
     let items = &xiv_gen_db::decompress_data().items;
     let (sort_mode, set_sort_mode) = create_signal(cx, SortMode::Roi);
     let (minimum_profit, set_minimum_profit) = create_signal(cx, Ok(0));
     let (minimum_roi, set_minimum_roi) = create_signal(cx, Ok(0));
     let (max_predicted_time, set_max_predicted_time) = create_signal(cx, "1 week".to_string());
-    let (world_filter, set_world_filter) = create_signal(cx, None);
-    let (datacenter_filter, set_datacenter_filter) = create_signal(cx, None);
+    let (world_filter, set_world_filter) = create_signal(cx, Option::<String>::None);
+    let (datacenter_filter, set_datacenter_filter) = create_signal(cx, Option::<String>::None);
     let predicted_time = create_memo(cx, move |_| parse_duration(&max_predicted_time()));
     let predicted_time_string = move || {
         predicted_time()
@@ -258,8 +256,8 @@ fn AnalyzerTable(
                    }}
                    </div>
                </th>
-               <th style="width: 180px;">"World"</th>
-               <th>"Datacenter"</th>
+               <th style="width: 180px;">"World" {move || world_filter().map(move |world| view!{cx, "[" {world} "]"})}</th>
+               <th>"Datacenter" {move || datacenter_filter().map(move |datacenter| view!{cx, "[" {datacenter} "]"})}</th>
                <th>"Next sale"</th>
            </tr>
            <For each=sorted_data
@@ -267,26 +265,28 @@ fn AnalyzerTable(
                    (data.sale_summary.item_id, data.cheapest_world_id, data.sale_summary.hq)
                 }
                 view=move |data| {
-                   let world = worlds.lookup_selector(AnySelector::World(data.cheapest_world_id));
-                   let datacenter = world
-                       .as_ref()
-                       .and_then(|world| {
-                           let datacenters = worlds.get_datacenters(world);
-                           datacenters.first().map(|dc| dc.name.as_str())
-                       })
-                       .unwrap_or_default()
-                       .to_string();
-                   let world = world
-                       .as_ref()
-                       .map(|r| r.get_name())
-                       .unwrap_or_default()
-                       .to_string();
-                   let item_id = data.sale_summary.item_id;
-                   let item = items
-                       .get(&ItemId(item_id))
-                       .map(|item| item.name.as_str())
-                       .unwrap_or_default();
-                   view! {cx, <tr>
+                    let world = worlds.lookup_selector(AnySelector::World(data.cheapest_world_id));
+                    let datacenter = world
+                        .as_ref()
+                        .and_then(|world| {
+                            let datacenters = worlds.get_datacenters(world);
+                            datacenters.first().map(|dc| dc.name.as_str())
+                        })
+                        .unwrap_or_default()
+                        .to_string();
+                    let world = world
+                        .as_ref()
+                        .map(|r| r.get_name())
+                        .unwrap_or_default()
+                        .to_string();
+                    let world_event = world.clone();
+                    let datacenter_event = datacenter.clone();
+                    let item_id = data.sale_summary.item_id;
+                    let item = items
+                        .get(&ItemId(item_id))
+                        .map(|item| item.name.as_str())
+                        .unwrap_or_default();
+                    view! {cx, <tr>
                        <td class="flex flex-row">
                            <a href=format!("/listings/{world}/{item_id}")>
                                <ItemIcon item_id icon_size=IconSize::Small/>
@@ -296,8 +296,8 @@ fn AnalyzerTable(
                        </td>
                        <td><Gil amount=data.profit /></td>
                        <td>{data.return_on_investment}"%"</td>
-                       <td><Gil amount=data.cheapest_price/>" on "{world}</td>
-                       <td><a on:click= move |_| set_datacenter_filter(Some(datacenter))>{datacenter}</a></td>
+                       <td><Gil amount=data.cheapest_price/>" on "<a on:click=move |_| { set_datacenter_filter(None); set_world_filter(Some(world_event.clone())); }>{world}</a></td>
+                       <td><a on:click= move |_| { set_world_filter(None); set_datacenter_filter(Some(datacenter_event.clone())) }>{&datacenter}</a></td>
                        <td>{data.sale_summary
                                .avg_sale_duration
                                .and_then(|sale_duration| {

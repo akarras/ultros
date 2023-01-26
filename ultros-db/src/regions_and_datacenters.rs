@@ -121,9 +121,7 @@ impl UltrosDb {
         }
         {
             let datacenters = datacenter::Entity::find().all(&self.db).await?;
-            let mut existing_worlds = world::Entity::find()
-                .all(&self.db)
-                .await?;
+            let mut existing_worlds = world::Entity::find().all(&self.db).await?;
             let worlds: Vec<_> = worlds
                 .0
                 .iter()

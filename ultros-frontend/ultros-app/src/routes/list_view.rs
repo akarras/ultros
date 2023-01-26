@@ -6,7 +6,7 @@ use ultros_api_types::list::ListItem;
 use xiv_gen::ItemId;
 
 use crate::api::{add_item_to_list, delete_list_item, get_list_items};
-use crate::components::{item_icon::*, item_icon::*, loading::*};
+use crate::components::{item_icon::*, item_icon::*, loading::*, price_viewer::*};
 
 #[component]
 pub fn ListView(cx: Scope) -> impl IntoView {
@@ -99,6 +99,9 @@ pub fn ListView(cx: Scope) -> impl IntoView {
                                     <td>
                                         <ItemIcon item_id=item.item_id icon_size=IconSize::Small/>
                                         {game_items.get(&ItemId(item.item_id)).map(|item| &item.name)}
+                                    </td>
+                                    <td>
+                                        <PriceViewer world="North-America".to_string() item_id=item.item_id hq=None />
                                     </td>
                                     <td>
                                         <button class="btn" on:click=move |_| {delete_item.dispatch(item.id)}>
