@@ -1,6 +1,5 @@
 use chrono::{Duration, Utc};
 use humantime::{format_duration, parse_duration};
-use itertools::Itertools;
 use leptos::*;
 use leptos_router::*;
 use std::{cmp::Reverse, collections::HashMap, rc::Rc};
@@ -121,24 +120,6 @@ impl ProfitTable {
             // .filter(|data| data.profit > 0) // filter items that don't return any profit
             .collect();
         ProfitTable(table)
-    }
-
-    fn min_max_profit(&self) -> (i32, i32) {
-        self.0
-            .iter()
-            .map(|i| i.profit)
-            .minmax()
-            .into_option()
-            .unwrap_or((i32::MIN, i32::MAX))
-    }
-
-    fn min_max_roi(&self) -> (i32, i32) {
-        self.0
-            .iter()
-            .map(|i| i.return_on_investment)
-            .minmax()
-            .into_option()
-            .unwrap_or((i32::MIN, i32::MAX))
     }
 }
 

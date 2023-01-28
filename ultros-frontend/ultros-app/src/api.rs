@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use futures::future::join_all;
 use itertools::Itertools;
@@ -9,7 +9,6 @@ use ultros_api_types::{
     recent_sales::RecentSales,
     user::{UserData, UserRetainerListings, UserRetainers},
     world::WorldData,
-    world_helper::AnyResult,
     ActiveListing, CurrentlyShownItem, Retainer,
 };
 
@@ -102,9 +101,9 @@ pub(crate) async fn get_retainer_undercuts(cx: Scope) -> Option<UserRetainerList
     for (_, retainers) in &mut retainer_data.retainers {
         for (_retainer, listings) in retainers {
             let mut new_listings = vec![];
-            for listing in listings {
+            for listing in listings.iter() {
                 // use the world/item_id as keys to lookup the rest of the listings that match this retainer
-                let value = if let Some((cheapest, _)) = listings_map
+                if let Some((cheapest, _)) = listings_map
                     .get(&listing.world_id)
                     .and_then(|world_map| world_map.get(&listing.item_id))
                     .and_then(|listings| listings.first())
@@ -116,6 +115,7 @@ pub(crate) async fn get_retainer_undercuts(cx: Scope) -> Option<UserRetainerList
                     return None; // in theory this shouldn't happen, but mark as false to leave it in the set?
                 };
             }
+            *listings = new_listings;
         }
     }
 

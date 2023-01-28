@@ -5,6 +5,8 @@ use thiserror::Error;
 use ultros_api_types::list::ListItem;
 use xiv_gen::ItemId;
 
+use crate::api::add_item_to_list;
+
 #[derive(Error, Debug)]
 pub enum ParseListError {
     #[error("Error parsing integer {0}")]
@@ -51,9 +53,38 @@ fn parse_list(list: &str) -> Result<Vec<MakePlaceItemData>, ParseListError> {
 }
 
 #[component]
-pub fn MakePlaceImporter(cx: Scope, list_id: MaybeSignal<i32>) -> impl IntoView {
+pub fn MakePlaceImporter(cx: Scope, list_id: Signal<i32>) -> impl IntoView {
+    let (is_open, set_is_open) = create_signal(cx, false);
+    let (list, set_list) = create_signal(cx, "".to_string());
+    let add_items_to_list = create_action(cx, move |list_items: &Vec<MakePlaceItemData>| {
+        let list_items = list_items.clone();
+        async move {
+            let items =
+                futures::future::join_all(list_items.into_iter().map(|data: MakePlaceItemData| {
+                    add_item_to_list(
+                        cx,
+                        list_id(),
+                        ListItem {
+                            item_id: data.item_id,
+                            quantity: Some(data.quantity),
+                            ..Default::default()
+                        },
+                    )
+                }))
+                .await;
+            items
+        }
+    });
     view! {cx,
-        <input></input>
+        <button on:click=move |_| set_is_open(!is_open()) class="btn">"Import from make place"</button>
+        <div class="flex-column" class:hidden=move || !is_open()>
+        <textarea on:input=move |input| set_list(event_target_value(&input))></textarea>
+        <button on:click=move |_| {
+            if let Ok(list) = parse_list(&list()) {
+                add_items_to_list.dispatch(list);
+            }
+        } class="btn">"Submit"</button>
+        </div>
     }
 }
 

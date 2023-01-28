@@ -6,7 +6,9 @@ use ultros_api_types::list::ListItem;
 use xiv_gen::ItemId;
 
 use crate::api::{add_item_to_list, delete_list_item, get_list_items};
-use crate::components::{item_icon::*, item_icon::*, loading::*, price_viewer::*};
+use crate::components::{
+    item_icon::*, loading::*, make_place_importer::*, price_viewer::*, tooltip::*,
+};
 
 #[component]
 pub fn ListView(cx: Scope) -> impl IntoView {
@@ -38,8 +40,9 @@ pub fn ListView(cx: Scope) -> impl IntoView {
     let game_items = &xiv_gen_db::decompress_data().items;
     view! {cx,
         <div class="container">
-            <div class="main-content">
+            <div class="main-content ">
                 <button class="btn" on:click=move |_| set_item_menu(!item_menu())><i class="fa-solid fa-plus"></i></button>
+                <MakePlaceImporter list_id = Signal::derive(cx, move || params.with(|p| p.get("id").as_ref().map(|id| id.parse::<i32>().ok())).flatten().unwrap_or_default()) />
                 {move || item_menu().then(|| {
                     let (search, set_search) = create_signal(cx, "".to_string());
                     let items = &xiv_gen_db::decompress_data().items;
@@ -66,8 +69,15 @@ pub fn ListView(cx: Scope) -> impl IntoView {
                                 {move || {
                                     let search = item_search()
                                         .into_iter()
-                                        .map(move |(id, item, _)| view!{cx, <span>
-                                                <ItemIcon item_id=id.0 icon_size=IconSize::Medium/>{&item.name}
+                                        .map(move |(id, item, _)| {
+                                            let (quantity, set_quantity) = create_signal(cx, 1);
+                                            let read_input_quantity = move |input| { if let Ok(quantity) = event_target_value(&input).parse() {
+                                                set_quantity(quantity)
+                                            } };
+                                            view!{cx, <div class="flex-row">
+                                                <ItemIcon item_id=id.0 icon_size=IconSize::Medium/>
+                                                <span style="width: 400px">{&item.name}</span>
+                                                <label for="amount">"quantity:"</label><input on:input=read_input_quantity prop:value=move || quantity()></input>
                                                 <button class="btn" on:click=move |_| {
                                                     let item = ListItem { item_id: id.0, list_id: params
                                                         .with(|p| {
@@ -76,10 +86,11 @@ pub fn ListView(cx: Scope) -> impl IntoView {
                                                                 .map(|id| id.parse::<i32>().ok())
                                                                 .flatten()
                                                         })
-                                                        .unwrap_or_default(), ..Default::default() };
+                                                        .unwrap_or_default(), quantity: Some(quantity()), ..Default::default() };
                                                     add_item.dispatch(item);
                                                 }><i class="fa-solid fa-plus"></i></button>
-                                            </span>}).collect::<Vec<_>>();
+                                            </div>}
+                                        }).collect::<Vec<_>>();
                                     view!{cx, {search}}
                                 }}
                             </div>
@@ -93,15 +104,25 @@ pub fn ListView(cx: Scope) -> impl IntoView {
                             <table>
                                 <tr>
                                     <th>"Item"</th>
+                                    <th>"Quantity"</th>
                                     <th>"Price"</th>
+                                    <th>"Options"</th>
                                 </tr>
                                 <For each=move || items.clone() key=|item| item.id view=move |item| view!{cx, <tr>
                                     <td>
-                                        <ItemIcon item_id=item.item_id icon_size=IconSize::Small/>
-                                        {game_items.get(&ItemId(item.item_id)).map(|item| &item.name)}
+                                        <div class="flex-row">
+                                            <ItemIcon item_id=item.item_id icon_size=IconSize::Small/>
+                                            {game_items.get(&ItemId(item.item_id)).map(|item| &item.name)}
+                                            {game_items.get(&ItemId(item.item_id)).map(|item| item.item_search_category.0 <= 1).unwrap_or_default().then(move || {
+                                                view!{cx, <div><Tooltip tooltip_text="This item is not available on the marketboard".to_string()><i class="fa-solid fa-circle-exclamation"></i></Tooltip></div>}
+                                            })}
+                                        </div>
                                     </td>
                                     <td>
-                                        <PriceViewer world="North-America".to_string() item_id=item.item_id hq=None />
+                                        {item.quantity}
+                                    </td>
+                                    <td>
+                                        <PriceViewer world="North-America".to_string() quantity=item.quantity.unwrap_or(1) item_id=item.item_id hq=None />
                                     </td>
                                     <td>
                                         <button class="btn" on:click=move |_| {delete_item.dispatch(item.id)}>

@@ -1,4 +1,4 @@
-use crate::api::{get_retainer_listings, get_retainer_undercuts, get_retainers};
+use crate::api::{get_retainer_listings, get_retainer_undercuts};
 use crate::components::gil::*;
 use crate::components::{item_icon::*, retainer_nav::*, world_name::*};
 use leptos::*;

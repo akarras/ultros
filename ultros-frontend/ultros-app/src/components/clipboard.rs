@@ -1,7 +1,5 @@
 use super::tooltip::*;
 use leptos::*;
-#[cfg(all(web_sys_unstable_apis, feature = "hydrate"))]
-use web_sys::{Clipboard, Navigator, Window};
 
 #[component]
 pub fn Clipboard(cx: Scope, clipboard_text: String) -> impl IntoView {
@@ -9,6 +7,7 @@ pub fn Clipboard(cx: Scope, clipboard_text: String) -> impl IntoView {
     view! {cx, <div class="clipboard" on:click=move |_| {
         #[cfg(all(web_sys_unstable_apis, feature = "hydrate"))]
         {
+            use web_sys::{Clipboard, Navigator, Window};
             if let Some(window) = web_sys::window()
             {
                 let navigator = window.navigator();

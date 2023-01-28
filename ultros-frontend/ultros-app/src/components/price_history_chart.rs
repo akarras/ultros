@@ -1,13 +1,13 @@
 use std::ops::Deref;
 
-use chrono::{DateTime, NaiveDateTime};
+use chrono::DateTime;
 use itertools::Itertools;
 use leptos::*;
 use plotters::{prelude::*, style::RGBColor};
 use plotters_canvas::CanvasBackend;
 use ultros_api_types::SaleHistory;
 
-use chrono::{Duration, Local, TimeZone};
+use chrono::Local;
 
 fn try_draw(backend: CanvasBackend, sales: &[SaleHistory]) -> Option<()> {
     let root = backend.into_drawing_area();
