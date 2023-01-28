@@ -19,7 +19,7 @@ pub use sea_orm::ActiveValue;
 use anyhow::Result;
 use chrono::{Duration, Utc};
 use futures::{future::try_join_all, Stream};
-use migration::{sea_orm::QueryOrder, DbErr, Migrator, MigratorTrait, Write};
+use migration::{sea_orm::QueryOrder, DbErr, Migrator, MigratorTrait};
 
 use sea_orm::{
     ActiveModelTrait, ActiveValue::NotSet, ColumnTrait, ConnectOptions, Database,

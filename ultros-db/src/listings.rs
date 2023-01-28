@@ -105,6 +105,22 @@ impl UltrosDb {
     }
 
     #[instrument(skip(self))]
+    pub async fn get_all_listings_in_worlds(
+        &self,
+        worlds: &Vec<i32>,
+        item: ItemId,
+    ) -> Result<Vec<active_listing::Model>> {
+        let result = try_join_all(
+            worlds
+                .into_iter()
+                .map(|world| self.get_listings_for_world(WorldId(*world), item)),
+        )
+        .await?;
+        let data = result.into_iter().flat_map(|s| s.into_iter()).collect();
+        Ok(data)
+    }
+
+    #[instrument(skip(self))]
     pub async fn get_all_listings_with_retainers(
         &self,
         world: i32,

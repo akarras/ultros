@@ -1,11 +1,11 @@
 use leptos::*;
 
-use super::{gil::*, loading::*, world_name::*};
+use super::{gil::*, world_name::*};
 use crate::api::get_listings;
 use ultros_api_types::{world_helper::AnySelector, ActiveListing, Retainer};
 
 fn get_cheapest_listing(
-    mut listings: Vec<(ActiveListing, Retainer)>,
+    mut listings: Vec<(ActiveListing, Option<Retainer>)>,
     quantity: i32,
     hq: Option<bool>,
 ) -> Vec<ActiveListing> {
@@ -32,34 +32,19 @@ fn get_cheapest_listing(
 #[component]
 pub fn PriceViewer(
     cx: Scope,
-    item_id: i32,
     quantity: i32,
     world: String,
     hq: Option<bool>,
+    listings: Vec<(ActiveListing, Option<Retainer>)>,
 ) -> impl IntoView {
-    let listings = create_resource(
-        cx,
-        move || (item_id, world.clone(), hq),
-        move |(item_id, world, _)| async move { get_listings(cx, item_id, &world).await },
-    );
-    view! {cx,
-    <div>
-        <Suspense fallback=move || view!{cx, <Loading/>}>
-        {move || listings().map(|listings| match listings {
-            Some(listing) => {
-                let cheapest_listings = get_cheapest_listing(listing.listings, quantity, hq);
-                view!{cx, <div class="flex-column">
-                    {cheapest_listings.iter().map(|listing| view!{cx,
-                        <div class="flex-row">
-                            {listing.quantity}" "
-                            <Gil amount=listing.price_per_unit/>" "
-                            <WorldName id=AnySelector::World(listing.world_id)/>
-                        </div>
-                    }).collect::<Vec<_>>()}
-                </div>}.into_view(cx)
-            },
-            None => view!{cx, "No listings"}.into_view(cx)
-        })}
-        </Suspense>
+    let cheapest_listings = get_cheapest_listing(listings, quantity, hq);
+    view! {cx, <div class="flex-column">
+        {cheapest_listings.iter().map(|listing| view!{cx,
+            <div class="flex-row">
+                {listing.quantity}" "
+                <Gil amount=listing.price_per_unit/>" "
+                <WorldName id=AnySelector::World(listing.world_id)/>
+            </div>
+        }).collect::<Vec<_>>()}
     </div>}
 }

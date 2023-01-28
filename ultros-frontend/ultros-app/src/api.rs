@@ -144,8 +144,14 @@ pub(crate) async fn get_lists(cx: Scope) -> Option<Vec<List>> {
     fetch_api(cx, &format!("/api/v1/list")).await
 }
 
-pub(crate) async fn get_list_items(cx: Scope, list_id: i32) -> Option<(List, Vec<ListItem>)> {
-    fetch_api(cx, &format!("/api/v1/list/{list_id}")).await
+pub(crate) async fn get_list_items_with_listings(
+    cx: Scope,
+    list_id: i32,
+) -> Option<(
+    List,
+    Vec<(ListItem, Vec<(ActiveListing, Option<Retainer>)>)>,
+)> {
+    fetch_api(cx, &format!("/api/v1/list/{list_id}/listings")).await
 }
 
 pub(crate) async fn delete_list(cx: Scope, list_id: i32) -> Option<()> {

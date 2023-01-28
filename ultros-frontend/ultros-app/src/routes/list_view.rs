@@ -5,7 +5,7 @@ use leptos_router::use_params_map;
 use ultros_api_types::list::ListItem;
 use xiv_gen::ItemId;
 
-use crate::api::{add_item_to_list, delete_list_item, get_list_items};
+use crate::api::{add_item_to_list, delete_list_item, get_list_items_with_listings};
 use crate::components::{
     item_icon::*, loading::*, make_place_importer::*, price_viewer::*, tooltip::*,
 };
@@ -34,7 +34,7 @@ pub fn ListView(cx: Scope) -> impl IntoView {
                     .unwrap_or_default(),
             )
         },
-        move |(_, _, id)| get_list_items(cx, id),
+        move |(_, _, id)| get_list_items_with_listings(cx, id),
     );
     let (item_menu, set_item_menu) = create_signal(cx, false);
     let game_items = &xiv_gen_db::decompress_data().items;
@@ -110,7 +110,7 @@ pub fn ListView(cx: Scope) -> impl IntoView {
                                     <th>"Price"</th>
                                     <th>"Options"</th>
                                 </tr>
-                                <For each=move || items.clone() key=|item| item.id view=move |item| view!{cx, <tr valign="top">
+                                <For each=move || items.clone() key=|(item, _)| item.id view=move |(item, listings)| view!{cx, <tr valign="top">
                                     <td>
                                         <div class="flex-row">
                                             <ItemIcon item_id=item.item_id icon_size=IconSize::Small/>
@@ -124,7 +124,7 @@ pub fn ListView(cx: Scope) -> impl IntoView {
                                         {item.quantity}
                                     </td>
                                     <td>
-                                        <PriceViewer world="North-America".to_string() quantity=item.quantity.unwrap_or(1) item_id=item.item_id hq=None />
+                                        <PriceViewer world="North-America".to_string() quantity=item.quantity.unwrap_or(1) hq=None listings=listings/>
                                     </td>
                                     <td>
                                         <button class="btn" on:click=move |_| {delete_item.dispatch(item.id)}>

@@ -33,6 +33,7 @@ use ultros_api_types::list::{List, ListItem};
 use ultros_api_types::user::{OwnedRetainer, UserData, UserRetainerListings, UserRetainers};
 use ultros_api_types::world::WorldData;
 use ultros_api_types::{ActiveListing, CurrentlyShownItem, FfxivCharacter, Retainer};
+use ultros_db::world_cache::AnySelector;
 use ultros_db::ActiveValue;
 use ultros_db::{world_cache::WorldCache, UltrosDb};
 use ultros_ui_server::create_leptos_app;
@@ -556,6 +557,48 @@ pub(crate) async fn get_list(
     Ok(Json((list, list_items)))
 }
 
+pub(crate) async fn get_list_with_listings(
+    State(db): State<UltrosDb>,
+    State(world_cache): State<Arc<WorldCache>>,
+    Path(id): Path<i32>,
+    user: AuthDiscordUser,
+) -> Result<Json<(List, Vec<(ListItem, Vec<ActiveListing>)>)>, ApiError> {
+    let (list, list_items) = futures::future::try_join(
+        db.get_list(id, user.id as i64),
+        db.get_list_items(id, user.id as i64),
+    )
+    .await?;
+    // tbd: probably don't need to send clients all listings, but for now keep it this way.
+    let selector = AnySelector::try_from(&list)?;
+    let world = world_cache.lookup_selector(&selector)?;
+    let world_ids = world_cache
+        .get_all_worlds_in(&world)
+        .ok_or(anyhow::anyhow!("Bad world id"))?;
+    // borrow these for use inside the closure
+    let world_ids = &world_ids;
+    let db = &db;
+    let list_items = futures::future::try_join_all(list_items.into_iter().map(|list| async move {
+        // get alll the listings that match our item list
+        let listings = db
+            .get_all_listings_in_worlds(&world_ids, ItemId(list.item_id))
+            .await;
+        listings.map(|listings| {
+            // return this as a tuple and bring the list that we moved vec
+            (
+                ListItem::from(list),
+                // convert our new active listing to the API types
+                listings
+                    .into_iter()
+                    .map(|listing| ActiveListing::from(listing))
+                    .collect(),
+            )
+        })
+    }))
+    .await?;
+
+    Ok(Json((List::from(list), list_items)))
+}
+
 pub(crate) async fn delete_list(
     State(db): State<UltrosDb>,
     Path(list_id): Path<i32>,
@@ -676,6 +719,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/list/create", post(create_list))
         .route("/api/v1/list/edit", post(edit_list))
         .route("/api/v1/list/:id", get(get_list))
+        .route("/api/v1/list/:id/listings", get(get_list_with_listings))
         .route("/api/v1/list/:id/add/item", post(post_item_to_list))
         .route("/api/v1/list/:id/delete", get(delete_list))
         .route("/api/v1/list/item/:id/delete", get(delete_list_item))

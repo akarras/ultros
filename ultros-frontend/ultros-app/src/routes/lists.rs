@@ -22,12 +22,12 @@ pub fn Lists(cx: Scope) -> impl IntoView {
                             <For each=move || lists.clone()
                             key=move |list| list.id
                             view=move |list| view!{cx, <div>
-                                    <A href=format!("/list/{}", list.id)>
+                                    <a href=format!("/list/{}", list.id) style="font-size: 30px">
                                     {list.name}
                                     {list.world_id.map(move |world_id| {
                                         view!{cx, <WorldName id=AnySelector::World(world_id)/>}.into_view(cx)
                                     })}
-                                    </A>
+                                    </a>
                                 </div>}
                             />
                         </div>}.into_view(cx)
