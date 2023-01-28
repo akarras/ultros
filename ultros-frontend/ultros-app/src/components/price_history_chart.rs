@@ -1,25 +1,23 @@
 use std::ops::Deref;
 
-use chrono::{NaiveDateTime, DateTime};
+use chrono::{DateTime, NaiveDateTime};
 use gloo::console::info;
 use itertools::Itertools;
 use leptos::*;
+use plotters::{prelude::*, style::RGBColor};
 use plotters_canvas::CanvasBackend;
 use ultros_api_types::SaleHistory;
-use plotters::{prelude::*, style::RGBColor};
 
 use chrono::{Duration, Local, TimeZone};
 
 fn try_draw(backend: CanvasBackend, sales: &[SaleHistory]) -> Option<()> {
     let root = backend.into_drawing_area();
-    root.fill(&RGBColor(16, 10, 18).mix(0.93)).expect("Test");
+    root.fill(&RGBColor(16, 10, 18).mix(0.93)).ok()?;
 
     let line = map_sale_history_to_line(sales);
 
-    
     let (min_sale, max_sale) = line.iter().map(|(_, price)| price).minmax().into_option()?;
     let (first_sale, last_sale) = line.iter().map(|(date, _)| date).minmax().into_option()?;
-    
 
     let mut chart = ChartBuilder::on(&root)
         .x_label_area_size(60)
@@ -52,7 +50,6 @@ fn try_draw(backend: CanvasBackend, sales: &[SaleHistory]) -> Option<()> {
 
 #[component]
 pub fn PriceHistoryChart(cx: Scope, sales: MaybeSignal<Vec<SaleHistory>>) -> impl IntoView {
-    
     let c = NodeRef::<HtmlElement<Canvas>>::new(cx);
     let hidden = create_memo(cx, move |_| {
         if let Some(canvas) = c() {
@@ -73,5 +70,13 @@ pub fn PriceHistoryChart(cx: Scope, sales: MaybeSignal<Vec<SaleHistory>>) -> imp
 }
 
 fn map_sale_history_to_line(sales: &[SaleHistory]) -> Vec<(DateTime<Local>, i32)> {
-    sales.iter().flat_map(|sale| Some((sale.sold_date.and_local_timezone(Local).single()?, sale.price_per_item))).collect()
+    sales
+        .iter()
+        .flat_map(|sale| {
+            Some((
+                sale.sold_date.and_local_timezone(Local).single()?,
+                sale.price_per_item,
+            ))
+        })
+        .collect()
 }
