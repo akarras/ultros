@@ -49,8 +49,8 @@ pub fn EditRetainers(cx: Scope) -> impl IntoView {
                           <For each=move || retainers.clone()
                             key=move |(_, retainer)| retainer.id
                             view=move |(owned, retainer)| view!{cx, <div class="flex-row">
-                              <div style="width: 300px" class="flex-column">
-                                <span>{retainer.name}</span>
+                              <div style="width: 300px" class="flex">
+                                <span style="width: 200px">{retainer.name}</span>
                                 <span><WorldName id=AnySelector::World(retainer.world_id)/></span>
                                 </div>
                               <button class="btn" on:click=move |_| remove_retainer.dispatch(owned.id)>"Unclaim"</button>
@@ -79,14 +79,11 @@ pub fn EditRetainers(cx: Scope) -> impl IntoView {
                           view=move |retainer| {
                             let world = AnySelector::World(retainer.world_id);
                             view!{ cx, <div class="card flex-row">
-                              <div class="flex-column" style="width: 300px">
-                                <span>{retainer.name}</span>
+                              <div style="width: 300px" class="flex">
+                                <span style="width: 200px;">{retainer.name}</span>
                                 <WorldName id=world/>
                               </div>
                               <button class="btn" on:click=move |_| claim.dispatch(retainer.id)>"Claim"</button>
-                              // <ActionForm action=claim>
-                              //   <input type="submit" value="claim"/>
-                              // </ActionForm>
                             </div>}
                           }
                           />

@@ -1,4 +1,4 @@
-use crate::api::{get_retainer_listings, get_retainers};
+use crate::api::{get_retainer_listings, get_retainer_undercuts, get_retainers};
 use crate::components::gil::*;
 use crate::components::{item_icon::*, retainer_nav::*, world_name::*};
 use leptos::*;
@@ -58,12 +58,41 @@ fn CharacterRetainerList(
         .collect();
     view! {
         cx,
-        <div class="content-well">
+        <div>
             {if let Some(character) = character {
                 view!{cx, <span>{character.first_name} {character.last_name}</span> }.into_view(cx)
             } else {
                 view!{cx, {listings}}.into_view(cx)
             }}
+        </div>
+    }
+}
+
+#[component]
+pub fn RetainerUndercuts(cx: Scope) -> impl IntoView {
+    let retainers = create_resource(cx, || "undercuts", move |_| get_retainer_undercuts(cx));
+    view! {
+        cx,
+        <div class="container">
+            <RetainerNav/>
+            <div class="main-content">
+                <span class="content-title">"Retainer Undercuts"</span>
+                <Suspense fallback=move || view!{cx, <span>"Loading..."</span>}>
+                {move || {
+                    retainers.read().map(|retainer| {
+                        match retainer {
+                            Some(retainers) => {
+                                let retainers : Vec<_> = retainers.retainers.into_iter()
+                                    .map(|(character, retainers)| view!{cx, <CharacterRetainerList character retainers />})
+                                    .collect();
+                                view!{cx, <div>{retainers}</div>}
+                            },
+                            None => view!{cx, <div>"Unable to get retainers"</div>}
+                        }
+                    })
+                }}
+                </Suspense>
+            </div>
         </div>
     }
 }
