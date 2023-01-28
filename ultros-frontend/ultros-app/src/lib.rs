@@ -11,7 +11,7 @@ use crate::{
     components::{profile_display::*, search_box::*},
     routes::{
         analyzer::*, edit_lists::*, edit_retainers::*, list_view::*, listings::*, lists::*,
-        profile::*, retainers::*, undercuts::*,
+        profile::*, retainers::*,
     },
 };
 use leptos::*;

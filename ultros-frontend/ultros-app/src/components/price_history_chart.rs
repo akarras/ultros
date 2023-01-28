@@ -1,7 +1,6 @@
 use std::ops::Deref;
 
 use chrono::{DateTime, NaiveDateTime};
-use gloo::console::info;
 use itertools::Itertools;
 use leptos::*;
 use plotters::{prelude::*, style::RGBColor};
@@ -16,7 +15,7 @@ fn try_draw(backend: CanvasBackend, sales: &[SaleHistory]) -> Option<()> {
 
     let line = map_sale_history_to_line(sales);
 
-    let (min_sale, max_sale) = line.iter().map(|(_, price)| price).minmax().into_option()?;
+    let max_sale = line.iter().map(|(_, price)| price).max()?;
     let (first_sale, last_sale) = line.iter().map(|(date, _)| date).minmax().into_option()?;
 
     let mut chart = ChartBuilder::on(&root)
@@ -27,19 +26,23 @@ fn try_draw(backend: CanvasBackend, sales: &[SaleHistory]) -> Option<()> {
             "Sale History",
             ("Jaldi, sans-serif", 50.0).into_font().color(&WHITE),
         )
-        .build_cartesian_2d(*first_sale..*last_sale, *min_sale..*max_sale)
+        .build_cartesian_2d(*first_sale..*last_sale, 0..*max_sale)
         .ok()?;
 
     chart
         .configure_mesh()
         .label_style(&WHITE)
         .light_line_style(&RGBColor(200, 200, 200).mix(0.2))
-        .x_label_formatter(&|x| format!("{}", x.format("%Y-%m-%d %H:%M:%S")))
+        .x_label_formatter(&|x| format!("{}", x.format("%Y-%m-%d %H")))
+        .x_labels(5)
         .draw()
         .ok()?;
 
     chart
-        .draw_series(LineSeries::new(line.into_iter(), &YELLOW))
+        .draw_series(
+            line.into_iter()
+                .map(|coord| Circle::new(coord.into(), 5, YELLOW.filled())),
+        )
         .ok()?;
 
     // To avoid the IO failure being ignored silently, we manually call the present function
@@ -54,10 +57,7 @@ pub fn PriceHistoryChart(cx: Scope, sales: MaybeSignal<Vec<SaleHistory>>) -> imp
     let hidden = create_memo(cx, move |_| {
         if let Some(canvas) = c() {
             let backend = CanvasBackend::with_canvas_object(canvas.deref().clone()).unwrap();
-            sales.with(|sales| {
-                info!("drawing canvas");
-                try_draw(backend, sales).is_none()
-            })
+            sales.with(|sales| try_draw(backend, sales).is_none())
         } else {
             true
         }

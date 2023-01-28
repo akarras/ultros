@@ -1,3 +1,7 @@
+use std::collections::{BTreeMap, HashMap};
+
+use futures::future::join_all;
+use itertools::Itertools;
 use leptos::*;
 use ultros_api_types::{
     cheapest_listings::CheapestListings,
@@ -6,7 +10,7 @@ use ultros_api_types::{
     user::{UserData, UserRetainerListings, UserRetainers},
     world::WorldData,
     world_helper::AnyResult,
-    CurrentlyShownItem, Retainer,
+    ActiveListing, CurrentlyShownItem, Retainer,
 };
 
 #[cfg(not(feature = "ssr"))]
@@ -18,6 +22,15 @@ pub(crate) async fn get_listings(
     world: &str,
 ) -> Option<CurrentlyShownItem> {
     fetch_api(cx, &format!("/api/v1/listings/{world}/{item_id}")).await
+}
+
+pub(crate) async fn get_bulk_listings(
+    cx: Scope,
+    world: &str,
+    item_ids: impl Iterator<Item = i32>,
+) -> Option<HashMap<i32, Vec<(ActiveListing, Option<Retainer>)>>> {
+    let ids = item_ids.format(",");
+    fetch_api(cx, &format!("/api/v1/bulkListings/{world}/{ids}")).await
 }
 
 pub(crate) async fn get_worlds(cx: Scope) -> Option<WorldData> {
@@ -49,6 +62,64 @@ pub(crate) async fn get_retainers(cx: Scope) -> Option<UserRetainers> {
 
 pub(crate) async fn get_retainer_listings(cx: Scope) -> Option<UserRetainerListings> {
     fetch_api(cx, "/api/v1/user/retainer/listings").await
+}
+
+pub(crate) async fn get_retainer_undercuts(cx: Scope) -> Option<UserRetainerListings> {
+    // get our retainer data
+    let mut retainer_data = get_retainer_listings(cx).await?;
+    // build a unique list of worlds and item ids so we can fetch additional info about them
+    // todo: couldn't I just use cheapest listings for each world & avoid looking up literally every retainer?
+    let world_items: HashMap<i32, Vec<i32>> = retainer_data
+        .retainers
+        .iter()
+        .flat_map(|(_, r)| {
+            r.iter()
+                .flat_map(|(_, l)| l.iter().map(|l| (l.world_id, l.item_id)))
+        })
+        .fold(HashMap::new(), |mut acc, (world, item_id)| {
+            acc.entry(world).or_default().push(item_id);
+            acc
+        });
+    // todo: once the api calls use a result type, swap this to a try_join all
+    let listings = join_all(world_items.into_iter().map(|(world, items)| async move {
+        get_bulk_listings(cx, &world.to_string(), items.into_iter())
+            .await
+            // include the world id in the returned value
+            .map(|listings| (world, listings))
+    }))
+    .await;
+    // flatten the listings down so it's more usable
+    let listings_map = listings.into_iter().flatten().fold(
+        HashMap::new(),
+        |mut world_map, (world_id, item_data)| {
+            if let Some(_) = world_map.insert(world_id, item_data) {
+                unreachable!("Should only be one world id from the set above.");
+            }
+            world_map
+        },
+    );
+    // Now remove every listing from the user retainer listings that is already the cheapest listing per world
+    for (_, retainers) in &mut retainer_data.retainers {
+        for (_retainer, listings) in retainers {
+            let mut new_listings = vec![];
+            for listing in listings {
+                // use the world/item_id as keys to lookup the rest of the listings that match this retainer
+                let value = if let Some((cheapest, _)) = listings_map
+                    .get(&listing.world_id)
+                    .and_then(|world_map| world_map.get(&listing.item_id))
+                    .and_then(|listings| listings.first())
+                {
+                    if listing.price_per_unit > cheapest.price_per_unit {
+                        new_listings.push(listing.clone());
+                    }
+                } else {
+                    return None; // in theory this shouldn't happen, but mark as false to leave it in the set?
+                };
+            }
+        }
+    }
+
+    Some(retainer_data)
 }
 
 /// Searches retainers based on their name

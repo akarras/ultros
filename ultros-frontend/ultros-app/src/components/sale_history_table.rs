@@ -4,6 +4,7 @@ use ultros_api_types::{world_helper::AnySelector, SaleHistory};
 
 #[component]
 pub fn SaleHistoryTable(cx: Scope, sale_history: MaybeSignal<Vec<SaleHistory>>) -> impl IntoView {
+    let (show_more, set_show_more) = create_signal(cx, false);
     view! { cx,  <table>
         <thead>
             <tr>

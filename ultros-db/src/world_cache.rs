@@ -287,6 +287,11 @@ impl WorldCache {
         self.name_map
             .get(name)
             .and_then(|selector| self.lookup_selector(selector).ok())
+            // if there's a world id that we could match with, try using that
+            .or_else(|| {
+                let world_id = name.parse::<i32>().ok()?;
+                self.lookup_selector(&AnySelector::World(world_id)).ok()
+            })
             .ok_or_else(|| WorldCacheError::NameLookupError(name.to_string()))
     }
 

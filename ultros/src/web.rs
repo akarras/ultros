@@ -17,11 +17,12 @@ use axum_extra::extract::cookie::Key;
 use futures::future::{try_join, try_join_all};
 use image::imageops::FilterType;
 use image::ImageOutputFormat;
+use itertools::Itertools;
 use maud::Render;
 use reqwest::header;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -86,7 +87,7 @@ async fn world_item_listings(
     let world_iter = worlds.iter().copied();
     let (listings, sales) = try_join(
         db_clone.get_all_listings_in_worlds_with_retainers(&worlds, ItemId(item_id)),
-        db.get_sale_history_from_multiple_worlds(world_iter, item_id, 10),
+        db.get_sale_history_from_multiple_worlds(world_iter, item_id, 1000),
     )
     .await?;
     let currently_shown = CurrentlyShownItem {
@@ -616,6 +617,49 @@ pub(crate) async fn delete_list_item(
     Ok(Json(()))
 }
 
+/// Does a bulk lookup of item listings. Will not preserve order.
+#[axum::debug_handler(state = WebState)]
+pub(crate) async fn bulk_item_listings(
+    State(db): State<UltrosDb>,
+    State(world_cache): State<Arc<WorldCache>>,
+    Path((world, item_ids)): Path<(String, String)>,
+) -> Result<Json<HashMap<i32, Vec<(ActiveListing, Option<Retainer>)>>>, ApiError> {
+    let world_lookup = world_cache.lookup_value_by_name(&world)?;
+    // borrow our worlds list & db now so it can be shared into the lookup futures
+    let worlds = &world_cache
+        .get_all_worlds_in(&world_lookup)
+        .ok_or(anyhow::anyhow!("Invalid world"))?;
+    let db = &db;
+    // get item ids
+    let item_ids: HashSet<i32> = item_ids.split(",").map(|id| id.parse()).try_collect()?;
+    // now perform lookups for all the listings for each world/item pair
+    let listings = try_join_all(item_ids.into_iter().map(|item| async move {
+        db.get_all_listings_in_worlds_with_retainers(worlds, ItemId(item))
+            .await
+            // map the result to have the item id at the front.
+            .map(|res| (item, res))
+    }))
+    .await?;
+    // now convert the database models to API types.
+    let listings = listings
+        .into_iter()
+        .map(|(id, l)| {
+            (
+                id,
+                l.into_iter()
+                    .map(|(listing, retainer)| {
+                        (
+                            ActiveListing::from(listing),
+                            retainer.map(|retainer| Retainer::from(retainer)),
+                        )
+                    })
+                    .collect(),
+            )
+        })
+        .collect();
+    Ok(Json(listings))
+}
+
 pub(crate) async fn start_web(state: WebState) {
     let db = state.db.clone();
     // build our application with a route
@@ -624,6 +668,10 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/cheapest/:world", get(cheapest_per_world))
         .route("/api/v1/recentSales/:world", get(recent_sales))
         .route("/api/v1/listings/:world/:itemid", get(world_item_listings))
+        .route(
+            "/api/v1/bulkListings/:world/:itemids",
+            get(bulk_item_listings),
+        )
         .route("/api/v1/list", get(get_lists))
         .route("/api/v1/list/create", post(create_list))
         .route("/api/v1/list/edit", post(edit_list))

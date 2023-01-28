@@ -87,10 +87,7 @@ impl<'a> TextSpan<'a> {
     }
 
     fn to_view(&self, cx: Scope) -> Option<View> {
-        let Self {
-            text,
-            ..
-        } = self;
+        let Self { text, .. } = self;
         if text.is_empty() {
             return None;
         }
