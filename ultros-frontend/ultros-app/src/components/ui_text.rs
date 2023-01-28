@@ -37,7 +37,7 @@ impl<'a> TextSpan<'a> {
     fn new(text: &'a str) -> Option<(&'a str, Self, &'a str)> {
         // find a tag
         let (previous_part, tag, rest) = TagData::find_tag(text)?;
-        let mut span = TextSpan::default();
+        let span = TextSpan::default();
         let span = span.read_tag_data(tag);
         Some((previous_part, span, rest))
     }
@@ -89,9 +89,7 @@ impl<'a> TextSpan<'a> {
     fn to_view(&self, cx: Scope) -> Option<View> {
         let Self {
             text,
-            foreground_color,
-            glow_color,
-            emphasis,
+            ..
         } = self;
         if text.is_empty() {
             return None;
@@ -114,21 +112,8 @@ impl<'a> TextSpan<'a> {
         .flatten()
         .collect::<Vec<String>>();
         let text = text.to_string();
-        Some(view! {cx, <span style=styles.join(";")><BreakOnNewLine text/></span>}.into_view(cx))
+        Some(view! {cx, <span style=styles.join(";")>{text}</span>}.into_view(cx))
     }
-}
-
-#[component]
-fn BreakOnNewLine(cx: Scope, text: String) -> impl IntoView {
-    let lines = text.split("\n");
-    let mut views = vec![];
-    let line_break = view! {cx, <br/> }.into_view(cx);
-    for line in lines {
-        views.push(view! {cx, {line.to_string()}}.into_view(cx));
-        views.push(line_break.clone());
-    }
-    // let _ = views.pop();
-    views
 }
 
 /// A UI component that takes the raw FFXIV text and converts it into HTML
@@ -138,7 +123,7 @@ pub fn UIText(cx: Scope, text: String) -> impl IntoView {
     let mut text_parts = vec![];
     if let Some((begin, span, end)) = TextSpan::new(&text) {
         if !begin.is_empty() {
-            text_parts.push(view! {cx, <BreakOnNewLine text=begin.to_owned()/>}.into_view(cx));
+            text_parts.push(begin.to_string().into_view(cx));
         }
         if let Some(view) = span.to_view(cx) {
             text_parts.push(view);
@@ -173,7 +158,7 @@ pub fn UIText(cx: Scope, text: String) -> impl IntoView {
             }
         }
     } else {
-        text_parts.push(view! {cx, <BreakOnNewLine text=text/>}.into_view(cx))
+        text_parts.push(text.into_view(cx))
     }
     view! {cx, <div class="ui-text">{text_parts}</div>}
 }
