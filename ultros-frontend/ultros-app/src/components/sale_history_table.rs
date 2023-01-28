@@ -3,7 +3,7 @@ use leptos::*;
 use ultros_api_types::{world_helper::AnySelector, SaleHistory};
 
 #[component]
-pub fn SaleHistoryTable(cx: Scope, sale_history: Vec<SaleHistory>) -> impl IntoView {
+pub fn SaleHistoryTable(cx: Scope, sale_history: MaybeSignal<Vec<SaleHistory>>) -> impl IntoView {
     view! { cx,  <table>
         <thead>
             <tr>
@@ -18,7 +18,7 @@ pub fn SaleHistoryTable(cx: Scope, sale_history: Vec<SaleHistory>) -> impl IntoV
             </tr>
         </thead>
         <tbody>
-            <For each=move || sale_history.clone()
+            <For each=sale_history
                 key=move |sale| sale.sold_date.timestamp()
                 view=move |sale| {
                     let total = sale.price_per_item * sale.quantity;

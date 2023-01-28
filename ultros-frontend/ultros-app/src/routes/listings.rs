@@ -83,6 +83,9 @@ fn ListingsContent(cx: Scope, item_id: Memo<i32>, world: Memo<String>) -> impl I
         move || (item_id(), world()),
         move |(item_id, world)| async move { get_listings(cx, item_id, &world).await },
     );
+    let sales = create_memo(cx, move |_| {
+        listing_resource.with(|listings| listings.as_ref().map(|listings| listings.sales.clone())).flatten().unwrap_or_default()
+     });
     view! { cx,
 
         <Suspense fallback=move || view!{ cx, <Loading/>}>
@@ -90,10 +93,12 @@ fn ListingsContent(cx: Scope, item_id: Memo<i32>, world: Memo<String>) -> impl I
             match listings {
                 None => view!{ cx, <div>"Error getting listings"</div>}.into_view(cx),
                 Some(currently_shown) => {
+
                     let hq_listings = currently_shown.listings.iter().cloned().filter(|(listing, _)| listing.hq).collect::<Vec<_>>();
                     let lq_listings = currently_shown.listings.iter().cloned().filter(|(listing, _)| !listing.hq).collect::<Vec<_>>();
+                    
                     view! { cx,
-                        <PriceHistoryChart />
+                        <PriceHistoryChart sales=MaybeSignal::from(sales) />
                         {(!hq_listings.is_empty()).then(move || {
                             view!{ cx, <div class="content-well">
                                 <span class="content-title">"high quality listings"</span>
@@ -106,7 +111,7 @@ fn ListingsContent(cx: Scope, item_id: Memo<i32>, world: Memo<String>) -> impl I
                         </div>
                         <div class="content-well">
                             <span class="content-title">"sale history"</span>
-                            <SaleHistoryTable sale_history=currently_shown.sales />
+                            <SaleHistoryTable sale_history=MaybeSignal::from(sales) />
                         </div>
                     }.into_view(cx)
                 }
