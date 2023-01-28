@@ -24,7 +24,7 @@ fn get_cheapest_listing(
         })
         .take_while(|listings| {
             current_quantity += listings.quantity;
-            current_quantity < quantity_needed
+            current_quantity <= quantity_needed
         })
         .collect::<Vec<_>>()
 }
@@ -51,8 +51,8 @@ pub fn PriceViewer(
                 view!{cx, <div class="flex-column">
                     {cheapest_listings.iter().map(|listing| view!{cx,
                         <div class="flex-row">
-                            {listing.quantity}
-                            <Gil amount=listing.price_per_unit/>
+                            {listing.quantity}" "
+                            <Gil amount=listing.price_per_unit/>" "
                             <WorldName id=AnySelector::World(listing.world_id)/>
                         </div>
                     }).collect::<Vec<_>>()}

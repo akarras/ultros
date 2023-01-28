@@ -40,9 +40,11 @@ pub fn ListView(cx: Scope) -> impl IntoView {
     let game_items = &xiv_gen_db::decompress_data().items;
     view! {cx,
         <div class="container">
-            <div class="main-content ">
-                <button class="btn" on:click=move |_| set_item_menu(!item_menu())><i class="fa-solid fa-plus"></i></button>
-                <MakePlaceImporter list_id = Signal::derive(cx, move || params.with(|p| p.get("id").as_ref().map(|id| id.parse::<i32>().ok())).flatten().unwrap_or_default()) />
+            <div class="main-content flex-column" style="align-items: center">
+                <div class="flex-row">
+                    <button class="btn" on:click=move |_| set_item_menu(!item_menu())><i class="fa-solid fa-plus"></i></button>
+                    <MakePlaceImporter list_id = Signal::derive(cx, move || params.with(|p| p.get("id").as_ref().map(|id| id.parse::<i32>().ok())).flatten().unwrap_or_default()) />
+                </div>
                 {move || item_menu().then(|| {
                     let (search, set_search) = create_signal(cx, "".to_string());
                     let items = &xiv_gen_db::decompress_data().items;
@@ -59,12 +61,12 @@ pub fn ListView(cx: Scope) -> impl IntoView {
                                 .into_iter()
                                 .filter(|(_, _, ma)| ma.score() > 0)
                                 .map(|(id, item, ma)| (id, item, ma))
-                                .take(10)
+                                .take(100)
                                 .collect::<Vec<_>>()
                         })
                     };
                     view!{cx, <div>
-                            <input prop:value=search on:input=move |input| set_search(event_target_value(&input)) />
+                            <div class="flex-row"><label>"Item search:"</label><input prop:value=search on:input=move |input| set_search(event_target_value(&input)) /></div>
                             <div class="content-well flex-column">
                                 {move || {
                                     let search = item_search()
@@ -108,7 +110,7 @@ pub fn ListView(cx: Scope) -> impl IntoView {
                                     <th>"Price"</th>
                                     <th>"Options"</th>
                                 </tr>
-                                <For each=move || items.clone() key=|item| item.id view=move |item| view!{cx, <tr>
+                                <For each=move || items.clone() key=|item| item.id view=move |item| view!{cx, <tr valign="top">
                                     <td>
                                         <div class="flex-row">
                                             <ItemIcon item_id=item.item_id icon_size=IconSize::Small/>

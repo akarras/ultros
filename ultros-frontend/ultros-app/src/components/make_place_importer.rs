@@ -30,6 +30,7 @@ pub struct MakePlaceItemData {
     pub quantity: i32,
 }
 
+/// Parse a MakePlace formatted list (or really any list following the format of name: quantity)
 fn parse_list(list: &str) -> Result<Vec<MakePlaceItemData>, ParseListError> {
     // Lists come with duplicated data in sections.
     // For our purposes, we want to read everything but the furniture + dye section.
@@ -43,7 +44,8 @@ fn parse_list(list: &str) -> Result<Vec<MakePlaceItemData>, ParseListError> {
         .map(|(item_name, quantity)| {
             println!("{item_name}: {quantity}");
             let quantity = quantity.trim().parse::<i32>()?;
-
+            // TODO: There are some dyes that have unmarketable variants such as Pure White Dye -> General Purpose Pure White Dye
+            // We should be able to automatically find the general-purpose version in the future
             let item_id = lookup_item_by_name(item_name)
                 .or_else(|_| lookup_item_by_name(&format!("{} Dye", item_name.trim())))?
                 .0;
@@ -76,14 +78,15 @@ pub fn MakePlaceImporter(cx: Scope, list_id: Signal<i32>) -> impl IntoView {
         }
     });
     view! {cx,
-        <button on:click=move |_| set_is_open(!is_open()) class="btn">"Import from make place"</button>
+        <button on:click=move |_| set_is_open(!is_open()) class="btn">"Bulk List"</button>
         <div class="flex-column" class:hidden=move || !is_open()>
+        <label>"Copy+Paste a list with a bunch of items in it formatted as Item1: Quantity. Make place users can paste their furniture+dye lists here."</label>
         <textarea on:input=move |input| set_list(event_target_value(&input))></textarea>
         <button on:click=move |_| {
             if let Ok(list) = parse_list(&list()) {
                 add_items_to_list.dispatch(list);
             }
-        } class="btn">"Submit"</button>
+        } class="btn">"Bulk add"</button>
         </div>
     }
 }
