@@ -7,7 +7,7 @@ use xiv_gen::ItemId;
 
 use crate::api::{add_item_to_list, delete_list_item, get_list_items_with_listings};
 use crate::components::{
-    item_icon::*, loading::*, make_place_importer::*, price_viewer::*, tooltip::*,
+    clipboard::*, item_icon::*, loading::*, make_place_importer::*, price_viewer::*, tooltip::*,
 };
 
 #[component]
@@ -115,6 +115,7 @@ pub fn ListView(cx: Scope) -> impl IntoView {
                                         <div class="flex-row">
                                             <ItemIcon item_id=item.item_id icon_size=IconSize::Small/>
                                             {game_items.get(&ItemId(item.item_id)).map(|item| &item.name)}
+                                            <Clipboard clipboard_text=game_items.get(&ItemId(item.item_id)).map(|item| item.name.to_string()).unwrap_or_default()/>
                                             {game_items.get(&ItemId(item.item_id)).map(|item| item.item_search_category.0 <= 1).unwrap_or_default().then(move || {
                                                 view!{cx, <div><Tooltip tooltip_text="This item is not available on the marketboard".to_string()><i class="fa-solid fa-circle-exclamation"></i></Tooltip></div>}
                                             })}
@@ -124,7 +125,7 @@ pub fn ListView(cx: Scope) -> impl IntoView {
                                         {item.quantity}
                                     </td>
                                     <td>
-                                        <PriceViewer world="North-America".to_string() quantity=item.quantity.unwrap_or(1) hq=None listings=listings/>
+                                        <PriceViewer quantity=item.quantity.unwrap_or(1) hq=None listings=listings/>
                                     </td>
                                     <td>
                                         <button class="btn" on:click=move |_| {delete_item.dispatch(item.id)}>

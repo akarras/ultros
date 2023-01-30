@@ -106,7 +106,15 @@ pub(crate) async fn get_retainer_undercuts(cx: Scope) -> Option<UserRetainerList
                 if let Some((cheapest, _)) = listings_map
                     .get(&listing.world_id)
                     .and_then(|world_map| world_map.get(&listing.item_id))
-                    .and_then(|listings| listings.first())
+                    .and_then(|listings| {
+                        listings.iter().find(|(cheapest, _)| {
+                            if listing.hq {
+                                listing.hq == cheapest.hq
+                            } else {
+                                true
+                            }
+                        })
+                    })
                 {
                     if listing.price_per_unit > cheapest.price_per_unit {
                         new_listings.push(listing.clone());
@@ -147,10 +155,7 @@ pub(crate) async fn get_lists(cx: Scope) -> Option<Vec<List>> {
 pub(crate) async fn get_list_items_with_listings(
     cx: Scope,
     list_id: i32,
-) -> Option<(
-    List,
-    Vec<(ListItem, Vec<(ActiveListing, Option<Retainer>)>)>,
-)> {
+) -> Option<(List, Vec<(ListItem, Vec<ActiveListing>)>)> {
     fetch_api(cx, &format!("/api/v1/list/{list_id}/listings")).await
 }
 

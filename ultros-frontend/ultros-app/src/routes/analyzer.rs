@@ -206,7 +206,7 @@ fn AnalyzerTable(
                <input min=0 max=100000 type="number" on:input=move |input| set_minimum_roi(event_target_value(&input).parse::<i32>()) />
            </div>
            <div>
-               <p>"minimum time:" <br/>{predicted_time_string}</p>
+               <p>"minimum time (use time notation, ex. 1w 30m) :" <br/>{predicted_time_string}</p>
                <input on:input=move |input| set_max_predicted_time(event_target_value(&input)) />
            </div>
        </div>

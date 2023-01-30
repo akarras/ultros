@@ -53,7 +53,11 @@ pub fn EditLists(cx: Scope) -> impl IntoView {
                                     let (name, set_name) = create_signal(cx, list().name);
                                     view!{cx, <tr>
                                         <td>{move || if is_edit() {
-                                            view!{cx, <input prop:value=name on:input=move |input| set_name(event_target_value(&input))/>}.into_view(cx)
+                                            view!{cx, <input prop:value=name on:input=move |input| set_name(event_target_value(&input))/>
+                                                <select>
+                                                    <option>"North-America"</option>
+                                                </select>
+                                            }.into_view(cx)
                                         } else {
                                             view!{cx, {name()}}.into_view(cx)
                                         }}</td>

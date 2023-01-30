@@ -15,6 +15,8 @@ use axum::routing::{get, post};
 use axum::{body, middleware, Json, Router};
 use axum_extra::extract::cookie::Key;
 use futures::future::{try_join, try_join_all};
+use futures::stream::TryStreamExt;
+use futures::{stream, StreamExt};
 use image::imageops::FilterType;
 use image::ImageOutputFormat;
 use itertools::Itertools;
@@ -577,7 +579,7 @@ pub(crate) async fn get_list_with_listings(
     // borrow these for use inside the closure
     let world_ids = &world_ids;
     let db = &db;
-    let list_items = futures::future::try_join_all(list_items.into_iter().map(|list| async move {
+    let list_items = stream::iter(list_items.into_iter().map(|list| async move {
         // get alll the listings that match our item list
         let listings = db
             .get_all_listings_in_worlds(&world_ids, ItemId(list.item_id))
@@ -594,6 +596,8 @@ pub(crate) async fn get_list_with_listings(
             )
         })
     }))
+    .buffered(10)
+    .try_collect()
     .await?;
 
     Ok(Json((List::from(list), list_items)))

@@ -1,5 +1,4 @@
 use leptos::*;
-use leptos_router::*;
 
 use crate::api::get_lists;
 use crate::components::{lists_nav::*, loading::*, world_name::*};
