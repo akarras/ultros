@@ -596,7 +596,7 @@ pub(crate) async fn get_list_with_listings(
             )
         })
     }))
-    .buffered(10)
+    .buffered(2)
     .try_collect()
     .await?;
 

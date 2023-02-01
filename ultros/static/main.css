@@ -77,8 +77,6 @@ body {
   justify-content: flex-end;
   flex-wrap: wrap;
   padding: 10px;
-  padding-top: 20px;
-  height: 16vh;
 }
 
 .btn {
@@ -834,3 +832,6 @@ select optgroup {
   }
 }
 
+[aria-current="page"] {
+  color:rgb(151, 79, 151)
+}
