@@ -20,6 +20,9 @@ pub(crate) async fn get_listings(
     item_id: i32,
     world: &str,
 ) -> Option<CurrentlyShownItem> {
+    if item_id == 0 {
+        return None;
+    }
     fetch_api(cx, &format!("/api/v1/listings/{world}/{item_id}")).await
 }
 
@@ -28,6 +31,9 @@ pub(crate) async fn get_bulk_listings(
     world: &str,
     item_ids: impl Iterator<Item = i32>,
 ) -> Option<HashMap<i32, Vec<(ActiveListing, Option<Retainer>)>>> {
+    if world.is_empty() {
+        return None;
+    }
     let ids = item_ids.format(",");
     fetch_api(cx, &format!("/api/v1/bulkListings/{world}/{ids}")).await
 }
@@ -156,6 +162,9 @@ pub(crate) async fn get_list_items_with_listings(
     cx: Scope,
     list_id: i32,
 ) -> Option<(List, Vec<(ListItem, Vec<ActiveListing>)>)> {
+    if list_id == 0 {
+        return None;
+    }
     fetch_api(cx, &format!("/api/v1/list/{list_id}/listings")).await
 }
 
@@ -206,7 +215,7 @@ where
     });
     T::from_json(&json)
         .map_err(|e| {
-            gloo::console::error!(format!("Error receiving json error: {e:?}"));
+            gloo::console::error!(format!("json error: {path} {e:?}"));
             e
         })
         .ok()

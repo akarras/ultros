@@ -2,7 +2,6 @@ use leptos::*;
 
 use crate::api::get_lists;
 use crate::components::{lists_nav::*, loading::*, world_name::*};
-use ultros_api_types::world_helper::AnySelector;
 
 #[component]
 pub fn Lists(cx: Scope) -> impl IntoView {
