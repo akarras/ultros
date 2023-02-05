@@ -31,10 +31,11 @@ use std::time::Duration;
 use tokio::time::timeout;
 use tower_http::compression::CompressionLayer;
 use tracing::debug;
-use ultros_api_types::list::{List, ListItem};
+use ultros_api_types::list::{CreateList, List, ListItem};
 use ultros_api_types::user::{OwnedRetainer, UserData, UserRetainerListings, UserRetainers};
 use ultros_api_types::world::WorldData;
 use ultros_api_types::{ActiveListing, CurrentlyShownItem, FfxivCharacter, Retainer};
+use ultros_db::common_type_conversions::ApiConversionError;
 use ultros_db::world_cache::AnySelector;
 use ultros_db::ActiveValue;
 use ultros_db::{world_cache::WorldCache, UltrosDb};
@@ -532,13 +533,13 @@ pub(crate) async fn get_lists(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
 ) -> Result<Json<Vec<List>>, ApiError> {
-    Ok(Json(
-        db.get_lists_for_user(user.id as i64)
-            .await?
-            .into_iter()
-            .map(|list| List::from(list))
-            .collect::<Vec<_>>(),
-    ))
+    let lists = db
+        .get_lists_for_user(user.id as i64)
+        .await?
+        .into_iter()
+        .map(|list| List::try_from(list))
+        .collect::<Result<Vec<_>, ApiConversionError>>()?;
+    Ok(Json(lists))
 }
 
 pub(crate) async fn get_list(
@@ -555,7 +556,7 @@ pub(crate) async fn get_list(
         .into_iter()
         .map(|item| ListItem::from(item))
         .collect::<Vec<_>>();
-    let list = List::from(list);
+    let list = List::try_from(list)?;
     Ok(Json((list, list_items)))
 }
 
@@ -600,7 +601,7 @@ pub(crate) async fn get_list_with_listings(
     .try_collect()
     .await?;
 
-    Ok(Json((List::from(list), list_items)))
+    Ok(Json((List::try_from(list)?, list_items)))
 }
 
 pub(crate) async fn delete_list(
@@ -615,10 +616,11 @@ pub(crate) async fn delete_list(
 pub(crate) async fn create_list(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
-    Json(list): Json<List>,
+    Json(list): Json<CreateList>,
 ) -> Result<Json<()>, ApiError> {
     let discord_user = db.get_or_create_discord_user(user.id, user.name).await?;
-    db.create_list(discord_user, list.name, None).await?;
+    db.create_list(discord_user, list.name, Some(list.wdr_filter.into()))
+        .await?;
     Ok(Json(()))
 }
 
@@ -628,9 +630,18 @@ pub(crate) async fn edit_list(
     Json(list): Json<List>,
 ) -> Result<Json<()>, ApiError> {
     db.update_list(list.id, user.id as i64, |ulist| {
-        ulist.datacenter_id = ActiveValue::Set(list.datacenter_id);
-        ulist.region_id = ActiveValue::Set(list.region_id);
-        ulist.world_id = ActiveValue::Set(list.world_id);
+        ulist.datacenter_id = ActiveValue::Set(match list.wdr_filter {
+            ultros_api_types::world_helper::AnySelector::Datacenter(dc) => Some(dc),
+            _ => None,
+        });
+        ulist.region_id = ActiveValue::Set(match list.wdr_filter {
+            ultros_api_types::world_helper::AnySelector::Region(region) => Some(region),
+            _ => None,
+        });
+        ulist.world_id = ActiveValue::Set(match list.wdr_filter {
+            ultros_api_types::world_helper::AnySelector::World(world) => Some(world),
+            _ => None,
+        });
         ulist.name = ActiveValue::Set(list.name);
     })
     .await?;

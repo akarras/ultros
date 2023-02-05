@@ -1,14 +1,21 @@
-use ultros_api_types::{
-    list::{List, ListItem},
-    user::OwnedRetainer,
-    world::{Datacenter, Region, World, WorldData},
-    ActiveListing, FfxivCharacter, Retainer, SaleHistory,
-};
-
 use crate::{
     entity::{self, datacenter, final_fantasy_character, list, list_item, owned_retainers, region},
     world_cache::WorldCache,
 };
+use thiserror::Error;
+use ultros_api_types::{
+    list::{List, ListItem},
+    user::OwnedRetainer,
+    world::{Datacenter, Region, World, WorldData},
+    world_helper::AnySelector,
+    ActiveListing, FfxivCharacter, Retainer, SaleHistory,
+};
+
+#[derive(Debug, Error)]
+pub enum ApiConversionError {
+    #[error("No world was supplied for the list")]
+    InvalidListNoWorld,
+}
 
 impl From<entity::active_listing::Model> for ActiveListing {
     fn from(value: entity::active_listing::Model) -> Self {
@@ -165,8 +172,9 @@ impl From<owned_retainers::Model> for OwnedRetainer {
     }
 }
 
-impl From<list::Model> for List {
-    fn from(value: list::Model) -> Self {
+impl TryFrom<list::Model> for List {
+    type Error = ApiConversionError;
+    fn try_from(value: list::Model) -> Result<Self, Self::Error> {
         let list::Model {
             id,
             owner,
@@ -175,14 +183,18 @@ impl From<list::Model> for List {
             datacenter_id,
             region_id,
         } = value;
-        Self {
+        // there should only ever be one world/region/datacenter but just go in order in the off chance there are duplicates
+        Ok(Self {
             id,
             owner,
             name,
-            world_id,
-            datacenter_id,
-            region_id,
-        }
+            wdr_filter: match (world_id, datacenter_id, region_id) {
+                (Some(world_id), _, _) => AnySelector::World(world_id),
+                (_, Some(datacenter_id), _) => AnySelector::Datacenter(datacenter_id),
+                (_, _, Some(region_id)) => AnySelector::Region(region_id),
+                _ => return Err(ApiConversionError::InvalidListNoWorld),
+            },
+        })
     }
 }
 
@@ -201,6 +213,16 @@ impl From<list_item::Model> for ListItem {
             list_id,
             hq,
             quantity,
+        }
+    }
+}
+
+impl From<AnySelector> for crate::world_cache::AnySelector {
+    fn from(value: AnySelector) -> Self {
+        match value {
+            AnySelector::Region(region) => crate::world_cache::AnySelector::Region(region),
+            AnySelector::Datacenter(dc) => crate::world_cache::AnySelector::Datacenter(dc),
+            AnySelector::World(world) => crate::world_cache::AnySelector::World(world),
         }
     }
 }

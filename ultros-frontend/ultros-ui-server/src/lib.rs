@@ -22,7 +22,7 @@ pub async fn create_leptos_app(_db: ultros_db::UltrosDb) -> Router {
     let bundle_path = format!("/{site_root}/{pkg_dir}");
     // The filesystem path of the generated JS/WASM bundle from cargo-leptos
     let bundle_filepath = format!("./{site_root}/{pkg_dir}");
-    let addr = leptos_options.site_address.clone();
+    let addr = leptos_options.site_addr.clone();
     log::debug!("serving at {addr}");
 
     // simple_logger::init_with_level(log::Level::Debug).expect("couldn't initialize logging");

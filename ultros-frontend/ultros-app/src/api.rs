@@ -5,7 +5,7 @@ use itertools::Itertools;
 use leptos::*;
 use ultros_api_types::{
     cheapest_listings::CheapestListings,
-    list::{List, ListItem},
+    list::{CreateList, List, ListItem},
     recent_sales::RecentSales,
     user::{UserData, UserRetainerListings, UserRetainers},
     world::WorldData,
@@ -163,7 +163,7 @@ pub(crate) async fn delete_list(cx: Scope, list_id: i32) -> Option<()> {
     fetch_api(cx, &format!("/api/v1/list/{list_id}/delete")).await
 }
 
-pub(crate) async fn create_list(cx: Scope, list: List) -> Option<()> {
+pub(crate) async fn create_list(cx: Scope, list: CreateList) -> Option<()> {
     post_api(cx, &format!("/api/v1/list/create"), list).await
 }
 

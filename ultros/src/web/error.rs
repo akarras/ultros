@@ -15,7 +15,9 @@ use thiserror::Error;
 use tokio::{sync::broadcast::error::SendError, time::error::Elapsed};
 use tracing::log::error;
 use ultros_api_types::result::JsonError;
-use ultros_db::{world_cache::WorldCacheError, SeaDbErr};
+use ultros_db::{
+    common_type_conversions::ApiConversionError, world_cache::WorldCacheError, SeaDbErr,
+};
 
 use crate::{analyzer_service::AnalyzerError, event};
 
@@ -84,6 +86,8 @@ pub enum ApiError {
             StandardErrorResponse<BasicErrorResponseType>,
         >,
     ),
+    #[error("API conversions error {0}")]
+    ApiConversionError(#[from] ApiConversionError),
 }
 
 impl ApiError {

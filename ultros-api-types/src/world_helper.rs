@@ -7,14 +7,14 @@ pub struct WorldHelper {
     world_data: WorldData,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub enum AnyResult<'a> {
     Region(&'a Region),
     Datacenter(&'a Datacenter),
     World(&'a World),
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub enum AnySelector {
     Region(i32),
     Datacenter(i32),
@@ -54,6 +54,24 @@ impl<'a> AnyResult<'a> {
             _ => None,
         }
     }
+
+    /// Determines whether this result is inside of the other result
+    /// for example, if this is the Datacenter Aether, and other is North-America,
+    /// then this would be true.
+    /// If it is the same object, it will also be true.
+    pub fn is_in(&self, other: &Self) -> bool {
+        match (self, other) {
+            (AnyResult::Region(r1), AnyResult::Region(r2)) => r1.id == r2.id,
+            (AnyResult::Datacenter(d1), AnyResult::Datacenter(d2)) => d1.id == d2.id,
+            (AnyResult::Datacenter(d1), AnyResult::Region(r1)) => d1.region_id == r1.id,
+            (AnyResult::World(w1), AnyResult::Region(r1)) => {
+                r1.datacenters.iter().any(|d| d.id == w1.datacenter_id)
+            }
+            (AnyResult::World(w1), AnyResult::Datacenter(d1)) => w1.datacenter_id == d1.id,
+            (AnyResult::World(w1), AnyResult::World(w2)) => w1.id == w2.id,
+            _ => false,
+        }
+    }
 }
 
 impl<'a> AnyResult<'a> {
@@ -63,6 +81,24 @@ impl<'a> AnyResult<'a> {
             AnyResult::Datacenter(d) => d.name.as_str(),
             AnyResult::World(w) => w.name.as_str(),
         }
+    }
+}
+
+impl<'a> From<&'a World> for AnyResult<'a> {
+    fn from(value: &'a World) -> Self {
+        AnyResult::World(value)
+    }
+}
+
+impl<'a> From<&'a Datacenter> for AnyResult<'a> {
+    fn from(value: &'a Datacenter) -> Self {
+        AnyResult::Datacenter(value)
+    }
+}
+
+impl<'a> From<&'a Region> for AnyResult<'a> {
+    fn from(value: &'a Region) -> Self {
+        AnyResult::Region(value)
     }
 }
 
@@ -148,5 +184,13 @@ impl<'a> WorldHelper {
                 region.as_region().unwrap()
             }
         }
+    }
+
+    pub fn get_all(&'a self) -> &'a WorldData {
+        &self.world_data
+    }
+
+    pub fn get_cloned(&self) -> WorldData {
+        self.world_data.clone()
     }
 }
