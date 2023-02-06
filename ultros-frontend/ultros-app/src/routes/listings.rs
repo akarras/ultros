@@ -114,7 +114,7 @@ fn ListingsContent(cx: Scope, item_id: Memo<i32>, world: Memo<String>) -> impl I
                         </div>
                         <div class="content-well">
                             <span class="content-title">"sale history"</span>
-                            <SaleHistoryTable sales=MaybeSignal::from(sales) />
+                            <SaleHistoryTable sales=Signal::from(sales) />
                         </div>
                     }.into_view(cx)
                 }
