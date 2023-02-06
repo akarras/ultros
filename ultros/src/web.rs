@@ -12,7 +12,7 @@ use axum::extract::{FromRef, Path, Query, State};
 use axum::http::{HeaderValue, Response, StatusCode};
 use axum::response::{IntoResponse, Redirect};
 use axum::routing::{get, post};
-use axum::{body, middleware, Json, Router};
+use axum::{body, debug_handler, middleware, Json, Router};
 use axum_extra::extract::cookie::Key;
 use futures::future::{try_join, try_join_all};
 use futures::stream::TryStreamExt;
@@ -20,6 +20,7 @@ use futures::{stream, StreamExt};
 use image::imageops::FilterType;
 use image::ImageOutputFormat;
 use itertools::Itertools;
+use lodestone::model::server::Server;
 use maud::Render;
 use reqwest::header;
 use serde::{Deserialize, Serialize};
@@ -676,7 +677,6 @@ pub(crate) async fn delete_list_item(
 }
 
 /// Does a bulk lookup of item listings. Will not preserve order.
-#[axum::debug_handler(state = WebState)]
 pub(crate) async fn bulk_item_listings(
     State(db): State<UltrosDb>,
     State(world_cache): State<Arc<WorldCache>>,
@@ -718,6 +718,68 @@ pub(crate) async fn bulk_item_listings(
     Ok(Json(listings))
 }
 
+// #[debug_handler(state = WebState)]
+async fn user_characters(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+) -> Result<Json<Vec<FfxivCharacter>>, ApiError> {
+    let characters = db
+        .get_all_characters_for_discord_user(user.id as i64)
+        .await?;
+    // we can now strip the owned final fantasy character tag and convert to the API version
+    Ok(Json(
+        characters
+            .into_iter()
+            .flat_map(|(_, character)| character.map(|c| c.into()))
+            .collect::<Vec<_>>(),
+    ))
+}
+
+async fn character_search(
+    _user: AuthDiscordUser, // user required just to prevent this endpoint from being abused.
+    Path(name): Path<String>,
+    State(cache): State<Arc<WorldCache>>,
+) -> Result<Json<Vec<FfxivCharacter>>, ApiError> {
+    let mut builder = lodestone::search::SearchBuilder::new().character(&name);
+    // if let Some(world) = query.world {
+    //     let world = cache.lookup_selector(&AnySelector::World(world))?;
+    //     let world_name = world.get_name();
+    //     builder = builder.server(Server::from_str(world_name)?);
+    // }
+    let client = reqwest::Client::new();
+    let search_results = builder.send_async(&client).await?;
+
+    let characters = search_results
+        .into_iter()
+        .flat_map(|r| {
+            let world = cache.lookup_value_by_name(&r.world).ok()?;
+            let (first_name, last_name) = r
+                .name
+                .split_once(' ')
+                .expect("Should always have first last name");
+            Some(FfxivCharacter {
+                id: r.user_id as i32,
+                first_name: first_name.to_string(),
+                last_name: last_name.to_string(),
+                world_id: world.as_world().ok()?.id,
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(Json(characters))
+}
+
+async fn claim_character(
+    user: AuthDiscordUser,
+    Path(character_id): Path<u32>,
+    State(verifier): State<CharacterVerifierService>,
+) -> Result<Json<(i32, String)>, ApiError> {
+    let result = verifier
+        .start_verification(character_id, user.id as i64)
+        .await?;
+    // db.create_character_challenge(character_id, user.id as i64, challenge)
+    Ok(Json(result))
+}
+
 pub(crate) async fn start_web(state: WebState) {
     let db = state.db.clone();
     // build our application with a route
@@ -752,7 +814,10 @@ pub(crate) async fn start_web(state: WebState) {
             "/listings/refresh/:worldid/:itemid",
             get(refresh_world_item_listings),
         )
-        .route("/characters/verify/:id", get(verify_character))
+        .route("/api/v1/characters/search/:name", get(character_search))
+        .route("/api/v1/characters/claim/:id", get(claim_character))
+        .route("/api/v1/characters/verify/:id", get(verify_character))
+        .route("/api/v1/characters", get(user_characters))
         .route("/retainers/add/:id", get(add_retainer))
         .route("/retainers/remove/:id", get(remove_owned_retainer))
         .route("/static/*path", get(static_path))

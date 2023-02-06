@@ -9,7 +9,7 @@ use ultros_api_types::{
     recent_sales::RecentSales,
     user::{UserData, UserRetainerListings, UserRetainers},
     world::WorldData,
-    ActiveListing, CurrentlyShownItem, Retainer,
+    ActiveListing, CurrentlyShownItem, FfxivCharacter, Retainer,
 };
 
 #[cfg(not(feature = "ssr"))]
@@ -152,6 +152,21 @@ pub(crate) async fn claim_retainer(cx: Scope, retainer_id: i32) -> Option<()> {
 /// Unclaims the retainer based on the owned retainer id
 pub(crate) async fn unclaim_retainer(cx: Scope, owned_retainer_id: i32) -> Option<()> {
     fetch_api(cx, &format!("/api/v1/retainer/unclaim/{owned_retainer_id}")).await
+}
+
+/// Gets the characters for this user
+pub(crate) async fn get_characters(cx: Scope) -> Option<Vec<FfxivCharacter>> {
+    fetch_api(cx, &format!("/api/v1/characters")).await
+}
+
+/// Starts to claim the given character
+pub(crate) async fn claim_character(cx: Scope, id: i32) -> Option<()> {
+    fetch_api(cx, &format!("/api/v1/character/claim/{id}")).await
+}
+
+/// Searches for the given character with the given lodestone ID.
+pub(crate) async fn search_characters(cx: Scope, character: String) -> Option<Vec<FfxivCharacter>> {
+    fetch_api(cx, &format!("/api/v1/characters/search/{character}")).await
 }
 
 pub(crate) async fn get_lists(cx: Scope) -> Option<Vec<List>> {
