@@ -7,7 +7,6 @@ pub fn Clipboard(cx: Scope, clipboard_text: String) -> impl IntoView {
     view! {cx, <div class="clipboard" on:click=move |_| {
         #[cfg(all(web_sys_unstable_apis, feature = "hydrate"))]
         {
-            use web_sys::{Clipboard, Navigator, Window};
             if let Some(window) = web_sys::window()
             {
                 let navigator = window.navigator();
@@ -17,7 +16,7 @@ pub fn Clipboard(cx: Scope, clipboard_text: String) -> impl IntoView {
                 }
             }
         }
-        #[cfg(not(web_sys_unstable_apis))]
+        #[cfg(any(not(web_sys_unstable_apis), not(feature = "hydrate")))]
         {
             set_tooltip("Clipboard API unavailable".to_string())
         }
