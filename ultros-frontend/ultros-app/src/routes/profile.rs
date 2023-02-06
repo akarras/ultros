@@ -1,10 +1,17 @@
 use leptos::*;
+use ultros_api_types::world_helper::AnySelector;
 
-use crate::api::{claim_character, get_characters, search_characters};
-use crate::components::loading::*;
+use crate::api::{
+    check_character_verification, claim_character, get_character_verifications, get_characters,
+    search_characters, unclaim_character,
+};
+use crate::components::{loading::*, world_name::*};
 
 #[component]
-fn AddCharacterMenu(cx: Scope, claim_character: Action<i32, Option<()>>) -> impl IntoView {
+fn AddCharacterMenu(
+    cx: Scope,
+    claim_character: Action<i32, Option<(i32, String)>>,
+) -> impl IntoView {
     let (is_open, set_is_open) = create_signal(cx, false);
     let (character_search, set_character_search) = create_signal(cx, "".to_string());
     let search_action = create_action(cx, move |search: &String| {
@@ -13,6 +20,13 @@ fn AddCharacterMenu(cx: Scope, claim_character: Action<i32, Option<()>>) -> impl
 
     view! {cx,
         <button class="btn" on:click=move |_| set_is_open(!is_open())><i class="fa-solid fa-plus"></i></button>
+        {move || claim_character.value()().flatten().map(|(_id, value)| {
+            view!{cx,
+            <div class="content-well">
+                "Successfully started claim. Add "{value}" to your lodestone profile"
+            </div>
+            }
+        })}
         {move || is_open().then(||
             view!{cx, <div class="flex-column">
                     <label for="character-name">"Character:"</label>
@@ -30,9 +44,10 @@ fn AddCharacterMenu(cx: Scope, claim_character: Action<i32, Option<()>>) -> impl
                                     "No search results found"
                                 })}
                                 {characters.into_iter().map(|character| view!{cx,
-                                    <div>
-                                        {character.first_name} {character.last_name}
-                                        <button class="btn" on:click=move |_| claim_character.dispatch(character.id)>"Claim"</button>
+                                    <div class="flex flex-row">
+                                        <span style="width: 250px">{character.first_name}" "{character.last_name}</span>
+                                        <span style="width: 150px"><WorldName id=AnySelector::World(character.world_id)/></span>
+                                        <button class="btn" on:click=move |_| { set_is_open(false); claim_character.dispatch(character.id); }>"Claim"</button>
                                     </div>
                                 }).collect::<Vec<_>>()}
                             </div>}.into_view(cx),
@@ -45,8 +60,25 @@ fn AddCharacterMenu(cx: Scope, claim_character: Action<i32, Option<()>>) -> impl
 
 #[component]
 pub fn Profile(cx: Scope) -> impl IntoView {
-    let characters = create_resource(cx, move || {}, move |_| get_characters(cx));
     let claim_character = create_action(cx, move |id: &i32| claim_character(cx, *id));
+    let unclaim_character = create_action(cx, move |id: &i32| unclaim_character(cx, *id));
+    let check_verification =
+        create_action(cx, move |id: &i32| check_character_verification(cx, *id));
+    let characters = create_resource(
+        cx,
+        move || {
+            (
+                unclaim_character.version()(),
+                check_verification.version()(),
+            )
+        },
+        move |_| get_characters(cx),
+    );
+    let pending_verifications = create_resource(
+        cx,
+        move || (check_verification.version()(), claim_character.version()()),
+        move |_| get_character_verifications(cx),
+    );
 
     view! { cx, <div class="container">
         <div class="main-content">
@@ -57,6 +89,26 @@ pub fn Profile(cx: Scope) -> impl IntoView {
                 </span>
                 <AddCharacterMenu claim_character/>
                 <Suspense fallback=move || view!{cx, <Loading/>}>
+                    {move || pending_verifications().flatten().map(|verifications| {
+                        view!{cx, <div>
+                                {verifications.into_iter().map(|verification| {
+                                    view!{cx, <div class="flex-row">
+                                            <div class="flex-column">
+                                                {verification.character.first_name}" "{verification.character.last_name}
+                                                <br/>
+                                                "verification string:" {verification.verification_string}
+                                                <br/>
+                                                "Add the verification string to your lodestone profile and then click verify!"
+                                            </div>
+                                            <button class="btn" on:click=move |_| {
+                                                check_verification.dispatch(verification.id)
+                                            }>"Verify"</button>
+                                        </div>}
+                                }).collect::<Vec<_>>()}
+                            </div>}
+                    })}
+                </Suspense>
+                <Suspense fallback=move || view!{cx, <Loading/>}>
                     {move || characters().map(|characters| {
                         match characters {
                             Some(characters) => {
@@ -66,9 +118,10 @@ pub fn Profile(cx: Scope) -> impl IntoView {
                                     view!{cx, <div>
                                         {characters.into_iter().map(|character| {
                                             view!{cx,
-                                                <div>
-                                                    {character.first_name}" "{character.last_name}
-                                                    <button class="btn"><span class="fa-solid fa-trash"></span></button>
+                                                <div class="flex flex-row">
+                                                    <span style="width: 250px;">{character.first_name}" "{character.last_name}</span>
+                                                    <span style="width: 150px"><WorldName id=AnySelector::World(character.world_id)/></span>
+                                                    <button class="btn" on:click=move |_| unclaim_character.dispatch(character.id)><span class="fa-solid fa-trash"></span></button>
                                                 </div>
                                             }
                                         }).collect::<Vec<_>>()}

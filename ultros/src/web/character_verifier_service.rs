@@ -23,8 +23,8 @@ pub enum VerifierError {
     Lodestone(#[from] LodestoneError),
     #[error("Generic DB error {0}")]
     DbError(#[from] anyhow::Error),
-    #[error("Verification string did not match")]
-    VerificationFailure,
+    #[error("Verification string did not match. Profile contained `{profile}`. Actual `{actual}`")]
+    VerificationFailure { profile: String, actual: String },
     #[error("World error {0}")]
     WorldCacheError(#[from] WorldCacheError),
     #[error("Unauthorized")]
@@ -85,8 +85,8 @@ impl CharacterVerifierService {
             challenge,
             ..
         } = &verification;
-        if discord_user == *discord_user_id {
-            return Err(VerifierError::VerificationFailure);
+        if discord_user != *discord_user_id {
+            return Err(VerifierError::Unauthorized);
         }
         self.compare_verification(&challenge, *ffxiv_character_id as u32)
             .await?;
@@ -108,7 +108,10 @@ impl CharacterVerifierService {
         if intro {
             Ok(())
         } else {
-            Err(VerifierError::VerificationFailure)
+            Err(VerifierError::VerificationFailure {
+                profile: profile.self_introduction,
+                actual: verifier_string.to_string(),
+            })
         }
     }
 }

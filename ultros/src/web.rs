@@ -35,7 +35,9 @@ use tracing::debug;
 use ultros_api_types::list::{CreateList, List, ListItem};
 use ultros_api_types::user::{OwnedRetainer, UserData, UserRetainerListings, UserRetainers};
 use ultros_api_types::world::WorldData;
-use ultros_api_types::{ActiveListing, CurrentlyShownItem, FfxivCharacter, Retainer};
+use ultros_api_types::{
+    ActiveListing, CurrentlyShownItem, FfxivCharacter, FfxivCharacterVerification, Retainer,
+};
 use ultros_db::common_type_conversions::ApiConversionError;
 use ultros_db::world_cache::AnySelector;
 use ultros_db::ActiveValue;
@@ -735,12 +737,33 @@ async fn user_characters(
     ))
 }
 
+async fn pending_verifications(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+) -> Result<Json<Vec<FfxivCharacterVerification>>, ApiError> {
+    let verifications = db
+        .get_all_pending_verification_challenges(user.id as i64)
+        .await?;
+    Ok(Json(
+        verifications
+            .into_iter()
+            .flat_map(|(verification, character)| {
+                character.map(|character| FfxivCharacterVerification {
+                    id: verification.id,
+                    character: character.into(),
+                    verification_string: verification.challenge,
+                })
+            })
+            .collect::<Vec<_>>(),
+    ))
+}
+
 async fn character_search(
     _user: AuthDiscordUser, // user required just to prevent this endpoint from being abused.
     Path(name): Path<String>,
     State(cache): State<Arc<WorldCache>>,
 ) -> Result<Json<Vec<FfxivCharacter>>, ApiError> {
-    let mut builder = lodestone::search::SearchBuilder::new().character(&name);
+    let builder = lodestone::search::SearchBuilder::new().character(&name);
     // if let Some(world) = query.world {
     //     let world = cache.lookup_selector(&AnySelector::World(world))?;
     //     let world_name = world.get_name();
@@ -752,7 +775,12 @@ async fn character_search(
     let characters = search_results
         .into_iter()
         .flat_map(|r| {
-            let world = cache.lookup_value_by_name(&r.world).ok()?;
+            // world comes back as World [Datacenter], so strip the datacenter and parse the world
+            let (world, _) = r.world.split_once(' ')?;
+            let world = cache
+                .lookup_value_by_name(world)
+                .ok()
+                .unwrap_or_else(|| panic!("World {} not found", world));
             let (first_name, last_name) = r
                 .name
                 .split_once(' ')
@@ -778,6 +806,17 @@ async fn claim_character(
         .await?;
     // db.create_character_challenge(character_id, user.id as i64, challenge)
     Ok(Json(result))
+}
+
+// #[debug_handler(state = WebState)]
+async fn unclaim_character(
+    user: AuthDiscordUser,
+    Path(character_id): Path<i32>,
+    State(db): State<UltrosDb>,
+) -> Result<Json<()>, ApiError> {
+    db.delete_owned_character(user.id as i64, character_id)
+        .await?;
+    Ok(Json(()))
 }
 
 pub(crate) async fn start_web(state: WebState) {
@@ -816,8 +855,13 @@ pub(crate) async fn start_web(state: WebState) {
         )
         .route("/api/v1/characters/search/:name", get(character_search))
         .route("/api/v1/characters/claim/:id", get(claim_character))
+        .route("/api/v1/characters/unclaim/:id", get(unclaim_character))
         .route("/api/v1/characters/verify/:id", get(verify_character))
         .route("/api/v1/characters", get(user_characters))
+        .route(
+            "/api/v1/characters/verifications",
+            get(pending_verifications),
+        )
         .route("/retainers/add/:id", get(add_retainer))
         .route("/retainers/remove/:id", get(remove_owned_retainer))
         .route("/static/*path", get(static_path))

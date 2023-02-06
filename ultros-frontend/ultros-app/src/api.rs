@@ -9,7 +9,7 @@ use ultros_api_types::{
     recent_sales::RecentSales,
     user::{UserData, UserRetainerListings, UserRetainers},
     world::WorldData,
-    ActiveListing, CurrentlyShownItem, FfxivCharacter, Retainer,
+    ActiveListing, CurrentlyShownItem, FfxivCharacter, FfxivCharacterVerification, Retainer,
 };
 
 #[cfg(not(feature = "ssr"))]
@@ -159,9 +159,24 @@ pub(crate) async fn get_characters(cx: Scope) -> Option<Vec<FfxivCharacter>> {
     fetch_api(cx, &format!("/api/v1/characters")).await
 }
 
+/// Gets pending character verifications for this user
+pub(crate) async fn get_character_verifications(
+    cx: Scope,
+) -> Option<Vec<FfxivCharacterVerification>> {
+    fetch_api(cx, &format!("/api/v1/characters/verifications")).await
+}
+
+pub(crate) async fn check_character_verification(cx: Scope, character_id: i32) -> Option<bool> {
+    fetch_api(cx, &format!("/api/v1/characters/verify/{character_id}")).await
+}
+
 /// Starts to claim the given character
-pub(crate) async fn claim_character(cx: Scope, id: i32) -> Option<()> {
-    fetch_api(cx, &format!("/api/v1/character/claim/{id}")).await
+pub(crate) async fn claim_character(cx: Scope, id: i32) -> Option<(i32, String)> {
+    fetch_api(cx, &format!("/api/v1/characters/claim/{id}")).await
+}
+
+pub(crate) async fn unclaim_character(cx: Scope, id: i32) -> Option<(i32, String)> {
+    fetch_api(cx, &format!("/api/v1/characters/unclaim/{id}")).await
 }
 
 /// Searches for the given character with the given lodestone ID.
