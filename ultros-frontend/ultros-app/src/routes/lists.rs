@@ -21,7 +21,7 @@ pub fn Lists(cx: Scope) -> impl IntoView {
                             key=move |list| list.id
                             view=move |list| view!{cx, <div>
                                     <a href=format!("/list/{}", list.id) style="font-size: 30px">
-                                    {list.name}
+                                    {list.name}" - "
                                     <WorldName id=list.wdr_filter/>
                                     </a>
                                 </div>}

@@ -3,7 +3,15 @@ use leptos::*;
 use ultros_api_types::{world_helper::AnySelector, SaleHistory};
 
 #[component]
-pub fn SaleHistoryTable(cx: Scope, sale_history: MaybeSignal<Vec<SaleHistory>>) -> impl IntoView {
+pub fn SaleHistoryTable(cx: Scope, sales: MaybeSignal<Vec<SaleHistory>>) -> impl IntoView {
+    let (show_more, set_show_more) = create_signal(cx, false);
+    let sale_history = create_memo(cx, move |_| {
+        let mut sales = sales();
+        if !show_more() {
+            sales.truncate(10);
+        }
+        sales
+    });
     view! { cx,  <table>
         <thead>
             <tr>
@@ -38,6 +46,9 @@ pub fn SaleHistoryTable(cx: Scope, sale_history: MaybeSignal<Vec<SaleHistory>>) 
                     }
                 }
             />
+            {move || (!show_more() && sale_history.with(|sales| sales.len() > 10)).then(|| {
+                view!{cx, <button class="btn" on:click=move |_| set_show_more(true)>"Show more"</button>}
+            })}
         </tbody>
     </table>
     }
