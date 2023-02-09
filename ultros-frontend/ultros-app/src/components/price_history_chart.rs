@@ -53,7 +53,7 @@ fn try_draw(backend: CanvasBackend, sales: &[SaleHistory]) -> Option<()> {
 
 #[component]
 pub fn PriceHistoryChart(cx: Scope, sales: MaybeSignal<Vec<SaleHistory>>) -> impl IntoView {
-    let c = NodeRef::<HtmlElement<Canvas>>::new(cx);
+    let c = NodeRef::<Canvas>::new(cx);
     let hidden = create_memo(cx, move |_| {
         if let Some(canvas) = c() {
             let backend = CanvasBackend::with_canvas_object(canvas.deref().clone()).unwrap();

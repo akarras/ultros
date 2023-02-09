@@ -58,7 +58,7 @@ impl UltrosDb {
             .and_where(sale_history::Column::SoldDate.gt(Utc::now() - sale_window))
             .and_having(
                 Expr::val(sale_amount_threshold)
-                    .less_than(Expr::col(sale_history::Column::Quantity).sum()),
+                    .lt(Expr::col(sale_history::Column::Quantity).sum()),
             )
             .group_by_col(sale_history::Column::SoldItemId)
             .to_owned();
@@ -119,8 +119,8 @@ impl UltrosDb {
                 JoinType::InnerJoin,
                 world_sale_history_query,
                 query_iden.clone(),
-                Expr::tbl(active_listing::Entity, active_listing::Column::ItemId)
-                    .equals(query_iden.clone(), sale_history::Column::SoldItemId),
+                Expr::col((active_listing::Entity, active_listing::Column::ItemId))
+                    .equals((query_iden.clone(), sale_history::Column::SoldItemId)),
             )
             .and_where(active_listing::Column::WorldId.in_subquery(all_worlds_in_region_query))
             .group_by_col(active_listing::Column::ItemId)
