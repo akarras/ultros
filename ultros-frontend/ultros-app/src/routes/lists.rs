@@ -19,7 +19,7 @@ pub fn Lists(cx: Scope) -> impl IntoView {
                         <div class="content-well">
                             <For each=move || lists.clone()
                             key=move |list| list.id
-                            view=move |list| view!{cx, <div>
+                            view=move |cx, list| view!{cx, <div>
                                     <a href=format!("/list/{}", list.id) style="font-size: 30px">
                                     {list.name}" - "
                                     <WorldName id=list.wdr_filter/>

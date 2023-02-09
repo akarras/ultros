@@ -31,7 +31,7 @@ pub fn ListingsTable(cx: Scope, listings: Vec<(ActiveListing, Retainer)>) -> imp
         <tbody>
         {move || view!{cx, <For each=listings
         key=move |(listing, _retainer)| listing.id
-        view=move |(listing, retainer)| {
+        view=move |cx, (listing, retainer)| {
             let total = listing.price_per_unit * listing.quantity;
             view! { cx, <tr>
                 <td><Gil amount=listing.price_per_unit/></td>

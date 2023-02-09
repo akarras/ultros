@@ -245,7 +245,7 @@ fn AnalyzerTable(
                 key=move |data| {
                    (data.sale_summary.item_id, data.cheapest_world_id, data.sale_summary.hq)
                 }
-                view=move |data| {
+                view=move |cx, data| {
                     let world = worlds.lookup_selector(AnySelector::World(data.cheapest_world_id));
                     let datacenter = world
                         .as_ref()

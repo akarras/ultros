@@ -55,7 +55,7 @@ pub fn EditRetainers(cx: Scope) -> impl IntoView {
                   view!{cx,
                       <For each=move || retainers.retainers.clone()
                         key=move |(character, retainers)| (character.as_ref().map(|c| c.id).unwrap_or_default(), retainers.iter().map(|(o, _r)| o.id).collect::<Vec<_>>())
-                        view=move |(character, retainers)| view!{cx,
+                        view=move |cx, (character, retainers)| view!{cx,
                           {if let Some(character) = character {
                             view!{cx, <div>{character.first_name}" "{character.last_name}</div>}
                           } else {
@@ -64,7 +64,7 @@ pub fn EditRetainers(cx: Scope) -> impl IntoView {
                         <div class="flex-column">
                           <For each=move || retainers.clone()
                             key=move |(_, retainer)| retainer.id
-                            view=move |(owned, retainer)| view!{cx, <div class="flex-row">
+                            view=move |cx, (owned, retainer)| view!{cx, <div class="flex-row">
                               <div style="width: 300px" class="flex">
                                 <span style="width: 200px">{retainer.name}</span>
                                 <span><WorldName id=AnySelector::World(retainer.world_id)/></span>
@@ -92,7 +92,7 @@ pub fn EditRetainers(cx: Scope) -> impl IntoView {
                   Some(retainers) => view!{cx, <div class="content-well flex-column">
                     <For each=move || retainers.clone()
                           key=move |retainer| retainer.id
-                          view=move |retainer| {
+                          view=move |cx, retainer| {
                             let world = AnySelector::World(retainer.world_id);
                             view!{ cx, <div class="card flex-row">
                               <div style="width: 300px" class="flex">

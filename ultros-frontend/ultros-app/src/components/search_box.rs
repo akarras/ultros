@@ -39,7 +39,7 @@ pub fn SearchBox(cx: Scope) -> impl IntoView {
             <For
                 each=item_search
                 key=move |(id, _, _)| (id.0, search())
-                view=move |(id, _, match_): (&xiv_gen::ItemId, &xiv_gen::Item, Match)| {
+                view=move |cx, (id, _, match_): (&xiv_gen::ItemId, &xiv_gen::Item, Match)| {
                         let item_id = id.0;
                         view! { cx,  <ItemSearchResult item_id set_search matches=match_ /> }
                     }

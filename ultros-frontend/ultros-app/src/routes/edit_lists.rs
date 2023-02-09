@@ -183,7 +183,7 @@ pub fn EditLists(cx: Scope) -> impl IntoView {
                             <tr><td>"List Name"</td><td>"World"</td></tr>
                                 <For each=move || lists.clone()
                                     key=move |list| list.id
-                                    view=move |list| {
+                                    view=move |cx, list| {
                                         let (is_edit, set_is_edit) = create_signal(cx, false);
                                         let (list, _set_list) = create_signal(cx, list);
                                         let (name, set_name) = create_signal(cx, list().name);

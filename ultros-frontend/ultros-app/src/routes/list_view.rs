@@ -110,7 +110,7 @@ pub fn ListView(cx: Scope) -> impl IntoView {
                                     <th>"Price"</th>
                                     <th>"Options"</th>
                                 </tr>
-                                <For each=move || items.clone() key=|(item, _)| item.id view=move |(item, listings)| view!{cx, <tr valign="top">
+                                <For each=move || items.clone() key=|(item, _)| item.id view=move |cx, (item, listings)| view!{cx, <tr valign="top">
                                     <td>
                                         <div class="flex-row">
                                             <ItemIcon item_id=item.item_id icon_size=IconSize::Small/>
