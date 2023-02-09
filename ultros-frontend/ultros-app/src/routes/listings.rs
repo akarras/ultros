@@ -12,7 +12,7 @@ use xiv_gen::ItemId;
 
 #[component]
 fn WorldButton(cx: Scope, world_name: String, item_id: i32) -> impl IntoView {
-    view! { cx, <a class="btn btn-secondary" href=format!("/listings/{}/{item_id}", world_name)>{world_name}</a>}
+    view! { cx, <a class="btn-secondary" href=format!("/listings/{}/{item_id}", world_name)>{world_name}</a>}
 }
 
 #[component]
@@ -173,7 +173,7 @@ pub fn Listings(cx: Scope) -> impl IntoView {
                         <span>{move || {let description = item_description(); view!{cx, <UIText text=description.to_string()/>}}}</span>
                     </div>
                 </div>
-                <div class="flex-wrap content-nav">
+                <div class="content-nav">
                     <WorldMenu world_name=world item_id />
                 </div>
             </div>
