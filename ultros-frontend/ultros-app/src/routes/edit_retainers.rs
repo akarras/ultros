@@ -26,6 +26,22 @@ pub fn EditRetainers(cx: Scope) -> impl IntoView {
         move || (claim.version().get(), remove_retainer.version().get()),
         move |_| get_retainers(cx),
     );
+
+    let is_retainer_owned = move |retainer_id: i32| {
+        retainers
+            .with(|retainer| {
+                retainer.as_ref().map(|retainers| {
+                    retainers.retainers.iter().any(|(_character, retainers)| {
+                        retainers
+                            .iter()
+                            .any(|(_, retainer)| retainer.id == retainer_id)
+                    })
+                })
+            })
+            .flatten()
+            .unwrap_or_default()
+    };
+
     view! { cx,
     <div class="container">
       <RetainerNav/>
@@ -83,7 +99,10 @@ pub fn EditRetainers(cx: Scope) -> impl IntoView {
                                 <span style="width: 200px;">{retainer.name}</span>
                                 <WorldName id=world/>
                               </div>
-                              <button class="btn" on:click=move |_| claim.dispatch(retainer.id)>"Claim"</button>
+                              <button class="btn" on:click=move |_| claim.dispatch(retainer.id)>{move || match is_retainer_owned(retainer.id) {
+                                true => "Claimed",
+                                false => "Claim"
+                              }}</button>
                             </div>}
                           }
                           />
