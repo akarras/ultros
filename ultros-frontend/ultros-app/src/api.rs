@@ -109,20 +109,24 @@ pub(crate) async fn get_retainer_undercuts(cx: Scope) -> Option<UserRetainerList
             let mut new_listings = vec![];
             for listing in listings.iter() {
                 // use the world/item_id as keys to lookup the rest of the listings that match this retainer
-                if let Some((cheapest, _)) = listings_map
+                if let Some(cheapest) = listings_map
                     .get(&listing.world_id)
                     .and_then(|world_map| world_map.get(&listing.item_id))
                     .and_then(|listings| {
-                        listings.iter().find(|(cheapest, _)| {
-                            if listing.hq {
-                                listing.hq == cheapest.hq
-                            } else {
-                                true
-                            }
-                        })
+                        listings
+                            .iter()
+                            .filter(|(cheapest, _)| {
+                                if listing.hq {
+                                    listing.hq == cheapest.hq
+                                } else {
+                                    true
+                                }
+                            })
+                            .map(|(l, _)| l.price_per_unit)
+                            .min()
                     })
                 {
-                    if listing.price_per_unit > cheapest.price_per_unit {
+                    if listing.price_per_unit > cheapest {
                         new_listings.push(listing.clone());
                     }
                 } else {
