@@ -12,7 +12,7 @@ use xiv_gen::ItemId;
 
 #[component]
 fn WorldButton(cx: Scope, world_name: String, item_id: i32) -> impl IntoView {
-    view! { cx, <a class="btn-secondary" href=format!("/listings/{}/{item_id}", world_name)>{world_name}</a>}
+    view! { cx, <a class="btn-secondary" href=format!("/item/{}/{item_id}", world_name)>{world_name}</a>}
 }
 
 #[component]
@@ -125,7 +125,7 @@ fn ListingsContent(cx: Scope, item_id: Memo<i32>, world: Memo<String>) -> impl I
 }
 
 #[component]
-pub fn Listings(cx: Scope) -> impl IntoView {
+pub fn ItemView(cx: Scope) -> impl IntoView {
     // get world and item id from scope
     let params = use_params_map(cx);
 
@@ -162,7 +162,7 @@ pub fn Listings(cx: Scope) -> impl IntoView {
     });
     view! {
         cx,
-        <Meta name="description" content=move || description()/>
+        <Meta name="description" content=description/>
         <div class="container">
             <div class="flex-column">
                 <div class="flex-row" style="background-color: rgb(16, 10, 18); margin-bottom: 15px; border-radius: 12px; padding: 14px; line-height: .9;">
@@ -170,7 +170,7 @@ pub fn Listings(cx: Scope) -> impl IntoView {
                     <div class="flex-column" style="padding: 5px">
                         <span class="flex-row" style="font-size: 36px; line-height 0.5;">{move || item_name()}{move || view!{cx, <Clipboard clipboard_text=item_name().to_string()/>}}</span>
                         <span style="font-size: 16px">{move || items.get(&ItemId(item_id())).map(|item| categories.get(&item.item_ui_category)).flatten().map(|i| i.name.as_str()).unwrap_or_default()}</span>
-                        <span>{move || {let description = item_description(); view!{cx, <UIText text=description.to_string()/>}}}</span>
+                        <span>{move || view!{cx, <UIText text=item_description().to_string()/>}}</span>
                     </div>
                 </div>
                 <div class="content-nav">

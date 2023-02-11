@@ -167,7 +167,7 @@ async fn refresh_world_item_listings(
         Ok(())
     });
     let _ = timeout(Duration::from_secs(1), future).await?;
-    Ok(Redirect::to(&format!("/listings/{world}/{item_id}")))
+    Ok(Redirect::to(&format!("/item/{world}/{item_id}")))
 }
 
 #[derive(Deserialize, Serialize, Copy, Clone, PartialEq, PartialOrd, Eq, Ord)]
@@ -850,7 +850,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/retainer/claim/:id", get(claim_retainer))
         .route("/api/v1/retainer/unclaim/:id", get(unclaim_retainer))
         .route(
-            "/listings/refresh/:worldid/:itemid",
+            "/item/refresh/:worldid/:itemid",
             get(refresh_world_item_listings),
         )
         .route("/api/v1/characters/search/:name", get(character_search))

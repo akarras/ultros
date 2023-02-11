@@ -8,10 +8,10 @@ use std::rc::Rc;
 use crate::api::get_worlds;
 use crate::global_state::LocalWorldData;
 use crate::{
-    components::{profile_display::*, search_box::*},
+    components::{profile_display::*, search_box::*, tooltip::*},
     routes::{
-        analyzer::*, edit_lists::*, edit_retainers::*, list_view::*, listings::*, lists::*,
-        profile::*, retainers::*,
+        analyzer::*, edit_lists::*, edit_retainers::*, item_explorer::*, item_view::*,
+        list_view::*, lists::*, profile::*, retainers::*,
     },
 };
 use leptos::*;
@@ -61,6 +61,11 @@ pub fn App(cx: Scope) -> impl IntoView {
                 <div>
                     <SearchBox/>
                 </div>
+                <A href="/items">
+                    <Tooltip tooltip_text="All Items".to_string()>
+                        <i class="fa-solid fa-screwdriver-wrench"></i>
+                    </Tooltip>
+                </A>
                 <a rel="_external" class="btn nav-item" href="/invitebot">
                     "Invite Bot"
                 </a>
@@ -75,7 +80,11 @@ pub fn App(cx: Scope) -> impl IntoView {
                 <Route path="list/edit" view=move |cx| view! {cx, <EditLists/>}/>
                 <Route path="list/:id" view=move |cx| view!{ cx, <ListView/>}/>
                 <Route path="list" view=move |cx| view!{cx, <Lists/>}/>
-                <Route path="listings/:world/:id" view=move |cx| view! { cx, <Listings />}/>
+                <Route path="items" view=move |cx| view! { cx, <ItemExplorer/>}>
+                    <Route path="/" view=move |cx| view!{cx, "Pick a category"}/>
+                    <Route path=":category" view=move |cx| view!{cx, <div>"category"</div>}/>
+                </Route>
+                <Route path="item/:world/:id" view=move |cx| view! { cx, <ItemView />}/>
                 // <Route path="*listings" view=move |cx| view! { cx, <h1>"Listings"</h1>}/>
 
                 <Route path="analyzer" view=move |cx| view! { cx, <Analyzer/>}/>
