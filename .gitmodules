@@ -4,3 +4,6 @@
 [submodule "ultros-frontend/universalis-assets"]
 	path = ultros-frontend/universalis-assets
 	url = https://github.com/Universalis-FFXIV/universalis-assets.git
+[submodule "ultros-frontend/classjob-icons"]
+	path = ultros/static/classjob-icons
+	url = https://github.com/xivapi/classjob-icons.git

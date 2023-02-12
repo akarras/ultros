@@ -17,3 +17,5 @@ pub mod search_result;
 pub mod tooltip;
 pub mod ui_text;
 pub mod world_name;
+pub mod fonts;
+pub mod related_items;

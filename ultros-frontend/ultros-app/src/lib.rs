@@ -33,8 +33,9 @@ pub fn App(cx: Scope) -> impl IntoView {
     provide_context(cx, LocalWorldData(worlds));
     view! {
         cx,
-        <Stylesheet id="leptos" href="/target/site/pkg/ultros.css"/>
+        <Stylesheet id="app" href="/target/site/pkg/ultros.css"/>
         <Stylesheet id="font-awesome" href="/static/fa/css/all.min.css"/>
+        <Stylesheet id="xiv-icons" href="/static/classjob-icons/src/xivicon.css"/>
         <Title text="Ultros" />
         <div class="gradient-outer">
             <div class="gradient"></div>
@@ -80,10 +81,8 @@ pub fn App(cx: Scope) -> impl IntoView {
                 <Route path="list/edit" view=move |cx| view! {cx, <EditLists/>}/>
                 <Route path="list/:id" view=move |cx| view!{ cx, <ListView/>}/>
                 <Route path="list" view=move |cx| view!{cx, <Lists/>}/>
-                <Route path="items" view=move |cx| view! { cx, <ItemExplorer/>}>
-                    <Route path="/" view=move |cx| view!{cx, "Pick a category"}/>
-                    <Route path=":category" view=move |cx| view!{cx, <div>"category"</div>}/>
-                </Route>
+                <Route path="items/:category" view=move |cx| view! { cx, <ItemExplorer/>}/>
+                <Route path="items" view=move |cx| view! { cx, <ItemExplorer/>}/>
                 <Route path="item/:world/:id" view=move |cx| view! { cx, <ItemView />}/>
                 // <Route path="*listings" view=move |cx| view! { cx, <h1>"Listings"</h1>}/>
 

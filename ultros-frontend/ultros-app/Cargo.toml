@@ -31,6 +31,8 @@ colorsys = "0.6.6"
 plotters = "0.3"
 plotters-canvas = "0.3"
 thiserror = "1.0"
+log = "0.4"
+urlencoding = "2.1.2"
 
 [features]
 hydrate = ["leptos/hydrate", "leptos_meta/hydrate", "leptos_router/hydrate", "gloo", "gloo-net", "web-sys"]
