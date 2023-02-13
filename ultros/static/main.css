@@ -19,6 +19,26 @@
   font-display: swap;
 }
 
+@font-face {
+  font-family: 'xivicons';
+  src: url('/static/classjob-icons/src/FFXIVAppIcons.eot');
+  src: url('/static/classjob-icons/src/FFXIVAppIcons.eot?#iefix') format('embedded-opentype'),
+    url('/static/classjob-icons/src/FFXIVAppIcons.woff') format('woff'), url('./FFXIVAppIcons.ttf') format('truetype'),
+    url('/static/classjob-icons/src/FFXIVAppIcons.svg#FFXIVAppIcons') format('svg');
+  font-weight: normal;
+  font-style: normal;
+}
+
+[class*='xiv-']:before {
+  display: inline-block;
+  font-family: 'xivicons';
+  font-style: normal;
+  font-weight: normal;
+  line-height: 1;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
 a {
   color: #3B2B9E;
   transition: color .25s;
