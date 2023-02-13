@@ -1,6 +1,6 @@
 use std::cmp::Reverse;
 
-use crate::components::{fonts::*, item_icon::*, tooltip::*};
+use crate::components::{fonts::*, item_icon::*, tooltip::*, cheapest_price::*};
 use leptos::*;
 use leptos_router::use_params_map;
 use urlencoding::{decode, encode};
@@ -64,10 +64,11 @@ pub fn ItemExplorer(cx: Scope) -> impl IntoView {
                                 .filter(|(_, item)| item.item_search_category == *id)
                                 .collect::<Vec<_>>();
                             items.sort_by_key(|(_, item)| Reverse(item.level_item.0));
-                            items.into_iter().map(|(id, item)| view!{cx, <div>
+                            items.into_iter().map(|(id, item)| view!{cx, <div class="flex-row">
                                     <ItemIcon item_id=id.0 icon_size=IconSize::Small />
-                                    {&item.name}
-                                    <span style="color: #f3a">{item.level_item.0}</span>
+                                    <span style="width: 250px">{&item.name}</span>
+                                    <span style="color: #f3a; width: 50px">{item.level_item.0}</span>
+                                    <CheapestPrice item_id=*id hq=None />
                                 </div>
                             })
                             .collect::<Vec<_>>()

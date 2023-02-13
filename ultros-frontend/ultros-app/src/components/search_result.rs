@@ -1,4 +1,4 @@
-use crate::components::item_icon::*;
+use crate::components::{item_icon::*, cheapest_price::*};
 use leptos::*;
 use sublime_fuzzy::Match;
 use xiv_gen::ItemId;
@@ -58,10 +58,15 @@ pub fn ItemSearchResult(
                 <div class="search-result">
                     <ItemIcon item_id icon_size=IconSize::Small />
                     <div class="search-result-details">
-                        <span class="item-name"><MatchFormatter m=matches target=item.name.to_string() /></span>
+                        <div class="flex-row flex-space" style="height: 30px; overflow: hide">
+                            <span class="item-name"><MatchFormatter m=matches target=item.name.to_string() /></span>
+                            <span>
+                                <CheapestPrice item_id=item.key_id hq=None/>
+                            </span>
+                        </div>
                         <div class="flex-row flex-space">
                             <span class="item-type">{categories.get(&item.item_ui_category).map(|i| i.name.as_str()).unwrap_or_default()}</span>
-                            <span class="item-ilvl">"ITEM LEVEL " {item.level_item.0}</span>
+                            <span class="item-ilvl">"ILVL " {item.level_item.0}</span>
                         </div>
                     </div>
                 </div>

@@ -1,3 +1,4 @@
+pub mod cheapest_price;
 pub mod clipboard;
 pub mod datacenter_name;
 pub mod fonts;

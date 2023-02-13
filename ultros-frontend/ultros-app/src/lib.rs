@@ -6,6 +6,7 @@ pub(crate) mod routes;
 use std::rc::Rc;
 
 use crate::api::get_worlds;
+use crate::global_state::cheapest_prices::CheapestPrices;
 use crate::global_state::LocalWorldData;
 use crate::{
     components::{profile_display::*, search_box::*, tooltip::*},
@@ -17,6 +18,7 @@ use crate::{
 use leptos::*;
 use leptos_meta::*;
 use leptos_router::*;
+use ultros_api_types::cheapest_listings::CheapestListings;
 use ultros_api_types::world_helper::WorldHelper;
 
 #[component]
@@ -31,6 +33,8 @@ pub fn App(cx: Scope) -> impl IntoView {
         },
     );
     provide_context(cx, LocalWorldData(worlds));
+    let (read_cheapest, write_cheapest) = create_signal(cx, CheapestListings::default());
+    provide_context(cx, CheapestPrices::new(cx, read_cheapest, write_cheapest));
     view! {
         cx,
         <Stylesheet id="app" href="/target/site/pkg/ultros.css"/>

@@ -286,7 +286,7 @@ nav > a > * {
   width: 100%;
 }
 
-.search-result img {
+.search-result img:first-of-type {
   margin: 5px;
 }
 

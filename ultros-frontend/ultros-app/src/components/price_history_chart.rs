@@ -17,7 +17,9 @@ fn try_draw(backend: CanvasBackend, sales: &[SaleHistory]) -> Option<()> {
 
     let max_sale = line.iter().map(|(_, price)| price).max()?;
     let (first_sale, last_sale) = line.iter().map(|(date, _)| date).minmax().into_option()?;
-
+    if first_sale == last_sale {
+        return None;
+    }
     let mut chart = ChartBuilder::on(&root)
         .x_label_area_size(60)
         .y_label_area_size(60)

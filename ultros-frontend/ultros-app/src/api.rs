@@ -249,7 +249,7 @@ where
     });
     T::from_json(&json)
         .map_err(|e| {
-            gloo::console::error!(format!("json error: {path} {e:?}"));
+            gloo::console::error!(format!("json error: {path} {e:?}. {json}"));
             e
         })
         .ok()

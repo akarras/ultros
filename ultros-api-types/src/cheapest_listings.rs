@@ -9,7 +9,7 @@ pub struct CheapestListingItem {
     pub world_id: i32,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct CheapestListings {
     pub cheapest_listings: Vec<CheapestListingItem>,
 }

@@ -21,7 +21,6 @@ pub fn ItemSearchCategoryIcon(cx: Scope, id: ItemSearchCategoryId) -> impl IntoV
                     view! {cx, <i class=format!("icon xiv-ItemCategory_{}", category.name.replace(" ", "_").replace("", ""))></i>}
                 }
             }
-            
         }
     })
 }
