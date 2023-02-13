@@ -1,36 +1,35 @@
 use std::cmp::Reverse;
 
+use crate::components::{fonts::*, item_icon::*, tooltip::*};
 use leptos::*;
 use leptos_router::use_params_map;
-use urlencoding::{encode, decode};
-use crate::components::{item_icon::*, fonts::*, tooltip::*};
+use urlencoding::{decode, encode};
 
 /// Displays buttons of categories
 #[component]
 pub fn CategoryView(cx: Scope, category: u8) -> impl IntoView {
     let data = xiv_gen_db::decompress_data();
     let search_categories = &data.item_search_categorys;
-    let item_ui_category = &data.item_ui_categorys;
+    // let item_ui_category = &data.item_ui_categorys;
     let mut categories = search_categories
         .iter()
         .filter(|(_, cat)| cat.category == category)
-        .flat_map(|(_id, cat)| {
+        .map(|(id, cat)| {
             // lookup the ID for the map
-            let category = item_ui_category.iter().find(|(_key, category)| {
-                category.icon.0 == cat.icon.0
-            }).map(|(key, _)| key);
-            if let None = category {
-                log::error!("category {cat:?}");   
-            }
-            category.map(|category| (cat.order, &cat.name, category))
-        }
-        )
+            (cat.order, &cat.name, id)
+        })
         .collect::<Vec<_>>();
     categories.sort_by_key(|(order, _, _)| *order);
-    view! {cx, 
-        <div class="flex flex-wrap">
+    view! {cx,
+        <div class="flex flex-row flex-wrap">
         {categories.into_iter()
-            .map(|(_, name, id)| view! {cx, <Tooltip tooltip_text=name.to_string()><a href=format!("/items/{}", encode(name))><ItemUiCategoryIcon id=*id /></a></Tooltip>})
+            .map(|(_, name, id)| view! {cx,
+                <Tooltip tooltip_text=name.to_string()>
+                    <a style="width: 30px; height: 30px; font-size: 26px" href=format!("/items/{}", encode(name))>
+                        <ItemSearchCategoryIcon id=*id />
+                    </a>
+                </Tooltip>
+            })
             .collect::<Vec<_>>()}
         </div>
     }
@@ -44,7 +43,7 @@ pub fn ItemExplorer(cx: Scope) -> impl IntoView {
     view! {cx,
         <div class="container">
             <div class="main-content flex">
-                <div class="flex-column content-well">
+                <div class="flex-column" style="width: 250px">
                     "Weapons:"
                     <CategoryView category=1 />
                     "Armor"

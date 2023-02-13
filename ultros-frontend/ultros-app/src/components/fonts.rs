@@ -1,67 +1,29 @@
+use std::fmt::Display;
+
 use leptos::*;
-use xiv_gen::ItemUiCategoryId;
+use xiv_gen::ItemSearchCategoryId;
 
 #[component]
-pub fn ItemUiCategoryIcon(cx: Scope, id: ItemUiCategoryId) -> impl IntoView {
-    // The order of the CSV and the order of the icons match up, so I just copy those.
-    let icon = match id.0 {
-        1=>  "PGL",
-2	=>  "GLA",
-3	=>  "MRD",
-4	=>  "LNC",
-5	=>  "ARC",
-6	=>  "ROG",
-7	=>  "CNJ",
-8	=>  "THM",
-9	=>  "ACN",
-10	=>  "Shield",
-11	=>  "CRP",
-12	=>  "BSM",
-13	=>  "ARM",
-14	=>  "GSM",
-15	=>  "LTW",
-16	=>  "WVR",
-17	=>  "ALC",
-18	=>  "CUL",
-19	=>  "MIN",
-20	=>  "BTN",
-21	=>  "fisher",
-22	=>  "Fishing_Tackle",
-23	=>  "Medicine",
-24	=>  "Bone",
-25	=>  "Meal",
-26	=>  "Dye",
-27	=>  "Part",
-28	=>  "Furnishing",
-29	=>  "Materia",
-30	=>  "Crystal",
-31	=>  "Catalyst",
-32	=>  "Miscellany",
-33	=>  "Seasonal_Miscellany",
-34	=>  "Minion",
-35	=>  "Triple_Triad_Card",
-36	=>  "Soul_Crystal",
-37	=>  "Other",
-38	=>  "Exterior_Fixtures",
-39	=>  "Interior_Fixtures",
-40	=>  "Tables",
-41	=>  "Tabletop",
-42	=>  "Furnishings",
-43	=>  "Chairs_and_Beds",
-44	=>  "Wallmounted",
-45	=>  "Rug",
-46	=>  "Outdoor_Furnishings",
-47	=>  "Airship",
-48	=>  "DRK",
-49	=>  "AST",
-50	=>  "MCH",
-51	=>  "Orchestrion_Roll",
-52	=>  "Gardening",
-53	=>  "Painting",
-54	=>  "RDM",
-55	=>  "SAM",
-56	=>  "SCH",
-        _ => "unknown category"
-    };
-    view!{cx, <i class=format!("icon xiv-ItemCategory_{}", icon)></i>}
+pub fn ItemSearchCategoryIcon(cx: Scope, id: ItemSearchCategoryId) -> impl IntoView {
+    // the css names match with the english name of the category
+    // if there's a class job, use the abbreviation instead
+    let data = &xiv_gen_db::decompress_data();
+    let categories = &data.item_search_categorys;
+    let class_jobs = &data.class_jobs;
+    categories.get(&id).map(|category| {
+        let class_job = category.class_job;
+        if let Some(class_job) = class_jobs.get(&class_job) {
+            view! {cx, <i class=format!("icon xiv-ItemCategory_{}", class_job.abbreviation)></i>}
+        } else {
+            match id.0 {
+                31..=42 => {
+                    view! {cx, <i class=format!("icon xiv-Armoury_{}", category.name.replace(" ", "_").replace("", ""))></i>}
+                }
+                _ => {
+                    view! {cx, <i class=format!("icon xiv-ItemCategory_{}", category.name.replace(" ", "_").replace("", ""))></i>}
+                }
+            }
+            
+        }
+    })
 }

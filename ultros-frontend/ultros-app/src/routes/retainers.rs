@@ -19,6 +19,7 @@ fn RetainerTable(cx: Scope, retainer: Retainer, listings: Vec<ActiveListing>) ->
             let item = items.get(&ItemId(listing.item_id));
             let total = listing.quantity * listing.price_per_unit;
             view! { cx, <tr>
+                <td>{listing.hq.then(|| view!{cx, <i class="fa-solid fa-sparkles"></i>})}</td>
                 <td>{if let Some(item) = item {
                 view!{cx, <ItemIcon icon_size=IconSize::Small item_id=listing.item_id />{&item.name}}.into_view(cx)
             } else {
@@ -34,13 +35,18 @@ fn RetainerTable(cx: Scope, retainer: Retainer, listings: Vec<ActiveListing>) ->
         <div class="content-well">
             <span class="content-title">{retainer.name}" - "<WorldName id=AnySelector::World(retainer.world_id)/></span>
             <table>
-                <tr>
-                    <th>"Item"</th>
-                    <th>"Price Per Unit"</th>
-                    <th>"Quantity"</th>
-                    <th>"Total"</th>
-                </tr>
-                {listings}
+                <thead>
+                    <tr>
+                        <th>"HQ"</th>
+                        <th>"Item"</th>
+                        <th>"Price Per Unit"</th>
+                        <th>"Quantity"</th>
+                        <th>"Total"</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {listings}
+                </tbody>
             </table>
         </div>
     }

@@ -619,25 +619,54 @@ select optgroup {
 }
 
 .tooltip {
-  position: relative;
-  display: inline-block;
-  
+  display:inline-block;
+  position:relative;
+  border-bottom:1px dotted #666;
+  text-align:left;
 }
 
-.tooltip-text {
-  background-color: rgba(10, 0, 14, 0.95);
-  color: #fff;
-  text-align: center;
-  padding: 5px 0px;
-  border-radius: 8px;
-  position: absolute;
-  z-index: 10;
-  visibility: hidden;
-  font-size: 16px;
-  font-family: Jaldi, sans-serif;
-  padding: 5px;
+.tooltip .top {
+  min-width:200px; 
+  top:-20px;
+  left:50%;
+  transform:translate(-50%, -100%);
+  padding:10px 20px;
+  color:#EEEEEE;
+  background-color:#222222;
+  font-weight:normal;
+  font-size:13px;
+  border-radius:8px;
+  position:absolute;
+  z-index:99999999;
+  box-sizing:border-box;
+  border:1px solid #000000;box-shadow:0 1px 8px rgba(0,0,0,0.5);
+  visibility:hidden; opacity:0; transition:opacity 0.8s;
 }
 
+.tooltip:hover .top {
+  visibility:visible; opacity:1;
+}
+
+.tooltip .top i {
+  position:absolute;
+  top:100%;
+  left:50%;
+  margin-left:-12px;
+  width:24px;
+  height:12px;
+  overflow:hidden;
+}
+
+.tooltip .top i::after {
+  content:'';
+  position:absolute;
+  width:12px;
+  height:12px;
+  left:50%;
+  transform:translate(-50%,-50%) rotate(45deg);
+  background-color:#222222;
+  border:1px solid #000000;box-shadow:0 1px 8px rgba(0,0,0,0.5);
+}
 .tooltip .tooltip-text {
   bottom: 100%;
   left: 50%;

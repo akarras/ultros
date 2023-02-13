@@ -276,7 +276,7 @@ fn create_struct(
                 // regex: check is bit offset
                 static ref BIT: Regex = Regex::new(r#"^bit(&[0-9]+|)$"#).unwrap();
             }
-            if BIT.is_match(field_value) || field_value == "sbyte" {
+            if BIT.is_match(field_value) {
                 (line_one, "bool".to_string())
             } else if INT.is_match(field_value) {
                 let mut line_two = field_value.replace("int", "");
@@ -302,6 +302,8 @@ fn create_struct(
                 (line_one, line_two)
             } else if field_value == "byte" {
                 (line_one, "u8".to_string())
+            } else if field_value == "sbyte" {
+                (line_one, "i8".to_string())
             } else if field_value == "str" {
                 (line_one, "String".to_string())
             } else {

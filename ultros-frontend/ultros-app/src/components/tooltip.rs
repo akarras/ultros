@@ -10,7 +10,7 @@ pub fn Tooltip(
         cx,
         <div class="tooltip">
             {children(cx)}
-            <div class="tooltip-text">{tooltip_text}</div>
+            <div class="top">{tooltip_text}</div>
         </div>
     }
 }
