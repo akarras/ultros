@@ -1,5 +1,5 @@
 use clap::Parser;
-use log::{info, LevelFilter};
+use log::info;
 use universalis::websocket::event_types::{EventChannel, SubscribeMode};
 use universalis::websocket::SocketRx;
 use universalis::{ItemId, UniversalisClient, WebsocketClient};

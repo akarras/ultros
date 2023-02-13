@@ -392,7 +392,13 @@ mod test {
     #[tokio::test]
     async fn test_local_world_history() {
         let client = UniversalisClient::new();
-        client.get_item_history("Sargatanas", &[36693]);
-        client.get_item_history("Sargatanas", &[36693, 2]);
+        assert!(client
+            .get_item_history("Sargatanas", &[36693])
+            .await
+            .is_ok());
+        assert!(client
+            .get_item_history("Sargatanas", &[36693, 2])
+            .await
+            .is_ok());
     }
 }
