@@ -2,7 +2,7 @@ use crate::api::get_listings;
 use crate::api::get_worlds;
 use crate::components::{
     clipboard::*, item_icon::*, listings_table::*, loading::*, price_history_chart::*,
-    sale_history_table::*, ui_text::*,
+    related_items::*, sale_history_table::*, ui_text::*,
 };
 use leptos::*;
 use leptos_meta::*;
@@ -179,6 +179,7 @@ pub fn ItemView(cx: Scope) -> impl IntoView {
             </div>
             <div class="main-content flex-wrap">
                 <ListingsContent item_id world />
+                {move || view!{cx, <RelatedItems item_id=ItemId(item_id()) />}}
             </div>
         </div>
     }

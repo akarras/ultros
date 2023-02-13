@@ -459,7 +459,7 @@ nav > a > * {
 .icon-small {
   width: 30px;
   height: 30px;
-  margin: 0px 5px -7px -5px;
+  margin: 0px 5px -7px 0px;
 }
 
 .icon-medium {
@@ -621,7 +621,7 @@ select optgroup {
 .tooltip {
   display:inline-block;
   position:relative;
-  border-bottom:1px dotted #666;
+  
   text-align:left;
 }
 

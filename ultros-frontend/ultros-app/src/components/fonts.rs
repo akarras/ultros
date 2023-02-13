@@ -1,5 +1,3 @@
-use std::fmt::Display;
-
 use leptos::*;
 use xiv_gen::ItemSearchCategoryId;
 
