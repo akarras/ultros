@@ -5044,7 +5044,6 @@ dependencies = [
 name = "recipepricecheck"
 version = "0.1.0"
 dependencies = [
- "clap 3.2.23",
  "itertools",
  "log",
  "serde",
@@ -6779,10 +6778,6 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "serde",
- "thiserror",
- "xiv-gen",
- "xiv-gen-db",
- "yoke 0.6.2",
 ]
 
 [[package]]
@@ -7596,13 +7591,11 @@ name = "xiv-gen"
 version = "0.1.0"
 dependencies = [
  "bincode 2.0.0-rc.2",
- "clap 3.2.23",
  "codegen-rs",
  "csv",
  "heck 0.4.1",
  "lazy_static",
  "regex",
- "reqwest",
  "serde",
 ]
 
@@ -7614,7 +7607,6 @@ dependencies = [
  "flate2",
  "lazy_static",
  "serde",
- "serde_json",
  "xiv-gen",
 ]
 
@@ -7622,12 +7614,10 @@ dependencies = [
 name = "xivapi"
 version = "0.1.0"
 dependencies = [
- "async-trait",
  "clap 3.2.23",
  "futures 0.3.26",
  "itertools",
  "log",
- "rayon",
  "reqwest",
  "serde",
  "serde-aux",

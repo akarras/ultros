@@ -7,7 +7,6 @@ edition = "2021"
 
 [dependencies]
 universalis = {path = "../universalis"}
-clap = {version = "3.2.5", features = ["derive"]}
 thiserror = "1.0.31"
 itertools = "0"
 serde = {version = "1", features = ["derive"]}
