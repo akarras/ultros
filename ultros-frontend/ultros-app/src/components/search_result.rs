@@ -1,4 +1,4 @@
-use crate::components::{item_icon::*, cheapest_price::*};
+use crate::components::{cheapest_price::*, item_icon::*};
 use leptos::*;
 use sublime_fuzzy::Match;
 use xiv_gen::ItemId;

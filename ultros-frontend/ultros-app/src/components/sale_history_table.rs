@@ -32,9 +32,7 @@ pub fn SaleHistoryTable(cx: Scope, sales: Signal<Vec<SaleHistory>>) -> impl Into
                     let total = sale.price_per_item * sale.quantity;
                     view! { cx,
                         <tr>
-                            <td>{if sale.hq {view!{cx, <span class="fa-solid fa-check"></span>}.into_view(cx)} else {
-                                view!{cx, }.into_view(cx)
-                            }}</td>
+                            <td>{sale.hq.then(||{view!{cx, <span class="fa-solid fa-check"></span>}.into_view(cx)})}</td>
                             <td><Gil amount=sale.price_per_item/></td>
                             <td>{sale.quantity}</td>
                             <td><Gil amount=total /></td>

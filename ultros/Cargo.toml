@@ -9,8 +9,8 @@ edition = "2021"
 universalis = {path = "../universalis", features = ["websocket"]}
 ultros-db = {path = "../ultros-db"}
 anyhow = {workspace = true}
-axum = {version = "0.6.0-rc.5", features = ["ws", "headers", "json"]}
-axum-extra = {version = "0.4.0-rc.3", features = ["cookie", "cookie-private"]}
+axum = {version = "0.6.0", features = ["ws", "headers", "json"]}
+axum-extra = {version = "0.5.0", features = ["cookie", "cookie-private"]}
 xiv-gen-db = {path = "../xiv-gen-db"}
 poise = {version = "0.5.2"}
 chrono = "0.4.23"
@@ -19,10 +19,8 @@ reqwest = {version = "0.11", default-features = false, features = ["rustls-tls"]
 xiv-gen = {path = "../xiv-gen", features = ["recipe", "recipe_lookup", "item", "item_ui_category"]}
 serde = {version = "^1", features = ["derive"]}
 maud = {version = "0.24.0", features = ["axum"]}
-aho-corasick = "0.7.19"
 include_dir = "0.7.2"
 mime_guess = "2.0.4"
-tantivy = "0.19.0"
 tokio = {workspace = true}
 tracing = {workspace = true}
 tracing-subscriber = "0.3"
@@ -32,17 +30,14 @@ oauth2 = "4.1"
 async-trait = '0.1'
 serde_json = "1.0.85"
 thiserror = "1.0.36"
-urlencoding = "2"
 metrics = "0.20.1"
 metrics-exporter-prometheus = "0.11.0"
 thousands = "0.2.0"
-serde_urlencoded = "0.7.1"
 serde_with = "2.1.0"
 image = {version = "0.24.4", features = ["webp-encoder"]}
-timeago = "0.4"
 tower-http = {version = "0.3", features = ["compression-gzip"]}
 sha2 = "0.10.6"
-base64 = "0.13.1"
+base64 = "0.21.0"
 smallvec = {version = "1.10.0", features = ["const_generics", "const_new", "union"]}
 itertools = "0.10.5"
 sitemap-rs = "0.2.0"

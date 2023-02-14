@@ -2,7 +2,7 @@ use std::ops::Deref;
 
 use chrono::DateTime;
 use itertools::Itertools;
-use leptos::*;
+use leptos::{html::Canvas, *};
 use plotters::{prelude::*, style::RGBColor};
 use plotters_canvas::CanvasBackend;
 use ultros_api_types::SaleHistory;
@@ -55,10 +55,12 @@ fn try_draw(backend: CanvasBackend, sales: &[SaleHistory]) -> Option<()> {
 
 #[component]
 pub fn PriceHistoryChart(cx: Scope, sales: MaybeSignal<Vec<SaleHistory>>) -> impl IntoView {
-    let c = NodeRef::<Canvas>::new(cx);
+    let canvas = create_node_ref::<Canvas>(cx);
+
     let hidden = create_memo(cx, move |_| {
-        if let Some(canvas) = c() {
+        if let Some(canvas) = canvas() {
             let backend = CanvasBackend::with_canvas_object(canvas.deref().clone()).unwrap();
+            // if there's an error drawing, we should hide the canvas
             sales.with(|sales| try_draw(backend, sales).is_none())
         } else {
             true
@@ -66,7 +68,7 @@ pub fn PriceHistoryChart(cx: Scope, sales: MaybeSignal<Vec<SaleHistory>>) -> imp
     });
     view! {cx,
         <div class:hidden=hidden style="width:800px; height:500px">
-            <canvas width="800" height="500" _ref=c/>
+            <canvas width="800" height="500" _ref=canvas/>
         </div>
     }
 }
