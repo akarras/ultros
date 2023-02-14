@@ -1,0 +1,19 @@
+[package]
+name = "ultros-xiv-icons"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ultros-api-types = {path = "../../ultros-api-types"}
+tar = "0.4.38"
+
+[build-dependencies]
+ultros-api-types = {path = "../../ultros-api-types"}
+image = {version = "0.24.4", default-features = false, features = ["webp-encoder", "png"]}
+tokio = {version = "^1", features = ["rt-multi-thread", "macros", "fs"]}
+indicatif = {version = "*"}
+futures = "0.3.26"
+tempdir = "0.3.7"
+tar = "0.4.38"

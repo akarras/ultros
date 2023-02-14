@@ -4,6 +4,7 @@ mod retainer;
 mod sale_history;
 
 pub mod cheapest_listings;
+pub mod icon_size;
 pub mod list;
 pub mod recent_sales;
 pub mod result;

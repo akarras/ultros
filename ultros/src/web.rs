@@ -17,8 +17,6 @@ use axum_extra::extract::cookie::Key;
 use futures::future::{try_join, try_join_all};
 use futures::stream::TryStreamExt;
 use futures::{stream, StreamExt};
-use image::imageops::FilterType;
-use image::ImageOutputFormat;
 use itertools::Itertools;
 use maud::Render;
 use reqwest::header;
@@ -31,6 +29,7 @@ use std::time::Duration;
 use tokio::time::timeout;
 use tower_http::compression::CompressionLayer;
 use tracing::debug;
+use ultros_api_types::icon_size::IconSize;
 use ultros_api_types::list::{CreateList, List, ListItem};
 use ultros_api_types::user::{OwnedRetainer, UserData, UserRetainerListings, UserRetainers};
 use ultros_api_types::world::WorldData;
@@ -42,6 +41,7 @@ use ultros_db::world_cache::AnySelector;
 use ultros_db::ActiveValue;
 use ultros_db::{world_cache::WorldCache, UltrosDb};
 use ultros_ui_server::create_leptos_app;
+use ultros_xiv_icons::get_item_image;
 use universalis::{ItemId, ListingView, UniversalisClient, WorldId};
 
 use self::character_verifier_service::CharacterVerifierService;
@@ -56,7 +56,6 @@ use crate::web::{
     oauth::{begin_login, logout},
 };
 use crate::web_metrics::{start_metrics_server, track_metrics};
-use image::io::Reader as ImageReader;
 use std::io::Cursor;
 
 async fn add_retainer(
@@ -349,58 +348,17 @@ async fn static_path(Path(path): Path<String>) -> impl IntoResponse {
 
 #[derive(Deserialize)]
 struct IconQuery {
-    size: u32,
+    size: IconSize,
 }
 
-#[cfg(debug_assertions)]
 async fn get_item_icon(
     Path(item_id): Path<u32>,
     Query(query): Query<IconQuery>,
 ) -> Result<impl IntoResponse, WebError> {
-    use std::{io::Read, path::PathBuf};
-    let file =
-        PathBuf::from("./ultros-frontend/universalis-assets/icon2x").join(format!("{item_id}.png"));
-    let mut file = std::fs::File::open(file)?;
-    let mut vec = Vec::new();
-    file.read_to_end(&mut vec)?;
+    let bytes =
+        get_item_image(item_id as i32, query.size).ok_or(anyhow::anyhow!("Failed to get icon"))?;
     let mime_type = mime_guess::from_path("icon.webp").first_or_text_plain();
     let age_header = HeaderValue::from_str("max-age=86400").unwrap();
-    let img = ImageReader::new(Cursor::new(vec))
-        .with_guessed_format()?
-        .decode()?;
-    let smaller_image = img.resize(query.size, query.size, FilterType::Lanczos3);
-    let file = vec![];
-    let mut cursor = Cursor::new(file);
-    smaller_image.write_to(&mut cursor, ImageOutputFormat::WebP)?;
-    let bytes = cursor.into_inner();
-    Ok(Response::builder()
-        .header(header::CACHE_CONTROL, age_header)
-        .header(header::CONTENT_TYPE, mime_type.as_ref())
-        .body(body::boxed(Full::from(bytes)))?)
-}
-
-#[cfg(not(debug_assertions))]
-async fn get_item_icon(
-    Path(item_id): Path<u32>,
-    Query(query): Query<IconQuery>,
-) -> Result<impl IntoResponse, WebError> {
-    use include_dir::include_dir;
-    static IMAGES: include_dir::Dir =
-        include_dir!("$CARGO_MANIFEST_DIR/../ultros-frontend/universalis-assets/icon2x");
-    let file = IMAGES
-        .get_file(format!("{item_id}.png"))
-        .ok_or(WebError::InvalidItem(item_id as i32))?;
-    let bytes = file.contents();
-    let mime_type = mime_guess::from_path("icon.webp").first_or_text_plain();
-    let age_header = HeaderValue::from_str("max-age=86400").unwrap();
-    let img = ImageReader::new(Cursor::new(bytes))
-        .with_guessed_format()?
-        .decode()?;
-    let smaller_image = img.resize(query.size, query.size, FilterType::Lanczos3);
-    let file = vec![];
-    let mut cursor = Cursor::new(file);
-    smaller_image.write_to(&mut cursor, ImageOutputFormat::WebP)?;
-    let bytes = cursor.into_inner();
     Ok(Response::builder()
         .header(header::CACHE_CONTROL, age_header)
         .header(header::CONTENT_TYPE, mime_type.as_ref())

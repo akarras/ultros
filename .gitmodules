@@ -2,7 +2,7 @@
 	path = xiv-gen/ffxiv-datamining
 	url = https://github.com/xivapi/ffxiv-datamining.git
 [submodule "ultros-frontend/universalis-assets"]
-	path = ultros-frontend/universalis-assets
+	path = ultros-frontend/ultros-xiv-icons/universalis-assets
 	url = https://github.com/Universalis-FFXIV/universalis-assets.git
 [submodule "ultros-frontend/classjob-icons"]
 	path = ultros/static/classjob-icons

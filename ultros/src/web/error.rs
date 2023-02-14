@@ -4,7 +4,6 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
     Json,
 };
-use image::ImageError;
 use oauth2::{
     basic::BasicErrorResponseType, ConfigurationError, RequestTokenError,
     RevocationErrorResponseType, StandardErrorResponse,
@@ -57,8 +56,6 @@ pub enum ApiError {
     ReqwestError(#[from] reqwest::Error),
     #[error("Internal HTTP Error {0}")]
     AxumError(#[from] axum::http::Error),
-    #[error("Image error {0}")]
-    Image(#[from] ImageError),
     #[error("IO Error {0}")]
     StdError(#[from] std::io::Error),
     #[error("Error reading lodestone server name {0}")]
@@ -142,8 +139,6 @@ pub enum WebError {
     ReqwestError(#[from] reqwest::Error),
     #[error("Internal HTTP Error {0}")]
     AxumError(#[from] axum::http::Error),
-    #[error("Image error {0}")]
-    Image(#[from] ImageError),
     #[error("IO Error {0}")]
     StdError(#[from] std::io::Error),
     #[error("Error reading lodestone server name {0}")]

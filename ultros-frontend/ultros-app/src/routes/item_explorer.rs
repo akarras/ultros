@@ -3,6 +3,7 @@ use std::cmp::Reverse;
 use crate::components::{cheapest_price::*, fonts::*, item_icon::*, tooltip::*};
 use leptos::*;
 use leptos_router::use_params_map;
+use ultros_api_types::icon_size::IconSize;
 use urlencoding::{decode, encode};
 
 /// Displays buttons of categories

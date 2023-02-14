@@ -34,7 +34,6 @@ metrics = "0.20.1"
 metrics-exporter-prometheus = "0.11.0"
 thousands = "0.2.0"
 serde_with = "2.1.0"
-image = {version = "0.24.4", features = ["webp-encoder"]}
 tower-http = {version = "0.3", features = ["compression-gzip"]}
 sha2 = "0.10.6"
 base64 = "0.21.0"
@@ -43,3 +42,4 @@ itertools = "0.10.5"
 sitemap-rs = "0.2.0"
 ultros-ui-server = {path = "../ultros-frontend/ultros-ui-server"}
 ultros-api-types = {path = "../ultros-api-types"}
+ultros-xiv-icons = {path = "../ultros-frontend/ultros-xiv-icons"}

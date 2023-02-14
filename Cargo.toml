@@ -1,5 +1,5 @@
 [workspace]
-members = ["universalis", "xivapi", "recipepricecheck", "crafterstoolbox", "xiv-gen", "xiv-gen-db", "ultros", "ultros-db", "migration", "ultros-frontend/ultros-client", "ultros-frontend/ultros-app", "ultros-frontend/ultros-ui-server", "ultros-api-types"]
+members = ["universalis", "xivapi", "recipepricecheck", "crafterstoolbox", "xiv-gen", "xiv-gen-db", "ultros", "ultros-db", "migration", "ultros-frontend/ultros-client", "ultros-frontend/ultros-app", "ultros-frontend/ultros-ui-server", "ultros-api-types", "ultros-frontend/ultros-xiv-icons"]
 
 
 [workspace.dependencies]
@@ -81,3 +81,13 @@ end2end-cmd = "npx playwright test"
 #
 # Optional. Env: LEPTOS_END2END_DIR
 end2end-dir = "integration"
+
+
+
+[profile.dev.build-override]
+opt-level = 1
+codegen-units = 256
+
+[profile.release.build-override]
+opt-level = 3
+codegen-units = 256
