@@ -7,7 +7,7 @@ use ultros_api_types::{
     cheapest_listings::CheapestListings,
     list::{CreateList, List, ListItem},
     recent_sales::RecentSales,
-    user::{UserData, UserRetainerListings, UserRetainers},
+    user::{UserData, UserRetainerListings, UserRetainers, OwnedRetainer},
     world::WorldData,
     ActiveListing, CurrentlyShownItem, FfxivCharacter, FfxivCharacterVerification, Retainer,
 };
@@ -224,10 +224,9 @@ pub(crate) async fn delete_list_item(cx: Scope, list_id: i32) -> Option<()> {
 
 pub(crate) async fn update_retainer_order(
     cx: Scope,
-    character: Option<FfxivCharacter>,
-    retainers: Vec<Retainer>,
+    retainers: Vec<(OwnedRetainer, Retainer)>,
 ) -> Option<()> {
-    post_api(cx, &format!("/api/v1/retainer/reorder"), (character, retainers)).await
+    post_api(cx, &format!("/api/v1/retainer/reorder"), retainers).await
 }
 
 #[cfg(not(feature = "ssr"))]

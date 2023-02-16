@@ -2,13 +2,13 @@ use std::cmp::Reverse;
 
 use crate::components::{cheapest_price::*, fonts::*, item_icon::*, tooltip::*};
 use leptos::*;
-use leptos_router::use_params_map;
 use ultros_api_types::icon_size::IconSize;
+use leptos_router::*;
 use urlencoding::{decode, encode};
 
 /// Displays buttons of categories
 #[component]
-pub fn CategoryView(cx: Scope, category: u8) -> impl IntoView {
+fn CategoryView(cx: Scope, category: u8) -> impl IntoView {
     let data = xiv_gen_db::decompress_data();
     let search_categories = &data.item_search_categorys;
     // let item_ui_category = &data.item_ui_categorys;
@@ -26,9 +26,9 @@ pub fn CategoryView(cx: Scope, category: u8) -> impl IntoView {
         {categories.into_iter()
             .map(|(_, name, id)| view! {cx,
                 <Tooltip tooltip_text=name.to_string()>
-                    <a style="width: 30px; height: 30px; font-size: 26px" href=format!("/items/{}", encode(name))>
+                    <A  href=format!("/items/{}", encode(name))>
                         <ItemSearchCategoryIcon id=*id />
-                    </a>
+                    </A>
                 </Tooltip>
             })
             .collect::<Vec<_>>()}
@@ -37,10 +37,14 @@ pub fn CategoryView(cx: Scope, category: u8) -> impl IntoView {
 }
 
 #[component]
+pub fn JobGearView(cx: Scope) -> impl IntoView {
+    
+}
+
+#[component]
 pub fn ItemExplorer(cx: Scope) -> impl IntoView {
     let params = use_params_map(cx);
     let data = xiv_gen_db::decompress_data();
-    log::info!("item explorer created");
     view! {cx,
         <div class="container">
             <div class="main-content flex">

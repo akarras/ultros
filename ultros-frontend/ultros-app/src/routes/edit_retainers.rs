@@ -3,7 +3,7 @@ use ultros_api_types::user::OwnedRetainer;
 use ultros_api_types::world_helper::AnySelector;
 use ultros_api_types::Retainer;
 
-use crate::api::{claim_retainer, get_retainers, search_retainers, unclaim_retainer};
+use crate::api::{claim_retainer, get_retainers, search_retainers, unclaim_retainer, update_retainer_order};
 use crate::components::{loading::*, reorderable_list::*, retainer_nav::*, world_name::*};
 
 #[component]
@@ -62,8 +62,14 @@ pub fn EditRetainers(cx: Scope) -> impl IntoView {
                           let retainers = create_rw_signal(cx, retainers);
                           create_effect(cx, move |_| {
                             // TODO: Move this to a server action or action?
-                            leptos::spawn_local(
-                            save_retainer_order(character.map(|c| c.id), retainers()));
+                            let retainers = retainers();
+                            let retainers = retainers.into_iter().enumerate().map(|(i, (mut owned, retainer))| {
+                              owned.weight = Some(i as i32);
+                              (owned, retainer)
+                            }).collect::<Vec<_>>();
+                            leptos::spawn_local(async move {
+                              let _ = update_retainer_order(cx, retainers).await;
+                            });
                           });
                           view!{cx,
                           {if let Some(character) = character {
