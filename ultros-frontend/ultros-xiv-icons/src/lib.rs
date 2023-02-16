@@ -1,4 +1,4 @@
-use std::io::{Bytes, Cursor, Read};
+use std::io::{Cursor, Read};
 
 use tar::Archive;
 use ultros_api_types::icon_size::IconSize;

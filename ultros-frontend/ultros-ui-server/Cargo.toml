@@ -12,3 +12,4 @@ leptos_axum = {git = "https://github.com/leptos-rs/leptos"}
 ultros-app = {path = "../ultros-app", features = ["ssr"]}
 tower-http = { version = "0.3.4", features = ["fs"] }
 ultros-db = {path = "../../ultros-db"}
+log = "0.4.17"

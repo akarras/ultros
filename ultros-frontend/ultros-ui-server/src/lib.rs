@@ -10,7 +10,6 @@ use ultros_app::*;
 
 pub async fn create_leptos_app(_db: ultros_db::UltrosDb) -> Router {
     use axum::{error_handling::HandleError, http::StatusCode};
-    use leptos::tracing::log;
     use tower_http::services::ServeDir;
 
     let conf = get_configuration(None).await.unwrap();
@@ -33,7 +32,7 @@ pub async fn create_leptos_app(_db: ultros_db::UltrosDb) -> Router {
     // let static_service = HandleError::new(ServeDir::new("./static"), handle_file_error);
     //let pkg_service = HandleError::new(ServeDir::new("./pkg"), handle_file_error);
     let cargo_leptos_service = HandleError::new(ServeDir::new(&bundle_filepath), handle_file_error);
-    tracing::warn!("Serving pkg dir: {bundle_filepath}");
+    log::info!("Serving pkg dir: {bundle_filepath}");
     /// Convert the Errors from ServeDir to a type that implements IntoResponse
     async fn handle_file_error(err: std::io::Error) -> (StatusCode, String) {
         (StatusCode::NOT_FOUND, format!("File Not Found: {}", err))

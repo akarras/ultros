@@ -13,6 +13,7 @@ pub mod price_viewer;
 pub mod profile_display;
 pub mod related_items;
 pub mod relative_time;
+pub mod reorderable_list;
 pub mod retainer_nav;
 pub mod sale_history_table;
 pub mod search_box;

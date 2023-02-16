@@ -222,6 +222,14 @@ pub(crate) async fn delete_list_item(cx: Scope, list_id: i32) -> Option<()> {
     fetch_api(cx, &format!("/api/v1/list/item/{list_id}/delete")).await
 }
 
+pub(crate) async fn update_retainer_order(
+    cx: Scope,
+    character: Option<FfxivCharacter>,
+    retainers: Vec<Retainer>,
+) -> Option<()> {
+    post_api(cx, &format!("/api/v1/retainer/reorder"), (character, retainers)).await
+}
+
 #[cfg(not(feature = "ssr"))]
 pub async fn fetch_api<T>(cx: Scope, path: &str) -> Option<T>
 where
@@ -260,7 +268,6 @@ pub async fn fetch_api<T>(cx: Scope, path: &str) -> Option<T>
 where
     T: Serializable,
 {
-    use leptos::tracing::log;
     // use the original headers of the scope
     // add the hostname when using the ssr path.
     let req_parts = use_context::<leptos_axum::RequestParts>(cx)?;

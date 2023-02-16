@@ -1,8 +1,10 @@
 use leptos::*;
+use ultros_api_types::user::OwnedRetainer;
 use ultros_api_types::world_helper::AnySelector;
+use ultros_api_types::Retainer;
 
 use crate::api::{claim_retainer, get_retainers, search_retainers, unclaim_retainer};
-use crate::components::{loading::*, retainer_nav::*, world_name::*};
+use crate::components::{loading::*, reorderable_list::*, retainer_nav::*, world_name::*};
 
 #[component]
 pub fn EditRetainers(cx: Scope) -> impl IntoView {
@@ -52,27 +54,39 @@ pub fn EditRetainers(cx: Scope) -> impl IntoView {
             {move || retainers().map(|retainers| {
               match retainers {
                 Some(retainers) => {
+
                   view!{cx,
                       <For each=move || retainers.retainers.clone()
                         key=move |(character, retainers)| (character.as_ref().map(|c| c.id).unwrap_or_default(), retainers.iter().map(|(o, _r)| o.id).collect::<Vec<_>>())
-                        view=move |cx, (character, retainers)| view!{cx,
+                        view=move |cx, (character, retainers)| {
+                          let retainers = create_rw_signal(cx, retainers);
+                          create_effect(cx, move |_| {
+                            // TODO: Move this to a server action or action?
+                            leptos::spawn_local(
+                            save_retainer_order(character.map(|c| c.id), retainers()));
+                          });
+                          view!{cx,
                           {if let Some(character) = character {
                             view!{cx, <div>{character.first_name}" "{character.last_name}</div>}
                           } else {
                             view!{cx, <div>"No character"</div>}
                           }}
                         <div class="flex-column">
-                          <For each=move || retainers.clone()
-                            key=move |(_, retainer)| retainer.id
-                            view=move |cx, (owned, retainer)| view!{cx, <div class="flex-row">
+                          <ReorderableList items=retainers item_view=move |cx, (owned, retainer): (OwnedRetainer, Retainer)| {
+                            let owned_id = owned.id;
+                            let retainer_name = retainer.name.to_string();
+                            let world_id = retainer.world_id;
+                            view!{
+                            cx,
+                            <div class="flex-row">
                               <div style="width: 300px" class="flex">
-                                <span style="width: 200px">{retainer.name}</span>
-                                <span><WorldName id=AnySelector::World(retainer.world_id)/></span>
+                                <span style="width: 200px">{retainer_name}</span>
+                                <span><WorldName id=AnySelector::World(world_id)/></span>
                                 </div>
-                              <button class="btn" on:click=move |_| remove_retainer.dispatch(owned.id)>"Unclaim"</button>
-                              </div>}
-                          />
-                        </div>}
+                              <button class="btn" on:click=move |_| remove_retainer.dispatch(owned_id)>"Unclaim"</button>
+                              </div>
+                          }} />
+                        </div>} }
                       />}.into_view(cx)
                 },
                 None => {
