@@ -4,6 +4,10 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
     Json,
 };
+use axum_extra::extract::{
+    cookie::{Cookie, Key},
+    CookieJar, PrivateCookieJar,
+};
 use oauth2::{
     basic::BasicErrorResponseType, ConfigurationError, RequestTokenError,
     RevocationErrorResponseType, StandardErrorResponse,
@@ -166,6 +170,8 @@ pub enum WebError {
             StandardErrorResponse<BasicErrorResponseType>,
         >,
     ),
+    #[error("Discord token was invalid")]
+    DiscordTokenInvalid(PrivateCookieJar<Key>),
 }
 
 impl WebError {
@@ -182,6 +188,10 @@ impl IntoResponse for WebError {
         error!("Error returned {self:?}");
         if let WebError::HomeWorldNotSet = self {
             return Redirect::to("/profile").into_response();
+        } else if let WebError::DiscordTokenInvalid(mut cookies) = self {
+            // remove the discord user cookie
+            cookies = cookies.remove(Cookie::named("discord_auth"));
+            return (cookies, Redirect::to("/")).into_response();
         }
         (self.as_status_code(), format!("{self}")).into_response()
     }

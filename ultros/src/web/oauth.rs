@@ -241,7 +241,10 @@ where
         }
 
         let http = Http::new(&format!("Bearer {}", discord_auth.value()));
-        let user = http.get_current_user().await.expect("Infailable");
+        let user = http
+            .get_current_user()
+            .await
+            .map_err(|_| WebError::DiscordTokenInvalid(cookie_jar))?;
         let avatar_url = user
             .static_avatar_url()
             .unwrap_or_else(|| user.default_avatar_url());
