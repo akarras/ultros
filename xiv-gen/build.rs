@@ -274,7 +274,7 @@ fn create_struct(
                 // regex: check is int type
                 static ref INT: Regex = Regex::new(r#"^(u|)int(8|16|32|64)$"#).unwrap();
                 // regex: check is bit offset
-                static ref BIT: Regex = Regex::new(r#"^bit(&[0-9]+|)$"#).unwrap();
+                static ref BIT: Regex = Regex::new(r#"^bit(&[0-9]+|)|bool$"#).unwrap();
             }
             if BIT.is_match(field_value) {
                 (line_one, "bool".to_string())
