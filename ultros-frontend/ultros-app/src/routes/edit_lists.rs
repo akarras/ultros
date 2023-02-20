@@ -32,7 +32,7 @@ fn EditWorldList(
             set_current_world(selector)
         }>
             <Suspense fallback=move || view!{cx, <Loading/>}>
-                {local_worlds().map(move |worlds| match worlds {
+                {local_worlds.read(cx).map(move |worlds| match worlds {
                     Some(worlds) => {
                         let data = worlds.get_all().clone();
                         let current = worlds.lookup_selector(current_world()).map(|name| name.get_name().to_string());
@@ -73,7 +73,7 @@ fn FreshWorldList(
     view! {cx,
         <div>
             <Suspense fallback=move || view!{cx, <Loading/>}>
-                {local_worlds().map(move |worlds| match worlds.clone() {
+                {local_worlds.read(cx).map(move |worlds| match worlds.clone() {
                     Some(worlds) => {
                         let current = current_world();
                         let current_value = current.map(|current| worlds.lookup_selector(current)).flatten();
@@ -174,7 +174,7 @@ pub fn EditLists(cx: Scope) -> impl IntoView {
             })}
             <div class="content-well">
                 <Suspense fallback=move || view!{cx, <Loading />}>
-                {move || lists().map(|lists| {
+                {move || lists.read(cx).map(|lists| {
                     match lists {
                         Some(lists) => view!{cx,
 

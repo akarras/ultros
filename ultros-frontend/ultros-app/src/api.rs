@@ -7,7 +7,7 @@ use ultros_api_types::{
     cheapest_listings::CheapestListings,
     list::{CreateList, List, ListItem},
     recent_sales::RecentSales,
-    user::{UserData, UserRetainerListings, UserRetainers, OwnedRetainer},
+    user::{OwnedRetainer, UserData, UserRetainerListings, UserRetainers},
     world::WorldData,
     ActiveListing, CurrentlyShownItem, FfxivCharacter, FfxivCharacterVerification, Retainer,
 };

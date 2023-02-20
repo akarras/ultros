@@ -2,9 +2,10 @@ use std::cmp::Reverse;
 
 use crate::components::{cheapest_price::*, fonts::*, item_icon::*, tooltip::*};
 use leptos::*;
-use ultros_api_types::icon_size::IconSize;
 use leptos_router::*;
+use ultros_api_types::icon_size::IconSize;
 use urlencoding::{decode, encode};
+use xiv_gen::ClassJobCategory;
 
 /// Displays buttons of categories
 #[component]
@@ -36,9 +37,107 @@ fn CategoryView(cx: Scope, category: u8) -> impl IntoView {
     }
 }
 
+fn job_category_lookup(class_job_category: &ClassJobCategory, job_acronym: &str) -> bool {
+    // this is kind of dumb, but this should give a compile time error whenever a job changes.
+    let ClassJobCategory {
+        key_id: _,
+        name: _,
+        adv,
+        gla,
+        pgl,
+        mrd,
+        lnc,
+        arc,
+        cnj,
+        thm,
+        crp,
+        bsm,
+        arm,
+        gsm,
+        ltw,
+        wvr,
+        alc,
+        cul,
+        min,
+        btn,
+        fsh,
+        pld,
+        mnk,
+        war,
+        drg,
+        brd,
+        whm,
+        blm,
+        acn,
+        smn,
+        sch,
+        rog,
+        nin,
+        mch,
+        drk,
+        ast,
+        sam,
+        rdm,
+        blu,
+        gnb,
+        dnc,
+        rpr,
+        sge,
+    } = class_job_category;
+    match job_acronym {
+        "adv" => *adv,
+        "gla" => *gla,
+        "pgl" => *pgl,
+        "mrd" => *mrd,
+        "lnc" => *lnc,
+        "arc" => *arc,
+        "cnj" => *cnj,
+        "thm" => *thm,
+        "crp" => *crp,
+        "bsm" => *bsm,
+        "arm" => *arm,
+        "gsm" => *gsm,
+        "ltw" => *ltw,
+        "wvr" => *wvr,
+        "alc" => *alc,
+        "cul" => *cul,
+        "min" => *min,
+        "btn" => *btn,
+        "fsh" => *fsh,
+        "pld" => *pld,
+        "mnk" => *mnk,
+        "war" => *war,
+        "drg" => *drg,
+        "brd" => *brd,
+        "whm" => *whm,
+        "blm" => *blm,
+        "acn" => *acn,
+        "smn" => *smn,
+        "sch" => *sch,
+        "rog" => *rog,
+        "nin" => *nin,
+        "mch" => *mch,
+        "drk" => *drk,
+        "ast" => *ast,
+        "sam" => *sam,
+        "rdm" => *rdm,
+        "blu" => *blu,
+        "gnb" => *gnb,
+        "dnc" => *dnc,
+        "rpr" => *rpr,
+        "sge" => *sge,
+        _ => {
+            log::warn!("Unknown job acronym {job_acronym}");
+            return false;
+        }
+    }
+}
+
 #[component]
-pub fn JobGearView(cx: Scope) -> impl IntoView {
-    
+fn JobsList(cx: Scope) -> impl IntoView {
+    let jobs = &xiv_gen_db::decompress_data().class_jobs;
+    let mut jobs: Vec<_> = jobs.iter().collect();
+    jobs.sort_by_key(|(_, job)| job.ui_priority);
 }
 
 #[component]
@@ -57,6 +156,8 @@ pub fn ItemExplorer(cx: Scope) -> impl IntoView {
                     <CategoryView category=3 />
                     "Housing"
                     <CategoryView category=4 />
+                    "Job Armor"
+                    <JobsList />
                 </div>
                 <div class="flex-column">
                     {move || {

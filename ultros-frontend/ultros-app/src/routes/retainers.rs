@@ -86,7 +86,7 @@ pub fn RetainerUndercuts(cx: Scope) -> impl IntoView {
                 <span class="content-title">"Retainer Undercuts"</span>
                 <Suspense fallback=move || view!{cx, <span>"Loading..."</span>}>
                 {move || {
-                    retainers.read().map(|retainer| {
+                    retainers.read(cx).map(|retainer| {
                         match retainer {
                             Some(retainers) => {
                                 let retainers : Vec<_> = retainers.retainers.into_iter()
@@ -115,7 +115,7 @@ pub fn Retainers(cx: Scope) -> impl IntoView {
                 <span class="content-title">"Retainers"</span>
                 <Suspense fallback=move || view!{cx, <span>"Loading..."</span>}>
                 {move || {
-                    retainers.read().map(|retainer| {
+                    retainers.read(cx).map(|retainer| {
                         match retainer {
                             Some(retainers) => {
                                 let retainers : Vec<_> = retainers.retainers.into_iter()

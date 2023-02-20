@@ -89,7 +89,7 @@ pub fn Profile(cx: Scope) -> impl IntoView {
                 </span>
                 <AddCharacterMenu claim_character/>
                 <Suspense fallback=move || view!{cx, <Loading/>}>
-                    {move || pending_verifications().flatten().map(|verifications| {
+                    {move || pending_verifications.read(cx).flatten().map(|verifications| {
                         view!{cx, <div>
                                 {verifications.into_iter().map(|verification| {
                                     view!{cx, <div class="flex-row">
@@ -109,7 +109,7 @@ pub fn Profile(cx: Scope) -> impl IntoView {
                     })}
                 </Suspense>
                 <Suspense fallback=move || view!{cx, <Loading/>}>
-                    {move || characters().map(|characters| {
+                    {move || characters.read(cx).map(|characters| {
                         match characters {
                             Some(characters) => {
                                 if characters.is_empty() {

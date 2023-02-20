@@ -12,7 +12,7 @@ pub(crate) fn DatacenterName(cx: Scope, world_id: i32) -> impl IntoView {
         cx,
         <Suspense fallback=|| view!{cx, "--"}>
             {move ||
-                match context.0.read() {
+                match context.0.read(cx) {
                     Some(Some(data)) => if let Some(world) = data.lookup_selector(AnySelector::World(world_id)) {
                         let world = match world {
                             ultros_api_types::world_helper::AnyResult::World(world) => world,

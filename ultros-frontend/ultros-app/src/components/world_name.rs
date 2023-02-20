@@ -10,7 +10,7 @@ pub(crate) fn WorldName(cx: Scope, id: AnySelector) -> impl IntoView {
         cx,
         <Suspense fallback=|| view!{cx, "--"}>
             {move ||
-                    match context.0.read() {
+                    match context.0.read(cx) {
                         Some(Some(data)) => view!{ cx, <span>{data.lookup_selector(id).map(|value| value.get_name().to_string()).unwrap_or_default()}</span> }.into_view(cx),
                         _ => view!{ cx, <span>"None"</span>}.into_view(cx),
                     }

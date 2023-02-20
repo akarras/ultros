@@ -12,7 +12,7 @@ pub fn Lists(cx: Scope) -> impl IntoView {
         <div class="main-content flex-column">
             <span class="content-title">"Lists"</span>
             <Suspense fallback=move || view!{cx, <Loading/>}>
-            {move || lists().map(move |lists| {
+            {move || lists.read(cx).map(move |lists| {
                 match lists {
                     Some(lists) => {
                         view!{cx,

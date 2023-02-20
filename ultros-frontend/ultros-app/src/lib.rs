@@ -87,7 +87,7 @@ pub fn App(cx: Scope) -> impl IntoView {
                 <Route path="list" view=move |cx| view!{cx, <Lists/>}/>
                 <Route path="items/:category" view=move |cx| view! { cx, <ItemExplorer/>}/>
                 <Route path="items" view=move |cx| view! { cx, <ItemExplorer/>}/>
-                <Route path="item/:world/:id" view=move |cx| view! { cx, <ItemView />}/>
+                <Route path="item/:world/:id" view=move |cx| view! { cx, <ItemView />} />
                 // <Route path="*listings" view=move |cx| view! { cx, <h1>"Listings"</h1>}/>
 
                 <Route path="analyzer" view=move |cx| view! { cx, <Analyzer/>}/>

@@ -269,7 +269,7 @@ fn AnalyzerTable(
                         .unwrap_or_default();
                     view! {cx, <tr>
                        <td class="flex flex-row">
-                           <a href=format!("/listings/{world}/{item_id}")>
+                           <a href=format!("/item/{world}/{item_id}")>
                                <ItemIcon item_id icon_size=IconSize::Small/>
                                {item}
                            </a>
@@ -302,7 +302,7 @@ pub fn Analyzer(cx: Scope) -> impl IntoView {
         move |world| async move {
             // use the world cache to lookup the region for this world
             let world = world?;
-            let region = worlds.0().flatten().and_then(|worlds| {
+            let region = worlds.0.read(cx).flatten().and_then(|worlds| {
                 worlds.lookup_world_by_name(&world).map(|world| {
                     let region = worlds.get_region(world);
                     AnyResult::Region(region).get_name().to_string()
@@ -331,9 +331,9 @@ pub fn Analyzer(cx: Scope) -> impl IntoView {
                         } else {
                             view!{cx, <Suspense fallback=move || view!{cx, <Loading />}>
                             {move || {
-                                let sales = sales();
-                                let listings = listings();
-                                let worlds = use_context::<LocalWorldData>(cx).expect("Worlds should always be populated here").0();
+                                let sales = sales.read(cx);
+                                let listings = listings.read(cx);
+                                let worlds = use_context::<LocalWorldData>(cx).expect("Worlds should always be populated here").0.read(cx);
                                 match (sales, listings, worlds) {
                                     (Some(Some(sales)), Some(Some(listings)), Some(Some(worlds))) => {
                                         view!{cx, <AnalyzerTable sales listings worlds />}.into_view(cx)

@@ -3,7 +3,9 @@ use ultros_api_types::user::OwnedRetainer;
 use ultros_api_types::world_helper::AnySelector;
 use ultros_api_types::Retainer;
 
-use crate::api::{claim_retainer, get_retainers, search_retainers, unclaim_retainer, update_retainer_order};
+use crate::api::{
+    claim_retainer, get_retainers, search_retainers, unclaim_retainer, update_retainer_order,
+};
 use crate::components::{loading::*, reorderable_list::*, retainer_nav::*, world_name::*};
 
 #[component]
@@ -31,7 +33,7 @@ pub fn EditRetainers(cx: Scope) -> impl IntoView {
 
     let is_retainer_owned = move |retainer_id: i32| {
         retainers
-            .with(|retainer| {
+            .with(cx, |retainer| {
                 retainer.as_ref().map(|retainers| {
                     retainers.retainers.iter().any(|(_character, retainers)| {
                         retainers
@@ -51,7 +53,7 @@ pub fn EditRetainers(cx: Scope) -> impl IntoView {
         <div style="width: 500px;" class="retainer-list flex-column">
           <span class="content-title">"Retainers"</span>
           <Suspense fallback=move || view!{cx, <div></div>}>
-            {move || retainers().map(|retainers| {
+            {move || retainers.read(cx).map(|retainers| {
               match retainers {
                 Some(retainers) => {
 
@@ -107,7 +109,7 @@ pub fn EditRetainers(cx: Scope) -> impl IntoView {
           <input prop:value=retainer_search  on:input=move |input| set_retainer_search(event_target_value(&input)) />
           <div class="retainer-results">
             <Suspense fallback=move || view!{cx, <Loading/>}>
-              {move || search_results.read().map(|retainers| {
+              {move || search_results.read(cx).map(|retainers| {
                 match retainers {
                   Some(retainers) => view!{cx, <div class="content-well flex-column">
                     <For each=move || retainers.clone()

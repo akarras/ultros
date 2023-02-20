@@ -29,7 +29,7 @@ fn WorldMenu(cx: Scope, world_name: Memo<String>, item_id: Memo<i32>) -> impl In
     view! {cx,
         <Suspense fallback=move || view!{ cx, <Loading/>}>
         {move || {
-            match worlds() {
+            match worlds.read(cx) {
                 Some(Some(worlds)) => {
                     if let Some(world) = worlds.lookup_world_by_name(&world_name()) {
                         let create_world_button = move |name| view!{cx, <WorldButton world_name=name item_id=item_id()/>};
@@ -85,14 +85,16 @@ fn ListingsContent(cx: Scope, item_id: Memo<i32>, world: Memo<String>) -> impl I
     );
     let sales = create_memo(cx, move |_| {
         listing_resource
-            .with(|listings| listings.as_ref().map(|listings| listings.sales.clone()))
+            .with(cx, |listings| {
+                listings.as_ref().map(|listings| listings.sales.clone())
+            })
             .flatten()
             .unwrap_or_default()
     });
     view! { cx,
 
         <Suspense fallback=move || view!{ cx, <Loading/>}>
-        {move || listing_resource().map(|listings| {
+        {move || listing_resource.read(cx).map(|listings| {
             match listings {
                 None => view!{ cx, <div>"Error getting listings"</div>}.into_view(cx),
                 Some(currently_shown) => {

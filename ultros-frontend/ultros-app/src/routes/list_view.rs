@@ -99,7 +99,7 @@ pub fn ListView(cx: Scope) -> impl IntoView {
                         </div>}
                 })}
                 <Suspense fallback=move || view!{cx, <Loading />}>
-                {move || list_view().map(move |list| match list {
+                {move || list_view.read(cx).map(move |list| match list {
                     Some((list, items)) => view!{cx,
                         <div class="content-well">
                             <span class="content-title">{list.name}</span>
