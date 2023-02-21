@@ -439,7 +439,8 @@ nav > a > * {
 }
 
 .content-well {
-  margin: 15px;
+  margin: 7px;
+  padding: 12px;
   background-color: rgba(0, 0, 0, 0.08);
   border-radius: 8px;
   max-height: 800px;
@@ -836,5 +837,9 @@ select optgroup {
 }
 
 [aria-current="page"] {
+  color:rgb(151, 79, 151)
+}
+
+.main-content [aria-current="page"] {
   color:rgb(151, 79, 151)
 }

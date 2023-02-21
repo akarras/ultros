@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 ultros-api-types = {path = "../../ultros-api-types"}
 tar = "0.4.38"
+flate2 = "1.0.25"
 
 [build-dependencies]
 ultros-api-types = {path = "../../ultros-api-types"}
@@ -17,3 +18,4 @@ indicatif = {version = "*"}
 futures = "0.3.26"
 tempdir = "0.3.7"
 tar = "0.4.38"
+flate2 = "1.0.25"

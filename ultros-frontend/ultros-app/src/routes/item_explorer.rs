@@ -38,6 +38,7 @@ fn CategoryView(cx: Scope, category: u8) -> impl IntoView {
 }
 
 fn job_category_lookup(class_job_category: &ClassJobCategory, job_acronym: &str) -> bool {
+    let lower_case = job_acronym.to_lowercase();
     // this is kind of dumb, but this should give a compile time error whenever a job changes.
     let ClassJobCategory {
         key_id: _,
@@ -84,7 +85,7 @@ fn job_category_lookup(class_job_category: &ClassJobCategory, job_acronym: &str)
         rpr,
         sge,
     } = class_job_category;
-    match job_acronym {
+    match lower_case.as_str() {
         "adv" => *adv,
         "gla" => *gla,
         "pgl" => *pgl,
@@ -138,6 +139,11 @@ fn JobsList(cx: Scope) -> impl IntoView {
     let jobs = &xiv_gen_db::decompress_data().class_jobs;
     let mut jobs: Vec<_> = jobs.iter().collect();
     jobs.sort_by_key(|(_, job)| job.ui_priority);
+    view!{cx, <div class="flex-wrap">
+            {jobs.into_iter().map(|(_id, job)| view!{cx, <A href=format!("/items/jobset/{}", job.abbreviation)>
+                {&job.abbreviation}
+            </A>}).collect::<Vec<_>>()}
+        </div>}
 }
 
 #[component]
@@ -147,8 +153,8 @@ pub fn ItemExplorer(cx: Scope) -> impl IntoView {
     view! {cx,
         <div class="container">
             <div class="main-content flex">
-                <div class="flex-column" style="width: 250px">
-                    "Weapons:"
+                <div class="flex-column" style="width: 250px; font-size: 2em">
+                    "Weapons"
                     <CategoryView category=1 />
                     "Armor"
                     <CategoryView category=2 />
@@ -156,7 +162,7 @@ pub fn ItemExplorer(cx: Scope) -> impl IntoView {
                     <CategoryView category=3 />
                     "Housing"
                     <CategoryView category=4 />
-                    "Job Armor"
+                    "Job Set"
                     <JobsList />
                 </div>
                 <div class="flex-column">
@@ -172,7 +178,7 @@ pub fn ItemExplorer(cx: Scope) -> impl IntoView {
                             items.sort_by_key(|(_, item)| Reverse(item.level_item.0));
                             items.into_iter().map(|(id, item)| view!{cx, <div class="flex-row">
                                     <ItemIcon item_id=id.0 icon_size=IconSize::Small />
-                                    <span style="width: 250px">{&item.name}</span>
+                                    <a href=format!("/item/North-America/{}", id.0) style="width: 250px">{&item.name}</a>
                                     <span style="color: #f3a; width: 50px">{item.level_item.0}</span>
                                     <CheapestPrice item_id=*id hq=None />
                                 </div>

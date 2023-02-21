@@ -59,7 +59,7 @@ pub fn App(cx: Scope) -> impl IntoView {
                     <i class="fa-solid fa-list"></i>
                     "Lists"
                 </A>
-                <A href="/retainers">
+                <A href="/retainers/listings">
                     <i class="fa-solid fa-user-group"></i>
                     "Retainers"
                 </A>
@@ -79,7 +79,7 @@ pub fn App(cx: Scope) -> impl IntoView {
             <Routes>
                 <Route path="retainers/edit" view=move |cx| view! { cx, <EditRetainers />}/>
                 <Route path="retainers/undercuts" view=move |cx| view! { cx, <RetainerUndercuts />}/>
-                <Route path="retainers" view=move |cx| view! { cx, <Retainers/>} />
+                <Route path="retainers/listings" view=move |cx| view! { cx, <Retainers/>} />
                     // <Route path="listings" view=move |cx| view! {cx, <h1>"Retainer Listings"</h1>}/>
                 // </Route>
                 <Route path="list/edit" view=move |cx| view! {cx, <EditLists/>}/>
@@ -97,7 +97,7 @@ pub fn App(cx: Scope) -> impl IntoView {
             </Routes>
         </Router>
         <footer class="flex-column flex-space flex-center">
-            <div class="flex-row column-pad">
+            <div class="flex-row column-pad flex-center">
                 <a href="https://discord.gg/pgdq9nGUP2">"Discord"</a>"|"
                 <a href="https://github.com/akarras/ultros">"GitHub"</a>"|"
                 <a href="https://leekspin.com">"Patreon"</a>

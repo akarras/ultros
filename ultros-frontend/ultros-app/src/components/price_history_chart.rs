@@ -67,8 +67,10 @@ pub fn PriceHistoryChart(cx: Scope, sales: MaybeSignal<Vec<SaleHistory>>) -> imp
         }
     });
     view! {cx,
-        <div class:hidden=hidden style="width:800px; height:500px">
-            <canvas width="800" height="500" _ref=canvas/>
+        <div class="content-well">
+            <div>
+                <canvas width="750" height="450" _ref=canvas/>
+            </div>
         </div>
     }
 }

@@ -1,6 +1,6 @@
 use crate::api::{get_retainer_listings, get_retainer_undercuts};
 use crate::components::gil::*;
-use crate::components::{item_icon::*, retainer_nav::*, world_name::*};
+use crate::components::{item_icon::*, retainer_nav::*, world_name::*, loading::*};
 use leptos::*;
 use ultros_api_types::icon_size::IconSize;
 use ultros_api_types::{world_helper::AnySelector, ActiveListing, FfxivCharacter, Retainer};
@@ -113,7 +113,7 @@ pub fn Retainers(cx: Scope) -> impl IntoView {
             <RetainerNav/>
             <div class="main-content">
                 <span class="content-title">"Retainers"</span>
-                <Suspense fallback=move || view!{cx, <span>"Loading..."</span>}>
+                <Suspense fallback=move || view!{cx, <Loading/>}>
                 {move || {
                     retainers.read(cx).map(|retainer| {
                         match retainer {

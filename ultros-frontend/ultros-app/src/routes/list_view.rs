@@ -8,6 +8,7 @@ use xiv_gen::ItemId;
 use crate::api::{add_item_to_list, delete_list_item, get_list_items_with_listings};
 use crate::components::{
     clipboard::*, item_icon::*, loading::*, make_place_importer::*, price_viewer::*, tooltip::*,
+    lists_nav::*
 };
 
 #[component]
@@ -40,6 +41,7 @@ pub fn ListView(cx: Scope) -> impl IntoView {
     let game_items = &xiv_gen_db::decompress_data().items;
     view! {cx,
         <div class="container">
+            <ListsNav />
             <div class="main-content flex-column" style="align-items: center">
                 <div class="flex-row">
                     <button class="btn" on:click=move |_| set_item_menu(!item_menu())><i class="fa-solid fa-plus"></i></button>

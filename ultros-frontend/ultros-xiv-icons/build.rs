@@ -1,11 +1,12 @@
 #![feature(async_closure)]
+use flate2::{write::GzEncoder, Compression};
 use futures::{stream, StreamExt};
 use image::{imageops::FilterType, io::Reader as ImageReader, ImageOutputFormat};
 use std::{
     env,
     ffi::OsStr,
     fs::{read_dir, DirEntry},
-    io::Cursor,
+    io::{Cursor, Write},
     path::PathBuf,
     time::Instant,
 };
@@ -114,8 +115,14 @@ async fn compress(path: &PathBuf) {
     }
     tar.finish().unwrap();
     let cursor = tar.into_inner().unwrap();
+    // Write tar to a compressed file
+    let mut compressed = GzEncoder::new(Vec::new(), Compression::best());
+    compressed
+        .write_all(cursor.into_inner().as_slice())
+        .unwrap();
+    let compress = compressed.finish().unwrap();
     let out_dir = std::env::var("OUT_DIR").unwrap();
-    std::fs::write(format!("{out_dir}/images.tar"), cursor.into_inner()).unwrap();
+    std::fs::write(format!("{out_dir}/images.tar.gz"), compress).unwrap();
 }
 
 #[tokio::main]

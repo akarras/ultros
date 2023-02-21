@@ -98,15 +98,19 @@ pub fn RelatedItems(cx: Scope, item_id: ItemId) -> impl IntoView {
                     <SmallItemDisplay item/>
                 }
             })
+            .take(8)
             .collect::<Vec<_>>();
         let recipes = recipe_tree_iter(item_id)
             .map(|recipe| view! {cx, <Recipe recipe/>})
+            .take(10)
             .collect::<Vec<_>>();
         view! {cx,
         <div class="content-well flex-column">
-            "Related Items:"
+            <span class="content-title">"related items"</span>
             <div class="flex-wrap">{item_set}</div>
-            "Crafting recipes:"
+        </div>
+        <div class="content-well flex-column">
+            <span class="content-title">"crafting recipes"</span>
             <div class="flex-wrap">{recipes}</div>
         </div>}
     })

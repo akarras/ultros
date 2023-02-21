@@ -198,7 +198,7 @@ pub fn EditLists(cx: Scope) -> impl IntoView {
                                                     </td>
                                                 }.into_view(cx)
                                             } else {
-                                                view!{cx, <td>{list().name}</td><td><WorldName id=list().wdr_filter/></td>}.into_view(cx)
+                                                view!{cx, <td><a href=format!("/list/{}", list().id)>{list().name}</a></td><td><WorldName id=list().wdr_filter/></td>}.into_view(cx)
                                             }}
                                             <td>
                                                 {move || if is_edit() {
@@ -209,15 +209,16 @@ pub fn EditLists(cx: Scope) -> impl IntoView {
                                                         edit_list.dispatch(list);
                                                     } >
                                                         <i class="fa-solid fa-check"></i>
-                                                    </button>}.into_view(cx)
+                                                    </button>
+                                                    <button class="btn" on:click=move |_| delete_list.dispatch(list().id)>
+                                                        <i class="fa-solid fa-trash"></i>
+                                                    </button>
+                                                }.into_view(cx)
                                                 } else {
                                                     view!{cx,  <button class="btn" on:click=move |_| set_is_edit(true)>
                                                     <i class="fa-solid fa-pencil"></i>
                                                 </button>}.into_view(cx)
                                                 }}
-                                                <button class="btn" on:click=move |_| delete_list.dispatch(list().id)>
-                                                    <i class="fa-solid fa-trash"></i>
-                                                </button>
                                             </td>
                                         </tr>}
                                     }
