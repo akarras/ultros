@@ -1,9 +1,8 @@
-use std::cmp::Reverse;
+use std::{cmp::Reverse, collections::HashSet};
 
-use crate::components::{cheapest_price::*, fonts::*, item_icon::*, tooltip::*};
+use crate::components::{cheapest_price::*, fonts::*, small_item_display::*, tooltip::*};
 use leptos::*;
 use leptos_router::*;
-use ultros_api_types::icon_size::IconSize;
 use urlencoding::{decode, encode};
 use xiv_gen::ClassJobCategory;
 
@@ -27,7 +26,7 @@ fn CategoryView(cx: Scope, category: u8) -> impl IntoView {
         {categories.into_iter()
             .map(|(_, name, id)| view! {cx,
                 <Tooltip tooltip_text=name.to_string()>
-                    <A  href=format!("/items/{}", encode(name))>
+                    <A  href=format!("/items/category/{}", encode(name))>
                         <ItemSearchCategoryIcon id=*id />
                     </A>
                 </Tooltip>
@@ -37,6 +36,7 @@ fn CategoryView(cx: Scope, category: u8) -> impl IntoView {
     }
 }
 
+/// Return true if the given acronym is in the given class job category
 fn job_category_lookup(class_job_category: &ClassJobCategory, job_acronym: &str) -> bool {
     let lower_case = job_acronym.to_lowercase();
     // this is kind of dumb, but this should give a compile time error whenever a job changes.
@@ -139,17 +139,18 @@ fn JobsList(cx: Scope) -> impl IntoView {
     let jobs = &xiv_gen_db::decompress_data().class_jobs;
     let mut jobs: Vec<_> = jobs.iter().collect();
     jobs.sort_by_key(|(_, job)| job.ui_priority);
-    view!{cx, <div class="flex-wrap">
-            {jobs.into_iter().map(|(_id, job)| view!{cx, <A href=format!("/items/jobset/{}", job.abbreviation)>
-                {&job.abbreviation}
-            </A>}).collect::<Vec<_>>()}
-        </div>}
+    view! {cx, <div class="flex-wrap">
+        {jobs.into_iter().map(|(_id, job)| view!{cx, <A href=format!("/items/jobset/{}", job.abbreviation)>
+            {&job.abbreviation}
+        </A>}).collect::<Vec<_>>()}
+    </div>}
 }
 
 #[component]
 pub fn ItemExplorer(cx: Scope) -> impl IntoView {
     let params = use_params_map(cx);
     let data = xiv_gen_db::decompress_data();
+    let (market_only, set_market_only) = create_signal(cx, true);
     view! {cx,
         <div class="container">
             <div class="main-content flex">
@@ -166,7 +167,18 @@ pub fn ItemExplorer(cx: Scope) -> impl IntoView {
                     <JobsList />
                 </div>
                 <div class="flex-column">
+                    <div class="flex-row">
+
+                        <form method="get">
+                            <label for="marketable-only">"Marketable Only"</label>
+                            <input type="checkbox" prop:checked=market_only name="market-only" on:change=move |e| {
+
+                                set_market_only(!market_only())
+                            } />
+                        </form>
+                    </div>
                     {move || {
+                        // look up items that match the category and add them to the list
                         let cat = params().get("category")?.clone();
                         let cat = decode(&cat).ok()?.into_owned();
                         let category = data.item_search_categorys.iter().find(|(_id, category)| category.name == cat);
@@ -177,15 +189,36 @@ pub fn ItemExplorer(cx: Scope) -> impl IntoView {
                                 .collect::<Vec<_>>();
                             items.sort_by_key(|(_, item)| Reverse(item.level_item.0));
                             items.into_iter().map(|(id, item)| view!{cx, <div class="flex-row">
-                                    <ItemIcon item_id=id.0 icon_size=IconSize::Small />
-                                    <a href=format!("/item/North-America/{}", id.0) style="width: 250px">{&item.name}</a>
-                                    <span style="color: #f3a; width: 50px">{item.level_item.0}</span>
+                                    <SmallItemDisplay item=item />
                                     <CheapestPrice item_id=*id hq=None />
                                 </div>
                             })
                             .collect::<Vec<_>>()
                         })
 
+                    }}
+                    {move || {
+                        let job_set = params().get("jobset")?.clone();
+                        // lookup jobs that match the acronym for the given job set
+                        let job_categories : HashSet<_> = data.class_job_categorys.iter().filter(|(_id, job_category)| {
+                            job_category_lookup(job_category, &job_set)
+                        })
+                        .map(|(id, _)| {
+                            *id
+                        }).collect();
+                        let market_only = market_only();
+                        let mut job_items : Vec<_> = data.items.iter().filter(|(_id, item)| {
+                            job_categories.contains(&item.class_job_category)
+                        }).filter(|(_id, item)| !market_only || item.item_search_category.0 > 0)
+                        .collect();
+
+                        job_items.sort_by_key(|(_, item)| Reverse(item.level_item.0));
+                        Some(job_items.into_iter().take(100).map(|(id, item)| view!{cx, <div class="flex-row">
+                                <SmallItemDisplay item=item />
+                                <CheapestPrice item_id=*id hq=None />
+                            </div>
+                        })
+                        .collect::<Vec<_>>())
                     }}
                 </div>
             </div>

@@ -18,6 +18,7 @@ pub mod retainer_nav;
 pub mod sale_history_table;
 pub mod search_box;
 pub mod search_result;
+pub mod small_item_display;
 pub mod tooltip;
 pub mod ui_text;
 pub mod world_name;

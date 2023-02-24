@@ -7,8 +7,8 @@ use xiv_gen::ItemId;
 
 use crate::api::{add_item_to_list, delete_list_item, get_list_items_with_listings};
 use crate::components::{
-    clipboard::*, item_icon::*, loading::*, make_place_importer::*, price_viewer::*, tooltip::*,
-    lists_nav::*
+    clipboard::*, item_icon::*, lists_nav::*, loading::*, make_place_importer::*, price_viewer::*,
+    tooltip::*,
 };
 
 #[component]

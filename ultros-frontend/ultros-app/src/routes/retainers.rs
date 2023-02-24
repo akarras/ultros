@@ -1,6 +1,6 @@
 use crate::api::{get_retainer_listings, get_retainer_undercuts};
 use crate::components::gil::*;
-use crate::components::{item_icon::*, retainer_nav::*, world_name::*, loading::*};
+use crate::components::{item_icon::*, loading::*, retainer_nav::*, world_name::*};
 use leptos::*;
 use ultros_api_types::icon_size::IconSize;
 use ultros_api_types::{world_helper::AnySelector, ActiveListing, FfxivCharacter, Retainer};

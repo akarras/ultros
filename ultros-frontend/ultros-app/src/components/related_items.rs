@@ -2,7 +2,7 @@
 use leptos::*;
 use xiv_gen::{Item, ItemId, Recipe};
 
-use super::item_icon::*;
+use super::{cheapest_price::*, small_item_display::*};
 
 /// This iterator will attempt to find related items using the classjobcategory && ilvl
 fn item_set_iter(item: &'static Item) -> impl Iterator<Item = &'static Item> {
@@ -62,26 +62,20 @@ fn recipe_tree_iter(item_id: ItemId) -> impl Iterator<Item = &'static Recipe> {
 }
 
 #[component]
-fn SmallItemDisplay(cx: Scope, item: &'static Item) -> impl IntoView {
-    view! {cx,
-    <div>
-        <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Small/>
-        <span style="width: 250px;">{&item.name}</span>
-        <span style="color: #abc; width: 50px;">{item.level_item.0}</span>
-    </div>}
-}
-
-#[component]
 fn Recipe(cx: Scope, recipe: &'static Recipe) -> impl IntoView {
     let items = &xiv_gen_db::decompress_data().items;
     let ingredients = IngredientsIter::new(recipe)
         .flat_map(|(ingredient, amount)| items.get(&ingredient).map(|item| (item, amount)))
-        .map(|(ingredient, amount)| view! {cx, <div class="flex-row"><span style="color:#dab">{amount.to_string()}</span>"x"<SmallItemDisplay item=ingredient/></div>})
+        .map(|(ingredient, amount)| view! {cx,
+            <div class="flex-row">
+                <span style="color:#dab;">{amount.to_string()}</span>"x"<SmallItemDisplay item=ingredient/>
+                <CheapestPrice item_id=ingredient.key_id hq=None />
+            </div>})
         .collect::<Vec<_>>();
     let target_item = items.get(&recipe.item_result)?;
     Some(view! {cx, <div>
         "Crafting Recipe:"
-        <SmallItemDisplay item=target_item/>
+        <div class="flex-row"><SmallItemDisplay item=target_item/><CheapestPrice item_id=target_item.key_id hq=None /></div>
         "Ingredients:"
         {ingredients}
     </div>})
@@ -105,13 +99,18 @@ pub fn RelatedItems(cx: Scope, item_id: ItemId) -> impl IntoView {
             .take(10)
             .collect::<Vec<_>>();
         view! {cx,
-        <div class="content-well flex-column">
-            <span class="content-title">"related items"</span>
-            <div class="flex-wrap">{item_set}</div>
-        </div>
-        <div class="content-well flex-column">
+            {(!item_set.is_empty()).then(|| {
+                view!{cx, <div class="content-well flex-column">
+                <span class="content-title">"related items"</span>
+                <div class="flex-wrap">{item_set}</div>
+            </div>}
+            })}
+        {(!recipes.is_empty()).then(|| {
+            view!{cx, <div class="content-well flex-column">
             <span class="content-title">"crafting recipes"</span>
             <div class="flex-wrap">{recipes}</div>
         </div>}
+        })}
+        }
     })
 }
