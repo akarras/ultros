@@ -1,6 +1,8 @@
 use std::{cmp::Reverse, collections::HashSet};
 
-use crate::components::{cheapest_price::*, fonts::*, small_item_display::*, tooltip::*};
+use crate::components::{
+    cheapest_price::*, fonts::*, small_item_display::*, tooltip::*, virtual_scroller::*,
+};
 use leptos::*;
 use leptos_router::*;
 use urlencoding::{decode, encode};
@@ -151,6 +153,29 @@ pub fn ItemExplorer(cx: Scope) -> impl IntoView {
     let params = use_params_map(cx);
     let data = xiv_gen_db::decompress_data();
     let (market_only, set_market_only) = create_signal(cx, true);
+    let items = create_memo(cx, move |_| {
+        let job_set = match params().get("jobset") {
+            Some(p) => p.clone(),
+            None => return vec![],
+        };
+        // lookup jobs that match the acronym for the given job set
+        let job_categories: HashSet<_> = data
+            .class_job_categorys
+            .iter()
+            .filter(|(_id, job_category)| job_category_lookup(job_category, &job_set))
+            .map(|(id, _)| *id)
+            .collect();
+        let market_only = market_only();
+        let mut job_items: Vec<_> = data
+            .items
+            .iter()
+            .filter(|(_id, item)| job_categories.contains(&item.class_job_category))
+            .filter(|(_id, item)| !market_only || item.item_search_category.0 > 0)
+            .collect();
+
+        job_items.sort_by_key(|(_, item)| Reverse(item.level_item.0));
+        job_items
+    });
     view! {cx,
         <div class="container">
             <div class="main-content flex">
@@ -171,7 +196,7 @@ pub fn ItemExplorer(cx: Scope) -> impl IntoView {
 
                         <form method="get">
                             <label for="marketable-only">"Marketable Only"</label>
-                            <input type="checkbox" prop:checked=market_only name="market-only" on:change=move |e| {
+                            <input type="checkbox" prop:checked=market_only name="market-only" on:change=move |_e| {
 
                                 set_market_only(!market_only())
                             } />
@@ -197,29 +222,14 @@ pub fn ItemExplorer(cx: Scope) -> impl IntoView {
                         })
 
                     }}
-                    {move || {
-                        let job_set = params().get("jobset")?.clone();
-                        // lookup jobs that match the acronym for the given job set
-                        let job_categories : HashSet<_> = data.class_job_categorys.iter().filter(|(_id, job_category)| {
-                            job_category_lookup(job_category, &job_set)
-                        })
-                        .map(|(id, _)| {
-                            *id
-                        }).collect();
-                        let market_only = market_only();
-                        let mut job_items : Vec<_> = data.items.iter().filter(|(_id, item)| {
-                            job_categories.contains(&item.class_job_category)
-                        }).filter(|(_id, item)| !market_only || item.item_search_category.0 > 0)
-                        .collect();
+                    <VirtualScroller
+                        each=items.into()
+                        key=|(id, item)| (id.0, &item.name)
+                        view=|cx, (id, item)| view!{cx, <div class="flex-row">
+                            <SmallItemDisplay item=item />
+                            <CheapestPrice item_id=*id hq=None />
+                        </div> } viewport_height=800.0 row_height=27.5/>
 
-                        job_items.sort_by_key(|(_, item)| Reverse(item.level_item.0));
-                        Some(job_items.into_iter().take(100).map(|(id, item)| view!{cx, <div class="flex-row">
-                                <SmallItemDisplay item=item />
-                                <CheapestPrice item_id=*id hq=None />
-                            </div>
-                        })
-                        .collect::<Vec<_>>())
-                    }}
                 </div>
             </div>
         </div>

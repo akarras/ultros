@@ -1,8 +1,7 @@
 use std::cmp::Reverse;
 
-use crate::components::search_result::*;
+use crate::components::{search_result::*, virtual_scroller::*};
 use leptos::*;
-use sublime_fuzzy::Match;
 
 #[component]
 pub fn SearchBox(cx: Scope) -> impl IntoView {
@@ -14,7 +13,7 @@ pub fn SearchBox(cx: Scope) -> impl IntoView {
     let focus_in = move |_| set_active(true);
     let focus_out = move |_| set_active(false);
     let items = &xiv_gen_db::decompress_data().items;
-    let item_search = move || {
+    let item_search = create_memo(cx, move |_| {
         search.with(|s| {
             let mut score = items
                 .into_iter()
@@ -25,24 +24,26 @@ pub fn SearchBox(cx: Scope) -> impl IntoView {
             score.sort_by_key(|(_, i, m)| (Reverse(m.score()), Reverse(i.level_item.0)));
             score
                 .into_iter()
-                .filter(|(_, _, ma)| ma.score() > 0)
-                .map(|(id, item, ma)| (id, item, ma))
-                .take(100)
+                // .filter(|(_, _, ma)| ma.score() > 0)
+                .map(|(id, item, _ma)| (id, item))
+                // .take(100)
                 .collect::<Vec<_>>()
         })
-    };
+    });
     view! {
         cx,
         <div style="height: 36px;">
             <input on:input=on_input on:focusin=focus_in on:focusout=focus_out class="search-box" type="text" prop:value=search class:active={move || active()}/>
             <div class="search-results">
-            <For
-                each=item_search
-                key=move |(id, _, _)| (id.0, search())
-                view=move |cx, (id, _, match_): (&xiv_gen::ItemId, &xiv_gen::Item, Match)| {
+            <VirtualScroller
+                each=item_search.into()
+                key=move |(id, _item)| id.0
+                view=move |cx, (id, _): (&xiv_gen::ItemId, &xiv_gen::Item)| {
                         let item_id = id.0;
-                        view! { cx,  <ItemSearchResult item_id set_search matches=match_ /> }
+                        view! { cx,  <ItemSearchResult item_id set_search search /> }
                     }
+                viewport_height=500.0
+                row_height=42.0
             />
             </div>
         </div>

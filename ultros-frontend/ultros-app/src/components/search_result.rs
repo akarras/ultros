@@ -1,6 +1,6 @@
 use crate::components::{cheapest_price::*, item_icon::*};
 use leptos::*;
-use sublime_fuzzy::Match;
+use sublime_fuzzy::{best_match, Match};
 use xiv_gen::ItemId;
 
 /// Leptos version of sublime_fuzzy::format_simple
@@ -43,8 +43,9 @@ fn MatchFormatter(cx: Scope, m: Match, target: String) -> impl IntoView {
 pub fn ItemSearchResult(
     cx: Scope,
     item_id: i32,
+    search: ReadSignal<String>,
     set_search: WriteSignal<String>,
-    matches: Match,
+    // matches: Match,
 ) -> impl IntoView {
     let data = xiv_gen_db::decompress_data();
     let categories = &data.item_ui_categorys;
@@ -59,7 +60,17 @@ pub fn ItemSearchResult(
                     <ItemIcon item_id icon_size=IconSize::Small />
                     <div class="search-result-details">
                         <div class="flex-row flex-space" style="height: 30px; overflow: hide">
-                            <span class="item-name"><MatchFormatter m=matches target=item.name.to_string() /></span>
+                            <span class="item-name">{move || {
+                                    let item_name = items.get(&ItemId(item_id)).as_ref().map(|item| item.name.as_str()).unwrap_or_default();
+                                    if let Some(m) = best_match(&search(), item_name) {
+                                        view!{cx,
+
+                                            <MatchFormatter m target=item_name.to_string() />}.into_view(cx)
+                                    } else {
+                                        item_name.into_view(cx)
+                                    }
+                                }
+                            }</span>
                             <span>
                                 <CheapestPrice item_id=item.key_id hq=None/>
                             </span>

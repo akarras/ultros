@@ -21,4 +21,5 @@ pub mod search_result;
 pub mod small_item_display;
 pub mod tooltip;
 pub mod ui_text;
+pub mod virtual_scroller;
 pub mod world_name;
