@@ -190,7 +190,7 @@ nav > a > * {
 }
 
 .search-box {
-  width: 336px;
+  width: 400px;
   height: 36px;
   border-radius: 4px;
   margin: 5px;
@@ -221,6 +221,12 @@ nav > a > * {
   animation: search-open .25s cubic-bezier(0.76, 0, 0.24, 1) 0s 1;
 }
 
+.search-box:active ~ .search-results {
+  visibility: visible;
+  opacity: 1.0;
+  animation: search-open .25s cubic-bezier(0.76, 0, 0.24, 1) 0s 1;
+}
+
 .search-results:hover {
   visibility: visible;
 }
@@ -231,7 +237,7 @@ nav > a > * {
   flex-direction: column;
   align-items: center;
   height: 500px;
-  width: 356px;
+  width: 424px;
   position: relative;
   visibility: hidden;
   overflow-y: scroll;
@@ -255,10 +261,10 @@ nav > a > * {
   text-align: left;
   justify-content: left;
   align-items: center;
-  width: 350px;
+  width: 424px;
   height: 40px;
   background-color: rgba(0, 0, 0, 0.22);
-  animation-name: search-result-in;
+  /* animation-name: search-result-in; */
   animation-duration: .1s;
   animation-timing-function: cubic-bezier(.24,.27,.18,.81);
   transition: background-color 1s;
@@ -513,12 +519,16 @@ footer {
 }
 
 .gil {
-  text-decoration: wavy;
+	text-decoration: none;
+	height: 1em;
+	display: inline-flex;
+	width: 1em;
+	padding-right: .3em;
+	margin-top: -1em;
 }
 
 .gil img {
   height: 1.2em;
-  margin-bottom: -.2em;
 }
 
 th {

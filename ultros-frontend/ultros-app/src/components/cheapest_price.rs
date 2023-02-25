@@ -32,7 +32,7 @@ pub fn CheapestPrice(cx: Scope, item_id: ItemId, hq: Option<bool>) -> impl IntoV
                 .map(|listing| {
                     view! {cx,
                         <span style="padding-right: 5px"><Gil amount=listing.cheapest_price/></span>
-                        <WorldName id=AnySelector::World(listing.world_id)/>
+                        <span><WorldName id=AnySelector::World(listing.world_id)/></span>
                     }
                 })
                 .into_view(cx)

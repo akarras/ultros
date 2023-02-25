@@ -59,25 +59,27 @@ pub fn ItemSearchResult(
                 <div class="search-result">
                     <ItemIcon item_id icon_size=IconSize::Small />
                     <div class="search-result-details">
-                        <div class="flex-row flex-space" style="height: 30px; overflow: hide">
+                        <div class="flex-row flex-space" style="height: 20px; overflow: clip">
                             <span class="item-name">{move || {
                                     let item_name = items.get(&ItemId(item_id)).as_ref().map(|item| item.name.as_str()).unwrap_or_default();
                                     if let Some(m) = best_match(&search(), item_name) {
                                         view!{cx,
-
                                             <MatchFormatter m target=item_name.to_string() />}.into_view(cx)
                                     } else {
                                         item_name.into_view(cx)
                                     }
                                 }
                             }</span>
-                            <span>
+                            <div class="flex-row">
                                 <CheapestPrice item_id=item.key_id hq=None/>
-                            </span>
+                            </div>
                         </div>
-                        <div class="flex-row flex-space">
+                        <div class="flex-row flex-space" style="height: 20px; overflow: clip">
                             <span class="item-type">{categories.get(&item.item_ui_category).map(|i| i.name.as_str()).unwrap_or_default()}</span>
-                            <span class="item-ilvl">"ILVL " {item.level_item.0}</span>
+
+                            {(item.level_item.0 != 0).then(|| view!{cx,
+                                <span class="item-ilvl">"ILVL " {item.level_item.0}</span>
+                            })}
                         </div>
                     </div>
                 </div>

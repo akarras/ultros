@@ -65,9 +65,11 @@ where
             transform: translateY({}px);
           ", (child_start() as f64 * row_height) as u32)
         >
+        // {move || virtual_children().into_iter().map(|child| view(cx, child)).collect::<Vec<_>>()}
+        // For component currently has issues with readding elements in order properly.
           <For each=virtual_children
-               key=key
-               view=view
+           key=key
+           view=view
           />
         </div>
       </div>
