@@ -77,6 +77,27 @@ async fn remove(
     ctx: Context<'_>,
     #[description = "Name of the list to remove"] list_name: String,
 ) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    let user_lists = ctx
+        .data()
+        .db
+        .get_lists_for_user(ctx.author().id.0 as i64)
+        .await?;
+    let lists = user_lists
+        .into_iter()
+        .find(|list| list.name == list_name)
+        .ok_or(anyhow!("Failed to find list {list_name}"))?;
+    ctx.data()
+        .db
+        .delete_list(lists.id, ctx.author().id.0 as i64)
+        .await?;
+    ctx.send(|msg| {
+        msg.embed(|e| {
+            e.title(format!("List `{}` Deleted!", list_name))
+                .description("Create a new list with \n * `list create`")
+        })
+    })
+    .await?;
     Ok(())
 }
 
@@ -128,7 +149,7 @@ async fn remove_item(
 ) -> Result<(), Error> {
     let items = &xiv_gen_db::decompress_data().items;
     let author_id = ctx.author().id.0 as i64;
-    let (id, items) = items
+    let (id, _) = items
         .iter()
         .find(|(_, item)| item.name == item_name)
         .ok_or(anyhow!("Unable to find item"))?;

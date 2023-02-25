@@ -17,18 +17,16 @@ use tracing::{
     instrument,
     log::{debug, error, info},
 };
-use ultros_db::{world_cache::AnySelector, UltrosDb};
+use ultros_db::UltrosDb;
 
 #[derive(Debug, Deserialize)]
 pub(crate) enum AlertsRx {
-    Undercuts {
-        margin: i32,
-    },
-    CreatePriceAlert {
-        item_id: i32,
-        travel_amount: AnySelector,
-        price_threshold: i32,
-    },
+    Undercuts { margin: i32 },
+    // CreatePriceAlert {
+    //     item_id: i32,
+    //     travel_amount: AnySelector,
+    //     price_threshold: i32,
+    // },
     Ping(Vec<u8>),
 }
 
@@ -40,12 +38,12 @@ pub(crate) enum AlertsTx {
         /// List of all the retainers that were just undercut
         undercut_retainers: Vec<UndercutRetainer>,
     },
-    PriceAlert {
-        world_id: i32,
-        item_id: i32,
-        item_name: String,
-        price: i32,
-    },
+    // PriceAlert {
+    //     world_id: i32,
+    //     item_id: i32,
+    //     item_name: String,
+    //     price: i32,
+    // },
 }
 
 /// Websocket connection will enable the user to receive real time events for alerts.
@@ -124,14 +122,14 @@ async fn handle_upgrade(
                                 UndercutTracker::new(user.id, &ultros_db, margin).await.ok();
                             continue;
                         }
-                        AlertsRx::CreatePriceAlert {
-                            item_id,
-                            travel_amount,
-                            price_threshold,
-                        } => {
-                            info!("price alert tried create, but not implemented");
-                            continue;
-                        }
+                        // AlertsRx::CreatePriceAlert {
+                        //     item_id,
+                        //     travel_amount,
+                        //     price_threshold,
+                        // } => {
+                        //     info!("price alert tried create, but not implemented");
+                        //     continue;
+                        // }
                         AlertsRx::Ping(ping) => Action::Pong(ping),
                     }
                 } else {

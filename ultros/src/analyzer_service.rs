@@ -442,9 +442,7 @@ impl AnalyzerService {
                 let profit = est_sale_price - cheapest_price.price;
                 Some(ResaleStats {
                     profit,
-                    cheapest: cheapest_price.price,
                     item_id: item_key.item_id,
-                    hq: item_key.hq,
                     return_on_investment: ((est_sale_price as f32) / (cheapest_price.price as f32)
                         * 100.0)
                         - 100.0,
@@ -757,11 +755,9 @@ impl<'a> FromIterator<&'a SaleSummary> for SoldWithin {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ResaleStats {
     pub(crate) profit: i32,
-    pub(crate) cheapest: i32,
     pub(crate) item_id: i32,
     pub(crate) sold_within: SoldWithin,
     pub(crate) return_on_investment: f32,
-    pub(crate) hq: bool,
     pub(crate) world_id: i32,
 }
 

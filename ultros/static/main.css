@@ -259,7 +259,8 @@ nav > a > * {
   height: 40px;
   background-color: rgba(0, 0, 0, 0.22);
   animation-name: search-result-in;
-  animation-duration: 300ms;
+  animation-duration: .1s;
+  animation-timing-function: cubic-bezier(.24,.27,.18,.81);
   transition: background-color 1s;
   border: solid #111 1px;
 }
@@ -273,8 +274,8 @@ nav > a > * {
 }
 
 @keyframes search-result-in {
-  from {opacity: 0.0;}
-  to {opacity: 1.0;}
+  from {opacity: 0.5; transform: translateX(50%)}
+  to {opacity: 1.0; transform: translateX(0);}
 }
 
 .search-result-details {

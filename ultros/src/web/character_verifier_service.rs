@@ -1,5 +1,9 @@
 use std::sync::Arc;
 
+use base64::{
+    engine::{GeneralPurpose, GeneralPurposeConfig},
+    Engine,
+};
 use lodestone::{model::profile::Profile, LodestoneError};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -42,7 +46,8 @@ impl CharacterVerifierService {
         hasher.update(&discord_user_id.to_le_bytes());
         hasher.update(&character_id.to_le_bytes());
         let auth_token = hasher.finalize();
-        let challenge_string = base64::encode(auth_token);
+        let engine = GeneralPurpose::new(&base64::alphabet::URL_SAFE, GeneralPurposeConfig::new());
+        let challenge_string = engine.encode(auth_token);
         let profile =
             lodestone::model::profile::Profile::get_async(&self.client, character_id).await?;
         let (first_name, last_name) = profile

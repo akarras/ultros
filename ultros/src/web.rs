@@ -2,7 +2,6 @@ mod alerts_websocket;
 pub mod api;
 pub(crate) mod character_verifier_service;
 pub mod error;
-mod home_world_cookie;
 pub mod oauth;
 pub mod sitemap;
 
@@ -56,7 +55,6 @@ use crate::web::{
     oauth::{begin_login, logout},
 };
 use crate::web_metrics::{start_metrics_server, track_metrics};
-use std::io::Cursor;
 
 async fn add_retainer(
     State(db): State<UltrosDb>,

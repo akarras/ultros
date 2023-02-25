@@ -6,7 +6,7 @@ use axum::{
 };
 use axum_extra::extract::{
     cookie::{Cookie, Key},
-    CookieJar, PrivateCookieJar,
+    PrivateCookieJar,
 };
 use oauth2::{
     basic::BasicErrorResponseType, ConfigurationError, RequestTokenError,
@@ -28,8 +28,6 @@ use super::character_verifier_service::VerifierError;
 
 #[derive(Debug, Error)]
 pub enum ApiError {
-    #[error("Not authorized to view this page")]
-    NotAuthenticated,
     #[error("OAuth configuration error {0}")]
     ConfigurationError(#[from] ConfigurationError),
     #[error("Error creating oauth token {0}")]
@@ -42,8 +40,6 @@ pub enum ApiError {
     ),
     #[error("Generic error {0}")]
     AnyhowError(#[from] anyhow::Error),
-    #[error("Home world has not been set")]
-    HomeWorldNotSet,
     #[error("Parse int failed {0}")]
     ParseIntError(#[from] ParseIntError),
     #[error("{0}")]
@@ -77,8 +73,6 @@ pub enum ApiError {
     SiteMapError(#[from] SitemapIndexError),
     #[error("Error generating url set {0}")]
     UrlSetError(#[from] UrlSetError),
-    #[error("Invalid item")]
-    InvalidItem(i32),
     #[error("Token error {0}")]
     TokenError(
         #[from]
@@ -94,7 +88,6 @@ pub enum ApiError {
 impl ApiError {
     fn as_status_code(&self) -> StatusCode {
         match self {
-            ApiError::NotAuthenticated => StatusCode::UNAUTHORIZED,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -125,8 +118,6 @@ pub enum WebError {
     ),
     #[error("Generic error {0}")]
     AnyhowError(#[from] anyhow::Error),
-    #[error("Home world has not been set")]
-    HomeWorldNotSet,
     #[error("Parse int failed {0}")]
     ParseIntError(#[from] ParseIntError),
     #[error("{0}")]
@@ -160,8 +151,6 @@ pub enum WebError {
     SiteMapError(#[from] SitemapIndexError),
     #[error("Error generating url set {0}")]
     UrlSetError(#[from] UrlSetError),
-    #[error("Invalid item")]
-    InvalidItem(i32),
     #[error("Token error {0}")]
     TokenError(
         #[from]
@@ -186,9 +175,7 @@ impl WebError {
 impl IntoResponse for WebError {
     fn into_response(self) -> Response {
         error!("Error returned {self:?}");
-        if let WebError::HomeWorldNotSet = self {
-            return Redirect::to("/profile").into_response();
-        } else if let WebError::DiscordTokenInvalid(mut cookies) = self {
+        if let WebError::DiscordTokenInvalid(mut cookies) = self {
             // remove the discord user cookie
             cookies = cookies.remove(Cookie::named("discord_auth"));
             return (cookies, Redirect::to("/")).into_response();
