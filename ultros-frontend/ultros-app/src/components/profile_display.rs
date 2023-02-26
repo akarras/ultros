@@ -17,12 +17,12 @@ pub fn ProfileDisplay(cx: Scope) -> impl IntoView {
                     <a href="/profile">
                         <img class="avatar" src=&auth.avatar alt=&auth.username/>
                     </a>
-                    <a class="btn" href="/logout">
+                    <a rel="external" class="btn" href="/logout">
                         "Logout"
                     </a>}.into_view(cx)
             }
             _ => {
-                view!{cx, <a class="btn" href="/login">
+                view!{cx, <a rel="external" class="btn" href="/login">
                     "Login"
                 </a>
                 }.into_view(cx)

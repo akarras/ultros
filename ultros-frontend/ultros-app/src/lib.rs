@@ -72,7 +72,7 @@ pub fn App(cx: Scope) -> impl IntoView {
                         <i class="fa-solid fa-screwdriver-wrench"></i>
                     </Tooltip>
                 </A>
-                <a rel="_external" class="btn nav-item" href="/invitebot">
+                <a rel="external" class="btn nav-item" href="/invitebot">
                     "Invite Bot"
                 </a>
                 <ProfileDisplay/>
