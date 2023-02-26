@@ -30,7 +30,7 @@ fn WorldMenu(cx: Scope, world_name: Memo<String>, item_id: Memo<i32>) -> impl In
         <Suspense fallback=move || view!{ cx, <Loading/>}>
         {move || {
             match worlds.read(cx) {
-                Some(Some(worlds)) => {
+                Some(Ok(worlds)) => {
                     if let Some(world) = worlds.lookup_world_by_name(&world_name()) {
                         let create_world_button = move |name| view!{cx, <WorldButton world_name=name item_id=item_id()/>};
                         match world {
@@ -86,7 +86,10 @@ fn ListingsContent(cx: Scope, item_id: Memo<i32>, world: Memo<String>) -> impl I
     let sales = create_memo(cx, move |_| {
         listing_resource
             .with(cx, |listings| {
-                listings.as_ref().map(|listings| listings.sales.clone())
+                listings
+                    .as_ref()
+                    .map(|listings| listings.sales.clone())
+                    .ok()
             })
             .flatten()
             .unwrap_or_default()
@@ -96,8 +99,8 @@ fn ListingsContent(cx: Scope, item_id: Memo<i32>, world: Memo<String>) -> impl I
         <Suspense fallback=move || view!{ cx, <Loading/>}>
         {move || listing_resource.read(cx).map(|listings| {
             match listings {
-                None => view!{ cx, <div>"Error getting listings"</div>}.into_view(cx),
-                Some(currently_shown) => {
+                Err(e) => view!{ cx, <div>{format!("Error getting listings\n{e}")}</div>}.into_view(cx),
+                Ok(currently_shown) => {
 
                     let hq_listings = currently_shown.listings.iter().cloned().filter(|(listing, _)| listing.hq).collect::<Vec<_>>();
                     let lq_listings = currently_shown.listings.iter().cloned().filter(|(listing, _)| !listing.hq).collect::<Vec<_>>();

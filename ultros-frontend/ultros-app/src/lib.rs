@@ -1,5 +1,6 @@
 pub(crate) mod api;
 pub(crate) mod components;
+pub(crate) mod error;
 pub(crate) mod global_state;
 pub(crate) mod routes;
 

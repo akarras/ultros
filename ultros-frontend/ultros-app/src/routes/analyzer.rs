@@ -12,7 +12,8 @@ use xiv_gen::ItemId;
 
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
-    components::{clipboard::*, gil::*, item_icon::*, loading::*, tooltip::*},
+    components::{clipboard::*, gil::*, item_icon::*, loading::*, tooltip::*, virtual_scroller::*},
+    error::AppError,
     global_state::LocalWorldData,
 };
 
@@ -184,7 +185,7 @@ fn AnalyzerTable(
             SortMode::Profit => sorted_data.sort_by_key(|data| Reverse(data.profit)),
         }
 
-        sorted_data.truncate(100);
+        // sorted_data.truncate(100);
         sorted_data
     });
     view! { cx,
@@ -241,7 +242,10 @@ fn AnalyzerTable(
                <th>"Datacenter" {move || datacenter_filter().map(move |datacenter| view!{cx, "[" {datacenter} "]"})}</th>
                <th>"Next sale"</th>
            </tr>
-           <For each=sorted_data
+           <VirtualScroller
+                viewport_height=1000.0
+                row_height=37.3
+                each=sorted_data.into()
                 key=move |data| {
                    (data.sale_summary.item_id, data.cheapest_world_id, data.sale_summary.hq)
                 }
@@ -298,23 +302,36 @@ pub fn Analyzer(cx: Scope) -> impl IntoView {
     let params = use_params_map(cx);
     let listings = create_resource(
         cx,
-        move || params.with(|p| p.get("world").cloned()),
-        move |world| async move {
+        move || {
+            (
+                params.with(|p| p.get("world").cloned()),
+                worlds.0.read(cx).is_some(),
+            )
+        },
+        move |(world, _world_data)| async move {
             // use the world cache to lookup the region for this world
-            let world = world?;
-            let region = worlds.0.read(cx).flatten().and_then(|worlds| {
-                worlds.lookup_world_by_name(&world).map(|world| {
-                    let region = worlds.get_region(world);
-                    AnyResult::Region(region).get_name().to_string()
+            let world = world.ok_or(AppError::ParamMissing)?;
+            let region = worlds
+                .0
+                .read(cx)
+                .map(|w| w.ok())
+                .flatten()
+                .and_then(|worlds| {
+                    worlds.lookup_world_by_name(&world).map(|world| {
+                        let region = worlds.get_region(world);
+                        AnyResult::Region(region).get_name().to_string()
+                    })
                 })
-            })?;
+                .ok_or(AppError::ParamMissing)?;
             get_cheapest_listings(cx, &region).await
         },
     );
     let sales = create_resource(
         cx,
         move || params.with(|p| p.get("world").cloned()),
-        move |world| async move { get_recent_sales_for_world(cx, &world?).await },
+        move |world| async move {
+            get_recent_sales_for_world(cx, &world.ok_or(AppError::ParamMissing)?).await
+        },
     );
 
     view! {
@@ -331,15 +348,15 @@ pub fn Analyzer(cx: Scope) -> impl IntoView {
                         } else {
                             view!{cx, <Suspense fallback=move || view!{cx, <Loading />}>
                             {move || {
-                                let sales = sales.read(cx);
                                 let listings = listings.read(cx);
+                                let sales = sales.read(cx);
                                 let worlds = use_context::<LocalWorldData>(cx).expect("Worlds should always be populated here").0.read(cx);
                                 match (sales, listings, worlds) {
-                                    (Some(Some(sales)), Some(Some(listings)), Some(Some(worlds))) => {
+                                    (Some(Ok(sales)), Some(Ok(listings)), Some(Ok(worlds))) => {
                                         view!{cx, <AnalyzerTable sales listings worlds />}.into_view(cx)
                                     },
-                                    (Some(_), Some(_), Some(_)) => {
-                                        view!{cx, "Failed to get listings/sales"}.into_view(cx)
+                                    (Some(sales), Some(listings), Some(worlds)) => {
+                                        format!("Failed to get listings/sales {:?} {:?} {:?}", sales.err(), listings.err(), worlds.err()).into_view(cx)
                                     },
                                     _ => {
                                         view!{cx, <Loading/>}.into_view(cx)

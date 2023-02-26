@@ -7,12 +7,12 @@ pub fn ProfileDisplay(cx: Scope) -> impl IntoView {
     spawn_local(async move {
         let login = get_login(cx).await;
         leptos::log!("login {login:?}");
-        set_login(login);
+        set_login(Some(login));
     });
     // let auth = create_resource(cx, || (), move |_| async move { get_login(cx).await });
     view! {cx,
         {move || match login() {
-            Some(auth) => {
+            Some(Ok(auth)) => {
                 view!{cx,
                     <a href="/profile">
                         <img class="avatar" src=&auth.avatar alt=&auth.username/>

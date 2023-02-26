@@ -33,7 +33,7 @@ fn EditWorldList(
         }>
             <Suspense fallback=move || view!{cx, <Loading/>}>
                 {local_worlds.read(cx).map(move |worlds| match worlds {
-                    Some(worlds) => {
+                    Ok(worlds) => {
                         let data = worlds.get_all().clone();
                         let current = worlds.lookup_selector(current_world()).map(|name| name.get_name().to_string());
                         view!{cx, <option>{current}</option>
@@ -51,8 +51,9 @@ fn EditWorldList(
                             }
                         }).collect::<Vec<_>>()}}.into_view(cx)
                     },
-                    None => {
-                        "No worlds".into_view(cx)
+                    Err(e) => {
+                        view!{cx, <div><span>"No worlds"</span>
+                            <span>{e.to_string()}</span></div>}.into_view(cx)
                     }
                 })}
             </Suspense>
@@ -74,7 +75,7 @@ fn FreshWorldList(
         <div>
             <Suspense fallback=move || view!{cx, <Loading/>}>
                 {local_worlds.read(cx).map(move |worlds| match worlds.clone() {
-                    Some(worlds) => {
+                    Ok(worlds) => {
                         let current = current_world();
                         let current_value = current.map(|current| worlds.lookup_selector(current)).flatten();
                         let is_in = move |other : AnyResult| current_value.map(|value| value.is_in(&other)).unwrap_or_default();
@@ -116,8 +117,8 @@ fn FreshWorldList(
                         </div>
                         }.into_view(cx)
                     },
-                    None => {
-                        "No worlds".into_view(cx)
+                    Err(e) => {
+                        view!{cx, <div>"No worlds"<br/>{e.to_string()}</div>}.into_view(cx)
                     }
                 })}
             </Suspense>
@@ -176,7 +177,7 @@ pub fn EditLists(cx: Scope) -> impl IntoView {
                 <Suspense fallback=move || view!{cx, <Loading />}>
                 {move || lists.read(cx).map(|lists| {
                     match lists {
-                        Some(lists) => view!{cx,
+                        Ok(lists) => view!{cx,
 
                             <h3>"Current lists"</h3>
                             <table>
@@ -224,7 +225,7 @@ pub fn EditLists(cx: Scope) -> impl IntoView {
                                     }
                                 />
                             </table>}.into_view(cx),
-                        None => view!{cx, <div>"Error getting lists"</div>}.into_view(cx)
+                        Err(e) => view!{cx, <div>{format!("Error getting listings\n{e}")}</div>}.into_view(cx)
                     }
                 })}
                 </Suspense>

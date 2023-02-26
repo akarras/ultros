@@ -197,7 +197,6 @@ pub fn ItemExplorer(cx: Scope) -> impl IntoView {
                         <form method="get">
                             <label for="marketable-only">"Marketable Only"</label>
                             <input type="checkbox" prop:checked=market_only name="market-only" on:change=move |_e| {
-
                                 set_market_only(!market_only())
                             } />
                         </form>

@@ -34,13 +34,16 @@ pub fn EditRetainers(cx: Scope) -> impl IntoView {
     let is_retainer_owned = move |retainer_id: i32| {
         retainers
             .with(cx, |retainer| {
-                retainer.as_ref().map(|retainers| {
-                    retainers.retainers.iter().any(|(_character, retainers)| {
-                        retainers
-                            .iter()
-                            .any(|(_, retainer)| retainer.id == retainer_id)
+                retainer
+                    .as_ref()
+                    .map(|retainers| {
+                        retainers.retainers.iter().any(|(_character, retainers)| {
+                            retainers
+                                .iter()
+                                .any(|(_, retainer)| retainer.id == retainer_id)
+                        })
                     })
-                })
+                    .ok()
             })
             .flatten()
             .unwrap_or_default()
@@ -55,7 +58,7 @@ pub fn EditRetainers(cx: Scope) -> impl IntoView {
           <Suspense fallback=move || view!{cx, <div></div>}>
             {move || retainers.read(cx).map(|retainers| {
               match retainers {
-                Some(retainers) => {
+                Ok(retainers) => {
 
                   view!{cx,
                       <For each=move || retainers.retainers.clone()
@@ -97,8 +100,8 @@ pub fn EditRetainers(cx: Scope) -> impl IntoView {
                         </div>} }
                       />}.into_view(cx)
                 },
-                None => {
-                  view!{cx, <div>"Retainers"</div>}.into_view(cx)
+                Err(e) => {
+                  view!{cx, <div>"Retainers"<br/>{e.to_string()}</div>}.into_view(cx)
                 }
               }
             })}
@@ -111,7 +114,7 @@ pub fn EditRetainers(cx: Scope) -> impl IntoView {
             <Suspense fallback=move || view!{cx, <Loading/>}>
               {move || search_results.read(cx).map(|retainers| {
                 match retainers {
-                  Some(retainers) => view!{cx, <div class="content-well flex-column">
+                  Ok(retainers) => view!{cx, <div class="content-well flex-column">
                     <For each=move || retainers.clone()
                           key=move |retainer| retainer.id
                           view=move |cx, retainer| {
@@ -129,7 +132,7 @@ pub fn EditRetainers(cx: Scope) -> impl IntoView {
                           }
                           />
                   </div>}.into_view(cx),
-                  None => view!{cx, <div>"No retainers found"</div>}.into_view(cx)
+                  Err(e) => view!{cx, <div>{format!("No retainers found\n{e}")}</div>}.into_view(cx)
                 }
               })}
             </Suspense>

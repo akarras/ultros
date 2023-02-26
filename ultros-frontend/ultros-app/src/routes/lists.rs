@@ -14,7 +14,7 @@ pub fn Lists(cx: Scope) -> impl IntoView {
             <Suspense fallback=move || view!{cx, <Loading/>}>
             {move || lists.read(cx).map(move |lists| {
                 match lists {
-                    Some(lists) => {
+                    Ok(lists) => {
                         view!{cx,
                         <div class="content-well">
                             <For each=move || lists.clone()
@@ -28,8 +28,8 @@ pub fn Lists(cx: Scope) -> impl IntoView {
                             />
                         </div>}.into_view(cx)
                     },
-                    None => {
-                        view!{cx, "No lists"}.into_view(cx)
+                    Err(e) => {
+                        format!("{e}").into_view(cx)
                     }
                 }})
             }

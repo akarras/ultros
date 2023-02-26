@@ -84,17 +84,17 @@ pub fn RetainerUndercuts(cx: Scope) -> impl IntoView {
             <RetainerNav/>
             <div class="main-content">
                 <span class="content-title">"Retainer Undercuts"</span>
-                <Suspense fallback=move || view!{cx, <span>"Loading..."</span>}>
+                <Suspense fallback=move || view!{cx, <Loading/>}>
                 {move || {
                     retainers.read(cx).map(|retainer| {
                         match retainer {
-                            Some(retainers) => {
+                            Ok(retainers) => {
                                 let retainers : Vec<_> = retainers.retainers.into_iter()
                                     .map(|(character, retainers)| view!{cx, <CharacterRetainerList character retainers />})
                                     .collect();
-                                view!{cx, <div>{retainers}</div>}
+                                view!{cx, <div>{retainers}</div>}.into_view(cx)
                             },
-                            None => view!{cx, <div>"Unable to get retainers"</div>}
+                            Err(e) => view!{cx, <div>{"Unable to get retainers"}<br/>{e.to_string()}</div>}.into_view(cx)
                         }
                     })
                 }}
@@ -117,13 +117,13 @@ pub fn Retainers(cx: Scope) -> impl IntoView {
                 {move || {
                     retainers.read(cx).map(|retainer| {
                         match retainer {
-                            Some(retainers) => {
+                            Ok(retainers) => {
                                 let retainers : Vec<_> = retainers.retainers.into_iter()
                                     .map(|(character, retainers)| view!{cx, <CharacterRetainerList character retainers />})
                                     .collect();
                                 view!{cx, <div>{retainers}</div>}
                             },
-                            None => view!{cx, <div>"Unable to get retainers"</div>}
+                            Err(e) => view!{cx, <div>"Unable to get retainers"<br/>{e.to_string()}</div>}
                         }
                     })
                 }}

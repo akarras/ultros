@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use futures::future::join_all;
 use itertools::Itertools;
+use leptos::Serializable;
 use leptos::*;
 use ultros_api_types::{
     cheapest_listings::CheapestListings,
@@ -12,16 +13,15 @@ use ultros_api_types::{
     ActiveListing, CurrentlyShownItem, FfxivCharacter, FfxivCharacterVerification, Retainer,
 };
 
-#[cfg(not(feature = "ssr"))]
-use serde::Serialize;
+use crate::error::{AppError, AppResult, SystemError};
 
 pub(crate) async fn get_listings(
     cx: Scope,
     item_id: i32,
     world: &str,
-) -> Option<CurrentlyShownItem> {
+) -> AppResult<CurrentlyShownItem> {
     if item_id == 0 {
-        return None;
+        return Err(AppError::NoItem);
     }
     fetch_api(cx, &format!("/api/v1/listings/{world}/{item_id}")).await
 }
@@ -30,25 +30,28 @@ pub(crate) async fn get_bulk_listings(
     cx: Scope,
     world: &str,
     item_ids: impl Iterator<Item = i32>,
-) -> Option<HashMap<i32, Vec<(ActiveListing, Option<Retainer>)>>> {
+) -> AppResult<HashMap<i32, Vec<(ActiveListing, Option<Retainer>)>>> {
     if world.is_empty() {
-        return None;
+        return Err(AppError::NoItem);
     }
     let ids = item_ids.format(",");
     fetch_api(cx, &format!("/api/v1/bulkListings/{world}/{ids}")).await
 }
 
-pub(crate) async fn get_worlds(cx: Scope) -> Option<WorldData> {
+pub(crate) async fn get_worlds(cx: Scope) -> AppResult<WorldData> {
     fetch_api(cx, "/api/v1/world_data").await
 }
 
 /// This is okay because the client will send our login cookie
-pub(crate) async fn get_login(cx: Scope) -> Option<UserData> {
+pub(crate) async fn get_login(cx: Scope) -> AppResult<UserData> {
     fetch_api(cx, "/api/v1/current_user").await
 }
 
 /// Get analyzer data
-pub(crate) async fn get_cheapest_listings(cx: Scope, world_name: &str) -> Option<CheapestListings> {
+pub(crate) async fn get_cheapest_listings(
+    cx: Scope,
+    world_name: &str,
+) -> AppResult<CheapestListings> {
     fetch_api(cx, &format!("/api/v1/cheapest/{}", world_name)).await
 }
 
@@ -56,20 +59,20 @@ pub(crate) async fn get_cheapest_listings(cx: Scope, world_name: &str) -> Option
 pub(crate) async fn get_recent_sales_for_world(
     cx: Scope,
     region_name: &str,
-) -> Option<RecentSales> {
+) -> AppResult<RecentSales> {
     fetch_api(cx, &format!("/api/v1/recentSales/{}", region_name)).await
 }
 
 /// Returns a list of the logged in user's retainers
-pub(crate) async fn get_retainers(cx: Scope) -> Option<UserRetainers> {
+pub(crate) async fn get_retainers(cx: Scope) -> AppResult<UserRetainers> {
     fetch_api(cx, "/api/v1/user/retainer").await
 }
 
-pub(crate) async fn get_retainer_listings(cx: Scope) -> Option<UserRetainerListings> {
+pub(crate) async fn get_retainer_listings(cx: Scope) -> AppResult<UserRetainerListings> {
     fetch_api(cx, "/api/v1/user/retainer/listings").await
 }
 
-pub(crate) async fn get_retainer_undercuts(cx: Scope) -> Option<UserRetainerListings> {
+pub(crate) async fn get_retainer_undercuts(cx: Scope) -> AppResult<UserRetainerListings> {
     // get our retainer data
     let mut retainer_data = get_retainer_listings(cx).await?;
     // build a unique list of worlds and item ids so we can fetch additional info about them
@@ -130,107 +133,133 @@ pub(crate) async fn get_retainer_undercuts(cx: Scope) -> Option<UserRetainerList
                         new_listings.push(listing.clone());
                     }
                 } else {
-                    return None; // in theory this shouldn't happen, but mark as false to leave it in the set?
+                    return Err(AppError::NoRetainerItems); // in theory this shouldn't happen, but mark as false to leave it in the set?
                 };
             }
             *listings = new_listings;
         }
     }
 
-    Some(retainer_data)
+    Ok(retainer_data)
 }
 
 /// Searches retainers based on their name
-pub(crate) async fn search_retainers(cx: Scope, name: String) -> Option<Vec<Retainer>> {
+pub(crate) async fn search_retainers(cx: Scope, name: String) -> AppResult<Vec<Retainer>> {
     if name.is_empty() {
-        return None;
+        return Err(AppError::EmptyString);
     }
     fetch_api(cx, &format!("/api/v1/retainer/search/{name}")).await
 }
 
 /// Claims the given retainer based on their id
-pub(crate) async fn claim_retainer(cx: Scope, retainer_id: i32) -> Option<()> {
+pub(crate) async fn claim_retainer(cx: Scope, retainer_id: i32) -> AppResult<()> {
     fetch_api(cx, &format!("/api/v1/retainer/claim/{retainer_id}")).await
 }
 
 /// Unclaims the retainer based on the owned retainer id
-pub(crate) async fn unclaim_retainer(cx: Scope, owned_retainer_id: i32) -> Option<()> {
+pub(crate) async fn unclaim_retainer(cx: Scope, owned_retainer_id: i32) -> AppResult<()> {
     fetch_api(cx, &format!("/api/v1/retainer/unclaim/{owned_retainer_id}")).await
 }
 
 /// Gets the characters for this user
-pub(crate) async fn get_characters(cx: Scope) -> Option<Vec<FfxivCharacter>> {
+pub(crate) async fn get_characters(cx: Scope) -> AppResult<Vec<FfxivCharacter>> {
     fetch_api(cx, &format!("/api/v1/characters")).await
 }
 
 /// Gets pending character verifications for this user
 pub(crate) async fn get_character_verifications(
     cx: Scope,
-) -> Option<Vec<FfxivCharacterVerification>> {
+) -> AppResult<Vec<FfxivCharacterVerification>> {
     fetch_api(cx, &format!("/api/v1/characters/verifications")).await
 }
 
-pub(crate) async fn check_character_verification(cx: Scope, character_id: i32) -> Option<bool> {
+pub(crate) async fn check_character_verification(cx: Scope, character_id: i32) -> AppResult<bool> {
     fetch_api(cx, &format!("/api/v1/characters/verify/{character_id}")).await
 }
 
 /// Starts to claim the given character
-pub(crate) async fn claim_character(cx: Scope, id: i32) -> Option<(i32, String)> {
+pub(crate) async fn claim_character(cx: Scope, id: i32) -> AppResult<(i32, String)> {
     fetch_api(cx, &format!("/api/v1/characters/claim/{id}")).await
 }
 
-pub(crate) async fn unclaim_character(cx: Scope, id: i32) -> Option<(i32, String)> {
+pub(crate) async fn unclaim_character(cx: Scope, id: i32) -> AppResult<(i32, String)> {
     fetch_api(cx, &format!("/api/v1/characters/unclaim/{id}")).await
 }
 
 /// Searches for the given character with the given lodestone ID.
-pub(crate) async fn search_characters(cx: Scope, character: String) -> Option<Vec<FfxivCharacter>> {
+pub(crate) async fn search_characters(
+    cx: Scope,
+    character: String,
+) -> AppResult<Vec<FfxivCharacter>> {
     fetch_api(cx, &format!("/api/v1/characters/search/{character}")).await
 }
 
-pub(crate) async fn get_lists(cx: Scope) -> Option<Vec<List>> {
+pub(crate) async fn get_lists(cx: Scope) -> AppResult<Vec<List>> {
     fetch_api(cx, &format!("/api/v1/list")).await
 }
 
 pub(crate) async fn get_list_items_with_listings(
     cx: Scope,
     list_id: i32,
-) -> Option<(List, Vec<(ListItem, Vec<ActiveListing>)>)> {
+) -> AppResult<(List, Vec<(ListItem, Vec<ActiveListing>)>)> {
     if list_id == 0 {
-        return None;
+        return Err(AppError::BadList);
     }
     fetch_api(cx, &format!("/api/v1/list/{list_id}/listings")).await
 }
 
-pub(crate) async fn delete_list(cx: Scope, list_id: i32) -> Option<()> {
+pub(crate) async fn delete_list(cx: Scope, list_id: i32) -> AppResult<()> {
     fetch_api(cx, &format!("/api/v1/list/{list_id}/delete")).await
 }
 
-pub(crate) async fn create_list(cx: Scope, list: CreateList) -> Option<()> {
+pub(crate) async fn create_list(cx: Scope, list: CreateList) -> AppResult<()> {
     post_api(cx, &format!("/api/v1/list/create"), list).await
 }
 
-pub(crate) async fn edit_list(cx: Scope, list: List) -> Option<()> {
+pub(crate) async fn edit_list(cx: Scope, list: List) -> AppResult<()> {
     post_api(cx, &format!("/api/v1/list/edit"), list).await
 }
 
-pub(crate) async fn add_item_to_list(cx: Scope, list_id: i32, list_item: ListItem) -> Option<()> {
+pub(crate) async fn add_item_to_list(
+    cx: Scope,
+    list_id: i32,
+    list_item: ListItem,
+) -> AppResult<()> {
     post_api(cx, &format!("/api/v1/list/{list_id}/add/item"), list_item).await
 }
 
-pub(crate) async fn delete_list_item(cx: Scope, list_id: i32) -> Option<()> {
+pub(crate) async fn delete_list_item(cx: Scope, list_id: i32) -> AppResult<()> {
     fetch_api(cx, &format!("/api/v1/list/item/{list_id}/delete")).await
 }
 
 pub(crate) async fn update_retainer_order(
     cx: Scope,
     retainers: Vec<(OwnedRetainer, Retainer)>,
-) -> Option<()> {
+) -> AppResult<()> {
     post_api(cx, &format!("/api/v1/retainer/reorder"), retainers).await
 }
 
+/// Return the T, or try and return an AppError
+fn deserialize<T>(json: &str) -> AppResult<T>
+where
+    T: Serializable,
+{
+    let data = T::from_json(json);
+    match data {
+        Ok(d) => return Ok(d),
+        // try to deserialize as SystemError, if that fails then return this error
+        Err(e) => {
+            if let Ok(d) = SystemError::from_json(json) {
+                return Err(d.into());
+            } else {
+                return Err(e.into());
+            }
+        }
+    }
+}
+
 #[cfg(not(feature = "ssr"))]
-pub async fn fetch_api<T>(cx: Scope, path: &str) -> Option<T>
+pub(crate) async fn fetch_api<T>(cx: Scope, path: &str) -> AppResult<T>
 where
     T: Serializable,
 {
@@ -241,11 +270,12 @@ where
         .abort_signal(abort_signal.as_ref())
         .send()
         .await
-        .map_err(|e| log!("{e}"))
-        .ok()?
+        .map_err(|e| {
+            log!("{e}");
+            e
+        })?
         .text()
-        .await
-        .ok()?;
+        .await?;
 
     // abort in-flight requests if the Scope is disposed
     // i.e., if we've navigated away from this page
@@ -254,48 +284,41 @@ where
             abort_controller.abort()
         }
     });
-    T::from_json(&json)
-        .map_err(|e| {
-            gloo::console::error!(format!("json error: {path} {e:?}. {json}"));
-            e
-        })
-        .ok()
+    deserialize(&json)
 }
 
 #[cfg(feature = "ssr")]
-pub async fn fetch_api<T>(cx: Scope, path: &str) -> Option<T>
+pub(crate) async fn fetch_api<T>(cx: Scope, path: &str) -> AppResult<T>
 where
     T: Serializable,
 {
     // use the original headers of the scope
     // add the hostname when using the ssr path.
-    let req_parts = use_context::<leptos_axum::RequestParts>(cx)?;
+    let req_parts = use_context::<leptos_axum::RequestParts>(cx).ok_or(AppError::ParamMissing)?;
     let mut headers = req_parts.headers;
     let hostname = "http://localhost:8080";
     let path = format!("{hostname}{path}");
     headers.remove("Accept-Encoding");
     let client = reqwest::Client::builder()
         .default_headers(headers)
-        .build()
-        .ok()?;
-    let request = client.get(&path).build().ok()?;
+        .build()?;
+    let request = client.get(&path).build()?;
     let json = client
         .execute(request)
         .await
-        .map_err(|e| log::error!("Response {e}. {path}"))
-        .ok()?
+        .map_err(|e| {
+            log::error!("Response {e}. {path}");
+            e
+        })?
         .text()
-        .await
-        .ok()?;
-    T::from_json(&json)
-        .map_err(|e| log::error!("{e} {path} returned: json text {json}"))
-        .ok()
+        .await?;
+    deserialize(&json)
 }
 
 #[cfg(not(feature = "ssr"))]
-pub async fn post_api<Y, T>(cx: Scope, path: &str, json: Y) -> Option<T>
+pub(crate) async fn post_api<Y, T>(cx: Scope, path: &str, json: Y) -> AppResult<T>
 where
-    Y: Serialize,
+    Y: serde::Serialize,
     T: Serializable,
 {
     let abort_controller = web_sys::AbortController::new().ok();
@@ -303,15 +326,15 @@ where
 
     let json: String = gloo_net::http::Request::post(path)
         .abort_signal(abort_signal.as_ref())
-        .json(&json)
-        .ok()?
+        .json(&json)?
         .send()
         .await
-        .map_err(|e| log!("{e}"))
-        .ok()?
+        .map_err(|e| {
+            log!("{e}");
+            e
+        })?
         .text()
-        .await
-        .ok()?;
+        .await?;
 
     // abort in-flight requests if the Scope is disposed
     // i.e., if we've navigated away from this page
@@ -320,16 +343,11 @@ where
             abort_controller.abort()
         }
     });
-    T::from_json(&json)
-        .map_err(|e| {
-            gloo::console::error!(format!("Error receiving json error: {e:?}"));
-            e
-        })
-        .ok()
+    deserialize(&json)
 }
 
 #[cfg(feature = "ssr")]
-pub async fn post_api<Y, T>(_cx: Scope, _path: &str, _json: Y) -> Option<T>
+pub(crate) async fn post_api<Y, T>(_cx: Scope, _path: &str, _json: Y) -> AppResult<T>
 where
     Y: Serializable,
     T: Serializable,

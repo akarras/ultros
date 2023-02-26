@@ -22,4 +22,5 @@ pub mod small_item_display;
 pub mod tooltip;
 pub mod ui_text;
 pub mod virtual_scroller;
+pub mod wasm_loading_indicator;
 pub mod world_name;

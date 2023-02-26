@@ -102,7 +102,7 @@ pub fn ListView(cx: Scope) -> impl IntoView {
                 })}
                 <Suspense fallback=move || view!{cx, <Loading />}>
                 {move || list_view.read(cx).map(move |list| match list {
-                    Some((list, items)) => view!{cx,
+                    Ok((list, items)) => view!{cx,
                         <div class="content-well">
                             <span class="content-title">{list.name}</span>
                             <table>
@@ -138,7 +138,7 @@ pub fn ListView(cx: Scope) -> impl IntoView {
                                 />
                             </table>
                         </div>},
-                    None => view!{cx, <div>"Failed to get items"</div>}
+                    Err(e) => view!{cx, <div>{format!("Failed to get items\n{e}")}</div>}
                 })
                 }
                 </Suspense>
