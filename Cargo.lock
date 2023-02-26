@@ -705,7 +705,7 @@ dependencies = [
  "serde",
  "serde_bytes",
  "serde_json",
- "time 0.3.19",
+ "time 0.3.20",
  "uuid",
 ]
 
@@ -1100,9 +1100,9 @@ dependencies = [
 
 [[package]]
 name = "console_log"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "501a375961cef1a0d44767200e66e4a559283097e91d0730b1d75dfb2f8a1494"
+checksum = "878ad067d4089144a36ee412d665916c665430eb84c0057b9987f424a5d15c03"
 dependencies = [
  "log",
  "web-sys",
@@ -1128,7 +1128,7 @@ dependencies = [
  "percent-encoding",
  "rand 0.8.5",
  "subtle",
- "time 0.3.19",
+ "time 0.3.20",
  "version_check",
 ]
 
@@ -3353,8 +3353,8 @@ checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
 
 [[package]]
 name = "leptos"
-version = "0.2.0-beta"
-source = "git+https://github.com/leptos-rs/leptos#0301c7f1cfff4ca99eb47d68d20955a07f0461cb"
+version = "0.2.0"
+source = "git+https://github.com/leptos-rs/leptos#b153ab51ee9bba50057ba65353a7312c94f753c5"
 dependencies = [
  "cfg-if",
  "leptos_config",
@@ -3368,8 +3368,8 @@ dependencies = [
 
 [[package]]
 name = "leptos_axum"
-version = "0.2.0-beta"
-source = "git+https://github.com/leptos-rs/leptos#0301c7f1cfff4ca99eb47d68d20955a07f0461cb"
+version = "0.2.0"
+source = "git+https://github.com/leptos-rs/leptos#b153ab51ee9bba50057ba65353a7312c94f753c5"
 dependencies = [
  "axum",
  "futures 0.3.26",
@@ -3386,8 +3386,8 @@ dependencies = [
 
 [[package]]
 name = "leptos_config"
-version = "0.2.0-beta"
-source = "git+https://github.com/leptos-rs/leptos#0301c7f1cfff4ca99eb47d68d20955a07f0461cb"
+version = "0.2.0"
+source = "git+https://github.com/leptos-rs/leptos#b153ab51ee9bba50057ba65353a7312c94f753c5"
 dependencies = [
  "config",
  "fs",
@@ -3399,8 +3399,8 @@ dependencies = [
 
 [[package]]
 name = "leptos_dom"
-version = "0.2.0-beta"
-source = "git+https://github.com/leptos-rs/leptos#0301c7f1cfff4ca99eb47d68d20955a07f0461cb"
+version = "0.2.0"
+source = "git+https://github.com/leptos-rs/leptos#b153ab51ee9bba50057ba65353a7312c94f753c5"
 dependencies = [
  "async-recursion",
  "cfg-if",
@@ -3426,8 +3426,8 @@ dependencies = [
 
 [[package]]
 name = "leptos_integration_utils"
-version = "0.2.0-beta"
-source = "git+https://github.com/leptos-rs/leptos#0301c7f1cfff4ca99eb47d68d20955a07f0461cb"
+version = "0.2.0"
+source = "git+https://github.com/leptos-rs/leptos#b153ab51ee9bba50057ba65353a7312c94f753c5"
 dependencies = [
  "futures 0.3.26",
  "leptos",
@@ -3438,8 +3438,8 @@ dependencies = [
 
 [[package]]
 name = "leptos_macro"
-version = "0.2.0-beta"
-source = "git+https://github.com/leptos-rs/leptos#0301c7f1cfff4ca99eb47d68d20955a07f0461cb"
+version = "0.2.0"
+source = "git+https://github.com/leptos-rs/leptos#b153ab51ee9bba50057ba65353a7312c94f753c5"
 dependencies = [
  "cfg-if",
  "convert_case",
@@ -3459,8 +3459,8 @@ dependencies = [
 
 [[package]]
 name = "leptos_meta"
-version = "0.2.0-beta"
-source = "git+https://github.com/leptos-rs/leptos#0301c7f1cfff4ca99eb47d68d20955a07f0461cb"
+version = "0.2.0"
+source = "git+https://github.com/leptos-rs/leptos#b153ab51ee9bba50057ba65353a7312c94f753c5"
 dependencies = [
  "cfg-if",
  "leptos",
@@ -3472,8 +3472,8 @@ dependencies = [
 
 [[package]]
 name = "leptos_reactive"
-version = "0.2.0-beta"
-source = "git+https://github.com/leptos-rs/leptos#0301c7f1cfff4ca99eb47d68d20955a07f0461cb"
+version = "0.2.0"
+source = "git+https://github.com/leptos-rs/leptos#b153ab51ee9bba50057ba65353a7312c94f753c5"
 dependencies = [
  "base64 0.21.0",
  "cfg-if",
@@ -3493,8 +3493,8 @@ dependencies = [
 
 [[package]]
 name = "leptos_router"
-version = "0.2.0-beta"
-source = "git+https://github.com/leptos-rs/leptos#0301c7f1cfff4ca99eb47d68d20955a07f0461cb"
+version = "0.2.0"
+source = "git+https://github.com/leptos-rs/leptos#b153ab51ee9bba50057ba65353a7312c94f753c5"
 dependencies = [
  "cfg-if",
  "common_macros",
@@ -3518,8 +3518,8 @@ dependencies = [
 
 [[package]]
 name = "leptos_server"
-version = "0.2.0-beta"
-source = "git+https://github.com/leptos-rs/leptos#0301c7f1cfff4ca99eb47d68d20955a07f0461cb"
+version = "0.2.0"
+source = "git+https://github.com/leptos-rs/leptos#b153ab51ee9bba50057ba65353a7312c94f753c5"
 dependencies = [
  "ciborium",
  "form_urlencoded",
@@ -5325,7 +5325,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "thiserror",
- "time 0.3.19",
+ "time 0.3.20",
  "tracing",
  "url",
  "uuid",
@@ -5388,7 +5388,7 @@ dependencies = [
  "rust_decimal",
  "sea-query-derive",
  "serde_json",
- "time 0.3.19",
+ "time 0.3.20",
  "uuid",
 ]
 
@@ -5404,7 +5404,7 @@ dependencies = [
  "sea-query",
  "serde_json",
  "sqlx",
- "time 0.3.19",
+ "time 0.3.20",
  "uuid",
 ]
 
@@ -5623,7 +5623,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with_macros",
- "time 0.3.19",
+ "time 0.3.20",
 ]
 
 [[package]]
@@ -5663,7 +5663,7 @@ dependencies = [
  "serde",
  "serde-value",
  "serde_json",
- "time 0.3.19",
+ "time 0.3.20",
  "tokio",
  "tracing",
  "typemap_rev",
@@ -5918,7 +5918,7 @@ dependencies = [
  "sqlx-rt",
  "stringprep",
  "thiserror",
- "time 0.3.19",
+ "time 0.3.20",
  "tokio-stream",
  "url",
  "uuid",
@@ -6159,9 +6159,9 @@ dependencies = [
 
 [[package]]
 name = "time"
-version = "0.3.19"
+version = "0.3.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "53250a3b3fed8ff8fd988587d8925d26a83ac3845d9e03b220b37f34c2b8d6c2"
+checksum = "cd0cbfecb4d19b5ea75bb31ad904eb5b9fa13f21079c3b92017ebdf4999a5890"
 dependencies = [
  "itoa 1.0.5",
  "serde",
@@ -6177,9 +6177,9 @@ checksum = "2e153e1f1acaef8acc537e68b44906d2db6436e2b35ac2c6b42640fff91f00fd"
 
 [[package]]
 name = "time-macros"
-version = "0.2.7"
+version = "0.2.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a460aeb8de6dcb0f381e1ee05f1cd56fcf5a5f6eb8187ff3d8f0b11078d38b7c"
+checksum = "fd80a657e71da814b8e5d60d3374fc6d35045062245d80224748ae522dd76f36"
 dependencies = [
  "time-core",
 ]
