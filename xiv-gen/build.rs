@@ -74,6 +74,7 @@ fn apply_derives(s: &mut Struct) -> &mut Struct {
         .derive("Clone")
         .derive("Serialize")
         .derive("Deserialize")
+        .derive("PartialEq")
         .derive("Encode")
         .derive("Decode")
 }
@@ -288,7 +289,7 @@ fn create_struct(
 
                 if line_one == "key_id" {
                     let mut key = Struct::new(&key_name);
-                    apply_derives(&mut key).derive("Hash").derive("Eq").derive("PartialEq").derive("Copy").vis("pub").tuple_field(&line_two).vis("pub");
+                    apply_derives(&mut key).derive("Hash").derive("Eq").derive("Copy").vis("pub").tuple_field(&line_two).vis("pub");
                     scope.push_struct(key);
 
                     line_two = key_name.clone();
