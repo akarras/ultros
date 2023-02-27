@@ -244,12 +244,12 @@ fn deserialize<T>(json: &str) -> AppResult<T>
 where
     T: Serializable,
 {
-    let data = T::from_json(json);
+    let data = T::de(json);
     match data {
         Ok(d) => return Ok(d),
         // try to deserialize as SystemError, if that fails then return this error
         Err(e) => {
-            if let Ok(d) = SystemError::from_json(json) {
+            if let Ok(d) = SystemError::de(json) {
                 return Err(d.into());
             } else {
                 return Err(e.into());
