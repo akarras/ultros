@@ -7,8 +7,6 @@ use crate::api::{
     claim_retainer, get_retainers, search_retainers, unclaim_retainer, update_retainer_order,
 };
 use crate::components::{loading::*, reorderable_list::*, retainer_nav::*, world_name::*};
-use crate::error::AppError;
-use serde::{Deserialize, Serialize};
 
 #[component]
 pub fn EditRetainers(cx: Scope) -> impl IntoView {
