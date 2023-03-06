@@ -4,6 +4,8 @@ pub(crate) mod error;
 pub(crate) mod global_state;
 pub(crate) mod routes;
 
+pub use global_state::user::User;
+
 use std::rc::Rc;
 
 use crate::api::get_worlds;
@@ -21,6 +23,12 @@ use leptos_meta::*;
 use leptos_router::*;
 use ultros_api_types::cheapest_listings::CheapestListings;
 use ultros_api_types::world_helper::WorldHelper;
+
+#[cfg(feature = "ssr")]
+pub fn register_server_functions() -> Result<(), Box<dyn std::error::Error>> {
+    // EditRetainerOrder::register()?;
+    Ok(())
+}
 
 #[component]
 pub fn App(cx: Scope) -> impl IntoView {

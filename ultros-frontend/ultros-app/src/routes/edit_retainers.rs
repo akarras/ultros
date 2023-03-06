@@ -3,16 +3,16 @@ use ultros_api_types::user::OwnedRetainer;
 use ultros_api_types::world_helper::AnySelector;
 use ultros_api_types::Retainer;
 
-use crate::api::{
-    claim_retainer, get_retainers, search_retainers, unclaim_retainer, update_retainer_order,
-};
+use crate::api::{claim_retainer, get_retainers, search_retainers, unclaim_retainer, update_retainer_order};
 use crate::components::{loading::*, reorderable_list::*, retainer_nav::*, world_name::*};
+use crate::error::AppError;
+use serde::{Serialize, Deserialize};
 
 #[component]
 pub fn EditRetainers(cx: Scope) -> impl IntoView {
     // This page should let the user drag and drop retainers to reorder them
     // It should also support a search panel for retainers to the right that will allow the user to search for retainers
-
+    
     let (retainer_search, set_retainer_search) = create_signal(cx, String::new());
 
     let search_results = create_resource(
@@ -24,11 +24,17 @@ pub fn EditRetainers(cx: Scope) -> impl IntoView {
     let claim = create_action(cx, move |retainer_id| claim_retainer(cx, *retainer_id));
 
     let remove_retainer = create_action(cx, move |owned_id| unclaim_retainer(cx, *owned_id));
-
+    let update_retainers = create_action(cx, move |owners : &Vec<OwnedRetainer>| update_retainer_order(cx, owners.clone()));
     let retainers = create_resource(
         cx,
-        move || (claim.version().get(), remove_retainer.version().get()),
-        move |_| get_retainers(cx),
+        move || {
+            (
+                claim.version().get(),
+                remove_retainer.version().get(),
+                // update_retainers.version().get(),
+            )
+        },
+        move |key| { log::info!("getting retainers {key:?}"); get_retainers(cx) },
     );
 
     let is_retainer_owned = move |retainer_id: i32| {
@@ -55,26 +61,45 @@ pub fn EditRetainers(cx: Scope) -> impl IntoView {
       <div class="main-content flex-wrap">
         <div style="width: 500px;" class="retainer-list flex-column">
           <span class="content-title">"Retainers"</span>
-          <Suspense fallback=move || view!{cx, <div></div>}>
+          <Transition fallback=move || view!{cx, <div></div>}>
             {move || retainers.read(cx).map(|retainers| {
               match retainers {
                 Ok(retainers) => {
 
                   view!{cx,
+                      {move || update_retainers.value()().map(|value| {
+                        match value {
+                          Ok(_) => None,
+                          Err(e) => Some(format!("App error: {e:?}"))
+                        }
+                      })}
                       <For each=move || retainers.retainers.clone()
                         key=move |(character, retainers)| (character.as_ref().map(|c| c.id).unwrap_or_default(), retainers.iter().map(|(o, _r)| o.id).collect::<Vec<_>>())
                         view=move |cx, (character, retainers)| {
                           let retainers = create_rw_signal(cx, retainers);
                           create_effect(cx, move |_| {
-                            // TODO: Move this to a server action or action?
                             let retainers = retainers();
-                            let retainers = retainers.into_iter().enumerate().map(|(i, (mut owned, retainer))| {
-                              owned.weight = Some(i as i32);
-                              (owned, retainer)
-                            }).collect::<Vec<_>>();
-                            leptos::spawn_local(async move {
-                              let _ = update_retainer_order(cx, retainers).await;
-                            });
+                            let mut changed = false;
+                            let retainers = retainers.into_iter().enumerate().flat_map(|(i, (mut owned, _retainer))| {
+                              if let Some(weight) = &mut owned.weight {
+                                if *weight != i as i32 {
+                                  changed = true;
+                                  *weight = i as i32;
+                                  return Some(owned)
+                                }
+                              } else {
+                                owned.weight = Some(i as i32);
+                                changed = true;
+                                return Some(owned)
+                              }
+                              None
+                            }).collect();
+                            // I have no idea how I would have found that the #[server] macro takes params as a struct
+                            // without the compiler just spelling it out for me
+                            if changed {
+                              log::info!("Updating retainer list");
+                              update_retainers.dispatch(retainers);
+                            }
                           });
                           view!{cx,
                           {if let Some(character) = character {
@@ -105,7 +130,7 @@ pub fn EditRetainers(cx: Scope) -> impl IntoView {
                 }
               }
             })}
-          </Suspense>
+          </Transition>
         </div>
         <div class="retainer-search">
             <span class="content-title">"Search:"</span>

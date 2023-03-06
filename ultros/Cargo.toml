@@ -34,12 +34,16 @@ metrics = "0.20.1"
 metrics-exporter-prometheus = "0.11.0"
 thousands = "0.2.0"
 serde_with = "2.1.0"
-tower-http = {version = "0.3", features = ["compression-gzip"]}
+tower-http = {version = "0.3.5", features = ["compression-gzip", "fs"]}
 sha2 = "0.10.6"
 base64 = "0.21.0"
 smallvec = {version = "1.10.0", features = ["const_generics", "const_new", "union"]}
 itertools = "0.10.5"
 sitemap-rs = "0.2.0"
-ultros-ui-server = {path = "../ultros-frontend/ultros-ui-server"}
 ultros-api-types = {path = "../ultros-api-types"}
 ultros-xiv-icons = {path = "../ultros-frontend/ultros-xiv-icons"}
+leptos = {git = "https://github.com/leptos-rs/leptos.git", default-features = false, features = ["ssr"]}
+leptos_axum = {git = "https://github.com/leptos-rs/leptos.git"}
+leptos_router = {git = "https://github.com/leptos-rs/leptos.git"}
+ultros-app = {path = "../ultros-frontend/ultros-app", features = ["ssr"]}
+hyper = "0.14.24"

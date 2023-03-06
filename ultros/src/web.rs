@@ -39,7 +39,6 @@ use ultros_db::common_type_conversions::ApiConversionError;
 use ultros_db::world_cache::AnySelector;
 use ultros_db::ActiveValue;
 use ultros_db::{world_cache::WorldCache, UltrosDb};
-use ultros_ui_server::create_leptos_app;
 use ultros_xiv_icons::get_item_image;
 use universalis::{ItemId, ListingView, UniversalisClient, WorldId};
 
@@ -48,6 +47,7 @@ use self::error::{ApiError, WebError};
 use self::oauth::{AuthDiscordUser, AuthUserCache, DiscordAuthConfig};
 use crate::analyzer_service::AnalyzerService;
 use crate::event::{EventReceivers, EventSenders, EventType};
+use crate::leptos::create_leptos_app;
 use crate::web::api::{cheapest_per_world, recent_sales};
 use crate::web::sitemap::{sitemap_index, world_sitemap};
 use crate::web::{
@@ -774,6 +774,17 @@ async fn unclaim_character(
     Ok(Json(()))
 }
 
+async fn reorder_retainer(user: AuthDiscordUser, State(db): State<UltrosDb>, Json(data): Json<Vec<OwnedRetainer>>) -> Result<Json<()>, ApiError> {
+    for retainer in data {
+        db.update_owned_retainer(user.id as i64, retainer.id, |mut existing_retainer| {
+            existing_retainer.weight = ActiveValue::Set(retainer.weight);
+            existing_retainer
+        })
+        .await?;
+    }
+    Ok(Json(()))
+}
+
 pub(crate) async fn start_web(state: WebState) {
     let db = state.db.clone();
     // build our application with a route
@@ -797,6 +808,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/world_data", get(world_data))
         .route("/api/v1/current_user", get(current_user))
         .route("/api/v1/user/retainer", get(user_retainers))
+        .route("/api/v1/retainer/reorder", post(reorder_retainer))
         .route(
             "/api/v1/user/retainer/listings",
             get(user_retainer_listings),
@@ -829,8 +841,8 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/robots.txt", get(robots))
         .route("/sitemap/world/:s.xml", get(world_sitemap))
         .route("/sitemap.xml", get(sitemap_index))
+        .nest("/", create_leptos_app().await)
         .with_state(state)
-        .nest("/", create_leptos_app(db).await)
         .route_layer(middleware::from_fn(track_metrics))
         .layer(CompressionLayer::new());
 

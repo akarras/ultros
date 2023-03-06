@@ -5,7 +5,7 @@ use serde::{de::Visitor, Deserialize, Serialize};
 use thiserror::Error;
 
 #[derive(Debug, Error, Clone, Deserialize, Serialize)]
-pub(crate) enum AppError {
+pub enum AppError {
     #[error("JSON {0}")]
     Json(String),
     #[error("System error {0}")]
@@ -25,13 +25,26 @@ pub(crate) enum AppError {
 /// This error type implements From's for the non serializable error types and shoves them into a string
 /// Upon being actually serialized
 #[derive(Clone, Debug)]
-pub(crate) enum SystemError {
+pub enum SystemError {
     Message(String),
     #[cfg(feature = "ssr")]
     ReqwestError(Rc<reqwest::Error>),
     #[cfg(not(feature = "ssr"))]
     GlooError(Rc<gloo_net::Error>),
     SerializationError(SerializationError),
+    Anyhow(Rc<anyhow::Error>),
+}
+
+impl From<anyhow::Error> for SystemError {
+    fn from(value: anyhow::Error) -> Self {
+        Self::Anyhow(Rc::new(value))
+    }
+}
+
+impl From<anyhow::Error> for AppError {
+    fn from(value: anyhow::Error) -> Self {
+        Self::SystemError(value.into())
+    }
 }
 
 #[cfg(feature = "ssr")]
@@ -83,6 +96,7 @@ impl Display for SystemError {
             #[cfg(not(feature = "ssr"))]
             SystemError::GlooError(g) => write!(f, "{}", g),
             SystemError::SerializationError(serialization) => write!(f, "{}", serialization),
+            SystemError::Anyhow(anyhow) => write!(f, "{}", anyhow),
         }
     }
 }
@@ -96,6 +110,7 @@ impl error::Error for SystemError {
             #[cfg(not(feature = "ssr"))]
             SystemError::GlooError(gloo) => Some(gloo.as_ref()),
             SystemError::SerializationError(serialize) => Some(serialize),
+            SystemError::Anyhow(anyhow) => Some(anyhow.root_cause()),
         }
     }
 }

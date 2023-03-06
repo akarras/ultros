@@ -2,6 +2,7 @@ pub(crate) mod alerts;
 pub(crate) mod analyzer_service;
 mod discord;
 pub(crate) mod event;
+pub mod leptos;
 pub(crate) mod utils;
 mod web;
 mod web_metrics;
