@@ -3,16 +3,18 @@ use ultros_api_types::user::OwnedRetainer;
 use ultros_api_types::world_helper::AnySelector;
 use ultros_api_types::Retainer;
 
-use crate::api::{claim_retainer, get_retainers, search_retainers, unclaim_retainer, update_retainer_order};
+use crate::api::{
+    claim_retainer, get_retainers, search_retainers, unclaim_retainer, update_retainer_order,
+};
 use crate::components::{loading::*, reorderable_list::*, retainer_nav::*, world_name::*};
 use crate::error::AppError;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[component]
 pub fn EditRetainers(cx: Scope) -> impl IntoView {
     // This page should let the user drag and drop retainers to reorder them
     // It should also support a search panel for retainers to the right that will allow the user to search for retainers
-    
+
     let (retainer_search, set_retainer_search) = create_signal(cx, String::new());
 
     let search_results = create_resource(
@@ -24,7 +26,9 @@ pub fn EditRetainers(cx: Scope) -> impl IntoView {
     let claim = create_action(cx, move |retainer_id| claim_retainer(cx, *retainer_id));
 
     let remove_retainer = create_action(cx, move |owned_id| unclaim_retainer(cx, *owned_id));
-    let update_retainers = create_action(cx, move |owners : &Vec<OwnedRetainer>| update_retainer_order(cx, owners.clone()));
+    let update_retainers = create_action(cx, move |owners: &Vec<OwnedRetainer>| {
+        update_retainer_order(cx, owners.clone())
+    });
     let retainers = create_resource(
         cx,
         move || {
@@ -34,7 +38,10 @@ pub fn EditRetainers(cx: Scope) -> impl IntoView {
                 // update_retainers.version().get(),
             )
         },
-        move |key| { log::info!("getting retainers {key:?}"); get_retainers(cx) },
+        move |key| {
+            log::info!("getting retainers {key:?}");
+            get_retainers(cx)
+        },
     );
 
     let is_retainer_owned = move |retainer_id: i32| {

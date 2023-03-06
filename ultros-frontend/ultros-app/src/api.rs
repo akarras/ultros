@@ -239,7 +239,6 @@ pub(crate) async fn update_retainer_order(
     post_api(cx, &format!("/api/v1/retainer/reorder"), retainers).await
 }
 
-
 /// Return the T, or try and return an AppError
 fn deserialize<T>(json: &str) -> AppResult<T>
 where
@@ -258,7 +257,6 @@ where
         }
     }
 }
-
 
 #[cfg(not(feature = "ssr"))]
 pub(crate) async fn fetch_api<T>(cx: Scope, path: &str) -> AppResult<T>

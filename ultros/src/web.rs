@@ -774,7 +774,11 @@ async fn unclaim_character(
     Ok(Json(()))
 }
 
-async fn reorder_retainer(user: AuthDiscordUser, State(db): State<UltrosDb>, Json(data): Json<Vec<OwnedRetainer>>) -> Result<Json<()>, ApiError> {
+async fn reorder_retainer(
+    user: AuthDiscordUser,
+    State(db): State<UltrosDb>,
+    Json(data): Json<Vec<OwnedRetainer>>,
+) -> Result<Json<()>, ApiError> {
     for retainer in data {
         db.update_owned_retainer(user.id as i64, retainer.id, |mut existing_retainer| {
             existing_retainer.weight = ActiveValue::Set(retainer.weight);
@@ -786,7 +790,6 @@ async fn reorder_retainer(user: AuthDiscordUser, State(db): State<UltrosDb>, Jso
 }
 
 pub(crate) async fn start_web(state: WebState) {
-    let db = state.db.clone();
     // build our application with a route
     let app = Router::new()
         .route("/alerts/websocket", get(connect_websocket))
@@ -841,7 +844,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/robots.txt", get(robots))
         .route("/sitemap/world/:s.xml", get(world_sitemap))
         .route("/sitemap.xml", get(sitemap_index))
-        .nest("/", create_leptos_app().await)
+        .nest("/", create_leptos_app().await.unwrap())
         .with_state(state)
         .route_layer(middleware::from_fn(track_metrics))
         .layer(CompressionLayer::new());

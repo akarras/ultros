@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{error::Error, sync::Arc};
 
 /// Ultros UI server contains all the axum routes required to serve and bundle leptos wasm files
 /// # Building
@@ -11,10 +11,11 @@ use axum::{
     extract::State,
     http::Request,
     response::{IntoResponse, Response},
-    Extension, Router, routing::get,
+    routing::get,
+    Extension, Router,
 };
 use leptos::*;
-use leptos_axum::{generate_route_list};
+use leptos_axum::generate_route_list;
 use leptos_router::SsrMode;
 use ultros_app::*;
 
@@ -52,13 +53,13 @@ async fn custom_handler(
     handler(req).await.into_response()
 }
 
-pub(crate) async fn create_leptos_app() -> Router<WebState> {
+pub(crate) async fn create_leptos_app() -> Result<Router<WebState>, Box<dyn Error>> {
     use axum::{error_handling::HandleError, http::StatusCode};
     use tower_http::services::ServeDir;
 
-    register_server_functions();
+    register_server_functions()?;
 
-    let conf = get_configuration(None).await.unwrap();
+    let conf = get_configuration(None).await?;
     let leptos_options = conf.leptos_options;
     let site_root = &leptos_options.site_root;
     let pkg_dir = &leptos_options.site_pkg_dir;
@@ -89,14 +90,14 @@ pub(crate) async fn create_leptos_app() -> Router<WebState> {
     // simple_logger::init_with_level(log::Level::Debug).expect("couldn't initialize logging");
 
     // build our application with a route
-    Router::new()
+    Ok(Router::new()
         // `GET /` goes to `root`
         .nest_service("/pkg", cargo_leptos_service.clone()) // Only need if using wasm-pack. Can be deleted if using cargo-leptos
         .nest_service(&bundle_path, cargo_leptos_service) // Only needed if using cargo-leptos. Can be deleted if using wasm-pack and cargo-run
         //.nest_service("/static", static_service)
         .leptos_routes_with_handler_stateful(routes, custom_handler)
         // .with_state(state)
-        .layer(Extension(Arc::new(leptos_options)))
+        .layer(Extension(Arc::new(leptos_options))))
 }
 
 pub trait StatefulRoutes<S, B> {
@@ -111,7 +112,6 @@ pub trait StatefulRoutes<S, B> {
         T: 'static,
         B: HttpBody + Send + 'static;
 }
-
 
 impl<S, B> StatefulRoutes<S, B> for axum::Router<S, B> {
     fn leptos_routes_with_handler_stateful<H, T>(
@@ -139,7 +139,8 @@ mod test {
     use axum::{
         async_trait, debug_handler,
         extract::{FromRef, FromRequestParts, State},
-        Router, http::request::Parts,
+        http::request::Parts,
+        Router,
     };
     use hyper::Body;
     use std::sync::Arc;
@@ -151,8 +152,7 @@ mod test {
             "Hello world".to_string()
         }
 
-        Router::<(), Body>::new()
-            .leptos_routes_with_handler_stateful(vec![], handler);
+        Router::<(), Body>::new().leptos_routes_with_handler_stateful(vec![], handler);
     }
 
     #[test]
@@ -209,21 +209,16 @@ mod test {
                 parts: &mut Parts,
                 state: &S,
             ) -> Result<Self, Self::Rejection> {
-                let State(inner) =
-                    <State<AState>>::from_request_parts(parts, state)
-                        .await
-                        .map_err(|_| ())?;
+                let State(inner) = <State<AState>>::from_request_parts(parts, state)
+                    .await
+                    .map_err(|_| ())?;
 
                 Ok(Self(inner.0))
             }
         }
 
         #[debug_handler]
-        async fn handler(
-            State(other_state): State<WebState>,
-            data: InnerData,
-        ) {
-        }
+        async fn handler(State(other_state): State<WebState>, data: InnerData) {}
 
         Router::<WebState, Body>::new()
             .leptos_routes_with_handler_stateful(vec![], handler)
@@ -233,4 +228,3 @@ mod test {
             });
     }
 }
-
