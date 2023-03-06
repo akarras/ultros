@@ -2,26 +2,46 @@
 
 Ultros is a Final Fantasy XIV marketboard analysis tool that utilizes data sourced from Universalis. Blazingly fast and written in Rust.
 
-Currently hosted on https://fly.io via https://ultros.app
+Uses Axum, Leptos, SeaOrm, and Serenity to create something that works most the time!
 
+Currently hosted on https://fly.io via https://ultros.app
 
 ### Development
 
-Ultros requires a rust toolchain which can be acquired with `rustup`
+Ultros requires a nightly rust toolchain which can be acquired with `rustup`. Check (rustup.rs)[https://rustup.rs] for more details.
 
-The project can be run with `cargo run -p ultros`, or `cargo run -p ultros --release` to enable optimizations.
+This project utilizes git submodules to bring in assets. Since I'm not smart enough to put this into a build script, you must use `git submodule update --init` or `git clone --recursive` when cloning the project.
+
+The project can be run with `cargo leptos serve` or `cargo leptos watch`. Add `--release` to enable optimizations.
 
 If you have need of it, you can also use `cargo run -p ultros --profile fastdev` to enable optimizations that don't take as long to compile.
+
+### Environment Variables
+* `DISCORD_TOKEN` - A discord bot token
+* `DATABASE_URL` - Postgres connection string
+* `DISCORD_CLIENT_ID` - ID of your Discord application
+* `DISCORD_CLIENT_SECRET` - Client secret of your Discord application
+* `HOSTNAME` - Address that your app is hosted at. Necessary to get OAuth to work.
+* `KEY` - A secret hash used to encrypt cookies
+* `RUST_LOG` - Log level to log at. ex: `RUST_LOG=ultros=info,warn`
+
+### Contributing
+
+Contributing is always appreciated - this project is still just a hobby for me.
+Feel free to open an issue, submit a PR, or contact me directly with feedback and changes requested.
 
 ### Crates
 
 This repo has been my sandbox for FFXIV projects, and still has unused crates within the repo for reference, but might not compile or be maintained.
 
-* `ultros` - Main crate for the ultros website
-* `ultros-db` - Ultros' datastore
+* `ultros` - Main crate for the ultros website. Contains main axum initialization and discord.
+* `ultros-db` - Ultros' datastore. Uses SeaOrm to store data in Postgres.
+* `migration` - SeaOrm migration executable to run executables.
 * `xiv-gen` - Generates structs that represent ffxiv scraped data sourced from [https://github.com/xivapi/ffxiv-datamining](ffxiv-datamining), or rawexd from SaintCoinarch.
-* `xiv-gen-db` - Generates a simple bincode file that stores all the scraped data
+* `xiv-gen-db` - Statically embeds a compressed file containing xiv data.
+* `ultros-api-types` - Common API types between the frontend and backend
 * `universalis` - API wrapper for Universalis, contains a websocket API and a simple HTTP client using reqwest internally.
-* `crafterstoolbox` - *Deprecated* My first attempt at a UI for marketboard data, written with egui.
-* `xivapi` - *Deprecated* api wrapper for xivapi that I was using at one point, but no longer maintain
-* `recipepricecheck` - *Deprecated* Attempt at using the Universalis API to calculate the price to craft an item using items sourced from multiple worlds.
+* `ultros-frontend` - Frontend crates for ultros, primarily driven by leptos.
+    * `ultros-app` - Main leptos app code.
+    * `ultros-client` - WASM Client for ultros-app. Basically just provides some context and an init function.
+    * `ultros-xiv-icons` - An attempt to bundle assets using Rust build.rs files and then statically including them
