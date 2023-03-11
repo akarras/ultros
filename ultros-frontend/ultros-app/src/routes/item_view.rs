@@ -44,7 +44,7 @@ fn WorldMenu(cx: Scope, world_name: Memo<String>, item_id: Memo<i32>) -> impl In
                                     .chain(datacenters.iter().flat_map(|dc| dc.worlds.iter().filter(|w| w.name != world.name).map(|world| world.name.to_string())))
                                         .map(move |name| view!{cx, <WorldButton world_name=name item_id=item_id()/>})
                                     .collect();
-                                view!{cx, {views}}.into_view(cx)
+                                views.into_view(cx)
                             },
                             AnyResult::Datacenter(dc) => {
                                 // show all worlds in this datacenter, other datacenters in this region, the region this datacenter belongs to
@@ -54,7 +54,7 @@ fn WorldMenu(cx: Scope, world_name: Memo<String>, item_id: Memo<i32>) -> impl In
                                     .chain(dc.worlds.iter().map(|w| w.name.to_string()))
                                     .map(create_world_button)
                                     .collect();
-                                view!{cx, {views}}.into_view(cx)
+                                views.into_view(cx)
                             },
                             AnyResult::Region(region) => {
                                 // show all regions, and datacenters in this region
@@ -62,7 +62,7 @@ fn WorldMenu(cx: Scope, world_name: Memo<String>, item_id: Memo<i32>) -> impl In
                                 let views : Vec<_> = datacenters.iter()
                                     .map(|dc| dc.name.to_string())
                                     .map(move |name| view!{cx, <WorldButton world_name=name item_id=item_id()/>}).collect();
-                                view!{cx, {views}}.into_view(cx)
+                                views.into_view(cx)
                             }
                         }
                     } else {
@@ -179,7 +179,10 @@ pub fn ItemView(cx: Scope) -> impl IntoView {
                     </div>
                 </div>
                 <div class="content-nav">
-                    <WorldMenu world_name=world item_id />
+                    <div>
+                        <WorldMenu world_name=world item_id />
+                    </div>
+                    <a href=move || format!("https://universalis.app/market/{}", item_id())></a>
                 </div>
             </div>
             <div class="main-content flex-wrap">

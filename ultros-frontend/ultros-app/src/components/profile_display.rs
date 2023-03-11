@@ -9,8 +9,8 @@ pub fn ProfileDisplay(cx: Scope) -> impl IntoView {
         leptos::log!("login {login:?}");
         set_login(Some(login));
     });
-    // let auth = create_resource(cx, || (), move |_| async move { get_login(cx).await });
     view! {cx,
+        <>
         {move || match login() {
             Some(Ok(auth)) => {
                 view!{cx,
@@ -28,5 +28,6 @@ pub fn ProfileDisplay(cx: Scope) -> impl IntoView {
                 }.into_view(cx)
             }
         }}
+        </>
     }
 }

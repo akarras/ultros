@@ -55,7 +55,7 @@ pub fn App(cx: Scope) -> impl IntoView {
         </div>
         <Router>
             <nav class="header">
-                <i><b>"ULTROS IS STILL UNDER ACTIVE DEVELOPMENT"</b></i>
+                // <i><b>"ULTROS IS STILL UNDER ACTIVE DEVELOPMENT"</b></i>
                 <A href="/alerts">
                     <i class="fa-solid fa-bell"></i>
                     "Alerts"
@@ -86,6 +86,7 @@ pub fn App(cx: Scope) -> impl IntoView {
                 <ProfileDisplay/>
             </nav>
             <Routes>
+                <Route path="" view=move |cx| view! {cx, <div class="container"><div class="hero-title">"Dominate the marketboard"</div></div>}/>
                 <Route path="retainers/edit" view=move |cx| view! { cx, <EditRetainers />}/>
                 <Route path="retainers/undercuts" view=move |cx| view! { cx, <RetainerUndercuts />}/>
                 <Route path="retainers/listings" view=move |cx| view! { cx, <Retainers/>} />
@@ -101,9 +102,8 @@ pub fn App(cx: Scope) -> impl IntoView {
                 // <Route path="*listings" view=move |cx| view! { cx, <h1>"Listings"</h1>}/>
 
                 <Route path="analyzer" view=move |cx| view! { cx, <Analyzer/>}/>
-                <Route path="analyzer/:world" view=move |cx| view! { cx, <Analyzer/>}/>
+                <Route path="analyzer/:world" view=move |cx| view! { cx, <AnalyzerWorldView/>}/>
                 <Route path="profile" view=move |cx| view! { cx, <Profile/>}/>
-                <Route path="" view=move |cx| view! {cx, <div class="container"><div class="hero-title">"Dominate the marketboard"</div></div>}/>
             </Routes>
         </Router>
         <footer class="flex-column flex-space flex-center">

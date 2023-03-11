@@ -14,11 +14,30 @@ pub enum AnyResult<'a> {
     World(&'a World),
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AnySelector {
     Region(i32),
     Datacenter(i32),
     World(i32),
+}
+
+impl AnySelector {
+    pub fn as_world_id(&self) -> Option<i32> {
+        match self {
+            Self::World(id) => Some(*id),
+            _ => None,
+        }
+    }
+}
+
+impl<'a> From<&AnyResult<'a>> for AnySelector {
+    fn from(value: &AnyResult<'a>) -> Self {
+        match value {
+            AnyResult::Region(r) => AnySelector::Region(r.id),
+            AnyResult::Datacenter(d) => AnySelector::Datacenter(d.id),
+            AnyResult::World(w) => AnySelector::World(w.id),
+        }
+    }
 }
 
 impl<'a> AnyResult<'a> {

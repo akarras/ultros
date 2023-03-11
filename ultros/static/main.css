@@ -96,6 +96,7 @@ body {
   display: flex;
   flex-direction: row;
   justify-content: flex-end;
+  align-items: center;
   flex-wrap: wrap;
   padding: 10px;
 }
@@ -190,19 +191,22 @@ nav > a > * {
   height: 52px;
 }
 
+div > .search-box {
+  width: 400px;
+}
+
 .search-box {
   width: 400px;
   height: 36px;
-  border-radius: 4px;
   margin: 5px;
   padding: 0px 10px;
-  border: 1px;
   flex-direction: column;
   font-family: inherit;
   font-size: large;
   color: #fff;
   background-color: #18003470;
-  border: solid grey 2px;
+  border: solid grey 1px;
+  border-radius: 4px;
   transition: .5s 0s cubic-bezier(0.075, 0.82, 0.165, 1) background-color;
 }
 
@@ -328,8 +332,8 @@ nav > a > * {
 }
 
 .container {
-  margin-left: 10px;
-  margin-right: 10px;
+  margin-left: 0px;
+  margin-right: 0px;
   margin-bottom: -10px;
   min-height: 84vh;
 }
@@ -367,14 +371,11 @@ nav > a > * {
 }
 
 .main-content {
-  background-color: #100A12ED;
-  backdrop-filter: blur(5px);
-  padding: 2em;
-  border-top-left-radius: 25px;
-  border-top-right-radius: 25px;
-  min-height: 90vh;
-  
-  opacity: 1;
+	background-color: rgba(16, 10, 18, .97);
+	backdrop-filter: blur(2.25px);
+	padding: 2em;
+	min-height: 90vh;
+	overflow-x: auto;
 }
 
 .flex-wrap {
@@ -456,7 +457,7 @@ nav > a > * {
   background-color: rgba(0, 0, 0, 0.08);
   border-radius: 8px;
   max-height: 800px;
-  overflow: scroll;
+  overflow: auto;
 }
 
 .content-title {
@@ -551,7 +552,7 @@ th {
 
 @media screen and (max-width: 1200px) {
   .content-well {
-    overflow-x: scroll;
+    overflow-x: auto;
   }
 
   .main-content {
@@ -899,4 +900,19 @@ select optgroup {
 
 .main-content [aria-current="page"] {
   color:rgb(151, 79, 151)
+}
+
+.grid-table {
+  display: flex;
+  flex-direction: column;
+}
+
+.grid-header {
+  display: flex;
+  flex-direction: row;
+}
+
+.grid-row {
+  display: flex;
+  flex-direction: row;
 }
