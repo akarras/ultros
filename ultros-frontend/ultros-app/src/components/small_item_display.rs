@@ -16,11 +16,11 @@ pub fn SmallItemDisplay(cx: Scope, item: &'static Item) -> impl IntoView {
         <div class="flex-row">
         // If the item isn't marketable then do not display a market link
         {if item.item_search_category.0 == 0 {
-            view!{cx,
+            template!{cx,
                 <ItemDetails item />
             }.into_view(cx)
         } else {
-            view!{cx,
+            template!{cx,
             <a class="flex-row" href=format!("/item/North-America/{}", item.key_id.0)>
                 <ItemDetails item />
             </a>}.into_view(cx)

@@ -729,9 +729,9 @@ checksum = "89b2fd2a0dcf38d7971e2194b6b6eebab45ae01067456a7fd93d5547a61b70be"
 
 [[package]]
 name = "camino"
-version = "1.1.3"
+version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6031a462f977dd38968b6f23378356512feeace69cef817e1a4475108093cec3"
+checksum = "c530edf18f37068ac2d977409ed5cd50d53d73bc653c7647b48eb78976ac9ae2"
 
 [[package]]
 name = "cc"
@@ -978,9 +978,9 @@ dependencies = [
 
 [[package]]
 name = "console_log"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "878ad067d4089144a36ee412d665916c665430eb84c0057b9987f424a5d15c03"
+checksum = "e89f72f65e8501878b8a004d5a1afb780987e2ce2b4532c562e367a72c57499f"
 dependencies = [
  "log",
  "web-sys",
@@ -1236,9 +1236,9 @@ dependencies = [
 
 [[package]]
 name = "darling"
-version = "0.14.3"
+version = "0.14.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c0808e1bd8671fb44a113a14e13497557533369847788fa2ae912b6ebfce9fa8"
+checksum = "7b750cb3417fd1b327431a470f388520309479ab0bf5e323505daf0290cd3850"
 dependencies = [
  "darling_core",
  "darling_macro",
@@ -1246,9 +1246,9 @@ dependencies = [
 
 [[package]]
 name = "darling_core"
-version = "0.14.3"
+version = "0.14.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "001d80444f28e193f30c2f293455da62dcf9a6b29918a4253152ae2b1de592cb"
+checksum = "109c1ca6e6b7f82cc233a97004ea8ed7ca123a9af07a8230878fcfda9b158bf0"
 dependencies = [
  "fnv",
  "ident_case",
@@ -1260,9 +1260,9 @@ dependencies = [
 
 [[package]]
 name = "darling_macro"
-version = "0.14.3"
+version = "0.14.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b36230598a2d5de7ec1c6f51f72d8a99a9208daff41de2084d06e3fd3ea56685"
+checksum = "a4aab4dbc9f7611d8b55048a3a16d2d010c2c8334e46304b40ac1cc14bf3b48e"
 dependencies = [
  "darling_core",
  "quote",
@@ -2198,9 +2198,9 @@ checksum = "9a3a5bfb195931eeb336b2a7b4d761daec841b97f947d34394601737a7bba5e4"
 
 [[package]]
 name = "hyper"
-version = "0.14.24"
+version = "0.14.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e011372fa0b68db8350aa7a248930ecc7839bf46d8485577d69f117a75f164c"
+checksum = "cc5e554ff619822309ffd57d8734d77cd5ce6238bc956f037ea06c58238c9899"
 dependencies = [
  "bytes 1.4.0",
  "futures-channel",
@@ -2231,6 +2231,19 @@ dependencies = [
  "rustls",
  "tokio",
  "tokio-rustls",
+]
+
+[[package]]
+name = "hyper-tls"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d6183ddfa99b85da61a140bea0efc93fdf56ceaa041b37d553518030827f9905"
+dependencies = [
+ "bytes 1.4.0",
+ "hyper",
+ "native-tls",
+ "tokio",
+ "tokio-native-tls",
 ]
 
 [[package]]
@@ -2475,7 +2488,7 @@ checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
 [[package]]
 name = "leptos"
 version = "0.2.0"
-source = "git+https://github.com/leptos-rs/leptos.git#1f95eb1e1d3d93e40a428433fc4da411ebcf2c6c"
+source = "git+https://github.com/leptos-rs/leptos.git#1a3c1e9e5247c818b29b2221031c576a74ff4ef7"
 dependencies = [
  "cfg-if",
  "leptos_config",
@@ -2491,7 +2504,7 @@ dependencies = [
 [[package]]
 name = "leptos_axum"
 version = "0.2.0"
-source = "git+https://github.com/leptos-rs/leptos.git#1f95eb1e1d3d93e40a428433fc4da411ebcf2c6c"
+source = "git+https://github.com/leptos-rs/leptos.git#1a3c1e9e5247c818b29b2221031c576a74ff4ef7"
 dependencies = [
  "axum",
  "futures 0.3.26",
@@ -2509,7 +2522,7 @@ dependencies = [
 [[package]]
 name = "leptos_config"
 version = "0.2.0"
-source = "git+https://github.com/leptos-rs/leptos.git#1f95eb1e1d3d93e40a428433fc4da411ebcf2c6c"
+source = "git+https://github.com/leptos-rs/leptos.git#1a3c1e9e5247c818b29b2221031c576a74ff4ef7"
 dependencies = [
  "config",
  "fs",
@@ -2522,7 +2535,7 @@ dependencies = [
 [[package]]
 name = "leptos_dom"
 version = "0.2.0"
-source = "git+https://github.com/leptos-rs/leptos.git#1f95eb1e1d3d93e40a428433fc4da411ebcf2c6c"
+source = "git+https://github.com/leptos-rs/leptos.git#1a3c1e9e5247c818b29b2221031c576a74ff4ef7"
 dependencies = [
  "async-recursion",
  "cfg-if",
@@ -2549,7 +2562,7 @@ dependencies = [
 [[package]]
 name = "leptos_hot_reload"
 version = "0.2.0"
-source = "git+https://github.com/leptos-rs/leptos.git#1f95eb1e1d3d93e40a428433fc4da411ebcf2c6c"
+source = "git+https://github.com/leptos-rs/leptos.git#1a3c1e9e5247c818b29b2221031c576a74ff4ef7"
 dependencies = [
  "anyhow",
  "camino",
@@ -2566,7 +2579,7 @@ dependencies = [
 [[package]]
 name = "leptos_integration_utils"
 version = "0.2.0"
-source = "git+https://github.com/leptos-rs/leptos.git#1f95eb1e1d3d93e40a428433fc4da411ebcf2c6c"
+source = "git+https://github.com/leptos-rs/leptos.git#1a3c1e9e5247c818b29b2221031c576a74ff4ef7"
 dependencies = [
  "futures 0.3.26",
  "leptos",
@@ -2579,7 +2592,7 @@ dependencies = [
 [[package]]
 name = "leptos_macro"
 version = "0.2.0"
-source = "git+https://github.com/leptos-rs/leptos.git#1f95eb1e1d3d93e40a428433fc4da411ebcf2c6c"
+source = "git+https://github.com/leptos-rs/leptos.git#1a3c1e9e5247c818b29b2221031c576a74ff4ef7"
 dependencies = [
  "attribute-derive",
  "cfg-if",
@@ -2589,7 +2602,6 @@ dependencies = [
  "leptos_dom",
  "leptos_hot_reload",
  "leptos_reactive",
- "leptos_server",
  "prettyplease",
  "proc-macro-error",
  "proc-macro2",
@@ -2603,7 +2615,7 @@ dependencies = [
 [[package]]
 name = "leptos_meta"
 version = "0.2.0"
-source = "git+https://github.com/leptos-rs/leptos.git#1f95eb1e1d3d93e40a428433fc4da411ebcf2c6c"
+source = "git+https://github.com/leptos-rs/leptos.git#1a3c1e9e5247c818b29b2221031c576a74ff4ef7"
 dependencies = [
  "cfg-if",
  "leptos",
@@ -2616,7 +2628,7 @@ dependencies = [
 [[package]]
 name = "leptos_reactive"
 version = "0.2.0"
-source = "git+https://github.com/leptos-rs/leptos.git#1f95eb1e1d3d93e40a428433fc4da411ebcf2c6c"
+source = "git+https://github.com/leptos-rs/leptos.git#1a3c1e9e5247c818b29b2221031c576a74ff4ef7"
 dependencies = [
  "base64 0.21.0",
  "cfg-if",
@@ -2637,7 +2649,7 @@ dependencies = [
 [[package]]
 name = "leptos_router"
 version = "0.2.0"
-source = "git+https://github.com/leptos-rs/leptos.git#1f95eb1e1d3d93e40a428433fc4da411ebcf2c6c"
+source = "git+https://github.com/leptos-rs/leptos.git#1a3c1e9e5247c818b29b2221031c576a74ff4ef7"
 dependencies = [
  "cfg-if",
  "common_macros",
@@ -2662,7 +2674,7 @@ dependencies = [
 [[package]]
 name = "leptos_server"
 version = "0.2.0"
-source = "git+https://github.com/leptos-rs/leptos.git#1f95eb1e1d3d93e40a428433fc4da411ebcf2c6c"
+source = "git+https://github.com/leptos-rs/leptos.git#1a3c1e9e5247c818b29b2221031c576a74ff4ef7"
 dependencies = [
  "lazy_static",
  "leptos_dom",
@@ -2970,6 +2982,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "native-tls"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "07226173c32f2926027b63cce4bcd8076c3552846cbe7925f3aaffeac0a3b92e"
+dependencies = [
+ "lazy_static",
+ "libc",
+ "log",
+ "openssl",
+ "openssl-probe",
+ "openssl-sys",
+ "schannel",
+ "security-framework",
+ "security-framework-sys",
+ "tempfile",
+]
+
+[[package]]
 name = "new_debug_unreachable"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3083,6 +3113,51 @@ name = "opaque-debug"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "624a8340c38c1b80fd549087862da4ba43e08858af025b236e509b6649fc13d5"
+
+[[package]]
+name = "openssl"
+version = "0.10.45"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b102428fd03bc5edf97f62620f7298614c45cedf287c271e7ed450bbaf83f2e1"
+dependencies = [
+ "bitflags",
+ "cfg-if",
+ "foreign-types",
+ "libc",
+ "once_cell",
+ "openssl-macros",
+ "openssl-sys",
+]
+
+[[package]]
+name = "openssl-macros"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b501e44f11665960c7e7fcf062c7d96a14ade4aa98116c004b2e37b5be7d736c"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "openssl-probe"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff011a302c396a5197692431fc1948019154afc178baf7d8e37367442a4601cf"
+
+[[package]]
+name = "openssl-sys"
+version = "0.9.80"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23bbbf7854cd45b83958ebe919f0e8e516793727652e27fda10a8384cfc790b7"
+dependencies = [
+ "autocfg",
+ "cc",
+ "libc",
+ "pkg-config",
+ "vcpkg",
+]
 
 [[package]]
 name = "ordered-float"
@@ -3874,11 +3949,13 @@ dependencies = [
  "http-body",
  "hyper",
  "hyper-rustls",
+ "hyper-tls",
  "ipnet",
  "js-sys",
  "log",
  "mime",
  "mime_guess",
+ "native-tls",
  "once_cell",
  "percent-encoding",
  "pin-project-lite",
@@ -3888,6 +3965,7 @@ dependencies = [
  "serde_json",
  "serde_urlencoded",
  "tokio",
+ "tokio-native-tls",
  "tokio-rustls",
  "tokio-util",
  "tower-service",
@@ -4060,6 +4138,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "schannel"
+version = "0.1.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "713cfb06c7059f3588fb8044c0fad1d09e3c01d225e25b9220dbfdcf16dbb1b3"
+dependencies = [
+ "windows-sys 0.42.0",
+]
+
+[[package]]
 name = "scopeguard"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4083,9 +4170,9 @@ dependencies = [
 
 [[package]]
 name = "sea-orm"
-version = "0.11.0"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7a0e3ec90718d849c73b167df7a476672b64c7ee5f3c582179069e63b2451e1"
+checksum = "587b878d32666ec796da72f84263f7103072426d3f84faae38af5f2844e34aa7"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -4111,9 +4198,9 @@ dependencies = [
 
 [[package]]
 name = "sea-orm-cli"
-version = "0.11.0"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "992bc003ed84e736daa19d1b562bd80fa2de09d7bca70cb1745adec3f3b54064"
+checksum = "3d5e11a072efc7527b8c0f35a976a7d23dda6ff01967e3132be2e65f4184883b"
 dependencies = [
  "chrono",
  "clap 3.2.23",
@@ -4127,9 +4214,9 @@ dependencies = [
 
 [[package]]
 name = "sea-orm-macros"
-version = "0.11.0"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d89f7d4d2533c178e08a9e1990619c391e9ca7b402851d02a605938b15e03d9"
+checksum = "6abb2f32ddb765e5a392975887ae3e0a7b90256a3fa7d3fbd7fe7ea4fb2237e5"
 dependencies = [
  "bae",
  "heck 0.3.3",
@@ -4140,9 +4227,9 @@ dependencies = [
 
 [[package]]
 name = "sea-orm-migration"
-version = "0.11.0"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "355b1e2763e73d36de6f4539b04fc5d01b232e5c97785e0d08c4becbc2accad3"
+checksum = "e83b3786e42c62bf54196910648da81011bae8d87edb121083b92b0a5711d072"
 dependencies = [
  "async-trait",
  "clap 3.2.23",
@@ -4249,6 +4336,29 @@ name = "seahash"
 version = "4.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c107b6f4780854c8b126e228ea8869f4d7b71260f962fefb57b996b8959ba6b"
+
+[[package]]
+name = "security-framework"
+version = "2.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a332be01508d814fed64bf28f798a146d73792121129962fdf335bb3c49a4254"
+dependencies = [
+ "bitflags",
+ "core-foundation",
+ "core-foundation-sys",
+ "libc",
+ "security-framework-sys",
+]
+
+[[package]]
+name = "security-framework-sys"
+version = "2.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "31c9bb296072e961fcbd8853511dd39c2d8be2deb1e17c6860b1d30732b323b4"
+dependencies = [
+ "core-foundation-sys",
+ "libc",
+]
 
 [[package]]
 name = "select"
@@ -4381,9 +4491,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with"
-version = "2.2.0"
+version = "2.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30d904179146de381af4c93d3af6ca4984b3152db687dacb9c3c35e86f39809c"
+checksum = "85456ffac572dc8826334164f2fb6fb40a7c766aebe195a2a21ee69ee2885ecf"
 dependencies = [
  "base64 0.13.1",
  "chrono",
@@ -4397,9 +4507,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with_macros"
-version = "2.2.0"
+version = "2.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1966009f3c05f095697c537312f5415d1e3ed31ce0a56942bac4c771c5c335e"
+checksum = "7cbcd6104f8a4ab6af7f6be2a0da6be86b9de3c401f6e86bb856ab2af739232f"
 dependencies = [
  "darling",
  "proc-macro2",
@@ -4442,7 +4552,7 @@ dependencies = [
 [[package]]
 name = "server_fn"
 version = "0.2.0"
-source = "git+https://github.com/leptos-rs/leptos.git#1f95eb1e1d3d93e40a428433fc4da411ebcf2c6c"
+source = "git+https://github.com/leptos-rs/leptos.git#1a3c1e9e5247c818b29b2221031c576a74ff4ef7"
 dependencies = [
  "cfg-if",
  "ciborium",
@@ -4450,9 +4560,10 @@ dependencies = [
  "form_urlencoded",
  "gloo-net",
  "js-sys",
- "lazy_static",
+ "once_cell",
  "proc-macro2",
  "quote",
+ "reqwest",
  "serde",
  "serde_json",
  "serde_urlencoded",
@@ -4465,7 +4576,7 @@ dependencies = [
 [[package]]
 name = "server_fn_macro"
 version = "0.2.0"
-source = "git+https://github.com/leptos-rs/leptos.git#1f95eb1e1d3d93e40a428433fc4da411ebcf2c6c"
+source = "git+https://github.com/leptos-rs/leptos.git#1a3c1e9e5247c818b29b2221031c576a74ff4ef7"
 dependencies = [
  "const_format",
  "proc-macro-error",
@@ -4481,7 +4592,7 @@ dependencies = [
 [[package]]
 name = "server_fn_macro_default"
 version = "0.2.0"
-source = "git+https://github.com/leptos-rs/leptos.git#1f95eb1e1d3d93e40a428433fc4da411ebcf2c6c"
+source = "git+https://github.com/leptos-rs/leptos.git#1a3c1e9e5247c818b29b2221031c576a74ff4ef7"
 dependencies = [
  "proc-macro2",
  "server_fn_macro",
@@ -4828,6 +4939,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tempfile"
+version = "3.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af18f7ae1acd354b992402e9ec5864359d693cd8a79dcbef59f76891701c1e95"
+dependencies = [
+ "cfg-if",
+ "fastrand",
+ "redox_syscall",
+ "rustix",
+ "windows-sys 0.42.0",
+]
+
+[[package]]
 name = "tendril"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4981,6 +5105,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "tokio-native-tls"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbae76ab933c85776efabc971569dd6119c580d8f5d448769dec1764bf796ef2"
+dependencies = [
+ "native-tls",
+ "tokio",
 ]
 
 [[package]]
@@ -5211,9 +5345,9 @@ dependencies = [
 
 [[package]]
 name = "typed-builder"
-version = "0.13.0"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bd5c107dcbf45d40f13749fe0a83dc58a41af3a01c3fc605806f39d3b5ec8f1a"
+checksum = "64cba322cb9b7bc6ca048de49e83918223f35e7a86311267013afff257004870"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5517,6 +5651,12 @@ dependencies = [
  "ctor",
  "version_check",
 ]
+
+[[package]]
+name = "vcpkg"
+version = "0.2.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "version_check"

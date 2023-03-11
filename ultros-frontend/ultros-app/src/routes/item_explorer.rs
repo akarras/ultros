@@ -141,9 +141,12 @@ fn JobsList(cx: Scope) -> impl IntoView {
     let jobs = &xiv_gen_db::decompress_data().class_jobs;
     let mut jobs: Vec<_> = jobs.iter().collect();
     jobs.sort_by_key(|(_, job)| job.ui_priority);
-    view! {cx, <div class="flex-wrap">
-        {jobs.into_iter().map(|(_id, job)| view!{cx, <A href=format!("/items/jobset/{}", job.abbreviation)>
-            {&job.abbreviation}
+    view! {cx, <div class="flex-wrap" style="padding: 5px;">
+        {jobs.into_iter()
+            // .filter(|(_id, job)| job.class_job_parent.0 == 0)
+            .map(|(_id, job)| view!{cx, <A href=format!("/items/jobset/{}", job.abbreviation)>
+            // {&job.abbreviation}
+            <ClassJobIcon id=job.key_id />
         </A>}).collect::<Vec<_>>()}
     </div>}
 }
@@ -179,7 +182,7 @@ pub fn ItemExplorer(cx: Scope) -> impl IntoView {
     view! {cx,
         <div class="container">
             <div class="main-content flex">
-                <div class="flex-column" style="width: 250px; font-size: 2em">
+                <div class="flex-column" style="width: 250px; font-size: 1.2em">
                     "Weapons"
                     <CategoryView category=1 />
                     "Armor"

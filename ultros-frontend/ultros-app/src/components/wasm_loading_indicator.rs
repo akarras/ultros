@@ -11,14 +11,11 @@ pub fn WasmLoadingIndicator(cx: Scope) -> impl IntoView {
         set_loading(false);
         console_log("Loading done");
     });
-    view! { cx,
-      // <Show when=loading fallback=|_| {}>
-      //   <Loading/>
-      // </Show>
-      {move || {
-        loading().then(|| {
-          view!{cx, <Loading/>}
-        })
-      }}
+    {
+        move || {
+            loading().then(|| {
+                view! {cx, <Loading/>}
+            })
+        }
     }
 }

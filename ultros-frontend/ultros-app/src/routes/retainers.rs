@@ -1,3 +1,5 @@
+use std::cmp::Reverse;
+
 use crate::api::{get_retainer_listings, get_retainer_undercuts};
 use crate::components::gil::*;
 use crate::components::{item_icon::*, loading::*, retainer_nav::*, world_name::*};
@@ -13,7 +15,17 @@ fn RetainerView(cx: Scope) -> impl IntoView {
 
 #[component]
 fn RetainerTable(cx: Scope, retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoView {
-    let items = &xiv_gen_db::decompress_data().items;
+    let data = xiv_gen_db::decompress_data();
+    let items = &data.items;
+    let categories = &data.item_search_categorys;
+    let mut listings = listings;
+    listings.sort_by_key(|listing| {
+        items.get(&ItemId(listing.item_id)).and_then(|item| {
+            categories
+                .get(&item.item_search_category)
+                .map(|category| (category.order, Reverse(item.level_item.0)))
+        })
+    });
     let listings: Vec<_> = listings
         .into_iter()
         .map(|listing| {

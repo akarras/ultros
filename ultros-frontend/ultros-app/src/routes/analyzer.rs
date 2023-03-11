@@ -123,14 +123,11 @@ impl ProfitTable {
             .flat_map(|sale| {
                 let item_id = sale.item_id;
                 let hq = sale.hq;
-                let key = ProfitKey {
-                    item_id,
-                    hq,
-                };
+                let key = ProfitKey { item_id, hq };
                 let (cheapest_price, cheapest_world_id) = *region_cheapest.get(&key)?;
                 let summary =
                     compute_summary(sale, (!hq).then(|| hq_sales.get(&item_id)).flatten());
-                // Use the world's price as 
+                // Use the world's price as
                 let estimated_sale_price =
                     if let Some((world_cheapest, _)) = world_cheapest.get(&key) {
                         summary.min_price.min(*world_cheapest)
@@ -139,7 +136,8 @@ impl ProfitTable {
                     };
                 Some(ProfitData {
                     profit: estimated_sale_price - cheapest_price,
-                    return_on_investment: ((estimated_sale_price - cheapest_price) as f32 / cheapest_price as f32
+                    return_on_investment: ((estimated_sale_price - cheapest_price) as f32
+                        / cheapest_price as f32
                         * 100.0) as i32,
                     sale_summary: summary,
                     cheapest_world_id,

@@ -1,4 +1,4 @@
-use leptos_meta::{provide_meta_context, MetaContext};
+use leptos_meta::provide_meta_context;
 use wasm_bindgen::prelude::wasm_bindgen;
 
 use leptos::*;

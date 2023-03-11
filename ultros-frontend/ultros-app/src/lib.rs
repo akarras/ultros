@@ -14,8 +14,8 @@ use crate::global_state::LocalWorldData;
 use crate::{
     components::{profile_display::*, search_box::*, tooltip::*},
     routes::{
-        analyzer::*, edit_lists::*, edit_retainers::*, item_explorer::*, item_view::*,
-        list_view::*, lists::*, profile::*, retainers::*,
+        analyzer::*, edit_lists::*, edit_retainers::*, home_page::*, item_explorer::*,
+        item_view::*, list_view::*, lists::*, profile::*, retainers::*,
     },
 };
 use leptos::*;
@@ -73,7 +73,7 @@ pub fn App(cx: Scope) -> impl IntoView {
                     "Retainers"
                 </A>
                 <div>
-                    <SearchBox/>
+                    {move || view!{cx, <SearchBox/>}}
                 </div>
                 <A href="/items">
                     <Tooltip tooltip_text="All Items".to_string()>
@@ -83,10 +83,10 @@ pub fn App(cx: Scope) -> impl IntoView {
                 <a rel="external" class="btn nav-item" href="/invitebot">
                     "Invite Bot"
                 </a>
-                <ProfileDisplay/>
+                {move || view!{cx, <ProfileDisplay/>}}
             </nav>
             <Routes>
-                <Route path="" view=move |cx| view! {cx, <div class="container"><div class="hero-title">"Dominate the marketboard"</div></div>}/>
+                <Route path="" view=move |cx| view!{cx, <HomePage/>} />
                 <Route path="retainers/edit" view=move |cx| view! { cx, <EditRetainers />}/>
                 <Route path="retainers/undercuts" view=move |cx| view! { cx, <RetainerUndercuts />}/>
                 <Route path="retainers/listings" view=move |cx| view! { cx, <Retainers/>} />

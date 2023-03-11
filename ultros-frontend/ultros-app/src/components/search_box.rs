@@ -1,6 +1,6 @@
 use std::cmp::Reverse;
 
-use crate::components::{search_result::*, virtual_scroller::*, wasm_loading_indicator::*};
+use crate::components::{search_result::*, virtual_scroller::*};
 use leptos::*;
 use sublime_fuzzy::{FuzzySearch, Match, Scoring};
 
