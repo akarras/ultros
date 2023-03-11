@@ -9,25 +9,21 @@ pub fn ProfileDisplay(cx: Scope) -> impl IntoView {
         leptos::log!("login {login:?}");
         set_login(Some(login));
     });
-    view! {cx,
-        <>
-        {move || match login() {
-            Some(Ok(auth)) => {
-                view!{cx,
-                    <a href="/profile">
-                        <img class="avatar" src=&auth.avatar alt=&auth.username/>
-                    </a>
-                    <a rel="external" class="btn" href="/logout">
-                        "Logout"
-                    </a>}.into_view(cx)
+    {
+        move || match login() {
+            Some(Ok(auth)) => view! {cx,
+            <a href="/profile">
+                <img class="avatar" src=&auth.avatar alt=&auth.username/>
+            </a>
+            <a rel="external" class="btn" href="/logout">
+                "Logout"
+            </a>}
+            .into_view(cx),
+            _ => view! {cx, <a rel="external" class="btn" href="/login">
+                <i class="fa-brands fa-discord"></i>"Login"
+            </a>
             }
-            _ => {
-                view!{cx, <a rel="external" class="btn" href="/login">
-                    "Login"
-                </a>
-                }.into_view(cx)
-            }
-        }}
-        </>
+            .into_view(cx),
+        }
     }
 }

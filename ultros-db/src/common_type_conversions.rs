@@ -42,8 +42,13 @@ impl From<entity::active_listing::Model> for ActiveListing {
     }
 }
 
-impl From<entity::sale_history::Model> for SaleHistory {
-    fn from(value: entity::sale_history::Model) -> Self {
+pub struct SaleHistoryReturn(
+    pub entity::sale_history::Model,
+    pub Option<entity::unknown_final_fantasy_character::Model>,
+);
+
+impl From<SaleHistoryReturn> for SaleHistory {
+    fn from(SaleHistoryReturn(value, character): SaleHistoryReturn) -> Self {
         let entity::sale_history::Model {
             quantity,
             price_per_item,
@@ -52,9 +57,11 @@ impl From<entity::sale_history::Model> for SaleHistory {
             sold_item_id,
             sold_date,
             world_id,
-            buyer_name,
+            id,
+            // buyer_name,
         } = value;
         Self {
+            id,
             quantity,
             price_per_item,
             buying_character_id,
@@ -62,7 +69,7 @@ impl From<entity::sale_history::Model> for SaleHistory {
             sold_item_id,
             sold_date,
             world_id,
-            buyer_name,
+            buyer_name: character.map(|c| c.name),
         }
     }
 }

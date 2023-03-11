@@ -1,5 +1,5 @@
 use leptos::*;
-use xiv_gen::{ItemSearchCategoryId, ClassJobId};
+use xiv_gen::{ClassJobId, ItemSearchCategoryId};
 
 #[component]
 pub fn ItemSearchCategoryIcon(cx: Scope, id: ItemSearchCategoryId) -> impl IntoView {
@@ -27,6 +27,5 @@ pub fn ItemSearchCategoryIcon(cx: Scope, id: ItemSearchCategoryId) -> impl IntoV
 
 #[component]
 pub fn ClassJobIcon(cx: Scope, id: ClassJobId) -> impl IntoView {
-    view!{cx, <i class=format!("icon xiv-class_job_{:03}", id.0)></i>}
+    view! {cx, <i class=format!("icon xiv-class_job_{:03}", id.0)></i>}
 }
-

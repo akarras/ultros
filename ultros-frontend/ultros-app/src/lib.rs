@@ -73,7 +73,7 @@ pub fn App(cx: Scope) -> impl IntoView {
                     "Retainers"
                 </A>
                 <div>
-                    {move || view!{cx, <SearchBox/>}}
+                    <SearchBox/>
                 </div>
                 <A href="/items">
                     <Tooltip tooltip_text="All Items".to_string()>

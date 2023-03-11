@@ -766,7 +766,6 @@ pub(crate) enum SaleHistory {
     Hq,
     PricePerItem,
     BuyingCharacterId,
-    BuyerName,
     SoldDate,
     WorldId,
 }
