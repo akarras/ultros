@@ -33,10 +33,11 @@ impl MigrationTrait for Migration {
                     .to_owned(),
             )
             .await?;
-
+        
         manager
-            .drop_index(
-                IndexDropStatement::new()
+            .drop_foreign_key(
+                ForeignKeyDropStatement::new()
+                    .table(SaleHistory::Table)
                     .name("sale_history_pkey")
                     .to_owned(),
             )
@@ -47,6 +48,7 @@ impl MigrationTrait for Migration {
                     .name("sale_history_pkey")
                     .table(SaleHistory::Table)
                     .col(SaleHistory::Id)
+                    .unique()
                     .to_owned(),
             )
             .await?;
