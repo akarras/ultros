@@ -6,7 +6,7 @@ use crate::components::{
 use leptos::*;
 use leptos_router::*;
 use urlencoding::{decode, encode};
-use xiv_gen::ClassJobCategory;
+use xiv_gen::{ClassJobCategory, Item, ItemId};
 
 /// Displays buttons of categories
 #[component]
@@ -152,7 +152,34 @@ fn JobsList(cx: Scope) -> impl IntoView {
 }
 
 #[component]
-pub fn ItemExplorer(cx: Scope) -> impl IntoView {
+pub fn CategoryItems(cx: Scope) -> impl IntoView {
+    let params = use_params_map(cx);
+    let data = xiv_gen_db::decompress_data();
+    let items = create_memo(cx, move |_| {
+        let cat = params()
+            .get("category")
+            .and_then(|cat| decode(&cat).ok())
+            .and_then(|cat| {
+                data.item_search_categorys
+                    .iter()
+                    .find(|(_id, category)| category.name == cat)
+            })
+            .map(|(id, _)| {
+                let mut items = data
+                    .items
+                    .iter()
+                    .filter(|(_, item)| item.item_search_category == *id)
+                    .collect::<Vec<_>>();
+                items.sort_by_key(|(_, item)| Reverse(item.level_item.0));
+                items
+            });
+        cat.unwrap_or_default()
+    });
+    view! {cx, <ItemList items />}
+}
+
+#[component]
+pub fn JobItems(cx: Scope) -> impl IntoView {
     let params = use_params_map(cx);
     let data = xiv_gen_db::decompress_data();
     let (market_only, set_market_only) = create_signal(cx, true);
@@ -161,6 +188,8 @@ pub fn ItemExplorer(cx: Scope) -> impl IntoView {
             Some(p) => p.clone(),
             None => return vec![],
         };
+
+        // let item_category_items = category
         // lookup jobs that match the acronym for the given job set
         let job_categories: HashSet<_> = data
             .class_job_categorys
@@ -180,6 +209,31 @@ pub fn ItemExplorer(cx: Scope) -> impl IntoView {
         job_items
     });
     view! {cx,
+    <div class="flex-row">
+        <label for="marketable-only">"Marketable Only"</label>
+        <input type="checkbox" prop:checked=market_only name="market-only" on:change=move |_e| {
+            set_market_only(!market_only())
+        } />
+    </div>
+    <ItemList items />}
+}
+
+#[component]
+fn ItemList(cx: Scope, items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView {
+    view! {cx,
+
+    <VirtualScroller
+        each=items.into()
+        key=|(id, item)| (id.0, &item.name)
+        view=|cx, (id, item)| view!{cx, <div class="flex-row" style="min-width: 500px;">
+            <SmallItemDisplay item=item />
+            <CheapestPrice item_id=*id hq=None />
+        </div> } viewport_height=800.0 row_height=27.5/>}
+}
+
+#[component]
+pub fn ItemExplorer(cx: Scope) -> impl IntoView {
+    view! {cx,
         <div class="container">
             <div class="main-content flex">
                 <div class="flex-column" style="width: 250px; font-size: 1.2em">
@@ -195,43 +249,7 @@ pub fn ItemExplorer(cx: Scope) -> impl IntoView {
                     <JobsList />
                 </div>
                 <div class="flex-column">
-                    <div class="flex-row">
-
-                        <form method="get">
-                            <label for="marketable-only">"Marketable Only"</label>
-                            <input type="checkbox" prop:checked=market_only name="market-only" on:change=move |_e| {
-                                set_market_only(!market_only())
-                            } />
-                        </form>
-                    </div>
-                    {move || {
-                        // look up items that match the category and add them to the list
-                        let cat = params().get("category")?.clone();
-                        let cat = decode(&cat).ok()?.into_owned();
-                        let category = data.item_search_categorys.iter().find(|(_id, category)| category.name == cat);
-                        category.map(|(id, _)| {
-                            let mut items = data.items
-                                .iter()
-                                .filter(|(_, item)| item.item_search_category == *id)
-                                .collect::<Vec<_>>();
-                            items.sort_by_key(|(_, item)| Reverse(item.level_item.0));
-                            items.into_iter().map(|(id, item)| view!{cx, <div class="flex-row">
-                                    <SmallItemDisplay item=item />
-                                    <CheapestPrice item_id=*id hq=None />
-                                </div>
-                            })
-                            .collect::<Vec<_>>()
-                        })
-
-                    }}
-                    <VirtualScroller
-                        each=items.into()
-                        key=|(id, item)| (id.0, &item.name)
-                        view=|cx, (id, item)| view!{cx, <div class="flex-row">
-                            <SmallItemDisplay item=item />
-                            <CheapestPrice item_id=*id hq=None />
-                        </div> } viewport_height=800.0 row_height=27.5/>
-
+                    <Outlet/>
                 </div>
             </div>
         </div>

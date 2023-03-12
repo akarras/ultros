@@ -95,9 +95,11 @@ pub fn App(cx: Scope) -> impl IntoView {
                 <Route path="list/edit" view=move |cx| view! {cx, <EditLists/>}/>
                 <Route path="list/:id" view=move |cx| view!{ cx, <ListView/>}/>
                 <Route path="list" view=move |cx| view!{cx, <Lists/>}/>
-                <Route path="items/jobset/:jobset" view=move |cx| view! { cx, <ItemExplorer/>}/>
-                <Route path="items/category/:category" view=move |cx| view! { cx, <ItemExplorer/>}/>
-                <Route path="items" view=move |cx| view! { cx, <ItemExplorer/>}/>
+                <Route path="items" view=move |cx| view! { cx, <ItemExplorer/>}>
+                    <Route path="jobset/:jobset" view=move |cx| view!{cx, <JobItems />}/>
+                    <Route path="category/:category" view=move |cx| view!{cx, <CategoryItems />}/>
+                    <Route path="" view=move |_cx| view!{cx, "Choose a category to search!"}/>
+                </Route>
                 <Route path="item/:world/:id" view=move |cx| view! { cx, <ItemView />} />
                 // <Route path="*listings" view=move |cx| view! { cx, <h1>"Listings"</h1>}/>
 
