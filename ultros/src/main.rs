@@ -2,6 +2,7 @@ pub(crate) mod alerts;
 pub(crate) mod analyzer_service;
 mod discord;
 pub(crate) mod event;
+mod item_update_service;
 pub mod leptos;
 pub(crate) mod utils;
 mod web;
@@ -12,6 +13,7 @@ use std::env;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::item_update_service::UpdateService;
 use crate::web::WebState;
 use analyzer_service::AnalyzerService;
 use anyhow::Result;
@@ -190,6 +192,8 @@ async fn main() -> Result<()> {
         db: db.clone(),
         world_cache: world_cache.clone(),
     };
+    UpdateService::start_service(db.clone(), world_cache.clone());
+
     let web_state = WebState {
         analyzer_service,
         db,

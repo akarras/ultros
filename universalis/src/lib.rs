@@ -141,6 +141,20 @@ impl MarketView {
                 .map(|m| &m.listings),
         }
     }
+
+    pub fn items(self) -> impl Iterator<Item = (ItemId, Vec<ListingView>)> {
+        match self {
+            SingleView(single) => {
+                vec![(ItemId(single.item_id as i32), single.listings)].into_iter()
+            }
+            MultiView(multi) => multi
+                .items
+                .into_iter()
+                .map(|(i, d)| (ItemId(i as i32), d.listings))
+                .collect::<Vec<_>>()
+                .into_iter(),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -251,6 +265,33 @@ pub struct HistorySingleView {
     pub hq_sale_velocity: f64,
 }
 
+#[derive(Deserialize, Serialize, Debug)]
+pub struct MostRecentlyUpdatedItemsView {
+    pub items: Vec<WorldItemRecencyView>,
+}
+
+#[serde_as]
+#[derive(Deserialize, Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct WorldItemRecencyView {
+    // The item ID.
+    #[serde(rename = "itemID")]
+    pub item_id: i32,
+    // The last upload time for the item on the listed world.
+    #[serde_as(as = "TimestampMilliSeconds<i64, Flexible>")]
+    pub last_upload_time: DateTime<Local>,
+    // The world ID.
+    #[serde(rename = "worldID")]
+    pub world_id: i32,
+    // The world name.
+    pub world_name: Option<String>,
+}
+
+pub enum WorldOrDatacenter<'a> {
+    World(&'a str),
+    Datacenter(&'a str),
+}
+
 impl Default for UniversalisClient {
     fn default() -> Self {
         Self::new()
@@ -327,6 +368,23 @@ impl UniversalisClient {
         })
     }
 
+    pub async fn recently_updated_items(
+        &self,
+        filter: WorldOrDatacenter<'_>,
+        entries: u8,
+    ) -> Result<MostRecentlyUpdatedItemsView, Error> {
+        let world_filter_str = match filter {
+            WorldOrDatacenter::World(world) => format!("world={world}"),
+            WorldOrDatacenter::Datacenter(datacenter) => format!("datacenter={datacenter}"),
+        };
+        let url = format!(
+            "{}/extra/stats/most-recently-updated?entries={entries}&{world_filter_str}",
+            Self::UNIVERSALIS_BASE_URL
+        );
+        info!("getting recently updated items {}", url);
+        Ok(self.client.get(url).send().await?.json().await?)
+    }
+
     fn ids_to_string(item_ids: &[i32]) -> String {
         let id_strs: Vec<_> = item_ids.iter().map(|m| m.to_string()).collect();
         id_strs.join(",")
@@ -400,5 +458,15 @@ mod test {
             .get_item_history("Sargatanas", &[36693, 2])
             .await
             .is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_recently_updated() {
+        let client = UniversalisClient::new();
+        let entries = client
+            .recently_updated_items(crate::WorldOrDatacenter::World("Sargatanas"), 200)
+            .await
+            .unwrap();
+        assert_eq!(entries.items.len(), 200);
     }
 }

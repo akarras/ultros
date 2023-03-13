@@ -218,7 +218,7 @@ mod test {
         }
 
         #[debug_handler]
-        async fn handler(State(other_state): State<WebState>, data: InnerData) {}
+        async fn handler(State(_other_state): State<WebState>, _data: InnerData) {}
 
         Router::<WebState, Body>::new()
             .leptos_routes_with_handler_stateful(vec![], handler)

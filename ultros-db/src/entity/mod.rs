@@ -13,6 +13,7 @@ pub mod ffxiv_character_verification;
 pub mod final_fantasy_character;
 pub mod list;
 pub mod list_item;
+pub mod listing_last_updated;
 pub mod materia_listing;
 pub mod owned_ffxiv_character;
 pub mod owned_retainers;

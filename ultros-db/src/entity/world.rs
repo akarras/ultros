@@ -29,6 +29,8 @@ pub enum Relation {
     List,
     #[sea_orm(has_many = "super::retainer::Entity")]
     Retainer,
+    #[sea_orm(has_many = "super::sale_history::Entity")]
+    SaleHistory,
 }
 
 impl Related<super::datacenter::Entity> for Entity {
@@ -49,21 +51,18 @@ impl Related<super::list::Entity> for Entity {
     }
 }
 
+impl Related<super::sale_history::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::SaleHistory.def()
+    }
+}
+
 impl Related<super::retainer::Entity> for Entity {
     fn to() -> RelationDef {
         super::active_listing::Relation::Retainer.def()
     }
     fn via() -> Option<RelationDef> {
         Some(super::active_listing::Relation::World.def().rev())
-    }
-}
-
-impl Related<super::unknown_final_fantasy_character::Entity> for Entity {
-    fn to() -> RelationDef {
-        super::sale_history::Relation::UnknownFinalFantasyCharacter.def()
-    }
-    fn via() -> Option<RelationDef> {
-        Some(super::sale_history::Relation::World.def().rev())
     }
 }
 

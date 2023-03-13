@@ -349,4 +349,12 @@ impl WorldCache {
     pub fn get_all(&self) -> &AllWorldsAndRegions {
         &self.yoke.get().all
     }
+
+    pub fn get_all_worlds(&self) -> impl Iterator<Item = &&world::Model> {
+        self.yoke
+            .get()
+            .all
+            .iter()
+            .flat_map(|(_, d)| d.iter().flat_map(|(_, worlds)| worlds.iter()))
+    }
 }

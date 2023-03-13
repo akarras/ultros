@@ -25,14 +25,12 @@ tokio = {workspace = true}
 tracing = {workspace = true}
 tracing-subscriber = "0.3"
 futures = {workspace = true}
-lazy_static = "1.4.0"
 oauth2 = "4.1"
 async-trait = '0.1'
 serde_json = "1.0.85"
 thiserror = "1.0.36"
 metrics = "0.20.1"
 metrics-exporter-prometheus = "0.11.0"
-thousands = "0.2.0"
 serde_with = "2.1.0"
 tower-http = {version = "0.3.5", features = ["compression-gzip", "fs"]}
 sha2 = "0.10.6"

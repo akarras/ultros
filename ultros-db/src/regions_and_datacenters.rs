@@ -64,7 +64,7 @@ impl UltrosDb {
             let diff = PartialDiffIterator::from((new_regions.iter(), current_regions.iter()));
             let added_regions: Vec<_> = diff
                 .flat_map(|m| match m {
-                    crate::partial_diff_iterator::Diff::Left(l) => Some(region::ActiveModel {
+                    crate::partial_diff_iterator::DiffItem::Left(l) => Some(region::ActiveModel {
                         id: ActiveValue::default(),
                         name: Set(l.0.clone()),
                     }),
@@ -95,8 +95,8 @@ impl UltrosDb {
             let new_datacenters: Vec<_> =
                 PartialDiffIterator::from((new_datacenters.iter(), existing_datacenters.iter()))
                     .flat_map(|m| match m {
-                        crate::partial_diff_iterator::Diff::Same(_, _) => None,
-                        crate::partial_diff_iterator::Diff::Left(datacenter) => {
+                        crate::partial_diff_iterator::DiffItem::Same(_, _) => None,
+                        crate::partial_diff_iterator::DiffItem::Left(datacenter) => {
                             Some(datacenter::ActiveModel {
                                 id: ActiveValue::default(),
                                 name: Set(datacenter.name.0.clone()),
@@ -107,7 +107,7 @@ impl UltrosDb {
                                     .expect("We should have all regions stored at this point.")),
                             })
                         }
-                        crate::partial_diff_iterator::Diff::Right(_) => None,
+                        crate::partial_diff_iterator::DiffItem::Right(_) => None,
                     })
                     .collect();
             if !new_datacenters.is_empty() {
@@ -131,23 +131,25 @@ impl UltrosDb {
             existing_worlds.sort_by(|a, b| a.name.cmp(&b.name));
             let worlds: Vec<_> = PartialDiffIterator::from((worlds.iter(), existing_worlds.iter()))
                 .flat_map(|m| match m {
-                    crate::partial_diff_iterator::Diff::Same(_, _) => None,
-                    crate::partial_diff_iterator::Diff::Left(left) => Some(world::ActiveModel {
-                        id: Set(left.id.0),
-                        name: Set(left.name.0.clone()),
-                        datacenter_id: Set(datacenter
-                            .0
-                            .iter()
-                            .find(|d| d.worlds.iter().any(|w| *w == left.id))
-                            .and_then(|m| {
-                                datacenters
-                                    .iter()
-                                    .find(|dc| dc.name == m.name.0)
-                                    .map(|m| m.id)
-                            })
-                            .expect("Should have a valid datacenter id available")),
-                    }),
-                    crate::partial_diff_iterator::Diff::Right(_right) => None,
+                    crate::partial_diff_iterator::DiffItem::Same(_, _) => None,
+                    crate::partial_diff_iterator::DiffItem::Left(left) => {
+                        Some(world::ActiveModel {
+                            id: Set(left.id.0),
+                            name: Set(left.name.0.clone()),
+                            datacenter_id: Set(datacenter
+                                .0
+                                .iter()
+                                .find(|d| d.worlds.iter().any(|w| *w == left.id))
+                                .and_then(|m| {
+                                    datacenters
+                                        .iter()
+                                        .find(|dc| dc.name == m.name.0)
+                                        .map(|m| m.id)
+                                })
+                                .expect("Should have a valid datacenter id available")),
+                        })
+                    }
+                    crate::partial_diff_iterator::DiffItem::Right(_right) => None,
                 })
                 .collect();
             if !worlds.is_empty() {

@@ -13,7 +13,6 @@ pub struct Model {
     pub buying_character_id: i32,
     pub hq: bool,
     pub sold_item_id: i32,
-    #[sea_orm(primary_key, auto_increment = false)]
     pub sold_date: DateTime,
     pub world_id: i32,
 }

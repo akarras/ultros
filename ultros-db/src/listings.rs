@@ -73,7 +73,7 @@ impl UltrosDb {
                 remove_listings.into_iter(),
             )
             .flat_map(|listing| match listing {
-                crate::partial_diff_iterator::Diff::Same(listing, _) => Some(listing.0),
+                crate::partial_diff_iterator::DiffItem::Same(listing, _) => Some(listing.0),
                 _ => None,
             })
             .map(|listing| async move {
@@ -278,8 +278,8 @@ impl UltrosDb {
                 Result::<usize>::Ok(remove_result.len())
             })
             .await;
-
         let added = added.into_iter().flatten().collect();
+        self.set_last_updated(world_id, item_id).await?;
         Ok((added, removed.into_iter().map(|(m, _)| m).collect()))
     }
 
