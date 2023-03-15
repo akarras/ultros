@@ -14,6 +14,43 @@ pub enum AnyResult<'a> {
     World(&'a World),
 }
 
+impl<'a> From<AnyResult<'a>> for OwnedResult {
+    fn from(value: AnyResult<'a>) -> Self {
+        match value {
+            AnyResult::Region(r) => Self::Region(r.clone()),
+            AnyResult::Datacenter(d) => Self::Datacenter(d.clone()),
+            AnyResult::World(w) => Self::World(w.clone()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+pub enum OwnedResult {
+    Region(Region),
+    Datacenter(Datacenter),
+    World(World),
+}
+
+impl OwnedResult {
+    pub fn get_name(&self) -> &str {
+        match self {
+            OwnedResult::Region(r) => &r.name,
+            OwnedResult::Datacenter(d) => &d.name,
+            OwnedResult::World(w) => &w.name,
+        }
+    }
+}
+
+impl From<OwnedResult> for AnySelector {
+    fn from(value: OwnedResult) -> Self {
+        match value {
+            OwnedResult::Region(r) => AnySelector::Region(r.id),
+            OwnedResult::Datacenter(d) => AnySelector::Datacenter(d.id),
+            OwnedResult::World(w) => AnySelector::World(w.id),
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AnySelector {
     Region(i32),

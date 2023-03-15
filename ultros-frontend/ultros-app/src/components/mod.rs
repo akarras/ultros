@@ -24,3 +24,4 @@ pub mod ui_text;
 pub mod virtual_scroller;
 pub mod wasm_loading_indicator;
 pub mod world_name;
+pub mod world_picker;

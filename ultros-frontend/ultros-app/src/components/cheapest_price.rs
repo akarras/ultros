@@ -27,8 +27,9 @@ pub fn CheapestPrice(cx: Scope, item_id: ItemId, hq: Option<bool>) -> impl IntoV
     use_context::<CheapestPrices>(cx)
         .unwrap()
         .read_listings
-        .with(|data| {
-            find_matching_listings(&data, item_id, hq)
+        .with(cx, |data| {
+            data.as_ref().ok().map(|data| {
+                find_matching_listings(&data, item_id, hq)
                 .map(|listing| {
                     view! {cx,
                         <span style="padding-right: 5px"><Gil amount=listing.cheapest_price/></span>
@@ -36,5 +37,6 @@ pub fn CheapestPrice(cx: Scope, item_id: ItemId, hq: Option<bool>) -> impl IntoV
                     }
                 })
                 .into_view(cx)
+            })
         })
 }

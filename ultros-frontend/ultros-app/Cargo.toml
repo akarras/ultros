@@ -18,7 +18,7 @@ sublime_fuzzy = "0.7"
 reqwest = {version = "0.11.0", optional = true, default-features = false, features = ["brotli", "json", "rustls-tls"]}
 gloo-net = {version = "0.2", optional = true, features = ["http"]}
 gloo = {version = "0.8.0", optional = true}
-web-sys = {version = "0.3", optional = true, features = ["AbortController", "Clipboard", "Window", "Navigator", "HtmlCanvasElement", "HtmlDivElement", "HtmlElement"]}
+web-sys = {version = "0.3", optional = true, features = ["AbortController", "Clipboard", "Window", "Navigator", "HtmlCanvasElement", "HtmlDivElement", "HtmlElement", "HtmlDocument"]}
 ultros-api-types = {path = "../../ultros-api-types"}
 ultros-db = {path = "../../ultros-db", optional = true}
 serde = {version = "1", features = ["rc", "derive"]}
@@ -35,8 +35,10 @@ thiserror = "1.0"
 log = "0.4"
 urlencoding = "2.1.2"
 anyhow = "1.0.69"
+cookie = {version = "0.17", features = ["percent-encode"]}
+wasm-bindgen = {version = "0.2", optional = true}
 
 [features]
 default = ["ssr"] # this is mostly so if I run cargo check, it has a flavor to work on
-hydrate = ["leptos/hydrate", "leptos_meta/hydrate", "leptos_router/hydrate", "gloo", "gloo-net", "web-sys"]
+hydrate = ["leptos/hydrate", "leptos_meta/hydrate", "leptos_router/hydrate", "gloo", "gloo-net", "web-sys", "wasm-bindgen"]
 ssr = ["leptos/ssr", "leptos_meta/ssr", "leptos_router/ssr", "reqwest", "leptos_axum", "web-sys", "ultros-db"]

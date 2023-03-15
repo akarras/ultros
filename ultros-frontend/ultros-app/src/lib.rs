@@ -4,12 +4,14 @@ pub(crate) mod error;
 pub(crate) mod global_state;
 pub(crate) mod routes;
 
+use global_state::home_world::get_homeworld;
 pub use global_state::user::User;
 
 use std::rc::Rc;
 
 use crate::api::get_worlds;
 use crate::global_state::cheapest_prices::CheapestPrices;
+use crate::global_state::cookies::Cookies;
 use crate::global_state::LocalWorldData;
 use crate::{
     components::{profile_display::*, search_box::*, tooltip::*},
@@ -21,7 +23,6 @@ use crate::{
 use leptos::*;
 use leptos_meta::*;
 use leptos_router::*;
-use ultros_api_types::cheapest_listings::CheapestListings;
 use ultros_api_types::world_helper::WorldHelper;
 
 #[cfg(feature = "ssr")]
@@ -41,9 +42,10 @@ pub fn App(cx: Scope) -> impl IntoView {
             world_data.map(|data| Rc::new(WorldHelper::new(data)))
         },
     );
+    provide_context(cx, Cookies::new(cx));
     provide_context(cx, LocalWorldData(worlds));
-    let (read_cheapest, write_cheapest) = create_signal(cx, CheapestListings::default());
-    provide_context(cx, CheapestPrices::new(cx, read_cheapest, write_cheapest));
+    provide_context(cx, CheapestPrices::new(cx));
+    let (homeworld, _set_homeworld) = get_homeworld(cx);
     view! {
         cx,
         <Stylesheet id="app" href="/target/site/pkg/ultros.css"/>
@@ -60,7 +62,11 @@ pub fn App(cx: Scope) -> impl IntoView {
                     <i class="fa-solid fa-bell"></i>
                     "Alerts"
                 </A>
-                <A href="/analyzer">
+                <A href={move || if let Some(v) = homeworld().map(|w| w.name) {
+                    format!("/analyzer/{v}")
+                } else {
+                    "/analyzer".to_string()
+                }}>
                     <i class="fa-solid fa-money-bill-trend-up"></i>
                     "Analyzer"
                 </A>

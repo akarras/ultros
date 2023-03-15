@@ -5,8 +5,11 @@ use crate::api::{
     check_character_verification, claim_character, get_character_verifications, get_characters,
     search_characters, unclaim_character,
 };
-use crate::components::{loading::*, world_name::*};
+use crate::components::{loading::*, world_name::*, world_picker::*};
 use crate::error::AppResult;
+use crate::global_state::home_world::{
+    get_homeworld, get_price_zone, result_to_selector_read, selector_to_setter_signal,
+};
 
 #[component]
 fn AddCharacterMenu(
@@ -85,10 +88,19 @@ pub fn Profile(cx: Scope) -> impl IntoView {
         move || (check_verification.version()(), claim_character.version()()),
         move |_| get_character_verifications(cx),
     );
-
+    let (homeworld, set_homeworld) = get_homeworld(cx);
+    let (price_region, set_price_region) = get_price_zone(cx);
+    let price_region = result_to_selector_read(cx, price_region);
+    let set_price_region = selector_to_setter_signal(cx, set_price_region);
     view! { cx, <div class="container">
         <div class="main-content">
             <span class="content-title">"Profile"</span>
+            <div class="content-well">
+                <label>"home world:"</label>
+                <WorldOnlyPicker current_world=homeworld.into() set_current_world=set_homeworld.into()  />
+                <label>"Default price selector"</label>
+                <WorldPicker current_world=price_region.into() set_current_world=set_price_region.into() />
+            </div>
             <div class="content-well">
                 <span class="content-title">
                     "Characters"
