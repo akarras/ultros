@@ -30,6 +30,7 @@ pub fn get_homeworld(cx: Scope) -> (Signal<Option<World>>, SignalSetter<Option<W
                 let mut cookie = Cookie::new(HOMEWORLD_COOKIE_NAME, w.name);
                 cookie.set_same_site(SameSite::Strict);
                 cookie.set_secure(Some(true));
+                cookie.set_path("/");
                 cookie
             });
             set_cookie(world);
@@ -90,6 +91,7 @@ pub fn get_price_zone(
                 let mut cookie = Cookie::new(DEFAULT_PRICE_ZONE, w.get_name().to_string());
                 cookie.set_same_site(SameSite::Strict);
                 cookie.set_secure(Some(true));
+                cookie.set_path("/");
                 cookie
             });
             set_cookie(world);

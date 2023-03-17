@@ -6,13 +6,13 @@ use crate::components::{
 };
 use leptos::*;
 use leptos_meta::*;
-use leptos_router::use_params_map;
+use leptos_router::*;
 use ultros_api_types::world_helper::{AnyResult, WorldHelper};
 use xiv_gen::ItemId;
 
 #[component]
 fn WorldButton(cx: Scope, world_name: String, item_id: i32) -> impl IntoView {
-    view! { cx, <a class="btn-secondary" href=format!("/item/{}/{item_id}", world_name)>{world_name}</a>}
+    view! { cx, <A class="btn-secondary" href=format!("/item/{}/{item_id}", urlencoding::encode(&world_name))>{world_name}</A>}
 }
 
 #[component]
@@ -31,7 +31,9 @@ fn WorldMenu(cx: Scope, world_name: Memo<String>, item_id: Memo<i32>) -> impl In
         {move || {
             match worlds.read(cx) {
                 Some(Ok(worlds)) => {
-                    if let Some(world) = worlds.lookup_world_by_name(&world_name()) {
+                    let world = world_name();
+                    let world_name = urlencoding::decode(&world).unwrap_or_default();
+                    if let Some(world) = worlds.lookup_world_by_name(&world_name) {
                         let create_world_button = move |name| view!{cx, <WorldButton world_name=name item_id=item_id()/>};
                         match world {
                             AnyResult::World(world) => {
@@ -41,7 +43,8 @@ fn WorldMenu(cx: Scope, world_name: Memo<String>, item_id: Memo<i32>) -> impl In
                                 let views : Vec<_> = [region.name.to_string()]
                                     .into_iter()
                                     .chain(datacenters.iter().map(|dc| dc.name.to_string()))
-                                    .chain(datacenters.iter().flat_map(|dc| dc.worlds.iter().filter(|w| w.name != world.name).map(|world| world.name.to_string())))
+                                    .chain(datacenters.iter().flat_map(|dc| dc.worlds.iter()
+                                        .map(|world| world.name.to_string())))
                                         .map(move |name| view!{cx, <WorldButton world_name=name item_id=item_id()/>})
                                     .collect();
                                 views.into_view(cx)
@@ -50,7 +53,7 @@ fn WorldMenu(cx: Scope, world_name: Memo<String>, item_id: Memo<i32>) -> impl In
                                 // show all worlds in this datacenter, other datacenters in this region, the region this datacenter belongs to
                                 let region = worlds.get_region(AnyResult::Datacenter(dc));
                                 let views : Vec<_> = [region.name.to_string()].into_iter()
-                                    .chain(region.datacenters.iter().filter(|d| dc.name != d.name).map(|d| d.name.to_string()))
+                                    .chain(region.datacenters.iter().map(|d| d.name.to_string()))
                                     .chain(dc.worlds.iter().map(|w| w.name.to_string()))
                                     .map(create_world_button)
                                     .collect();
@@ -58,9 +61,10 @@ fn WorldMenu(cx: Scope, world_name: Memo<String>, item_id: Memo<i32>) -> impl In
                             },
                             AnyResult::Region(region) => {
                                 // show all regions, and datacenters in this region
+                                let regions = worlds.get_all().regions.iter().map(|r| r.name.to_string());
                                 let datacenters = worlds.get_datacenters(&AnyResult::Region(region));
-                                let views : Vec<_> = datacenters.iter()
-                                    .map(|dc| dc.name.to_string())
+                                let views : Vec<_> = regions.chain(datacenters.iter()
+                                    .map(|dc| dc.name.to_string()))
                                     .map(move |name| view!{cx, <WorldButton world_name=name item_id=item_id()/>}).collect();
                                 views.into_view(cx)
                             }
