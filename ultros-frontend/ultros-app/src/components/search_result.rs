@@ -1,4 +1,7 @@
-use crate::components::{cheapest_price::*, item_icon::*};
+use crate::{
+    components::{cheapest_price::*, item_icon::*},
+    global_state::home_world::get_price_zone,
+};
 use leptos::*;
 use sublime_fuzzy::{best_match, Match};
 use xiv_gen::ItemId;
@@ -51,11 +54,16 @@ pub fn ItemSearchResult(
     let categories = &data.item_ui_categorys;
     let items = &data.items;
     let item = items.get(&ItemId(item_id));
+    let (price_zone, _) = get_price_zone(cx);
     view! {
         cx,
         {if let Some(item) = item {
+
             template!{cx,
-            <a on:click=move |_| set_search("".to_string()) href=format!("/item/North-America/{item_id}")> // this needs to be updated to be able to point to any region
+            <a on:click=move |_| set_search("".to_string()) href=move || {
+                let zone = price_zone();
+                let price_zone = zone.as_ref().map(|z| z.get_name()).unwrap_or("North-America");
+                format!("/item/{price_zone}/{item_id}") }> // this needs to be updated to be able to point to any region
                 <div class="search-result">
                     <ItemIcon item_id icon_size=IconSize::Small />
                     <div class="search-result-details">

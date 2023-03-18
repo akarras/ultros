@@ -12,6 +12,7 @@ fn item_set_iter(item: &'static Item) -> impl Iterator<Item = &'static Item> {
             && item.class_job_category.0 == i.class_job_category.0
             && item.level_item.0 == i.level_item.0
             && i.key_id != item.key_id
+            && item.item_search_category.0 != 0
     })
 }
 
@@ -78,6 +79,7 @@ fn Recipe(cx: Scope, recipe: &'static Recipe) -> impl IntoView {
         <div class="flex-row"><SmallItemDisplay item=target_item/><CheapestPrice item_id=target_item.key_id hq=None /></div>
         "Ingredients:"
         {ingredients}
+        <div class="flex-row">"Optimistic price to craft: "</div>
     </div>})
 }
 

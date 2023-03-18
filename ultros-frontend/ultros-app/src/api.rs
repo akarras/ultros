@@ -220,6 +220,14 @@ pub(crate) async fn edit_list(cx: Scope, list: List) -> AppResult<()> {
     post_api(cx, &format!("/api/v1/list/edit"), list).await
 }
 
+pub(crate) async fn bulk_add_item_to_list(
+    cx: Scope,
+    list_id: i32,
+    list_items: Vec<ListItem>,
+) -> AppResult<()> {
+    post_api(cx, &format!("/api/v1/list/{list_id}/add/items"), list_items).await
+}
+
 pub(crate) async fn add_item_to_list(
     cx: Scope,
     list_id: i32,

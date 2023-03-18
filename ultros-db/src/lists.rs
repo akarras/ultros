@@ -160,6 +160,37 @@ impl UltrosDb {
     }
 
     #[instrument(skip(self))]
+    pub async fn add_items_to_list(
+        &self,
+        list: &list::Model,
+        discord_user: i64,
+        items: Vec<list_item::Model>,
+    ) -> Result<u64> {
+        if list.owner != discord_user {
+            return Err(anyhow::anyhow!("Failed to add item to list"));
+        }
+        let many = list_item::Entity::insert_many(items.into_iter().map(|item| {
+            let list_item::Model {
+                item_id,
+                list_id,
+                hq,
+                quantity,
+                ..
+            } = item;
+            list_item::ActiveModel {
+                id: Default::default(),
+                item_id: ActiveValue::Set(item_id),
+                list_id: ActiveValue::Set(list_id),
+                hq: ActiveValue::Set(hq),
+                quantity: ActiveValue::Set(quantity),
+            }
+        }))
+        .exec_without_returning(&self.db)
+        .await?;
+        Ok(many)
+    }
+
+    #[instrument(skip(self))]
     pub async fn remove_item_from_list(
         &self,
         discord_user: i64,

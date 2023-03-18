@@ -23,7 +23,11 @@ fn find_matching_listings(
 
 /// Always shows the lowest price
 #[component]
-pub fn CheapestPrice(cx: Scope, item_id: ItemId, hq: Option<bool>) -> impl IntoView {
+pub fn CheapestPrice(
+    cx: Scope,
+    item_id: ItemId,
+    hq: Option<bool>,
+) -> impl IntoView {
     use_context::<CheapestPrices>(cx)
         .unwrap()
         .read_listings

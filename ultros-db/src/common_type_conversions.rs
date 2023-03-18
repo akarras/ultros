@@ -224,6 +224,25 @@ impl From<list_item::Model> for ListItem {
     }
 }
 
+impl From<ListItem> for list_item::Model {
+    fn from(value: ListItem) -> Self {
+        let ListItem {
+            id,
+            item_id,
+            list_id,
+            hq,
+            quantity,
+        } = value;
+        Self {
+            id,
+            item_id,
+            list_id,
+            hq,
+            quantity,
+        }
+    }
+}
+
 impl From<AnySelector> for crate::world_cache::AnySelector {
     fn from(value: AnySelector) -> Self {
         match value {

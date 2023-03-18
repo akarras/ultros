@@ -1,5 +1,6 @@
 use crate::api::{create_list, delete_list, edit_list, get_lists};
 use crate::components::{loading::*, tooltip::*, world_name::*, world_picker::*};
+use crate::global_state::home_world::get_price_zone;
 use leptos::*;
 use ultros_api_types::list::{CreateList, List};
 
@@ -29,13 +30,15 @@ pub fn EditLists(cx: Scope) -> impl IntoView {
     </div>
     {move || creating().then(|| {
         let (new_list, set_new_list) = create_signal(cx, "".to_string());
-        let (wdr_filter, set_wdr_filter) = create_signal(cx, None); // this should be the user's homeworld by default
+        let (global, _) = get_price_zone(cx);
+        let selector = global().map(|global| global.into());
+        let (wdr_filter, set_wdr_filter) = create_signal(cx, selector);
 
         view!{cx,
-            <div class="content-well flex-column">
+            <div class="content-well">
                 <label for="list-name">"List name:"</label>
                 <input id="list-name" prop:value=new_list on:input=move |input| set_new_list(event_target_value(&input)) />
-                <label>"Market world: " {move || wdr_filter().map(|world| view!{cx, <WorldName id=world/>})}</label>
+                <label>"World/Datacenter/Region:" {move || wdr_filter().map(|world| view!{cx, <WorldName id=world/>})}</label>
                 <WorldPicker current_world=wdr_filter.into() set_current_world=set_wdr_filter.into() />
                 <button prop:disabled=move || wdr_filter().is_none() class="btn" on:click=move |_| {
                 if let Some(wdr_filter) = wdr_filter() {
