@@ -54,6 +54,7 @@ pub struct ListingMultiViewData {
     pub item_id: u32,
     pub last_upload_time: i64,
     pub listings: Vec<ListingView>,
+    pub recent_history: Vec<SaleView>,
     pub current_average_price: f64,
     #[serde(rename = "currentAveragePriceNQ")]
     pub current_average_price_nq: f64,
@@ -117,6 +118,22 @@ pub struct ListingView {
     pub total: u32,
 }
 
+#[serde_as]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SaleView {
+    pub hq: bool,
+    pub price_per_unit: i32,
+    pub quantity: i32,
+    #[serde_as(as = "TimestampSeconds<i64, Flexible>")]
+    pub timestamp: DateTime<Local>,
+    pub on_mannequin: bool,
+    pub world_name: Option<String>,
+    pub world_id: Option<WorldId>,
+    pub buyer_name: String,
+    pub total: i32,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(untagged)]
 pub enum MarketView {
@@ -142,15 +159,18 @@ impl MarketView {
         }
     }
 
-    pub fn items(self) -> impl Iterator<Item = (ItemId, Vec<ListingView>)> {
+    pub fn items(self) -> impl Iterator<Item = (ItemId, Vec<ListingView>, Vec<SaleView>)> {
         match self {
-            SingleView(single) => {
-                vec![(ItemId(single.item_id as i32), single.listings)].into_iter()
-            }
+            SingleView(single) => vec![(
+                ItemId(single.item_id as i32),
+                single.listings,
+                single.recent_history,
+            )]
+            .into_iter(),
             MultiView(multi) => multi
                 .items
                 .into_iter()
-                .map(|(i, d)| (ItemId(i as i32), d.listings))
+                .map(|(i, d)| (ItemId(i as i32), d.listings, d.recent_history))
                 .collect::<Vec<_>>()
                 .into_iter(),
         }
@@ -163,6 +183,7 @@ pub struct CurrentlyShownSingleView {
     #[serde(rename = "itemID")]
     pub item_id: u32,
     pub listings: Vec<ListingView>,
+    pub recent_history: Vec<SaleView>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

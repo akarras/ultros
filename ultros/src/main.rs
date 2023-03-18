@@ -19,9 +19,9 @@ use analyzer_service::AnalyzerService;
 use anyhow::Result;
 use axum_extra::extract::cookie::Key;
 use discord::start_discord;
-use event::{create_event_busses, EventProducer, EventType};
+use event::{create_event_busses, EventProducer, EventType, ListingData};
 use tracing::{error, info};
-use ultros_db::entity::{active_listing, sale_history};
+use ultros_db::entity::sale_history;
 use ultros_db::world_cache::WorldCache;
 use ultros_db::UltrosDb;
 use universalis::websocket::event_types::{EventChannel, SubscribeMode, WSMessage};
@@ -32,7 +32,7 @@ use web::oauth::{AuthUserCache, DiscordAuthConfig, OAuthScope};
 
 async fn run_socket_listener(
     db: UltrosDb,
-    listings_tx: EventProducer<Vec<active_listing::Model>>,
+    listings_tx: EventProducer<ListingData>,
     sales_tx: EventProducer<Vec<sale_history::Model>>,
 ) {
     let mut socket = WebsocketClient::connect().await;
@@ -66,8 +66,8 @@ async fn run_socket_listener(
                         listings,
                     })) => match db.update_listings(listings.clone(), item, world).await {
                         Ok((listings, removed)) => {
-                            let listings = Arc::new(listings);
-                            let removed = Arc::new(removed);
+                            let listings = Arc::new(ListingData { item_id: item, world_id: world, listings });
+                            let removed = Arc::new(ListingData { item_id: item, world_id: world, listings: removed });
                             match listings_tx.send(EventType::Remove(removed)) {
                                 Ok(o) => info!("sent removed listings {o} updates"),
                                 Err(e) => error!("Error removing listings {e}"),
@@ -87,7 +87,7 @@ async fn run_socket_listener(
                         match db.remove_listings(listings.clone(), item, world).await {
                             Ok(listings) => {
                                 info!("Removed listings {listings:?} {item:?} {world:?}");
-                                if let Err(e) = listings_tx.send(EventType::Remove(Arc::new(listings))) {
+                                if let Err(e) = listings_tx.send(EventType::Remove(Arc::new(ListingData { item_id: item, world_id: world, listings }))) {
                                     error!("Error sending remove listings {e:?}");
                                 }
                             },
@@ -95,7 +95,7 @@ async fn run_socket_listener(
                         }
                     }
                     SocketRx::Event(Ok(WSMessage::SalesAdd { item, world, sales })) => {
-                        match db.store_sale(sales.clone(), item, world).await {
+                        match db.update_sales(sales.clone(), item, world).await {
                             Ok(added_sales) => {
                                 info!(
                                     "Stored sale data. Last id: {added_sales:?} {item:?} {world:?}"
@@ -192,7 +192,14 @@ async fn main() -> Result<()> {
         db: db.clone(),
         world_cache: world_cache.clone(),
     };
-    UpdateService::start_service(db.clone(), world_cache.clone());
+    let update_service = UpdateService {
+        db: db.clone(),
+        world_cache: world_cache.clone(),
+        universalis: UniversalisClient::new(),
+        listings: senders.listings.clone(),
+        sales: senders.history.clone(),
+    };
+    update_service.start_service();
 
     let web_state = WebState {
         analyzer_service,

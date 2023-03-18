@@ -59,12 +59,22 @@ impl UltrosDb {
             .one(&self.db)
             .await?
             .ok_or_else(|| anyhow::Error::msg("Retainer not found"))?;
+        let other_retainers = owned_retainers::Entity::find()
+            .filter(owned_retainers::Column::DiscordId.eq(discord_user_id as i64))
+            .all(&self.db)
+            .await?;
+        let weight = other_retainers
+            .into_iter()
+            .map(|r| r.weight)
+            .max()
+            .flatten()
+            .map(|w| w + 1);
         Ok(owned_retainers::ActiveModel {
             id: ActiveValue::default(),
             retainer_id: Set(retainer.id),
             character_id: ActiveValue::default(),
             discord_id: Set(discord_user_id as i64),
-            weight: ActiveValue::default(),
+            weight: ActiveValue::Set(weight),
         }
         .insert(&self.db)
         .await?)

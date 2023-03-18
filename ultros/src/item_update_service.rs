@@ -4,20 +4,24 @@ use futures::{stream, StreamExt};
 use tokio::time::Instant;
 use tracing::{info, instrument};
 use ultros_db::{
-    entity::{listing_last_updated::Model, world},
+    entity::{listing_last_updated::Model, sale_history, world},
     partial_diff_iterator::PartialDiffIterator,
     world_cache::WorldCache,
     UltrosDb,
 };
 use universalis::{UniversalisClient, WorldId, WorldItemRecencyView};
 
+use crate::event::{EventProducer, EventType, ListingData};
+
 /// Item update service attempts to keep ultros' data in sync with Universalis' data.
 /// It does this primarily by comparing the recently updated items on Universalis with recently updated items on ultros
 
 pub(crate) struct UpdateService {
-    db: UltrosDb,
-    world_cache: Arc<WorldCache>,
-    universalis: UniversalisClient,
+    pub(crate) db: UltrosDb,
+    pub(crate) world_cache: Arc<WorldCache>,
+    pub(crate) universalis: UniversalisClient,
+    pub(crate) listings: EventProducer<ListingData>,
+    pub(crate) sales: EventProducer<Vec<sale_history::Model>>,
 }
 
 struct CmpListing(Model);
@@ -35,21 +39,16 @@ impl PartialEq<WorldItemRecencyView> for CmpListing {
 }
 
 impl UpdateService {
-    pub(crate) fn start_service(db: UltrosDb, world_cache: Arc<WorldCache>) {
+    pub(crate) fn start_service(self) {
         tokio::spawn(async move {
-            let update_service = Self {
-                db,
-                world_cache: world_cache.clone(),
-                universalis: UniversalisClient::new(),
-            };
             loop {
                 // check all worlds
                 info!("Checking all worlds");
                 // Create this 30 minute duration check now so that our refresh interval includes the time we spent checking
                 let next_interval = Instant::now() + tokio::time::Duration::from_secs(60 * 30);
-                for world in world_cache.get_all_worlds() {
+                for world in self.world_cache.get_all_worlds() {
                     info!("{world:?}");
-                    let world = update_service.do_full_world_update(world).await;
+                    let world = self.do_full_world_update(world).await;
                     if let Err(w) = world {
                         info!("{w:?}");
                     }
@@ -64,19 +63,40 @@ impl UpdateService {
         let world_id = WorldId(world.id);
         let updates = self.get_missing_updates(world_name).await?;
         let item_ids: Box<[i32]> = updates.into_iter().map(|i| i.item_id).collect();
-        let market_data = self
-            .universalis
-            .marketboard_current_data(world_name, &item_ids)
-            .await?;
-        info!("missing data {item_ids:?}");
+        for item_ids in item_ids.chunks(100) {
+            let market_data = self
+                .universalis
+                .marketboard_current_data(world_name, &item_ids)
+                .await?;
+            info!("missing data {item_ids:?}");
 
-        stream::iter(market_data.items().map(|(item_id, listings)| async move {
-            self.db.update_listings(listings, item_id, world_id).await
-        }))
-        .buffer_unordered(50)
-        .collect::<Vec<_>>()
-        .await;
-        // try_join_all().await?;
+            stream::iter(
+                market_data
+                    .items()
+                    .map(|(item_id, listings, sales)| async move {
+                        if let Ok((added, removed)) =
+                            self.db.update_listings(listings, item_id, world_id).await
+                        {
+                            let _ = self.listings.send(EventType::Add(Arc::new(ListingData {
+                                item_id,
+                                world_id,
+                                listings: added,
+                            })));
+                            let _ = self.listings.send(EventType::Add(Arc::new(ListingData {
+                                item_id,
+                                world_id,
+                                listings: removed,
+                            })));
+                        }
+                        if let Ok(added) = self.db.update_sales(sales, item_id, world_id).await {
+                            let _ = self.sales.send(EventType::Add(Arc::new(added)));
+                        }
+                    }),
+            )
+            .buffer_unordered(50)
+            .collect::<Vec<_>>()
+            .await;
+        }
         Ok(())
     }
 

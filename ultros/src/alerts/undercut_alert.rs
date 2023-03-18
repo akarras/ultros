@@ -10,7 +10,7 @@ use serde::Serialize;
 use tracing::{debug, error, instrument};
 use ultros_db::{entity::*, UltrosDb};
 
-use crate::event::{EventBus, EventType};
+use crate::event::{EventBus, EventType, ListingData};
 
 pub(crate) struct RetainerAlertListener {
     pub(crate) retainer_alert_id: i32,
@@ -142,12 +142,12 @@ impl UndercutTracker {
 
     pub(crate) async fn handle_listing_event(
         &mut self,
-        listings: Result<EventType<Arc<Vec<active_listing::Model>>>, anyhow::Error>,
+        listings: Result<EventType<Arc<ListingData>>, anyhow::Error>,
     ) -> Result<UndercutResult, anyhow::Error> {
         let listing = listings?;
         match listing {
             EventType::Remove(removed) => {
-                for removed in removed.iter() {
+                for removed in removed.listings.iter() {
                     // if we removed our listing, we need to refetch our pricing from the database if the listing was the lowest
                     if self.retainer_ids.contains(&removed.retainer_id) {
                         if let Some(value) = self
@@ -179,6 +179,7 @@ impl UndercutTracker {
             EventType::Add(added) => {
                 // update our own data from the added list
                 if let Some(retainer_listing) = added
+                    .listings
                     .iter()
                     .filter(|added| self.retainer_ids.contains(&added.retainer_id))
                     .min_by_key(|i| i.price_per_unit)
@@ -202,7 +203,7 @@ impl UndercutTracker {
                     }
                 }
                 // items in an added vec should all be the same type, so lets just find the cheapest item
-                if let Some(added) = added.iter().min_by_key(|a| a.price_per_unit) {
+                if let Some(added) = added.listings.iter().min_by_key(|a| a.price_per_unit) {
                     if let Some(our_price) = self.user_lowest_listings.get_mut(&ListingKey {
                         item_id: added.item_id,
                         world_id: added.world_id,
@@ -269,7 +270,7 @@ impl RetainerAlertListener {
         alert_id: i32,
         margin: i32,
         ultros_db: UltrosDb,
-        mut listings: EventBus<Vec<active_listing::Model>>,
+        mut listings: EventBus<ListingData>,
         active_retainers: EventBus<retainer::Model>,
         ctx: serenity_prelude::Context,
     ) -> Result<Self> {

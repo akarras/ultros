@@ -1,7 +1,4 @@
-use sea_orm_migration::{
-    prelude::*,
-    sea_orm::{Statement, StatementBuilder},
-};
+use sea_orm_migration::prelude::*;
 
 use crate::m20220101_000001_create_table::{ActiveListing, Retainer, SaleHistory};
 

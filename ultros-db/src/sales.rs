@@ -9,7 +9,7 @@ use crate::{
     UltrosDb,
 };
 use anyhow::Result;
-use chrono::{Duration, NaiveDateTime};
+use chrono::NaiveDateTime;
 
 use futures::{future::try_join_all, Stream};
 use migration::{
@@ -20,13 +20,13 @@ use sea_orm::{
     ActiveModelTrait, ActiveValue, DbBackend, FromQueryResult, QueryOrder, QuerySelect, Statement,
 };
 use tracing::instrument;
-use universalis::{websocket::event_types::SaleView, ItemId, WorldId};
+use universalis::{ItemId, SaleView, WorldId};
 
 impl UltrosDb {
     /// Stores a sale from a given sale view.
     /// Demands that a world name for the sale is provided as it is optional on the sale view, but can be determined other ways
     #[instrument(skip(self))]
-    pub async fn store_sale(
+    pub async fn update_sales(
         &self,
         mut sales: Vec<SaleView>,
         item_id: ItemId,
@@ -36,19 +36,6 @@ impl UltrosDb {
         // check if the sales have already been logged
         if sales.is_empty() {
             return Ok(vec![]);
-        }
-        // just nudge the timestamps to not be exactly aligned...
-        let mut last_timestamp = None;
-        for sale in &mut sales {
-            if let Some(t) = last_timestamp {
-                if t >= sale.timestamp {
-                    sale.timestamp = t;
-                    sale.timestamp += Duration::microseconds(1);
-                    assert!(sale.timestamp != last_timestamp.unwrap());
-                }
-            }
-
-            last_timestamp = Some(sale.timestamp.clone());
         }
 
         // check for any sales that have already been posted

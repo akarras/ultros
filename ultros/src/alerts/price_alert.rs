@@ -44,7 +44,7 @@ impl PriceAlertService {
     async fn start_listener(&self, mut event_receiver: EventReceivers) {
         loop {
             if let Ok(crate::event::EventType::Add(l)) = event_receiver.listings.recv().await {
-                self.check_listings(&l).await;
+                self.check_listings(&l.listings).await;
             }
         }
     }

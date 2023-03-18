@@ -152,7 +152,7 @@ mod test {
             "Hello world".to_string()
         }
 
-        Router::<(), Body>::new().leptos_routes_with_handler_stateful(vec![], handler);
+        let _ = Router::<(), Body>::new().leptos_routes_with_handler_stateful(vec![], handler);
     }
 
     #[test]
@@ -164,7 +164,7 @@ mod test {
             state.0.to_string()
         }
         let state = AppState(Arc::new("Hello world".to_string()));
-        Router::<AppState, Body>::new()
+        let _router = Router::<AppState, Body>::new()
             .leptos_routes_with_handler_stateful(vec![], handler)
             .with_state::<AppState>(state);
     }
@@ -220,7 +220,7 @@ mod test {
         #[debug_handler]
         async fn handler(State(_other_state): State<WebState>, _data: InnerData) {}
 
-        Router::<WebState, Body>::new()
+        let _ = Router::<WebState, Body>::new()
             .leptos_routes_with_handler_stateful(vec![], handler)
             .with_state::<WebState>(WebState {
                 a_state: AState(1),

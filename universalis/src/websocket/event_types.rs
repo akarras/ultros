@@ -1,7 +1,5 @@
-use crate::{ItemId, ListingView, WorldId};
-use chrono::{DateTime, Local};
+use crate::{ItemId, ListingView, SaleView, WorldId};
 use serde::{Deserialize, Serialize, Serializer};
-use serde_with::{formats::Flexible, serde_as, TimestampSeconds};
 use std::fmt::{Display, Formatter};
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -71,22 +69,6 @@ impl From<&WSMessage> for WorldId {
             WSMessage::SalesRemove { world, .. } => *world,
         }
     }
-}
-
-#[serde_as]
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct SaleView {
-    pub hq: bool,
-    pub price_per_unit: i32,
-    pub quantity: i32,
-    #[serde_as(as = "TimestampSeconds<i64, Flexible>")]
-    pub timestamp: DateTime<Local>,
-    pub on_mannequin: bool,
-    pub world_name: Option<String>,
-    pub world_id: Option<WorldId>,
-    pub buyer_name: String,
-    pub total: i32,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

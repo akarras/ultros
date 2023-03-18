@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use tokio::sync::broadcast::channel;
 use ultros_db::entity::*;
+use universalis::{ItemId, WorldId};
 
 pub(crate) type EventBus<T> = tokio::sync::broadcast::Receiver<EventType<Arc<T>>>;
 pub(crate) type EventProducer<T> = tokio::sync::broadcast::Sender<EventType<Arc<T>>>;
@@ -37,10 +38,17 @@ pub(crate) fn create_event_busses() -> (EventSenders, EventReceivers) {
     )
 }
 
+#[derive(Debug)]
+pub(crate) struct ListingData {
+    pub(crate) item_id: ItemId,
+    pub(crate) world_id: WorldId,
+    pub(crate) listings: Vec<active_listing::Model>,
+}
+
 #[derive(Clone)]
 pub(crate) struct EventSenders {
     pub(crate) retainers: EventProducer<retainer::Model>,
-    pub(crate) listings: EventProducer<Vec<active_listing::Model>>,
+    pub(crate) listings: EventProducer<ListingData>,
     pub(crate) alerts: EventProducer<alert::Model>,
     pub(crate) retainer_undercut: EventProducer<alert_retainer_undercut::Model>,
     pub(crate) history: EventProducer<Vec<sale_history::Model>>,
@@ -50,7 +58,7 @@ pub(crate) struct EventSenders {
 #[derive(Debug)]
 pub(crate) struct EventReceivers {
     pub(crate) retainers: EventBus<retainer::Model>,
-    pub(crate) listings: EventBus<Vec<active_listing::Model>>,
+    pub(crate) listings: EventBus<ListingData>,
     pub(crate) alerts: EventBus<alert::Model>,
     pub(crate) retainer_undercut: EventBus<alert_retainer_undercut::Model>,
     pub(crate) history: EventBus<Vec<sale_history::Model>>,

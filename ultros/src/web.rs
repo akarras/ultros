@@ -46,7 +46,7 @@ use self::character_verifier_service::CharacterVerifierService;
 use self::error::{ApiError, WebError};
 use self::oauth::{AuthDiscordUser, AuthUserCache, DiscordAuthConfig};
 use crate::analyzer_service::AnalyzerService;
-use crate::event::{EventReceivers, EventSenders, EventType};
+use crate::event::{EventReceivers, EventSenders, EventType, ListingData};
 use crate::leptos::create_leptos_app;
 use crate::web::api::{cheapest_per_world, recent_sales};
 use crate::web::sitemap::{sitemap_index, world_sitemap};
@@ -155,10 +155,18 @@ async fn refresh_world_item_listings(
             let (added, removed) = db
                 .update_listings(listings, ItemId(item_id), WorldId(world_id as i32))
                 .await?;
-            senders.listings.send(EventType::Add(Arc::new(added)))?;
+            senders.listings.send(EventType::Add(Arc::new(ListingData {
+                item_id: ItemId(item_id),
+                world_id: WorldId(world_id.into()),
+                listings: added,
+            })))?;
             senders
                 .listings
-                .send(EventType::Remove(Arc::new(removed)))?;
+                .send(EventType::Remove(Arc::new(ListingData {
+                    item_id: ItemId(item_id),
+                    world_id: WorldId(world_id.into()),
+                    listings: removed,
+                })))?;
         }
         Ok(())
     });

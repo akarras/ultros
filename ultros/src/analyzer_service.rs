@@ -21,7 +21,7 @@ use ultros_db::{
 };
 use universalis::{ItemId, WorldId};
 
-use crate::event::EventReceivers;
+use crate::event::{EventReceivers, ListingData};
 use thiserror::Error;
 use tokio::sync::RwLock;
 use tracing::log::error;
@@ -347,6 +347,7 @@ impl AnalyzerService {
                 match listings {
                     crate::event::EventType::Remove(remove) => {
                         let region = if let Some(region) = remove
+                            .listings
                             .iter()
                             .flat_map(|w| {
                                 world_cache
@@ -364,7 +365,7 @@ impl AnalyzerService {
                             .await;
                     }
                     crate::event::EventType::Add(add) => {
-                        self.add_listings(&add, &world_cache).await;
+                        self.add_listings(&add.listings, &world_cache).await;
                     }
                     crate::event::EventType::Update(_) => todo!(),
                 }
@@ -520,7 +521,7 @@ impl AnalyzerService {
     async fn remove_listings(
         &self,
         region_id: i32,
-        listings: Arc<Vec<active_listing::Model>>,
+        listings: Arc<ListingData>,
         world_cache: &WorldCache,
         ultros_db: &UltrosDb,
     ) {
@@ -529,7 +530,7 @@ impl AnalyzerService {
             .get(&AnySelector::Region(region_id))
             .expect("Unable to get region");
         let mut entry = entry.write().await;
-        for listing in listings.iter() {
+        for listing in listings.listings.iter() {
             entry
                 .remove_listing(
                     listing,
@@ -540,7 +541,7 @@ impl AnalyzerService {
                 .await;
         }
         drop(entry);
-        for listing in listings.iter() {
+        for listing in listings.listings.iter() {
             let world = self
                 .cheapest_items
                 .get(&AnySelector::World(listing.world_id))
