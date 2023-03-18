@@ -2,16 +2,12 @@ use std::cmp::Reverse;
 
 use crate::api::{get_retainer_listings, get_retainer_undercuts};
 use crate::components::gil::*;
-use crate::components::{item_icon::*, loading::*, retainer_nav::*, world_name::*};
+use crate::components::{item_icon::*, loading::*, world_name::*};
 use leptos::*;
+use leptos_router::*;
 use ultros_api_types::icon_size::IconSize;
 use ultros_api_types::{world_helper::AnySelector, ActiveListing, FfxivCharacter, Retainer};
 use xiv_gen::ItemId;
-
-#[component]
-fn RetainerView(cx: Scope) -> impl IntoView {
-    view! {cx, <div></div>};
-}
 
 #[component]
 fn RetainerTable(cx: Scope, retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoView {
@@ -92,54 +88,71 @@ pub fn RetainerUndercuts(cx: Scope) -> impl IntoView {
     let retainers = create_resource(cx, || "undercuts", move |_| get_retainer_undercuts(cx));
     view! {
         cx,
-        <div class="container">
-            <RetainerNav/>
-            <div class="main-content">
-                <span class="content-title">"Retainer Undercuts"</span>
-                <Suspense fallback=move || view!{cx, <Loading/>}>
-                {move || {
-                    retainers.read(cx).map(|retainer| {
-                        match retainer {
-                            Ok(retainers) => {
-                                let retainers : Vec<_> = retainers.retainers.into_iter()
-                                    .map(|(character, retainers)| view!{cx, <CharacterRetainerList character retainers />})
-                                    .collect();
-                                view!{cx, <div>{retainers}</div>}.into_view(cx)
-                            },
-                            Err(e) => view!{cx, <div>{"Unable to get retainers"}<br/>{e.to_string()}</div>}.into_view(cx)
-                        }
-                    })
-                }}
-                </Suspense>
-            </div>
-        </div>
+        <span class="content-title">"Retainer Undercuts"</span>
+        <Suspense fallback=move || view!{cx, <Loading/>}>
+        {move || {
+            retainers.read(cx).map(|retainer| {
+                match retainer {
+                    Ok(retainers) => {
+                        let retainers : Vec<_> = retainers.retainers.into_iter()
+                            .map(|(character, retainers)| view!{cx, <CharacterRetainerList character retainers />})
+                            .collect();
+                        view!{cx, <div>{retainers}</div>}.into_view(cx)
+                    },
+                    Err(e) => view!{cx, <div>{"Unable to get retainers"}<br/>{e.to_string()}</div>}.into_view(cx)
+                }
+            })
+        }}
+        </Suspense>
+    }
+}
+
+#[component]
+pub fn RetainerListings(cx: Scope) -> impl IntoView {
+    let retainers = create_resource(cx, || "undercuts", move |_| get_retainer_listings(cx));
+    view! {
+        cx,
+        <span class="content-title">"Retainer Undercuts"</span>
+        <Suspense fallback=move || view!{cx, <Loading/>}>
+        {move || {
+            retainers.read(cx).map(|retainer| {
+                match retainer {
+                    Ok(retainers) => {
+                        let retainers : Vec<_> = retainers.retainers.into_iter()
+                            .map(|(character, retainers)| view!{cx, <CharacterRetainerList character retainers />})
+                            .collect();
+                        view!{cx, <div>{retainers}</div>}.into_view(cx)
+                    },
+                    Err(e) => view!{cx, <div>{"Unable to get retainers"}<br/>{e.to_string()}</div>}.into_view(cx)
+                }
+            })
+        }}
+        </Suspense>
     }
 }
 
 #[component]
 pub fn Retainers(cx: Scope) -> impl IntoView {
-    let retainers = create_resource(cx, || "retainers", move |_| get_retainer_listings(cx));
+    // let retainers = create_resource(cx, || "retainers", move |_| get_retainer_listings(cx));
     view! {
         cx,
         <div class="container">
-            <RetainerNav/>
+            <div class="content-nav">
+                <A class="btn-secondary" href="/retainers/edit">
+                    <span class="fa fa-pen-to-square"></span>
+                    "Edit"
+                </A>
+                <A class="btn-secondary" href="/retainers/listings">
+                    <span class="fa fa-pencil"></span>
+                    "All Listings"
+                </A>
+                <A class="btn-secondary" href="/retainers/undercuts">
+                    <span class="fa fa-exclamation"></span>
+                    "Undercuts"
+                </A>
+            </div>
             <div class="main-content">
-                <span class="content-title">"Retainers"</span>
-                <Suspense fallback=move || view!{cx, <Loading/>}>
-                {move || {
-                    retainers.read(cx).map(|retainer| {
-                        match retainer {
-                            Ok(retainers) => {
-                                let retainers : Vec<_> = retainers.retainers.into_iter()
-                                    .map(|(character, retainers)| view!{cx, <CharacterRetainerList character retainers />})
-                                    .collect();
-                                view!{cx, <div>{retainers}</div>}
-                            },
-                            Err(e) => view!{cx, <div>"Unable to get retainers"<br/>{e.to_string()}</div>}
-                        }
-                    })
-                }}
-                </Suspense>
+                <Outlet />
             </div>
         </div>
     }

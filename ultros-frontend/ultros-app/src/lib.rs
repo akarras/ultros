@@ -93,14 +93,16 @@ pub fn App(cx: Scope) -> impl IntoView {
             </nav>
             <Routes>
                 <Route path="" view=move |cx| view!{cx, <HomePage/>} />
-                <Route path="retainers/edit" view=move |cx| view! { cx, <EditRetainers />}/>
-                <Route path="retainers/undercuts" view=move |cx| view! { cx, <RetainerUndercuts />}/>
-                <Route path="retainers/listings" view=move |cx| view! { cx, <Retainers/>} />
-                    // <Route path="listings" view=move |cx| view! {cx, <h1>"Retainer Listings"</h1>}/>
-                // </Route>
-                <Route path="list/edit" view=move |cx| view! {cx, <EditLists/>}/>
-                <Route path="list/:id" view=move |cx| view!{ cx, <ListView/>}/>
-                <Route path="list" view=move |cx| view!{cx, <Lists/>}/>
+                <Route path="retainers" view=move |cx| view!{cx, <Retainers/>}>
+                    <Route path="edit" view=move |cx| view!{cx, <EditRetainers />}/>
+                    <Route path="undercuts" view=move |cx| view!{cx, <RetainerUndercuts />}/>
+                    <Route path="listings" view=move |cx| view!{cx, <RetainerListings />}/>
+                </Route>
+                <Route path="list" view=move |cx| view!{cx, <Lists/>}>
+                    <Route path="edit" view=move |cx| view! {cx, <EditLists/>}/>
+                    <Route path=":id" view=move |cx| view!{ cx, <ListView/>}/>
+                    <Route path="" view=move |cx| view!{cx, <ListsRoot/>}/>
+                </Route>
                 <Route path="items" view=move |cx| view! { cx, <ItemExplorer/>}>
                     <Route path="jobset/:jobset" view=move |cx| view!{cx, <JobItems />}/>
                     <Route path="category/:category" view=move |cx| view!{cx, <CategoryItems />}/>

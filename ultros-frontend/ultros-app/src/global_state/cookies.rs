@@ -65,18 +65,16 @@ where
 
 #[cfg(not(feature = "ssr"))]
 pub(crate) fn set_cookies(cookies: CookieJar) {
-    use itertools::Itertools;
     use wasm_bindgen::JsCast;
     use web_sys::HtmlDocument;
-    let header = document().dyn_into::<HtmlDocument>().unwrap();
-    let encode = cookies.iter().map(|cookie| cookie.encoded()).join(";");
-    header.set_cookie(&encode).unwrap();
+    let document = document().dyn_into::<HtmlDocument>().unwrap();
+    for cookie in cookies.delta() {
+        document.set_cookie(&cookie.encoded().to_string()).unwrap();
+    }
 }
 #[cfg(feature = "ssr")]
 pub(crate) fn set_cookies(_cookies: CookieJar) {
-    // let header = document().dyn_into::<HtmlDocument>().unwrap();
-    // let encode = cookie_jar.iter().map(|cookie| cookie.encoded()).join(";");
-    // header.set_cookie(&encode).unwrap();
+    unimplemented!("Server can't set cookies");
 }
 
 #[cfg(not(feature = "ssr"))]
