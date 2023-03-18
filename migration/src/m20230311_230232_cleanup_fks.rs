@@ -1,4 +1,7 @@
-use sea_orm_migration::prelude::*;
+use sea_orm_migration::{
+    prelude::*,
+    sea_orm::{Statement, StatementBuilder},
+};
 
 use crate::m20220101_000001_create_table::{ActiveListing, Retainer, SaleHistory};
 
@@ -43,13 +46,15 @@ impl MigrationTrait for Migration {
             )
             .await?;
         manager
-            .create_index(
-                IndexCreateStatement::new()
-                    .name("sale_history_pkey")
+            .alter_table(
+                TableAlterStatement::new()
                     .table(SaleHistory::Table)
-                    .col(SaleHistory::Id)
-                    .primary()
-                    .unique()
+                    .modify_column(
+                        ColumnDef::new(SaleHistory::Id)
+                            .primary_key()
+                            .integer()
+                            .not_null(),
+                    )
                     .to_owned(),
             )
             .await?;
