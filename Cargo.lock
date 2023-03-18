@@ -224,13 +224,13 @@ dependencies = [
 
 [[package]]
 name = "async-recursion"
-version = "1.0.2"
+version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b015a331cc64ebd1774ba119538573603427eaace0a1950c423ab971f903796"
+checksum = "0e97ce7de6cf12de5d7226c73f5ba9811622f4db3a5b91b55c53e987e5f91cba"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 1.0.109",
+ "syn 2.0.0",
 ]
 
 [[package]]
@@ -1205,9 +1205,9 @@ dependencies = [
 
 [[package]]
 name = "cxx"
-version = "1.0.92"
+version = "1.0.93"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a140f260e6f3f79013b8bfc65e7ce630c9ab4388c6a89c71e07226f49487b72"
+checksum = "a9c00419335c41018365ddf7e4d5f1c12ee3659ddcf3e01974650ba1de73d038"
 dependencies = [
  "cc",
  "cxxbridge-flags",
@@ -1217,9 +1217,9 @@ dependencies = [
 
 [[package]]
 name = "cxx-build"
-version = "1.0.92"
+version = "1.0.93"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da6383f459341ea689374bf0a42979739dc421874f112ff26f829b8040b8e613"
+checksum = "fb8307ad413a98fff033c8545ecf133e3257747b3bae935e7602aab8aa92d4ca"
 dependencies = [
  "cc",
  "codespan-reporting",
@@ -1227,24 +1227,24 @@ dependencies = [
  "proc-macro2",
  "quote",
  "scratch",
- "syn 1.0.109",
+ "syn 2.0.0",
 ]
 
 [[package]]
 name = "cxxbridge-flags"
-version = "1.0.92"
+version = "1.0.93"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90201c1a650e95ccff1c8c0bb5a343213bdd317c6e600a93075bca2eff54ec97"
+checksum = "edc52e2eb08915cb12596d29d55f0b5384f00d697a646dbd269b6ecb0fbd9d31"
 
 [[package]]
 name = "cxxbridge-macro"
-version = "1.0.92"
+version = "1.0.93"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b75aed41bb2e6367cae39e6326ef817a851db13c13e4f3263714ca3cfb8de56"
+checksum = "631569015d0d8d54e6c241733f944042623ab6df7bc3be7466874b05fcdb1c5f"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 1.0.109",
+ "syn 2.0.0",
 ]
 
 [[package]]
@@ -2415,9 +2415,9 @@ checksum = "30e22bd8629359895450b59ea7a776c850561b96a3b1d31321c1949d9e6c9146"
 
 [[package]]
 name = "is-terminal"
-version = "0.4.4"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "21b6b32576413a8e69b90e952e4a026476040d81017b80445deda5f2d3921857"
+checksum = "8687c819457e979cc940d09cb16e42a1bf70aa6b60a549de6d3a62a0ee90c69e"
 dependencies = [
  "hermit-abi 0.3.1",
  "io-lifetimes",
@@ -2508,7 +2508,7 @@ checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
 [[package]]
 name = "leptos"
 version = "0.2.3"
-source = "git+https://github.com/leptos-rs/leptos.git#a9f778459a568c27472e37db41a3af85fbf80305"
+source = "git+https://github.com/leptos-rs/leptos.git#1698ffa7dbcdfbc2cf760a884986a2c24e76d11d"
 dependencies = [
  "cfg-if",
  "leptos_config",
@@ -2524,7 +2524,7 @@ dependencies = [
 [[package]]
 name = "leptos_axum"
 version = "0.2.3"
-source = "git+https://github.com/leptos-rs/leptos.git#a9f778459a568c27472e37db41a3af85fbf80305"
+source = "git+https://github.com/leptos-rs/leptos.git#1698ffa7dbcdfbc2cf760a884986a2c24e76d11d"
 dependencies = [
  "axum",
  "futures 0.3.27",
@@ -2541,7 +2541,7 @@ dependencies = [
 [[package]]
 name = "leptos_config"
 version = "0.2.3"
-source = "git+https://github.com/leptos-rs/leptos.git#a9f778459a568c27472e37db41a3af85fbf80305"
+source = "git+https://github.com/leptos-rs/leptos.git#1698ffa7dbcdfbc2cf760a884986a2c24e76d11d"
 dependencies = [
  "config",
  "fs",
@@ -2554,7 +2554,7 @@ dependencies = [
 [[package]]
 name = "leptos_dom"
 version = "0.2.3"
-source = "git+https://github.com/leptos-rs/leptos.git#a9f778459a568c27472e37db41a3af85fbf80305"
+source = "git+https://github.com/leptos-rs/leptos.git#1698ffa7dbcdfbc2cf760a884986a2c24e76d11d"
 dependencies = [
  "async-recursion",
  "cfg-if",
@@ -2581,7 +2581,7 @@ dependencies = [
 [[package]]
 name = "leptos_hot_reload"
 version = "0.2.3"
-source = "git+https://github.com/leptos-rs/leptos.git#a9f778459a568c27472e37db41a3af85fbf80305"
+source = "git+https://github.com/leptos-rs/leptos.git#1698ffa7dbcdfbc2cf760a884986a2c24e76d11d"
 dependencies = [
  "anyhow",
  "camino",
@@ -2598,7 +2598,7 @@ dependencies = [
 [[package]]
 name = "leptos_integration_utils"
 version = "0.2.3"
-source = "git+https://github.com/leptos-rs/leptos.git#a9f778459a568c27472e37db41a3af85fbf80305"
+source = "git+https://github.com/leptos-rs/leptos.git#1698ffa7dbcdfbc2cf760a884986a2c24e76d11d"
 dependencies = [
  "futures 0.3.27",
  "leptos",
@@ -2610,7 +2610,7 @@ dependencies = [
 [[package]]
 name = "leptos_macro"
 version = "0.2.3"
-source = "git+https://github.com/leptos-rs/leptos.git#a9f778459a568c27472e37db41a3af85fbf80305"
+source = "git+https://github.com/leptos-rs/leptos.git#1698ffa7dbcdfbc2cf760a884986a2c24e76d11d"
 dependencies = [
  "attribute-derive",
  "cfg-if",
@@ -2631,7 +2631,7 @@ dependencies = [
 [[package]]
 name = "leptos_meta"
 version = "0.2.3"
-source = "git+https://github.com/leptos-rs/leptos.git#a9f778459a568c27472e37db41a3af85fbf80305"
+source = "git+https://github.com/leptos-rs/leptos.git#1698ffa7dbcdfbc2cf760a884986a2c24e76d11d"
 dependencies = [
  "cfg-if",
  "leptos",
@@ -2643,7 +2643,7 @@ dependencies = [
 [[package]]
 name = "leptos_reactive"
 version = "0.2.3"
-source = "git+https://github.com/leptos-rs/leptos.git#a9f778459a568c27472e37db41a3af85fbf80305"
+source = "git+https://github.com/leptos-rs/leptos.git#1698ffa7dbcdfbc2cf760a884986a2c24e76d11d"
 dependencies = [
  "base64 0.21.0",
  "cfg-if",
@@ -2666,7 +2666,7 @@ dependencies = [
 [[package]]
 name = "leptos_router"
 version = "0.2.3"
-source = "git+https://github.com/leptos-rs/leptos.git#a9f778459a568c27472e37db41a3af85fbf80305"
+source = "git+https://github.com/leptos-rs/leptos.git#1698ffa7dbcdfbc2cf760a884986a2c24e76d11d"
 dependencies = [
  "cfg-if",
  "common_macros",
@@ -2691,7 +2691,7 @@ dependencies = [
 [[package]]
 name = "leptos_server"
 version = "0.2.3"
-source = "git+https://github.com/leptos-rs/leptos.git#a9f778459a568c27472e37db41a3af85fbf80305"
+source = "git+https://github.com/leptos-rs/leptos.git#1698ffa7dbcdfbc2cf760a884986a2c24e76d11d"
 dependencies = [
  "lazy_static",
  "leptos_reactive",
@@ -4573,7 +4573,7 @@ dependencies = [
 [[package]]
 name = "server_fn"
 version = "0.2.3"
-source = "git+https://github.com/leptos-rs/leptos.git#a9f778459a568c27472e37db41a3af85fbf80305"
+source = "git+https://github.com/leptos-rs/leptos.git#1698ffa7dbcdfbc2cf760a884986a2c24e76d11d"
 dependencies = [
  "ciborium",
  "const_format",
@@ -4595,7 +4595,7 @@ dependencies = [
 [[package]]
 name = "server_fn_macro"
 version = "0.2.3"
-source = "git+https://github.com/leptos-rs/leptos.git#a9f778459a568c27472e37db41a3af85fbf80305"
+source = "git+https://github.com/leptos-rs/leptos.git#1698ffa7dbcdfbc2cf760a884986a2c24e76d11d"
 dependencies = [
  "const_format",
  "proc-macro-error",
@@ -4609,7 +4609,7 @@ dependencies = [
 [[package]]
 name = "server_fn_macro_default"
 version = "0.2.3"
-source = "git+https://github.com/leptos-rs/leptos.git#a9f778459a568c27472e37db41a3af85fbf80305"
+source = "git+https://github.com/leptos-rs/leptos.git#1698ffa7dbcdfbc2cf760a884986a2c24e76d11d"
 dependencies = [
  "server_fn_macro",
  "syn 1.0.109",
