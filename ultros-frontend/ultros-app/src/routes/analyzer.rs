@@ -2,7 +2,7 @@ use chrono::{Duration, Utc};
 use humantime::{format_duration, parse_duration};
 use leptos::*;
 use leptos_router::*;
-use std::{cmp::Reverse, collections::HashMap, rc::Rc};
+use std::{cmp::Reverse, collections::HashMap, rc::Rc, str::FromStr, fmt::Display};
 use ultros_api_types::{
     cheapest_listings::CheapestListings,
     recent_sales::{RecentSales, SaleData},
@@ -155,6 +155,67 @@ enum SortMode {
     Profit,
 }
 
+impl FromStr for SortMode {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "roi" => Ok(SortMode::Roi),
+            "profit" => Ok(SortMode::Profit),
+            _ => Err(())
+        }
+    }
+}
+
+impl Display for SortMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", match self {
+            SortMode::Roi => "roi",
+            SortMode::Profit => "profit",
+        })
+    }
+}
+
+fn use_query_item<T>(
+    cx: Scope,
+    parameter: &'static str,
+) -> (Signal<Option<T>>, SignalSetter<Option<T>>)
+where T: FromStr + ToString + PartialEq {
+    let router = use_router(cx);
+    let query_map = use_query_map(cx);
+
+    let read = create_memo(cx, move |_| {
+        query_map.with(|query| query.get(&parameter).and_then(|s| s.parse().ok()))
+    });
+    let navigate = use_navigate(cx);
+    let set = move |value: Option<T>| {
+        let mut query_map = query_map();
+        let path_name = router.pathname()();
+        match value {
+            Some(value) => {
+                query_map.insert(parameter.to_string(), value.to_string());
+            }
+            None => {
+                query_map.remove(&parameter);
+            }
+        }
+        let query_string = query_map.to_query_string();
+        
+        if let Err(e) = navigate(
+            &format!("{path_name}{query_string}"),
+            NavigateOptions {
+                resolve: false,
+                replace: true,
+                scroll: true,
+                state: State(None),
+            },
+        ) {
+            error!("Unable to navigate {e:?}");
+        }
+    };
+    (read.into(), set.mapped_signal_setter(cx))
+}
+
 #[component]
 fn AnalyzerTable(
     cx: Scope,
@@ -169,12 +230,13 @@ fn AnalyzerTable(
     // get ranges of possible values for our sliders
 
     let items = &xiv_gen_db::decompress_data().items;
-    let (sort_mode, set_sort_mode) = create_signal(cx, SortMode::Roi);
-    let (minimum_profit, set_minimum_profit) = create_signal(cx, Ok(0));
-    let (minimum_roi, set_minimum_roi) = create_signal(cx, Ok(0));
-    let (max_predicted_time, set_max_predicted_time) = create_signal(cx, "1 week".to_string());
-    let (world_filter, set_world_filter) = create_signal(cx, Option::<String>::None);
-    let (datacenter_filter, set_datacenter_filter) = create_signal(cx, Option::<String>::None);
+    let (sort_mode, set_sort_mode) = use_query_item::<SortMode>(cx, "sort");
+    let (minimum_profit, set_minimum_profit) = use_query_item::<i32>(cx, "profit");
+    let (minimum_roi, set_minimum_roi) = use_query_item(cx, "roi");
+    // let (max_predicted_time, set_max_predicted_time) = create_signal(cx, "1 week".to_string());
+    let (max_predicted_time, set_max_predicted_time) = use_query_item::<String>(cx, "next-sale");
+    let (world_filter, set_world_filter) = use_query_item::<String>(cx, "world");
+    let (datacenter_filter, set_datacenter_filter) = use_query_item::<String>(cx, "datacenter");
     let world_clone = worlds.clone(); // cloned to pass into closure
     let world_filter_list = create_memo(cx, move |_| {
         let world = world_filter().or_else(move || datacenter_filter())?;
@@ -191,7 +253,7 @@ fn AnalyzerTable(
             &world_clone.lookup_world_by_name(&world())?,
         ))
     });
-    let predicted_time = create_memo(cx, move |_| parse_duration(&max_predicted_time()));
+    let predicted_time = create_memo(cx, move |_| parse_duration(&max_predicted_time().unwrap_or_default()));
     let predicted_time_string = move || {
         predicted_time()
             .map(|duration| format_duration(duration).to_string())
@@ -235,7 +297,7 @@ fn AnalyzerTable(
                         .unwrap_or_default()
             })
             .collect::<Vec<_>>();
-        match sort_mode() {
+        match sort_mode().unwrap_or(SortMode::Roi) {
             SortMode::Roi => sorted_data.sort_by_key(|data| Reverse(data.return_on_investment)),
             SortMode::Profit => sorted_data.sort_by_key(|data| Reverse(data.profit)),
         }
@@ -246,34 +308,34 @@ fn AnalyzerTable(
     view! { cx,
        <div class="flex flex-row">
            <div>
-               {move || if let Ok(minimum_profit) = minimum_profit() {
+               {move || if let Some(minimum_profit) = minimum_profit() {
                    view!{cx, <p>"minimum profit:"<br/><Gil amount=minimum_profit/></p>}
                } else {
                    view!{cx, <p>"Minimum profit not set"</p>}
                }}
-               <input min=0 max=100000 type="number" on:input=move |input| set_minimum_profit(event_target_value(&input).parse::<i32>()) />
+               <input min=0 max=100000 type="number" value=minimum_profit on:input=move |input| set_minimum_profit(event_target_value(&input).parse::<i32>().ok()) />
            </div>
            <div>
-               {move || if let Ok(minimum_roi) = minimum_roi() {
+               {move || if let Some(minimum_roi) = minimum_roi() {
                    view!{cx, <p>"minimum ROI:"<br/>{minimum_roi}"%"</p>}
                } else {
                    view!{cx, <p>"Minimum ROI not set"</p>}
                }}
-               <input min=0 max=100000 type="number" on:input=move |input| set_minimum_roi(event_target_value(&input).parse::<i32>()) />
+               <input min=0 max=100000 type="number" on:input=move |input| set_minimum_roi(event_target_value(&input).parse::<i32>().ok()) />
            </div>
            <div>
                <p>"minimum time (use time notation, ex. 1w 30m) :" <br/>{predicted_time_string}</p>
-               <input on:input=move |input| set_max_predicted_time(event_target_value(&input)) />
+               <input on:input=move |input| set_max_predicted_time(Some(event_target_value(&input))) />
            </div>
        </div>
        <div class="grid-table" role="table">
         <div class="grid-header" role="rowgroup">
             <div role="columnheader" style="width: 25px">"HQ"</div>
             <div role="columnheader first" style="width: 450px">"Item"</div>
-            <div role="columnheader" style="width:100px;" on:click=move |_| set_sort_mode(SortMode::Profit)>
+            <div role="columnheader" style="width:100px;" on:click=move |_| set_sort_mode(Some(SortMode::Profit))>
                 <div class="flex-row flex-space">
                 {move || {
-                    match sort_mode() {
+                    match sort_mode().unwrap_or(SortMode::Roi) {
                         SortMode::Profit => {
                             view!{cx, "Profit"<i class="fa-solid fa-sort-down"></i>}.into_view(cx)
                         },
@@ -282,10 +344,10 @@ fn AnalyzerTable(
                 }}
                 </div>
             </div>
-            <div role="columnheader" style="width: 100px;" on:click=move |_| set_sort_mode(SortMode::Roi)>
+            <div role="columnheader" style="width: 100px;" on:click=move |_| set_sort_mode(Some(SortMode::Roi))>
                 <div class="flex-row flex-space">
                 {move || {
-                    match sort_mode() {
+                    match sort_mode().unwrap_or(SortMode::Roi) {
                         SortMode::Roi => {
                             view!{cx, "R.O.I"<i class="fa-solid fa-sort-down"></i>}.into_view(cx)
                         },
