@@ -1,4 +1,7 @@
-use cookie::{Cookie, SameSite};
+use cookie::{
+    time::{Duration, OffsetDateTime},
+    Cookie, SameSite,
+};
 use leptos::*;
 use ultros_api_types::{
     world::World,
@@ -31,6 +34,7 @@ pub fn get_homeworld(cx: Scope) -> (Signal<Option<World>>, SignalSetter<Option<W
                 cookie.set_same_site(SameSite::Strict);
                 cookie.set_secure(Some(true));
                 cookie.set_path("/");
+                cookie.set_expires(OffsetDateTime::now_utc() + Duration::weeks(30));
                 cookie
             });
             set_cookie(world);
@@ -92,6 +96,7 @@ pub fn get_price_zone(
                 cookie.set_same_site(SameSite::Strict);
                 cookie.set_secure(Some(true));
                 cookie.set_path("/");
+                cookie.set_expires(OffsetDateTime::now_utc() + Duration::weeks(30));
                 cookie
             });
             set_cookie(world);
