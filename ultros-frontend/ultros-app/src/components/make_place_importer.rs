@@ -56,7 +56,6 @@ fn parse_list(list: &str) -> Result<Vec<MakePlaceItemData>, ParseListError> {
 
 #[component]
 pub fn MakePlaceImporter(cx: Scope, list_id: Signal<i32>) -> impl IntoView {
-    let (is_open, set_is_open) = create_signal(cx, false);
     let (list, set_list) = create_signal(cx, "".to_string());
     let add_items_to_list = create_action(cx, move |list_items: &Vec<MakePlaceItemData>| {
         let list_items = list_items.clone();
@@ -73,8 +72,7 @@ pub fn MakePlaceImporter(cx: Scope, list_id: Signal<i32>) -> impl IntoView {
         }
     });
     view! {cx,
-        <button on:click=move |_| set_is_open(!is_open()) class="btn">"Bulk List"</button>
-        <div class="flex-column" class:hidden=move || !is_open()>
+        <div class="flex-column">
             <label>"Copy+Paste a list with a bunch of items in it formatted as Item1: Quantity. Make place users can paste their furniture+dye lists here."</label>
             <textarea on:input=move |input| set_list(event_target_value(&input))></textarea>
             <button on:click=move |_| {

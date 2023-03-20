@@ -159,17 +159,17 @@ impl UltrosDb {
         .await?)
     }
 
-    #[instrument(skip(self))]
+    // #[instrument(skip(self))]
     pub async fn add_items_to_list(
         &self,
         list: &list::Model,
         discord_user: i64,
-        items: Vec<list_item::Model>,
+        items: impl Iterator<Item = list_item::Model>,
     ) -> Result<u64> {
         if list.owner != discord_user {
             return Err(anyhow::anyhow!("Failed to add item to list"));
         }
-        let many = list_item::Entity::insert_many(items.into_iter().map(|item| {
+        let many = list_item::Entity::insert_many(items.map(|item| {
             let list_item::Model {
                 item_id,
                 list_id,

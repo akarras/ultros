@@ -17,13 +17,13 @@ fn item_set_iter(item: &'static Item) -> impl Iterator<Item = &'static Item> {
 }
 
 /// Creates an iterator over the ingredients in a recipe
-struct IngredientsIter(&'static Recipe, u8);
-impl IngredientsIter {
-    fn new(recipe: &'static Recipe) -> Self {
+pub(crate) struct IngredientsIter<'a>(&'a Recipe, u8);
+impl<'a> IngredientsIter<'a> {
+    pub(crate) fn new(recipe: &'a Recipe) -> Self {
         Self(recipe, 0)
     }
 }
-impl Iterator for IngredientsIter {
+impl<'a> Iterator for IngredientsIter<'a> {
     type Item = (ItemId, u8);
 
     fn next(&mut self) -> Option<Self::Item> {

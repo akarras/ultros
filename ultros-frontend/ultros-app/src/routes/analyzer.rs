@@ -2,7 +2,7 @@ use chrono::{Duration, Utc};
 use humantime::{format_duration, parse_duration};
 use leptos::*;
 use leptos_router::*;
-use std::{cmp::Reverse, collections::HashMap, rc::Rc, str::FromStr, fmt::Display};
+use std::{cmp::Reverse, collections::HashMap, fmt::Display, rc::Rc, str::FromStr};
 use ultros_api_types::{
     cheapest_listings::CheapestListings,
     recent_sales::{RecentSales, SaleData},
@@ -162,17 +162,21 @@ impl FromStr for SortMode {
         match s {
             "roi" => Ok(SortMode::Roi),
             "profit" => Ok(SortMode::Profit),
-            _ => Err(())
+            _ => Err(()),
         }
     }
 }
 
 impl Display for SortMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", match self {
-            SortMode::Roi => "roi",
-            SortMode::Profit => "profit",
-        })
+        write!(
+            f,
+            "{}",
+            match self {
+                SortMode::Roi => "roi",
+                SortMode::Profit => "profit",
+            }
+        )
     }
 }
 
@@ -180,7 +184,9 @@ fn use_query_item<T>(
     cx: Scope,
     parameter: &'static str,
 ) -> (Signal<Option<T>>, SignalSetter<Option<T>>)
-where T: FromStr + ToString + PartialEq {
+where
+    T: FromStr + ToString + PartialEq,
+{
     let router = use_router(cx);
     let query_map = use_query_map(cx);
 
@@ -200,7 +206,7 @@ where T: FromStr + ToString + PartialEq {
             }
         }
         let query_string = query_map.to_query_string();
-        
+
         if let Err(e) = navigate(
             &format!("{path_name}{query_string}"),
             NavigateOptions {
@@ -253,7 +259,9 @@ fn AnalyzerTable(
             &world_clone.lookup_world_by_name(&world())?,
         ))
     });
-    let predicted_time = create_memo(cx, move |_| parse_duration(&max_predicted_time().unwrap_or_default()));
+    let predicted_time = create_memo(cx, move |_| {
+        parse_duration(&max_predicted_time().unwrap_or_default())
+    });
     let predicted_time_string = move || {
         predicted_time()
             .map(|duration| format_duration(duration).to_string())

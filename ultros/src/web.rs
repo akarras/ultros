@@ -632,6 +632,20 @@ pub(crate) async fn post_item_to_list(
     Ok(Json(()))
 }
 
+pub(crate) async fn post_items_to_list(
+    State(db): State<UltrosDb>,
+    Path(id): Path<i32>,
+    user: AuthDiscordUser,
+    Json(items): Json<Vec<ListItem>>,
+) -> Result<Json<()>, ApiError> {
+    let list = db.get_list(id, user.id as i64).await?;
+
+    let _list = db
+        .add_items_to_list(&list, user.id as i64, items.into_iter().map(|i| i.into()))
+        .await?;
+    Ok(Json(()))
+}
+
 pub(crate) async fn delete_list_item(
     State(db): State<UltrosDb>,
     Path(id): Path<i32>,
@@ -814,6 +828,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/list/:id", get(get_list))
         .route("/api/v1/list/:id/listings", get(get_list_with_listings))
         .route("/api/v1/list/:id/add/item", post(post_item_to_list))
+        .route("/api/v1/list/:id/add/items", post(post_items_to_list))
         .route("/api/v1/list/:id/delete", get(delete_list))
         .route("/api/v1/list/item/:id/delete", get(delete_list_item))
         .route("/api/v1/world_data", get(world_data))

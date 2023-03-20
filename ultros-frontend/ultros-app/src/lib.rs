@@ -16,8 +16,8 @@ use crate::global_state::LocalWorldData;
 use crate::{
     components::{profile_display::*, search_box::*, tooltip::*},
     routes::{
-        analyzer::*, edit_lists::*, edit_retainers::*, home_page::*, item_explorer::*,
-        item_view::*, list_view::*, lists::*, profile::*, retainers::*,
+        analyzer::*, edit_retainers::*, home_page::*, item_explorer::*, item_view::*, list_view::*,
+        lists::*, profile::*, retainers::*,
     },
 };
 use leptos::*;
@@ -63,7 +63,7 @@ pub fn App(cx: Scope) -> impl IntoView {
                     "Alerts"
                 </A>
                 <A href={move || if let Some(v) = homeworld().map(|w| w.name) {
-                    format!("/analyzer/{v}")
+                    format!("/analyzer/{v}?")
                 } else {
                     "/analyzer".to_string()
                 }}>
@@ -99,9 +99,8 @@ pub fn App(cx: Scope) -> impl IntoView {
                     <Route path="listings" view=move |cx| view!{cx, <RetainerListings />}/>
                 </Route>
                 <Route path="list" view=move |cx| view!{cx, <Lists/>}>
-                    <Route path="edit" view=move |cx| view! {cx, <EditLists/>}/>
                     <Route path=":id" view=move |cx| view!{ cx, <ListView/>}/>
-                    <Route path="" view=move |cx| view!{cx, <ListsRoot/>}/>
+                    <Route path="" view=move |cx| view! {cx, <EditLists/>}/>
                 </Route>
                 <Route path="items" view=move |cx| view! { cx, <ItemExplorer/>}>
                     <Route path="jobset/:jobset" view=move |cx| view!{cx, <JobItems />}/>
