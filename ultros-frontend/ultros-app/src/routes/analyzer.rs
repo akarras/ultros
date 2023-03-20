@@ -6,13 +6,17 @@ use std::{cmp::Reverse, collections::HashMap, fmt::Display, rc::Rc, str::FromStr
 use ultros_api_types::{
     cheapest_listings::CheapestListings,
     recent_sales::{RecentSales, SaleData},
+    world::World,
     world_helper::{AnyResult, AnySelector, WorldHelper},
 };
 use xiv_gen::ItemId;
 
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
-    components::{clipboard::*, gil::*, item_icon::*, loading::*, tooltip::*, virtual_scroller::*},
+    components::{
+        clipboard::*, gil::*, item_icon::*, loading::*, tooltip::*, virtual_scroller::*,
+        world_picker::*,
+    },
     error::AppError,
     global_state::LocalWorldData,
 };
@@ -265,7 +269,7 @@ fn AnalyzerTable(
     let predicted_time_string = move || {
         predicted_time()
             .map(|duration| format_duration(duration).to_string())
-            .unwrap_or_default()
+            .unwrap_or("---".to_string())
     };
     let sorted_data = create_memo(cx, move |_| {
         let mut sorted_data = profits
@@ -314,26 +318,25 @@ fn AnalyzerTable(
         sorted_data
     });
     view! { cx,
-       <div class="flex flex-row">
-           <div>
-               {move || if let Some(minimum_profit) = minimum_profit() {
-                   view!{cx, <p>"minimum profit:"<br/><Gil amount=minimum_profit/></p>}
-               } else {
-                   view!{cx, <p>"Minimum profit not set"</p>}
-               }}
-               <input min=0 max=100000 type="number" value=minimum_profit on:input=move |input| set_minimum_profit(event_target_value(&input).parse::<i32>().ok()) />
+       <div class="flex flex-row content-well">
+            <span>"filter:"</span><br/>
+           <div class="flex-column">
+                <label for>"minimum profit:"<br/>
+               {move || minimum_profit().map(|profit| {
+                    view!{cx, <Gil amount=profit /> }
+               }.into_view(cx)).unwrap_or("---".into_view(cx))}
+               </label><br/>
+               <input id="minimum_profit" min=0 max=100000 type="number" prop:value=minimum_profit
+                    on:input=move |input| set_minimum_profit(event_target_value(&input).parse::<i32>().ok()) />
            </div>
-           <div>
-               {move || if let Some(minimum_roi) = minimum_roi() {
-                   view!{cx, <p>"minimum ROI:"<br/>{minimum_roi}"%"</p>}
-               } else {
-                   view!{cx, <p>"Minimum ROI not set"</p>}
-               }}
-               <input min=0 max=100000 type="number" on:input=move |input| set_minimum_roi(event_target_value(&input).parse::<i32>().ok()) />
+           <div class="flex-column">
+                <label for="minimum_roi">"minimum ROI:"<br/>{move || minimum_roi().map(|roi| format!("{roi}%")).unwrap_or("---".to_string())}</label><br/>
+               <input min=0 max=100000 type="number" prop:value=minimum_roi
+                on:input=move |input| set_minimum_roi(event_target_value(&input).parse::<i32>().ok()) />
            </div>
-           <div>
-               <p>"minimum time (use time notation, ex. 1w 30m) :" <br/>{predicted_time_string}</p>
-               <input on:input=move |input| set_max_predicted_time(Some(event_target_value(&input))) />
+           <div class="flex-column">
+               <label for="predicted_time">"minimum time (use time notation, ex. 1w 30m) :" <br/>{predicted_time_string}</label><br/>
+               <input id="predicted_time" prop:value=max_predicted_time on:input=move |input| set_max_predicted_time(Some(event_target_value(&input))) />
            </div>
        </div>
        <div class="grid-table" role="table">
@@ -475,7 +478,13 @@ pub fn AnalyzerWorldView(cx: Scope) -> impl IntoView {
 
     view!{cx, <div class="container">
             <div class="main-content">
-                <span class="title">"Analyzer Results for "{world}</span>
+                <span class="title">"Resale Analyzer Results for "{world}</span><br/>
+                <AnalyzerWorldNavigator /><br />
+                <span>"The analyzer will show items that sell more on "{world}" than they can be purchased for."</span><br/>
+                <span>"These estimates aren't very accurate, but are meant to be easily accessible and fast to use."</span><br/>
+                <span>"Sample filters"</span>
+                <a class="btn" href="?next-sale=7d&roi=300&profit=0&">"300% return within 7 days"</a>
+                <a class="btn" href="?next-sale=1M&roi=500&profit=200000&">"500% return with 200K min gil profit within 1 month"</a>
                 <Suspense fallback=move || view!{cx, <Loading />}>
                 {move || {
                     let global_cheapest_listings = global_cheapest_listings.read(cx);
@@ -500,17 +509,32 @@ pub fn AnalyzerWorldView(cx: Scope) -> impl IntoView {
 }
 
 #[component]
+pub fn AnalyzerWorldNavigator(cx: Scope) -> impl IntoView {
+    let nav = use_navigate(cx);
+    let (current_world, set_current_world) = create_signal(cx, None::<World>);
+    create_effect(cx, move |_| {
+        if let Some(world) = current_world() {
+            let world = world.name;
+            if let Err(e) = nav(&format!("/analyzer/{world}"), NavigateOptions::default()) {
+                error!("{e:?}");
+            }
+        }
+    });
+    view! {cx, <label>"Analyzer World: "</label><WorldOnlyPicker current_world=current_world.into() set_current_world=set_current_world.into() />}
+}
+
+#[component]
 pub fn Analyzer(cx: Scope) -> impl IntoView {
-    // let worlds = use_context::<LocalWorldData>(cx).expect("Local world data");
     view! {
         cx,
         <div class="container">
             <div class="main-content">
                 <span class="content-title">"Analyzer"</span>
                 <div class="flex-column">
-                    <span>"The analyzer helps find items that are cheaper on other worlds that sell for more on your world."</span>
-                    <span>"Adjust parameters to try and find items that sell well"</span>
-                    <a href="/analyzer/Gilgamesh" class="btn">"Gilgamesh"</a>
+                    <span>"The analyzer helps find items that are cheaper on other worlds that sell for more on your world."</span><br/>
+                    <span>"Adjust parameters to try and find items that sell well"</span><br/>
+                    "Choose a world to get started:"<br/>
+                    <AnalyzerWorldNavigator />
                 </div>
             </div>
         </div>

@@ -28,6 +28,7 @@ pub fn WorldOnlyPicker(
                                 let world = worlds.lookup_selector(AnySelector::World(id)).and_then(|world| world.as_world().map(|w| w.clone()));
                                 set_current_world(world);
                             }>
+                            <option>""</option>
                             {move || current_world().map(|current| view!{cx, <option value=current.id>{current.name}</option>})}
                         {data.regions.into_iter().map(|region| {
                             view!{cx, // <optgroup label=region.name>
