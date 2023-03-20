@@ -2,7 +2,9 @@
 use leptos::*;
 use xiv_gen::{Item, ItemId, Recipe};
 
-use super::{cheapest_price::*, small_item_display::*};
+use crate::global_state::cheapest_prices::CheapestPrices;
+
+use super::{cheapest_price::*, gil::*, loading::*, small_item_display::*};
 
 /// This iterator will attempt to find related items using the classjobcategory && ilvl
 fn item_set_iter(item: &'static Item) -> impl Iterator<Item = &'static Item> {
@@ -17,6 +19,7 @@ fn item_set_iter(item: &'static Item) -> impl Iterator<Item = &'static Item> {
 }
 
 /// Creates an iterator over the ingredients in a recipe
+#[derive(Copy, Clone, Debug)]
 pub(crate) struct IngredientsIter<'a>(&'a Recipe, u8);
 impl<'a> IngredientsIter<'a> {
     pub(crate) fn new(recipe: &'a Recipe) -> Self {
@@ -63,6 +66,36 @@ fn recipe_tree_iter(item_id: ItemId) -> impl Iterator<Item = &'static Recipe> {
 }
 
 #[component]
+fn RecipePriceEstimate(cx: Scope, recipe: &'static Recipe) -> impl IntoView {
+    let items = &xiv_gen_db::decompress_data().items;
+    let cheapest_prices = use_context::<CheapestPrices>(cx).unwrap();
+
+    view! {cx,
+        <Suspense fallback=move || view!{cx, <Loading />}>
+            {move || cheapest_prices.read_listings.with(cx, |prices| {
+                prices.as_ref().ok().map(|prices| {
+                    let hq_amount : i32 = IngredientsIter::new(recipe)
+                    .flat_map(|(ingredient, amount)| items.get(&ingredient).map(|item| (item, amount)))
+                    .flat_map(|(item, quantity)| {
+                        prices.cheapest_listings.iter()
+                            .find(|l| l.item_id == item.key_id.0 && l.hq == item.can_be_hq)
+                            .map(|listings| (quantity, listings))
+                    }).map(|(quantity, listings)| listings.cheapest_price * quantity as i32).sum();
+                    let amount : i32 = IngredientsIter::new(recipe)
+                    .flat_map(|(ingredient, amount)| items.get(&ingredient).map(|item| (item, amount)))
+                    .flat_map(|(item, quantity)| {
+                        prices.cheapest_listings.iter()
+                            .find(|l| l.item_id == item.key_id.0 && !l.hq)
+                            .map(|listings| (quantity, listings))
+                    }).map(|(quantity, listings)| listings.cheapest_price * quantity as i32).sum();
+                    view!{cx, "HQ: " <Gil amount=hq_amount/> " LQ:" <Gil amount />}
+                })
+            }).flatten()}
+        </Suspense>
+    }
+}
+
+#[component]
 fn Recipe(cx: Scope, recipe: &'static Recipe) -> impl IntoView {
     let items = &xiv_gen_db::decompress_data().items;
     let ingredients = IngredientsIter::new(recipe)
@@ -79,7 +112,8 @@ fn Recipe(cx: Scope, recipe: &'static Recipe) -> impl IntoView {
         <div class="flex-row"><SmallItemDisplay item=target_item/><CheapestPrice item_id=target_item.key_id hq=None /></div>
         "Ingredients:"
         {ingredients}
-        <div class="flex-row">"Optimistic price to craft: "</div>
+        <div class="flex-row">"Price to craft: "</div>
+        <RecipePriceEstimate recipe />
     </div>})
 }
 
