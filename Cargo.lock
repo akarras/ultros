@@ -230,7 +230,7 @@ checksum = "0e97ce7de6cf12de5d7226c73f5ba9811622f4db3a5b91b55c53e987e5f91cba"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.0",
+ "syn 2.0.4",
 ]
 
 [[package]]
@@ -296,7 +296,7 @@ checksum = "86ea188f25f0255d8f92797797c97ebf5631fa88178beb1a46fdf5622c9a00e4"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.0",
+ "syn 2.0.4",
 ]
 
 [[package]]
@@ -665,9 +665,9 @@ dependencies = [
 
 [[package]]
 name = "bson"
-version = "2.6.0"
+version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6cc3e671fc2a91c8e84396cf14a8ed5a4c929739446aa6a33763b7e7d1568bf4"
+checksum = "9aeb8bae494e49dbc330dd23cf78f6f7accee22f640ce3ab17841badaa4ce232"
 dependencies = [
  "ahash 0.7.6",
  "base64 0.13.1",
@@ -1227,7 +1227,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "scratch",
- "syn 2.0.0",
+ "syn 2.0.4",
 ]
 
 [[package]]
@@ -1244,7 +1244,7 @@ checksum = "631569015d0d8d54e6c241733f944042623ab6df7bc3be7466874b05fcdb1c5f"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.0",
+ "syn 2.0.4",
 ]
 
 [[package]]
@@ -2412,6 +2412,15 @@ name = "ipnet"
 version = "2.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "30e22bd8629359895450b59ea7a776c850561b96a3b1d31321c1949d9e6c9146"
+
+[[package]]
+name = "iri-string"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f0f7638c1e223529f1bfdc48c8b133b9e0b434094d1d28473161ee48b235f78"
+dependencies = [
+ "nom",
+]
 
 [[package]]
 name = "is-terminal"
@@ -4474,7 +4483,7 @@ checksum = "78997f4555c22a7971214540c4a661291970619afd56de19f77e0de86296e1e5"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.0",
+ "syn 2.0.4",
 ]
 
 [[package]]
@@ -4917,9 +4926,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "2.0.0"
+version = "2.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4cff13bb1732bccfe3b246f3fdb09edfd51c01d6f5299b7ccd9457c2e4e37774"
+checksum = "2c622ae390c9302e214c31013517c2061ecb2699935882c60a9b37f82f8625ae"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5027,7 +5036,7 @@ checksum = "f9456a42c5b0d803c8cd86e73dd7cc9edd429499f37a3550d286d5e86720569f"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.0",
+ "syn 2.0.4",
 ]
 
 [[package]]
@@ -5064,6 +5073,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cd0cbfecb4d19b5ea75bb31ad904eb5b9fa13f21079c3b92017ebdf4999a5890"
 dependencies = [
  "itoa 1.0.6",
+ "js-sys",
  "serde",
  "time-core",
  "time-macros",
@@ -5230,6 +5240,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f873044bf02dd1e8239e9c1293ea39dad76dc594ec16185d0a1bf31d8dc8d858"
 dependencies = [
  "async-compression",
+ "base64 0.13.1",
  "bitflags",
  "bytes 1.4.0",
  "futures-core",
@@ -5238,14 +5249,18 @@ dependencies = [
  "http-body",
  "http-range-header",
  "httpdate",
+ "iri-string",
  "mime",
  "mime_guess",
  "percent-encoding",
  "pin-project-lite",
  "tokio",
  "tokio-util",
+ "tower",
  "tower-layer",
  "tower-service",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -5470,6 +5485,7 @@ dependencies = [
  "gloo-net",
  "humantime 2.1.0",
  "itertools",
+ "js-sys",
  "leptos",
  "leptos_axum",
  "leptos_meta",
@@ -5482,6 +5498,7 @@ dependencies = [
  "sublime_fuzzy",
  "thiserror",
  "thousands",
+ "time 0.3.20",
  "timeago",
  "ultros-api-types",
  "ultros-db",
@@ -5532,6 +5549,7 @@ dependencies = [
  "futures 0.3.27",
  "image",
  "indicatif",
+ "once_cell",
  "tar",
  "tempdir",
  "tokio",

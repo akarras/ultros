@@ -32,7 +32,7 @@ thiserror = "1.0.36"
 metrics = "0.20.1"
 metrics-exporter-prometheus = "0.11.0"
 serde_with = "2.1.0"
-tower-http = {version = "0.3.5", features = ["compression-gzip", "fs"]}
+tower-http = {version = "0.3.5", features = ["full"]}
 sha2 = "0.10.6"
 base64 = "0.21.0"
 smallvec = {version = "1.10.0", features = ["const_generics", "const_new", "union"]}

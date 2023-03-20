@@ -13,6 +13,18 @@ use super::{cookies::Cookies, LocalWorldData};
 const HOMEWORLD_COOKIE_NAME: &'static str = "HOME_WORLD";
 const DEFAULT_PRICE_ZONE: &'static str = "PRICE_ZONE";
 
+/// returns the current OffsetDateTime
+fn get_now() -> OffsetDateTime {
+    #[cfg(not(feature = "ssr"))]
+    {
+        js_sys::Date::new_0().into()
+    }
+    #[cfg(feature = "ssr")]
+    {
+        OffsetDateTime::now_utc()
+    }
+}
+
 pub fn get_homeworld(cx: Scope) -> (Signal<Option<World>>, SignalSetter<Option<World>>) {
     let cookies = use_context::<Cookies>(cx).unwrap();
     let (cookie, set_cookie) = cookies.get_cookie(cx, HOMEWORLD_COOKIE_NAME);
@@ -34,7 +46,7 @@ pub fn get_homeworld(cx: Scope) -> (Signal<Option<World>>, SignalSetter<Option<W
                 cookie.set_same_site(SameSite::Strict);
                 cookie.set_secure(Some(true));
                 cookie.set_path("/");
-                cookie.set_expires(OffsetDateTime::now_utc() + Duration::weeks(30));
+                cookie.set_expires(get_now() + Duration::days(365));
                 cookie
             });
             set_cookie(world);
@@ -88,6 +100,7 @@ pub fn get_price_zone(
                 .and_then(move |cookie| w.lookup_world_by_name(cookie.value()).map(|w| w.into()))
         })
     });
+
     let set_world = move |world: Option<OwnedResult>| {
         // only set the world cookie once the worlds are populated
         if worlds.0.read(cx).map(|w| w.ok()).flatten().is_some() {
@@ -96,7 +109,7 @@ pub fn get_price_zone(
                 cookie.set_same_site(SameSite::Strict);
                 cookie.set_secure(Some(true));
                 cookie.set_path("/");
-                cookie.set_expires(OffsetDateTime::now_utc() + Duration::weeks(30));
+                cookie.set_expires(get_now() + Duration::days(365));
                 cookie
             });
             set_cookie(world);
