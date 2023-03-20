@@ -107,7 +107,7 @@ fn Recipe(cx: Scope, recipe: &'static Recipe) -> impl IntoView {
             </div>})
         .collect::<Vec<_>>();
     let target_item = items.get(&recipe.item_result)?;
-    Some(view! {cx, <div>
+    Some(view! {cx, <div class="content-well">
         "Crafting Recipe:"
         <div class="flex-row"><SmallItemDisplay item=target_item/><CheapestPrice item_id=target_item.key_id hq=None /></div>
         "Ingredients:"
