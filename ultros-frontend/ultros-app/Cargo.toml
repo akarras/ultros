@@ -37,8 +37,10 @@ urlencoding = "2.1.2"
 anyhow = "1.0.69"
 cookie = {version = "0.17", features = ["percent-encode"]}
 wasm-bindgen = {version = "0.2", optional = true}
+time = "0.3.20"
+js-sys = {version = "0.3.61", optional = true}
 
 [features]
 default = ["ssr"] # this is mostly so if I run cargo check, it has a flavor to work on
-hydrate = ["leptos/hydrate", "leptos_meta/hydrate", "leptos_router/hydrate", "gloo", "gloo-net", "web-sys", "wasm-bindgen"]
+hydrate = ["leptos/hydrate", "leptos_meta/hydrate", "leptos_router/hydrate", "gloo", "gloo-net", "web-sys", "wasm-bindgen", "time/wasm-bindgen", "js-sys"]
 ssr = ["leptos/ssr", "leptos_meta/ssr", "leptos_router/ssr", "reqwest", "leptos_axum", "web-sys", "ultros-db"]

@@ -1,32 +1,56 @@
-use std::io::Read;
+use std::{
+    collections::HashMap,
+    io::{Cursor, Read},
+};
 
 use flate2::read::GzDecoder;
+use once_cell::sync::OnceCell;
 use tar::Archive;
 use ultros_api_types::icon_size::IconSize;
 
-pub fn get_item_image(item_id: i32, image_size: IconSize) -> Option<Vec<u8>> {
+fn parse_url(str: &str) -> (i32, IconSize) {
+    // id_size.webp
+    let (name, _ext) = str.split_once(".").unwrap();
+    // id size
+    let (id, size) = name.split_once("_").unwrap();
+    (
+        id.parse().unwrap(),
+        match size {
+            "Large" => IconSize::Large,
+            "Medium" => IconSize::Medium,
+            "Small" => IconSize::Small,
+            _ => panic!("Size did not match any known string? {}", size),
+        },
+    )
+}
+
+pub fn get_item_image(item_id: i32, image_size: IconSize) -> Option<&'static [u8]> {
     let tar = include_bytes!(concat!(env!("OUT_DIR"), "/images.tar.gz")).as_ref();
-    // somehow this is slower than converting images in real time- figure it out ;-;
-    let decoder = GzDecoder::new(tar);
-    let mut archive = Archive::new(decoder);
-    let file = format!("{item_id}_{image_size}.webp");
-    let mut data = vec![];
-    let entry = archive
-        .entries()
-        .ok()?
-        .flatten()
-        .find(|entry| {
-            entry
-                .path()
-                .ok()
-                .and_then(|path| path.as_os_str().to_str().map(|str| str.to_string()))
-                .map(|str| str == file)
-                .unwrap_or_default()
-        })
-        .map(|mut entry| entry.read_to_end(&mut data))?
-        .ok()?;
-    if entry == 0 {
-        return None;
-    }
-    Some(data)
+    static IMAGES: OnceCell<HashMap<(i32, IconSize), Vec<u8>>> = OnceCell::new();
+    // Dump all of our images into a static hashmap
+    let data = IMAGES.get_or_init(|| {
+        let mut decoder = GzDecoder::new(tar);
+        let mut data = vec![];
+        decoder.read_to_end(&mut data).unwrap();
+        let mut archive = Archive::new(Cursor::new(data));
+        let entries: HashMap<_, _> = archive
+            .entries_with_seek()
+            .ok()
+            .unwrap()
+            .flatten()
+            .map(|mut entry| {
+                let mut bytes = vec![];
+                entry.read_to_end(&mut bytes).unwrap();
+                entry
+                    .path()
+                    .ok()
+                    .and_then(|path| path.as_os_str().to_str().map(|str| parse_url(str)))
+                    .map(|key| (key, bytes))
+                    .unwrap()
+            })
+            .collect();
+        entries
+    });
+
+    data.get(&(item_id, image_size)).map(|v| v.as_slice())
 }
