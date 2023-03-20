@@ -10,7 +10,7 @@ use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, IntoActiveModel, ModelTrait,
     QueryFilter,
 };
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 use tracing::instrument;
 use universalis::ItemId;
 
@@ -148,15 +148,27 @@ impl UltrosDb {
         if list.owner != discord_user {
             return Err(anyhow::anyhow!("Failed to add item to list"));
         }
-        Ok(list_item::ActiveModel {
-            id: Default::default(),
-            item_id: ActiveValue::Set(item_id),
-            list_id: ActiveValue::Set(list.id),
-            hq: ActiveValue::Set(hq),
-            quantity: ActiveValue::Set(quantity),
+        // if the item already exists in the list, just update the existing list
+        let mut filter = list_item::Entity::find().filter(list_item::Column::ItemId.eq(item_id));
+        if let Some(hq) = hq {
+            filter = filter.filter(list_item::Column::Hq.eq(hq));
         }
-        .insert(&self.db)
-        .await?)
+        if let Some(item) = filter.one(&self.db).await? {
+            let new_quantity = item.quantity.unwrap_or(1) + quantity.unwrap_or(1);
+            let mut item = item.into_active_model();
+            item.quantity = ActiveValue::Set(Some(new_quantity));
+            Ok(item.update(&self.db).await?)
+        } else {
+            Ok(list_item::ActiveModel {
+                id: Default::default(),
+                item_id: ActiveValue::Set(item_id),
+                list_id: ActiveValue::Set(list.id),
+                hq: ActiveValue::Set(hq),
+                quantity: ActiveValue::Set(quantity),
+            }
+            .insert(&self.db)
+            .await?)
+        }
     }
 
     // #[instrument(skip(self))]
@@ -169,7 +181,36 @@ impl UltrosDb {
         if list.owner != discord_user {
             return Err(anyhow::anyhow!("Failed to add item to list"));
         }
-        let many = list_item::Entity::insert_many(items.map(|item| {
+        // for items that are already matching our list, we should update and insert
+        let mut existing_list_items: HashMap<_, _> = list
+            .find_related(list_item::Entity)
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .map(|item| ((item.hq, item.item_id), item))
+            .collect();
+
+        let mut insert_queue = vec![];
+        let mut updated_models = vec![];
+        items.into_iter().for_each(|item| {
+            let key = (item.hq, item.item_id);
+            // removing from the map and assuming that the incoming list won't have duplicates
+            if let Some(existing) = existing_list_items.remove(&key) {
+                let new_quantity = existing.quantity.unwrap_or(1) + item.quantity.unwrap_or(1);
+                let mut existing = existing.into_active_model();
+                existing.quantity = ActiveValue::Set(Some(new_quantity));
+                updated_models.push(existing);
+            } else {
+                insert_queue.push(item);
+            }
+        });
+        try_join_all(
+            updated_models
+                .into_iter()
+                .map(|updated| updated.update(&self.db)),
+        )
+        .await?;
+        let many = list_item::Entity::insert_many(insert_queue.into_iter().map(|item| {
             let list_item::Model {
                 item_id,
                 list_id,

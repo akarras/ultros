@@ -114,7 +114,8 @@ pub fn ListView(cx: Scope) -> impl IntoView {
                 })
             };
             view!{cx, <div>
-                    <div class="flex-row"><label>"Item search:"</label><input prop:value=search on:input=move |input| set_search(event_target_value(&input)) /></div>
+                    <div class="flex-row"><label>"item search:"</label><br/>
+                    <input prop:value=search on:input=move |input| set_search(event_target_value(&input)) /></div>
                     <div class="content-well flex-column">
                         {move || {
                             let search = item_search()
@@ -172,7 +173,8 @@ pub fn ListView(cx: Scope) -> impl IntoView {
                     let pending = recipe_add.pending();
                     let result = recipe_add.value();
                     view!{cx,
-                        <div class="flex-row"><label>"recipe search:"</label><input prop:value=recipe on:input=move |input| set_recipe(event_target_value(&input)) /></div>
+                        <div class="flex-row"><label>"recipe search:"</label><br/>
+                        <input prop:value=recipe on:input=move |input| set_recipe(event_target_value(&input)) /></div>
                         {move || pending().then(|| view!{cx, <Loading/>})}
                         {move || result().map(|v| match v {
                             Ok(()) => view!{cx, "Success"}.into_view(cx),
@@ -197,7 +199,7 @@ pub fn ListView(cx: Scope) -> impl IntoView {
                                 <input type="checkbox" prop:checked=hq on:click=move |_| hq.update(|h| *h = !*h) />
                                 <label>"Ignore Crystals"</label>
                                 <input type="checkbox" prop:checked=crystals on:click=move |_| crystals.update(|c| *c = !*c) />
-                                <button on:click=move |_| {
+                                <button class="btn" on:click=move |_| {
                                     recipe_add.dispatch((ri, quantity(), hq(), crystals()));
                                 }>"Add Recipe"</button>
                             </div>}
@@ -209,7 +211,7 @@ pub fn ListView(cx: Scope) -> impl IntoView {
                     view!{cx, <MakePlaceImporter list_id=Signal::derive(cx, move || params.with(|p| p.get("id").as_ref().map(|id| id.parse::<i32>().ok())).flatten().unwrap_or_default()) />}
                 }.into_view(cx),
         }}
-        <Suspense fallback=move || view!{cx, <Loading />}>
+        <Transition fallback=move || view!{cx, <Loading />}>
         {move || list_view.read(cx).map(move |list| match list {
             Ok((list, items)) => view!{cx,
                 <div class="content-well">
@@ -258,6 +260,6 @@ pub fn ListView(cx: Scope) -> impl IntoView {
             Err(e) => view!{cx, <div>{format!("Failed to get items\n{e}")}</div>}
         })
         }
-        </Suspense>
+        </Transition>
     }
 }
