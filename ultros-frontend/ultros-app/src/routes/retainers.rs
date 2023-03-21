@@ -151,7 +151,7 @@ pub fn Retainers(cx: Scope) -> impl IntoView {
                     "Undercuts"
                 </A>
             </div>
-            <div class="main-content">
+            <div class="main-content" style="display: flex; flex-direction: column; align-items: start;">
                 <Outlet />
             </div>
         </div>

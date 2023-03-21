@@ -452,12 +452,12 @@ div > .search-box {
 }
 
 .content-well {
-  margin: 7px;
-  padding: 12px;
-  background-color: rgba(0, 0, 0, 0.08);
-  border-radius: 8px;
-  max-height: 800px;
-  overflow: auto;
+	margin: 10px;
+	padding: 5px 15px;
+	background-color: rgba(13, 5, 14, .7);
+	border-radius: 8px;
+	max-height: 800px;
+	overflow: auto;
 }
 
 .content-title {
@@ -915,4 +915,12 @@ select optgroup {
 .grid-row {
   display: flex;
   flex-direction: row;
+}
+
+.grid-row.odd {
+  background-color: rgba(64, 33, 68, 0.7);
+}
+
+.grid-row.even {
+  background-color: rgba(136, 0, 96, 0.09);
 }

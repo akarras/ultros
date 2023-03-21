@@ -313,10 +313,10 @@ fn AnalyzerTable(
             SortMode::Roi => sorted_data.sort_by_key(|data| Reverse(data.return_on_investment)),
             SortMode::Profit => sorted_data.sort_by_key(|data| Reverse(data.profit)),
         }
-
-        // sorted_data.truncate(100);
-        sorted_data
+        sorted_data.into_iter().enumerate().collect()
     });
+    const DATACENTER_WIDTH: &str = "width: 130px";
+    const WORLD_WIDTH: &str = "width: 170px";
     view! { cx,
        <div class="flex flex-row content-well">
             <span>"filter:"</span><br/>
@@ -367,18 +367,22 @@ fn AnalyzerTable(
                 }}
                 </div>
             </div>
-            <div role="columnheader" style="width: 180px;">"World" {move || world_filter().map(move |world| view!{cx, <a on:click=move |_| set_world_filter(None)>"[" {world} "]"</a>})}</div>
-            <div role="columnheader" style="width: 180px;">"Datacenter" {move || datacenter_filter().map(move |datacenter| view!{cx, <a on:click=move |_| set_datacenter_filter(None)>"[" {datacenter} "]"</a>})}</div>
+            <div role="columnheader" style=WORLD_WIDTH>
+                "World" {move || world_filter().map(move |world| view!{cx, <a on:click=move |_| set_world_filter(None)>"[" {world} "]"</a>})}
+            </div>
+            <div role="columnheader" style=DATACENTER_WIDTH>
+                "Datacenter" {move || datacenter_filter().map(move |datacenter| view!{cx, <a on:click=move |_| set_datacenter_filter(None)>"[" {datacenter} "]"</a>})}
+            </div>
             <div role="columnheader" style="widht: 300px;">"Next sale"</div>
         </div>
         <VirtualScroller
             viewport_height=1000.0
             row_height=37.3
             each=sorted_data.into()
-            key=move |data| {
-                (data.sale_summary.item_id, data.cheapest_world_id, data.sale_summary.hq)
+            key=move |(i, data)| {
+                (*i, data.sale_summary.item_id, data.cheapest_world_id, data.sale_summary.hq)
             }
-            view=move |cx, data| {
+            view=move |cx, (i, data)| {
                 let world = worlds.lookup_selector(AnySelector::World(data.cheapest_world_id));
                 let datacenter = world
                     .as_ref()
@@ -400,7 +404,7 @@ fn AnalyzerTable(
                     .get(&ItemId(item_id))
                     .map(|item| item.name.as_str())
                     .unwrap_or_default();
-                template! {cx, <div class="grid-row" role="row-group">
+                template! {cx, <div class="grid-row" role="row-group" class:even=move || (i % 2) == 0 class:odd=move || (i % 2) == 1>
                     <div role="cell" style="width: 25px;">{data.sale_summary.hq.then(|| "✅")}</div>
                     <div role="cell" class="flex flex-row" style="width: 450px;">
                         <a href=format!("/item/{world}/{item_id}")>
@@ -411,8 +415,8 @@ fn AnalyzerTable(
                     </div>
                     <div role="cell" style="width: 100px;"><Gil amount=data.profit /></div>
                     <div role="cell" style="width: 100px;">{data.return_on_investment}"%"</div>
-                    <div role="cell" style="width: 180px;"><Gil amount=data.cheapest_price/>" on "<a on:click=move |_| { set_datacenter_filter(None); set_world_filter(Some(world_event.clone())); }>{world}</a></div>
-                    <div role="cell" style="width: 180px;"><a on:click= move |_| { set_world_filter(None); set_datacenter_filter(Some(datacenter_event.clone())) }>{&datacenter}</a></div>
+                    <div role="cell" style=WORLD_WIDTH><Gil amount=data.cheapest_price/>" on "<a on:click=move |_| { set_datacenter_filter(None); set_world_filter(Some(world_event.clone())); }>{world}</a></div>
+                    <div role="cell" style=DATACENTER_WIDTH><a on:click= move |_| { set_world_filter(None); set_datacenter_filter(Some(datacenter_event.clone())) }>{&datacenter}</a></div>
                     <div role="cell" style="width: 300px;">{data.sale_summary
                             .avg_sale_duration
                             .and_then(|sale_duration| {
@@ -483,7 +487,7 @@ pub fn AnalyzerWorldView(cx: Scope) -> impl IntoView {
                 <span>"The analyzer will show items that sell more on "{world}" than they can be purchased for."</span><br/>
                 <span>"These estimates aren't very accurate, but are meant to be easily accessible and fast to use."</span><br/>
                 <span>"Sample filters"</span>
-                <a class="btn" href="?next-sale=7d&roi=300&profit=0&">"300% return within 7 days"</a>
+                <a class="btn" href="?next-sale=7d&roi=300&profit=0&sort=profit&">"300% return within 7 days"</a>
                 <a class="btn" href="?next-sale=1M&roi=500&profit=200000&">"500% return with 200K min gil profit within 1 month"</a>
                 <Suspense fallback=move || view!{cx, <Loading />}>
                 {move || {
@@ -496,11 +500,10 @@ pub fn AnalyzerWorldView(cx: Scope) -> impl IntoView {
                             view!{cx, <AnalyzerTable sales global_cheapest_listings world_cheapest_listings worlds world=world.into() />}.into_view(cx)
                         },
                         (Some(sales), Some(listings), Some(world_cheapest), Some(worlds)) => {
-                            format!("Failed to get listings/sales {:?} {:?} {:?} {:?}", sales.err(), listings.err(), world_cheapest, worlds.err()).into_view(cx)
+                            format!("Failed to get listings/sales {} {} {} {}",
+                                sales.is_ok(), listings.is_ok(), world_cheapest.is_ok(), worlds.is_ok()).into_view(cx)
                         },
-                        _ => {
-                            view!{cx, <Loading/>}.into_view(cx)
-                        }
+                        _ => {}.into_view(cx)
                     }
                 }}
                 </Suspense>
