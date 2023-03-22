@@ -28,6 +28,7 @@ use std::time::Duration;
 use tokio::time::timeout;
 use tower_http::compression::predicate::{NotForContentType, SizeAbove};
 use tower_http::compression::{CompressionLayer, Predicate};
+use tower_http::trace::TraceLayer;
 use tracing::debug;
 use ultros_api_types::icon_size::IconSize;
 use ultros_api_types::list::{CreateList, List, ListItem};
@@ -871,6 +872,7 @@ pub(crate) async fn start_web(state: WebState) {
         .nest("/", create_leptos_app().await.unwrap())
         .with_state(state)
         .route_layer(middleware::from_fn(track_metrics))
+        .layer(TraceLayer::new_for_http())
         .layer(
             CompressionLayer::new().compress_when(
                 SizeAbove::new(256)

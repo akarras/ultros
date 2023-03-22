@@ -1,9 +1,9 @@
-use std::collections::HashMap;
-
 use futures::future::join_all;
 use itertools::Itertools;
 use leptos::Serializable;
 use leptos::*;
+use std::collections::HashMap;
+use tracing::instrument;
 use ultros_api_types::{
     cheapest_listings::CheapestListings,
     list::{CreateList, List, ListItem},
@@ -267,6 +267,7 @@ where
 }
 
 #[cfg(not(feature = "ssr"))]
+#[instrument(skip(cx))]
 pub(crate) async fn fetch_api<T>(cx: Scope, path: &str) -> AppResult<T>
 where
     T: Serializable,
@@ -296,12 +297,14 @@ where
 }
 
 #[cfg(feature = "ssr")]
+#[instrument(skip(cx))]
 pub(crate) async fn fetch_api<T>(cx: Scope, path: &str) -> AppResult<T>
 where
     T: Serializable,
 {
     // use the original headers of the scope
     // add the hostname when using the ssr path.
+
     let req_parts = use_context::<leptos_axum::RequestParts>(cx).ok_or(AppError::ParamMissing)?;
     let mut headers = req_parts.headers;
     let hostname = "http://localhost:8080";
@@ -324,6 +327,7 @@ where
 }
 
 #[cfg(not(feature = "ssr"))]
+#[instrument(skip(cx, json))]
 pub(crate) async fn post_api<Y, T>(cx: Scope, path: &str, json: Y) -> AppResult<T>
 where
     Y: serde::Serialize,
@@ -355,6 +359,7 @@ where
 }
 
 #[cfg(feature = "ssr")]
+#[instrument(skip(_cx, _json))]
 pub(crate) async fn post_api<Y, T>(_cx: Scope, _path: &str, _json: Y) -> AppResult<T>
 where
     Y: Serializable,

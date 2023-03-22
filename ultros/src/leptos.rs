@@ -17,14 +17,15 @@ use axum::{
 use leptos::*;
 use leptos_axum::generate_route_list;
 use leptos_router::SsrMode;
+use tracing::instrument;
 use ultros_app::*;
 
 use crate::web::{oauth::AuthDiscordUser, WebState};
 
-#[debug_handler]
+#[instrument(skip(options))]
 async fn custom_handler(
     // Path(id): Path<String>,
-    State(_state): State<WebState>,
+    // State(state): State<WebState>,
     user: Option<AuthDiscordUser>,
     Extension(options): Extension<Arc<LeptosOptions>>,
     req: Request<Body>,

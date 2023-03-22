@@ -138,7 +138,7 @@ pub fn RelatedItems(cx: Scope, item_id: ItemId) -> impl IntoView {
             {(!item_set.is_empty()).then(|| {
                 view!{cx, <div class="content-well flex-column">
                 <span class="content-title">"related items"</span>
-                <div class="flex-wrap">{item_set}</div>
+                <div class="flex-column">{item_set}</div>
             </div>}
             })}
         {(!recipes.is_empty()).then(|| {

@@ -25,7 +25,7 @@ use universalis::{ItemId, SaleView, WorldId};
 impl UltrosDb {
     /// Stores a sale from a given sale view.
     /// Demands that a world name for the sale is provided as it is optional on the sale view, but can be determined other ways
-    #[instrument(skip(self))]
+    #[instrument(skip(self, sales))]
     pub async fn update_sales(
         &self,
         mut sales: Vec<SaleView>,

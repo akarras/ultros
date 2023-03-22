@@ -20,7 +20,11 @@ use anyhow::Result;
 use axum_extra::extract::cookie::Key;
 use discord::start_discord;
 use event::{create_event_busses, EventProducer, EventType, ListingData};
+use opentelemetry::global;
+use opentelemetry::runtime::Tokio;
 use tracing::{error, info};
+use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 use ultros_db::entity::sale_history;
 use ultros_db::world_cache::WorldCache;
 use ultros_db::UltrosDb;
@@ -139,10 +143,10 @@ async fn init_db(
     Ok(())
 }
 
-#[tokio::main]
+#[tokio::main(worker_threads = 2)]
 async fn main() -> Result<()> {
     // Create the db before we proceed
-    tracing_subscriber::fmt::init();
+    // tracing_subscriber::fmt::init();
     info!("Ultros starting!");
     info!("Connecting DB");
     let db = UltrosDb::connect().await?;
@@ -200,6 +204,16 @@ async fn main() -> Result<()> {
         sales: senders.history.clone(),
     };
     update_service.start_service();
+    global::set_text_map_propagator(opentelemetry_jaeger::Propagator::new());
+    let tracer = opentelemetry_jaeger::new_agent_pipeline()
+        .with_endpoint("localhost:6831")
+        .with_service_name("ultros")
+        .with_auto_split_batch(true)
+        .install_batch(Tokio)?;
+    let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+    tracing_subscriber::registry()
+        .with(opentelemetry)
+        .try_init()?;
 
     let web_state = WebState {
         analyzer_service,
