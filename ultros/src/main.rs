@@ -145,7 +145,7 @@ async fn init_db(
     Ok(())
 }
 
-#[tokio::main(worker_threads = 2)]
+#[tokio::main]
 async fn main() -> Result<()> {
     // Create the db before we proceed
     tracing_subscriber::fmt::init();
