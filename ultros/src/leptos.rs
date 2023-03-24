@@ -7,8 +7,6 @@ use std::{error::Error, sync::Arc};
 ///
 use axum::{
     body::{Body, HttpBody},
-    debug_handler,
-    extract::State,
     http::Request,
     response::{IntoResponse, Response},
     routing::get,

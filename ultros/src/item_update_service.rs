@@ -3,15 +3,16 @@ use std::sync::Arc;
 use futures::{stream, StreamExt};
 use tokio::time::Instant;
 use tracing::{info, instrument};
+use ultros_api_types::websocket::{ListingEventData, SaleEventData};
 use ultros_db::{
-    entity::{listing_last_updated::Model, sale_history, world},
+    entity::{listing_last_updated::Model, world},
     partial_diff_iterator::PartialDiffIterator,
     world_cache::WorldCache,
     UltrosDb,
 };
 use universalis::{UniversalisClient, WorldId, WorldItemRecencyView};
 
-use crate::event::{EventProducer, EventType, ListingData};
+use crate::event::{EventProducer, EventType};
 
 /// Item update service attempts to keep ultros' data in sync with Universalis' data.
 /// It does this primarily by comparing the recently updated items on Universalis with recently updated items on ultros
@@ -20,8 +21,8 @@ pub(crate) struct UpdateService {
     pub(crate) db: UltrosDb,
     pub(crate) world_cache: Arc<WorldCache>,
     pub(crate) universalis: UniversalisClient,
-    pub(crate) listings: EventProducer<ListingData>,
-    pub(crate) sales: EventProducer<Vec<sale_history::Model>>,
+    pub(crate) listings: EventProducer<ListingEventData>,
+    pub(crate) sales: EventProducer<SaleEventData>,
 }
 
 struct CmpListing(Model);
@@ -77,19 +78,25 @@ impl UpdateService {
                         if let Ok((added, removed)) =
                             self.db.update_listings(listings, item_id, world_id).await
                         {
-                            let _ = self.listings.send(EventType::Add(Arc::new(ListingData {
-                                item_id,
-                                world_id,
-                                listings: added,
-                            })));
-                            let _ = self.listings.send(EventType::Add(Arc::new(ListingData {
-                                item_id,
-                                world_id,
-                                listings: removed,
-                            })));
+                            let _ =
+                                self.listings
+                                    .send(EventType::Add(Arc::new(ListingEventData {
+                                        item_id: item_id.0,
+                                        world_id: world_id.0,
+                                        listings: added,
+                                    })));
+                            let _ =
+                                self.listings
+                                    .send(EventType::Remove(Arc::new(ListingEventData {
+                                        item_id: item_id.0,
+                                        world_id: world_id.0,
+                                        listings: removed,
+                                    })));
                         }
                         if let Ok(added) = self.db.update_sales(sales, item_id, world_id).await {
-                            let _ = self.sales.send(EventType::Add(Arc::new(added)));
+                            let _ = self
+                                .sales
+                                .send(EventType::Add(Arc::new(SaleEventData { sales: added })));
                         }
                     }),
             )

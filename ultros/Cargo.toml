@@ -48,3 +48,4 @@ leptos_axum = {git = "https://github.com/leptos-rs/leptos.git"}
 leptos_router = {git = "https://github.com/leptos-rs/leptos.git"}
 ultros-app = {path = "../ultros-frontend/ultros-app", features = ["ssr"]}
 hyper = "0.14.24"
+tokio-stream = {version = "0.1.12", features = ["sync"]}

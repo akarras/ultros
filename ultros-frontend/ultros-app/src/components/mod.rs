@@ -5,6 +5,7 @@ pub mod fonts;
 pub mod gil;
 pub mod item_icon;
 pub mod listings_table;
+pub mod live_sale_ticker;
 pub mod loading;
 pub mod make_place_importer;
 pub mod price_history_chart;

@@ -1,5 +1,8 @@
 use crate::{
-    entity::{self, datacenter, final_fantasy_character, list, list_item, owned_retainers, region},
+    entity::{
+        self, datacenter, final_fantasy_character, list, list_item, owned_retainers, region,
+        unknown_final_fantasy_character,
+    },
     world_cache::WorldCache,
 };
 use thiserror::Error;
@@ -8,7 +11,7 @@ use ultros_api_types::{
     user::OwnedRetainer,
     world::{Datacenter, Region, World, WorldData},
     world_helper::AnySelector,
-    ActiveListing, FfxivCharacter, Retainer, SaleHistory,
+    ActiveListing, FfxivCharacter, Retainer, SaleHistory, UnknownCharacter,
 };
 
 #[derive(Debug, Error)]
@@ -139,6 +142,16 @@ impl From<&entity::world::Model> for World {
             id: *id,
             name: name.to_string(),
             datacenter_id: *datacenter_id,
+        }
+    }
+}
+
+impl From<&unknown_final_fantasy_character::Model> for UnknownCharacter {
+    fn from(value: &unknown_final_fantasy_character::Model) -> Self {
+        let unknown_final_fantasy_character::Model { id, name } = value;
+        Self {
+            id: *id,
+            name: name.clone(),
         }
     }
 }

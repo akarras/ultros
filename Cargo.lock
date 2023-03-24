@@ -5300,6 +5300,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -5588,6 +5589,7 @@ dependencies = [
  "smallvec",
  "thiserror",
  "tokio",
+ "tokio-stream",
  "tower-http",
  "tracing",
  "tracing-opentelemetry",
@@ -5632,6 +5634,7 @@ dependencies = [
  "plotters-canvas",
  "reqwest",
  "serde",
+ "serde_json",
  "sublime_fuzzy",
  "thiserror",
  "thousands",

@@ -19,13 +19,15 @@ use analyzer_service::AnalyzerService;
 use anyhow::Result;
 use axum_extra::extract::cookie::Key;
 use discord::start_discord;
-use event::{create_event_busses, EventProducer, EventType, ListingData};
+use event::{create_event_busses, EventProducer, EventType};
 use opentelemetry::global;
 use opentelemetry::runtime::Tokio;
 use tracing::{error, info};
 use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use ultros_db::entity::sale_history;
+use ultros_api_types::websocket::{ListingEventData, SaleEventData};
+use ultros_api_types::world::WorldData;
+use ultros_api_types::world_helper::WorldHelper;
 use ultros_db::world_cache::WorldCache;
 use ultros_db::UltrosDb;
 use universalis::websocket::event_types::{EventChannel, SubscribeMode, WSMessage};
@@ -36,8 +38,8 @@ use web::oauth::{AuthUserCache, DiscordAuthConfig, OAuthScope};
 
 async fn run_socket_listener(
     db: UltrosDb,
-    listings_tx: EventProducer<ListingData>,
-    sales_tx: EventProducer<Vec<sale_history::Model>>,
+    listings_tx: EventProducer<ListingEventData>,
+    sales_tx: EventProducer<SaleEventData>,
 ) {
     let mut socket = WebsocketClient::connect().await;
     socket
@@ -70,8 +72,8 @@ async fn run_socket_listener(
                         listings,
                     })) => match db.update_listings(listings.clone(), item, world).await {
                         Ok((listings, removed)) => {
-                            let listings = Arc::new(ListingData { item_id: item, world_id: world, listings });
-                            let removed = Arc::new(ListingData { item_id: item, world_id: world, listings: removed });
+                            let listings = Arc::new(ListingEventData { item_id: item.0, world_id: world.0, listings });
+                            let removed = Arc::new(ListingEventData { item_id: item.0, world_id: world.0, listings: removed });
                             match listings_tx.send(EventType::Remove(removed)) {
                                 Ok(o) => info!("sent removed listings {o} updates"),
                                 Err(e) => error!("Error removing listings {e}"),
@@ -91,7 +93,7 @@ async fn run_socket_listener(
                         match db.remove_listings(listings.clone(), item, world).await {
                             Ok(listings) => {
                                 info!("Removed listings {listings:?} {item:?} {world:?}");
-                                if let Err(e) = listings_tx.send(EventType::Remove(Arc::new(ListingData { item_id: item, world_id: world, listings }))) {
+                                if let Err(e) = listings_tx.send(EventType::Remove(Arc::new(ListingEventData { item_id: item.0, world_id: world.0, listings }))) {
                                     error!("Error sending remove listings {e:?}");
                                 }
                             },
@@ -104,7 +106,7 @@ async fn run_socket_listener(
                                 info!(
                                     "Stored sale data. Last id: {added_sales:?} {item:?} {world:?}"
                                 );
-                                match sales_tx.send(EventType::Add(Arc::new(added_sales))) {
+                                match sales_tx.send(EventType::Add(Arc::new(SaleEventData{sales: added_sales}))) {
                                     Ok(o) => info!("Sent sale {o} updates"),
                                     Err(e) => error!("Error sending sale update {e:?}"),
                                 }
@@ -146,7 +148,7 @@ async fn init_db(
 #[tokio::main(worker_threads = 2)]
 async fn main() -> Result<()> {
     // Create the db before we proceed
-    // tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt::init();
     info!("Ultros starting!");
     info!("Connecting DB");
     let db = UltrosDb::connect().await?;
@@ -204,16 +206,17 @@ async fn main() -> Result<()> {
         sales: senders.history.clone(),
     };
     update_service.start_service();
-    global::set_text_map_propagator(opentelemetry_jaeger::Propagator::new());
-    let tracer = opentelemetry_jaeger::new_agent_pipeline()
-        .with_endpoint("localhost:6831")
-        .with_service_name("ultros")
-        .with_auto_split_batch(true)
-        .install_batch(Tokio)?;
-    let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
-    tracing_subscriber::registry()
-        .with(opentelemetry)
-        .try_init()?;
+    // global::set_text_map_propagator(opentelemetry_jaeger::Propagator::new());
+    // let tracer = opentelemetry_jaeger::new_agent_pipeline()
+    //     .with_endpoint("localhost:6831")
+    //     .with_service_name("ultros")
+    //     .with_auto_split_batch(true)
+    //     .install_batch(Tokio)?;
+    // let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+    // tracing_subscriber::registry()
+    //     .with(opentelemetry)
+    //     .try_init()?;
+    let world_helper = Arc::new(WorldHelper::new(WorldData::from(world_cache.as_ref())));
 
     let web_state = WebState {
         analyzer_service,
@@ -235,6 +238,7 @@ async fn main() -> Result<()> {
         event_receivers: receivers,
         event_senders: senders,
         world_cache,
+        world_helper,
     };
     web::start_web(web_state).await;
     Ok(())

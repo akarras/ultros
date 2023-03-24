@@ -1,3 +1,4 @@
+use crate::components::live_sale_ticker::*;
 use leptos::*;
 
 #[component]
@@ -6,7 +7,7 @@ pub fn HomePage(cx: Scope) -> impl IntoView {
     <div class="container">
         <div class="main-content">
             <h1>"Ultros Alpha"</h1>
-
+            <LiveSaleTicker />
             <div class="flex-wrap">
                 <div class="content-well">
                     <span class="content-title">"Analyzer"</span>

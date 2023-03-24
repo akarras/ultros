@@ -924,3 +924,20 @@ select optgroup {
 .grid-row.even {
   background-color: rgba(136, 0, 96, 0.09);
 }
+
+.stock-ticker {
+	display: flex;
+	flex-direction: row;
+	flex-wrap: nowrap;
+	height: 26px;
+	overflow-y: clip;
+	overflow-x: clip;
+}
+
+.stock-ticker > div {
+	display: flex;
+	flex-direction: row;
+	flex-wrap: nowrap;
+	flex-shrink: 0;
+  transition: all;
+}

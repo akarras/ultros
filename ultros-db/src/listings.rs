@@ -2,8 +2,9 @@ use anyhow::Result;
 use futures::{future::try_join_all, Stream};
 use migration::DbErr;
 use sea_orm::{ColumnTrait, DbBackend, EntityTrait, FromQueryResult, QueryFilter, Statement};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use tracing::instrument;
+use ultros_api_types::{ActiveListing, Retainer};
 use universalis::{ItemId, ListingView, WorldId};
 
 use crate::{
@@ -60,7 +61,7 @@ impl UltrosDb {
         remove_listings: Vec<ListingView>,
         item_id: ItemId,
         world_id: WorldId,
-    ) -> Result<Vec<active_listing::Model>> {
+    ) -> Result<Vec<(ActiveListing, Retainer)>> {
         let listings = self
             .get_all_listings_with_retainers(world_id.0, item_id)
             .await?;
@@ -84,8 +85,25 @@ impl UltrosDb {
             }),
         )
         .await?;
-
-        Ok(items)
+        let retainers: HashSet<_> = items.iter().map(|i| i.retainer_id).collect();
+        let retainers: HashMap<i32, Retainer> = try_join_all(
+            retainers
+                .into_iter()
+                .map(|r| retainer::Entity::find_by_id(r).one(&self.db)),
+        )
+        .await?
+        .into_iter()
+        .flatten()
+        .map(|r| (r.id, r.into()))
+        .collect();
+        Ok(items
+            .into_iter()
+            .flat_map(|i| {
+                retainers
+                    .get(&i.retainer_id)
+                    .map(|r| (i.into(), r.clone().into()))
+            })
+            .collect())
     }
 
     #[instrument(skip(self))]
@@ -142,7 +160,10 @@ impl UltrosDb {
         mut listings: Vec<ListingView>,
         item_id: ItemId,
         world_id: WorldId,
-    ) -> Result<(Vec<active_listing::Model>, Vec<active_listing::Model>)> {
+    ) -> Result<(
+        Vec<(ActiveListing, Retainer)>,
+        Vec<(ActiveListing, Retainer)>,
+    )> {
         use active_listing::*;
         // Assumes that we are being given a full list of all the listings for the item and world.
         // First, query the db to see what listings it has
@@ -165,19 +186,22 @@ impl UltrosDb {
             })
             .collect();
 
-        let mut retainers = self
+        let mut retainers: HashMap<String, _> = self
             .get_retainer_ids_from_name(
                 queried_retainers.iter().map(|(name, _, _)| name.as_str()),
                 world_id.0,
             )
-            .await?;
+            .await?
+            .into_iter()
+            .map(|r| (r.name.clone(), r))
+            .collect();
         // determine missing retainers
         for (name, id, retainer_city) in queried_retainers {
-            if !retainers.iter().any(|m| m.name == name) {
+            if !retainers.contains_key(&name) {
                 let retainer = self
                     .store_retainer(&id, &name, world_id, retainer_city as i32)
                     .await?;
-                retainers.push(retainer);
+                retainers.insert(name, retainer);
             }
         }
         let mut existing_items = Entity::find()
@@ -263,8 +287,7 @@ impl UltrosDb {
         let remove_iter = removed.iter();
         let added = added.iter().map(|m| {
             let retainer_id = retainers
-                .iter()
-                .find(|r| r.name == m.retainer_name)
+                .get(&m.retainer_name)
                 .expect("Should always have a retainer at this point.")
                 .id;
             self.create_listing(m, item_id, world_id, Some(retainer_id))
@@ -278,9 +301,29 @@ impl UltrosDb {
                 Result::<usize>::Ok(remove_result.len())
             })
             .await;
-        let added = added.into_iter().flatten().collect();
+        let added = added
+            .into_iter()
+            .map(|l| {
+                l.ok().map(|l| {
+                    let retainer = retainers
+                        .values()
+                        .find(|r| r.id == l.retainer_id)
+                        .unwrap()
+                        .clone()
+                        .into();
+                    (l.into(), retainer)
+                })
+            })
+            .flatten()
+            .collect();
         self.set_last_updated(world_id, item_id).await?;
-        Ok((added, removed.into_iter().map(|(m, _)| m).collect()))
+        Ok((
+            added,
+            removed
+                .into_iter()
+                .flat_map(|(m, r)| r.map(|r| (m.into(), r.into())))
+                .collect(),
+        ))
     }
 
     pub async fn get_all_listings_for_world(

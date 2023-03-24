@@ -3,6 +3,7 @@ pub(crate) mod components;
 pub(crate) mod error;
 pub(crate) mod global_state;
 pub(crate) mod routes;
+pub(crate) mod ws;
 
 use global_state::home_world::get_homeworld;
 pub use global_state::user::User;

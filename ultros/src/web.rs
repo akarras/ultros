@@ -33,7 +33,9 @@ use tracing::debug;
 use ultros_api_types::icon_size::IconSize;
 use ultros_api_types::list::{CreateList, List, ListItem};
 use ultros_api_types::user::{OwnedRetainer, UserData, UserRetainerListings, UserRetainers};
+use ultros_api_types::websocket::ListingEventData;
 use ultros_api_types::world::WorldData;
+use ultros_api_types::world_helper::WorldHelper;
 use ultros_api_types::{
     ActiveListing, CurrentlyShownItem, FfxivCharacter, FfxivCharacterVerification, Retainer,
 };
@@ -48,8 +50,9 @@ use self::character_verifier_service::CharacterVerifierService;
 use self::error::{ApiError, WebError};
 use self::oauth::{AuthDiscordUser, AuthUserCache, DiscordAuthConfig};
 use crate::analyzer_service::AnalyzerService;
-use crate::event::{EventReceivers, EventSenders, EventType, ListingData};
+use crate::event::{EventReceivers, EventSenders, EventType};
 use crate::leptos::create_leptos_app;
+use crate::web::api::real_time_data::real_time_data;
 use crate::web::api::{cheapest_per_world, recent_sales};
 use crate::web::sitemap::{sitemap_index, world_sitemap};
 use crate::web::{
@@ -157,16 +160,18 @@ async fn refresh_world_item_listings(
             let (added, removed) = db
                 .update_listings(listings, ItemId(item_id), WorldId(world_id as i32))
                 .await?;
-            senders.listings.send(EventType::Add(Arc::new(ListingData {
-                item_id: ItemId(item_id),
-                world_id: WorldId(world_id.into()),
-                listings: added,
-            })))?;
             senders
                 .listings
-                .send(EventType::Remove(Arc::new(ListingData {
-                    item_id: ItemId(item_id),
-                    world_id: WorldId(world_id.into()),
+                .send(EventType::Add(Arc::new(ListingEventData {
+                    item_id,
+                    world_id: world_id.into(),
+                    listings: added,
+                })))?;
+            senders
+                .listings
+                .send(EventType::Remove(Arc::new(ListingEventData {
+                    item_id,
+                    world_id: world_id.into(),
                     listings: removed,
                 })))?;
         }
@@ -238,6 +243,8 @@ pub(crate) struct WebState {
     pub(crate) event_receivers: EventReceivers,
     pub(crate) event_senders: EventSenders,
     pub(crate) world_cache: Arc<WorldCache>,
+    /// Common variant of world_cache. Maybe get rid of world_cache?
+    pub(crate) world_helper: Arc<WorldHelper>,
     pub(crate) analyzer_service: AnalyzerService,
     pub(crate) character_verification: CharacterVerifierService,
 }
@@ -275,6 +282,12 @@ impl FromRef<WebState> for EventReceivers {
 impl FromRef<WebState> for Arc<WorldCache> {
     fn from_ref(input: &WebState) -> Self {
         input.world_cache.clone()
+    }
+}
+
+impl FromRef<WebState> for Arc<WorldHelper> {
+    fn from_ref(input: &WebState) -> Self {
+        input.world_helper.clone()
     }
 }
 
@@ -817,6 +830,7 @@ pub(crate) async fn start_web(state: WebState) {
     // build our application with a route
     let app = Router::new()
         .route("/alerts/websocket", get(connect_websocket))
+        .route("/api/v1/realtime/events", get(real_time_data))
         .route("/api/v1/cheapest/:world", get(cheapest_per_world))
         .route("/api/v1/recentSales/:world", get(recent_sales))
         .route("/api/v1/listings/:world/:itemid", get(world_item_listings))

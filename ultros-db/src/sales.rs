@@ -2,10 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     common_type_conversions::SaleHistoryReturn,
-    entity::{
-        sale_history::{self, Model},
-        unknown_final_fantasy_character,
-    },
+    entity::{sale_history, unknown_final_fantasy_character},
     UltrosDb,
 };
 use anyhow::Result;
@@ -20,6 +17,7 @@ use sea_orm::{
     ActiveModelTrait, ActiveValue, DbBackend, FromQueryResult, QueryOrder, QuerySelect, Statement,
 };
 use tracing::instrument;
+use ultros_api_types::{SaleHistory, UnknownCharacter};
 use universalis::{ItemId, SaleView, WorldId};
 
 impl UltrosDb {
@@ -31,7 +29,7 @@ impl UltrosDb {
         mut sales: Vec<SaleView>,
         item_id: ItemId,
         world_id: WorldId,
-    ) -> Result<Vec<Model>> {
+    ) -> Result<Vec<(SaleHistory, UnknownCharacter)>> {
         use sale_history::*;
         // check if the sales have already been logged
         if sales.is_empty() {
@@ -72,16 +70,21 @@ impl UltrosDb {
                 quantity,
                 ..
             } = sale;
-            recorded_sales.push(Model {
-                id: 0,
-                quantity,
-                price_per_item: price_per_unit,
-                buying_character_id: buyer.id,
-                hq,
-                sold_item_id: item_id.0,
-                sold_date: sale.timestamp.naive_utc(),
-                world_id: world_id.0,
-            });
+            let record: SaleHistory = SaleHistoryReturn(
+                Model {
+                    id: 0,
+                    quantity,
+                    price_per_item: price_per_unit,
+                    buying_character_id: buyer.id,
+                    hq,
+                    sold_item_id: item_id.0,
+                    sold_date: sale.timestamp.naive_utc(),
+                    world_id: world_id.0,
+                },
+                Some(buyer.clone()),
+            )
+            .into();
+            recorded_sales.push((record, buyer.into()));
             ActiveModel {
                 id: Default::default(),
                 quantity: Set(quantity),

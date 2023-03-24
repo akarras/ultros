@@ -1,8 +1,11 @@
 use std::sync::Arc;
 
 use tokio::sync::broadcast::channel;
+use ultros_api_types::{
+    websocket::{ListingEventData, SaleEventData},
+    Retainer,
+};
 use ultros_db::entity::*;
-use universalis::{ItemId, WorldId};
 
 pub(crate) type EventBus<T> = tokio::sync::broadcast::Receiver<EventType<Arc<T>>>;
 pub(crate) type EventProducer<T> = tokio::sync::broadcast::Sender<EventType<Arc<T>>>;
@@ -12,6 +15,16 @@ pub enum EventType<T> {
     Remove(T),
     Add(T),
     Update(T),
+}
+
+impl<T> AsRef<T> for EventType<T> {
+    fn as_ref(&self) -> &T {
+        match self {
+            EventType::Remove(t) => t,
+            EventType::Add(t) => t,
+            EventType::Update(t) => t,
+        }
+    }
 }
 
 pub(crate) fn create_event_busses() -> (EventSenders, EventReceivers) {
@@ -38,30 +51,23 @@ pub(crate) fn create_event_busses() -> (EventSenders, EventReceivers) {
     )
 }
 
-#[derive(Debug)]
-pub(crate) struct ListingData {
-    pub(crate) item_id: ItemId,
-    pub(crate) world_id: WorldId,
-    pub(crate) listings: Vec<active_listing::Model>,
-}
-
 #[derive(Clone)]
 pub(crate) struct EventSenders {
-    pub(crate) retainers: EventProducer<retainer::Model>,
-    pub(crate) listings: EventProducer<ListingData>,
+    pub(crate) retainers: EventProducer<Retainer>,
+    pub(crate) listings: EventProducer<ListingEventData>,
     pub(crate) alerts: EventProducer<alert::Model>,
     pub(crate) retainer_undercut: EventProducer<alert_retainer_undercut::Model>,
-    pub(crate) history: EventProducer<Vec<sale_history::Model>>,
+    pub(crate) history: EventProducer<SaleEventData>,
 }
 
 /// Base event type for communicating across different parts of the app
 #[derive(Debug)]
 pub(crate) struct EventReceivers {
-    pub(crate) retainers: EventBus<retainer::Model>,
-    pub(crate) listings: EventBus<ListingData>,
+    pub(crate) retainers: EventBus<Retainer>,
+    pub(crate) listings: EventBus<ListingEventData>,
     pub(crate) alerts: EventBus<alert::Model>,
     pub(crate) retainer_undercut: EventBus<alert_retainer_undercut::Model>,
-    pub(crate) history: EventBus<Vec<sale_history::Model>>,
+    pub(crate) history: EventBus<SaleEventData>,
 }
 
 impl Clone for EventReceivers {

@@ -8,9 +8,10 @@ use futures::future::{self, Either};
 use poise::serenity_prelude::{self, Color, UserId};
 use serde::Serialize;
 use tracing::{debug, error, instrument};
-use ultros_db::{entity::*, UltrosDb};
+use ultros_api_types::{websocket::ListingEventData, Retainer};
+use ultros_db::UltrosDb;
 
-use crate::event::{EventBus, EventType, ListingData};
+use crate::event::{EventBus, EventType};
 
 pub(crate) struct RetainerAlertListener {
     pub(crate) retainer_alert_id: i32,
@@ -142,12 +143,12 @@ impl UndercutTracker {
 
     pub(crate) async fn handle_listing_event(
         &mut self,
-        listings: Result<EventType<Arc<ListingData>>, anyhow::Error>,
+        listings: Result<EventType<Arc<ListingEventData>>, anyhow::Error>,
     ) -> Result<UndercutResult, anyhow::Error> {
         let listing = listings?;
         match listing {
             EventType::Remove(removed) => {
-                for removed in removed.listings.iter() {
+                for (removed, _) in removed.listings.iter() {
                     // if we removed our listing, we need to refetch our pricing from the database if the listing was the lowest
                     if self.retainer_ids.contains(&removed.retainer_id) {
                         if let Some(value) = self
@@ -178,11 +179,11 @@ impl UndercutTracker {
             }
             EventType::Add(added) => {
                 // update our own data from the added list
-                if let Some(retainer_listing) = added
+                if let Some((retainer_listing, _)) = added
                     .listings
                     .iter()
-                    .filter(|added| self.retainer_ids.contains(&added.retainer_id))
-                    .min_by_key(|i| i.price_per_unit)
+                    .filter(|(added, _)| self.retainer_ids.contains(&added.retainer_id))
+                    .min_by_key(|(i, _)| i.price_per_unit)
                 {
                     let entry = self
                         .user_lowest_listings
@@ -203,7 +204,9 @@ impl UndercutTracker {
                     }
                 }
                 // items in an added vec should all be the same type, so lets just find the cheapest item
-                if let Some(added) = added.listings.iter().min_by_key(|a| a.price_per_unit) {
+                if let Some((added, _)) =
+                    added.listings.iter().min_by_key(|(a, _)| a.price_per_unit)
+                {
                     if let Some(our_price) = self.user_lowest_listings.get_mut(&ListingKey {
                         item_id: added.item_id,
                         world_id: added.world_id,
@@ -270,8 +273,8 @@ impl RetainerAlertListener {
         alert_id: i32,
         margin: i32,
         ultros_db: UltrosDb,
-        mut listings: EventBus<ListingData>,
-        active_retainers: EventBus<retainer::Model>,
+        mut listings: EventBus<ListingEventData>,
+        active_retainers: EventBus<Retainer>,
         ctx: serenity_prelude::Context,
     ) -> Result<Self> {
         let alert = ultros_db
