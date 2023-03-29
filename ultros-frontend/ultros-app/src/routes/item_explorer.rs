@@ -221,14 +221,13 @@ pub fn JobItems(cx: Scope) -> impl IntoView {
 #[component]
 fn ItemList(cx: Scope, items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView {
     view! {cx,
-
     <VirtualScroller
         each=items.into()
         key=|(id, item)| (id.0, &item.name)
         view=|cx, (id, item)| view!{cx, <div class="flex-row" style="min-width: 500px;">
             <SmallItemDisplay item=item />
             <CheapestPrice item_id=*id hq=None />
-        </div> } viewport_height=800.0 row_height=27.5/>}
+        </div> } viewport_height=800.0 row_height=27.3/>}
 }
 
 #[component]
@@ -248,7 +247,7 @@ pub fn ItemExplorer(cx: Scope) -> impl IntoView {
                     "Job Set"
                     <JobsList />
                 </div>
-                <div class="flex-column">
+                <div class="flex-column" style="flex-grow: 1;">
                     <Outlet/>
                 </div>
             </div>
