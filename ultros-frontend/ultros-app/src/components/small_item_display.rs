@@ -2,6 +2,7 @@ use leptos::*;
 use xiv_gen::Item;
 
 use super::item_icon::*;
+use leptos_router::*;
 
 #[component]
 fn ItemDetails(cx: Scope, item: &'static Item) -> impl IntoView {
@@ -21,9 +22,9 @@ pub fn SmallItemDisplay(cx: Scope, item: &'static Item) -> impl IntoView {
             }.into_view(cx)
         } else {
             template!{cx,
-            <a class="flex-row" href=format!("/item/North-America/{}", item.key_id.0)>
+            <A class="flex-row" href=format!("/item/North-America/{}", item.key_id.0)>
                 <ItemDetails item />
-            </a>}.into_view(cx)
+            </A>}.into_view(cx)
         }}
         </div>
     }

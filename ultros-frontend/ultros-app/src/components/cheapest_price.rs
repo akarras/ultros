@@ -1,7 +1,7 @@
 use leptos::*;
 use xiv_gen::ItemId;
 
-use super::{gil::*, world_name::*};
+use super::{gil::*, loading::*, world_name::*};
 use crate::global_state::cheapest_prices::CheapestPrices;
 use ultros_api_types::{
     cheapest_listings::{CheapestListingItem, CheapestListings},
@@ -24,9 +24,10 @@ fn find_matching_listings(
 /// Always shows the lowest price
 #[component]
 pub fn CheapestPrice(cx: Scope, item_id: ItemId, hq: Option<bool>) -> impl IntoView {
-    use_context::<CheapestPrices>(cx)
-        .unwrap()
-        .read_listings
+    let cheapest = use_context::<CheapestPrices>(cx).unwrap().read_listings;
+    view! {cx,
+        <Suspense fallback=move || view!{cx, <Loading />}>
+        {move || cheapest
         .with(cx, |data| {
             data.as_ref().ok().map(|data| {
                 find_matching_listings(&data, item_id, hq)
@@ -38,5 +39,7 @@ pub fn CheapestPrice(cx: Scope, item_id: ItemId, hq: Option<bool>) -> impl IntoV
                 })
                 .into_view(cx)
             })
-        })
+        })}
+        </Suspense>
+    }
 }

@@ -108,7 +108,7 @@ fn ListingsContent(cx: Scope, item_id: Memo<i32>, world: Memo<String>) -> impl I
 
                     let hq_listings = currently_shown.listings.iter().cloned().filter(|(listing, _)| listing.hq).collect::<Vec<_>>();
                     let lq_listings = currently_shown.listings.iter().cloned().filter(|(listing, _)| !listing.hq).collect::<Vec<_>>();
-
+                    let sales = create_memo(cx, move |_| currently_shown.sales.clone());
                     view! { cx,
                         <PriceHistoryChart sales=MaybeSignal::from(sales) />
                         {(!hq_listings.is_empty()).then(move || {
@@ -191,7 +191,7 @@ pub fn ItemView(cx: Scope) -> impl IntoView {
             </div>
             <div class="main-content flex-wrap">
                 <ListingsContent item_id world />
-                {move || view!{cx, <RelatedItems item_id=ItemId(item_id()) />}}
+                <RelatedItems item_id=Signal::from(item_id) />
             </div>
         </div>
     }
