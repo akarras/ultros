@@ -23,7 +23,7 @@ pub fn SearchBox(cx: Scope) -> impl IntoView {
     let focus_in = move |_| set_active(true);
     let focus_out = move |_| set_active(false);
     let items = &xiv_gen_db::decompress_data().items;
-    let item_search = create_memo(cx, move |_| {
+    let item_search = move || {
         search.with(|s| {
             let mut score = items
                 .into_iter()
@@ -37,7 +37,7 @@ pub fn SearchBox(cx: Scope) -> impl IntoView {
                 .map(|(id, item, _ma)| (id, item))
                 .collect::<Vec<_>>()
         })
-    });
+    };
     view! {
         cx,
         <div style="height: 36px;">
@@ -46,7 +46,7 @@ pub fn SearchBox(cx: Scope) -> impl IntoView {
             // WHY DOES THIS BREAK HYDRATION?
             // <WasmLoadingIndicator />
             <VirtualScroller
-                each=item_search.into()
+                each=Signal::derive(cx, item_search)
                 key=move |(id, _item)| id.0
                 view=move |cx, (id, _): (&xiv_gen::ItemId, &xiv_gen::Item)| {
                         let item_id = id.0;
