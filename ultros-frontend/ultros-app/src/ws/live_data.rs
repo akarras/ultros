@@ -40,14 +40,20 @@ pub(crate) async fn live_sales(
                         match val {
                             ServerClient::Sales(sig) => match sig {
                                 EventType::Added(add) => {
-                                    signal.update(|sales| {
-                                        for sale in add.sales {
-                                            sales.push_back(sale);
-                                        }
-                                        while sales.len() > 10 {
-                                            sales.pop_front();
-                                        }
-                                    });
+                                    if signal
+                                        .try_update(|sales| {
+                                            for sale in add.sales {
+                                                sales.push_back(sale);
+                                            }
+                                            while sales.len() > 10 {
+                                                sales.pop_front();
+                                            }
+                                        })
+                                        .is_none()
+                                    {
+                                        info!("Socket closed");
+                                        return Ok(());
+                                    }
                                 }
                                 _ => {}
                             },
