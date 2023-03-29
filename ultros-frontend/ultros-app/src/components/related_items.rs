@@ -1,3 +1,4 @@
+use itertools::Itertools;
 /// Related items links items that are related to the current set
 use leptos::*;
 use xiv_gen::{Item, ItemId, Recipe};
@@ -118,35 +119,38 @@ fn Recipe(cx: Scope, recipe: &'static Recipe) -> impl IntoView {
 }
 
 #[component]
-pub fn RelatedItems(cx: Scope, item_id: ItemId) -> impl IntoView {
+pub fn RelatedItems(cx: Scope, item_id: Signal<i32>) -> impl IntoView {
     let db = xiv_gen_db::decompress_data();
-    let item = db.items.get(&item_id);
-    item.map(|item| {
-        let item_set = item_set_iter(item)
+    let item = move || db.items.get(&ItemId(item_id()));
+    let item_set = move || {
+        item()
             .map(|item| {
-                view! {cx,
-                    <SmallItemDisplay item/>
-                }
+                item_set_iter(item)
+                    .map(|item| {
+                        view! {cx,
+                            <SmallItemDisplay item/>
+                        }
+                    })
+                    .take(30)
+                    .collect::<Vec<_>>()
             })
-            .take(8)
-            .collect::<Vec<_>>();
-        let recipes = recipe_tree_iter(item_id)
+            .unwrap_or_default()
+    };
+    let recipes = move || {
+        recipe_tree_iter(ItemId(item_id()))
             .map(|recipe| view! {cx, <Recipe recipe/>})
             .take(10)
-            .collect::<Vec<_>>();
-        view! {cx,
-            {(!item_set.is_empty()).then(|| {
-                view!{cx, <div class="content-well flex-column">
-                <span class="content-title">"related items"</span>
-                <div class="flex-column">{item_set}</div>
-            </div>}
-            })}
-        {(!recipes.is_empty()).then(|| {
-            view!{cx, <div class="content-well flex-column">
+            .collect::<Vec<_>>()
+    };
+    view! {cx,
+        <div class="content-well flex-column" class:hidden=move || item_set().is_empty()>
+            <span class="content-title">"related items"</span>
+            <div class="flex-column">{move || item_set()}</div>
+        </div>
+        <div class="content-well flex-column" class:hidden=move || recipes().is_empty()>
             <span class="content-title">"crafting recipes"</span>
-            <div class="flex-wrap">{recipes}</div>
-        </div>}
-        })}
-        }
-    })
+            <div class="flex-wrap">{move || recipes()}</div>
+        </div>
+
+    }
 }
