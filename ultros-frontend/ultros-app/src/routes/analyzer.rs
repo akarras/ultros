@@ -373,7 +373,7 @@ fn AnalyzerTable(
             <div role="columnheader" style=DATACENTER_WIDTH>
                 "Datacenter" {move || datacenter_filter().map(move |datacenter| view!{cx, <a on:click=move |_| set_datacenter_filter(None)>"[" {datacenter} "]"</a>})}
             </div>
-            <div role="columnheader" style="widht: 300px;">"Next sale"</div>
+            <div role="columnheader" style="width: 300px;">"Next sale"</div>
         </div>
         <VirtualScroller
             viewport_height=1000.0

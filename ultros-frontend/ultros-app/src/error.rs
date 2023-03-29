@@ -4,7 +4,7 @@ use leptos::SerializationError;
 use serde::{de::Visitor, Deserialize, Serialize};
 use thiserror::Error;
 
-#[derive(Debug, Error, Clone, Deserialize, Serialize)]
+#[derive(Debug, Error, Clone, Deserialize, Serialize, PartialEq)]
 pub enum AppError {
     #[error("JSON {0}")]
     Json(String),
@@ -33,6 +33,15 @@ pub enum SystemError {
     GlooError(Rc<gloo_net::Error>),
     SerializationError(SerializationError),
     Anyhow(Rc<anyhow::Error>),
+}
+
+impl PartialEq for SystemError {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Message(l0), Self::Message(r0)) => l0 == r0,
+            _ => false,
+        }
+    }
 }
 
 impl From<anyhow::Error> for SystemError {
@@ -139,6 +148,20 @@ impl<'de> Visitor<'de> for StringVisitor {
     {
         Ok(v)
     }
+
+    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(v.to_string())
+    }
+
+    fn visit_borrowed_str<E>(self, v: &'de str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(v.to_string())
+    }
 }
 
 impl<'de> Deserialize<'de> for SystemError {
@@ -155,6 +178,19 @@ pub(crate) type AppResult<T> = Result<T, AppError>;
 
 #[cfg(test)]
 mod test {
+    use crate::error::SystemError;
+
+    use super::AppError;
+
     #[test]
-    fn error_types() {}
+    fn error_types() {
+        let sample_error = "{\"Err\":{\"SystemError\":\"error deserializing Resource: expected value at line 1 column 1\"}}";
+        let app_error = serde_json::from_str::<Result<(), AppError>>(sample_error).unwrap();
+        assert_eq!(
+            app_error,
+            Err(AppError::SystemError(SystemError::Message(
+                "error deserializing Resource: expected value at line 1 column 1".to_string()
+            )))
+        );
+    }
 }
