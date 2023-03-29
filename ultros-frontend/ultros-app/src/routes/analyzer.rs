@@ -377,7 +377,7 @@ fn AnalyzerTable(
         </div>
         <VirtualScroller
             viewport_height=1000.0
-            row_height=37.3
+            row_height=32.3333
             each=sorted_data.into()
             key=move |(i, data)| {
                 (*i, data.sale_summary.item_id, data.cheapest_world_id, data.sale_summary.hq)
@@ -444,32 +444,6 @@ pub fn AnalyzerWorldView(cx: Scope) -> impl IntoView {
             get_recent_sales_for_world(cx, &world.ok_or(AppError::ParamMissing)?).await
         },
     );
-    let global_cheapest_listings = create_resource(
-        cx,
-        move || {
-            (
-                params.with(|p| p.get("world").cloned()),
-                worlds.0.read(cx).is_some(),
-            )
-        },
-        move |(world, _world_data)| async move {
-            // use the world cache to lookup the region for this world
-            let world = world.ok_or(AppError::ParamMissing)?;
-            let region = worlds
-                .0
-                .read(cx)
-                .map(|w| w.ok())
-                .flatten()
-                .and_then(|worlds| {
-                    worlds.lookup_world_by_name(&world).map(|world| {
-                        let region = worlds.get_region(world);
-                        AnyResult::Region(region).get_name().to_string()
-                    })
-                })
-                .ok_or(AppError::ParamMissing)?;
-            get_cheapest_listings(cx, &region).await
-        },
-    );
 
     let world_cheapest_listings = create_resource(
         cx,
@@ -491,21 +465,42 @@ pub fn AnalyzerWorldView(cx: Scope) -> impl IntoView {
                 <a class="btn" href="?next-sale=1M&roi=500&profit=200000&">"500% return with 200K min gil profit within 1 month"</a>
                 <Suspense fallback=move || view!{cx, <Loading />}>
                 {move || {
-                    let global_cheapest_listings = global_cheapest_listings.read(cx);
-                    let world_cheapest = world_cheapest_listings.read(cx);
-                    let sales = sales.read(cx);
                     let worlds = use_context::<LocalWorldData>(cx).expect("Worlds should always be populated here").0.read(cx);
-                    match (sales, global_cheapest_listings, world_cheapest, worlds) {
-                        (Some(Ok(sales)), Some(Ok(global_cheapest_listings)), Some(Ok(world_cheapest_listings)), Some(Ok(worlds))) => {
-                            view!{cx, <AnalyzerTable sales global_cheapest_listings world_cheapest_listings worlds world=world.into() />}.into_view(cx)
-                        },
-                        (Some(sales), Some(listings), Some(world_cheapest), Some(worlds)) => {
-                            format!("Failed to get listings/sales {} {} {} {}",
-                                sales.is_ok(), listings.is_ok(), world_cheapest.is_ok(), worlds.is_ok()).into_view(cx)
-                        },
-                        _ => {}.into_view(cx)
+                    worlds.map(|w| w.ok()).flatten().map(|worlds| {
+                            let world_value = store_value(cx, worlds);
+                            let global_cheapest_listings = create_resource(
+                                cx,
+                                move || params.with(|p| p.get("world").cloned()),
+                                move |world| async move {
+                                    let worlds = world_value();
+                                    // use the world cache to lookup the region for this world
+                                    let world = world.ok_or(AppError::ParamMissing)?;
+                                    let region = worlds.lookup_world_by_name(&world).map(|world| {
+                                        let region = worlds.get_region(world);
+                                        AnyResult::Region(region).get_name().to_string()
+                                    }).ok_or(AppError::ParamMissing)?;
+                                    get_cheapest_listings(cx, &region).await
+                                },
+                            );
+                            view!{cx,
+                                <Suspense fallback=move || view!{cx, <Loading />}>
+                                    {move || {
+                                        let world_cheapest = world_cheapest_listings.read(cx);
+                                        let sales = sales.read(cx);
+                                        let global_cheapest_listings = global_cheapest_listings.read(cx);
+                                        let worlds = world_value();
+                                        let values = world_cheapest.map(|w| w.ok())
+                                            .flatten().and_then(|r| sales.map(|s| s.ok())
+                                            .flatten().and_then(|s| global_cheapest_listings.map(|g| g.ok()).flatten().and_then(|g| Some((r, s, g)))));
+                                        values.map(|(world_cheapest_listings, sales, global_cheapest_listings)| {
+                                        view!{cx, <AnalyzerTable sales global_cheapest_listings world_cheapest_listings worlds world=world.into() />
+                                        } }
+                                    )}}
+                                </Suspense>
+                            }.into_view(cx)
+                        })
                     }
-                }}
+                }
                 </Suspense>
         </div>
     </div>}.into_view(cx)
