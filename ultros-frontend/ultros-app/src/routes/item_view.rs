@@ -87,17 +87,6 @@ fn ListingsContent(cx: Scope, item_id: Memo<i32>, world: Memo<String>) -> impl I
         move || (item_id(), world()),
         move |(item_id, world)| async move { get_listings(cx, item_id, &world).await },
     );
-    let sales = create_memo(cx, move |_| {
-        listing_resource
-            .with(cx, |listings| {
-                listings
-                    .as_ref()
-                    .map(|listings| listings.sales.clone())
-                    .ok()
-            })
-            .flatten()
-            .unwrap_or_default()
-    });
     view! { cx,
 
         <Suspense fallback=move || view!{ cx, <Loading/>}>

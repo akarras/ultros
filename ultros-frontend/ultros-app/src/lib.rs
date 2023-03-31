@@ -6,13 +6,12 @@ pub(crate) mod routes;
 pub(crate) mod ws;
 
 use global_state::home_world::get_homeworld;
-pub use global_state::user::User;
-
 use std::rc::Rc;
 
-use crate::api::get_worlds;
+use crate::api::{get_login, get_worlds};
 use crate::global_state::cheapest_prices::CheapestPrices;
 use crate::global_state::cookies::Cookies;
+use crate::global_state::user::LoggedInUser;
 use crate::global_state::LocalWorldData;
 use crate::{
     components::{profile_display::*, search_box::*, tooltip::*},
@@ -46,6 +45,13 @@ pub fn App(cx: Scope) -> impl IntoView {
     provide_context(cx, Cookies::new(cx));
     provide_context(cx, LocalWorldData(worlds));
     provide_context(cx, CheapestPrices::new(cx));
+    let login = create_resource_with_initial_value(
+        cx,
+        move || {},
+        move |_| async move { get_login(cx).await.ok() },
+        None,
+    );
+    provide_context(cx, LoggedInUser(login));
     let (homeworld, _set_homeworld) = get_homeworld(cx);
     view! {
         cx,
@@ -59,26 +65,29 @@ pub fn App(cx: Scope) -> impl IntoView {
         <Router>
             <nav class="header">
                 // <i><b>"ULTROS IS STILL UNDER ACTIVE DEVELOPMENT"</b></i>
-                <A href="/alerts">
-                    <i class="fa-solid fa-bell"></i>
-                    "Alerts"
-                </A>
-                <A href={move || if let Some(v) = homeworld().map(|w| w.name) {
-                    format!("/analyzer/{v}?")
-                } else {
-                    "/analyzer".to_string()
-                }}>
-                    <i class="fa-solid fa-money-bill-trend-up"></i>
-                    "Analyzer"
-                </A>
-                <A href="/list">
+                // <Suspense fallback=move || {}>
+                // {move || login.read(cx).flatten().map(|_| view!{cx, <A href="/alerts">
+                //     <i class="fa-solid fa-bell"></i>
+                //     "Alerts"
+                // </A>})}
+                // </Suspense>
+                <Suspense fallback=move || {}>
+                    {move || view!{cx,
+                        <A href=homeworld().map(|w| format!("/analyzer/{}", w.name)).unwrap_or("/analyzer".to_string())>
+                            <i class="fa-solid fa-money-bill-trend-up"></i>
+                            "Analyzer"
+                        </A>}}
+                </Suspense>
+                <Suspense fallback=move || {}>
+                {move || login.read(cx).flatten().map(|_| view!{cx, <A href="/list">
                     <i class="fa-solid fa-list"></i>
                     "Lists"
                 </A>
                 <A href="/retainers/listings">
                     <i class="fa-solid fa-user-group"></i>
                     "Retainers"
-                </A>
+                </A>})}
+                </Suspense>
                 <div>
                     <SearchBox/>
                 </div>

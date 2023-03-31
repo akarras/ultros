@@ -1,17 +1,21 @@
-use crate::api::get_login;
+use crate::global_state::user::LoggedInUser;
 use leptos::*;
 
 #[component]
 pub fn ProfileDisplay(cx: Scope) -> impl IntoView {
-    let (login, set_login) = create_signal(cx, None);
-    spawn_local(async move {
-        let login = get_login(cx).await;
-        leptos::log!("login {login:?}");
-        set_login(Some(login));
-    });
-    {
-        move || match login() {
-            Some(Ok(auth)) => view! {cx,
+    // let (login, set_login) = create_signal(cx, None);
+    // spawn_local(async move {
+    //     let login = get_login(cx).await;
+    //     leptos::log!("login {login:?}");
+    //     set_login(Some(login));
+    // });
+    let user = use_context::<LoggedInUser>(cx)
+        .expect("Logged in user state to be present")
+        .0;
+    view! {cx,
+        <Suspense fallback=move || {}>
+        {move || match user.read(cx) {
+            Some(Some(auth)) => view! {cx,
             <a href="/profile">
                 <img class="avatar" src=&auth.avatar alt=&auth.username/>
             </a>
@@ -24,6 +28,7 @@ pub fn ProfileDisplay(cx: Scope) -> impl IntoView {
             </a>
             }
             .into_view(cx),
-        }
+        }}
+        </Suspense>
     }
 }

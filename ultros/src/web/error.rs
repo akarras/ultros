@@ -1,7 +1,7 @@
 use std::{num::ParseIntError, sync::Arc};
 
 use axum::{
-    response::{IntoResponse, Redirect, Response},
+    response::{IntoResponse, Response},
     Json,
 };
 use axum_extra::extract::{

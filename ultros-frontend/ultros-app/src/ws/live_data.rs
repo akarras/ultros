@@ -1,7 +1,6 @@
 use std::collections::VecDeque;
 
 use futures::{SinkExt, StreamExt};
-#[cfg(not(feature = "ssr"))]
 use gloo_net::websocket::{futures::WebSocket, Message};
 use leptos::{RwSignal, SignalUpdate};
 use log::error;
@@ -13,7 +12,6 @@ use ultros_api_types::{
 
 use crate::error::AppError;
 
-#[cfg(not(feature = "ssr"))]
 pub(crate) async fn live_sales(
     signal: RwSignal<VecDeque<(SaleHistory, UnknownCharacter)>>,
     price_zone: AnySelector,

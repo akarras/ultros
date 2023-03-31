@@ -13,7 +13,7 @@ pub fn HomePage(cx: Scope) -> impl IntoView {
                     <span class="content-title">"Analyzer"</span>
                     <br/>
                     <ul>
-                        <li>"Find items to resale on your own world"</li>
+                        <li>"Make tons of gil reselling items"</li>
                         <li>"Quickly filter by roi, profit, and estimated sale date"</li>
                     </ul>
                 </div>
@@ -21,8 +21,9 @@ pub fn HomePage(cx: Scope) -> impl IntoView {
                     <span class="content-title">"Retainers"</span>
                     <br/>
                     <ul>
-                        <li>"Quickly check which of your retainer's listings have been undercut"</li>
-                        <li>"Get alerted on Discord or on this site"</li>
+                        <li>"Track your sales without logging in"</li>
+                        <li>"Update all listings faster by only updating listings that are actually undercut"</li>
+                        <li>"Get alerted on Discord or on this site when someone undercuts you"</li>
                     </ul>
                 </div>
                 <div class="content-well">
@@ -30,6 +31,7 @@ pub fn HomePage(cx: Scope) -> impl IntoView {
                     <br/>
                     <ul>
                         <li>"Make shopping lists and find the cheapest prices"</li>
+                        <li>"Import entire recipes"</li>
                     </ul>
                 </div>
                 <div class="content-well">

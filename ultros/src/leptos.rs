@@ -24,29 +24,13 @@ use crate::web::{oauth::AuthDiscordUser, WebState};
 async fn custom_handler(
     // Path(id): Path<String>,
     // State(state): State<WebState>,
-    user: Option<AuthDiscordUser>,
+    // user: Option<AuthDiscordUser>,
     Extension(options): Extension<Arc<LeptosOptions>>,
     req: Request<Body>,
 ) -> Response {
     let handler = leptos_axum::render_app_to_stream_with_context(
         (*options).clone(),
-        move |cx| {
-            if let Some(AuthDiscordUser {
-                id,
-                name,
-                avatar_url,
-            }) = user.clone()
-            {
-                provide_context(
-                    cx,
-                    User {
-                        id,
-                        username: name,
-                        avatar: avatar_url,
-                    },
-                )
-            }
-        },
+        move |_cx| {},
         |cx| view! { cx, <App/> },
     );
     handler(req).await.into_response()

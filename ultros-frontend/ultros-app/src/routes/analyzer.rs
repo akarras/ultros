@@ -432,7 +432,6 @@ fn AnalyzerTable(
 
 #[component]
 pub fn AnalyzerWorldView(cx: Scope) -> impl IntoView {
-    let worlds = use_context::<LocalWorldData>(cx).expect("Local world data");
     let params = use_params_map(cx);
     let world = create_memo(cx, move |_| {
         params.with(|p| p.get("world").cloned()).unwrap_or_default()

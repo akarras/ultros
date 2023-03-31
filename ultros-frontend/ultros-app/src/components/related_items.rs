@@ -1,4 +1,3 @@
-use itertools::Itertools;
 /// Related items links items that are related to the current set
 use leptos::*;
 use xiv_gen::{Item, ItemId, Recipe};

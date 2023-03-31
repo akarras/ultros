@@ -162,7 +162,7 @@ pub async fn redirect(
     // store the token into a cookie
     let mut cookie = Cookie::new("discord_auth", token);
     cookie.set_secure(true);
-    cookie.set_same_site(SameSite::Strict);
+    cookie.set_same_site(SameSite::Lax);
     cookie.make_permanent();
     cookies = cookies.add(cookie);
     Ok((cookies, Redirect::to("/")))
