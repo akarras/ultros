@@ -83,6 +83,10 @@ pub enum ApiError {
     ),
     #[error("API conversions error {0}")]
     ApiConversionError(#[from] ApiConversionError),
+    #[error("Not authenticated")]
+    NotAuthenticated,
+    #[error("Discord token was invalid")]
+    DiscordTokenInvalid(PrivateCookieJar<Key>),
 }
 
 impl ApiError {
@@ -96,9 +100,28 @@ impl ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         error!("error {}", self);
-        let e = format!("{self}");
+        if let ApiError::DiscordTokenInvalid(mut cookies) = self {
+            // remove the discord user cookie
+            cookies = cookies.remove(Cookie::named("discord_auth"));
+            return (
+                cookies,
+                Json(JsonError::ApiError(
+                    ultros_api_types::result::ApiError::NotAuthenticated,
+                )),
+            )
+                .into_response();
+        }
+        if let ApiError::NotAuthenticated = self {
+            return (
+                self.as_status_code(),
+                Json(JsonError::ApiError(
+                    ultros_api_types::result::ApiError::NotAuthenticated,
+                )),
+            )
+                .into_response();
+        }
 
-        (self.as_status_code(), Json(JsonError { error_message: e })).into_response()
+        (self.as_status_code(), Json(JsonError::from(self))).into_response()
     }
 }
 
@@ -159,8 +182,6 @@ pub enum WebError {
             StandardErrorResponse<BasicErrorResponseType>,
         >,
     ),
-    #[error("Discord token was invalid")]
-    DiscordTokenInvalid(PrivateCookieJar<Key>),
 }
 
 impl WebError {
@@ -175,11 +196,7 @@ impl WebError {
 impl IntoResponse for WebError {
     fn into_response(self) -> Response {
         error!("Error returned {self:?}");
-        if let WebError::DiscordTokenInvalid(mut cookies) = self {
-            // remove the discord user cookie
-            cookies = cookies.remove(Cookie::named("discord_auth"));
-            return (cookies, Redirect::to("/")).into_response();
-        }
+
         (self.as_status_code(), format!("{self}")).into_response()
     }
 }

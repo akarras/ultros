@@ -3,6 +3,7 @@ use std::{error, fmt::Display, rc::Rc};
 use leptos::SerializationError;
 use serde::{de::Visitor, Deserialize, Serialize};
 use thiserror::Error;
+use ultros_api_types::result::ApiError;
 
 #[derive(Debug, Error, Clone, Deserialize, Serialize, PartialEq)]
 pub enum AppError {
@@ -20,6 +21,8 @@ pub enum AppError {
     BadList,
     #[error("Url missing dynamic parameter")]
     ParamMissing,
+    #[error("{0}")]
+    ApiError(#[from] ApiError),
 }
 
 /// This error type implements From's for the non serializable error types and shoves them into a string

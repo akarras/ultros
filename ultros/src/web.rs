@@ -65,7 +65,7 @@ async fn add_retainer(
     State(db): State<UltrosDb>,
     current_user: AuthDiscordUser,
     Path(retainer_id): Path<i32>,
-) -> Result<Redirect, WebError> {
+) -> Result<Redirect, ApiError> {
     let _register_retainer = db
         .register_retainer(retainer_id, current_user.id, current_user.name)
         .await?;
@@ -406,29 +406,27 @@ pub(crate) async fn current_user(user: AuthDiscordUser) -> Json<UserData> {
 pub(crate) async fn user_retainers(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
-) -> Json<Option<UserRetainers>> {
+) -> Result<Json<UserRetainers>, ApiError> {
     // load the retainer/character details from the database and then extract it into the shared API types.
-    let retainers = db
-        .get_all_owned_retainers_and_character(user.id)
-        .await
-        .ok()
-        .map(|c| UserRetainers {
-            retainers: c
-                .into_iter()
-                .map(|(character, retainers)| {
-                    (
-                        character.map(|character| FfxivCharacter::from(character)),
-                        retainers
-                            .into_iter()
-                            .map(|(owned, retainer)| {
-                                (OwnedRetainer::from(owned), Retainer::from(retainer))
-                            })
-                            .collect(),
-                    )
-                })
-                .collect(),
-        });
-    Json(retainers)
+    let retainers = UserRetainers {
+        retainers: db
+            .get_all_owned_retainers_and_character(user.id)
+            .await?
+            .into_iter()
+            .map(|(character, retainers)| {
+                (
+                    character.map(|character| FfxivCharacter::from(character)),
+                    retainers
+                        .into_iter()
+                        .map(|(owned, retainer)| {
+                            (OwnedRetainer::from(owned), Retainer::from(retainer))
+                        })
+                        .collect(),
+                )
+            })
+            .collect(),
+    };
+    Ok(Json(retainers))
 }
 
 pub(crate) async fn user_retainer_listings(

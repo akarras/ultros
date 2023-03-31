@@ -8,6 +8,7 @@ use ultros_api_types::{
     cheapest_listings::CheapestListings,
     list::{CreateList, List, ListItem},
     recent_sales::RecentSales,
+    result::JsonError,
     user::{OwnedRetainer, UserData, UserRetainerListings, UserRetainers},
     world::WorldData,
     ActiveListing, CurrentlyShownItem, FfxivCharacter, FfxivCharacterVerification, Retainer,
@@ -257,7 +258,13 @@ where
         Ok(d) => return Ok(d),
         // try to deserialize as SystemError, if that fails then return this error
         Err(e) => {
-            if let Ok(d) = SystemError::de(json) {
+            if let Ok(d) = JsonError::de(json) {
+                match d {
+                    JsonError::ApiError(api) => {
+                        return Err(api.into());
+                    }
+                }
+            } else if let Ok(d) = SystemError::de(json) {
                 return Err(d.into());
             } else {
                 return Err(e.into());

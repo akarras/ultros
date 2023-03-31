@@ -24,7 +24,7 @@ use std::{
 use tokio::sync::RwLock;
 use ultros_db::UltrosDb;
 
-use super::error::WebError;
+use super::error::{ApiError, WebError};
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialOrd, PartialEq, Hash)]
 pub enum OAuthScope {
@@ -225,14 +225,14 @@ where
     UltrosDb: FromRef<S>,
     AuthUserCache: FromRef<S>,
 {
-    type Rejection = WebError;
+    type Rejection = ApiError;
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let cookie_jar: PrivateCookieJar<Key> = PrivateCookieJar::from_request_parts(parts, state)
             .await
             .unwrap();
         let discord_auth = cookie_jar
             .get("discord_auth")
-            .ok_or(WebError::NotAuthenticated)?;
+            .ok_or(ApiError::NotAuthenticated)?;
         // get the discord user
         let State(ultros): State<UltrosDb> = State::from_request_parts(parts, state).await.unwrap();
         let State(user_cache): State<AuthUserCache> =
@@ -246,7 +246,7 @@ where
         let user = http
             .get_current_user()
             .await
-            .map_err(|_| WebError::DiscordTokenInvalid(cookie_jar))?;
+            .map_err(|_| ApiError::DiscordTokenInvalid(cookie_jar))?;
         let avatar_url = user
             .static_avatar_url()
             .unwrap_or_else(|| user.default_avatar_url());
