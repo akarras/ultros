@@ -2,7 +2,7 @@ use std::cmp::Reverse;
 
 use crate::api::{get_retainer_listings, get_retainer_undercuts};
 use crate::components::gil::*;
-use crate::components::{item_icon::*, loading::*, world_name::*};
+use crate::components::{item_icon::*, loading::*, meta::*, world_name::*};
 use leptos::*;
 use leptos_router::*;
 use ultros_api_types::icon_size::IconSize;
@@ -88,7 +88,10 @@ pub fn RetainerUndercuts(cx: Scope) -> impl IntoView {
     let retainers = create_resource(cx, || "undercuts", move |_| get_retainer_undercuts(cx));
     view! {
         cx,
+        <MetaTitle title="Retainer Undercuts" />
         <span class="content-title">"Retainer Undercuts"</span>
+        <span>"Please keep in mind that data may not always be up to date. To update data, please contribute to universalis and then refresh this page."</span>
+        <span>"This page will only show listings that have been undercut, enabling you to quickly view which items need to be refreshed"</span>
         <Suspense fallback=move || view!{cx, <Loading/>}>
         {move || {
             retainers.read(cx).map(|retainer| {
@@ -112,7 +115,10 @@ pub fn RetainerListings(cx: Scope) -> impl IntoView {
     let retainers = create_resource(cx, || "undercuts", move |_| get_retainer_listings(cx));
     view! {
         cx,
-        <span class="content-title">"Retainer Undercuts"</span>
+        <span class="content-title">"All Listings"</span>
+        <MetaTitle title="All Listings"/>
+        <MetaDescription text="View your retainer's listings without making it a second job!"/>
+        <span>"Please keep in mind that data may not always be up to date. To update data, please contribute to universalis and then refresh this page."</span>
         <Suspense fallback=move || view!{cx, <Loading/>}>
         {move || {
             retainers.read(cx).map(|retainer| {
@@ -121,7 +127,10 @@ pub fn RetainerListings(cx: Scope) -> impl IntoView {
                         let retainers : Vec<_> = retainers.retainers.into_iter()
                             .map(|(character, retainers)| view!{cx, <CharacterRetainerList character retainers />})
                             .collect();
-                        view!{cx, <div>{retainers}</div>}.into_view(cx)
+                        view!{cx,
+                            {retainers.is_empty().then(|| view!{cx, <span>"Add a retainer to get started!"</span>})}
+                            <div>{retainers}</div>
+                        }.into_view(cx)
                     },
                     Err(e) => view!{cx, <div>{"Unable to get retainers"}<br/>{e.to_string()}</div>}.into_view(cx)
                 }

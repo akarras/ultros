@@ -78,7 +78,7 @@ pub fn ItemSearchResult(
                                     }
                                 }
                             }</span>
-                            <div class="flex-row">
+                            <div class="flex-row" style="align-items: start; flex-wrap: nowrap; justify-content:end;">
                                 <CheapestPrice item_id=item.key_id hq=None/>
                             </div>
                         </div>

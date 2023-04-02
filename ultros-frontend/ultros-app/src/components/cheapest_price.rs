@@ -33,7 +33,8 @@ pub fn CheapestPrice(cx: Scope, item_id: ItemId, hq: Option<bool>) -> impl IntoV
                 find_matching_listings(&data, item_id, hq)
                 .map(|listing| {
                     view! {cx,
-                        <span style="padding-right: 5px"><Gil amount=listing.cheapest_price/></span>
+                        <Gil amount=listing.cheapest_price/>
+                        <span style="padding-right: 5px"></span>
                         <span><WorldName id=AnySelector::World(listing.world_id)/></span>
                     }
                 })

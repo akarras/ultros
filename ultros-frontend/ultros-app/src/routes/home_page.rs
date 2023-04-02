@@ -1,5 +1,6 @@
 use crate::components::live_sale_ticker::*;
 use leptos::*;
+use leptos_meta::*;
 
 #[component]
 pub fn HomePage(cx: Scope) -> impl IntoView {
@@ -7,6 +8,7 @@ pub fn HomePage(cx: Scope) -> impl IntoView {
     <div class="container">
         <div class="main-content">
             <h1>"Ultros Alpha"</h1>
+            <Title text="Ultros The Ultra Fast Market Tool"/>
             <LiveSaleTicker />
             <div class="flex-wrap">
                 <div class="content-well">

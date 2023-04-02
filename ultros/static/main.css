@@ -97,7 +97,7 @@ body {
   flex-direction: row;
   justify-content: flex-end;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: wrap-reverse;
   padding: 10px;
 }
 
@@ -108,11 +108,12 @@ body {
   font-size: 1.2em;
   font-family: Jaldi, sans-serif;
   min-width: 100px;
-  color: #3A2B7E;
   background-color: #18003470;
   color: #fff;
   margin: 5px;
-  text-align: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .btn:hover {
@@ -131,7 +132,7 @@ body {
 }
 
 
-.btn.active {
+.btn:active {
   background-color: #846D8F;
 }
 
@@ -142,7 +143,7 @@ input.btn {
   padding: 0px;
 }
 
-nav > a {
+nav > a, nav > * > a {
   color: #fff;
   margin: 5px;
   text-decoration: none;
@@ -155,7 +156,7 @@ nav > a {
   transition: .25s;
 }
 
-nav > a > * {
+nav a > * {
   padding: 5px;
 }
 
@@ -386,7 +387,7 @@ div > .search-box {
 .flex-row {
   display: flex;
   flex-direction: row;
-  flex-wrap: wrap;
+  align-items: center;
 }
 
 .flex {
@@ -458,6 +459,7 @@ div > .search-box {
 	border-radius: 8px;
 	max-height: 800px;
 	overflow: auto;
+  flex-grow: 1;
 }
 
 .content-title {
@@ -531,7 +533,6 @@ footer {
 	display: inline-flex;
 	width: 1em;
 	padding-right: .3em;
-	margin-top: -1em;
 }
 
 .gil img {
@@ -912,9 +913,23 @@ select optgroup {
   flex-direction: row;
 }
 
+.grid-header > div {
+  flex-shrink: 0;
+}
+
 .grid-row {
   display: flex;
   flex-direction: row;
+}
+
+.grid-row > div {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  overflow-x: auto;
+  flex-shrink: 0;
+  column-gap: 0.1em;
 }
 
 .grid-row.odd {
@@ -926,18 +941,26 @@ select optgroup {
 }
 
 .stock-ticker {
-	display: flex;
-	flex-direction: row;
-	flex-wrap: nowrap;
-	height: 26px;
-	overflow-y: clip;
-	overflow-x: clip;
+  overflow-x: clip;
+  width: 100%;
 }
 
-.stock-ticker > div {
+.stock-ticker-body {
 	display: flex;
 	flex-direction: row;
 	flex-wrap: nowrap;
-	flex-shrink: 0;
-  transition: all;
+	gap: 30px;
+	animation-name: stockslide;
+	animation-duration: 90s;
+  animation-iteration-count: infinite;
+  animation-timing-function: linear;
+}
+
+@keyframes stockslide {
+  from {transform: translateX(110%);}
+  to {transform: translateX(-200%);}
+}
+
+.stock-ticker span {
+  white-space: nowrap;
 }

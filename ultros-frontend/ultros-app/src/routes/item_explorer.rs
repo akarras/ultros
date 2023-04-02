@@ -1,7 +1,7 @@
 use std::{cmp::Reverse, collections::HashSet};
 
 use crate::components::{
-    cheapest_price::*, fonts::*, small_item_display::*, tooltip::*, virtual_scroller::*,
+    cheapest_price::*, fonts::*, meta::*, small_item_display::*, tooltip::*, virtual_scroller::*,
 };
 use leptos::*;
 use leptos_router::*;
@@ -175,7 +175,18 @@ pub fn CategoryItems(cx: Scope) -> impl IntoView {
             });
         cat.unwrap_or_default()
     });
-    view! {cx, <ItemList items />}
+    let category_view_name = create_memo(cx, move |_| {
+        params()
+            .get("category")
+            .as_ref()
+            .map(|c| c.as_str())
+            .unwrap_or("Category View")
+            .to_string()
+    });
+    view! {cx,
+    <MetaTitle title=category_view_name/>
+    <MetaDescription text=move || format!("List of items for the item category {}", category_view_name())/>
+    <ItemList items />}
 }
 
 #[component]
@@ -209,6 +220,7 @@ pub fn JobItems(cx: Scope) -> impl IntoView {
         job_items
     });
     view! {cx,
+        <MetaTitle title=move || format!("{}", params().get("jobset").as_ref().map(|s| s.as_str()).unwrap_or("Job Set"))/>
     <div class="flex-row">
         <label for="marketable-only">"Marketable Only"</label>
         <input type="checkbox" prop:checked=market_only name="market-only" on:change=move |_e| {

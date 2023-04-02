@@ -41,10 +41,13 @@ pub(crate) async fn live_sales(
                                     if signal
                                         .try_update(|sales| {
                                             for sale in add.sales {
-                                                sales.push_back(sale);
+                                                sales.push_front(sale);
                                             }
-                                            while sales.len() > 10 {
-                                                sales.pop_front();
+                                            sales.make_contiguous().sort_by_key(|(sale, _)| {
+                                                std::cmp::Reverse(sale.sold_date)
+                                            });
+                                            while sales.len() > 50 {
+                                                sales.pop_back();
                                             }
                                         })
                                         .is_none()

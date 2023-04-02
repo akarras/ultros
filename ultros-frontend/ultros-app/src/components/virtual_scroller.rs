@@ -24,14 +24,14 @@ where
     K: Eq + Hash + 'static,
     T: 'static + Clone,
 {
-    let render_ahead = 0;
+    let render_ahead = 10;
     let (scroll_offset, set_scroll_offset) = create_signal(cx, 0);
     // use memo here so our signals only retrigger if the value actually changed.
     let child_start = create_memo(cx, move |_| {
         ((scroll_offset() as f64 / row_height) as u32).saturating_sub(render_ahead / 2)
     });
     let children_shown = (viewport_height / row_height).ceil() as u32 + render_ahead;
-    let _ = key; // temporary getting rid of unused variable warning without renaming the key.
+    // let _ = key; // temporary getting rid of unused variable warning without renaming the key.
     create_effect(cx, move |_| {});
     let virtual_children = move || {
         each.with(|children| {
@@ -61,20 +61,20 @@ where
           overflow: hidden;
           will-change: transform;
           position: relative;
-        "#, (each.with(|children| children.len()) as f64 * row_height).ceil() as u32)}
+        "#, (each.with(|children| children.len() + render_ahead as usize) as f64 * row_height).ceil() as u32)}
       >
         <div // offset for visible nodes
           style=move || format!("
             transform: translateY({}px);
           ", (child_start() as f64 * row_height) as u32)
         >
-        {move || virtual_children().into_iter().map(|child| view(cx, child)).collect::<Vec<_>>()}
+        // {move || virtual_children().into_iter().map(|child| view(cx, child)).collect::<Vec<_>>()}
         // For component currently has issues. Possibly
         // https://github.com/leptos-rs/leptos/issues/533
-        // <For each=virtual_children
-        //  key=key
-        //  view=view
-        // />
+        <For each=virtual_children
+         key=key
+         view=view
+        />
         </div>
       </div>
     </div>

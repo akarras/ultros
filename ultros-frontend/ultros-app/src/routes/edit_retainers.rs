@@ -6,7 +6,7 @@ use ultros_api_types::Retainer;
 use crate::api::{
     claim_retainer, get_retainers, search_retainers, unclaim_retainer, update_retainer_order,
 };
-use crate::components::{loading::*, reorderable_list::*, world_name::*};
+use crate::components::{loading::*, meta::*, reorderable_list::*, world_name::*};
 
 #[component]
 pub fn EditRetainers(cx: Scope) -> impl IntoView {
@@ -62,6 +62,7 @@ pub fn EditRetainers(cx: Scope) -> impl IntoView {
 
     view! { cx,
     <div style="width: 500px;" class="retainer-list flex-column">
+      <MetaTitle title="Edit Retainers"/>
       <span class="content-title">"Retainers"</span>
       <Transition fallback=move || view!{cx, <div></div>}>
         {move || retainers.read(cx).map(|retainers| {

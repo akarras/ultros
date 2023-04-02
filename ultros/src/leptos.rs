@@ -18,7 +18,7 @@ use leptos_router::SsrMode;
 use tracing::instrument;
 use ultros_app::*;
 
-use crate::web::{oauth::AuthDiscordUser, WebState};
+use crate::web::WebState;
 
 #[instrument(skip(options))]
 async fn custom_handler(

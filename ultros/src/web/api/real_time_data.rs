@@ -128,6 +128,7 @@ async fn handle_socket(
         )?))
         .await?;
     // sender.send(Message::Ping(vec![1, 2, 3, 4])).await?;
+
     info!("socket upgraded, starting.");
     loop {
         match select(receiver.next(), subscriptions.next()).await {
@@ -198,11 +199,11 @@ async fn handle_socket(
                     .send(Message::Text(serde_json::to_string(&right)?))
                     .await?;
             }
-            Either::Left((left, _l)) => {
+            Either::Left((_left, _l)) => {
                 // info!("Received none: {left:?}");
                 break;
             }
-            Either::Right((right, _r)) => {
+            Either::Right((_right, _r)) => {
                 // info!("Right {right:?}");
             }
         };

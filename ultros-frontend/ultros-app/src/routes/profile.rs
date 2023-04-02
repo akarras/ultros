@@ -97,9 +97,13 @@ pub fn Profile(cx: Scope) -> impl IntoView {
             <span class="content-title">"Profile"</span>
             <div class="content-well">
                 <label>"home world:"</label>
-                <WorldOnlyPicker current_world=homeworld.into() set_current_world=set_homeworld.into()  />
-                <label>"Default price selector"</label>
-                <WorldPicker current_world=price_region.into() set_current_world=set_price_region.into() />
+                <Suspense fallback=move || view!{cx, <Loading/>}>
+                    <WorldOnlyPicker current_world=homeworld.into() set_current_world=set_homeworld.into()  />
+                </Suspense>
+                    <label>"Default price selector"</label>
+                <Suspense fallback=move || view!{cx, <Loading />}>
+                    <WorldPicker current_world=price_region.into() set_current_world=set_price_region.into() />
+                </Suspense>
             </div>
             <div class="content-well">
                 <span class="content-title">

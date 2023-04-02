@@ -14,7 +14,7 @@ use crate::global_state::cookies::Cookies;
 use crate::global_state::user::LoggedInUser;
 use crate::global_state::LocalWorldData;
 use crate::{
-    components::{profile_display::*, search_box::*, tooltip::*},
+    components::{meta::*, profile_display::*, search_box::*, tooltip::*},
     routes::{
         analyzer::*, edit_retainers::*, home_page::*, item_explorer::*, item_view::*, list_view::*,
         lists::*, profile::*, retainers::*,
@@ -58,7 +58,11 @@ pub fn App(cx: Scope) -> impl IntoView {
         <Stylesheet id="app" href="/target/site/pkg/ultros.css"/>
         <Stylesheet id="font-awesome" href="/static/fa/css/all.min.css"/>
         <Stylesheet id="xiv-icons" href="/static/classjob-icons/src/xivicon.css"/>
-        <Title text="Ultros" />
+        <MetaTitle title="Ultros" />
+        <Meta name="twitter:card" content="summary_large_image"/>
+        <Meta name="viewport" content="width=device-width"/>
+        <Meta name="theme-color" content="#0f0710"/>
+        <Meta property="og:type" content="website"/>
         <div class="gradient-outer">
             <div class="gradient"></div>
         </div>
@@ -96,10 +100,12 @@ pub fn App(cx: Scope) -> impl IntoView {
                         <i class="fa-solid fa-screwdriver-wrench"></i>
                     </Tooltip>
                 </A>
-                <a rel="external" class="btn nav-item" href="/invitebot">
-                    "Invite Bot"
-                </a>
-                {move || view!{cx, <ProfileDisplay/>}}
+                <div class="flex-row">
+                    <a rel="external" class="btn nav-item" href="/invitebot">
+                        "Invite Bot"
+                    </a>
+                    {move || view!{cx, <ProfileDisplay/>}}
+                </div>
             </nav>
             <Routes>
                 <Route path="" view=move |cx| view!{cx, <HomePage/>} />

@@ -19,7 +19,7 @@ pub fn SaleHistoryTable(cx: Scope, sales: Signal<Vec<SaleHistory>>) -> impl Into
                 <th>"price"</th>
                 <th>"qty."</th>
                 <th>"total"</th>
-                <th>"retainer name"</th>
+                <th>"purchaser"</th>
                 <th>"world"</th>
                 <th>"datacenter"</th>
                 <th>"time sold"</th>

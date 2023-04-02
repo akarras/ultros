@@ -14,7 +14,7 @@ use xiv_gen::ItemId;
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
-        clipboard::*, gil::*, item_icon::*, loading::*, tooltip::*, virtual_scroller::*,
+        clipboard::*, gil::*, item_icon::*, loading::*, meta::*, tooltip::*, virtual_scroller::*,
         world_picker::*,
     },
     error::AppError,
@@ -316,8 +316,10 @@ fn AnalyzerTable(
         sorted_data.into_iter().enumerate().collect()
     });
     const DATACENTER_WIDTH: &str = "width: 130px";
-    const WORLD_WIDTH: &str = "width: 170px";
+    const WORLD_WIDTH: &str = "width: 180px";
     view! { cx,
+        <MetaTitle title="Price Analayzer"/>
+        <MetaDescription text="The analyzer finds the best items to buy on other worlds and sell on your own world."/>
        <div class="flex flex-row content-well">
             <span>"filter:"</span><br/>
            <div class="flex-column">

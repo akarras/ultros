@@ -28,8 +28,6 @@ pub fn WorldOnlyPicker(
                                 let world = worlds.lookup_selector(AnySelector::World(id)).and_then(|world| world.as_world().map(|w| w.clone()));
                                 set_current_world(world);
                             }>
-                            <option>""</option>
-                            {move || current_world().map(|current| view!{cx, <option value=current.id>{current.name}</option>})}
                         {data.regions.into_iter().map(|region| {
                             view!{cx, // <optgroup label=region.name>
                             {region.datacenters.into_iter().map(|datacenter| {
@@ -72,7 +70,7 @@ pub fn WorldPicker(
         {local_worlds.read(cx).map(move |worlds| match worlds {
             Ok(worlds) => {
                 let data = worlds.get_all().clone();
-                let current = current_world().map(|world| worlds.lookup_selector(world).map(|name| name.get_name().to_string()));
+                let current = move || current_world().map(|world| worlds.lookup_selector(world).map(|name| name.get_name().to_string()));
                 view!{cx,
                     <select on:change=move |input| {
                         let world_target = event_target_value(&input);
@@ -87,13 +85,12 @@ pub fn WorldPicker(
                         };
                         set_current_world(Some(selector))
                     }>
-                        {current.map(|current| view!{cx, <option>{current}</option>})}
                         {data.regions.into_iter().map(|region| {
                             view!{cx, <option value=move || format!("region:{}", region.id)>{&region.name}</option>
                             {region.datacenters.into_iter().map(|datacenter| {
                                 view!{cx, <option value=move || format!("datacenter:{}", datacenter.id)>{&datacenter.name}</option>
                                 {datacenter.worlds.into_iter().map(|world| {
-                                    view!{cx, <option value=move || {format!("world:{}", world.id)}>
+                                    view!{cx, <option value=move || {format!("world:{}", world.id)} prop:selected=move || current_world().map(|w| w == AnySelector::World(world.id)).unwrap_or_default()>
                                         {&world.name}
                                         </option>}
                                 }).collect::<Vec<_>>()}
