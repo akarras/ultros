@@ -181,8 +181,9 @@ pub fn CategoryItems(cx: Scope) -> impl IntoView {
         params()
             .get("category")
             .as_ref()
-            .map(|c| c.as_str())
-            .unwrap_or("Category View")
+            .and_then(|cat| decode(&cat).ok())
+            .map(|c| c.to_string())
+            .unwrap_or("Category View".to_string())
             .to_string()
     });
     view! {cx,

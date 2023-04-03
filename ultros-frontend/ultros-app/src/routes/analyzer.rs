@@ -370,10 +370,10 @@ fn AnalyzerTable(
                 </div>
             </div>
             <div role="columnheader" style=WORLD_WIDTH>
-                "World" {move || world_filter().map(move |world| view!{cx, <a on:click=move |_| set_world_filter(None)>"[" {world} "]"</a>})}
+                "World" {move || world_filter().map(move |world| view!{cx, <a on:click=move |_| set_world_filter(None)><Tooltip tooltip_text="Clear this world filter".to_string()>"[" {&world} "]"</Tooltip></a>})}
             </div>
             <div role="columnheader" style=DATACENTER_WIDTH>
-                "Datacenter" {move || datacenter_filter().map(move |datacenter| view!{cx, <a on:click=move |_| set_datacenter_filter(None)>"[" {datacenter} "]"</a>})}
+                "Datacenter" {move || datacenter_filter().map(move |datacenter| view!{cx, <a on:click=move |_| set_datacenter_filter(None)><Tooltip tooltip_text="Clear this datacenter filter".to_string()>"[" {&datacenter} "]"</Tooltip></a>})}
             </div>
             <div role="columnheader" style="width: 300px;">"Next sale"</div>
         </div>
@@ -461,6 +461,7 @@ pub fn AnalyzerWorldView(cx: Scope) -> impl IntoView {
                 <AnalyzerWorldNavigator /><br />
                 <span>"The analyzer will show items that sell more on "{world}" than they can be purchased for."</span><br/>
                 <span>"These estimates aren't very accurate, but are meant to be easily accessible and fast to use."</span><br/>
+                <span>"Be extra careful to make sure that the price you buy things for matches the price"</span><br/>
                 <span>"Sample filters"</span>
                 <a class="btn" href="?next-sale=7d&roi=300&profit=0&sort=profit&">"300% return within 7 days"</a>
                 <a class="btn" href="?next-sale=1M&roi=500&profit=200000&">"500% return with 200K min gil profit within 1 month"</a>
