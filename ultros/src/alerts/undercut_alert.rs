@@ -1,10 +1,15 @@
 use std::{
     collections::{HashMap, HashSet},
+    rc::Rc,
     sync::Arc,
 };
 
 use anyhow::Result;
-use futures::future::{self, Either};
+use futures::{
+    future::{self, Either},
+    lock::Mutex,
+    stream, Stream, StreamExt, TryStreamExt,
+};
 use poise::serenity_prelude::{self, Color, UserId};
 use serde::Serialize;
 use tracing::{debug, error, instrument};
@@ -106,12 +111,9 @@ pub(crate) struct UndercutRetainer {
 }
 
 #[derive(Debug)]
-pub(crate) enum UndercutResult {
-    None,
-    Undercut {
-        item_id: i32,
-        undercut_retainers: Vec<UndercutRetainer>,
-    },
+pub(crate) struct Undercut {
+    pub(crate) item_id: i32,
+    pub(crate) undercut_retainers: Vec<UndercutRetainer>,
 }
 
 #[derive(Debug)]
@@ -141,10 +143,25 @@ impl UndercutTracker {
         })
     }
 
+    pub(crate) fn into_stream<E>(self, listing_events: E) -> impl Stream<Item = Undercut>
+    where
+        E: Stream<Item = Result<EventType<Arc<ListingEventData>>, anyhow::Error>>,
+    {
+        let value = Arc::new(Mutex::new(self));
+        listing_events.filter_map(move |s| {
+            let value = value.clone();
+            async move {
+                let value = value.clone();
+                let mut lock = value.lock().await;
+                lock.handle_listing_event(s).await.ok()?
+            }
+        })
+    }
+
     pub(crate) async fn handle_listing_event(
         &mut self,
         listings: Result<EventType<Arc<ListingEventData>>, anyhow::Error>,
-    ) -> Result<UndercutResult, anyhow::Error> {
+    ) -> Result<Option<Undercut>, anyhow::Error> {
         let listing = listings?;
         match listing {
             EventType::Remove(removed) => {
@@ -251,10 +268,10 @@ impl UndercutTracker {
                                             .collect::<Vec<_>>()
                                     })
                                     .unwrap_or_default();
-                                return Ok(UndercutResult::Undercut {
+                                return Ok(Some(Undercut {
                                     item_id: added.item_id,
                                     undercut_retainers: retainers,
-                                });
+                                }));
                             }
                         }
                     }
@@ -262,7 +279,7 @@ impl UndercutTracker {
             }
             EventType::Update(_) => {}
         }
-        Ok(UndercutResult::None)
+        Ok(None)
     }
 }
 
@@ -314,11 +331,11 @@ impl RetainerAlertListener {
                                 break;
                             }
                             Ok(undercuts) => match undercuts {
-                                UndercutResult::None => {}
-                                UndercutResult::Undercut {
+                                None => {}
+                                Some(Undercut {
                                     item_id,
                                     undercut_retainers,
-                                } => {
+                                }) => {
                                     let items = &xiv_gen_db::decompress_data().items;
                                     if let Some(item) = items.get(&xiv_gen::ItemId(item_id)) {
                                         let retainer_names = undercut_retainers
