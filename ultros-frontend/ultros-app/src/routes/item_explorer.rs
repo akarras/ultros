@@ -146,7 +146,9 @@ fn JobsList(cx: Scope) -> impl IntoView {
             // .filter(|(_id, job)| job.class_job_parent.0 == 0)
             .map(|(_id, job)| view!{cx, <A href=format!("/items/jobset/{}", job.abbreviation)>
             // {&job.abbreviation}
-            <ClassJobIcon id=job.key_id />
+            <Tooltip tooltip_text=job.name_english.clone()>
+                <ClassJobIcon id=job.key_id />
+            </Tooltip>
         </A>}).collect::<Vec<_>>()}
     </div>}
 }
@@ -221,6 +223,7 @@ pub fn JobItems(cx: Scope) -> impl IntoView {
     });
     view! {cx,
         <MetaTitle title=move || format!("{}", params().get("jobset").as_ref().map(|s| s.as_str()).unwrap_or("Job Set"))/>
+        <MetaDescription text=move || format!("All items equippable by {}", params().get("jobset").as_ref().map(|s| s.as_str()).unwrap_or_default())/>
     <div class="flex-row">
         <label for="marketable-only">"Marketable Only"</label>
         <input type="checkbox" prop:checked=market_only name="market-only" on:change=move |_e| {
