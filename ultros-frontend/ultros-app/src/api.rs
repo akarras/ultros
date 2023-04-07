@@ -39,6 +39,7 @@ pub(crate) async fn get_bulk_listings(
     fetch_api(cx, &format!("/api/v1/bulkListings/{world}/{ids}")).await
 }
 
+#[instrument]
 pub(crate) async fn get_worlds(cx: Scope) -> AppResult<WorldData> {
     fetch_api(cx, "/api/v1/world_data").await
 }
@@ -249,6 +250,7 @@ pub(crate) async fn update_retainer_order(
 }
 
 /// Return the T, or try and return an AppError
+#[instrument]
 fn deserialize<T>(json: &str) -> AppResult<T>
 where
     T: Serializable,
@@ -311,19 +313,27 @@ where
 {
     // use the original headers of the scope
     // add the hostname when using the ssr path.
+    use tracing::Instrument;
 
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    let client = CLIENT.get_or_init(|| {
+        reqwest::ClientBuilder::new()
+            .tcp_keepalive(std::time::Duration::from_secs(60))
+            .build()
+            .unwrap()
+    });
     let req_parts = use_context::<leptos_axum::RequestParts>(cx).ok_or(AppError::ParamMissing)?;
     let mut headers = req_parts.headers;
     let hostname = "http://localhost:8080";
     let path = format!("{hostname}{path}");
     headers.remove("Accept-Encoding");
-    let client = reqwest::Client::builder()
-        .default_headers(headers)
-        .build()?;
-    let request = client.get(&path).build()?;
+
+    let request = client.get(&path).headers(headers).build()?;
     let json = client
         .execute(request)
         .await
+        .instrument(tracing::trace_span!("HTTP FETCH"))
+        .into_inner()
         .map_err(|e| {
             log::error!("Response {e}. {path}");
             e
