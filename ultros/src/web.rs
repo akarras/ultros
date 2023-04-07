@@ -21,9 +21,10 @@ use maud::Render;
 use reqwest::header;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
+use std::cell::OnceCell;
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::time::timeout;
 use tower_http::compression::predicate::{NotForContentType, SizeAbove};
@@ -391,8 +392,12 @@ pub(crate) async fn invite() -> Redirect {
     Redirect::to(&format!("https://discord.com/oauth2/authorize?client_id={client_id}&scope=bot&permissions=2147483648"))
 }
 
-pub(crate) async fn world_data(State(world_cache): State<Arc<WorldCache>>) -> Json<WorldData> {
-    Json(WorldData::from(world_cache.as_ref()))
+pub(crate) async fn world_data(
+    State(world_cache): State<Arc<WorldCache>>,
+) -> Json<&'static WorldData> {
+    static ONCE: OnceLock<WorldData> = OnceLock::new();
+    let world_data = ONCE.get_or_init(move || WorldData::from(world_cache.as_ref()));
+    Json(world_data)
 }
 
 pub(crate) async fn current_user(user: AuthDiscordUser) -> Json<UserData> {
