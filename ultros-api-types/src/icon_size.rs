@@ -10,7 +10,7 @@ pub enum IconSize {
 }
 
 impl IconSize {
-    pub fn get_class(&self) -> &str {
+    pub fn get_class(&self) -> &'static str {
         match self {
             IconSize::Small => "icon-small",
             IconSize::Medium => "icon-medium",

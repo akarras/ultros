@@ -7,13 +7,12 @@ use super::world_name::*;
 
 #[component]
 pub(crate) fn DatacenterName(cx: Scope, world_id: i32) -> impl IntoView {
-    let context = use_context::<LocalWorldData>(cx).expect("Local world data must be verified");
     view! {
         cx,
         <Suspense fallback=|| view!{cx, "--"}>
             {move ||
-                match context.0.read(cx) {
-                    Some(Ok(data)) => if let Some(world) = data.lookup_selector(AnySelector::World(world_id)) {
+                match use_context::<LocalWorldData>(cx).expect("Local world data must be verified").0 {
+                    Ok(data) => if let Some(world) = data.lookup_selector(AnySelector::World(world_id)) {
                         let world = match world {
                             ultros_api_types::world_helper::AnyResult::World(world) => world,
                             _ => unreachable!("World cannot return non world")

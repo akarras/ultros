@@ -7,6 +7,12 @@ pub struct WorldHelper {
     world_data: WorldData,
 }
 
+impl From<WorldData> for WorldHelper {
+    fn from(world_data: WorldData) -> Self {
+        Self { world_data }
+    }
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub enum AnyResult<'a> {
     Region(&'a Region),

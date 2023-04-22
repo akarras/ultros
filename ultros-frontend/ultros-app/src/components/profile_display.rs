@@ -1,4 +1,4 @@
-use crate::global_state::user::LoggedInUser;
+use crate::{components::loading::Loading, global_state::user::LoggedInUser};
 use leptos::*;
 
 #[component]
@@ -13,9 +13,9 @@ pub fn ProfileDisplay(cx: Scope) -> impl IntoView {
         .expect("Logged in user state to be present")
         .0;
     view! {cx,
-        <Suspense fallback=move || {}>
-        {move || match user.read(cx) {
-            Some(Some(auth)) => view! {cx,
+        <Suspense fallback=move || view!{cx, <Loading/>}>
+        {move || user.read(cx).map(|user| match user {
+            Some(auth) => view! {cx,
             <a href="/profile">
                 <img class="avatar" src=&auth.avatar alt=&auth.username/>
             </a>
@@ -28,7 +28,7 @@ pub fn ProfileDisplay(cx: Scope) -> impl IntoView {
             </a>
             }
             .into_view(cx),
-        }}
+        })}
         </Suspense>
     }
 }

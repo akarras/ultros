@@ -67,7 +67,7 @@ pub fn ItemSearchCategoryIcon(cx: Scope, id: ItemSearchCategoryId) -> impl IntoV
                 )
                 .into(),
             };
-            view! {cx, <i class=value.as_ref()></i>}.into_view(cx)
+            view! {cx, <i class=value></i>}.into_view(cx)
         }
     })
 }

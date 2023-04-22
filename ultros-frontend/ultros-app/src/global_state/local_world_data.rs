@@ -1,8 +1,7 @@
-use std::rc::Rc;
+use std::sync::Arc;
 
-use leptos::*;
 use ultros_api_types::world_helper::WorldHelper;
 
 use crate::error::AppResult;
 #[derive(Clone)]
-pub(crate) struct LocalWorldData(pub(crate) Resource<&'static str, AppResult<Rc<WorldHelper>>>);
+pub(crate) struct LocalWorldData(pub(crate) AppResult<Arc<WorldHelper>>);

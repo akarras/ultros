@@ -881,7 +881,10 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/robots.txt", get(robots))
         .route("/sitemap/world/:s.xml", get(world_sitemap))
         .route("/sitemap.xml", get(sitemap_index))
-        .nest("/", create_leptos_app().await.unwrap())
+        .nest(
+            "/",
+            create_leptos_app(state.world_helper.clone()).await.unwrap(),
+        )
         .with_state(state)
         .route_layer(middleware::from_fn(track_metrics))
         .layer(TraceLayer::new_for_http())

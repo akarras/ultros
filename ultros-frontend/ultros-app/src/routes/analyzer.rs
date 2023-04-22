@@ -2,7 +2,7 @@ use chrono::{Duration, Utc};
 use humantime::{format_duration, parse_duration};
 use leptos::*;
 use leptos_router::*;
-use std::{cmp::Reverse, collections::HashMap, fmt::Display, rc::Rc, str::FromStr};
+use std::{cmp::Reverse, collections::HashMap, fmt::Display, rc::Rc, str::FromStr, sync::Arc};
 use ultros_api_types::{
     cheapest_listings::CheapestListings,
     recent_sales::{RecentSales, SaleData},
@@ -232,7 +232,7 @@ fn AnalyzerTable(
     sales: RecentSales,
     global_cheapest_listings: CheapestListings,
     world_cheapest_listings: CheapestListings,
-    worlds: Rc<WorldHelper>,
+    worlds: Arc<WorldHelper>,
     world: Signal<String>,
 ) -> impl IntoView {
     let profits = ProfitTable::new(sales, global_cheapest_listings, world_cheapest_listings);
@@ -454,8 +454,12 @@ pub fn AnalyzerWorldView(cx: Scope) -> impl IntoView {
             get_cheapest_listings(cx, &world).await
         },
     );
+    let worlds = use_context::<LocalWorldData>(cx)
+        .expect("Worlds should always be populated here")
+        .0;
 
-    view!{cx, <div class="container">
+    view!{ cx,
+        <div class="container">
             <div class="main-content">
                 <span class="title">"Resale Analyzer Results for "{world}</span><br/>
                 <AnalyzerWorldNavigator /><br />
@@ -465,45 +469,37 @@ pub fn AnalyzerWorldView(cx: Scope) -> impl IntoView {
                 <span>"Sample filters"</span>
                 <a class="btn" href="?next-sale=7d&roi=300&profit=0&sort=profit&">"300% return within 7 days"</a>
                 <a class="btn" href="?next-sale=1M&roi=500&profit=200000&">"500% return with 200K min gil profit within 1 month"</a>
-                <Suspense fallback=move || view!{cx, <Loading />}>
-                {move || {
-                    let worlds = use_context::<LocalWorldData>(cx).expect("Worlds should always be populated here").0.read(cx);
-                    worlds.map(|w| w.ok()).flatten().map(|worlds| {
-                            let world_value = store_value(cx, worlds);
-                            let global_cheapest_listings = create_resource(
-                                cx,
-                                move || params.with(|p| p.get("world").cloned()),
-                                move |world| async move {
-                                    let worlds = world_value();
-                                    // use the world cache to lookup the region for this world
-                                    let world = world.ok_or(AppError::ParamMissing)?;
-                                    let region = worlds.lookup_world_by_name(&world).map(|world| {
-                                        let region = worlds.get_region(world);
-                                        AnyResult::Region(region).get_name().to_string()
-                                    }).ok_or(AppError::ParamMissing)?;
-                                    get_cheapest_listings(cx, &region).await
-                                },
-                            );
-                            view!{cx,
-                                <Suspense fallback=move || view!{cx, <Loading />}>
-                                    {move || {
-                                        let world_cheapest = world_cheapest_listings.read(cx);
-                                        let sales = sales.read(cx);
-                                        let global_cheapest_listings = global_cheapest_listings.read(cx);
-                                        let worlds = world_value();
-                                        let values = world_cheapest.map(|w| w.ok())
-                                            .flatten().and_then(|r| sales.map(|s| s.ok())
-                                            .flatten().and_then(|s| global_cheapest_listings.map(|g| g.ok()).flatten().and_then(|g| Some((r, s, g)))));
-                                        values.map(|(world_cheapest_listings, sales, global_cheapest_listings)| {
-                                        view!{cx, <AnalyzerTable sales global_cheapest_listings world_cheapest_listings worlds world=world.into() />
-                                        } }
-                                    )}}
-                                </Suspense>
-                            }.into_view(cx)
-                        })
+                {worlds.ok().map(|worlds| {
+                    let world_value = store_value(cx, worlds);
+                    let global_cheapest_listings = create_resource(
+                        cx,
+                        move || params.with(|p| p.get("world").cloned()),
+                        move |world| async move {
+                            let worlds = world_value();
+                            // use the world cache to lookup the region for this world
+                            let world = world.ok_or(AppError::ParamMissing)?;
+                            let region = worlds.lookup_world_by_name(&world).map(|world| {
+                                let region = worlds.get_region(world);
+                                AnyResult::Region(region).get_name().to_string()
+                            }).ok_or(AppError::ParamMissing)?;
+                            get_cheapest_listings(cx, &region).await
+                        },
+                    );
+                    view!{cx,
+                            {move || {
+                                let world_cheapest = world_cheapest_listings.read(cx);
+                                let sales = sales.read(cx);
+                                let global_cheapest_listings = global_cheapest_listings.read(cx);
+                                let worlds = world_value();
+                                let values = world_cheapest.map(|w| w.ok())
+                                    .flatten().and_then(|r| sales.map(|s| s.ok())
+                                    .flatten().and_then(|s| global_cheapest_listings.map(|g| g.ok()).flatten().and_then(|g| Some((r, s, g)))));
+                                values.map(|(world_cheapest_listings, sales, global_cheapest_listings)| {
+                                view!{cx, <AnalyzerTable sales global_cheapest_listings world_cheapest_listings worlds world=world.into() />
+                                } }
+                            )}}
                     }
-                }
-                </Suspense>
+                })}
         </div>
     </div>}.into_view(cx)
 }

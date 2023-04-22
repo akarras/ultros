@@ -7,6 +7,7 @@ use std::{error::Error, sync::Arc};
 ///
 use axum::{
     body::{Body, HttpBody},
+    extract::State,
     http::Request,
     response::{IntoResponse, Response},
     routing::get,
@@ -14,29 +15,30 @@ use axum::{
 };
 use leptos::*;
 use leptos_axum::generate_route_list;
-use leptos_router::SsrMode;
+use leptos_router::RouteListing;
 use tracing::instrument;
+use ultros_api_types::world_helper::WorldHelper;
 use ultros_app::*;
 
 use crate::web::WebState;
 
-#[instrument(skip(options))]
+#[instrument(skip(worlds, options, req))]
 async fn custom_handler(
-    // Path(id): Path<String>,
-    // State(state): State<WebState>,
-    // user: Option<AuthDiscordUser>,
+    State(worlds): State<Arc<WorldHelper>>,
     Extension(options): Extension<Arc<LeptosOptions>>,
     req: Request<Body>,
 ) -> Response {
     let handler = leptos_axum::render_app_to_stream_with_context(
         (*options).clone(),
         move |_cx| {},
-        |cx| view! { cx, <App/> },
+        move |cx| view! { cx, <App worlds=Ok(worlds.clone())/> },
     );
     handler(req).await.into_response()
 }
 
-pub(crate) async fn create_leptos_app() -> Result<Router<WebState>, Box<dyn Error>> {
+pub(crate) async fn create_leptos_app(
+    worlds: Arc<WorldHelper>,
+) -> Result<Router<WebState>, Box<dyn Error>> {
     use axum::{error_handling::HandleError, http::StatusCode};
     use tower_http::services::ServeDir;
 
@@ -67,8 +69,8 @@ pub(crate) async fn create_leptos_app() -> Result<Router<WebState>, Box<dyn Erro
     async fn handle_file_error(err: std::io::Error) -> (StatusCode, String) {
         (StatusCode::NOT_FOUND, format!("File Not Found: {}", err))
     }
-
-    let routes = generate_route_list(|cx| view! { cx, <App/> }).await;
+    let worlds = Ok(worlds);
+    let routes = generate_route_list(|cx| view! { cx, <App worlds /> }).await;
 
     // simple_logger::init_with_level(log::Level::Debug).expect("couldn't initialize logging");
 
@@ -86,7 +88,7 @@ pub(crate) async fn create_leptos_app() -> Result<Router<WebState>, Box<dyn Erro
 pub trait StatefulRoutes<S, B> {
     fn leptos_routes_with_handler_stateful<H, T>(
         self,
-        paths: Vec<(String, SsrMode)>,
+        paths: Vec<RouteListing>,
         handler: H,
     ) -> Self
     where
@@ -97,11 +99,7 @@ pub trait StatefulRoutes<S, B> {
 }
 
 impl<S, B> StatefulRoutes<S, B> for axum::Router<S, B> {
-    fn leptos_routes_with_handler_stateful<H, T>(
-        self,
-        paths: Vec<(String, SsrMode)>,
-        handler: H,
-    ) -> Self
+    fn leptos_routes_with_handler_stateful<H, T>(self, paths: Vec<RouteListing>, handler: H) -> Self
     where
         H: axum::handler::Handler<T, S, B>,
         S: Clone + Send + Sync + 'static,
@@ -109,8 +107,8 @@ impl<S, B> StatefulRoutes<S, B> for axum::Router<S, B> {
         B: HttpBody + Send + 'static,
     {
         let mut router = self;
-        for (path, _) in paths.iter() {
-            router = router.route(path, get(handler.clone()));
+        for route in paths.iter() {
+            router = router.route(route.path(), get(handler.clone()));
         }
         router
     }
