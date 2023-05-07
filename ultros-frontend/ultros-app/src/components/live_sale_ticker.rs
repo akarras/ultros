@@ -17,25 +17,22 @@ use crate::ws::live_data::live_sales;
 #[component]
 pub fn LiveSaleTicker(cx: Scope) -> impl IntoView {
     let sales = create_rw_signal::<VecDeque<(SaleHistory, UnknownCharacter)>>(cx, VecDeque::new());
+    let (homeworld, _) = get_homeworld(cx);
+    spawn_local(async move {
 
+        #[cfg(not(feature = "ssr"))]
+        if let Some(sale) = homeworld().map(|homeworld| ultros_api_types::world_helper::AnySelector::World(homeworld.id)) {
+            log::info!("live sale");
+            live_sales(sales, sale).await.unwrap();
+        }
+    });
     let items = &xiv_gen_db::decompress_data().items;
     view! {cx,
         <Suspense fallback=move || view!{cx, <Loading />}>
             {move ||{
-                let (homeworld, _) = get_homeworld(cx);
-
-                spawn_local(async move {
-
-                    #[cfg(not(feature = "ssr"))]
-                    if let Some(sale) = homeworld().map(|homeworld| ultros_api_types::world_helper::AnySelector::World(homeworld.id)) {
-                        log::info!("live sale");
-                        live_sales(sales, sale).await.unwrap();
-                    }
-                });
-
                 view!{cx,
                     <div class="content-well">
-                    <div class="content-title">{move || format!("Sales on {}", homeworld().map(|world| world.name).unwrap_or_default())}</div>
+                    // <div class="content-title">{move || format!("Sales on {}", homeworld().map(|world| world.name).unwrap_or_default())}</div>
                     <div class="stock-ticker">
                         <div class="stock-ticker-body">
                             {move || sales()

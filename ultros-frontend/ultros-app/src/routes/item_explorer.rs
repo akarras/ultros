@@ -264,7 +264,7 @@ pub fn ItemExplorer(cx: Scope) -> impl IntoView {
                     <JobsList />
                 </div>
                 <div class="flex-column" style="flex-grow: 1;">
-                    <Outlet/>
+                    <AnimatedOutlet/>
                 </div>
             </div>
         </div>

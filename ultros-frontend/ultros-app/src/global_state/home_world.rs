@@ -1,8 +1,11 @@
+use std::backtrace;
+
 use cookie::{
     time::{Duration, OffsetDateTime},
     Cookie, SameSite,
 };
 use leptos::*;
+use log::info;
 use ultros_api_types::{
     world::World,
     world_helper::{AnySelector, OwnedResult},

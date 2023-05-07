@@ -161,7 +161,7 @@ pub fn Retainers(cx: Scope) -> impl IntoView {
                 </A>
             </div>
             <div class="main-content" style="display: flex; flex-direction: column; align-items: start;">
-                <Outlet />
+                <AnimatedOutlet />
             </div>
         </div>
     }

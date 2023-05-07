@@ -15,7 +15,7 @@ leptos_axum = { git = "https://github.com/leptos-rs/leptos.git", default-feature
 xiv-gen-db = {path = "../../xiv-gen-db"}
 xiv-gen = {path = "../../xiv-gen", features = ["item", "item_ui_category", "item_search_category", "class_job", "recipe", "class_job_category"]}
 sublime_fuzzy = "0.7"
-reqwest = {version = "0.11.0", optional = true, default-features = false, features = ["json", "rustls-tls"]}
+reqwest = {version = "0.11.0", optional = true, default-features = false, features = ["json", "rustls-tls", "brotli"]}
 gloo-net = {version = "0.2", optional = true, features = ["http", "websocket"]}
 gloo = {version = "0.8.0", optional = true}
 web-sys = {version = "0.3", optional = true, features = ["AbortController", "Clipboard", "Window", "Navigator", "HtmlCanvasElement", "HtmlDivElement", "HtmlElement", "HtmlDocument"]}

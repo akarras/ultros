@@ -25,6 +25,9 @@ pub fn SearchBox(cx: Scope) -> impl IntoView {
     let items = &xiv_gen_db::decompress_data().items;
     let item_search = move || {
         search.with(|s| {
+            if s.is_empty() {
+                return vec![];
+            }
             let mut score = items
                 .into_iter()
                 .filter(|(_, i)| i.item_search_category.0 > 0)

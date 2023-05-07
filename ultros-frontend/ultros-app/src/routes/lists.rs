@@ -136,7 +136,7 @@ pub fn Lists(cx: Scope) -> impl IntoView {
             </A>
         </div>
         <div class="main-content flex-column">
-            <Outlet/>
+            <AnimatedOutlet/>
         </div>
     </div>
     }

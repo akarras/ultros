@@ -52,16 +52,20 @@ pub fn App(cx: Scope, worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
         <Stylesheet id="font-awesome" href="/static/fa/css/all.min.css"/>
         <Stylesheet id="xiv-icons" href="/static/classjob-icons/src/xivicon.css"/>
         <MetaTitle title="Ultros" />
+        <MetaDescription text="Ultros is a FAST FFXIV marketboard analysis tool, keep up to date with all of your retainers and ensure you've got the best prices!" />
         <Meta name="twitter:card" content="summary_large_image"/>
         <Meta name="viewport" content="width=device-width"/>
         <Meta name="theme-color" content="#0f0710"/>
         <Meta property="og:type" content="website"/>
+        <Meta property="og:locale" content="en_US" />
+        <Meta property="og:site_name" content="Ultros" />
+
         <div class="gradient-outer">
             <div class="gradient"></div>
         </div>
         <Router>
             <nav class="header">
-                // <i><b>"ULTROS IS STILL UNDER ACTIVE DEVELOPMENT"</b></i>
+                <i><b>"ULTROS IS STILL UNDER ACTIVE DEVELOPMENT"</b></i>
                 // <Suspense fallback=move || {}>
                 // {move || login.read(cx).flatten().map(|_| view!{cx, <A href="/alerts">
                 //     <i class="fa-solid fa-bell"></i>
@@ -102,7 +106,7 @@ pub fn App(cx: Scope, worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
                     <ProfileDisplay />
                 </div>
             </nav>
-            <Routes>
+            <AnimatedRoutes outro="route-out" intro="route-in">
                 <Route path="" view=move |cx| view!{cx, <HomePage/>} />
                 <Route path="retainers" view=move |cx| view!{cx, <Retainers/>}>
                     <Route path="edit" view=move |cx| view!{cx, <EditRetainers />}/>
@@ -124,7 +128,7 @@ pub fn App(cx: Scope, worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
                 <Route path="analyzer" view=move |cx| view! { cx, <Analyzer/>}/>
                 <Route path="analyzer/:world" view=move |cx| view! { cx, <AnalyzerWorldView/>}/>
                 <Route path="profile" view=move |cx| view! { cx, <Profile/>}/>
-            </Routes>
+            </AnimatedRoutes>
         </Router>
         <footer class="flex-column flex-space flex-center">
             <div class="flex-row column-pad flex-center">

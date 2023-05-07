@@ -156,7 +156,7 @@ pub fn ItemView(cx: Scope) -> impl IntoView {
     view! {
         cx,
         <MetaDescription text=description/>
-        <MetaTitle title=move || format!("Market view - {}", item_name())/>
+        <MetaTitle title=move || format!("{} - Market view", item_name())/>
         // TODO: probably shouldn't hard code the domain here
         <MetaImage url=move || { format!("https://beta.ultros.app/static/itemicon/{}?size=Large", item_id())}/>
         <div class="container">

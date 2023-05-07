@@ -16,7 +16,7 @@ pub fn ItemSearchCategoryIcon(cx: Scope, id: ItemSearchCategoryId) -> impl IntoV
             // view! {cx, <i class=format!("icon xiv-ItemCategory_{}", class_job.abbreviation)></i>}
             view! {cx, <ClassJobIcon id=class_job.key_id/>}.into_view(cx)
         } else {
-            let value: Cow<str> = match id.0 {
+            let value: Cow<'static, str> = match id.0 {
                 // singular armory items
                 30..=38 | 40..=41 => {
                     format!("icon xiv-Armoury_{}", category.name.replace(" ", "_")).into()
