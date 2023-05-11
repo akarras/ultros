@@ -65,7 +65,7 @@ pub fn App(cx: Scope, worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
         </div>
         <Router>
             <nav class="header">
-                <i><b>"ULTROS IS STILL UNDER ACTIVE DEVELOPMENT"</b></i>
+            <b><i>"ULTRA ALPHA™"</i></b>
                 // <Suspense fallback=move || {}>
                 // {move || login.read(cx).flatten().map(|_| view!{cx, <A href="/alerts">
                 //     <i class="fa-solid fa-bell"></i>
@@ -106,7 +106,7 @@ pub fn App(cx: Scope, worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
                     <ProfileDisplay />
                 </div>
             </nav>
-            <AnimatedRoutes outro="route-out" intro="route-in">
+            <AnimatedRoutes outro="route-out" intro="route-in" outro_back="route-out-back" intro_back="route-in-back">
                 <Route path="" view=move |cx| view!{cx, <HomePage/>} />
                 <Route path="retainers" view=move |cx| view!{cx, <Retainers/>}>
                     <Route path="edit" view=move |cx| view!{cx, <EditRetainers />}/>

@@ -1,6 +1,5 @@
 use std::{
     collections::{HashMap, HashSet},
-    rc::Rc,
     sync::Arc,
 };
 
@@ -8,7 +7,7 @@ use anyhow::Result;
 use futures::{
     future::{self, Either},
     lock::Mutex,
-    stream, Stream, StreamExt, TryStreamExt,
+    Stream, StreamExt,
 };
 use poise::serenity_prelude::{self, Color, UserId};
 use serde::Serialize;

@@ -90,7 +90,8 @@ pub fn RetainerUndercuts(cx: Scope) -> impl IntoView {
         cx,
         <MetaTitle title="Retainer Undercuts" />
         <span class="content-title">"Retainer Undercuts"</span>
-        <span>"Please keep in mind that data may not always be up to date. To update data, please contribute to universalis and then refresh this page."</span>
+        <br/>
+        <span>"Please keep in mind that data may not always be up to date. To update data, please contribute to universalis and then refresh this page."</span> <br/>
         <span>"This page will only show listings that have been undercut, enabling you to quickly view which items need to be refreshed"</span>
         <Suspense fallback=move || view!{cx, <Loading/>}>
         {move || {
@@ -118,6 +119,7 @@ pub fn RetainerListings(cx: Scope) -> impl IntoView {
         <span class="content-title">"All Listings"</span>
         <MetaTitle title="All Listings"/>
         <MetaDescription text="View your retainer's listings without making it a second job!"/>
+        <br />
         <span>"Please keep in mind that data may not always be up to date. To update data, please contribute to universalis and then refresh this page."</span>
         <Suspense fallback=move || view!{cx, <Loading/>}>
         {move || {

@@ -2,7 +2,7 @@ use chrono::{Duration, Utc};
 use humantime::{format_duration, parse_duration};
 use leptos::*;
 use leptos_router::*;
-use std::{cmp::Reverse, collections::HashMap, fmt::Display, rc::Rc, str::FromStr, sync::Arc};
+use std::{cmp::Reverse, collections::HashMap, fmt::Display, str::FromStr, sync::Arc};
 use ultros_api_types::{
     cheapest_listings::CheapestListings,
     recent_sales::{RecentSales, SaleData},
@@ -14,7 +14,7 @@ use xiv_gen::ItemId;
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
-        clipboard::*, gil::*, item_icon::*, loading::*, meta::*, tooltip::*, virtual_scroller::*,
+        clipboard::*, gil::*, item_icon::*, meta::*, tooltip::*, virtual_scroller::*,
         world_picker::*,
     },
     error::AppError,

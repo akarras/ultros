@@ -1,8 +1,6 @@
 use leptos::*;
 
 use ultros_api_types::{world::World, world_helper::AnySelector};
-
-use super::loading::*;
 use crate::global_state::LocalWorldData;
 
 #[component]
@@ -63,7 +61,8 @@ pub fn WorldPicker(
     match local_worlds {
         Ok(worlds) => {
             let data = worlds.get_all().clone();
-            let current = move || {
+            // TODO: include a current world default option in the picker
+            let _current = move || {
                 current_world().map(|world| {
                     worlds
                         .lookup_selector(world)

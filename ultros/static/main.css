@@ -597,15 +597,17 @@ th {
     top: 0px;
     left: 0px;
     right: 0px;
+    width: 100%;
   }
 
   .search-box {
-    width: 98vw;
+    width: 100%;
     margin: 0px;
     padding: 2px;
     left: 0px;
     right: 0px;
   }
+
 
   .search-results {
     width: 100vw;
@@ -614,6 +616,7 @@ th {
     top: 44px;
     left: 0px;
     bottom: 50%;
+    padding: 0px 15px;
   }
 
   .search-result {
@@ -1001,30 +1004,62 @@ select optgroup {
   white-space: nowrap;
 }
 
+:root {
+  --page-transition-time: .1s;
+}
+
+.route-out-back {
+  animation-name: fade-out;
+  animation-duration: var(--page-transition-time);
+  animation-iteration-count: 1;
+  animation-timing-function: linear;
+}
+
+.route-in-back {
+  animation-name: fade-in;
+  animation-duration: var(--page-transition-time);
+  animation-iteration-count: 1;
+  animation-timing-function: linear;
+}
+
+.route-out-back>* {
+  animation-name: slide-out;
+  animation-duration: var(--page-transition-time);
+  animation-iteration-count: 1;
+  animation-timing-function: linear;
+}
+
+.route-in-back>* {
+  animation-name: slide-in;
+  animation-duration: var(--page-transition-time);
+  animation-iteration-count: 1;
+  animation-timing-function: linear;
+}
+
 .route-out {
   animation-name: fade-out;
-  animation-duration: 0.25s;
+  animation-duration: var(--page-transition-time);
   animation-iteration-count: 1;
-  animation-timing-function: cubic-bezier(0.075, 0.82, 0.165, 1);
+  animation-timing-function: linear;
 }
 
 .route-in {
   animation-name: fade-in;
-  animation-duration: 0.25s;
+  animation-duration: var(--page-transition-time);
   animation-iteration-count: 1;
-  animation-timing-function:cubic-bezier(0.68, -0.55, 0.265, 1.55);
+  animation-timing-function: linear;
 }
 
 .route-out>* {
   animation-name: slide-out;
-  animation-duration: 0.25s;
+  animation-duration: var(--page-transition-time);
   animation-iteration-count: 1;
   animation-timing-function: linear;
 }
 
 .route-in>* {
   animation-name: slide-in;
-  animation-duration: 0.25s;
+  animation-duration: var(--page-transition-time);
   animation-iteration-count: 1;
   animation-timing-function: linear;
 }
@@ -1036,22 +1071,22 @@ select optgroup {
   }
   70% {
     transform: translateY(-100px) scaleY(110%);
-    background-color: rgba(0, 0, 0, 50);
+    background-color: rgba(0, 0, 0, 1.0);
   }
   100% {
     transform: translateY(-100px) scaleY(110%);
-    background-color: rgba(0, 0, 0, 50);
+    background-color: rgba(0, 0, 0, 1.0);
   }
 }
 
 @keyframes fade-in {
   0% {
     transform: translateY(-100px) scaleY(110%);
-    background-color: rgba(0, 0, 0, 50);
+    background-color: rgba(0, 0, 0, 1.0);
   }
-  30% {
+  75% {
     transform: translateY(-100px) scaleY(110%);
-    background-color: rgba(0, 0, 0, 50);
+    background-color: rgba(0, 0, 0, 1.0);
   }
   100% {
     transform: translateY(0px);
@@ -1060,25 +1095,29 @@ select optgroup {
 }
 
 @keyframes slide-in {
-  from {
-    transform: translateX(-100%) scale(0.8, 0.8);
+  0% {
+    transform: translate(0%, 100vh) scale(1, 0.5);
     /* color: #ffffff; */
   }
-
-  to {
+  75% {
+    transform: translateX(0, 50vh) scale(1, 0.8)
+  }
+  99% {
     /* color: #00000000; */
-    transform: translateX(0%) scale(1.0, 1.0);
+    transform: translate(0, 0) scale(1.0, 1.0);
   }
 }
 
 @keyframes slide-out {
-  from {
+  0% {
     /* color: #00000000; */
-    transform: translateX(0%) scale(1, 1);
+    transform: translate(0%, 0) scale(1, 1);
   }
-
-  to {
+  30% {
+    transform: translate(0, 50vh) scale(1, 0.8);
+  }
+  100% {
     /* color: #ffffff; */
-    transform: translateX(100%) scale(0.8, 0.8);
+    transform: translate(0, 100vh) scale(1, 0.5);
   }
 }

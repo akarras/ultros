@@ -5,7 +5,6 @@ use crate::global_state::LocalWorldData;
 
 #[component]
 pub(crate) fn WorldName(cx: Scope, id: AnySelector) -> impl IntoView {
-    let context = use_context::<LocalWorldData>(cx).expect("Local world data must be verified");
     view! {
         cx,
         <Suspense fallback=|| view!{cx, "--"}>
