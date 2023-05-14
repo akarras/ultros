@@ -43,9 +43,9 @@ itertools = "0.10.5"
 sitemap-rs = "0.2.0"
 ultros-api-types = {path = "../ultros-api-types"}
 ultros-xiv-icons = {path = "../ultros-frontend/ultros-xiv-icons"}
-leptos = {git = "https://github.com/leptos-rs/leptos.git", default-features = false, features = ["ssr"]}
-leptos_axum = {git = "https://github.com/leptos-rs/leptos.git"}
-leptos_router = {git = "https://github.com/leptos-rs/leptos.git"}
+leptos = {workspace = true, features = ["ssr"]}
+leptos_axum.workspace = true
+leptos_router = {workspace = true, features = ["ssr"]}
 ultros-app = {path = "../ultros-frontend/ultros-app", features = ["ssr"]}
 hyper = "0.14.24"
 tokio-stream = {version = "0.1.12", features = ["sync"]}

@@ -19,9 +19,10 @@ pub fn LiveSaleTicker(cx: Scope) -> impl IntoView {
     let sales = create_rw_signal::<VecDeque<(SaleHistory, UnknownCharacter)>>(cx, VecDeque::new());
     let (homeworld, _) = get_homeworld(cx);
     spawn_local(async move {
-
         #[cfg(not(feature = "ssr"))]
-        if let Some(sale) = homeworld().map(|homeworld| ultros_api_types::world_helper::AnySelector::World(homeworld.id)) {
+        if let Some(sale) = homeworld()
+            .map(|homeworld| ultros_api_types::world_helper::AnySelector::World(homeworld.id))
+        {
             log::info!("live sale");
             live_sales(sales, sale).await.unwrap();
         }

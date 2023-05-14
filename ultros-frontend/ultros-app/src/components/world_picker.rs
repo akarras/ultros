@@ -1,7 +1,7 @@
 use leptos::*;
 
-use ultros_api_types::{world::World, world_helper::AnySelector};
 use crate::global_state::LocalWorldData;
+use ultros_api_types::{world::World, world_helper::AnySelector};
 
 #[component]
 pub fn WorldOnlyPicker(

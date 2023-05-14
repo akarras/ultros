@@ -48,7 +48,7 @@ pub fn App(cx: Scope, worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
     let (homeworld, _set_homeworld) = get_homeworld(cx);
     view! {
         cx,
-        <Stylesheet id="app" href="/target/site/pkg/ultros.css"/>
+        <Stylesheet id="leptos" href="/target/site/pkg/ultros.css"/>
         <Stylesheet id="font-awesome" href="/static/fa/css/all.min.css"/>
         <Stylesheet id="xiv-icons" href="/static/classjob-icons/src/xivicon.css"/>
         <MetaTitle title="Ultros" />

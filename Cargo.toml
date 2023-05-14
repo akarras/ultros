@@ -18,6 +18,12 @@ tracing = "0.1.36"
 tracing-subscriber = "0.3"
 futures = "0.3.24"
 anyhow = "1.0.64"
+leptos = { git = "https://github.com/leptos-rs/leptos.git", default-features = false, features = [
+  "serde",
+] }
+leptos_axum = { git = "https://github.com/leptos-rs/leptos.git" }
+leptos_router = { git = "https://github.com/leptos-rs/leptos.git" }
+leptos_meta = { git = "https://github.com/leptos-rs/leptos.git" }
 
 [profile.release]
 lto = true
