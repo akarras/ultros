@@ -326,7 +326,7 @@ where
     let mut headers = req_parts.headers;
     let hostname = "http://localhost:8080";
     let path = format!("{hostname}{path}");
-    headers.remove("Accept-Encoding");
+    // headers.remove("Accept-Encoding");
 
     let request = client.get(&path).headers(headers).build()?;
     let json = client
