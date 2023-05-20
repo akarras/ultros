@@ -92,7 +92,7 @@ pub fn Profile(cx: Scope) -> impl IntoView {
     let (price_region, set_price_region) = get_price_zone(cx);
     let price_region = result_to_selector_read(cx, price_region);
     let set_price_region = selector_to_setter_signal(cx, set_price_region);
-    view! { cx, <div class="container">
+    view! { cx,
         <div class="main-content">
             <span class="content-title">"Profile"</span>
             <div class="content-well">
@@ -162,6 +162,5 @@ pub fn Profile(cx: Scope) -> impl IntoView {
                     })}
                 </Suspense>
             </div>
-        </div>
-    </div>}
+        </div>}
 }

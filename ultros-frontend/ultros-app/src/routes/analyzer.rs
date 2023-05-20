@@ -459,48 +459,46 @@ pub fn AnalyzerWorldView(cx: Scope) -> impl IntoView {
         .0;
 
     view!{ cx,
-        <div class="container">
-            <div class="main-content">
-                <span class="title">"Resale Analyzer Results for "{world}</span><br/>
-                <AnalyzerWorldNavigator /><br />
-                <span>"The analyzer will show items that sell more on "{world}" than they can be purchased for."</span><br/>
-                <span>"These estimates aren't very accurate, but are meant to be easily accessible and fast to use."</span><br/>
-                <span>"Be extra careful to make sure that the price you buy things for matches the price"</span><br/>
-                <span>"Sample filters"</span>
-                <a class="btn" href="?next-sale=7d&roi=300&profit=0&sort=profit&">"300% return within 7 days"</a>
-                <a class="btn" href="?next-sale=1M&roi=500&profit=200000&">"500% return with 200K min gil profit within 1 month"</a>
-                {worlds.ok().map(|worlds| {
-                    let world_value = store_value(cx, worlds);
-                    let global_cheapest_listings = create_resource(
-                        cx,
-                        move || params.with(|p| p.get("world").cloned()),
-                        move |world| async move {
+        <div class="main-content">
+            <span class="title">"Resale Analyzer Results for "{world}</span><br/>
+            <AnalyzerWorldNavigator /><br />
+            <span>"The analyzer will show items that sell more on "{world}" than they can be purchased for."</span><br/>
+            <span>"These estimates aren't very accurate, but are meant to be easily accessible and fast to use."</span><br/>
+            <span>"Be extra careful to make sure that the price you buy things for matches the price"</span><br/>
+            <span>"Sample filters"</span>
+            <a class="btn" href="?next-sale=7d&roi=300&profit=0&sort=profit&">"300% return within 7 days"</a>
+            <a class="btn" href="?next-sale=1M&roi=500&profit=200000&">"500% return with 200K min gil profit within 1 month"</a>
+            {worlds.ok().map(|worlds| {
+                let world_value = store_value(cx, worlds);
+                let global_cheapest_listings = create_resource(
+                    cx,
+                    move || params.with(|p| p.get("world").cloned()),
+                    move |world| async move {
+                        let worlds = world_value();
+                        // use the world cache to lookup the region for this world
+                        let world = world.ok_or(AppError::ParamMissing)?;
+                        let region = worlds.lookup_world_by_name(&world).map(|world| {
+                            let region = worlds.get_region(world);
+                            AnyResult::Region(region).get_name().to_string()
+                        }).ok_or(AppError::ParamMissing)?;
+                        get_cheapest_listings(cx, &region).await
+                    },
+                );
+                view!{cx,
+                        {move || {
+                            let world_cheapest = world_cheapest_listings.read(cx);
+                            let sales = sales.read(cx);
+                            let global_cheapest_listings = global_cheapest_listings.read(cx);
                             let worlds = world_value();
-                            // use the world cache to lookup the region for this world
-                            let world = world.ok_or(AppError::ParamMissing)?;
-                            let region = worlds.lookup_world_by_name(&world).map(|world| {
-                                let region = worlds.get_region(world);
-                                AnyResult::Region(region).get_name().to_string()
-                            }).ok_or(AppError::ParamMissing)?;
-                            get_cheapest_listings(cx, &region).await
-                        },
-                    );
-                    view!{cx,
-                            {move || {
-                                let world_cheapest = world_cheapest_listings.read(cx);
-                                let sales = sales.read(cx);
-                                let global_cheapest_listings = global_cheapest_listings.read(cx);
-                                let worlds = world_value();
-                                let values = world_cheapest.map(|w| w.ok())
-                                    .flatten().and_then(|r| sales.map(|s| s.ok())
-                                    .flatten().and_then(|s| global_cheapest_listings.map(|g| g.ok()).flatten().and_then(|g| Some((r, s, g)))));
-                                values.map(|(world_cheapest_listings, sales, global_cheapest_listings)| {
-                                view!{cx, <AnalyzerTable sales global_cheapest_listings world_cheapest_listings worlds world=world.into() />
-                                } }
-                            )}}
-                    }
-                })}
-        </div>
+                            let values = world_cheapest.map(|w| w.ok())
+                                .flatten().and_then(|r| sales.map(|s| s.ok())
+                                .flatten().and_then(|s| global_cheapest_listings.map(|g| g.ok()).flatten().and_then(|g| Some((r, s, g)))));
+                            values.map(|(world_cheapest_listings, sales, global_cheapest_listings)| {
+                            view!{cx, <AnalyzerTable sales global_cheapest_listings world_cheapest_listings worlds world=world.into() />
+                            } }
+                        )}}
+                }
+            })}
     </div>}.into_view(cx)
 }
 

@@ -147,24 +147,22 @@ pub fn Retainers(cx: Scope) -> impl IntoView {
     // let retainers = create_resource(cx, || "retainers", move |_| get_retainer_listings(cx));
     view! {
         cx,
-        <div class="container">
-            <div class="content-nav">
-                <A class="btn-secondary" href="/retainers/edit">
-                    <span class="fa fa-pen-to-square"></span>
-                    "Edit"
-                </A>
-                <A class="btn-secondary" href="/retainers/listings">
-                    <span class="fa fa-pencil"></span>
-                    "All Listings"
-                </A>
-                <A class="btn-secondary" href="/retainers/undercuts">
-                    <span class="fa fa-exclamation"></span>
-                    "Undercuts"
-                </A>
-            </div>
-            <div class="main-content" style="display: flex; flex-direction: column; align-items: start;">
-                <AnimatedOutlet />
-            </div>
+        <div class="content-nav">
+            <A class="btn-secondary" href="/retainers/edit">
+                <span class="fa fa-pen-to-square"></span>
+                "Edit"
+            </A>
+            <A class="btn-secondary" href="/retainers/listings">
+                <span class="fa fa-pencil"></span>
+                "All Listings"
+            </A>
+            <A class="btn-secondary" href="/retainers/undercuts">
+                <span class="fa fa-exclamation"></span>
+                "Undercuts"
+            </A>
+        </div>
+        <div class="main-content" style="display: flex; flex-direction: column; align-items: start;">
+            <AnimatedOutlet />
         </div>
     }
 }

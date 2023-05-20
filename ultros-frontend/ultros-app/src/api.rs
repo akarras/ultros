@@ -323,7 +323,7 @@ where
             .unwrap()
     });
     let req_parts = use_context::<leptos_axum::RequestParts>(cx).ok_or(AppError::ParamMissing)?;
-    let mut headers = req_parts.headers;
+    let headers = req_parts.headers;
     let hostname = "http://localhost:8080";
     let path = format!("{hostname}{path}");
     // headers.remove("Accept-Encoding");

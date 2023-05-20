@@ -54,7 +54,7 @@ pub fn App(cx: Scope, worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
         <MetaTitle title="Ultros" />
         <MetaDescription text="Ultros is a FAST FFXIV marketboard analysis tool, keep up to date with all of your retainers and ensure you've got the best prices!" />
         <Meta name="twitter:card" content="summary_large_image"/>
-        <Meta name="viewport" content="width=device-width"/>
+        <Meta name="viewport" content="initial-scale=1.0,width=device-width"/>
         <Meta name="theme-color" content="#0f0710"/>
         <Meta property="og:type" content="website"/>
         <Meta property="og:locale" content="en_US" />
@@ -63,73 +63,75 @@ pub fn App(cx: Scope, worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
         <div class="gradient-outer">
             <div class="gradient"></div>
         </div>
-        <Router>
-            <nav class="header">
-            <b><i>"ULTRA ALPHA™"</i></b>
-                // <Suspense fallback=move || {}>
-                // {move || login.read(cx).flatten().map(|_| view!{cx, <A href="/alerts">
-                //     <i class="fa-solid fa-bell"></i>
-                //     "Alerts"
-                // </A>})}
-                // </Suspense>
-                {move ||
-                    {
-                        view!{cx,
-                        <A href=homeworld().map(|w| format!("/analyzer/{}", w.name)).unwrap_or("/analyzer".to_string())>
-                            <i class="fa-solid fa-money-bill-trend-up"></i>
-                            "Analyzer"
-                        </A>}
+        <div class="container">
+            <Router>
+                <nav class="header">
+                <b><i>"ULTRA ALPHA™"</i></b>
+                    // <Suspense fallback=move || {}>
+                    // {move || login.read(cx).flatten().map(|_| view!{cx, <A href="/alerts">
+                    //     <i class="fa-solid fa-bell"></i>
+                    //     "Alerts"
+                    // </A>})}
+                    // </Suspense>
+                    {move ||
+                        {
+                            view!{cx,
+                            <A href=homeworld().map(|w| format!("/analyzer/{}", w.name)).unwrap_or("/analyzer".to_string())>
+                                <i class="fa-solid fa-money-bill-trend-up"></i>
+                                "Analyzer"
+                            </A>}
+                        }
                     }
-                }
-                <Suspense fallback=move || {}>
-                {move || login.read(cx).flatten().map(|_| view!{cx, <A href="/list">
-                    <i class="fa-solid fa-list"></i>
-                    "Lists"
-                </A>
-                <A href="/retainers/listings">
-                    <i class="fa-solid fa-user-group"></i>
-                    "Retainers"
-                </A>})}
-                </Suspense>
-                <div>
-                    <SearchBox/>
-                </div>
-                <A href="/items">
-                    <Tooltip tooltip_text="All Items".to_string()>
-                        <i class="fa-solid fa-screwdriver-wrench"></i>
-                    </Tooltip>
-                </A>
-                <div class="flex-row">
-                    <a rel="external" class="btn nav-item" href="/invitebot">
-                        "Invite Bot"
-                    </a>
-                    <ProfileDisplay />
-                </div>
-            </nav>
-            <AnimatedRoutes outro="route-out" intro="route-in" outro_back="route-out-back" intro_back="route-in-back">
-                <Route path="" view=move |cx| view!{cx, <HomePage/>} />
-                <Route path="retainers" view=move |cx| view!{cx, <Retainers/>}>
-                    <Route path="edit" view=move |cx| view!{cx, <EditRetainers />}/>
-                    <Route path="undercuts" view=move |cx| view!{cx, <RetainerUndercuts />}/>
-                    <Route path="listings" view=move |cx| view!{cx, <RetainerListings />}/>
-                </Route>
-                <Route path="list" view=move |cx| view!{cx, <Lists/>}>
-                    <Route path=":id" view=move |cx| view!{ cx, <ListView/>}/>
-                    <Route path="" view=move |cx| view! {cx, <EditLists/>}/>
-                </Route>
-                <Route path="items" view=move |cx| view! { cx, <ItemExplorer/>}>
-                    <Route path="jobset/:jobset" view=move |cx| view!{cx, <JobItems />}/>
-                    <Route path="category/:category" view=move |cx| view!{cx, <CategoryItems />}/>
-                    <Route path="" view=move |_cx| view!{cx, "Choose a category to search!"}/>
-                </Route>
-                <Route path="item/:world/:id" view=move |cx| view! { cx, <ItemView />} />
-                // <Route path="*listings" view=move |cx| view! { cx, <h1>"Listings"</h1>}/>
+                    <Suspense fallback=move || {}>
+                    {move || login.read(cx).flatten().map(|_| view!{cx, <A href="/list">
+                        <i class="fa-solid fa-list"></i>
+                        "Lists"
+                    </A>
+                    <A href="/retainers/listings">
+                        <i class="fa-solid fa-user-group"></i>
+                        "Retainers"
+                    </A>})}
+                    </Suspense>
+                    <div>
+                        <SearchBox/>
+                    </div>
+                    <A href="/items">
+                        <Tooltip tooltip_text="All Items".to_string()>
+                            <i class="fa-solid fa-screwdriver-wrench"></i>
+                        </Tooltip>
+                    </A>
+                    <div class="flex-row">
+                        <a rel="external" class="btn nav-item" href="/invitebot">
+                            "Invite Bot"
+                        </a>
+                        <ProfileDisplay />
+                    </div>
+                </nav>
+                <AnimatedRoutes outro="route-out" intro="route-in" outro_back="route-out-back" intro_back="route-in-back">
+                    <Route path="" view=move |cx| view!{cx, <HomePage/>} />
+                    <Route path="retainers" view=move |cx| view!{cx, <Retainers/>}>
+                        <Route path="edit" view=move |cx| view!{cx, <EditRetainers />}/>
+                        <Route path="undercuts" view=move |cx| view!{cx, <RetainerUndercuts />}/>
+                        <Route path="listings" view=move |cx| view!{cx, <RetainerListings />}/>
+                    </Route>
+                    <Route path="list" view=move |cx| view!{cx, <Lists/>}>
+                        <Route path=":id" view=move |cx| view!{ cx, <ListView/>}/>
+                        <Route path="" view=move |cx| view! {cx, <EditLists/>}/>
+                    </Route>
+                    <Route path="items" view=move |cx| view! { cx, <ItemExplorer/>}>
+                        <Route path="jobset/:jobset" view=move |cx| view!{cx, <JobItems />}/>
+                        <Route path="category/:category" view=move |cx| view!{cx, <CategoryItems />}/>
+                        <Route path="" view=move |_cx| view!{cx, "Choose a category to search!"}/>
+                    </Route>
+                    <Route path="item/:world/:id" view=move |cx| view! { cx, <ItemView />} />
+                    // <Route path="*listings" view=move |cx| view! { cx, <h1>"Listings"</h1>}/>
 
-                <Route path="analyzer" view=move |cx| view! { cx, <Analyzer/>}/>
-                <Route path="analyzer/:world" view=move |cx| view! { cx, <AnalyzerWorldView/>}/>
-                <Route path="profile" view=move |cx| view! { cx, <Profile/>}/>
-            </AnimatedRoutes>
-        </Router>
+                    <Route path="analyzer" view=move |cx| view! { cx, <Analyzer/>}/>
+                    <Route path="analyzer/:world" view=move |cx| view! { cx, <AnalyzerWorldView/>}/>
+                    <Route path="profile" view=move |cx| view! { cx, <Profile/>}/>
+                </AnimatedRoutes>
+            </Router>
+        </div>
         <footer class="flex-column flex-space flex-center">
             <div class="flex-row column-pad flex-center">
                 <a href="https://discord.gg/pgdq9nGUP2">"Discord"</a>"|"

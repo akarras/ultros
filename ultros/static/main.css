@@ -44,7 +44,7 @@ a {
   transition: color .25s;
 }
 
-a:hover {
+a:hover,a:active {
   color: #fff;
   transition: color .25s;
 }
@@ -331,11 +331,6 @@ div>.search-box {
 .item-type {
   font-size: 14px;
   text-align: left;
-}
-
-.container .search-result img {
-  height: 80px;
-  width: 80px;
 }
 
 .avatar {

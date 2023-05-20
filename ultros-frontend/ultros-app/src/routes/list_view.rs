@@ -82,7 +82,7 @@ pub fn ListView(cx: Scope) -> impl IntoView {
     view! {cx,
         <div class="flex-row">
             <Tooltip tooltip_text="Add an item to the list".to_string()>
-                <button class="btn" class:active=move || menu() == MenuState::Item on:click=move |_| set_menu(match menu() { MenuState::Item => MenuState::None, _ => MenuState::Item  })><i class="fa-solid fa-plus"></i></button>
+                <button class="btn" class:active=move || menu() == MenuState::Item on:click=move |_| set_menu(match menu() { MenuState::Item => MenuState::None, _ => MenuState::Item  })><i class="fa-solid fa-plus" style="padding-right: 5px;"></i><span>"Add Item"</span></button>
             </Tooltip>
             <Tooltip tooltip_text="Add a recipe's ingredients to the list".to_string()>
                 <button class="btn" class:active=move || menu() == MenuState::Recipe on:click=move |_| set_menu(match menu() { MenuState::Recipe => MenuState::None, _ => MenuState::Recipe })>"Add Recipe"</button>
