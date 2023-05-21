@@ -17,11 +17,8 @@ use futures::future::{try_join, try_join_all};
 use futures::stream::TryStreamExt;
 use futures::{stream, StreamExt};
 use itertools::Itertools;
-use maud::Render;
 use reqwest::header;
-use serde::{Deserialize, Serialize};
-use serde_with::serde_as;
-use std::cell::OnceCell;
+use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::{Arc, OnceLock};
@@ -180,59 +177,6 @@ async fn refresh_world_item_listings(
     });
     let _ = timeout(Duration::from_secs(1), future).await?;
     Ok(Redirect::to(&format!("/item/{world}/{item_id}")))
-}
-
-#[derive(Deserialize, Serialize, Copy, Clone, PartialEq, PartialOrd, Eq, Ord)]
-#[serde(rename_all = "camelCase")]
-pub enum AnalyzerSort {
-    Profit,
-    Margin,
-}
-
-impl Render for AnalyzerSort {
-    fn render(&self) -> maud::Markup {
-        maud::PreEscaped(
-            match self {
-                AnalyzerSort::Profit => "profit",
-                AnalyzerSort::Margin => "margin",
-            }
-            .to_string(),
-        )
-    }
-}
-
-#[derive(Deserialize, Serialize, Clone)]
-pub enum SaleTimeLabel {
-    NoFilter,
-    Today,
-    Week,
-    Month,
-    Year,
-}
-
-impl Render for SaleTimeLabel {
-    fn render(&self) -> maud::Markup {
-        maud::PreEscaped(match self {
-            SaleTimeLabel::NoFilter => "No Filter".to_string(),
-            SaleTimeLabel::Today => "Today".to_string(),
-            SaleTimeLabel::Week => "Week".to_string(),
-            SaleTimeLabel::Month => "Month".to_string(),
-            SaleTimeLabel::Year => "Year".to_string(),
-        })
-    }
-}
-
-#[serde_as]
-#[derive(Deserialize, Serialize, Clone)]
-pub struct AnalyzerOptions {
-    sort: Option<AnalyzerSort>,
-    page: Option<usize>,
-    minimum_profit: Option<i32>,
-    world: Option<i32>,
-    filter_world: Option<i32>,
-    filter_datacenter: Option<i32>,
-    sale_label: Option<SaleTimeLabel>,
-    sale_value: Option<u8>,
 }
 
 #[derive(Clone)]

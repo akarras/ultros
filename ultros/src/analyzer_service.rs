@@ -10,7 +10,6 @@ use std::{
 
 use chrono::{Duration, NaiveDateTime, Utc};
 use futures::StreamExt;
-use maud::Render;
 use poise::serenity_prelude::Timestamp;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -719,12 +718,6 @@ impl Display for SoldWithin {
             SoldWithin::Year(y) => write!(f, "{y} sold this year"),
             SoldWithin::YearsAgo(i, y) => write!(f, "{y} sold {i} years ago"),
         }
-    }
-}
-
-impl Render for SoldWithin {
-    fn render(&self) -> maud::Markup {
-        maud::PreEscaped(self.to_string())
     }
 }
 
