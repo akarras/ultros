@@ -2,6 +2,7 @@ use chrono::{Duration, Utc};
 use humantime::{format_duration, parse_duration};
 use leptos::*;
 use leptos_router::*;
+use log::info;
 use std::{cmp::Reverse, collections::HashMap, fmt::Display, str::FromStr, sync::Arc};
 use ultros_api_types::{
     cheapest_listings::CheapestListings,
@@ -505,7 +506,20 @@ pub fn AnalyzerWorldView(cx: Scope) -> impl IntoView {
 #[component]
 pub fn AnalyzerWorldNavigator(cx: Scope) -> impl IntoView {
     let nav = use_navigate(cx);
-    let (current_world, set_current_world) = create_signal(cx, None::<World>);
+    let params = use_params_map(cx);
+    let worlds = use_context::<LocalWorldData>(cx)
+        .expect("Should always have local world data")
+        .0
+        .unwrap();
+    let initial_world = params.with(|p| {
+        let world = p.get("world").map(|s| s.as_str()).unwrap_or_default();
+        worlds
+            .lookup_world_by_name(world)
+            .map(|w| w.as_world().cloned())
+            .flatten()
+    });
+    info!("{initial_world:?}");
+    let (current_world, set_current_world) = create_signal(cx, initial_world);
     create_effect(cx, move |_| {
         if let Some(world) = current_world() {
             let world = world.name;

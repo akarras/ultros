@@ -93,74 +93,74 @@ pub fn Profile(cx: Scope) -> impl IntoView {
     let price_region = result_to_selector_read(cx, price_region);
     let set_price_region = selector_to_setter_signal(cx, set_price_region);
     view! { cx,
-        <div class="main-content">
-            <span class="content-title">"Profile"</span>
-            <div class="content-well">
-                <label>"home world:"</label>
-                <Suspense fallback=move || view!{cx, <Loading/>}>
-                    <WorldOnlyPicker current_world=homeworld.into() set_current_world=set_homeworld.into()  />
-                </Suspense>
-                    <label>"Default price selector"</label>
-                <Suspense fallback=move || view!{cx, <Loading />}>
-                    <WorldPicker current_world=price_region.into() set_current_world=set_price_region.into() />
-                </Suspense>
-            </div>
-            <div class="content-well">
-                <span class="content-title">
-                    "Characters"
-                </span>
-                <AddCharacterMenu claim_character/>
-                <Suspense fallback=move || view!{cx, <Loading/>}>
-                    {move || pending_verifications.read(cx).map(|verifications| {
-                        match verifications {
-                            Ok(verifications) => {
+    <div class="main-content">
+        <span class="content-title">"Profile"</span>
+        <div class="content-well">
+            <label>"home world:"</label>
+            <Suspense fallback=move || view!{cx, <Loading/>}>
+                <WorldOnlyPicker current_world=homeworld.into() set_current_world=set_homeworld.into()  />
+            </Suspense>
+                <label>"Default price selector"</label>
+            <Suspense fallback=move || view!{cx, <Loading />}>
+                <WorldPicker current_world=price_region.into() set_current_world=set_price_region.into() />
+            </Suspense>
+        </div>
+        <div class="content-well">
+            <span class="content-title">
+                "Characters"
+            </span>
+            <AddCharacterMenu claim_character/>
+            <Suspense fallback=move || view!{cx, <Loading/>}>
+                {move || pending_verifications.read(cx).map(|verifications| {
+                    match verifications {
+                        Ok(verifications) => {
+                            view!{cx, <div>
+                                {verifications.into_iter().map(|verification| {
+                                    view!{cx, <div class="flex-row">
+                                            <div class="flex-column">
+                                                {verification.character.first_name}" "{verification.character.last_name}
+                                                <br/>
+                                                "verification string:" {verification.verification_string}
+                                                <br/>
+                                                "Add the verification string to your lodestone profile and then click verify!"
+                                            </div>
+                                            <button class="btn" on:click=move |_| {
+                                                check_verification.dispatch(verification.id)
+                                            }>"Verify"</button>
+                                        </div>}
+                                }).collect::<Vec<_>>()}
+                            </div>}.into_view(cx)
+                        },
+                        Err(e) => view!{cx, "Unable to fetch verifications"<br/>{e.to_string()}}.into_view(cx)
+                    }
+                })}
+            </Suspense>
+            <Suspense fallback=move || view!{cx, <Loading/>}>
+                {move || characters.read(cx).map(|characters| {
+                    match characters {
+                        Ok(characters) => {
+                            if characters.is_empty() {
+                                view!{cx, "No characters. Add a character to get started."}.into_view(cx)
+                            } else {
                                 view!{cx, <div>
-                                    {verifications.into_iter().map(|verification| {
-                                        view!{cx, <div class="flex-row">
-                                                <div class="flex-column">
-                                                    {verification.character.first_name}" "{verification.character.last_name}
-                                                    <br/>
-                                                    "verification string:" {verification.verification_string}
-                                                    <br/>
-                                                    "Add the verification string to your lodestone profile and then click verify!"
-                                                </div>
-                                                <button class="btn" on:click=move |_| {
-                                                    check_verification.dispatch(verification.id)
-                                                }>"Verify"</button>
-                                            </div>}
+                                    {characters.into_iter().map(|character| {
+                                        view!{cx,
+                                            <div class="flex flex-row">
+                                                <span style="width: 250px;">{character.first_name}" "{character.last_name}</span>
+                                                <span style="width: 150px"><WorldName id=AnySelector::World(character.world_id)/></span>
+                                                <button class="btn" on:click=move |_| unclaim_character.dispatch(character.id)><span class="fa-solid fa-trash"></span></button>
+                                            </div>
+                                        }
                                     }).collect::<Vec<_>>()}
                                 </div>}.into_view(cx)
-                            },
-                            Err(e) => view!{cx, "Unable to fetch verifications"<br/>{e.to_string()}}.into_view(cx)
-                        }
-                    })}
-                </Suspense>
-                <Suspense fallback=move || view!{cx, <Loading/>}>
-                    {move || characters.read(cx).map(|characters| {
-                        match characters {
-                            Ok(characters) => {
-                                if characters.is_empty() {
-                                    view!{cx, "No characters. Add a character to get started."}.into_view(cx)
-                                } else {
-                                    view!{cx, <div>
-                                        {characters.into_iter().map(|character| {
-                                            view!{cx,
-                                                <div class="flex flex-row">
-                                                    <span style="width: 250px;">{character.first_name}" "{character.last_name}</span>
-                                                    <span style="width: 150px"><WorldName id=AnySelector::World(character.world_id)/></span>
-                                                    <button class="btn" on:click=move |_| unclaim_character.dispatch(character.id)><span class="fa-solid fa-trash"></span></button>
-                                                </div>
-                                            }
-                                        }).collect::<Vec<_>>()}
-                                    </div>}.into_view(cx)
-                                }
-                            },
-                            Err(e) => {
-                                view!{cx, "unable to get characters"<br/>{e.to_string()}}.into_view(cx)
                             }
+                        },
+                        Err(e) => {
+                            view!{cx, "unable to get characters"<br/>{e.to_string()}}.into_view(cx)
                         }
-                    })}
-                </Suspense>
-            </div>
-        </div>}
+                    }
+                })}
+            </Suspense>
+        </div>
+    </div>}
 }

@@ -15,7 +15,6 @@ pub fn WorldOnlyPicker(
     match local_worlds {
         Ok(worlds) => {
             let data = worlds.get_all().clone();
-            // let current = current_world();
             view!{cx,
                 <select on:change=move |input| {
                     let id = event_target_value(&input);
@@ -29,7 +28,9 @@ pub fn WorldOnlyPicker(
                 {region.datacenters.into_iter().map(|datacenter| {
                     view!{cx, // <optgroup label=datacenter.name>
                     {datacenter.worlds.into_iter().map(|world| {
-                        view!{cx, <option value=world.id>
+                        view!{cx, <option value=world.id prop:selected=move || {
+                            current_world.with(|w| w.as_ref().map(|w| w.id).unwrap_or_default() == world.id)
+                        }>
                             {&world.name}
                             </option>}
                     }).collect::<Vec<_>>()}
@@ -62,13 +63,6 @@ pub fn WorldPicker(
         Ok(worlds) => {
             let data = worlds.get_all().clone();
             // TODO: include a current world default option in the picker
-            let _current = move || {
-                current_world().map(|world| {
-                    worlds
-                        .lookup_selector(world)
-                        .map(|name| name.get_name().to_string())
-                })
-            };
             view!{cx,
                 <select on:change=move |input| {
                     let world_target = event_target_value(&input);
@@ -84,9 +78,9 @@ pub fn WorldPicker(
                     set_current_world(Some(selector))
                 }>
                     {data.regions.into_iter().map(|region| {
-                        view!{cx, <option value=move || format!("region:{}", region.id)>{&region.name}</option>
+                        view!{cx, <option value=move || format!("region:{}", region.id) prop:selected=move || current_world().map(|w| w == AnySelector::Region(region.id)).unwrap_or_default()>{&region.name}</option>
                         {region.datacenters.into_iter().map(|datacenter| {
-                            view!{cx, <option value=move || format!("datacenter:{}", datacenter.id)>{&datacenter.name}</option>
+                            view!{cx, <option value=move || format!("datacenter:{}", datacenter.id) prop:selected=move || current_world().map(|w| w == AnySelector::Datacenter(datacenter.id)).unwrap_or_default()>{&datacenter.name}</option>
                             {datacenter.worlds.into_iter().map(|world| {
                                 view!{cx, <option value=move || {format!("world:{}", world.id)} prop:selected=move || current_world().map(|w| w == AnySelector::World(world.id)).unwrap_or_default()>
                                     {&world.name}
