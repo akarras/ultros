@@ -36,7 +36,7 @@ fn MatchFormatter(cx: Scope, m: Match, target: String) -> impl IntoView {
 
     // Leftover chars
     if last_end != target.len() {
-        pieces.push(view! {cx, {target.chars().skip(last_end).collect::<String>()}}.into_view(cx));
+        pieces.push(target.chars().skip(last_end).collect::<String>().into_view(cx));
     }
 
     pieces
