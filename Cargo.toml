@@ -24,6 +24,9 @@ leptos = { git = "https://github.com/leptos-rs/leptos.git", default-features = f
 leptos_axum = { git = "https://github.com/leptos-rs/leptos.git" }
 leptos_router = { git = "https://github.com/leptos-rs/leptos.git" }
 leptos_meta = { git = "https://github.com/leptos-rs/leptos.git" }
+chrono = "0.4.23"
+itertools = "0.10.5"
+image = "0.24.6"
 
 [profile.release]
 lto = true

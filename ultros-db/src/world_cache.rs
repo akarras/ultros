@@ -350,6 +350,18 @@ impl WorldCache {
         &self.yoke.get().all
     }
 
+    pub fn get_all_results(&self) -> impl Iterator<Item = AnyResult> {
+        self.get_all().iter().flat_map(|(r, d)| {
+            [AnyResult::Region(r)]
+                .into_iter()
+                .chain(d.iter().flat_map(|(d, w)| {
+                    [AnyResult::Datacenter(d)]
+                        .into_iter()
+                        .chain(w.iter().map(|w| AnyResult::World(w)))
+                }))
+        })
+    }
+
     pub fn get_all_worlds(&self) -> impl Iterator<Item = &&world::Model> {
         self.yoke
             .get()

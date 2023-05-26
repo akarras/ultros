@@ -22,13 +22,11 @@ ultros-db = {path = "../../ultros-db", optional = true}
 serde = {version = "1", features = ["rc", "derive"]}
 thousands = "0.2.0"
 timeago = "0.4.0"
-chrono = "0.4.23"
+chrono.workspace = true
+itertools.workspace = true
 futures = "0.3"
 humantime = "2.1"
-itertools = "0.10.5"
 colorsys = "0.6.6"
-plotters = "0.3"
-plotters-canvas = "0.3"
 thiserror = "1.0"
 log = "0.4"
 urlencoding = "2.1.2"
@@ -39,6 +37,8 @@ time = "0.3.20"
 js-sys = {version = "0.3.61", optional = true}
 tracing = "0.1"
 serde_json = "1.0.94"
+ultros-charts = {path = "../ultros-charts" }
+plotters-canvas = "0.3"
 
 [features]
 default = ["ssr"] # this is mostly so if I run cargo check, it has a flavor to work on

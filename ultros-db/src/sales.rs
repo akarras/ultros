@@ -168,20 +168,6 @@ impl UltrosDb {
             .collect())
     }
 
-    pub async fn get_sale_history_for_multiple_items_worlds_joined_future(
-        &self,
-        world_ids: impl Iterator<Item = i32>,
-        item_ids: impl Iterator<Item = i32> + Clone,
-        limit: u64,
-    ) -> Result<Vec<Vec<sale_history::Model>>, anyhow::Error> {
-        futures::future::try_join_all(world_ids.flat_map(|world_id| {
-            item_ids
-                .clone()
-                .map(move |item_id| self.get_sale_history_for_item(world_id, item_id, limit))
-        }))
-        .await
-    }
-
     pub async fn get_sale_history_for_item(
         &self,
         world_id: i32,

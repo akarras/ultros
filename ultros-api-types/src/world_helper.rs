@@ -57,7 +57,7 @@ impl From<OwnedResult> for AnySelector {
     }
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum AnySelector {
     Region(i32),
     Datacenter(i32),

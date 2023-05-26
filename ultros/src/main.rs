@@ -169,6 +169,7 @@ async fn main() -> Result<()> {
     });
     // on first run, the world cache may be empty
     let world_cache = Arc::new(WorldCache::new(&db).await);
+    let world_helper = Arc::new(WorldHelper::new(WorldData::from(world_cache.as_ref())));
 
     let analyzer_service =
         AnalyzerService::start_analyzer(db.clone(), receivers.clone(), world_cache.clone()).await;
@@ -179,6 +180,7 @@ async fn main() -> Result<()> {
         receivers.clone(),
         analyzer_service.clone(),
         world_cache.clone(),
+        world_helper.clone(),
     ));
     // create the oauth config
     let hostname = env::var("HOSTNAME").expect(
@@ -202,17 +204,6 @@ async fn main() -> Result<()> {
         sales: senders.history.clone(),
     };
     update_service.start_service();
-    // global::set_text_map_propagator(opentelemetry_jaeger::Propagator::new());
-    // let tracer = opentelemetry_jaeger::new_agent_pipeline()
-    //     .with_endpoint("localhost:6831")
-    //     .with_service_name("ultros")
-    //     .with_auto_split_batch(true)
-    //     .install_batch(Tokio)?;
-    // let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
-    // tracing_subscriber::registry()
-    //     .with(opentelemetry)
-    //     .try_init()?;
-    let world_helper = Arc::new(WorldHelper::new(WorldData::from(world_cache.as_ref())));
 
     let web_state = WebState {
         analyzer_service,

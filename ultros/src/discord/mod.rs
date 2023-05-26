@@ -3,6 +3,7 @@ pub(crate) mod ffxiv;
 use chrono::Local;
 use poise::{builtins::HelpConfiguration, serenity_prelude as serenity};
 use std::sync::Arc;
+use ultros_api_types::world_helper::WorldHelper;
 use ultros_db::{world_cache::WorldCache, UltrosDb};
 
 use crate::{
@@ -21,6 +22,7 @@ pub(crate) struct Data {
     event_senders: EventSenders,
     analyzer_service: AnalyzerService,
     world_cache: Arc<WorldCache>,
+    world_helper: Arc<WorldHelper>,
 }
 
 #[poise::command(slash_command, prefix_command)]
@@ -71,6 +73,7 @@ pub(crate) async fn start_discord(
     event_receivers: EventReceivers,
     analyzer_service: AnalyzerService,
     world_cache: Arc<WorldCache>,
+    world_helper: Arc<WorldHelper>,
 ) {
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
@@ -105,6 +108,7 @@ pub(crate) async fn start_discord(
                     event_senders,
                     analyzer_service,
                     world_cache,
+                    world_helper,
                 })
             })
         });
