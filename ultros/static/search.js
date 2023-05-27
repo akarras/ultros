@@ -6,7 +6,7 @@ function do_search(query) {
 
     document.getElementById("search-results").innerHTML = xhttp.responseText;
   }
-  xhttp.open("GET", "/items/" + encodeURIComponent(query), true);
+  xhttp.open("GET", "/item/" + encodeURIComponent(query), true);
   xhttp.send();
 }
 

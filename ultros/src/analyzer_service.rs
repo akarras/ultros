@@ -10,11 +10,11 @@ use std::{
 
 use chrono::{Duration, NaiveDateTime, Utc};
 use futures::StreamExt;
-use maud::Render;
 use poise::serenity_prelude::Timestamp;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use tracing::log::info;
+use ultros_api_types::{websocket::ListingEventData, ActiveListing, Retainer};
 use ultros_db::{
     entity::{active_listing, sale_history},
     UltrosDb,
@@ -50,6 +50,13 @@ impl From<&active_listing::Model> for ItemKey {
     }
 }
 
+impl From<&ActiveListing> for ItemKey {
+    fn from(value: &ActiveListing) -> Self {
+        let ActiveListing { item_id, hq, .. } = *value;
+        Self { item_id, hq }
+    }
+}
+
 impl From<&sale_history::Model> for ItemKey {
     fn from(model: &sale_history::Model) -> Self {
         let sale_history::Model {
@@ -58,6 +65,15 @@ impl From<&sale_history::Model> for ItemKey {
         Self {
             item_id: sold_item_id,
             hq,
+        }
+    }
+}
+
+impl From<&ultros_api_types::SaleHistory> for ItemKey {
+    fn from(value: &ultros_api_types::SaleHistory) -> Self {
+        Self {
+            item_id: value.sold_item_id,
+            hq: value.hq,
         }
     }
 }
@@ -81,7 +97,7 @@ impl From<&ultros_db::listings::ListingSummary> for ItemKey {
 }
 
 #[derive(Debug, PartialEq, PartialOrd, Eq, Ord, Clone, Copy)]
-struct SaleSummary {
+pub(crate) struct SaleSummary {
     pub(crate) price_per_item: i32,
     pub(crate) sale_date: NaiveDateTime,
 }
@@ -104,9 +120,18 @@ impl From<&ultros_db::entity::sale_history::Model> for SaleSummary {
     }
 }
 
+impl From<&ultros_api_types::SaleHistory> for SaleSummary {
+    fn from(value: &ultros_api_types::SaleHistory) -> Self {
+        Self {
+            price_per_item: value.price_per_item,
+            sale_date: value.sold_date,
+        }
+    }
+}
+
 #[derive(Debug, Default)]
-struct SaleHistory {
-    item_map: HashMap<ItemKey, SmallVec<[SaleSummary; SALE_HISTORY_SIZE]>>,
+pub(crate) struct SaleHistory {
+    pub(crate) item_map: HashMap<ItemKey, SmallVec<[SaleSummary; SALE_HISTORY_SIZE]>>,
 }
 
 impl SaleHistory {
@@ -137,6 +162,21 @@ impl From<&ultros_db::entity::active_listing::Model> for CheapestListingValue {
         Self {
             price: from.price_per_unit,
             world_id: from.world_id,
+        }
+    }
+}
+
+impl From<&ActiveListing> for CheapestListingValue {
+    fn from(
+        ActiveListing {
+            world_id,
+            price_per_unit,
+            ..
+        }: &ActiveListing,
+    ) -> Self {
+        Self {
+            price: *price_per_unit,
+            world_id: *world_id,
         }
     }
 }
@@ -188,7 +228,7 @@ impl CheapestListings {
 
     async fn remove_listing(
         &mut self,
-        listing: &active_listing::Model,
+        listing: &ActiveListing,
         id: AnySelector,
         world_cache: &WorldCache,
         ultros_db: &UltrosDb,
@@ -333,7 +373,7 @@ impl AnalyzerService {
                     match history {
                         crate::event::EventType::Remove(_) => {}
                         crate::event::EventType::Add(sales) => {
-                            for sale in sales.iter() {
+                            for (sale, _) in sales.sales.iter() {
                                 second_worker_instance.add_sale(sale).await;
                             }
                         }
@@ -347,8 +387,9 @@ impl AnalyzerService {
                 match listings {
                     crate::event::EventType::Remove(remove) => {
                         let region = if let Some(region) = remove
+                            .listings
                             .iter()
-                            .flat_map(|w| {
+                            .flat_map(|(w, _)| {
                                 world_cache
                                     .lookup_selector(&AnySelector::World(w.world_id))
                                     .map(|w| world_cache.get_region(&w))
@@ -364,7 +405,7 @@ impl AnalyzerService {
                             .await;
                     }
                     crate::event::EventType::Add(add) => {
-                        self.add_listings(&add, &world_cache).await;
+                        self.add_listings(&add.listings, &world_cache).await;
                     }
                     crate::event::EventType::Update(_) => todo!(),
                 }
@@ -442,9 +483,7 @@ impl AnalyzerService {
                 let profit = est_sale_price - cheapest_price.price;
                 Some(ResaleStats {
                     profit,
-                    cheapest: cheapest_price.price,
                     item_id: item_key.item_id,
-                    hq: item_key.hq,
                     return_on_investment: ((est_sale_price as f32) / (cheapest_price.price as f32)
                         * 100.0)
                         - 100.0,
@@ -489,11 +528,11 @@ impl AnalyzerService {
     /// process listings in bulk.
     async fn add_listings(
         &self,
-        listings: &[active_listing::Model],
+        listings: &[(ActiveListing, Retainer)],
         world_cache: &Arc<WorldCache>,
     ) {
         // process all listings from one world at a time
-        let listings = listings.iter().flat_map(|l| {
+        let listings = listings.iter().flat_map(|(l, _)| {
             let result = world_cache
                 .lookup_selector(&AnySelector::World(l.world_id))
                 .ok()?;
@@ -522,7 +561,7 @@ impl AnalyzerService {
     async fn remove_listings(
         &self,
         region_id: i32,
-        listings: Arc<Vec<active_listing::Model>>,
+        listings: Arc<ListingEventData>,
         world_cache: &WorldCache,
         ultros_db: &UltrosDb,
     ) {
@@ -531,7 +570,7 @@ impl AnalyzerService {
             .get(&AnySelector::Region(region_id))
             .expect("Unable to get region");
         let mut entry = entry.write().await;
-        for listing in listings.iter() {
+        for (listing, _) in listings.listings.iter() {
             entry
                 .remove_listing(
                     listing,
@@ -542,7 +581,7 @@ impl AnalyzerService {
                 .await;
         }
         drop(entry);
-        for listing in listings.iter() {
+        for (listing, _) in listings.listings.iter() {
             let world = self
                 .cheapest_items
                 .get(&AnySelector::World(listing.world_id))
@@ -560,7 +599,7 @@ impl AnalyzerService {
         }
     }
 
-    async fn add_sale(&self, sale: &sale_history::Model) {
+    async fn add_sale(&self, sale: &ultros_api_types::SaleHistory) {
         let entry = self
             .recent_sale_history
             .get(&sale.world_id)
@@ -580,6 +619,30 @@ impl AnalyzerService {
             let read = self
                 .cheapest_items
                 .get(&selector)
+                .ok_or(AnalyzerError::DatacenterNotAvailable)?
+                .read()
+                .await;
+            Ok(extract(&read))
+        } else {
+            return Err(AnalyzerError::Uninitialized);
+        }
+    }
+
+    pub(crate) async fn read_sale_history<T, O>(
+        &self,
+        selector: &AnySelector,
+        extract: T,
+    ) -> Result<O, AnalyzerError>
+    where
+        T: FnOnce(&SaleHistory) -> O,
+    {
+        if self.initiated.load(Ordering::Relaxed) {
+            let read = self
+                .recent_sale_history
+                .get(&match selector {
+                    AnySelector::World(world) => *world,
+                    _ => return Err(AnalyzerError::DatacenterNotAvailable),
+                })
                 .ok_or(AnalyzerError::DatacenterNotAvailable)?
                 .read()
                 .await;
@@ -658,12 +721,6 @@ impl Display for SoldWithin {
     }
 }
 
-impl Render for SoldWithin {
-    fn render(&self) -> maud::Markup {
-        maud::PreEscaped(self.to_string())
-    }
-}
-
 impl From<&SoldWithin> for Duration {
     fn from(sold: &SoldWithin) -> Self {
         match sold {
@@ -733,11 +790,9 @@ impl<'a> FromIterator<&'a SaleSummary> for SoldWithin {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ResaleStats {
     pub(crate) profit: i32,
-    pub(crate) cheapest: i32,
     pub(crate) item_id: i32,
     pub(crate) sold_within: SoldWithin,
     pub(crate) return_on_investment: f32,
-    pub(crate) hq: bool,
     pub(crate) world_id: i32,
 }
 

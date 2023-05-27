@@ -1,12 +1,11 @@
 use migration::OnConflict;
-use sea_orm::IntoActiveModel;
 use sea_orm::{ActiveValue, EntityTrait, Set};
+use sea_orm::{IntoActiveModel, ModelTrait};
 use tracing::instrument;
-use tracing::log::warn;
 
 use super::UltrosDb;
 use crate::entity::*;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use sea_orm::ActiveModelTrait;
 use sea_orm::ColumnTrait;
 use sea_orm::QueryFilter;
@@ -125,7 +124,6 @@ impl UltrosDb {
             discord_user_id: Set(discord_user_id),
             ffxiv_character_id: Set(ffxiv_character_id),
         };
-        warn!("creating challenge {model:?}");
         Ok(Entity::insert(model).exec_with_returning(&self.db).await?)
     }
 
@@ -151,6 +149,22 @@ impl UltrosDb {
             .ok_or(anyhow::Error::msg("Challenge ID not found"))?)
     }
 
+    pub async fn get_all_pending_verification_challenges(
+        &self,
+        discord_user: i64,
+    ) -> Result<
+        Vec<(
+            ffxiv_character_verification::Model,
+            Option<final_fantasy_character::Model>,
+        )>,
+    > {
+        Ok(ffxiv_character_verification::Entity::find()
+            .find_also_related(final_fantasy_character::Entity)
+            .filter(ffxiv_character_verification::Column::DiscordUserId.eq(discord_user as i64))
+            .all(&self.db)
+            .await?)
+    }
+
     pub async fn create_owned_character(
         &self,
         discord_user_id: i64,
@@ -161,5 +175,22 @@ impl UltrosDb {
             ffxiv_character_id: Set(ffxiv_character_id),
         };
         Ok(model.insert(&self.db).await?)
+    }
+
+    pub async fn delete_owned_character(
+        &self,
+        discord_user_id: i64,
+        ffxiv_character_id: i32,
+    ) -> Result<u64> {
+        let owned = owned_ffxiv_character::Entity::find()
+            .filter(owned_ffxiv_character::Column::DiscordUserId.eq(discord_user_id))
+            .filter(owned_ffxiv_character::Column::FfxivCharacterId.eq(ffxiv_character_id))
+            .one(&self.db)
+            .await?;
+        let delete = owned
+            .ok_or(anyhow!("Ownership record not found"))?
+            .delete(&self.db)
+            .await?;
+        Ok(delete.rows_affected)
     }
 }

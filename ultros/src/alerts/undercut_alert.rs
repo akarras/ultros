@@ -4,11 +4,16 @@ use std::{
 };
 
 use anyhow::Result;
-use futures::future::{self, Either};
+use futures::{
+    future::{self, Either},
+    lock::Mutex,
+    Stream, StreamExt,
+};
 use poise::serenity_prelude::{self, Color, UserId};
 use serde::Serialize;
 use tracing::{debug, error, instrument};
-use ultros_db::{entity::*, UltrosDb};
+use ultros_api_types::{websocket::ListingEventData, Retainer};
+use ultros_db::UltrosDb;
 
 use crate::event::{EventBus, EventType};
 
@@ -105,12 +110,9 @@ pub(crate) struct UndercutRetainer {
 }
 
 #[derive(Debug)]
-pub(crate) enum UndercutResult {
-    None,
-    Undercut {
-        item_id: i32,
-        undercut_retainers: Vec<UndercutRetainer>,
-    },
+pub(crate) struct Undercut {
+    pub(crate) item_id: i32,
+    pub(crate) undercut_retainers: Vec<UndercutRetainer>,
 }
 
 #[derive(Debug)]
@@ -140,14 +142,29 @@ impl UndercutTracker {
         })
     }
 
+    pub(crate) fn into_stream<E>(self, listing_events: E) -> impl Stream<Item = Undercut>
+    where
+        E: Stream<Item = Result<EventType<Arc<ListingEventData>>, anyhow::Error>>,
+    {
+        let value = Arc::new(Mutex::new(self));
+        listing_events.filter_map(move |s| {
+            let value = value.clone();
+            async move {
+                let value = value.clone();
+                let mut lock = value.lock().await;
+                lock.handle_listing_event(s).await.ok()?
+            }
+        })
+    }
+
     pub(crate) async fn handle_listing_event(
         &mut self,
-        listings: Result<EventType<Arc<Vec<active_listing::Model>>>, anyhow::Error>,
-    ) -> Result<UndercutResult, anyhow::Error> {
+        listings: Result<EventType<Arc<ListingEventData>>, anyhow::Error>,
+    ) -> Result<Option<Undercut>, anyhow::Error> {
         let listing = listings?;
         match listing {
             EventType::Remove(removed) => {
-                for removed in removed.iter() {
+                for (removed, _) in removed.listings.iter() {
                     // if we removed our listing, we need to refetch our pricing from the database if the listing was the lowest
                     if self.retainer_ids.contains(&removed.retainer_id) {
                         if let Some(value) = self
@@ -178,10 +195,11 @@ impl UndercutTracker {
             }
             EventType::Add(added) => {
                 // update our own data from the added list
-                if let Some(retainer_listing) = added
+                if let Some((retainer_listing, _)) = added
+                    .listings
                     .iter()
-                    .filter(|added| self.retainer_ids.contains(&added.retainer_id))
-                    .min_by_key(|i| i.price_per_unit)
+                    .filter(|(added, _)| self.retainer_ids.contains(&added.retainer_id))
+                    .min_by_key(|(i, _)| i.price_per_unit)
                 {
                     let entry = self
                         .user_lowest_listings
@@ -202,7 +220,9 @@ impl UndercutTracker {
                     }
                 }
                 // items in an added vec should all be the same type, so lets just find the cheapest item
-                if let Some(added) = added.iter().min_by_key(|a| a.price_per_unit) {
+                if let Some((added, _)) =
+                    added.listings.iter().min_by_key(|(a, _)| a.price_per_unit)
+                {
                     if let Some(our_price) = self.user_lowest_listings.get_mut(&ListingKey {
                         item_id: added.item_id,
                         world_id: added.world_id,
@@ -247,10 +267,10 @@ impl UndercutTracker {
                                             .collect::<Vec<_>>()
                                     })
                                     .unwrap_or_default();
-                                return Ok(UndercutResult::Undercut {
+                                return Ok(Some(Undercut {
                                     item_id: added.item_id,
                                     undercut_retainers: retainers,
-                                });
+                                }));
                             }
                         }
                     }
@@ -258,7 +278,7 @@ impl UndercutTracker {
             }
             EventType::Update(_) => {}
         }
-        Ok(UndercutResult::None)
+        Ok(None)
     }
 }
 
@@ -269,8 +289,8 @@ impl RetainerAlertListener {
         alert_id: i32,
         margin: i32,
         ultros_db: UltrosDb,
-        mut listings: EventBus<Vec<active_listing::Model>>,
-        active_retainers: EventBus<retainer::Model>,
+        mut listings: EventBus<ListingEventData>,
+        active_retainers: EventBus<Retainer>,
         ctx: serenity_prelude::Context,
     ) -> Result<Self> {
         let alert = ultros_db
@@ -310,11 +330,11 @@ impl RetainerAlertListener {
                                 break;
                             }
                             Ok(undercuts) => match undercuts {
-                                UndercutResult::None => {}
-                                UndercutResult::Undercut {
+                                None => {}
+                                Some(Undercut {
                                     item_id,
                                     undercut_retainers,
-                                } => {
+                                }) => {
                                     let items = &xiv_gen_db::decompress_data().items;
                                     if let Some(item) = items.get(&xiv_gen::ItemId(item_id)) {
                                         let retainer_names = undercut_retainers

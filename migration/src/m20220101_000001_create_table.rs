@@ -17,7 +17,7 @@ impl StatementBuilder for TimeScaleInstall {
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        println!("{:?}", manager.exec_stmt(TimeScaleInstall).await);
+        // println!("{:?}", manager.exec_stmt(TimeScaleInstall).await);
         manager
             .create_table(
                 Table::create()
@@ -766,7 +766,6 @@ pub(crate) enum SaleHistory {
     Hq,
     PricePerItem,
     BuyingCharacterId,
-    BuyerName,
     SoldDate,
     WorldId,
 }

@@ -2,6 +2,8 @@ pub(crate) mod alerts;
 pub(crate) mod analyzer_service;
 mod discord;
 pub(crate) mod event;
+mod item_update_service;
+pub mod leptos;
 pub(crate) mod utils;
 mod web;
 mod web_metrics;
@@ -11,6 +13,7 @@ use std::env;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::item_update_service::UpdateService;
 use crate::web::WebState;
 use analyzer_service::AnalyzerService;
 use anyhow::Result;
@@ -18,7 +21,9 @@ use axum_extra::extract::cookie::Key;
 use discord::start_discord;
 use event::{create_event_busses, EventProducer, EventType};
 use tracing::{error, info};
-use ultros_db::entity::{active_listing, sale_history};
+use ultros_api_types::websocket::{ListingEventData, SaleEventData};
+use ultros_api_types::world::WorldData;
+use ultros_api_types::world_helper::WorldHelper;
 use ultros_db::world_cache::WorldCache;
 use ultros_db::UltrosDb;
 use universalis::websocket::event_types::{EventChannel, SubscribeMode, WSMessage};
@@ -29,8 +34,8 @@ use web::oauth::{AuthUserCache, DiscordAuthConfig, OAuthScope};
 
 async fn run_socket_listener(
     db: UltrosDb,
-    listings_tx: EventProducer<Vec<active_listing::Model>>,
-    sales_tx: EventProducer<Vec<sale_history::Model>>,
+    listings_tx: EventProducer<ListingEventData>,
+    sales_tx: EventProducer<SaleEventData>,
 ) {
     let mut socket = WebsocketClient::connect().await;
     socket
@@ -63,8 +68,8 @@ async fn run_socket_listener(
                         listings,
                     })) => match db.update_listings(listings.clone(), item, world).await {
                         Ok((listings, removed)) => {
-                            let listings = Arc::new(listings);
-                            let removed = Arc::new(removed);
+                            let listings = Arc::new(ListingEventData { item_id: item.0, world_id: world.0, listings });
+                            let removed = Arc::new(ListingEventData { item_id: item.0, world_id: world.0, listings: removed });
                             match listings_tx.send(EventType::Remove(removed)) {
                                 Ok(o) => info!("sent removed listings {o} updates"),
                                 Err(e) => error!("Error removing listings {e}"),
@@ -84,7 +89,7 @@ async fn run_socket_listener(
                         match db.remove_listings(listings.clone(), item, world).await {
                             Ok(listings) => {
                                 info!("Removed listings {listings:?} {item:?} {world:?}");
-                                if let Err(e) = listings_tx.send(EventType::Remove(Arc::new(listings))) {
+                                if let Err(e) = listings_tx.send(EventType::Remove(Arc::new(ListingEventData { item_id: item.0, world_id: world.0, listings }))) {
                                     error!("Error sending remove listings {e:?}");
                                 }
                             },
@@ -92,12 +97,12 @@ async fn run_socket_listener(
                         }
                     }
                     SocketRx::Event(Ok(WSMessage::SalesAdd { item, world, sales })) => {
-                        match db.store_sale(sales.clone(), item, world).await {
+                        match db.update_sales(sales.clone(), item, world).await {
                             Ok(added_sales) => {
                                 info!(
                                     "Stored sale data. Last id: {added_sales:?} {item:?} {world:?}"
                                 );
-                                match sales_tx.send(EventType::Add(Arc::new(added_sales))) {
+                                match sales_tx.send(EventType::Add(Arc::new(SaleEventData{sales: added_sales}))) {
                                     Ok(o) => info!("Sent sale {o} updates"),
                                     Err(e) => error!("Error sending sale update {e:?}"),
                                 }
@@ -120,11 +125,12 @@ async fn run_socket_listener(
 }
 
 async fn init_db(
+    db: &UltrosDb,
     worlds_view: Result<WorldsView, universalis::Error>,
     datacenters: Result<DataCentersView, universalis::Error>,
-) -> Result<UltrosDb> {
+) -> Result<()> {
     info!("db starting");
-    let db = UltrosDb::connect().await?;
+
     db.insert_default_retainer_cities().await.unwrap();
     info!("DB connected & ffxiv world data primed");
     {
@@ -132,37 +138,49 @@ async fn init_db(
             db.update_datacenters(&datacenters, &worlds).await?;
         }
     }
-    Ok(db)
+    Ok(())
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // Create the db before we proceed
     tracing_subscriber::fmt::init();
-
+    info!("Ultros starting!");
+    info!("Connecting DB");
+    let db = UltrosDb::connect().await?;
+    info!("Fetching datacenters/worlds from universalis");
     let universalis_client = UniversalisClient::new();
-    let (datacenters, worlds) = futures::future::join(
-        universalis_client.get_data_centers(),
-        universalis_client.get_worlds(),
-    )
-    .await;
-    let db = init_db(worlds, datacenters).await.unwrap();
-    let world_cache = Arc::new(WorldCache::new(&db).await);
+    let init = db.clone();
     let (senders, receivers) = create_event_busses();
+    let listings_sender = senders.listings.clone();
+    let history_sender = senders.history.clone();
+    tokio::spawn(async move {
+        let (datacenters, worlds) = futures::future::join(
+            universalis_client.get_data_centers(),
+            universalis_client.get_worlds(),
+        )
+        .await;
+        info!("Initializing database with worlds/datacenters");
+        init_db(&init, worlds, datacenters)
+            .await
+            .expect("Unable to populate worlds datacenters- is universalis down?");
+        info!("starting websocket");
+        run_socket_listener(init, listings_sender, history_sender).await;
+    });
+    // on first run, the world cache may be empty
+    let world_cache = Arc::new(WorldCache::new(&db).await);
+    let world_helper = Arc::new(WorldHelper::new(WorldData::from(world_cache.as_ref())));
+
     let analyzer_service =
         AnalyzerService::start_analyzer(db.clone(), receivers.clone(), world_cache.clone()).await;
     // begin listening to universalis events
-    tokio::spawn(run_socket_listener(
-        db.clone(),
-        senders.listings.clone(),
-        senders.history.clone(),
-    ));
     tokio::spawn(start_discord(
         db.clone(),
         senders.clone(),
         receivers.clone(),
         analyzer_service.clone(),
         world_cache.clone(),
+        world_helper.clone(),
     ));
     // create the oauth config
     let hostname = env::var("HOSTNAME").expect(
@@ -178,6 +196,15 @@ async fn main() -> Result<()> {
         db: db.clone(),
         world_cache: world_cache.clone(),
     };
+    let update_service = UpdateService {
+        db: db.clone(),
+        world_cache: world_cache.clone(),
+        universalis: UniversalisClient::new(),
+        listings: senders.listings.clone(),
+        sales: senders.history.clone(),
+    };
+    update_service.start_service();
+
     let web_state = WebState {
         analyzer_service,
         db,
@@ -198,6 +225,7 @@ async fn main() -> Result<()> {
         event_receivers: receivers,
         event_senders: senders,
         world_cache,
+        world_helper,
     };
     web::start_web(web_state).await;
     Ok(())

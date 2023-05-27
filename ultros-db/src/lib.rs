@@ -1,14 +1,17 @@
 mod alerts;
+pub mod common_type_conversions;
 mod discord;
 pub mod entity;
 mod ffxiv_character;
 pub mod listings;
 pub mod lists;
-pub(crate) mod partial_diff_iterator;
+pub mod partial_diff_iterator;
 pub mod price_optimizer;
+pub mod recently_updated;
 mod regions_and_datacenters;
 pub mod retainers;
 pub mod sales;
+pub mod try_update_value;
 pub mod world_cache;
 mod worlds;
 
@@ -26,7 +29,8 @@ use sea_orm::{
     QuerySelect, Set,
 };
 
-use tracing::{info, instrument, error};
+use tracing::{error, info, instrument};
+use ultros_api_types::Retainer;
 use universalis::{ItemId, ListingView, WorldId};
 
 use crate::entity::*;
@@ -128,17 +132,26 @@ impl UltrosDb {
     }
 
     #[instrument(skip(self))]
-    pub async fn search_retainers(
-        &self,
-        retainer_name: &str,
-    ) -> Result<Vec<(retainer::Model, Option<world::Model>)>> {
+    pub async fn search_retainers(&self, retainer_name: &str) -> Result<Vec<Retainer>> {
+        // retainer names are forced to be lower except for the first character which will be uppercase.
+        let retainer_name: String = retainer_name
+            .chars()
+            .enumerate()
+            .map(|(i, byte)| {
+                if i == 0 {
+                    byte.to_ascii_uppercase()
+                } else {
+                    byte.to_ascii_lowercase()
+                }
+            })
+            .collect();
+
         let val = retainer::Entity::find()
-            .find_also_related(world::Entity)
-            .filter(retainer::Column::Name.like(retainer_name))
+            .filter(retainer::Column::Name.like(&format!("{retainer_name}%")))
             .limit(10)
             .all(&self.db)
             .await?;
-        Ok(val)
+        Ok(val.into_iter().map(|val| Retainer::from(val)).collect())
     }
 
     #[instrument(skip(self))]

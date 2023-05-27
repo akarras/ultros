@@ -14,7 +14,6 @@ use oauth2::{
     TokenUrl,
 };
 use poise::serenity_prelude::Http;
-use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::{
@@ -25,17 +24,7 @@ use std::{
 use tokio::sync::RwLock;
 use ultros_db::UltrosDb;
 
-use tracing::log::error;
-
-use crate::web::templates::pages::error_page::ErrorPage;
-
-use super::{
-    error::WebError,
-    templates::{
-        page::{Page, RenderPage},
-        pages::unauthorized_page::UnauthorizedPage,
-    },
-};
+use super::error::{ApiError, WebError};
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialOrd, PartialEq, Hash)]
 pub enum OAuthScope {
@@ -152,7 +141,7 @@ pub async fn redirect(
     mut cookies: PrivateCookieJar,
     State(config): State<DiscordAuthConfig>,
     Query(RedirectParameters { code, state }): Query<RedirectParameters>,
-) -> Result<(PrivateCookieJar, Redirect), (StatusCode, RenderPage<ErrorPage>)> {
+) -> Result<(PrivateCookieJar, Redirect), WebError> {
     let code = AuthorizationCode::new(code);
     let _state = CsrfToken::new(state);
     if let Some(pkce_challenge) = cookies.get("pkce_challenge") {
@@ -166,16 +155,14 @@ pub async fn redirect(
         .client
         .exchange_code(code)
         .request_async(oauth2::reqwest::async_http_client)
-        .await
-        .map_err(|e| {
-            error!("{e}");
-            (StatusCode::INTERNAL_SERVER_ERROR, RenderPage(ErrorPage {}))
-        })?
+        .await?
         .access_token()
         .secret()
         .clone();
     // store the token into a cookie
     let mut cookie = Cookie::new("discord_auth", token);
+    cookie.set_secure(true);
+    cookie.set_same_site(SameSite::Lax);
     cookie.make_permanent();
     cookies = cookies.add(cookie);
     Ok((cookies, Redirect::to("/")))
@@ -238,21 +225,14 @@ where
     UltrosDb: FromRef<S>,
     AuthUserCache: FromRef<S>,
 {
-    type Rejection = (StatusCode, RenderPage<Box<dyn Page>>);
+    type Rejection = ApiError;
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        // let Extension(key) = Extension::from_request_parts(parts, state).await?;
         let cookie_jar: PrivateCookieJar<Key> = PrivateCookieJar::from_request_parts(parts, state)
             .await
             .unwrap();
-        let discord_auth = match cookie_jar.get("discord_auth") {
-            Some(discord_auth) => discord_auth,
-            None => {
-                return Err((
-                    StatusCode::UNAUTHORIZED,
-                    RenderPage(Box::new(UnauthorizedPage {})),
-                ))
-            }
-        };
+        let discord_auth = cookie_jar
+            .get("discord_auth")
+            .ok_or(ApiError::NotAuthenticated)?;
         // get the discord user
         let State(ultros): State<UltrosDb> = State::from_request_parts(parts, state).await.unwrap();
         let State(user_cache): State<AuthUserCache> =
@@ -263,13 +243,10 @@ where
         }
 
         let http = Http::new(&format!("Bearer {}", discord_auth.value()));
-        let user = http.get_current_user().await.map_err(|e| {
-            error!("error accessing logged in user {e}");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                RenderPage(Box::new(ErrorPage {}) as Box<dyn Page>),
-            )
-        })?;
+        let user = http
+            .get_current_user()
+            .await
+            .map_err(|_| ApiError::DiscordTokenInvalid(cookie_jar))?;
         let avatar_url = user
             .static_avatar_url()
             .unwrap_or_else(|| user.default_avatar_url());
@@ -278,19 +255,9 @@ where
             name: user.name,
             avatar_url,
         };
-        match ultros
+        ultros
             .get_or_create_discord_user(user.id, user.name.clone())
-            .await
-        {
-            Ok(_) => {}
-            Err(e) => {
-                error!("{e:?}");
-                return Err((
-                    StatusCode::UNAUTHORIZED,
-                    RenderPage(Box::new(UnauthorizedPage {})),
-                ));
-            }
-        }
+            .await?;
         user_cache
             .store_user(discord_auth.value(), user.clone())
             .await;

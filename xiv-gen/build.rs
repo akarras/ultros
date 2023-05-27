@@ -74,6 +74,7 @@ fn apply_derives(s: &mut Struct) -> &mut Struct {
         .derive("Clone")
         .derive("Serialize")
         .derive("Deserialize")
+        .derive("PartialEq")
         .derive("Encode")
         .derive("Decode")
 }
@@ -274,9 +275,9 @@ fn create_struct(
                 // regex: check is int type
                 static ref INT: Regex = Regex::new(r#"^(u|)int(8|16|32|64)$"#).unwrap();
                 // regex: check is bit offset
-                static ref BIT: Regex = Regex::new(r#"^bit(&[0-9]+|)$"#).unwrap();
+                static ref BIT: Regex = Regex::new(r#"^bit(&[0-9]+|)|bool$"#).unwrap();
             }
-            if BIT.is_match(field_value) || field_value == "sbyte" {
+            if BIT.is_match(field_value) {
                 (line_one, "bool".to_string())
             } else if INT.is_match(field_value) {
                 let mut line_two = field_value.replace("int", "");
@@ -288,7 +289,7 @@ fn create_struct(
 
                 if line_one == "key_id" {
                     let mut key = Struct::new(&key_name);
-                    apply_derives(&mut key).derive("Hash").derive("Eq").derive("PartialEq").derive("Copy").vis("pub").tuple_field(&line_two).vis("pub");
+                    apply_derives(&mut key).derive("Hash").derive("Eq").derive("Copy").vis("pub").tuple_field(&line_two).vis("pub");
                     scope.push_struct(key);
 
                     line_two = key_name.clone();
@@ -302,6 +303,8 @@ fn create_struct(
                 (line_one, line_two)
             } else if field_value == "byte" {
                 (line_one, "u8".to_string())
+            } else if field_value == "sbyte" {
+                (line_one, "i8".to_string())
             } else if field_value == "str" {
                 (line_one, "String".to_string())
             } else {

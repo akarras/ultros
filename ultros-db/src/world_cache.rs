@@ -287,6 +287,11 @@ impl WorldCache {
         self.name_map
             .get(name)
             .and_then(|selector| self.lookup_selector(selector).ok())
+            // if there's a world id that we could match with, try using that
+            .or_else(|| {
+                let world_id = name.parse::<i32>().ok()?;
+                self.lookup_selector(&AnySelector::World(world_id)).ok()
+            })
             .ok_or_else(|| WorldCacheError::NameLookupError(name.to_string()))
     }
 
@@ -343,5 +348,25 @@ impl WorldCache {
 
     pub fn get_all(&self) -> &AllWorldsAndRegions {
         &self.yoke.get().all
+    }
+
+    pub fn get_all_results(&self) -> impl Iterator<Item = AnyResult> {
+        self.get_all().iter().flat_map(|(r, d)| {
+            [AnyResult::Region(r)]
+                .into_iter()
+                .chain(d.iter().flat_map(|(d, w)| {
+                    [AnyResult::Datacenter(d)]
+                        .into_iter()
+                        .chain(w.iter().map(|w| AnyResult::World(w)))
+                }))
+        })
+    }
+
+    pub fn get_all_worlds(&self) -> impl Iterator<Item = &&world::Model> {
+        self.yoke
+            .get()
+            .all
+            .iter()
+            .flat_map(|(_, d)| d.iter().flat_map(|(_, worlds)| worlds.iter()))
     }
 }

@@ -14,9 +14,7 @@ csv = {version = "1.1.6", optional = true}
 
 [build-dependencies]
 codegen-rs = { git = "https://github.com/sayanarijit/codegen-rs" }
-clap = {version = "3.2.16", features = ["derive"]}
 csv = "1.1.6"
-reqwest = {version = "0.11.10", default-features = false, features = ["rustls-tls", "json", "blocking"]}
 heck = "0.4.0"
 regex = "1.6.0"
 lazy_static = "1.4.0"

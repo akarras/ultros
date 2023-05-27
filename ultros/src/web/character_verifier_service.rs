@@ -1,5 +1,9 @@
 use std::sync::Arc;
 
+use base64::{
+    engine::{GeneralPurpose, GeneralPurposeConfig},
+    Engine,
+};
 use lodestone::{model::profile::Profile, LodestoneError};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -23,10 +27,12 @@ pub enum VerifierError {
     Lodestone(#[from] LodestoneError),
     #[error("Generic DB error {0}")]
     DbError(#[from] anyhow::Error),
-    #[error("Verification string did not match")]
-    VerificationFailure,
+    #[error("Verification string did not match. Profile contained `{profile}`. Actual `{actual}`")]
+    VerificationFailure { profile: String, actual: String },
     #[error("World error {0}")]
     WorldCacheError(#[from] WorldCacheError),
+    #[error("Unauthorized")]
+    Unauthorized,
 }
 
 impl CharacterVerifierService {
@@ -40,7 +46,8 @@ impl CharacterVerifierService {
         hasher.update(&discord_user_id.to_le_bytes());
         hasher.update(&character_id.to_le_bytes());
         let auth_token = hasher.finalize();
-        let challenge_string = base64::encode(auth_token);
+        let engine = GeneralPurpose::new(&base64::alphabet::URL_SAFE, GeneralPurposeConfig::new());
+        let challenge_string = engine.encode(auth_token);
         let profile =
             lodestone::model::profile::Profile::get_async(&self.client, character_id).await?;
         let (first_name, last_name) = profile
@@ -74,6 +81,7 @@ impl CharacterVerifierService {
     pub(crate) async fn check_verification(
         &self,
         verification_id: i32,
+        discord_user: i64,
     ) -> Result<(), VerifierError> {
         let verification = self.db.get_verification_challenge(verification_id).await?;
         let ffxiv_character_verification::Model {
@@ -82,6 +90,9 @@ impl CharacterVerifierService {
             challenge,
             ..
         } = &verification;
+        if discord_user != *discord_user_id {
+            return Err(VerifierError::Unauthorized);
+        }
         self.compare_verification(&challenge, *ffxiv_character_id as u32)
             .await?;
         // verification success, now add the owned character
@@ -102,7 +113,10 @@ impl CharacterVerifierService {
         if intro {
             Ok(())
         } else {
-            Err(VerifierError::VerificationFailure)
+            Err(VerifierError::VerificationFailure {
+                profile: profile.self_introduction,
+                actual: verifier_string.to_string(),
+            })
         }
     }
 }

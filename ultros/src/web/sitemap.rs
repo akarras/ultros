@@ -81,7 +81,7 @@ pub(crate) async fn world_sitemap(
         items
             .iter()
             .map(|i| {
-                Url::builder(format!("https://ultros.app/listings/{world_name}/{i}"))
+                Url::builder(format!("https://ultros.app/item/{world_name}/{i}"))
                     .build()
                     .unwrap()
             })

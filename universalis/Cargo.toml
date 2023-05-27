@@ -14,7 +14,7 @@ url = "2"
 log = "0.4.17"
 bson = "2.4.0"
 async-tungstenite = {version = "0.17.2", default-features = false, features = ["tokio-runtime", "tokio-rustls-webpki-roots"], optional = true}
-tokio = {version = "1.20.1", optional = true, features = ["full"]}
+tokio = {version = "1", optional = true, features = ["full"]}
 futures = "0.3.23"
 serde_with = {version = "2.0.0", features = ["chrono"]}
 chrono = {version = "0.4.23", features = ["serde"]}

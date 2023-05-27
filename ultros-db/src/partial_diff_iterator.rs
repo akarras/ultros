@@ -12,10 +12,33 @@ where
 }
 
 #[derive(Eq, PartialEq, PartialOrd, Ord, Debug)]
-pub enum Diff<C, D> {
+pub enum DiffItem<C, D> {
     Same(C, D),
     Left(C),
     Right(D),
+}
+
+impl<C, D> DiffItem<C, D> {
+    pub fn left(self) -> Option<C> {
+        match self {
+            DiffItem::Left(l) => Some(l),
+            _ => None,
+        }
+    }
+
+    pub fn right(self) -> Option<D> {
+        match self {
+            DiffItem::Right(r) => Some(r),
+            _ => None,
+        }
+    }
+
+    pub fn same(self) -> Option<(C, D)> {
+        match self {
+            DiffItem::Same(c, d) => Some((c, d)),
+            _ => None,
+        }
+    }
 }
 
 impl<A, B, C, D> From<(A, B)> for PartialDiffIterator<A, B, C, D>
@@ -51,9 +74,9 @@ where
     B: Iterator<Item = D>,
     C: PartialOrd<D>,
 {
-    type Item = Diff<C, D>;
+    type Item = DiffItem<C, D>;
     fn next(&mut self) -> Option<Self::Item> {
-        use Diff::*;
+        use DiffItem::*;
         let Self {
             left_current,
             right_current,
@@ -71,8 +94,8 @@ where
 
         match (left_current.take(), right_current.take()) {
             (None, None) => None,
-            (None, Some(right)) => Some(Diff::Right(right)),
-            (Some(left), None) => Some(Diff::Left(left)),
+            (None, Some(right)) => Some(DiffItem::Right(right)),
+            (Some(left), None) => Some(DiffItem::Left(left)),
             (Some(left), Some(right)) => {
                 match left.partial_cmp(&right) {
                     Some(std::cmp::Ordering::Less) => {
@@ -97,7 +120,7 @@ where
 
 #[cfg(test)]
 mod test {
-    use crate::partial_diff_iterator::Diff;
+    use crate::partial_diff_iterator::DiffItem;
 
     use super::PartialDiffIterator;
     #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -135,10 +158,10 @@ mod test {
         assert_eq!(
             results,
             vec![
-                Diff::Left(&a_set[0]),
-                Diff::Same(&a_set[1], &b_set[0]),
-                Diff::Left(&a_set[2]),
-                Diff::Right(&b_set[1])
+                DiffItem::Left(&a_set[0]),
+                DiffItem::Same(&a_set[1], &b_set[0]),
+                DiffItem::Left(&a_set[2]),
+                DiffItem::Right(&b_set[1])
             ]
         );
     }

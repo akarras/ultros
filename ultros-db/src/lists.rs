@@ -1,5 +1,6 @@
 use crate::{
     entity::{active_listing, discord_user, list, list_item, retainer},
+    try_update_value::ActiveValueCmpSet,
     world_cache::{AnySelector, WorldCache},
     UltrosDb,
 };
@@ -10,7 +11,7 @@ use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, IntoActiveModel, ModelTrait,
     QueryFilter,
 };
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 use tracing::instrument;
 use universalis::ItemId;
 
@@ -40,22 +41,22 @@ impl UltrosDb {
         &self,
         discord_user: discord_user::Model,
         name: String,
-        selector: AnySelector,
+        selector: Option<AnySelector>,
     ) -> Result<list::Model> {
         let list = list::ActiveModel {
             id: Default::default(),
             owner: ActiveValue::Set(discord_user.id),
             name: ActiveValue::Set(name),
             world_id: match selector {
-                AnySelector::World(w) => ActiveValue::Set(Some(w)),
+                Some(AnySelector::World(w)) => ActiveValue::Set(Some(w)),
                 _ => Default::default(),
             },
             datacenter_id: match selector {
-                AnySelector::Datacenter(d) => ActiveValue::Set(Some(d)),
+                Some(AnySelector::Datacenter(d)) => ActiveValue::Set(Some(d)),
                 _ => Default::default(),
             },
             region_id: match selector {
-                AnySelector::Region(r) => ActiveValue::Set(Some(r)),
+                Some(AnySelector::Region(r)) => ActiveValue::Set(Some(r)),
                 _ => Default::default(),
             },
         }
@@ -148,15 +149,109 @@ impl UltrosDb {
         if list.owner != discord_user {
             return Err(anyhow::anyhow!("Failed to add item to list"));
         }
-        Ok(list_item::ActiveModel {
-            id: Default::default(),
-            item_id: ActiveValue::Set(item_id),
-            list_id: ActiveValue::Set(list.id),
-            hq: ActiveValue::Set(hq),
-            quantity: ActiveValue::Set(quantity),
+        // if the item already exists in the list, just update the existing list
+        let mut filter = list_item::Entity::find().filter(list_item::Column::ItemId.eq(item_id));
+        if let Some(hq) = hq {
+            filter = filter.filter(list_item::Column::Hq.eq(hq));
         }
-        .insert(&self.db)
-        .await?)
+        if let Some(item) = filter.one(&self.db).await? {
+            let new_quantity = item.quantity.unwrap_or(1) + quantity.unwrap_or(1);
+            let mut item = item.into_active_model();
+            item.quantity = ActiveValue::Set(Some(new_quantity));
+            Ok(item.update(&self.db).await?)
+        } else {
+            Ok(list_item::ActiveModel {
+                id: Default::default(),
+                item_id: ActiveValue::Set(item_id),
+                list_id: ActiveValue::Set(list.id),
+                hq: ActiveValue::Set(hq),
+                quantity: ActiveValue::Set(quantity),
+            }
+            .insert(&self.db)
+            .await?)
+        }
+    }
+
+    /// Update list item
+    #[instrument(skip(self))]
+    pub async fn update_list_item(
+        &self,
+        updated_item: list_item::Model,
+        discord_user: i64,
+    ) -> Result<list_item::Model> {
+        let _list = self.get_list(updated_item.list_id, discord_user).await?; // this should give an error if the user doesn't own the list
+        let mut item = list_item::Entity::find_by_id(updated_item.id)
+            .one(&self.db)
+            .await?
+            .ok_or(anyhow!("Item not found"))?
+            .into_active_model();
+        item.hq.cmp_set_value(updated_item.hq);
+        item.quantity.cmp_set_value(updated_item.quantity);
+        if item.is_changed() {
+            Ok(item.update(&self.db).await?)
+        } else {
+            Ok(updated_item)
+        }
+    }
+
+    // #[instrument(skip(self))]
+    pub async fn add_items_to_list(
+        &self,
+        list: &list::Model,
+        discord_user: i64,
+        items: impl Iterator<Item = list_item::Model>,
+    ) -> Result<u64> {
+        if list.owner != discord_user {
+            return Err(anyhow::anyhow!("Failed to add item to list"));
+        }
+        // for items that are already matching our list, we should update and insert
+        let mut existing_list_items: HashMap<_, _> = list
+            .find_related(list_item::Entity)
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .map(|item| ((item.hq, item.item_id), item))
+            .collect();
+
+        let mut insert_queue = vec![];
+        let mut updated_models = vec![];
+        items.into_iter().for_each(|item| {
+            let key = (item.hq, item.item_id);
+            // removing from the map and assuming that the incoming list won't have duplicates
+            if let Some(existing) = existing_list_items.remove(&key) {
+                let new_quantity = existing.quantity.unwrap_or(1) + item.quantity.unwrap_or(1);
+                let mut existing = existing.into_active_model();
+                existing.quantity = ActiveValue::Set(Some(new_quantity));
+                updated_models.push(existing);
+            } else {
+                insert_queue.push(item);
+            }
+        });
+        try_join_all(
+            updated_models
+                .into_iter()
+                .map(|updated| updated.update(&self.db)),
+        )
+        .await?;
+        let many = list_item::Entity::insert_many(insert_queue.into_iter().map(|item| {
+            let list_item::Model {
+                item_id,
+                list_id,
+                hq,
+                quantity,
+                ..
+            } = item;
+            list_item::ActiveModel {
+                id: Default::default(),
+                item_id: ActiveValue::Set(item_id),
+                list_id: ActiveValue::Set(list_id),
+                hq: ActiveValue::Set(hq),
+                quantity: ActiveValue::Set(quantity),
+            }
+        }))
+        .exec_without_returning(&self.db)
+        .await?;
+        Ok(many)
     }
 
     #[instrument(skip(self))]

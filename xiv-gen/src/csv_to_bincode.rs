@@ -28,9 +28,10 @@ pub fn read_csv<T: DeserializeOwned>(path: &str) -> Vec<T> {
                 // try to pretty print this error a bit, otherwise it's hard to tell what went wrong
                 if let Some(position) = e.position() {
                     if let ErrorKind::Deserialize { err, .. } = e.kind() {
-                        let field = err.field().unwrap();
-                        let field_name = &headers[field as usize];
-                        eprintln!("Field {field}: {field_name}");
+                        if let Some(field) = err.field() {
+                            let field_name = &headers[field as usize];
+                            eprintln!("Field {field}: {field_name}");
+                        }
                     }
                     let byte = position.byte() as usize;
                     let start_index = str[0..byte].rfind('\n').unwrap_or(0);

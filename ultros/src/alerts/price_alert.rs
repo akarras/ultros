@@ -3,7 +3,8 @@ use tokio::sync::{
     mpsc::{self, Receiver},
     RwLock,
 };
-use ultros_db::{entity::active_listing, world_cache::AnySelector};
+use ultros_api_types::{ActiveListing, Retainer};
+use ultros_db::world_cache::AnySelector;
 
 use crate::event::EventReceivers;
 
@@ -44,14 +45,17 @@ impl PriceAlertService {
     async fn start_listener(&self, mut event_receiver: EventReceivers) {
         loop {
             if let Ok(crate::event::EventType::Add(l)) = event_receiver.listings.recv().await {
-                self.check_listings(&l).await;
+                self.check_listings(&l.listings).await;
             }
         }
     }
 
-    async fn check_listings(&self, listings: &[active_listing::Model]) {
+    async fn check_listings(&self, listings: &[(ActiveListing, Retainer)]) {
         // events *should* be one item at a time so this reduce is safe. if that ever changes, need to fix this.
-        listings.iter().map(|i| (i.price_per_unit, i.item_id)).min();
+        listings
+            .iter()
+            .map(|(i, _)| (i.price_per_unit, i.item_id))
+            .min();
     }
 
     pub(crate) async fn create_alert(
