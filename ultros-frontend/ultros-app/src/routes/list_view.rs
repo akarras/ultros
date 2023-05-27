@@ -142,7 +142,7 @@ pub fn ListView(cx: Scope) -> impl IntoView {
                                         }><i class="fa-solid fa-plus"></i></button>
                                     </div>}
                                 }).collect::<Vec<_>>();
-                            view!{cx, search}
+                            view!{cx, search.into_view(cx)}
                         }}
                     </div>
                 </div>}

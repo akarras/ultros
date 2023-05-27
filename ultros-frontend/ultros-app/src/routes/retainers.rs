@@ -54,7 +54,7 @@ fn RetainerTable(cx: Scope, retainer: Retainer, listings: Vec<ActiveListing>) ->
                     </tr>
                 </thead>
                 <tbody>
-                    {listings}
+                    {listings.into_view(cx)}
                 </tbody>
             </table>
         </div>
@@ -77,7 +77,7 @@ fn CharacterRetainerList(
             {if let Some(character) = character {
                 view!{cx, <span>{character.first_name} {character.last_name}</span> }.into_view(cx)
             } else {
-                view!{cx, listings}.into_view(cx)
+                listings.into_view(cx)
             }}
         </div>
     }
