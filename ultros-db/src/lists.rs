@@ -1,5 +1,6 @@
 use crate::{
     entity::{active_listing, discord_user, list, list_item, retainer},
+    try_update_value::ActiveValueCmpSet,
     world_cache::{AnySelector, WorldCache},
     UltrosDb,
 };
@@ -168,6 +169,28 @@ impl UltrosDb {
             }
             .insert(&self.db)
             .await?)
+        }
+    }
+
+    /// Update list item
+    #[instrument(skip(self))]
+    pub async fn update_list_item(
+        &self,
+        updated_item: list_item::Model,
+        discord_user: i64,
+    ) -> Result<list_item::Model> {
+        let _list = self.get_list(updated_item.list_id, discord_user).await?; // this should give an error if the user doesn't own the list
+        let mut item = list_item::Entity::find_by_id(updated_item.id)
+            .one(&self.db)
+            .await?
+            .ok_or(anyhow!("Item not found"))?
+            .into_active_model();
+        item.hq.cmp_set_value(updated_item.hq);
+        item.quantity.cmp_set_value(updated_item.quantity);
+        if item.is_changed() {
+            Ok(item.update(&self.db).await?)
+        } else {
+            Ok(updated_item)
         }
     }
 

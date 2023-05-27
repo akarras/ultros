@@ -1,6 +1,6 @@
-use std::{collections::HashSet, error::Error};
+use std::collections::HashSet;
 
-use anyhow::{anyhow, bail};
+use anyhow::anyhow;
 use chrono::DateTime;
 use chrono::Local;
 use itertools::Itertools;

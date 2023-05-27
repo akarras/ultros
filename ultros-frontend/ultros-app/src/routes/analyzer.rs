@@ -7,7 +7,6 @@ use std::{cmp::Reverse, collections::HashMap, fmt::Display, str::FromStr, sync::
 use ultros_api_types::{
     cheapest_listings::CheapestListings,
     recent_sales::{RecentSales, SaleData},
-    world::World,
     world_helper::{AnyResult, AnySelector, WorldHelper},
 };
 use xiv_gen::ItemId;

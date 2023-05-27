@@ -6,7 +6,8 @@ use ultros_api_types::list::ListItem;
 use xiv_gen::{Item, ItemId, Recipe};
 
 use crate::api::{
-    add_item_to_list, bulk_add_item_to_list, delete_list_item, get_list_items_with_listings,
+    add_item_to_list, bulk_add_item_to_list, delete_list_item, edit_list_item,
+    get_list_items_with_listings,
 };
 use crate::components::related_items::IngredientsIter;
 use crate::components::{
@@ -64,6 +65,7 @@ pub fn ListView(cx: Scope) -> impl IntoView {
 
         bulk_add_item_to_list(cx, list_id(), items)
     });
+    let edit_item = create_action(cx, move |item: &ListItem| edit_list_item(cx, item.clone()));
     let list_view = create_resource(
         cx,
         move || {
@@ -73,6 +75,7 @@ pub fn ListView(cx: Scope) -> impl IntoView {
                     add_item.version().get(),
                     delete_item.version().get(),
                     recipe_add.version().get(),
+                    edit_item.version().get(),
                 ),
             )
         },
@@ -142,7 +145,7 @@ pub fn ListView(cx: Scope) -> impl IntoView {
                                         }><i class="fa-solid fa-plus"></i></button>
                                     </div>}
                                 }).collect::<Vec<_>>();
-                            view!{cx, search.into_view(cx)}
+                            search.into_view(cx)
                         }}
                     </div>
                 </div>}
@@ -226,29 +229,64 @@ pub fn ListView(cx: Scope) -> impl IntoView {
                         </tr>
                         <For each=move || items.clone() key=|(item, _)| item.id view=move |cx, (item, listings)| {
                             let (edit, set_edit) = create_signal(cx, false);
+                            let item = create_rw_signal(cx, item);
+                            let temp_item = create_rw_signal(cx, item());
+                            let listings = create_rw_signal(cx, listings);
                             view!{cx, <tr valign="top">
-                            <td>{item.hq.and_then(|hq| hq.then(|| "✅"))}</td>
+                            {move || if !edit() {
+                                let item = item();
+                                view!{cx, <td>{item.hq.and_then(|hq| hq.then(|| "✅"))}</td>
+                                <td>
+                                    <div class="flex-row">
+                                        <ItemIcon item_id=item.item_id icon_size=IconSize::Small/>
+                                        {game_items.get(&ItemId(item.item_id)).map(|item| &item.name)}
+                                        <Clipboard clipboard_text=game_items.get(&ItemId(item.item_id)).map(|item| item.name.to_string()).unwrap_or_default()/>
+                                        {game_items.get(&ItemId(item.item_id)).map(|item| item.item_search_category.0 <= 1).unwrap_or_default().then(move || {
+                                            view!{cx, <div><Tooltip tooltip_text="This item is not available on the marketboard".to_string()><i class="fa-solid fa-circle-exclamation"></i></Tooltip></div>}
+                                        })}
+                                    </div>
+                                </td>
+                                <td>
+                                    {item.quantity}
+                                </td>
+                                <td>
+                                    {move || view!{cx, <PriceViewer quantity=item.quantity.unwrap_or(1) hq=item.hq listings=listings()/>}}
+                                </td>
+                            }
+                            } else {
+                                let item = item();
+                                view!{cx, <td><input type="checkbox" prop:checked=move || temp_item.with(|i| i.hq) on:click=move |_| { temp_item.update(|w| w.hq = Some(!w.hq.map(|hq| hq).unwrap_or_default())) }/></td>
+                                <td>
+                                    <div class="flex-row">
+                                        <ItemIcon item_id=item.item_id icon_size=IconSize::Small/>
+                                        {game_items.get(&ItemId(item.item_id)).map(|item| &item.name)}
+                                        <Clipboard clipboard_text=game_items.get(&ItemId(item.item_id)).map(|item| item.name.to_string()).unwrap_or_default()/>
+                                        {game_items.get(&ItemId(item.item_id)).map(|item| item.item_search_category.0 <= 1).unwrap_or_default().then(move || {
+                                            view!{cx, <div><Tooltip tooltip_text="This item is not available on the marketboard".to_string()><i class="fa-solid fa-circle-exclamation"></i></Tooltip></div>}
+                                        })}
+                                    </div>
+                                </td>
+                                <td>
+                                    <input prop:value=move || temp_item.with(|i| i.quantity) on:input=move |e| {
+                                        if let Ok(value) = event_target_value(&e).parse::<i32>() {
+                                            temp_item.update(|i| { i.quantity = Some(value); } ) }
+                                        }
+                                        />
+                                </td>
+                                <td>
+                                    {move || view!{cx, <PriceViewer quantity=item.quantity.unwrap_or(1) hq=item.hq listings=listings()/>}}
+                                </td>}
+                            }}
                             <td>
-                                <div class="flex-row">
-                                    <ItemIcon item_id=item.item_id icon_size=IconSize::Small/>
-                                    {game_items.get(&ItemId(item.item_id)).map(|item| &item.name)}
-                                    <Clipboard clipboard_text=game_items.get(&ItemId(item.item_id)).map(|item| item.name.to_string()).unwrap_or_default()/>
-                                    {game_items.get(&ItemId(item.item_id)).map(|item| item.item_search_category.0 <= 1).unwrap_or_default().then(move || {
-                                        view!{cx, <div><Tooltip tooltip_text="This item is not available on the marketboard".to_string()><i class="fa-solid fa-circle-exclamation"></i></Tooltip></div>}
-                                    })}
-                                </div>
-                            </td>
-                            <td>
-                                {item.quantity}
-                            </td>
-                            <td>
-                                <PriceViewer quantity=item.quantity.unwrap_or(1) hq=item.hq listings=listings/>
-                            </td>
-                            <td>
-                                <button class="btn" on:click=move |_| {delete_item.dispatch(item.id)}>
+                                <button class="btn" on:click=move |_| {delete_item.dispatch(item().id)}>
                                     <i class="fa-solid fa-trash"></i>
                                 </button>
-                                <button class="btn" on:click=move |_| set_edit(!edit())>
+                                <button class="btn" on:click=move |_| {
+                                    if temp_item() != item() {
+                                        edit_item.dispatch(temp_item())
+                                    }
+                                    set_edit(!edit())
+                                }>
                                     <i class="fa-solid" class:fa-check=edit class:fa-pencil=move || !edit()></i>
                                 </button>
                             </td>

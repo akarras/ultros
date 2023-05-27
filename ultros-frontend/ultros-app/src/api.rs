@@ -238,6 +238,10 @@ pub(crate) async fn add_item_to_list(
     post_api(cx, &format!("/api/v1/list/{list_id}/add/item"), list_item).await
 }
 
+pub(crate) async fn edit_list_item(cx: Scope, list_item: ListItem) -> AppResult<()> {
+    post_api(cx, &format!("/api/v1/list/item/edit"), list_item).await
+}
+
 pub(crate) async fn delete_list_item(cx: Scope, list_id: i32) -> AppResult<()> {
     fetch_api(cx, &format!("/api/v1/list/item/{list_id}/delete")).await
 }

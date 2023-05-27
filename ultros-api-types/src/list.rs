@@ -19,7 +19,7 @@ pub struct List {
     pub wdr_filter: AnySelector,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, Eq, PartialEq, PartialOrd, Ord)]
 pub struct ListItem {
     pub id: i32,
     pub item_id: i32,

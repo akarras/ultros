@@ -11,6 +11,7 @@ pub mod recently_updated;
 mod regions_and_datacenters;
 pub mod retainers;
 pub mod sales;
+pub mod try_update_value;
 pub mod world_cache;
 mod worlds;
 
