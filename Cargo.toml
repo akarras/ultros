@@ -22,8 +22,8 @@ leptos = { git = "https://github.com/leptos-rs/leptos.git", default-features = f
   "serde",
 ] }
 leptos_axum = { git = "https://github.com/leptos-rs/leptos.git" }
-leptos_router = { git = "https://github.com/leptos-rs/leptos.git" }
-leptos_meta = { git = "https://github.com/leptos-rs/leptos.git" }
+leptos_router = { git = "https://github.com/leptos-rs/leptos.git", default-features = false }
+leptos_meta = { git = "https://github.com/leptos-rs/leptos.git", default-features = false }
 chrono = "0.4.23"
 itertools = "0.10.5"
 image = "0.24.6"

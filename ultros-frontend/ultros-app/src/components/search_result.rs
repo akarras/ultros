@@ -65,7 +65,7 @@ pub fn ItemSearchResult(
         cx,
         {if let Some(item) = item {
 
-            template!{cx,
+            view!{cx,
             <a on:click=move |_| set_search("".to_string()) href=move || {
                 let zone = price_zone();
                 let price_zone = zone.as_ref().map(|z| z.get_name()).unwrap_or("North-America");

@@ -406,7 +406,7 @@ fn AnalyzerTable(
                     .get(&ItemId(item_id))
                     .map(|item| item.name.as_str())
                     .unwrap_or_default();
-                template! {cx, <div class="grid-row" role="row-group" class:even=move || (i % 2) == 0 class:odd=move || (i % 2) == 1>
+                view! {cx, <div class="grid-row" role="row-group" class:even=move || (i % 2) == 0 class:odd=move || (i % 2) == 1>
                     <div role="cell" style="width: 25px;">{data.sale_summary.hq.then(|| "✅")}</div>
                     <div role="cell" class="flex flex-row" style="width: 450px;">
                         <a href=format!("/item/{world}/{item_id}")>
