@@ -8,10 +8,11 @@ pub mod sitemap;
 use anyhow::Error;
 use axum::body::{Empty, Full};
 use axum::extract::{FromRef, Path, Query, State};
+use axum::headers::ContentType;
 use axum::http::{HeaderValue, Response, StatusCode};
 use axum::response::{IntoResponse, Redirect};
 use axum::routing::{get, post};
-use axum::{body, middleware, Json, Router};
+use axum::{body, middleware, Json, Router, TypedHeader};
 use axum_extra::extract::cookie::Key;
 use futures::future::{try_join, try_join_all};
 use futures::stream::TryStreamExt;
@@ -315,6 +316,11 @@ async fn static_path(Path(path): Path<String>) -> impl IntoResponse {
 #[derive(Deserialize)]
 struct IconQuery {
     size: IconSize,
+}
+
+async fn fallback_item_icon() -> impl IntoResponse {
+    let fallback_image = include_bytes!("../static/fallback-image.png");
+    (TypedHeader(ContentType::png()), fallback_image)
 }
 
 async fn get_item_icon(
@@ -832,6 +838,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/retainers/add/:id", get(add_retainer))
         .route("/retainers/remove/:id", get(remove_owned_retainer))
         .route("/static/*path", get(static_path))
+        .route("/static/itemicon/fallback", get(fallback_item_icon))
         .route("/static/itemicon/:path", get(get_item_icon))
         .route("/redirect", get(self::oauth::redirect))
         .route("/login", get(begin_login))
