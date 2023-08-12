@@ -25,8 +25,11 @@ leptos_axum = { git = "https://github.com/leptos-rs/leptos.git" }
 leptos_router = { git = "https://github.com/leptos-rs/leptos.git", default-features = false }
 leptos_meta = { git = "https://github.com/leptos-rs/leptos.git", default-features = false }
 chrono = "0.4.23"
-itertools = "0.10.5"
+itertools = "0.11.0"
 image = "0.24.6"
+sea-orm = { version = "^0", features = ["sqlx-postgres", "runtime-tokio-rustls"] }
+sea-query = "^0"
+sea-orm-migration=  {version = "0.12.2", features = ["runtime-tokio-rustls", "sqlx-postgres" ]}
 
 [profile.release]
 lto = true

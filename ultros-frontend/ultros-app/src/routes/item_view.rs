@@ -87,7 +87,6 @@ fn ListingsContent(cx: Scope, item_id: Memo<i32>, world: Memo<String>) -> impl I
         move |(item_id, world)| async move { get_listings(cx, item_id, &world).await },
     );
     view! { cx,
-
         <Suspense fallback=move || view!{ cx, <Loading/>}>
         {move || listing_resource.read(cx).map(|listings| {
             match listings {
