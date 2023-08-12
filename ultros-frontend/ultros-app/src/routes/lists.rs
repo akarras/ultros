@@ -127,7 +127,7 @@ pub fn EditLists() -> impl IntoView {
 #[component]
 pub fn Lists() -> impl IntoView {
     view! {
-    <div class="container">
+    <div class="container mx-auto">
         <div class="content-nav">
             <A class="btn-secondary" href="/list">
                 <i class="fa-solid fa-list"></i>

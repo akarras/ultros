@@ -115,7 +115,7 @@ pub fn ListView() -> impl IntoView {
                     <input prop:value=search on:input=move |input| set_search(event_target_value(&input)) /></div>
                     <div class="content-well flex-column">
                         {move || {
-                            let search = item_search()
+                            item_search()
                                 .into_iter()
                                 .map(move |(id, item, _)| {
                                     let (quantity, set_quantity) = create_signal(1);
@@ -137,8 +137,7 @@ pub fn ListView() -> impl IntoView {
                                             add_item.dispatch(item);
                                         }><i class="fa-solid fa-plus"></i></button>
                                     </div>}
-                                }).collect::<Vec<_>>();
-                            search.into_view()
+                                }).collect::<Vec<_>>()
                         }}
                     </div>
                 </div>}

@@ -27,22 +27,42 @@ fn RetainerTable(retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoV
         .map(|listing| {
             let item = items.get(&ItemId(listing.item_id));
             let total = listing.quantity * listing.price_per_unit;
-            view! { <tr>
-                <td>{listing.hq.then(|| view!{<i class="fa-solid fa-sparkles"></i>})}</td>
-                <td>{if let Some(item) = item {
-                view!{<ItemIcon icon_size=IconSize::Small item_id=listing.item_id />{&item.name}}.into_view()
-            } else {
-                view!{"Item not found"}.into_view()
-            }}</td>
-                <td><Gil amount=listing.price_per_unit/></td>
-                <td>{listing.quantity}</td>
-                <td><Gil amount=total /></td>
-            </tr>
-        }})
+            view! {
+                <tr>
+                    <td>
+                        {listing
+                            .hq
+                            .then(|| {
+                                view! { <i class="fa-solid fa-sparkles"></i> }
+                            })}
+                    </td>
+                    <td class="flex flex-row">
+                        {if let Some(item) = item {
+                            view! {
+                                <ItemIcon icon_size=IconSize::Small item_id=listing.item_id/>
+                                {&item.name}
+                            }
+                                .into_view()
+                        } else {
+                            view! { "Item not found" }
+                                .into_view()
+                        }}
+                    </td>
+                    <td>
+                        <Gil amount=listing.price_per_unit/>
+                    </td>
+                    <td>{listing.quantity}</td>
+                    <td>
+                        <Gil amount=total/>
+                    </td>
+                </tr>
+            }})
         .collect();
     view! {
         <div class="content-well">
-            <span class="content-title">{retainer.name}" - "<WorldName id=AnySelector::World(retainer.world_id)/></span>
+            <span class="content-title">
+                {retainer.name} " - " <WorldName id=AnySelector::World(retainer.world_id)/>
+            </span>
             <table>
                 <thead>
                     <tr>
@@ -53,28 +73,26 @@ fn RetainerTable(retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoV
                         <th>"Total"</th>
                     </tr>
                 </thead>
-                <tbody>
-                    {listings.into_view()}
-                </tbody>
+                <tbody>{listings}</tbody>
             </table>
         </div>
     }
 }
 
 #[component]
-fn CharacterRetainerList(
+pub(crate) fn CharacterRetainerList(
     character: Option<FfxivCharacter>,
     retainers: Vec<(Retainer, Vec<ActiveListing>)>,
 ) -> impl IntoView {
     let listings: Vec<_> = retainers
         .into_iter()
-        .map(|(retainer, listings)| view! {<RetainerTable retainer listings />})
+        .map(|(retainer, listings)| view! { <RetainerTable retainer listings/> })
         .collect();
     view! {
-
         <div>
             {if let Some(character) = character {
-                view!{<span>{character.first_name} {character.last_name}</span> }.into_view()
+                view! { <span>{character.first_name} {character.last_name}</span> }
+                    .into_view()
             } else {
                 listings.into_view()
             }}
@@ -86,26 +104,42 @@ fn CharacterRetainerList(
 pub fn RetainerUndercuts() -> impl IntoView {
     let retainers = create_resource(|| "undercuts", move |_| get_retainer_undercuts());
     view! {
-
-        <MetaTitle title="Retainer Undercuts" />
+        <MetaTitle title="Retainer Undercuts"/>
         <span class="content-title">"Retainer Undercuts"</span>
         <br/>
-        <span>"Please keep in mind that data may not always be up to date. To update data, please contribute to universalis and then refresh this page."</span> <br/>
-        <span>"This page will only show listings that have been undercut, enabling you to quickly view which items need to be refreshed"</span>
-        <Suspense fallback=move || view!{<Loading/>}>
-        {move || {
-            retainers.get().map(|retainer| {
-                match retainer {
-                    Ok(retainers) => {
-                        let retainers : Vec<_> = retainers.retainers.into_iter()
-                            .map(|(character, retainers)| view!{<CharacterRetainerList character retainers />})
-                            .collect();
-                        view!{<div>{retainers}</div>}.into_view()
-                    },
-                    Err(e) => view!{<div>{"Unable to get retainers"}<br/>{e.to_string()}</div>}.into_view()
-                }
-            })
-        }}
+        <span>
+            "Please keep in mind that data may not always be up to date. To update data, please contribute to universalis and then refresh this page."
+        </span>
+        <br/>
+        <span>
+            "This page will only show listings that have been undercut, enabling you to quickly view which items need to be refreshed"
+        </span>
+        <Suspense fallback=move || {
+            view! { <Loading/> }
+        }>
+            {move || {
+                retainers
+                    .get()
+                    .map(|retainer| {
+                        match retainer {
+                            Ok(retainers) => {
+                                let retainers: Vec<_> = retainers
+                                    .retainers
+                                    .into_iter()
+                                    .map(|(character, retainers)| {
+                                        view! { <CharacterRetainerList character retainers/> }
+                                    })
+                                    .collect();
+                                view! { <div>{retainers}</div> }
+                                    .into_view()
+                            }
+                            Err(e) => {
+                                view! { <div>{"Unable to get retainers"} <br/> {e.to_string()}</div> }
+                                    .into_view()
+                            }
+                        }
+                    })
+            }}
         </Suspense>
     }
 }
@@ -114,38 +148,54 @@ pub fn RetainerUndercuts() -> impl IntoView {
 pub fn RetainerListings() -> impl IntoView {
     let retainers = create_resource(|| "undercuts", move |_| get_retainer_listings());
     view! {
-
         <span class="content-title">"All Listings"</span>
         <MetaTitle title="All Listings"/>
         <MetaDescription text="View your retainer's listings without making it a second job!"/>
-        <br />
-        <span>"Please keep in mind that data may not always be up to date. To update data, please contribute to universalis and then refresh this page."</span>
-        <Suspense fallback=move || view!{<Loading/>}>
-        {move || {
-            retainers.get().map(|retainer| {
-                match retainer {
-                    Ok(retainers) => {
-                        let retainers : Vec<_> = retainers.retainers.into_iter()
-                            .map(|(character, retainers)| view!{<CharacterRetainerList character retainers />})
-                            .collect();
-                        view!{
-                            {retainers.is_empty().then(|| view!{<span>"Add a retainer to get started!"</span>})}
-                            <div>{retainers}</div>
-                        }.into_view()
-                    },
-                    Err(e) => view!{<div>{"Unable to get retainers"}<br/>{e.to_string()}</div>}.into_view()
-                }
-            })
-        }}
+        <br/>
+        <span>
+            "Please keep in mind that data may not always be up to date. To update data, please contribute to universalis and then refresh this page."
+        </span>
+        <Suspense fallback=move || {
+            view! { <Loading/> }
+        }>
+            {move || {
+                retainers
+                    .get()
+                    .map(|retainer| {
+                        match retainer {
+                            Ok(retainers) => {
+                                let retainers: Vec<_> = retainers
+                                    .retainers
+                                    .into_iter()
+                                    .map(|(character, retainers)| {
+                                        view! { <CharacterRetainerList character retainers/> }
+                                    })
+                                    .collect();
+                                view! {
+                                    {retainers
+                                        .is_empty()
+                                        .then(|| {
+                                            view! { <span>"Add a retainer to get started!"</span> }
+                                        })}
+                                    <div>{retainers}</div>
+                                }
+                                    .into_view()
+                            }
+                            Err(e) => {
+                                view! { <div>{"Unable to get retainers"} <br/> {e.to_string()}</div> }
+                                    .into_view()
+                            }
+                        }
+                    })
+            }}
         </Suspense>
     }
 }
 
 #[component]
 pub fn Retainers() -> impl IntoView {
-    // let retainers = create_resource(|| "retainers", move |_| get_retainer_listings());
+    // let retainers = create_resource(|| "retainers", move |_| get_retainer_listings(cx));
     view! {
-
         <div class="content-nav">
             <A class="btn-secondary" href="/retainers/edit">
                 <span class="fa fa-pen-to-square"></span>
@@ -160,8 +210,11 @@ pub fn Retainers() -> impl IntoView {
                 "Undercuts"
             </A>
         </div>
-        <div class="main-content" style="display: flex; flex-direction: column; align-items: start;">
-            <AnimatedOutlet />
+        <div
+            class="main-content"
+            style="display: flex; flex-direction: column; align-items: start;"
+        >
+            <AnimatedOutlet/>
         </div>
     }
 }

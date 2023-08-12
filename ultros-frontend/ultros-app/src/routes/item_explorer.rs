@@ -249,7 +249,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
 #[component]
 pub fn ItemExplorer() -> impl IntoView {
     view! {
-        <div class="container">
+        <div class="container mx-auto">
             <div class="main-content flex">
                 <div class="flex-column" style="width: 250px; font-size: 1.2em">
                     "Weapons"

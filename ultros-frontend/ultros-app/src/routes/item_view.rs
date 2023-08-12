@@ -2,7 +2,7 @@ use crate::api::get_listings;
 use crate::api::get_worlds;
 use crate::components::{
     clipboard::*, item_icon::*, listings_table::*, loading::*, meta::*, price_history_chart::*,
-    related_items::*, sale_history_table::*, ui_text::*,
+    related_items::*, sale_history_table::*, ui_text::*, stats_display::*
 };
 use leptos::*;
 use leptos_router::*;
@@ -156,9 +156,10 @@ pub fn ItemView() -> impl IntoView {
                 <div class="flex-row">
                     {move || view!{<ItemIcon item_id=item_id() icon_size=IconSize::Large />}}
                     <div class="flex-column" style="padding: 5px">
-                        <span class="flex-row" style="font-size: 36px; line-height 0.5;">{item_name}{move || view!{<Clipboard clipboard_text=item_name().to_string()/>}}</span>
-                        <span style="font-size: 16px">{move || items.get(&ItemId(item_id())).and_then(|item| categories.get(&item.item_ui_category)).map(|i| i.name.as_str()).unwrap_or_default()}</span>
+                        <span class="flex-row" style="font-size: 36px; line-height 0.5;">{move || item_name()}{move || view!{cx, <Clipboard clipboard_text=item_name().to_string()/>}}</span>
+                        <span style="font-size: 16px">{move || items.get(&ItemId(item_id())).map(|item| categories.get(&item.item_ui_category)).flatten().map(|i| i.name.as_str()).unwrap_or_default()}</span>
                         <span>{move || view!{<UIText text=item_description().to_string()/>}}</span>
+                        {move || view!{<ItemStats item_id=ItemId(item_id()) />}}
                     </div>
                 </div>
                 <div class="flex-row" style="align-items:start">
