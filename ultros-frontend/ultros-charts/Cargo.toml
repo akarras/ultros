@@ -12,4 +12,4 @@ xiv-gen = {path = "../../xiv-gen", features = ["item"]}
 ultros-api-types = {path = "../../ultros-api-types"}
 chrono = {workspace = true}
 itertools.workspace = true
-anyhow = "1.0.70"
+anyhow.workspace = true

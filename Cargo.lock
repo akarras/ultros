@@ -1072,9 +1072,9 @@ dependencies = [
 
 [[package]]
 name = "console_log"
-version = "0.2.2"
+version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e89f72f65e8501878b8a004d5a1afb780987e2ce2b4532c562e367a72c57499f"
+checksum = "be8aed40e4edbf4d3b4431ab260b63fdc40f5780a4766824329ea0f1eefe3c0f"
 dependencies = [
  "log",
  "web-sys",
@@ -6383,7 +6383,7 @@ version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "console_log",
- "gloo-net 0.2.6",
+ "gloo-net 0.4.0",
  "leptos",
  "leptos_meta",
  "log",
@@ -6399,7 +6399,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "futures",
- "itertools 0.10.5",
+ "itertools 0.11.0",
  "migration",
  "sea-orm",
  "sea-query",
@@ -7169,9 +7169,9 @@ dependencies = [
 
 [[package]]
 name = "yoke"
-version = "0.6.2"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fe1d55ca72c32d573bfbd5cb2f0ca65a497854c44762957a6d3da96041a5184"
+checksum = "1848075a23a28f9773498ee9a0f2cf58fcbad4f8c0ccf84a210ab33c6ae495de"
 dependencies = [
  "serde",
  "stable_deref_trait",

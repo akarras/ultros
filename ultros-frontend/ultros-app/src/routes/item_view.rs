@@ -92,10 +92,10 @@ fn ListingsContent(cx: Scope, item_id: Memo<i32>, world: Memo<String>) -> impl I
             match listings {
                 Err(e) => view!{ cx, <div>{format!("Error getting listings\n{e}")}</div>}.into_view(cx),
                 Ok(currently_shown) => {
-
-                    let hq_listings = currently_shown.listings.iter().cloned().filter(|(listing, _)| listing.hq).collect::<Vec<_>>();
-                    let lq_listings = currently_shown.listings.iter().cloned().filter(|(listing, _)| !listing.hq).collect::<Vec<_>>();
-                    let sales = create_memo(cx, move |_| currently_shown.sales.clone());
+                    let currently_shown = store_value(cx, currently_shown);
+                    (move || {let hq_listings = currently_shown.with_value(|shown| shown.listings.iter().cloned().filter(|(listing, _)| listing.hq).collect::<Vec<_>>());
+                    let lq_listings = currently_shown.with_value(|shown| shown.listings.iter().cloned().filter(|(listing, _)| !listing.hq).collect::<Vec<_>>());
+                    let sales = create_memo(cx, move |_| currently_shown.with_value(|shown| shown.sales.clone()));
                     view! { cx,
                         <PriceHistoryChart sales=MaybeSignal::from(sales) />
                         {(!hq_listings.is_empty()).then(move || {
@@ -112,7 +112,7 @@ fn ListingsContent(cx: Scope, item_id: Memo<i32>, world: Memo<String>) -> impl I
                             <span class="content-title">"sale history"</span>
                             <SaleHistoryTable sales=Signal::from(sales) />
                         </div>
-                    }.into_view(cx)
+                    }.into_view(cx)}).into_view(cx)
                 }
             }
         })}
