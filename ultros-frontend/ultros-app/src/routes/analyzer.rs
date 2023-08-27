@@ -185,19 +185,19 @@ impl Display for SortMode {
 }
 
 fn use_query_item<T>(
-    cx: Scope,
+    
     parameter: &'static str,
 ) -> (Signal<Option<T>>, SignalSetter<Option<T>>)
 where
     T: FromStr + ToString + PartialEq,
 {
-    let router = use_router(cx);
-    let query_map = use_query_map(cx);
+    let router = use_router();
+    let query_map = use_query_map();
 
-    let read = create_memo(cx, move |_| {
+    let read = create_memo(move |_| {
         query_map.with(|query| query.get(&parameter).and_then(|s| s.parse().ok()))
     });
-    let navigate = use_navigate(cx);
+    let navigate = use_navigate();
     let set = move |value: Option<T>| {
         let mut query_map = query_map();
         let path_name = router.pathname()();
@@ -211,7 +211,7 @@ where
         }
         let query_string = query_map.to_query_string();
 
-        if let Err(e) = navigate(
+        navigate(
             &format!("{path_name}{query_string}"),
             NavigateOptions {
                 resolve: false,
@@ -219,16 +219,14 @@ where
                 scroll: true,
                 state: State(None),
             },
-        ) {
-            error!("Unable to navigate {e:?}");
-        }
+        )
     };
-    (read.into(), set.mapped_signal_setter(cx))
+    (read.into(), set.mapped_signal_setter())
 }
 
 #[component]
 fn AnalyzerTable(
-    cx: Scope,
+    
     sales: RecentSales,
     global_cheapest_listings: CheapestListings,
     world_cheapest_listings: CheapestListings,
@@ -240,15 +238,15 @@ fn AnalyzerTable(
     // get ranges of possible values for our sliders
 
     let items = &xiv_gen_db::decompress_data().items;
-    let (sort_mode, set_sort_mode) = use_query_item::<SortMode>(cx, "sort");
-    let (minimum_profit, set_minimum_profit) = use_query_item::<i32>(cx, "profit");
-    let (minimum_roi, set_minimum_roi) = use_query_item(cx, "roi");
-    // let (max_predicted_time, set_max_predicted_time) = create_signal(cx, "1 week".to_string());
-    let (max_predicted_time, set_max_predicted_time) = use_query_item::<String>(cx, "next-sale");
-    let (world_filter, set_world_filter) = use_query_item::<String>(cx, "world");
-    let (datacenter_filter, set_datacenter_filter) = use_query_item::<String>(cx, "datacenter");
+    let (sort_mode, set_sort_mode) = use_query_item::<SortMode>("sort");
+    let (minimum_profit, set_minimum_profit) = use_query_item::<i32>("profit");
+    let (minimum_roi, set_minimum_roi) = use_query_item("roi");
+    // let (max_predicted_time, set_max_predicted_time) = create_signal("1 week".to_string());
+    let (max_predicted_time, set_max_predicted_time) = use_query_item::<String>("next-sale");
+    let (world_filter, set_world_filter) = use_query_item::<String>("world");
+    let (datacenter_filter, set_datacenter_filter) = use_query_item::<String>("datacenter");
     let world_clone = worlds.clone(); // cloned to pass into closure
-    let world_filter_list = create_memo(cx, move |_| {
+    let world_filter_list = create_memo(move |_| {
         let world = world_filter().or_else(move || datacenter_filter())?;
         let filter = world_clone
             .lookup_world_by_name(&world)?
@@ -258,12 +256,12 @@ fn AnalyzerTable(
         Some(filter)
     });
     let world_clone = worlds.clone();
-    let lookup_world = create_memo(cx, move |_| {
+    let lookup_world = create_memo(move |_| {
         Some(AnySelector::from(
             &world_clone.lookup_world_by_name(&world())?,
         ))
     });
-    let predicted_time = create_memo(cx, move |_| {
+    let predicted_time = create_memo(move |_| {
         parse_duration(&max_predicted_time().unwrap_or_default())
     });
     let predicted_time_string = move || {
@@ -271,7 +269,7 @@ fn AnalyzerTable(
             .map(|duration| format_duration(duration).to_string())
             .unwrap_or("---".to_string())
     };
-    let sorted_data = create_memo(cx, move |_| {
+    let sorted_data = create_memo(move |_| {
         let mut sorted_data = profits
             .0
             .iter()
@@ -317,7 +315,7 @@ fn AnalyzerTable(
     });
     const DATACENTER_WIDTH: &str = "width: 130px";
     const WORLD_WIDTH: &str = "width: 180px";
-    view! { cx,
+    view! { 
         <MetaTitle title="Price Analayzer"/>
         <MetaDescription text="The analyzer finds the best items to buy on other worlds and sell on your own world."/>
        <div class="flex flex-row content-well">
@@ -325,8 +323,8 @@ fn AnalyzerTable(
            <div class="flex-column">
                 <label for>"minimum profit:"<br/>
                {move || minimum_profit().map(|profit| {
-                    view!{cx, <Gil amount=profit /> }
-               }.into_view(cx)).unwrap_or("---".into_view(cx))}
+                    view!{<Gil amount=profit /> }
+               }.into_view()).unwrap_or("---".into_view())}
                </label><br/>
                <input id="minimum_profit" min=0 max=100000 type="number" prop:value=minimum_profit
                     on:input=move |input| set_minimum_profit(event_target_value(&input).parse::<i32>().ok()) />
@@ -350,9 +348,9 @@ fn AnalyzerTable(
                 {move || {
                     match sort_mode().unwrap_or(SortMode::Roi) {
                         SortMode::Profit => {
-                            view!{cx, "Profit"<i class="fa-solid fa-sort-down"></i>}.into_view(cx)
+                            view!{"Profit"<i class="fa-solid fa-sort-down"></i>}.into_view()
                         },
-                        _ => view!{cx, <Tooltip tooltip_text="Sort by profit".to_string()>"Profit"</Tooltip>}.into_view(cx),
+                        _ => view!{<Tooltip tooltip_text="Sort by profit".to_string()>"Profit"</Tooltip>}.into_view(),
                     }
                 }}
                 </div>
@@ -362,18 +360,18 @@ fn AnalyzerTable(
                 {move || {
                     match sort_mode().unwrap_or(SortMode::Roi) {
                         SortMode::Roi => {
-                            view!{cx, "R.O.I"<i class="fa-solid fa-sort-down"></i>}.into_view(cx)
+                            view!{"R.O.I"<i class="fa-solid fa-sort-down"></i>}.into_view()
                         },
-                        _ => view!{cx, <Tooltip tooltip_text="Sort by return on investment".to_string()>"R.O.I."</Tooltip>}.into_view(cx),
+                        _ => view!{<Tooltip tooltip_text="Sort by return on investment".to_string()>"R.O.I."</Tooltip>}.into_view(),
                     }
                 }}
                 </div>
             </div>
             <div role="columnheader" style=WORLD_WIDTH>
-                "World" {move || world_filter().map(move |world| view!{cx, <a on:click=move |_| set_world_filter(None)><Tooltip tooltip_text="Clear this world filter".to_string()>"[" {&world} "]"</Tooltip></a>})}
+                "World" {move || world_filter().map(move |world| view!{<a on:click=move |_| set_world_filter(None)><Tooltip tooltip_text="Clear this world filter".to_string()>"[" {&world} "]"</Tooltip></a>})}
             </div>
             <div role="columnheader" style=DATACENTER_WIDTH>
-                "Datacenter" {move || datacenter_filter().map(move |datacenter| view!{cx, <a on:click=move |_| set_datacenter_filter(None)><Tooltip tooltip_text="Clear this datacenter filter".to_string()>"[" {&datacenter} "]"</Tooltip></a>})}
+                "Datacenter" {move || datacenter_filter().map(move |datacenter| view!{<a on:click=move |_| set_datacenter_filter(None)><Tooltip tooltip_text="Clear this datacenter filter".to_string()>"[" {&datacenter} "]"</Tooltip></a>})}
             </div>
             <div role="columnheader" style="width: 300px;">"Next sale"</div>
         </div>
@@ -384,7 +382,7 @@ fn AnalyzerTable(
             key=move |(i, data)| {
                 (*i, data.sale_summary.item_id, data.cheapest_world_id, data.sale_summary.hq)
             }
-            view=move |cx, (i, data)| {
+            view=move |(i, data)| {
                 let world = worlds.lookup_selector(AnySelector::World(data.cheapest_world_id));
                 let datacenter = world
                     .as_ref()
@@ -406,7 +404,7 @@ fn AnalyzerTable(
                     .get(&ItemId(item_id))
                     .map(|item| item.name.as_str())
                     .unwrap_or_default();
-                view! {cx, <div class="grid-row" role="row-group" class:even=move || (i % 2) == 0 class:odd=move || (i % 2) == 1>
+                view! {<div class="grid-row" role="row-group" class:even=move || (i % 2) == 0 class:odd=move || (i % 2) == 1>
                     <div role="cell" style="width: 25px;">{data.sale_summary.hq.then(|| "✅")}</div>
                     <div role="cell" class="flex flex-row" style="width: 450px;">
                         <a href=format!("/item/{world}/{item_id}")>
@@ -433,32 +431,32 @@ fn AnalyzerTable(
 }
 
 #[component]
-pub fn AnalyzerWorldView(cx: Scope) -> impl IntoView {
-    let params = use_params_map(cx);
-    let world = create_memo(cx, move |_| {
+pub fn AnalyzerWorldView() -> impl IntoView {
+    let params = use_params_map();
+    let world = create_memo(move |_| {
         params.with(|p| p.get("world").cloned()).unwrap_or_default()
     });
     let sales = create_resource(
-        cx,
+        
         move || params.with(|p| p.get("world").cloned()),
         move |world| async move {
-            get_recent_sales_for_world(cx, &world.ok_or(AppError::ParamMissing)?).await
+            get_recent_sales_for_world(&world.ok_or(AppError::ParamMissing)?).await
         },
     );
 
     let world_cheapest_listings = create_resource(
-        cx,
+        
         move || params.with(|p| p.get("world").cloned()),
         move |world| async move {
             let world = world.ok_or(AppError::ParamMissing)?;
-            get_cheapest_listings(cx, &world).await
+            get_cheapest_listings(&world).await
         },
     );
-    let worlds = use_context::<LocalWorldData>(cx)
+    let worlds = use_context::<LocalWorldData>()
         .expect("Worlds should always be populated here")
         .0;
 
-    view!{ cx,
+    view!{ 
         <div class="main-content">
             <span class="title">"Resale Analyzer Results for "{world}</span><br/>
             <AnalyzerWorldNavigator /><br />
@@ -469,9 +467,9 @@ pub fn AnalyzerWorldView(cx: Scope) -> impl IntoView {
             <a class="btn" href="?next-sale=7d&roi=300&profit=0&sort=profit&">"300% return within 7 days"</a>
             <a class="btn" href="?next-sale=1M&roi=500&profit=200000&">"500% return with 200K min gil profit within 1 month"</a>
             {worlds.ok().map(|worlds| {
-                let world_value = store_value(cx, worlds);
+                let world_value = store_value(worlds);
                 let global_cheapest_listings = create_resource(
-                    cx,
+                    
                     move || params.with(|p| p.get("world").cloned()),
                     move |world| async move {
                         let worlds = world_value();
@@ -481,32 +479,32 @@ pub fn AnalyzerWorldView(cx: Scope) -> impl IntoView {
                             let region = worlds.get_region(world);
                             AnyResult::Region(region).get_name().to_string()
                         }).ok_or(AppError::ParamMissing)?;
-                        get_cheapest_listings(cx, &region).await
+                        get_cheapest_listings(&region).await
                     },
                 );
-                view!{cx,
+                view!{
                         {move || {
-                            let world_cheapest = world_cheapest_listings.read(cx);
-                            let sales = sales.read(cx);
-                            let global_cheapest_listings = global_cheapest_listings.read(cx);
+                            let world_cheapest = world_cheapest_listings.read();
+                            let sales = sales.read();
+                            let global_cheapest_listings = global_cheapest_listings.read();
                             let worlds = world_value();
                             let values = world_cheapest.map(|w| w.ok())
                                 .flatten().and_then(|r| sales.map(|s| s.ok())
                                 .flatten().and_then(|s| global_cheapest_listings.map(|g| g.ok()).flatten().and_then(|g| Some((r, s, g)))));
                             values.map(|(world_cheapest_listings, sales, global_cheapest_listings)| {
-                            view!{cx, <AnalyzerTable sales global_cheapest_listings world_cheapest_listings worlds world=world.into() />
+                            view!{<AnalyzerTable sales global_cheapest_listings world_cheapest_listings worlds world=world.into() />
                             } }
                         )}}
                 }
             })}
-    </div>}.into_view(cx)
+    </div>}.into_view()
 }
 
 #[component]
-pub fn AnalyzerWorldNavigator(cx: Scope) -> impl IntoView {
-    let nav = use_navigate(cx);
-    let params = use_params_map(cx);
-    let worlds = use_context::<LocalWorldData>(cx)
+pub fn AnalyzerWorldNavigator() -> impl IntoView {
+    let nav = use_navigate();
+    let params = use_params_map();
+    let worlds = use_context::<LocalWorldData>()
         .expect("Should always have local world data")
         .0
         .unwrap();
@@ -518,22 +516,20 @@ pub fn AnalyzerWorldNavigator(cx: Scope) -> impl IntoView {
             .flatten()
     });
     info!("{initial_world:?}");
-    let (current_world, set_current_world) = create_signal(cx, initial_world);
-    create_effect(cx, move |_| {
+    let (current_world, set_current_world) = create_signal(initial_world);
+    create_effect(move |_| {
         if let Some(world) = current_world() {
             let world = world.name;
-            if let Err(e) = nav(&format!("/analyzer/{world}"), NavigateOptions::default()) {
-                error!("{e:?}");
-            }
+            nav(&format!("/analyzer/{world}"), NavigateOptions::default());
         }
     });
-    view! {cx, <label>"Analyzer World: "</label><WorldOnlyPicker current_world=current_world.into() set_current_world=set_current_world.into() />}
+    view! {<label>"Analyzer World: "</label><WorldOnlyPicker current_world=current_world.into() set_current_world=set_current_world.into() />}
 }
 
 #[component]
-pub fn Analyzer(cx: Scope) -> impl IntoView {
+pub fn Analyzer() -> impl IntoView {
     view! {
-        cx,
+        
         <div class="container">
             <div class="main-content">
                 <span class="content-title">"Analyzer"</span>

@@ -23,22 +23,22 @@ fn find_matching_listings(
 
 /// Always shows the lowest price
 #[component]
-pub fn CheapestPrice(cx: Scope, item_id: ItemId, hq: Option<bool>) -> impl IntoView {
-    let cheapest = use_context::<CheapestPrices>(cx).unwrap().read_listings;
-    view! {cx,
-        <Suspense fallback=move || view!{cx, <Loading />}>
+pub fn CheapestPrice(item_id: ItemId, hq: Option<bool>) -> impl IntoView {
+    let cheapest = use_context::<CheapestPrices>().unwrap().read_listings;
+    view! {
+        <Suspense fallback=move || view!{<Loading />}>
         {move || cheapest
-        .with(cx, |data| {
-            data.as_ref().ok().map(|data| {
+        .with(|data| {
+            data.as_ref().and_then(|data| data.as_ref().ok()).map(|data| {
                 find_matching_listings(&data, item_id, hq)
                 .map(|listing| {
-                    view! {cx,
+                    view! {
                         <Gil amount=listing.cheapest_price/>
                         <span style="padding-right: 5px"></span>
                         <span><WorldName id=AnySelector::World(listing.world_id)/></span>
                     }
                 })
-                .into_view(cx)
+                .into_view()
             })
         })}
         </Suspense>

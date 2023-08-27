@@ -17,18 +17,18 @@ use ultros_api_types::{
 use crate::error::{AppError, AppResult, SystemError};
 
 pub(crate) async fn get_listings(
-    cx: Scope,
+    
     item_id: i32,
     world: &str,
 ) -> AppResult<CurrentlyShownItem> {
     if item_id == 0 {
         return Err(AppError::NoItem);
     }
-    fetch_api(cx, &format!("/api/v1/listings/{world}/{item_id}")).await
+    fetch_api(&format!("/api/v1/listings/{world}/{item_id}")).await
 }
 
 pub(crate) async fn get_bulk_listings(
-    cx: Scope,
+    
     world: &str,
     item_ids: impl Iterator<Item = i32>,
 ) -> AppResult<HashMap<i32, Vec<(ActiveListing, Option<Retainer>)>>> {
@@ -36,47 +36,47 @@ pub(crate) async fn get_bulk_listings(
         return Err(AppError::NoItem);
     }
     let ids = item_ids.format(",");
-    fetch_api(cx, &format!("/api/v1/bulkListings/{world}/{ids}")).await
+    fetch_api(&format!("/api/v1/bulkListings/{world}/{ids}")).await
 }
 
 #[instrument]
-pub(crate) async fn get_worlds(cx: Scope) -> AppResult<WorldData> {
-    fetch_api(cx, "/api/v1/world_data").await
+pub(crate) async fn get_worlds() -> AppResult<WorldData> {
+    fetch_api("/api/v1/world_data").await
 }
 
 /// This is okay because the client will send our login cookie
-pub(crate) async fn get_login(cx: Scope) -> AppResult<UserData> {
-    fetch_api(cx, "/api/v1/current_user").await
+pub(crate) async fn get_login() -> AppResult<UserData> {
+    fetch_api("/api/v1/current_user").await
 }
 
 /// Get analyzer data
 pub(crate) async fn get_cheapest_listings(
-    cx: Scope,
+    
     world_name: &str,
 ) -> AppResult<CheapestListings> {
-    fetch_api(cx, &format!("/api/v1/cheapest/{}", world_name)).await
+    fetch_api(&format!("/api/v1/cheapest/{}", world_name)).await
 }
 
 /// Get most expensive
 pub(crate) async fn get_recent_sales_for_world(
-    cx: Scope,
+    
     region_name: &str,
 ) -> AppResult<RecentSales> {
-    fetch_api(cx, &format!("/api/v1/recentSales/{}", region_name)).await
+    fetch_api(&format!("/api/v1/recentSales/{}", region_name)).await
 }
 
 /// Returns a list of the logged in user's retainers
-pub(crate) async fn get_retainers(cx: Scope) -> AppResult<UserRetainers> {
-    fetch_api(cx, "/api/v1/user/retainer").await
+pub(crate) async fn get_retainers() -> AppResult<UserRetainers> {
+    fetch_api("/api/v1/user/retainer").await
 }
 
-pub(crate) async fn get_retainer_listings(cx: Scope) -> AppResult<UserRetainerListings> {
-    fetch_api(cx, "/api/v1/user/retainer/listings").await
+pub(crate) async fn get_retainer_listings() -> AppResult<UserRetainerListings> {
+    fetch_api("/api/v1/user/retainer/listings").await
 }
 
-pub(crate) async fn get_retainer_undercuts(cx: Scope) -> AppResult<UserRetainerListings> {
+pub(crate) async fn get_retainer_undercuts() -> AppResult<UserRetainerListings> {
     // get our retainer data
-    let mut retainer_data = get_retainer_listings(cx).await?;
+    let mut retainer_data = get_retainer_listings().await?;
     // build a unique list of worlds and item ids so we can fetch additional info about them
     // todo: couldn't I just use cheapest listings for each world & avoid looking up literally every retainer?
     let world_items: HashMap<i32, Vec<i32>> = retainer_data
@@ -92,7 +92,7 @@ pub(crate) async fn get_retainer_undercuts(cx: Scope) -> AppResult<UserRetainerL
         });
     // todo: once the api calls use a result type, swap this to a try_join all
     let listings = join_all(world_items.into_iter().map(|(world, items)| async move {
-        get_bulk_listings(cx, &world.to_string(), items.into_iter())
+        get_bulk_listings(&world.to_string(), items.into_iter())
             .await
             // include the world id in the returned value
             .map(|listings| (world, listings))
@@ -146,111 +146,111 @@ pub(crate) async fn get_retainer_undercuts(cx: Scope) -> AppResult<UserRetainerL
 }
 
 /// Searches retainers based on their name
-pub(crate) async fn search_retainers(cx: Scope, name: String) -> AppResult<Vec<Retainer>> {
+pub(crate) async fn search_retainers(name: String) -> AppResult<Vec<Retainer>> {
     if name.is_empty() {
         return Err(AppError::EmptyString);
     }
-    fetch_api(cx, &format!("/api/v1/retainer/search/{name}")).await
+    fetch_api(&format!("/api/v1/retainer/search/{name}")).await
 }
 
 /// Claims the given retainer based on their id
-pub(crate) async fn claim_retainer(cx: Scope, retainer_id: i32) -> AppResult<()> {
-    fetch_api(cx, &format!("/api/v1/retainer/claim/{retainer_id}")).await
+pub(crate) async fn claim_retainer(retainer_id: i32) -> AppResult<()> {
+    fetch_api(&format!("/api/v1/retainer/claim/{retainer_id}")).await
 }
 
 /// Unclaims the retainer based on the owned retainer id
-pub(crate) async fn unclaim_retainer(cx: Scope, owned_retainer_id: i32) -> AppResult<()> {
-    fetch_api(cx, &format!("/api/v1/retainer/unclaim/{owned_retainer_id}")).await
+pub(crate) async fn unclaim_retainer(owned_retainer_id: i32) -> AppResult<()> {
+    fetch_api(&format!("/api/v1/retainer/unclaim/{owned_retainer_id}")).await
 }
 
 /// Gets the characters for this user
-pub(crate) async fn get_characters(cx: Scope) -> AppResult<Vec<FfxivCharacter>> {
-    fetch_api(cx, &format!("/api/v1/characters")).await
+pub(crate) async fn get_characters() -> AppResult<Vec<FfxivCharacter>> {
+    fetch_api(&format!("/api/v1/characters")).await
 }
 
 /// Gets pending character verifications for this user
 pub(crate) async fn get_character_verifications(
-    cx: Scope,
+    
 ) -> AppResult<Vec<FfxivCharacterVerification>> {
-    fetch_api(cx, &format!("/api/v1/characters/verifications")).await
+    fetch_api(&format!("/api/v1/characters/verifications")).await
 }
 
-pub(crate) async fn check_character_verification(cx: Scope, character_id: i32) -> AppResult<bool> {
-    fetch_api(cx, &format!("/api/v1/characters/verify/{character_id}")).await
+pub(crate) async fn check_character_verification(character_id: i32) -> AppResult<bool> {
+    fetch_api(&format!("/api/v1/characters/verify/{character_id}")).await
 }
 
 /// Starts to claim the given character
-pub(crate) async fn claim_character(cx: Scope, id: i32) -> AppResult<(i32, String)> {
-    fetch_api(cx, &format!("/api/v1/characters/claim/{id}")).await
+pub(crate) async fn claim_character(id: i32) -> AppResult<(i32, String)> {
+    fetch_api(&format!("/api/v1/characters/claim/{id}")).await
 }
 
-pub(crate) async fn unclaim_character(cx: Scope, id: i32) -> AppResult<(i32, String)> {
-    fetch_api(cx, &format!("/api/v1/characters/unclaim/{id}")).await
+pub(crate) async fn unclaim_character(id: i32) -> AppResult<(i32, String)> {
+    fetch_api(&format!("/api/v1/characters/unclaim/{id}")).await
 }
 
 /// Searches for the given character with the given lodestone ID.
 pub(crate) async fn search_characters(
-    cx: Scope,
+    
     character: String,
 ) -> AppResult<Vec<FfxivCharacter>> {
-    fetch_api(cx, &format!("/api/v1/characters/search/{character}")).await
+    fetch_api(&format!("/api/v1/characters/search/{character}")).await
 }
 
-pub(crate) async fn get_lists(cx: Scope) -> AppResult<Vec<List>> {
-    fetch_api(cx, &format!("/api/v1/list")).await
+pub(crate) async fn get_lists() -> AppResult<Vec<List>> {
+    fetch_api(&format!("/api/v1/list")).await
 }
 
 pub(crate) async fn get_list_items_with_listings(
-    cx: Scope,
+    
     list_id: i32,
 ) -> AppResult<(List, Vec<(ListItem, Vec<ActiveListing>)>)> {
     if list_id == 0 {
         return Err(AppError::BadList);
     }
-    fetch_api(cx, &format!("/api/v1/list/{list_id}/listings")).await
+    fetch_api(&format!("/api/v1/list/{list_id}/listings")).await
 }
 
-pub(crate) async fn delete_list(cx: Scope, list_id: i32) -> AppResult<()> {
-    fetch_api(cx, &format!("/api/v1/list/{list_id}/delete")).await
+pub(crate) async fn delete_list(list_id: i32) -> AppResult<()> {
+    fetch_api(&format!("/api/v1/list/{list_id}/delete")).await
 }
 
-pub(crate) async fn create_list(cx: Scope, list: CreateList) -> AppResult<()> {
-    post_api(cx, &format!("/api/v1/list/create"), list).await
+pub(crate) async fn create_list(list: CreateList) -> AppResult<()> {
+    post_api(&format!("/api/v1/list/create"), list).await
 }
 
-pub(crate) async fn edit_list(cx: Scope, list: List) -> AppResult<()> {
-    post_api(cx, &format!("/api/v1/list/edit"), list).await
+pub(crate) async fn edit_list(list: List) -> AppResult<()> {
+    post_api(&format!("/api/v1/list/edit"), list).await
 }
 
 pub(crate) async fn bulk_add_item_to_list(
-    cx: Scope,
+    
     list_id: i32,
     list_items: Vec<ListItem>,
 ) -> AppResult<()> {
-    post_api(cx, &format!("/api/v1/list/{list_id}/add/items"), list_items).await
+    post_api(&format!("/api/v1/list/{list_id}/add/items"), list_items).await
 }
 
 pub(crate) async fn add_item_to_list(
-    cx: Scope,
+    
     list_id: i32,
     list_item: ListItem,
 ) -> AppResult<()> {
-    post_api(cx, &format!("/api/v1/list/{list_id}/add/item"), list_item).await
+    post_api(&format!("/api/v1/list/{list_id}/add/item"), list_item).await
 }
 
-pub(crate) async fn edit_list_item(cx: Scope, list_item: ListItem) -> AppResult<()> {
-    post_api(cx, &format!("/api/v1/list/item/edit"), list_item).await
+pub(crate) async fn edit_list_item(list_item: ListItem) -> AppResult<()> {
+    post_api(&format!("/api/v1/list/item/edit"), list_item).await
 }
 
-pub(crate) async fn delete_list_item(cx: Scope, list_id: i32) -> AppResult<()> {
-    fetch_api(cx, &format!("/api/v1/list/item/{list_id}/delete")).await
+pub(crate) async fn delete_list_item(list_id: i32) -> AppResult<()> {
+    fetch_api(&format!("/api/v1/list/item/{list_id}/delete")).await
 }
 
 pub(crate) async fn update_retainer_order(
-    cx: Scope,
+    
     retainers: Vec<OwnedRetainer>,
 ) -> AppResult<()> {
-    post_api(cx, &format!("/api/v1/retainer/reorder"), retainers).await
+    post_api(&format!("/api/v1/retainer/reorder"), retainers).await
 }
 
 /// Return the T, or try and return an AppError
@@ -280,8 +280,8 @@ where
 }
 
 #[cfg(not(feature = "ssr"))]
-#[instrument(skip(cx))]
-pub(crate) async fn fetch_api<T>(cx: Scope, path: &str) -> AppResult<T>
+#[instrument(skip())]
+pub(crate) async fn fetch_api<T>(path: &str) -> AppResult<T>
 where
     T: Serializable,
 {
@@ -301,7 +301,7 @@ where
 
     // abort in-flight requests if the Scope is disposed
     // i.e., if we've navigated away from this page
-    on_cleanup(cx, move || {
+    on_cleanup(move || {
         if let Some(abort_controller) = abort_controller {
             abort_controller.abort()
         }
@@ -310,8 +310,8 @@ where
 }
 
 #[cfg(feature = "ssr")]
-#[instrument(skip(cx))]
-pub(crate) async fn fetch_api<T>(cx: Scope, path: &str) -> AppResult<T>
+#[instrument(skip())]
+pub(crate) async fn fetch_api<T>(path: &str) -> AppResult<T>
 where
     T: Serializable,
 {
@@ -326,7 +326,7 @@ where
             .build()
             .unwrap()
     });
-    let req_parts = use_context::<leptos_axum::RequestParts>(cx).ok_or(AppError::ParamMissing)?;
+    let req_parts = use_context::<leptos_axum::RequestParts>().ok_or(AppError::ParamMissing)?;
     let headers = req_parts.headers;
     let hostname = "http://localhost:8080";
     let path = format!("{hostname}{path}");
@@ -348,8 +348,8 @@ where
 }
 
 #[cfg(not(feature = "ssr"))]
-#[instrument(skip(cx, json))]
-pub(crate) async fn post_api<Y, T>(cx: Scope, path: &str, json: Y) -> AppResult<T>
+#[instrument(skip(json))]
+pub(crate) async fn post_api<Y, T>(path: &str, json: Y) -> AppResult<T>
 where
     Y: serde::Serialize,
     T: Serializable,
@@ -371,7 +371,7 @@ where
 
     // abort in-flight requests if the Scope is disposed
     // i.e., if we've navigated away from this page
-    on_cleanup(cx, move || {
+    on_cleanup(move || {
         if let Some(abort_controller) = abort_controller {
             abort_controller.abort()
         }
@@ -380,8 +380,8 @@ where
 }
 
 #[cfg(feature = "ssr")]
-#[instrument(skip(_cx, _json))]
-pub(crate) async fn post_api<Y, T>(_cx: Scope, _path: &str, _json: Y) -> AppResult<T>
+#[instrument(skip(_json))]
+pub(crate) async fn post_api<Y, T>(_path: &str, _json: Y) -> AppResult<T>
 where
     Y: Serializable,
     T: Serializable,

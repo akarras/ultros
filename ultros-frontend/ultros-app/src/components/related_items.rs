@@ -66,14 +66,14 @@ fn recipe_tree_iter(item_id: ItemId) -> impl Iterator<Item = &'static Recipe> {
 }
 
 #[component]
-fn RecipePriceEstimate(cx: Scope, recipe: &'static Recipe) -> impl IntoView {
+fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
     let items = &xiv_gen_db::decompress_data().items;
-    let cheapest_prices = use_context::<CheapestPrices>(cx).unwrap();
+    let cheapest_prices = use_context::<CheapestPrices>().unwrap();
 
-    view! {cx,
-        <Suspense fallback=move || view!{cx, <Loading />}>
-            {move || cheapest_prices.read_listings.with(cx, |prices| {
-                prices.as_ref().ok().map(|prices| {
+    view! {
+        <Suspense fallback=move || view!{<Loading />}>
+            {move || cheapest_prices.read_listings.with(|prices| {
+                prices.as_ref().and_then(|prices| prices.as_ref().ok()).map(|prices| {
                     let hq_amount : i32 = IngredientsIter::new(recipe)
                     .flat_map(|(ingredient, amount)| items.get(&ingredient).map(|item| (item, amount)))
                     .flat_map(|(item, quantity)| {
@@ -88,26 +88,26 @@ fn RecipePriceEstimate(cx: Scope, recipe: &'static Recipe) -> impl IntoView {
                             .find(|l| l.item_id == item.key_id.0 && !l.hq)
                             .map(|listings| (quantity, listings))
                     }).map(|(quantity, listings)| listings.cheapest_price * quantity as i32).sum();
-                    view!{cx, "HQ: " <Gil amount=hq_amount/> " LQ:" <Gil amount />}
+                    view!{"HQ: " <Gil amount=hq_amount/> " LQ:" <Gil amount />}
                 })
-            }).flatten()}
+            })}
         </Suspense>
     }
 }
 
 #[component]
-fn Recipe(cx: Scope, recipe: &'static Recipe) -> impl IntoView {
+fn Recipe(recipe: &'static Recipe) -> impl IntoView {
     let items = &xiv_gen_db::decompress_data().items;
     let ingredients = IngredientsIter::new(recipe)
         .flat_map(|(ingredient, amount)| items.get(&ingredient).map(|item| (item, amount)))
-        .map(|(ingredient, amount)| view! {cx,
+        .map(|(ingredient, amount)| view! {
             <div class="flex-row">
                 <span style="color:#dab;">{amount.to_string()}</span>"x"<SmallItemDisplay item=ingredient/>
                 <CheapestPrice item_id=ingredient.key_id hq=None />
             </div>})
         .collect::<Vec<_>>();
     let target_item = items.get(&recipe.item_result)?;
-    Some(view! {cx, <div class="content-well">
+    Some(view! {<div class="content-well">
         "Crafting Recipe:"
         <div class="flex-row"><SmallItemDisplay item=target_item/><CheapestPrice item_id=target_item.key_id hq=None /></div>
         "Ingredients:"
@@ -118,7 +118,7 @@ fn Recipe(cx: Scope, recipe: &'static Recipe) -> impl IntoView {
 }
 
 #[component]
-pub fn RelatedItems(cx: Scope, item_id: Signal<i32>) -> impl IntoView {
+pub fn RelatedItems(item_id: Signal<i32>) -> impl IntoView {
     let db = xiv_gen_db::decompress_data();
     let item = move || db.items.get(&ItemId(item_id()));
     let item_set = move || {
@@ -126,7 +126,7 @@ pub fn RelatedItems(cx: Scope, item_id: Signal<i32>) -> impl IntoView {
             .map(|item| {
                 item_set_iter(item)
                     .map(|item| {
-                        view! {cx,
+                        view! {
                             <SmallItemDisplay item/>
                         }
                     })
@@ -137,11 +137,11 @@ pub fn RelatedItems(cx: Scope, item_id: Signal<i32>) -> impl IntoView {
     };
     let recipes = move || {
         recipe_tree_iter(ItemId(item_id()))
-            .map(|recipe| view! {cx, <Recipe recipe/>})
+            .map(|recipe| view! {<Recipe recipe/>})
             .take(10)
             .collect::<Vec<_>>()
     };
-    view! {cx,
+    view! {
         <div class="content-well flex-column" class:hidden=move || item_set().is_empty()>
             <span class="content-title">"related items"</span>
             <div class="flex-column">{move || item_set()}</div>

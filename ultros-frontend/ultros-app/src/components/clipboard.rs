@@ -2,9 +2,9 @@ use super::tooltip::*;
 use leptos::*;
 
 #[component]
-pub fn Clipboard(cx: Scope, clipboard_text: String) -> impl IntoView {
-    let (tooltip, set_tooltip) = create_signal(cx, format!("Copy {clipboard_text} to clipboard"));
-    view! {cx, <div class="clipboard" on:click=move |_| {
+pub fn Clipboard(clipboard_text: String) -> impl IntoView {
+    let (tooltip, set_tooltip) = create_signal(format!("Copy {clipboard_text} to clipboard"));
+    view! {<div class="clipboard" on:click=move |_| {
         #[cfg(all(web_sys_unstable_apis, feature = "hydrate"))]
         {
             if let Some(window) = web_sys::window()
@@ -22,7 +22,7 @@ pub fn Clipboard(cx: Scope, clipboard_text: String) -> impl IntoView {
         }
     }>
         {move || {
-            view!{cx,
+            view!{
                 <Tooltip tooltip_text=tooltip() >
                     <span class="fa-regular fa-clipboard clipboard"></span>
                 </Tooltip>

@@ -16,11 +16,11 @@ pub(crate) struct CheapestPrices {
 }
 
 impl CheapestPrices {
-    pub fn new(cx: Scope) -> Self {
-        let (read, _) = get_price_zone(cx);
-        let read_listings = create_resource(cx, read, move |world| async move {
+    pub fn new() -> Self {
+        let (read, _) = get_price_zone();
+        let read_listings = create_resource(read, move |world| async move {
             get_cheapest_listings(
-                cx,
+                
                 world
                     .as_ref()
                     .map(|w| w.get_name())

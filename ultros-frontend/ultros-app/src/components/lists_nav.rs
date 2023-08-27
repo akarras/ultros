@@ -2,8 +2,8 @@ use leptos::*;
 use leptos_router::*;
 
 #[component]
-pub fn ListsNav(cx: Scope) -> impl IntoView {
-    view! {cx, <div class="content-nav">
+pub fn ListsNav() -> impl IntoView {
+    view! {<div class="content-nav">
         <A class="btn-secondary" href="/list/edit">
             <span class="fa fa-pen-to-square"></span>
             "Edit"

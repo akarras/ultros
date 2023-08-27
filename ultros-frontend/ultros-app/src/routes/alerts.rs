@@ -1,9 +1,9 @@
 use leptos::*;
 
 #[component]
-pub fn Alerts(cx: Scope) -> impl IntoView {
+pub fn Alerts() -> impl IntoView {
     view! {
-        cx,
+        
         <div>
             <h1>"Alerts"</h1>
             "Todo: implement alerts"

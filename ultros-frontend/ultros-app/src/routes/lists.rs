@@ -7,12 +7,12 @@ use crate::global_state::home_world::get_price_zone;
 use ultros_api_types::list::{CreateList, List};
 
 #[component]
-pub fn EditLists(cx: Scope) -> impl IntoView {
-    let delete_list = create_action(cx, move |id: &i32| delete_list(cx, *id));
-    let edit_list = create_action(cx, move |list: &List| edit_list(cx, list.clone()));
-    let create_list = create_action(cx, move |list: &CreateList| create_list(cx, list.clone()));
+pub fn EditLists() -> impl IntoView {
+    let delete_list = create_action(move |id: &i32| delete_list(*id));
+    let edit_list = create_action(move |list: &List| edit_list(list.clone()));
+    let create_list = create_action(move |list: &CreateList| create_list(list.clone()));
     let lists = create_resource(
-        cx,
+        
         move || {
             (
                 delete_list.version().get(),
@@ -20,10 +20,10 @@ pub fn EditLists(cx: Scope) -> impl IntoView {
                 create_list.version().get(),
             )
         },
-        move |_| get_lists(cx),
+        move |_| get_lists(),
     );
-    let (creating, set_creating) = create_signal(cx, false);
-    view! {cx,
+    let (creating, set_creating) = create_signal(false);
+    view! {
     <div class="flex-row">
         <span class="content-title">"Edit Lists"</span>
         <Tooltip tooltip_text="Create list".to_string()>
@@ -31,12 +31,12 @@ pub fn EditLists(cx: Scope) -> impl IntoView {
         </Tooltip>
     </div>
     {move || creating().then(|| {
-        let (new_list, set_new_list) = create_signal(cx, "".to_string());
-        let (global, _) = get_price_zone(cx);
+        let (new_list, set_new_list) = create_signal("".to_string());
+        let (global, _) = get_price_zone();
         let selector = global().map(|global| global.into());
-        let (wdr_filter, set_wdr_filter) = create_signal(cx, selector);
+        let (wdr_filter, set_wdr_filter) = create_signal(selector);
 
-        view!{cx,
+        view!{
             <div class="content-well">
                 <label for="list-name">"List name:"</label>
                 <input id="list-name" prop:value=new_list on:input=move |input| set_new_list(event_target_value(&input)) />
@@ -44,47 +44,47 @@ pub fn EditLists(cx: Scope) -> impl IntoView {
                 <WorldPicker current_world=wdr_filter.into() set_current_world=set_wdr_filter.into() />
                 <button prop:disabled=move || wdr_filter().is_none() class="btn" on:click=move |_| {
                 if let Some(wdr_filter) = wdr_filter() {
-                    set_creating(false);
                     let list = CreateList {name: new_list(), wdr_filter};
                     create_list.dispatch(list);
                     set_new_list("".to_string());
+                    set_creating(false);
                 }
             }><i class="fa-solid fa-floppy-disk"></i></button>
         </div>
     }
     })}
     <div class="content-well">
-        <Suspense fallback=move || view!{cx, <Loading />}>
+        <Suspense fallback=move || view!{<Loading />}>
         <>
-        {move || lists.read(cx).map(|lists| {
+        {move || lists.read().map(|lists| {
             match lists {
-                Ok(lists) => view!{cx,
+                Ok(lists) => view!{
 
                     <h3>"Current lists"</h3>
                     <table>
                     <tr><td>"List Name"</td><td>"World"</td></tr>
                         <For each=move || lists.clone()
                             key=move |list| list.id
-                            view=move |cx, list| {
-                                let (is_edit, set_is_edit) = create_signal(cx, false);
-                                let (list, _set_list) = create_signal(cx, list);
-                                let (name, set_name) = create_signal(cx, list().name);
-                                let (current_world, set_current_world) = create_signal(cx, Some(list().wdr_filter));
-                                view!{cx, <tr>
+                            view=move |list| {
+                                let (is_edit, set_is_edit) = create_signal(false);
+                                let (list, _set_list) = create_signal(list);
+                                let (name, set_name) = create_signal(list().name);
+                                let (current_world, set_current_world) = create_signal(Some(list().wdr_filter));
+                                view!{<tr>
                                     {move || if is_edit() {
-                                        view!{cx, <td>
+                                        view!{<td>
                                                 <input prop:value=name on:input=move |input| set_name(event_target_value(&input))/>
                                             </td>
                                             <td>
                                                 <WorldPicker current_world=current_world.into() set_current_world=set_current_world.into() />
                                             </td>
-                                        }.into_view(cx)
+                                        }.into_view()
                                     } else {
-                                        view!{cx, <td><a href=format!("/list/{}", list().id)>{list().name}</a></td><td><WorldName id=list().wdr_filter/></td>}.into_view(cx)
+                                        view!{<td><a href=format!("/list/{}", list().id)>{list().name}</a></td><td><WorldName id=list().wdr_filter/></td>}.into_view()
                                     }}
                                     <td>
                                         {move || if is_edit() {
-                                            view!{cx,
+                                            view!{
                                             <Tooltip tooltip_text="Save changes to this list".to_string()>
                                                 <button class="btn" on:click=move |_| {
                                                     let mut list = list();
@@ -102,22 +102,22 @@ pub fn EditLists(cx: Scope) -> impl IntoView {
                                                     <i class="fa-solid fa-trash"></i>
                                                 </button>
                                             </Tooltip>
-                                        }.into_view(cx)
+                                        }.into_view()
                                         } else {
-                                            view!{cx,
+                                            view!{
                                         <Tooltip tooltip_text="Edit this list".to_string()>
                                             <button class="btn" on:click=move |_| set_is_edit(true)>
                                                 <i class="fa-solid fa-pencil"></i>
                                             </button>
                                         </Tooltip>
-                                        }.into_view(cx)
+                                        }.into_view()
                                         }}
                                     </td>
                                 </tr>}
                             }
                         />
-                    </table>}.into_view(cx),
-                Err(e) => view!{cx, <div>{format!("Error getting listings\n{e}")}</div>}.into_view(cx)
+                    </table>}.into_view(),
+                Err(e) => view!{<div>{format!("Error getting listings\n{e}")}</div>}.into_view()
             }
         })}
         </>
@@ -126,8 +126,8 @@ pub fn EditLists(cx: Scope) -> impl IntoView {
 }
 
 #[component]
-pub fn Lists(cx: Scope) -> impl IntoView {
-    view! {cx,
+pub fn Lists() -> impl IntoView {
+    view! {
     <div class="container">
         <div class="content-nav">
             <A class="btn-secondary" href="/list">

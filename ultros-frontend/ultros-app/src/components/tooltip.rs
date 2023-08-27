@@ -2,14 +2,14 @@ use leptos::*;
 
 #[component]
 pub fn Tooltip(
-    cx: Scope,
+    
     tooltip_text: String,
-    children: Box<dyn Fn(Scope) -> Fragment>,
+    children: Box<dyn Fn() -> Fragment>,
 ) -> impl IntoView {
     view! {
-        cx,
+        
         <div class="tooltip">
-            {children(cx)}
+            {children()}
             <div class="top">{tooltip_text}</div>
         </div>
     }

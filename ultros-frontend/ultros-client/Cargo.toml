@@ -11,7 +11,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 ultros-app = { path = "../ultros-app", default-features = false, features = ["hydrate"] }
 ultros-api-types = { path = "../../ultros-api-types"}
-leptos = { git = "https://github.com/leptos-rs/leptos.git", default-features = false, features = [
+leptos = { workspace = true, default-features = false, features = [
   "serde",
   "hydrate",
 ] }
@@ -19,7 +19,7 @@ log = "0.4"
 wasm-bindgen = "0.2"
 console_log = "1.0.0"
 console_error_panic_hook = "0.1"
-leptos_meta = { git = "https://github.com/leptos-rs/leptos.git", default-features = false }
+leptos_meta = { workspace = true, default-features = false }
 gloo-net = "0.4.0"
 
 [features]

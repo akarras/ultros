@@ -5,11 +5,11 @@ use leptos::*;
 use ultros_api_types::{world_helper::AnySelector, ActiveListing, Retainer};
 
 #[component]
-pub fn ListingsTable(cx: Scope, listings: Vec<(ActiveListing, Retainer)>) -> impl IntoView {
-    let (show_more, set_show_more) = create_signal(cx, false);
+pub fn ListingsTable(listings: Vec<(ActiveListing, Retainer)>) -> impl IntoView {
+    let (show_more, set_show_more) = create_signal(false);
     let listing_count = listings.len();
     let show_click = move |_| set_show_more(true);
-    let listings = create_memo(cx, move |_| {
+    let listings = create_memo(move |_| {
         let mut listings = listings.clone();
         listings.sort_by_key(|(listing, _)| listing.price_per_unit);
         if show_more() {
@@ -18,7 +18,7 @@ pub fn ListingsTable(cx: Scope, listings: Vec<(ActiveListing, Retainer)>) -> imp
             listings.iter().cloned().take(10).collect()
         }
     });
-    view! { cx,  <table>
+    view! {  <table>
             <tr>
                 <th>"price"</th>
                 <th>"qty."</th>
@@ -29,11 +29,11 @@ pub fn ListingsTable(cx: Scope, listings: Vec<(ActiveListing, Retainer)>) -> imp
                 <th>"first seen"</th>
             </tr>
         <tbody>
-        {move || view!{cx, <For each=listings
+        {move || view!{<For each=listings
         key=move |(listing, _retainer)| listing.id
-        view=move |cx, (listing, retainer)| {
+        view=move |(listing, retainer)| {
             let total = listing.price_per_unit * listing.quantity;
-            view! { cx, <tr>
+            view! { <tr>
                 <td><Gil amount=listing.price_per_unit/></td>
                 <td>{listing.quantity}</td>
                 <td><Gil amount=total /></td>

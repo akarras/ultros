@@ -3,8 +3,8 @@ use leptos::*;
 use leptos_meta::*;
 
 #[component]
-pub fn HomePage(cx: Scope) -> impl IntoView {
-    view! {cx,
+pub fn HomePage() -> impl IntoView {
+    view! {
     <div class="main-content">
         <h1>"Ultros Alpha"</h1>
         <Title text="Ultros The Ultra Fast Market Tool"/>

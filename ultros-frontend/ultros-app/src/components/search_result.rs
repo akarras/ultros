@@ -8,7 +8,7 @@ use xiv_gen::ItemId;
 
 /// Leptos version of sublime_fuzzy::format_simple
 #[component]
-fn MatchFormatter(cx: Scope, m: Match, target: String) -> impl IntoView {
+fn MatchFormatter(m: Match, target: String) -> impl IntoView {
     let mut pieces = Vec::new();
 
     let mut last_end = 0;
@@ -16,19 +16,19 @@ fn MatchFormatter(cx: Scope, m: Match, target: String) -> impl IntoView {
     for c in m.continuous_matches() {
         // Piece between last match and this match
         pieces.push(
-            view! {cx,
+            view! {
             {target
                 .chars()
                 .skip(last_end)
                 .take(c.start() - last_end)
                 .collect::<String>()}}
-            .into_view(cx),
+            .into_view(),
         );
 
         // This match
         pieces.push(
-            view! {cx, <b>{target.chars().skip(c.start()).take(c.len()).collect::<String>()}</b>}
-                .into_view(cx),
+            view! {<b>{target.chars().skip(c.start()).take(c.len()).collect::<String>()}</b>}
+                .into_view(),
         );
 
         last_end = c.start() + c.len();
@@ -41,7 +41,7 @@ fn MatchFormatter(cx: Scope, m: Match, target: String) -> impl IntoView {
                 .chars()
                 .skip(last_end)
                 .collect::<String>()
-                .into_view(cx),
+                .into_view(),
         );
     }
 
@@ -50,7 +50,7 @@ fn MatchFormatter(cx: Scope, m: Match, target: String) -> impl IntoView {
 
 #[component]
 pub fn ItemSearchResult(
-    cx: Scope,
+    
     item_id: i32,
     search: ReadSignal<String>,
     set_search: WriteSignal<String>,
@@ -60,12 +60,12 @@ pub fn ItemSearchResult(
     let categories = &data.item_ui_categorys;
     let items = &data.items;
     let item = items.get(&ItemId(item_id));
-    let (price_zone, _) = get_price_zone(cx);
+    let (price_zone, _) = get_price_zone();
     view! {
-        cx,
+        
         {if let Some(item) = item {
 
-            view!{cx,
+            view!{
             <a on:click=move |_| set_search("".to_string()) href=move || {
                 let zone = price_zone();
                 let price_zone = zone.as_ref().map(|z| z.get_name()).unwrap_or("North-America");
@@ -77,10 +77,10 @@ pub fn ItemSearchResult(
                             <span class="item-name">{move || {
                                     let item_name = items.get(&ItemId(item_id)).as_ref().map(|item| item.name.as_str()).unwrap_or_default();
                                     if let Some(m) = best_match(&search(), item_name) {
-                                        view!{cx,
-                                            <MatchFormatter m target=item_name.to_string() />}.into_view(cx)
+                                        view!{
+                                            <MatchFormatter m target=item_name.to_string() />}.into_view()
                                     } else {
-                                        item_name.into_view(cx)
+                                        item_name.into_view()
                                     }
                                 }
                             }</span>
@@ -91,7 +91,7 @@ pub fn ItemSearchResult(
                         <div class="flex-row flex-space" style="height: 20px; overflow: clip">
                             <span class="item-type">{categories.get(&item.item_ui_category).map(|i| i.name.as_str()).unwrap_or_default()}</span>
 
-                            {(item.level_item.0 != 0).then(|| view!{cx,
+                            {(item.level_item.0 != 0).then(|| view!{
                                 <span class="item-ilvl">"ILVL " {item.level_item.0}</span>
                             })}
                         </div>
@@ -100,7 +100,7 @@ pub fn ItemSearchResult(
             </a>
     }
         } else {
-            view!{cx, <a class="search-result">"Invalid result"</a>}
+            view!{<a class="search-result">"Invalid result"</a>}
         }}
     }
 }

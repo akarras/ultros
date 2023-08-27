@@ -1,13 +1,13 @@
 use leptos::*;
 
 #[component]
-pub fn ReorderableList<T, V, N>(cx: Scope, items: RwSignal<Vec<T>>, item_view: V) -> impl IntoView
+pub fn ReorderableList<T, V, N>(items: RwSignal<Vec<T>>, item_view: V) -> impl IntoView
 where
     T: 'static + Clone,
-    V: Fn(Scope, T) -> N + 'static + Copy,
+    V: Fn(T) -> N + 'static + Copy,
     N: IntoView,
 {
-    let (dragging, set_dragging) = create_signal(cx, None);
+    let (dragging, set_dragging) = create_signal(None);
 
     {
         move || {
@@ -15,8 +15,8 @@ where
                 .into_iter()
                 .enumerate()
                 .map(|(id, child)| {
-                    let (hovered, set_hovered) = create_signal(cx, false);
-                    view! {cx, <div draggable="true" on:drop=move |e| {
+                    let (hovered, set_hovered) = create_signal(false);
+                    view! {<div draggable="true" on:drop=move |e| {
                         log::info!("Drop");
                         e.prevent_default();
                         let drop_index = id;
@@ -40,7 +40,7 @@ where
                     class:drag-active=move || dragging().map(|drag| drag == id).unwrap_or_default()
                     >
                         // if this is the drag object, leave the view the same, otherwise swap it out.
-                        {item_view(cx, child)}
+                        {item_view(child)}
                     </div>}
                 })
                 .collect::<Vec<_>>()

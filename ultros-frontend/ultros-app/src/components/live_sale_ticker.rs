@@ -15,9 +15,9 @@ use crate::global_state::home_world::get_homeworld;
 use crate::ws::live_data::live_sales;
 
 #[component]
-pub fn LiveSaleTicker(cx: Scope) -> impl IntoView {
-    let sales = create_rw_signal::<VecDeque<(SaleHistory, UnknownCharacter)>>(cx, VecDeque::new());
-    let (homeworld, _) = get_homeworld(cx);
+pub fn LiveSaleTicker() -> impl IntoView {
+    let sales = create_rw_signal::<VecDeque<(SaleHistory, UnknownCharacter)>>(VecDeque::new());
+    let (homeworld, _) = get_homeworld();
     spawn_local(async move {
         #[cfg(not(feature = "ssr"))]
         if let Some(sale) = homeworld()
@@ -28,10 +28,10 @@ pub fn LiveSaleTicker(cx: Scope) -> impl IntoView {
         }
     });
     let items = &xiv_gen_db::decompress_data().items;
-    view! {cx,
-        <Suspense fallback=move || view!{cx, <Loading />}>
+    view! {
+        <Suspense fallback=move || view!{<Loading />}>
             {move ||{
-                view!{cx,
+                view!{
                     <div class="content-well">
                     // <div class="content-title">{move || format!("Sales on {}", homeworld().map(|world| world.name).unwrap_or_default())}</div>
                     <div class="stock-ticker">
@@ -40,7 +40,7 @@ pub fn LiveSaleTicker(cx: Scope) -> impl IntoView {
                                     .into_iter()
                                     .flat_map(|(sale, character)| items.get(&ItemId(sale.sold_item_id))
                                     .map(|item| (item, sale, character)))
-                                        .map(|(item, sale, character)| view!{cx,
+                                        .map(|(item, sale, character)| view!{
                                             <div>
                                                 <div class="flex-row">
                                                     <A class="flex-row" href=format!("/item/{}/{}", homeworld().map(|w| w.name).unwrap_or_default(), item.key_id.0)>
@@ -58,8 +58,8 @@ pub fn LiveSaleTicker(cx: Scope) -> impl IntoView {
                         //     // the sale ID is just zero because I haven't figured out how to insert and fetch in an effiecient way...
                         //     // use the timestamp instead!
                         //     key=|(sale, _character)| sale.sold_date
-                        //     view=|cx, (sale, character)| items.get(&ItemId(sale.sold_item_id)).map(|item| (item, sale, character))
-                        //         .map(|(item, sale, character)| { view!{cx, <div>
+                        //     view=|(sale, character)| items.get(&ItemId(sale.sold_item_id)).map(|item| (item, sale, character))
+                        //         .map(|(item, sale, character)| { view!{<div>
                         //             <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Small />
                         //             <span>{&item.name}</span>
                         //             <Gil amount=sale.price_per_item />

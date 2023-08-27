@@ -13,19 +13,19 @@ use crate::global_state::home_world::{
 
 #[component]
 fn AddCharacterMenu(
-    cx: Scope,
+    
     claim_character: Action<i32, AppResult<(i32, String)>>,
 ) -> impl IntoView {
-    let (is_open, set_is_open) = create_signal(cx, false);
-    let (character_search, set_character_search) = create_signal(cx, "".to_string());
-    let search_action = create_action(cx, move |search: &String| {
-        search_characters(cx, search.to_string())
+    let (is_open, set_is_open) = create_signal(false);
+    let (character_search, set_character_search) = create_signal("".to_string());
+    let search_action = create_action(move |search: &String| {
+        search_characters(search.to_string())
     });
 
-    view! {cx,
+    view! {
         <button class="btn" on:click=move |_| set_is_open(!is_open())><i class="fa-solid fa-plus"></i></button>
         {move || claim_character.value()().map(|result| {
-            view!{cx, <div class="content-well">{
+            view!{<div class="content-well">{
                 match result {
                     Ok((_id, value)) => {
                         format!("Successfully started claim. Add {value} to your lodestone profile")
@@ -37,7 +37,7 @@ fn AddCharacterMenu(
             }</div>}
         })}
         {move || is_open().then(||
-            view!{cx, <div class="flex-column">
+            view!{<div class="flex-column">
                     <label for="character-name">"Character:"</label>
                     <div class="flex-row">
                         <input prop:value=character_search id="character-name" on:input=move |input| set_character_search(event_target_value(&input)) />
@@ -45,22 +45,22 @@ fn AddCharacterMenu(
                             <i class="fa-solid fa-magnifying-glass"></i>
                         </button>
                     </div>
-                    {search_action.pending()().then(|| view!{cx, <Loading/>})}
+                    {search_action.pending()().then(|| view!{<Loading/>})}
                     {search_action.value()().map(|value| match value {
-                        Ok(characters) => view!{cx, <div>
+                        Ok(characters) => view!{<div>
                                 <span class="content-title">"Search Results"</span>
                                 {characters.is_empty().then(|| {
                                     "No search results found"
                                 })}
-                                {characters.into_iter().map(|character| view!{cx,
+                                {characters.into_iter().map(|character| view!{
                                     <div class="flex flex-row">
                                         <span style="width: 250px">{character.first_name}" "{character.last_name}</span>
                                         <span style="width: 150px"><WorldName id=AnySelector::World(character.world_id)/></span>
                                         <button class="btn" on:click=move |_| { set_is_open(false); claim_character.dispatch(character.id); }>"Claim"</button>
                                     </div>
                                 }).collect::<Vec<_>>()}
-                            </div>}.into_view(cx),
-                        Err(e) => format!("Failed to load characters {e}").into_view(cx)
+                            </div>}.into_view(),
+                        Err(e) => format!("Failed to load characters {e}").into_view()
                     })}
                 </div>
         })}
@@ -68,40 +68,40 @@ fn AddCharacterMenu(
 }
 
 #[component]
-pub fn Profile(cx: Scope) -> impl IntoView {
-    let claim_character = create_action(cx, move |id: &i32| claim_character(cx, *id));
-    let unclaim_character = create_action(cx, move |id: &i32| unclaim_character(cx, *id));
+pub fn Profile() -> impl IntoView {
+    let claim_character = create_action(move |id: &i32| claim_character(*id));
+    let unclaim_character = create_action(move |id: &i32| unclaim_character(*id));
     let check_verification =
-        create_action(cx, move |id: &i32| check_character_verification(cx, *id));
+        create_action(move |id: &i32| check_character_verification(*id));
     let characters = create_resource(
-        cx,
+        
         move || {
             (
                 unclaim_character.version()(),
                 check_verification.version()(),
             )
         },
-        move |_| get_characters(cx),
+        move |_| get_characters(),
     );
     let pending_verifications = create_resource(
-        cx,
+        
         move || (check_verification.version()(), claim_character.version()()),
-        move |_| get_character_verifications(cx),
+        move |_| get_character_verifications(),
     );
-    let (homeworld, set_homeworld) = get_homeworld(cx);
-    let (price_region, set_price_region) = get_price_zone(cx);
-    let price_region = result_to_selector_read(cx, price_region);
-    let set_price_region = selector_to_setter_signal(cx, set_price_region);
-    view! { cx,
+    let (homeworld, set_homeworld) = get_homeworld();
+    let (price_region, set_price_region) = get_price_zone();
+    let price_region = result_to_selector_read(price_region);
+    let set_price_region = selector_to_setter_signal(set_price_region);
+    view! { 
     <div class="main-content">
         <span class="content-title">"Profile"</span>
         <div class="content-well">
             <label>"home world:"</label>
-            <Suspense fallback=move || view!{cx, <Loading/>}>
+            <Suspense fallback=move || view!{<Loading/>}>
                 <WorldOnlyPicker current_world=homeworld.into() set_current_world=set_homeworld.into()  />
             </Suspense>
                 <label>"Default price selector"</label>
-            <Suspense fallback=move || view!{cx, <Loading />}>
+            <Suspense fallback=move || view!{<Loading />}>
                 <WorldPicker current_world=price_region.into() set_current_world=set_price_region.into() />
             </Suspense>
         </div>
@@ -110,13 +110,13 @@ pub fn Profile(cx: Scope) -> impl IntoView {
                 "Characters"
             </span>
             <AddCharacterMenu claim_character/>
-            <Suspense fallback=move || view!{cx, <Loading/>}>
-                {move || pending_verifications.read(cx).map(|verifications| {
+            <Suspense fallback=move || view!{<Loading/>}>
+                {move || pending_verifications.read().map(|verifications| {
                     match verifications {
                         Ok(verifications) => {
-                            view!{cx, <div>
+                            view!{<div>
                                 {verifications.into_iter().map(|verification| {
-                                    view!{cx, <div class="flex-row">
+                                    view!{<div class="flex-row">
                                             <div class="flex-column">
                                                 {verification.character.first_name}" "{verification.character.last_name}
                                                 <br/>
@@ -129,22 +129,22 @@ pub fn Profile(cx: Scope) -> impl IntoView {
                                             }>"Verify"</button>
                                         </div>}
                                 }).collect::<Vec<_>>()}
-                            </div>}.into_view(cx)
+                            </div>}.into_view()
                         },
-                        Err(e) => view!{cx, "Unable to fetch verifications"<br/>{e.to_string()}}.into_view(cx)
+                        Err(e) => view!{"Unable to fetch verifications"<br/>{e.to_string()}}.into_view()
                     }
                 })}
             </Suspense>
-            <Suspense fallback=move || view!{cx, <Loading/>}>
-                {move || characters.read(cx).map(|characters| {
+            <Suspense fallback=move || view!{<Loading/>}>
+                {move || characters.read().map(|characters| {
                     match characters {
                         Ok(characters) => {
                             if characters.is_empty() {
-                                view!{cx, "No characters. Add a character to get started."}.into_view(cx)
+                                view!{"No characters. Add a character to get started."}.into_view()
                             } else {
-                                view!{cx, <div>
+                                view!{<div>
                                     {characters.into_iter().map(|character| {
-                                        view!{cx,
+                                        view!{
                                             <div class="flex flex-row">
                                                 <span style="width: 250px;">{character.first_name}" "{character.last_name}</span>
                                                 <span style="width: 150px"><WorldName id=AnySelector::World(character.world_id)/></span>
@@ -152,11 +152,11 @@ pub fn Profile(cx: Scope) -> impl IntoView {
                                             </div>
                                         }
                                     }).collect::<Vec<_>>()}
-                                </div>}.into_view(cx)
+                                </div>}.into_view()
                             }
                         },
                         Err(e) => {
-                            view!{cx, "unable to get characters"<br/>{e.to_string()}}.into_view(cx)
+                            view!{"unable to get characters"<br/>{e.to_string()}}.into_view()
                         }
                     }
                 })}

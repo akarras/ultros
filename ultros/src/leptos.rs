@@ -30,8 +30,8 @@ async fn custom_handler(
 ) -> Response {
     let handler = leptos_axum::render_app_to_stream_with_context(
         (*options).clone(),
-        move |_cx| {},
-        move |cx| view! { cx, <App worlds=Ok(worlds.clone())/> },
+        move || {},
+        move || view! { <App worlds=Ok(worlds.clone())/> },
     );
     handler(req).await.into_response()
 }
@@ -70,7 +70,7 @@ pub(crate) async fn create_leptos_app(
         (StatusCode::NOT_FOUND, format!("File Not Found: {}", err))
     }
     let worlds = Ok(worlds);
-    let routes = generate_route_list(|cx| view! { cx, <App worlds /> }).await;
+    let routes = generate_route_list(|| view! { <App worlds /> }).await;
 
     // simple_logger::init_with_level(log::Level::Debug).expect("couldn't initialize logging");
 

@@ -9,26 +9,26 @@ use crate::api::{
 use crate::components::{loading::*, meta::*, reorderable_list::*, world_name::*};
 
 #[component]
-pub fn EditRetainers(cx: Scope) -> impl IntoView {
+pub fn EditRetainers() -> impl IntoView {
     // This page should let the user drag and drop retainers to reorder them
     // It should also support a search panel for retainers to the right that will allow the user to search for retainers
 
-    let (retainer_search, set_retainer_search) = create_signal(cx, String::new());
+    let (retainer_search, set_retainer_search) = create_signal(String::new());
 
     let search_results = create_resource(
-        cx,
+        
         move || retainer_search(),
-        move |search| async move { search_retainers(cx, search).await },
+        move |search| async move { search_retainers(search).await },
     );
 
-    let claim = create_action(cx, move |retainer_id| claim_retainer(cx, *retainer_id));
+    let claim = create_action(move |retainer_id| claim_retainer(*retainer_id));
 
-    let remove_retainer = create_action(cx, move |owned_id| unclaim_retainer(cx, *owned_id));
-    let update_retainers = create_action(cx, move |owners: &Vec<OwnedRetainer>| {
-        update_retainer_order(cx, owners.clone())
+    let remove_retainer = create_action(move |owned_id| unclaim_retainer(*owned_id));
+    let update_retainers = create_action(move |owners: &Vec<OwnedRetainer>| {
+        update_retainer_order(owners.clone())
     });
     let retainers = create_resource(
-        cx,
+        
         move || {
             (
                 claim.version().get(),
@@ -38,38 +38,37 @@ pub fn EditRetainers(cx: Scope) -> impl IntoView {
         },
         move |key| {
             log::info!("getting retainers {key:?}");
-            get_retainers(cx)
+            get_retainers()
         },
     );
 
     let is_retainer_owned = move |retainer_id: i32| {
         retainers
-            .with(cx, |retainer| {
+            .with(|retainer| {
                 retainer
                     .as_ref()
                     .map(|retainers| {
-                        retainers.retainers.iter().any(|(_character, retainers)| {
+                        retainers.as_ref().ok().map(|r| r.retainers.iter().any(|(_character, retainers)| {
                             retainers
                                 .iter()
                                 .any(|(_, retainer)| retainer.id == retainer_id)
-                        })
+                        }))
                     })
-                    .ok()
             })
             .flatten()
             .unwrap_or_default()
     };
 
-    view! { cx,
+    view! { 
     <div style="width: 500px;" class="retainer-list flex-column">
       <MetaTitle title="Edit Retainers"/>
       <span class="content-title">"Retainers"</span>
-      <Transition fallback=move || view!{cx, <div></div>}>
-        {move || retainers.read(cx).map(|retainers| {
+      <Transition fallback=move || view!{<div></div>}>
+        {move || retainers.read().map(|retainers| {
           match retainers {
             Ok(retainers) => {
 
-              view!{cx,
+              view!{
                   {move || update_retainers.value()().map(|value| {
                     match value {
                       Ok(_) => None,
@@ -78,9 +77,9 @@ pub fn EditRetainers(cx: Scope) -> impl IntoView {
                   })}
                   <For each=move || retainers.retainers.clone()
                     key=move |(character, retainers)| (character.as_ref().map(|c| c.id).unwrap_or_default(), retainers.iter().map(|(o, _r)| o.id).collect::<Vec<_>>())
-                    view=move |cx, (character, retainers)| {
-                      let retainers = create_rw_signal(cx, retainers);
-                      create_effect(cx, move |_| {
+                    view=move |(character, retainers)| {
+                      let retainers = create_rw_signal(retainers);
+                      create_effect(move |_| {
                         let retainers = retainers();
                         let mut changed = false;
                         let retainers = retainers.into_iter().enumerate().flat_map(|(i, (mut owned, _retainer))| {
@@ -104,19 +103,19 @@ pub fn EditRetainers(cx: Scope) -> impl IntoView {
                           update_retainers.dispatch(retainers);
                         }
                       });
-                      view!{cx,
+                      view!{
                       {if let Some(character) = character {
-                        view!{cx, <div>{character.first_name}" "{character.last_name}</div>}
+                        view!{<div>{character.first_name}" "{character.last_name}</div>}
                       } else {
-                        view!{cx, <div>"No character"</div>}
+                        view!{<div>"No character"</div>}
                       }}
                     <div class="flex-column">
-                      <ReorderableList items=retainers item_view=move |cx, (owned, retainer): (OwnedRetainer, Retainer)| {
+                      <ReorderableList items=retainers item_view=move |(owned, retainer): (OwnedRetainer, Retainer)| {
                         let owned_id = owned.id;
                         let retainer_name = retainer.name.to_string();
                         let world_id = retainer.world_id;
                         view!{
-                        cx,
+                        
                         <div class="flex-row">
                           <div style="width: 300px" class="flex">
                             <span style="width: 200px">{retainer_name}</span>
@@ -126,10 +125,10 @@ pub fn EditRetainers(cx: Scope) -> impl IntoView {
                           </div>
                       }} />
                     </div>} }
-                  />}.into_view(cx)
+                  />}.into_view()
             },
             Err(e) => {
-              view!{cx, <div>"Retainers"<br/>{e.to_string()}</div>}.into_view(cx)
+              view!{<div>"Retainers"<br/>{e.to_string()}</div>}.into_view()
             }
           }
         })}
@@ -139,15 +138,15 @@ pub fn EditRetainers(cx: Scope) -> impl IntoView {
         <span class="content-title">"Search:"</span>
       <input prop:value=retainer_search  on:input=move |input| set_retainer_search(event_target_value(&input)) />
       <div class="retainer-results">
-        <Suspense fallback=move || view!{cx, <Loading/>}>
-          {move || search_results.read(cx).map(|retainers| {
+        <Suspense fallback=move || view!{<Loading/>}>
+          {move || search_results.read().map(|retainers| {
             match retainers {
-              Ok(retainers) => view!{cx, <div class="content-well flex-column">
+              Ok(retainers) => view!{<div class="content-well flex-column">
                 <For each=move || retainers.clone()
                       key=move |retainer| retainer.id
-                      view=move |cx, retainer| {
+                      view=move |retainer| {
                         let world = AnySelector::World(retainer.world_id);
-                        view!{ cx, <div class="card flex-row">
+                        view!{ <div class="card flex-row">
                           <div style="width: 300px" class="flex">
                             <span style="width: 200px;">{retainer.name}</span>
                             <WorldName id=world/>
@@ -159,8 +158,8 @@ pub fn EditRetainers(cx: Scope) -> impl IntoView {
                         </div>}
                       }
                       />
-              </div>}.into_view(cx),
-              Err(e) => view!{cx, <div>{format!("No retainers found\n{e}")}</div>}.into_view(cx)
+              </div>}.into_view(),
+              Err(e) => view!{<div>{format!("No retainers found\n{e}")}</div>}.into_view()
             }
           })}
         </Suspense>

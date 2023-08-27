@@ -14,9 +14,9 @@ pub(crate) fn fuzzy_search(query: &str, target: &str) -> Option<Match> {
 
 /// SearchBox primarily searches through item names- there might be better ways to filter the views down the line.
 #[component]
-pub fn SearchBox(cx: Scope) -> impl IntoView {
-    let (search, set_search) = create_signal(cx, String::new());
-    let (active, set_active) = create_signal(cx, false);
+pub fn SearchBox() -> impl IntoView {
+    let (search, set_search) = create_signal(String::new());
+    let (active, set_active) = create_signal(false);
     let on_input = move |ev| {
         set_search(event_target_value(&ev));
     };
@@ -42,18 +42,18 @@ pub fn SearchBox(cx: Scope) -> impl IntoView {
         })
     };
     view! {
-        cx,
+        
         <div style="height: 36px;">
             <input on:input=on_input on:focusin=focus_in on:focusout=focus_out class="search-box" type="text" prop:value=search class:active={move || active()}/>
             <div class="search-results">
             // WHY DOES THIS BREAK HYDRATION?
             // <WasmLoadingIndicator />
             <VirtualScroller
-                each=Signal::derive(cx, item_search)
+                each=Signal::derive(item_search)
                 key=move |(id, _item)| id.0
-                view=move |cx, (id, _): (&xiv_gen::ItemId, &xiv_gen::Item)| {
+                view=move |(id, _): (&xiv_gen::ItemId, &xiv_gen::Item)| {
                         let item_id = id.0;
-                        view! { cx,  <ItemSearchResult item_id set_search search /> }
+                        view! {  <ItemSearchResult item_id set_search search /> }
                     }
                 viewport_height=500.0
                 row_height=42.0

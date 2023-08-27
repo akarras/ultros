@@ -86,7 +86,7 @@ impl<'a> TextSpan<'a> {
         clone
     }
 
-    fn to_view(&self, cx: Scope) -> Option<View> {
+    fn to_view(&self, ) -> Option<View> {
         let Self { text, .. } = self;
         if text.is_empty() {
             return None;
@@ -109,20 +109,20 @@ impl<'a> TextSpan<'a> {
         .flatten()
         .collect::<Vec<String>>();
         let text = text.to_string();
-        Some(view! {cx, <span style=styles.join(";")>{text}</span>}.into_view(cx))
+        Some(view! {<span style=styles.join(";")>{text}</span>}.into_view())
     }
 }
 
 /// A UI component that takes the raw FFXIV text and converts it into HTML
 /// For example: "This is unstyled <UIGlow>32113</UIGlow>blah blah<Emphasis>Hello world</Emphasis><UIGlow>01</UIGlow>" -> "This is unstyled <span style="color: #32113"><i>blah blah</i></span>"
 #[component]
-pub fn UIText(cx: Scope, text: String) -> impl IntoView {
+pub fn UIText(text: String) -> impl IntoView {
     let mut text_parts = vec![];
     if let Some((begin, span, end)) = TextSpan::new(&text) {
         if !begin.is_empty() {
-            text_parts.push(begin.to_string().into_view(cx));
+            text_parts.push(begin.to_string().into_view());
         }
-        if let Some(view) = span.to_view(cx) {
+        if let Some(view) = span.to_view() {
             text_parts.push(view);
         }
         // now continue calling next_span until we reach the end of the rainbow
@@ -133,18 +133,18 @@ pub fn UIText(cx: Scope, text: String) -> impl IntoView {
             match span {
                 Ok((o, span, end)) => {
                     if let Some(o) = o {
-                        if let Some(view) = o.to_view(cx) {
+                        if let Some(view) = o.to_view() {
                             text_parts.push(view);
                         }
                     }
-                    if let Some(o) = span.to_view(cx) {
+                    if let Some(o) = span.to_view() {
                         text_parts.push(o);
                     }
                     rest = end;
                     next_span = span;
                 }
                 Err(view) => {
-                    if let Some(view) = view.to_view(cx) {
+                    if let Some(view) = view.to_view() {
                         text_parts.push(view);
                     }
                     break;
@@ -155,9 +155,9 @@ pub fn UIText(cx: Scope, text: String) -> impl IntoView {
             }
         }
     } else {
-        text_parts.push(text.into_view(cx))
+        text_parts.push(text.into_view())
     }
-    view! {cx, <div class="ui-text">{text_parts}</div>}
+    view! {<div class="ui-text">{text_parts}</div>}
 }
 
 #[cfg(test)]

@@ -10,7 +10,7 @@ use web_sys::HtmlDivElement;
 /// to use this with tables that have a table header.
 #[component]
 pub fn VirtualScroller<T, D, V, KF, K>(
-    cx: Scope,
+    
     each: Signal<Vec<T>>,
     key: KF,
     view: D,
@@ -18,21 +18,21 @@ pub fn VirtualScroller<T, D, V, KF, K>(
     row_height: f64,
 ) -> impl IntoView
 where
-    D: Fn(Scope, T) -> V + 'static,
-    V: IntoView,
+    D: Fn(T) -> V + 'static,
+    V: IntoView + 'static,
     KF: Fn(&T) -> K + 'static,
     K: Eq + Hash + 'static,
     T: 'static + Clone,
 {
     let render_ahead = 10;
-    let (scroll_offset, set_scroll_offset) = create_signal(cx, 0);
+    let (scroll_offset, set_scroll_offset) = create_signal(0);
     // use memo here so our signals only retrigger if the value actually changed.
-    let child_start = create_memo(cx, move |_| {
+    let child_start = create_memo(move |_| {
         ((scroll_offset() as f64 / row_height) as u32).saturating_sub(render_ahead / 2)
     });
     let children_shown = (viewport_height / row_height).ceil() as u32 + render_ahead;
     // let _ = key; // temporary getting rid of unused variable warning without renaming the key.
-    create_effect(cx, move |_| {});
+    create_effect(move |_| {});
     let virtual_children = move || {
         each.with(|children| {
             let array_size = children.len();
@@ -42,7 +42,7 @@ where
             children[start..end].to_vec()
         })
     };
-    view! {cx,
+    view! {
         <div
         on:scroll= move |scroll| {
             let div = event_target::<HtmlDivElement>(&scroll);
@@ -68,7 +68,7 @@ where
             transform: translateY({}px);
           ", (child_start() as f64 * row_height) as u32)
         >
-        // {move || virtual_children().into_iter().map(|child| view(cx, child)).collect::<Vec<_>>()}
+        // {move || virtual_children().into_iter().map(|child| view(child)).collect::<Vec<_>>()}
         // For component currently has issues. Possibly
         // https://github.com/leptos-rs/leptos/issues/533
         <For each=virtual_children

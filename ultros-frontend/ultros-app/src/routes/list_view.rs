@@ -24,13 +24,13 @@ enum MenuState {
 }
 
 #[component]
-pub fn ListView(cx: Scope) -> impl IntoView {
+pub fn ListView() -> impl IntoView {
     let data = xiv_gen_db::decompress_data();
     let game_items = &data.items;
     let recipes = &data.recipes;
 
-    let params = use_params_map(cx);
-    let list_id = create_memo(cx, move |_| {
+    let params = use_params_map();
+    let list_id = create_memo(move |_| {
         params
             .with(|p| {
                 p.get("id")
@@ -40,12 +40,12 @@ pub fn ListView(cx: Scope) -> impl IntoView {
             })
             .unwrap_or_default()
     });
-    let add_item = create_action(cx, move |list_item: &ListItem| {
+    let add_item = create_action(move |list_item: &ListItem| {
         let item = list_item.clone();
-        add_item_to_list(cx, item.list_id, item)
+        add_item_to_list(item.list_id, item)
     });
-    let delete_item = create_action(cx, move |list_item: &i32| delete_list_item(cx, *list_item));
-    let recipe_add = create_action(cx, move |data: &(&Recipe, i32, bool, bool)| {
+    let delete_item = create_action(move |list_item: &i32| delete_list_item(*list_item));
+    let recipe_add = create_action(move |data: &(&Recipe, i32, bool, bool)| {
         let ingredients = IngredientsIter::new(&data.0);
         let craft_count = data.1;
         let items: Vec<_> = ingredients
@@ -63,11 +63,11 @@ pub fn ListView(cx: Scope) -> impl IntoView {
             })
             .collect();
 
-        bulk_add_item_to_list(cx, list_id(), items)
+        bulk_add_item_to_list(list_id(), items)
     });
-    let edit_item = create_action(cx, move |item: &ListItem| edit_list_item(cx, item.clone()));
+    let edit_item = create_action(move |item: &ListItem| edit_list_item(item.clone()));
     let list_view = create_resource(
-        cx,
+        
         move || {
             (
                 list_id(),
@@ -79,10 +79,10 @@ pub fn ListView(cx: Scope) -> impl IntoView {
                 ),
             )
         },
-        move |(id, _)| get_list_items_with_listings(cx, id),
+        move |(id, _)| get_list_items_with_listings(id),
     );
-    let (menu, set_menu) = create_signal(cx, MenuState::None);
-    view! {cx,
+    let (menu, set_menu) = create_signal(MenuState::None);
+    view! {
         <div class="flex-row">
             <Tooltip tooltip_text="Add an item to the list".to_string()>
                 <button class="btn" class:active=move || menu() == MenuState::Item on:click=move |_| set_menu(match menu() { MenuState::Item => MenuState::None, _ => MenuState::Item  })><i class="fa-solid fa-plus" style="padding-right: 5px;"></i><span>"Add Item"</span></button>
@@ -97,7 +97,7 @@ pub fn ListView(cx: Scope) -> impl IntoView {
         </div>
         {move || match menu() {
             MenuState::Item => {
-            let (search, set_search) = create_signal(cx, "".to_string());
+            let (search, set_search) = create_signal("".to_string());
             let items = &xiv_gen_db::decompress_data().items;
             let item_search = move || {
                 search.with(|s| {
@@ -116,7 +116,7 @@ pub fn ListView(cx: Scope) -> impl IntoView {
                         .collect::<Vec<_>>()
                 })
             };
-            view!{cx, <div>
+            view!{<div>
                     <div class="flex-row"><label>"item search:"</label><br/>
                     <input prop:value=search on:input=move |input| set_search(event_target_value(&input)) /></div>
                     <div class="content-well flex-column">
@@ -124,11 +124,11 @@ pub fn ListView(cx: Scope) -> impl IntoView {
                             let search = item_search()
                                 .into_iter()
                                 .map(move |(id, item, _)| {
-                                    let (quantity, set_quantity) = create_signal(cx, 1);
+                                    let (quantity, set_quantity) = create_signal(1);
                                     let read_input_quantity = move |input| { if let Ok(quantity) = event_target_value(&input).parse() {
                                         set_quantity(quantity)
                                     } };
-                                    view!{cx, <div class="flex-row">
+                                    view!{<div class="flex-row">
                                         <ItemIcon item_id=id.0 icon_size=IconSize::Medium/>
                                         <span style="width: 400px">{&item.name}</span>
                                         <label for="amount">"quantity:"</label><input on:input=read_input_quantity prop:value=move || quantity()></input>
@@ -145,14 +145,14 @@ pub fn ListView(cx: Scope) -> impl IntoView {
                                         }><i class="fa-solid fa-plus"></i></button>
                                     </div>}
                                 }).collect::<Vec<_>>();
-                            search.into_view(cx)
+                            search.into_view()
                         }}
                     </div>
                 </div>}
-                }.into_view(cx),
-                MenuState::None => {}.into_view(cx),
+                }.into_view(),
+                MenuState::None => {}.into_view(),
                 MenuState::Recipe => {
-                    let (recipe, set_recipe) = create_signal(cx, "".to_string());
+                    let (recipe, set_recipe) = create_signal("".to_string());
                     let recipe_data : Vec<(&Item, &Recipe)> = recipes.iter().flat_map(|(_, r)| {
                         game_items.get(&r.item_result).map(|i| (i, r))
                      }).collect();
@@ -175,20 +175,20 @@ pub fn ListView(cx: Scope) -> impl IntoView {
                     };
                     let pending = recipe_add.pending();
                     let result = recipe_add.value();
-                    view!{cx,
+                    view!{
                         <div class="flex-row"><label>"recipe search:"</label><br/>
                         <input prop:value=recipe on:input=move |input| set_recipe(event_target_value(&input)) /></div>
-                        {move || pending().then(|| view!{cx, <Loading/>})}
+                        {move || pending().then(|| view!{<Loading/>})}
                         {move || result().map(|v| match v {
-                            Ok(()) => view!{cx, "Success"}.into_view(cx),
-                            Err(e) => format!("{e:?}").into_view(cx),
+                            Ok(()) => view!{"Success"}.into_view(),
+                            Err(e) => format!("{e:?}").into_view(),
                         })}
                         <div class="content-well flex-column">
                             {move || item_search().into_iter().map(|(_id, ri, item, _ma)| {
-                                let (quantity, set_quantity) = create_signal(cx, 1);
-                                let hq = create_rw_signal(cx, false);
-                                let crystals = create_rw_signal(cx, false);
-                                view!{cx,
+                                let (quantity, set_quantity) = create_signal(1);
+                                let hq = create_rw_signal(false);
+                                let crystals = create_rw_signal(false);
+                                view!{
                             <div class="flex-row">
                                 <SmallItemDisplay item=item />
                                 <label>"Craft count"</label>
@@ -209,14 +209,14 @@ pub fn ListView(cx: Scope) -> impl IntoView {
                         }).collect::<Vec<_>>()}
                         </div>
                     }
-                }.into_view(cx),
+                }.into_view(),
                 MenuState::MakePlace => {
-                    view!{cx, <MakePlaceImporter list_id=Signal::derive(cx, move || params.with(|p| p.get("id").as_ref().map(|id| id.parse::<i32>().ok())).flatten().unwrap_or_default()) />}
-                }.into_view(cx),
+                    view!{<MakePlaceImporter list_id=Signal::derive(move || params.with(|p| p.get("id").as_ref().map(|id| id.parse::<i32>().ok())).flatten().unwrap_or_default()) />}
+                }.into_view(),
         }}
-        <Transition fallback=move || view!{cx, <Loading />}>
-        {move || list_view.read(cx).map(move |list| match list {
-            Ok((list, items)) => view!{cx,
+        <Transition fallback=move || view!{<Loading />}>
+        {move || list_view.read().map(move |list| match list {
+            Ok((list, items)) => view!{
                 <div class="content-well">
                     <span class="content-title">{list.name}</span>
                     <table>
@@ -227,22 +227,22 @@ pub fn ListView(cx: Scope) -> impl IntoView {
                             <th>"Price"</th>
                             <th>"Options"</th>
                         </tr>
-                        <For each=move || items.clone() key=|(item, _)| item.id view=move |cx, (item, listings)| {
-                            let (edit, set_edit) = create_signal(cx, false);
-                            let item = create_rw_signal(cx, item);
-                            let temp_item = create_rw_signal(cx, item());
-                            let listings = create_rw_signal(cx, listings);
-                            view!{cx, <tr valign="top">
+                        <For each=move || items.clone() key=|(item, _)| item.id view=move |(item, listings)| {
+                            let (edit, set_edit) = create_signal(false);
+                            let item = create_rw_signal(item);
+                            let temp_item = create_rw_signal(item());
+                            let listings = create_rw_signal(listings);
+                            view!{<tr valign="top">
                             {move || if !edit() {
                                 let item = item();
-                                view!{cx, <td>{item.hq.and_then(|hq| hq.then(|| "✅"))}</td>
+                                view!{<td>{item.hq.and_then(|hq| hq.then(|| "✅"))}</td>
                                 <td>
                                     <div class="flex-row">
                                         <ItemIcon item_id=item.item_id icon_size=IconSize::Small/>
                                         {game_items.get(&ItemId(item.item_id)).map(|item| &item.name)}
                                         <Clipboard clipboard_text=game_items.get(&ItemId(item.item_id)).map(|item| item.name.to_string()).unwrap_or_default()/>
                                         {game_items.get(&ItemId(item.item_id)).map(|item| item.item_search_category.0 <= 1).unwrap_or_default().then(move || {
-                                            view!{cx, <div><Tooltip tooltip_text="This item is not available on the marketboard".to_string()><i class="fa-solid fa-circle-exclamation"></i></Tooltip></div>}
+                                            view!{<div><Tooltip tooltip_text="This item is not available on the marketboard".to_string()><i class="fa-solid fa-circle-exclamation"></i></Tooltip></div>}
                                         })}
                                     </div>
                                 </td>
@@ -250,19 +250,19 @@ pub fn ListView(cx: Scope) -> impl IntoView {
                                     {item.quantity}
                                 </td>
                                 <td>
-                                    {move || view!{cx, <PriceViewer quantity=item.quantity.unwrap_or(1) hq=item.hq listings=listings()/>}}
+                                    {move || view!{<PriceViewer quantity=item.quantity.unwrap_or(1) hq=item.hq listings=listings()/>}}
                                 </td>
                             }
                             } else {
                                 let item = item();
-                                view!{cx, <td><input type="checkbox" prop:checked=move || temp_item.with(|i| i.hq) on:click=move |_| { temp_item.update(|w| w.hq = Some(!w.hq.map(|hq| hq).unwrap_or_default())) }/></td>
+                                view!{<td><input type="checkbox" prop:checked=move || temp_item.with(|i| i.hq) on:click=move |_| { temp_item.update(|w| w.hq = Some(!w.hq.map(|hq| hq).unwrap_or_default())) }/></td>
                                 <td>
                                     <div class="flex-row">
                                         <ItemIcon item_id=item.item_id icon_size=IconSize::Small/>
                                         {game_items.get(&ItemId(item.item_id)).map(|item| &item.name)}
                                         <Clipboard clipboard_text=game_items.get(&ItemId(item.item_id)).map(|item| item.name.to_string()).unwrap_or_default()/>
                                         {game_items.get(&ItemId(item.item_id)).map(|item| item.item_search_category.0 <= 1).unwrap_or_default().then(move || {
-                                            view!{cx, <div><Tooltip tooltip_text="This item is not available on the marketboard".to_string()><i class="fa-solid fa-circle-exclamation"></i></Tooltip></div>}
+                                            view!{<div><Tooltip tooltip_text="This item is not available on the marketboard".to_string()><i class="fa-solid fa-circle-exclamation"></i></Tooltip></div>}
                                         })}
                                     </div>
                                 </td>
@@ -274,7 +274,7 @@ pub fn ListView(cx: Scope) -> impl IntoView {
                                         />
                                 </td>
                                 <td>
-                                    {move || view!{cx, <PriceViewer quantity=item.quantity.unwrap_or(1) hq=item.hq listings=listings()/>}}
+                                    {move || view!{<PriceViewer quantity=item.quantity.unwrap_or(1) hq=item.hq listings=listings()/>}}
                                 </td>}
                             }}
                             <td>
@@ -295,7 +295,7 @@ pub fn ListView(cx: Scope) -> impl IntoView {
                         />
                     </table>
                 </div>},
-            Err(e) => view!{cx, <div>{format!("Failed to get items\n{e}")}</div>}
+            Err(e) => view!{<div>{format!("Failed to get items\n{e}")}</div>}
         })
         }
         </Transition>

@@ -25,12 +25,12 @@ fn get_now() -> OffsetDateTime {
     }
 }
 
-pub fn get_homeworld(cx: Scope) -> (Signal<Option<World>>, SignalSetter<Option<World>>) {
-    let cookies = use_context::<Cookies>(cx).unwrap();
-    let (cookie, set_cookie) = cookies.get_cookie(cx, HOMEWORLD_COOKIE_NAME);
-    let world_1 = use_context::<LocalWorldData>(cx).unwrap().0.ok();
+pub fn get_homeworld() -> (Signal<Option<World>>, SignalSetter<Option<World>>) {
+    let cookies = use_context::<Cookies>().unwrap();
+    let (cookie, set_cookie) = cookies.get_cookie(HOMEWORLD_COOKIE_NAME);
+    let world_1 = use_context::<LocalWorldData>().unwrap().0.ok();
     let world_2 = world_1.clone();
-    let world = create_memo(cx, move |_| {
+    let world = create_memo(move |_| {
         world_1.as_ref().and_then(|w| {
             cookie().and_then(|cookie| {
                 w.lookup_world_by_name(cookie.value())
@@ -52,23 +52,23 @@ pub fn get_homeworld(cx: Scope) -> (Signal<Option<World>>, SignalSetter<Option<W
             set_cookie(world);
         }
     };
-    (world.into(), set_world.mapped_signal_setter(cx))
+    (world.into(), set_world.mapped_signal_setter())
 }
 
 pub fn result_to_selector_read(
-    cx: Scope,
+    
     selector: Signal<Option<OwnedResult>>,
 ) -> Signal<Option<AnySelector>> {
-    let signal = create_memo(cx, move |_| selector().map(|w| w.into()));
+    let signal = create_memo(move |_| selector().map(|w| w.into()));
     signal.into()
 }
 
 pub fn selector_to_setter_signal(
-    cx: Scope,
+    
     setter: SignalSetter<Option<OwnedResult>>,
 ) -> SignalSetter<Option<AnySelector>> {
     let signal = move |signal: Option<AnySelector>| {
-        let world_data = use_context::<LocalWorldData>(cx).unwrap().0.ok();
+        let world_data = use_context::<LocalWorldData>().unwrap().0.ok();
         if let Some(worlds) = signal.and_then(|signal| {
             world_data
                 .and_then(|worlds| worlds.lookup_selector(signal).map(|s| OwnedResult::from(s)))
@@ -76,20 +76,20 @@ pub fn selector_to_setter_signal(
             setter(Some(worlds))
         }
     };
-    signal.mapped_signal_setter(cx)
+    signal.mapped_signal_setter()
 }
 
 pub fn get_price_zone(
-    cx: Scope,
+    
 ) -> (
     Signal<Option<OwnedResult>>,
     SignalSetter<Option<OwnedResult>>,
 ) {
-    let cookies = use_context::<Cookies>(cx).unwrap();
-    let (cookie, set_cookie) = cookies.get_cookie(cx, DEFAULT_PRICE_ZONE);
+    let cookies = use_context::<Cookies>().unwrap();
+    let (cookie, set_cookie) = cookies.get_cookie(DEFAULT_PRICE_ZONE);
 
-    let world = create_memo(cx, move |_| {
-        let worlds = use_context::<LocalWorldData>(cx).unwrap().0.ok();
+    let world = create_memo(move |_| {
+        let worlds = use_context::<LocalWorldData>().unwrap().0.ok();
         worlds.and_then(|w| {
             cookie()
                 .and_then(move |cookie| w.lookup_world_by_name(cookie.value()).map(|w| w.into()))
@@ -97,7 +97,7 @@ pub fn get_price_zone(
     });
 
     let set_world = move |world: Option<OwnedResult>| {
-        let worlds = use_context::<LocalWorldData>(cx).unwrap().0;
+        let worlds = use_context::<LocalWorldData>().unwrap().0;
         // only set the world cookie once the worlds are populated
         if worlds.ok().is_some() {
             let world = world.map(|w| {
@@ -111,5 +111,5 @@ pub fn get_price_zone(
             set_cookie(world);
         }
     };
-    (world.into(), set_world.mapped_signal_setter(cx))
+    (world.into(), set_world.mapped_signal_setter())
 }

@@ -4,14 +4,14 @@ use ultros_api_types::world_helper::AnySelector;
 use crate::global_state::LocalWorldData;
 
 #[component]
-pub(crate) fn WorldName(cx: Scope, id: AnySelector) -> impl IntoView {
+pub(crate) fn WorldName(id: AnySelector) -> impl IntoView {
     view! {
-        cx,
-        <Suspense fallback=|| view!{cx, "--"}>
+        
+        <Suspense fallback=|| view!{"--"}>
             {move ||
-                    match use_context::<LocalWorldData>(cx).expect("Local world data must be verified").0 {
-                        Ok(data) => view!{ cx, <span>{data.lookup_selector(id).map(|value| value.get_name().to_string()).unwrap_or_default()}</span> }.into_view(cx),
-                        _ => view!{ cx, <span>"None"</span>}.into_view(cx),
+                    match use_context::<LocalWorldData>().expect("Local world data must be verified").0 {
+                        Ok(data) => view!{ <span>{data.lookup_selector(id).map(|value| value.get_name().to_string()).unwrap_or_default()}</span> }.into_view(),
+                        _ => view!{ <span>"None"</span>}.into_view(),
                     }
                 }
         </Suspense>

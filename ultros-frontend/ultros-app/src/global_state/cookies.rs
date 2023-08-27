@@ -11,9 +11,9 @@ pub struct Cookies {
 }
 
 impl Cookies {
-    pub fn new(cx: Scope) -> Self {
-        let cookies = create_rw_signal(cx, get_cookies(cx).unwrap_or_default());
-        create_effect(cx, move |_| {
+    pub fn new() -> Self {
+        let cookies = create_rw_signal(get_cookies().unwrap_or_default());
+        create_effect(move |_| {
             let cookie_jar = cookies();
             info!("updating cookies {cookie_jar:?}");
             set_cookies(cookie_jar);
@@ -23,7 +23,7 @@ impl Cookies {
 
     pub fn get_cookie<C>(
         &self,
-        cx: Scope,
+        
         cookie_name: C,
     ) -> (
         Signal<Option<Cookie<'static>>>,
@@ -34,7 +34,6 @@ impl Cookies {
     {
         // let cookie = &cookie_name;
         create_slice_non_copy(
-            cx,
             self.cookies,
             move |cookies| {
                 let cookie = cookie_name.as_ref();
@@ -50,7 +49,7 @@ impl Cookies {
 }
 
 pub(crate) fn create_slice_non_copy<T, O>(
-    cx: Scope,
+    
     signal: RwSignal<T>,
     getter: impl Fn(&T) -> O + Clone + 'static,
     setter: impl Fn(&mut T, O) + Clone + 'static,
@@ -58,9 +57,9 @@ pub(crate) fn create_slice_non_copy<T, O>(
 where
     O: PartialEq,
 {
-    let getter = create_memo(cx, move |_| signal.with(getter.clone()));
+    let getter = create_memo(move |_| signal.with(getter.clone()));
     let setter = move |value| signal.update(|x| setter(x, value));
-    (getter.into(), setter.mapped_signal_setter(cx))
+    (getter.into(), setter.mapped_signal_setter())
 }
 
 #[cfg(not(feature = "ssr"))]
@@ -78,7 +77,7 @@ pub(crate) fn set_cookies(_cookies: CookieJar) {
 }
 
 #[cfg(not(feature = "ssr"))]
-pub(crate) fn get_cookies(_cx: Scope) -> Option<CookieJar> {
+pub(crate) fn get_cookies() -> Option<CookieJar> {
     // use gloo::utils::document;
     use wasm_bindgen::JsCast;
     use web_sys::{window, HtmlDocument};
@@ -100,9 +99,9 @@ pub(crate) fn get_cookies(_cx: Scope) -> Option<CookieJar> {
 }
 
 #[cfg(feature = "ssr")]
-pub(crate) fn get_cookies(cx: Scope) -> Option<CookieJar> {
+pub(crate) fn get_cookies() -> Option<CookieJar> {
     use leptos_axum::RequestParts;
-    let cookies = use_context::<RequestParts>(cx)?;
+    let cookies = use_context::<RequestParts>()?;
     let cookie = cookies.headers.get("Cookie")?;
     let value = cookie.to_str().ok()?.to_string();
     let mut cookie_jar = CookieJar::new();

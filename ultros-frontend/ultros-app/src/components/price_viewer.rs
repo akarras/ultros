@@ -29,14 +29,14 @@ fn get_cheapest_listing(
 
 #[component]
 pub fn PriceViewer(
-    cx: Scope,
+    
     quantity: i32,
     hq: Option<bool>,
     listings: Vec<ActiveListing>,
 ) -> impl IntoView {
     let cheapest_listings = get_cheapest_listing(listings, quantity, hq);
-    view! {cx, <div class="flex-column">
-        {cheapest_listings.iter().map(|listing| view!{cx,
+    view! {<div class="flex-column">
+        {cheapest_listings.iter().map(|listing| view!{
             <div style="display: block;">
                 {listing.quantity}"x"
                 <Gil amount=listing.price_per_unit/>" on "

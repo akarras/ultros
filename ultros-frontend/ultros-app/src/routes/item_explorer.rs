@@ -10,7 +10,7 @@ use xiv_gen::{ClassJobCategory, Item, ItemId};
 
 /// Displays buttons of categories
 #[component]
-fn CategoryView(cx: Scope, category: u8) -> impl IntoView {
+fn CategoryView(category: u8) -> impl IntoView {
     let data = xiv_gen_db::decompress_data();
     let search_categories = &data.item_search_categorys;
     // let item_ui_category = &data.item_ui_categorys;
@@ -23,10 +23,10 @@ fn CategoryView(cx: Scope, category: u8) -> impl IntoView {
         })
         .collect::<Vec<_>>();
     categories.sort_by_key(|(order, _, _)| *order);
-    view! {cx,
+    view! {
         <div class="flex flex-row flex-wrap">
         {categories.into_iter()
-            .map(|(_, name, id)| view! {cx,
+            .map(|(_, name, id)| view! {
                 <Tooltip tooltip_text=name.to_string()>
                     <A  href=format!("/items/category/{}", encode(name))>
                         <ItemSearchCategoryIcon id=*id />
@@ -137,14 +137,14 @@ fn job_category_lookup(class_job_category: &ClassJobCategory, job_acronym: &str)
 }
 
 #[component]
-fn JobsList(cx: Scope) -> impl IntoView {
+fn JobsList() -> impl IntoView {
     let jobs = &xiv_gen_db::decompress_data().class_jobs;
     let mut jobs: Vec<_> = jobs.iter().collect();
     jobs.sort_by_key(|(_, job)| job.ui_priority);
-    view! {cx, <div class="flex-wrap" style="padding: 5px;">
+    view! {<div class="flex-wrap" style="padding: 5px;">
         {jobs.into_iter()
             // .filter(|(_id, job)| job.class_job_parent.0 == 0)
-            .map(|(_id, job)| view!{cx, <A href=format!("/items/jobset/{}", job.abbreviation)>
+            .map(|(_id, job)| view!{<A href=format!("/items/jobset/{}", job.abbreviation)>
             // {&job.abbreviation}
             <Tooltip tooltip_text=job.name_english.clone()>
                 <ClassJobIcon id=job.key_id />
@@ -154,10 +154,10 @@ fn JobsList(cx: Scope) -> impl IntoView {
 }
 
 #[component]
-pub fn CategoryItems(cx: Scope) -> impl IntoView {
-    let params = use_params_map(cx);
+pub fn CategoryItems() -> impl IntoView {
+    let params = use_params_map();
     let data = xiv_gen_db::decompress_data();
-    let items = create_memo(cx, move |_| {
+    let items = create_memo(move |_| {
         let cat = params()
             .get("category")
             .and_then(|cat| decode(&cat).ok())
@@ -177,7 +177,7 @@ pub fn CategoryItems(cx: Scope) -> impl IntoView {
             });
         cat.unwrap_or_default()
     });
-    let category_view_name = create_memo(cx, move |_| {
+    let category_view_name = create_memo(move |_| {
         params()
             .get("category")
             .as_ref()
@@ -186,18 +186,18 @@ pub fn CategoryItems(cx: Scope) -> impl IntoView {
             .unwrap_or("Category View".to_string())
             .to_string()
     });
-    view! {cx,
+    view! {
     <MetaTitle title=category_view_name/>
     <MetaDescription text=move || format!("List of items for the item category {}", category_view_name())/>
     <ItemList items />}
 }
 
 #[component]
-pub fn JobItems(cx: Scope) -> impl IntoView {
-    let params = use_params_map(cx);
+pub fn JobItems() -> impl IntoView {
+    let params = use_params_map();
     let data = xiv_gen_db::decompress_data();
-    let (market_only, set_market_only) = create_signal(cx, true);
-    let items = create_memo(cx, move |_| {
+    let (market_only, set_market_only) = create_signal(true);
+    let items = create_memo(move |_| {
         let job_set = match params().get("jobset") {
             Some(p) => p.clone(),
             None => return vec![],
@@ -222,7 +222,7 @@ pub fn JobItems(cx: Scope) -> impl IntoView {
         job_items.sort_by_key(|(_, item)| Reverse(item.level_item.0));
         job_items
     });
-    view! {cx,
+    view! {
         <MetaTitle title=move || format!("{}", params().get("jobset").as_ref().map(|s| s.as_str()).unwrap_or("Job Set"))/>
         <MetaDescription text=move || format!("All items equippable by {}", params().get("jobset").as_ref().map(|s| s.as_str()).unwrap_or_default())/>
     <div class="flex-row">
@@ -235,20 +235,20 @@ pub fn JobItems(cx: Scope) -> impl IntoView {
 }
 
 #[component]
-fn ItemList(cx: Scope, items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView {
-    view! {cx,
+fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView {
+    view! {
     <VirtualScroller
         each=items.into()
         key=|(id, item)| (id.0, &item.name)
-        view=|cx, (id, item)| view!{cx, <div class="flex-row" style="min-width: 500px;">
+        view=|(id, item)| view!{<div class="flex-row" style="min-width: 500px;">
             <SmallItemDisplay item=item />
             <CheapestPrice item_id=*id hq=None />
         </div> } viewport_height=800.0 row_height=27.3/>}
 }
 
 #[component]
-pub fn ItemExplorer(cx: Scope) -> impl IntoView {
-    view! {cx,
+pub fn ItemExplorer() -> impl IntoView {
+    view! {
         <div class="container">
             <div class="main-content flex">
                 <div class="flex-column" style="width: 250px; font-size: 1.2em">

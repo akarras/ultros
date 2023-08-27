@@ -4,7 +4,7 @@ use leptos::*;
 use xiv_gen::{ClassJobId, ItemSearchCategoryId};
 
 #[component]
-pub fn ItemSearchCategoryIcon(cx: Scope, id: ItemSearchCategoryId) -> impl IntoView {
+pub fn ItemSearchCategoryIcon(id: ItemSearchCategoryId) -> impl IntoView {
     // the css names match with the english name of the category
     // if there's a class job, use the abbreviation instead
     let data = &xiv_gen_db::decompress_data();
@@ -13,8 +13,8 @@ pub fn ItemSearchCategoryIcon(cx: Scope, id: ItemSearchCategoryId) -> impl IntoV
     categories.get(&id).map(|category| {
         let class_job = category.class_job;
         if let Some(class_job) = class_jobs.get(&class_job) {
-            // view! {cx, <i class=format!("icon xiv-ItemCategory_{}", class_job.abbreviation)></i>}
-            view! {cx, <ClassJobIcon id=class_job.key_id/>}.into_view(cx)
+            // view! {<i class=format!("icon xiv-ItemCategory_{}", class_job.abbreviation)></i>}
+            view! {<ClassJobIcon id=class_job.key_id/>}.into_view()
         } else {
             let value: Cow<'static, str> = match id.0 {
                 // singular armory items
@@ -67,7 +67,8 @@ pub fn ItemSearchCategoryIcon(cx: Scope, id: ItemSearchCategoryId) -> impl IntoV
                 )
                 .into(),
             };
-            view! {cx, <i class=value></i>}.into_view(cx)
+            
+            view! {<i class=Some(value)></i>}.into_view()
         }
     })
 }
@@ -86,6 +87,6 @@ impl StrExt for str {
 }
 
 #[component]
-pub fn ClassJobIcon(cx: Scope, id: ClassJobId) -> impl IntoView {
-    view! {cx, <i class=format!("icon xiv-class_job_{:03}", id.0)></i>}
+pub fn ClassJobIcon(id: ClassJobId) -> impl IntoView {
+    view! {<i class=format!("icon xiv-class_job_{:03}", id.0)></i>}
 }

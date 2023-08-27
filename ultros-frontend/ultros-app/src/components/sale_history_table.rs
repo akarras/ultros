@@ -3,16 +3,16 @@ use leptos::*;
 use ultros_api_types::{world_helper::AnySelector, SaleHistory};
 
 #[component]
-pub fn SaleHistoryTable(cx: Scope, sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
-    let (show_more, set_show_more) = create_signal(cx, false);
-    let sale_history = create_memo(cx, move |_| {
+pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
+    let (show_more, set_show_more) = create_signal(false);
+    let sale_history = create_memo(move |_| {
         let mut sales = sales();
         if !show_more() {
             sales.truncate(10);
         }
         sales
     });
-    view! { cx,  <table>
+    view! {  <table>
         <thead>
             <tr>
                 <th>"hq"</th>
@@ -28,11 +28,11 @@ pub fn SaleHistoryTable(cx: Scope, sales: Signal<Vec<SaleHistory>>) -> impl Into
         <tbody>
             <For each=sale_history
                 key=move |sale| sale.sold_date.timestamp()
-                view=move |cx, sale| {
+                view=move |sale| {
                     let total = sale.price_per_item * sale.quantity;
-                    view! { cx,
+                    view! { 
                         <tr>
-                            <td>{sale.hq.then(||{view!{cx, <span class="fa-solid fa-check"></span>}.into_view(cx)})}</td>
+                            <td>{sale.hq.then(||{view!{<span class="fa-solid fa-check"></span>}.into_view()})}</td>
                             <td><Gil amount=sale.price_per_item/></td>
                             <td>{sale.quantity}</td>
                             <td><Gil amount=total /></td>
@@ -45,7 +45,7 @@ pub fn SaleHistoryTable(cx: Scope, sales: Signal<Vec<SaleHistory>>) -> impl Into
                 }
             />
             {move || (!show_more() && sales.with(|sales| sales.len() > 10)).then(|| {
-                view!{cx, <tr><td colspan="8"><button class="btn" style="width: 100%;" on:click=move |_| set_show_more(true)>"Show more"</button></td></tr>}
+                view!{<tr><td colspan="8"><button class="btn" style="width: 100%;" on:click=move |_| set_show_more(true)>"Show more"</button></td></tr>}
             })}
         </tbody>
     </table>

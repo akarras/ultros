@@ -7,7 +7,7 @@ pub(crate) trait ActiveValueCmpSet<T> {
 
 impl<T> ActiveValueCmpSet<T> for ActiveValue<T>
 where
-    T: PartialEq + Into<Value> + Copy,
+    T: PartialEq + Into<Value> + Copy, sea_orm::Value: From<T>
 {
     fn cmp_set_value(&mut self, value: T) {
         *self = match self {

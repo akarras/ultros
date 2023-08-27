@@ -26,10 +26,10 @@ pub fn hydrate() {
             .await
             .unwrap();
         let worlds = Ok(Arc::new(WorldHelper::from(json)));
-
-        leptos::mount_to_body(move |cx| {
-            provide_meta_context(cx);
-            view! { cx, <App worlds/> }
+        leptos::mount_to_body(move || {
+            let worlds = worlds.clone();
+            provide_meta_context();
+            view! { <App worlds/> }
         });
     });
 }

@@ -12,7 +12,6 @@ use crate::error::AppResult;
 use crate::global_state::cheapest_prices::CheapestPrices;
 use crate::global_state::cookies::Cookies;
 use crate::global_state::home_world::get_homeworld;
-use crate::global_state::user::LoggedInUser;
 use crate::global_state::LocalWorldData;
 use crate::{
     components::{meta::*, profile_display::*, search_box::*, tooltip::*},
@@ -33,21 +32,19 @@ pub fn register_server_functions() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[component]
-pub fn App(cx: Scope, worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
-    provide_meta_context(cx);
-    provide_context(cx, Cookies::new(cx));
-    provide_context(cx, LocalWorldData(worlds));
-    provide_context(cx, CheapestPrices::new(cx));
-    let login = create_resource_with_initial_value(
-        cx,
+pub fn App(worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
+    provide_meta_context();
+    provide_context(Cookies::new());
+    provide_context(LocalWorldData(worlds));
+    provide_context(CheapestPrices::new());
+    let login = create_resource(
         move || {},
-        move |_| async move { get_login(cx).await.ok() },
-        None,
+        move |_| async move { get_login().await.ok() },
     );
-    provide_context(cx, LoggedInUser(login));
-    let (homeworld, _set_homeworld) = get_homeworld(cx);
+    // provide_context(LoggedInUser(login));
+    let (homeworld, _set_homeworld) = get_homeworld();
     view! {
-        cx,
+        
         <Stylesheet id="leptos" href="/target/site/pkg/ultros.css"/>
         <Stylesheet id="font-awesome" href="/static/fa/css/all.min.css"/>
         <Stylesheet id="xiv-icons" href="/static/classjob-icons/src/xivicon.css"/>
@@ -68,14 +65,14 @@ pub fn App(cx: Scope, worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
                 <nav class="header">
                 <b><i>"ULTRA ALPHA™"</i></b>
                     // <Suspense fallback=move || {}>
-                    // {move || login.read(cx).flatten().map(|_| view!{cx, <A href="/alerts">
+                    // {move || login.read().flatten().map(|_| view!{<A href="/alerts">
                     //     <i class="fa-solid fa-bell"></i>
                     //     "Alerts"
                     // </A>})}
                     // </Suspense>
                     {move ||
                         {
-                            view!{cx,
+                            view!{
                             <A href=homeworld().map(|w| format!("/analyzer/{}", w.name)).unwrap_or("/analyzer".to_string())>
                                 <i class="fa-solid fa-money-bill-trend-up"></i>
                                 "Analyzer"
@@ -83,7 +80,7 @@ pub fn App(cx: Scope, worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
                         }
                     }
                     <Suspense fallback=move || {}>
-                    {move || login.read(cx).flatten().map(|_| view!{cx, <A href="/list">
+                    {move || login.read().flatten().map(|_| view!{<A href="/list">
                         <i class="fa-solid fa-list"></i>
                         "Lists"
                     </A>
@@ -108,27 +105,27 @@ pub fn App(cx: Scope, worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
                     </div>
                 </nav>
                 <AnimatedRoutes outro="route-out" intro="route-in" outro_back="route-out-back" intro_back="route-in-back">
-                    <Route path="" view=move |cx| view!{cx, <HomePage/>} />
-                    <Route path="retainers" view=move |cx| view!{cx, <Retainers/>}>
-                        <Route path="edit" view=move |cx| view!{cx, <EditRetainers />}/>
-                        <Route path="undercuts" view=move |cx| view!{cx, <RetainerUndercuts />}/>
-                        <Route path="listings" view=move |cx| view!{cx, <RetainerListings />}/>
+                    <Route path="" view=HomePage/>
+                    <Route path="retainers" view=Retainers>
+                        <Route path="edit" view=EditRetainers/>
+                        <Route path="undercuts" view=RetainerUndercuts/>
+                        <Route path="listings" view=RetainerListings/>
                     </Route>
-                    <Route path="list" view=move |cx| view!{cx, <Lists/>}>
-                        <Route path=":id" view=move |cx| view!{ cx, <ListView/>}/>
-                        <Route path="" view=move |cx| view! {cx, <EditLists/>}/>
+                    <Route path="list" view=Lists>
+                        <Route path=":id" view=ListView/>
+                        <Route path="" view=EditLists/>
                     </Route>
-                    <Route path="items" view=move |cx| view! { cx, <ItemExplorer/>}>
-                        <Route path="jobset/:jobset" view=move |cx| view!{cx, <JobItems />}/>
-                        <Route path="category/:category" view=move |cx| view!{cx, <CategoryItems />}/>
-                        <Route path="" view=move |_cx| view!{cx, "Choose a category to search!"}/>
+                    <Route path="items" view=ItemExplorer>
+                        <Route path="jobset/:jobset" view=JobItems />
+                        <Route path="category/:category" view=CategoryItems />
+                        <Route path="" view=move || view!{"Choose a category to search!"}/>
                     </Route>
-                    <Route path="item/:world/:id" view=move |cx| view! { cx, <ItemView />} />
-                    // <Route path="*listings" view=move |cx| view! { cx, <h1>"Listings"</h1>}/>
+                    <Route path="item/:world/:id" view=ItemView/>
+                    // <Route path="*listings" view=move || view! { <h1>"Listings"</h1>}/>
 
-                    <Route path="analyzer" view=move |cx| view! { cx, <Analyzer/>}/>
-                    <Route path="analyzer/:world" view=move |cx| view! { cx, <AnalyzerWorldView/>}/>
-                    <Route path="profile" view=move |cx| view! { cx, <Profile/>}/>
+                    <Route path="analyzer" view=Analyzer/>
+                    <Route path="analyzer/:world" view=AnalyzerWorldView />
+                    <Route path="profile" view=Profile/>
                 </AnimatedRoutes>
             </Router>
         </div>

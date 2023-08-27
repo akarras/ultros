@@ -10,7 +10,7 @@ use ultros_api_types::{world_helper::AnySelector, ActiveListing, FfxivCharacter,
 use xiv_gen::ItemId;
 
 #[component]
-fn RetainerTable(cx: Scope, retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoView {
+fn RetainerTable(retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoView {
     let data = xiv_gen_db::decompress_data();
     let items = &data.items;
     let categories = &data.item_search_categorys;
@@ -27,12 +27,12 @@ fn RetainerTable(cx: Scope, retainer: Retainer, listings: Vec<ActiveListing>) ->
         .map(|listing| {
             let item = items.get(&ItemId(listing.item_id));
             let total = listing.quantity * listing.price_per_unit;
-            view! { cx, <tr>
-                <td>{listing.hq.then(|| view!{cx, <i class="fa-solid fa-sparkles"></i>})}</td>
+            view! { <tr>
+                <td>{listing.hq.then(|| view!{<i class="fa-solid fa-sparkles"></i>})}</td>
                 <td>{if let Some(item) = item {
-                view!{cx, <ItemIcon icon_size=IconSize::Small item_id=listing.item_id />{&item.name}}.into_view(cx)
+                view!{<ItemIcon icon_size=IconSize::Small item_id=listing.item_id />{&item.name}}.into_view()
             } else {
-                view!{cx, "Item not found"}.into_view(cx)
+                view!{"Item not found"}.into_view()
             }}</td>
                 <td><Gil amount=listing.price_per_unit/></td>
                 <td>{listing.quantity}</td>
@@ -40,7 +40,7 @@ fn RetainerTable(cx: Scope, retainer: Retainer, listings: Vec<ActiveListing>) ->
             </tr>
         }})
         .collect();
-    view! { cx,
+    view! { 
         <div class="content-well">
             <span class="content-title">{retainer.name}" - "<WorldName id=AnySelector::World(retainer.world_id)/></span>
             <table>
@@ -54,7 +54,7 @@ fn RetainerTable(cx: Scope, retainer: Retainer, listings: Vec<ActiveListing>) ->
                     </tr>
                 </thead>
                 <tbody>
-                    {listings.into_view(cx)}
+                    {listings.into_view()}
                 </tbody>
             </table>
         </div>
@@ -63,47 +63,47 @@ fn RetainerTable(cx: Scope, retainer: Retainer, listings: Vec<ActiveListing>) ->
 
 #[component]
 fn CharacterRetainerList(
-    cx: Scope,
+    
     character: Option<FfxivCharacter>,
     retainers: Vec<(Retainer, Vec<ActiveListing>)>,
 ) -> impl IntoView {
     let listings: Vec<_> = retainers
         .into_iter()
-        .map(|(retainer, listings)| view! {cx, <RetainerTable retainer listings />})
+        .map(|(retainer, listings)| view! {<RetainerTable retainer listings />})
         .collect();
     view! {
-        cx,
+        
         <div>
             {if let Some(character) = character {
-                view!{cx, <span>{character.first_name} {character.last_name}</span> }.into_view(cx)
+                view!{<span>{character.first_name} {character.last_name}</span> }.into_view()
             } else {
-                listings.into_view(cx)
+                listings.into_view()
             }}
         </div>
     }
 }
 
 #[component]
-pub fn RetainerUndercuts(cx: Scope) -> impl IntoView {
-    let retainers = create_resource(cx, || "undercuts", move |_| get_retainer_undercuts(cx));
+pub fn RetainerUndercuts() -> impl IntoView {
+    let retainers = create_resource(|| "undercuts", move |_| get_retainer_undercuts());
     view! {
-        cx,
+        
         <MetaTitle title="Retainer Undercuts" />
         <span class="content-title">"Retainer Undercuts"</span>
         <br/>
         <span>"Please keep in mind that data may not always be up to date. To update data, please contribute to universalis and then refresh this page."</span> <br/>
         <span>"This page will only show listings that have been undercut, enabling you to quickly view which items need to be refreshed"</span>
-        <Suspense fallback=move || view!{cx, <Loading/>}>
+        <Suspense fallback=move || view!{<Loading/>}>
         {move || {
-            retainers.read(cx).map(|retainer| {
+            retainers.read().map(|retainer| {
                 match retainer {
                     Ok(retainers) => {
                         let retainers : Vec<_> = retainers.retainers.into_iter()
-                            .map(|(character, retainers)| view!{cx, <CharacterRetainerList character retainers />})
+                            .map(|(character, retainers)| view!{<CharacterRetainerList character retainers />})
                             .collect();
-                        view!{cx, <div>{retainers}</div>}.into_view(cx)
+                        view!{<div>{retainers}</div>}.into_view()
                     },
-                    Err(e) => view!{cx, <div>{"Unable to get retainers"}<br/>{e.to_string()}</div>}.into_view(cx)
+                    Err(e) => view!{<div>{"Unable to get retainers"}<br/>{e.to_string()}</div>}.into_view()
                 }
             })
         }}
@@ -112,29 +112,29 @@ pub fn RetainerUndercuts(cx: Scope) -> impl IntoView {
 }
 
 #[component]
-pub fn RetainerListings(cx: Scope) -> impl IntoView {
-    let retainers = create_resource(cx, || "undercuts", move |_| get_retainer_listings(cx));
+pub fn RetainerListings() -> impl IntoView {
+    let retainers = create_resource(|| "undercuts", move |_| get_retainer_listings());
     view! {
-        cx,
+        
         <span class="content-title">"All Listings"</span>
         <MetaTitle title="All Listings"/>
         <MetaDescription text="View your retainer's listings without making it a second job!"/>
         <br />
         <span>"Please keep in mind that data may not always be up to date. To update data, please contribute to universalis and then refresh this page."</span>
-        <Suspense fallback=move || view!{cx, <Loading/>}>
+        <Suspense fallback=move || view!{<Loading/>}>
         {move || {
-            retainers.read(cx).map(|retainer| {
+            retainers.read().map(|retainer| {
                 match retainer {
                     Ok(retainers) => {
                         let retainers : Vec<_> = retainers.retainers.into_iter()
-                            .map(|(character, retainers)| view!{cx, <CharacterRetainerList character retainers />})
+                            .map(|(character, retainers)| view!{<CharacterRetainerList character retainers />})
                             .collect();
-                        view!{cx,
-                            {retainers.is_empty().then(|| view!{cx, <span>"Add a retainer to get started!"</span>})}
+                        view!{
+                            {retainers.is_empty().then(|| view!{<span>"Add a retainer to get started!"</span>})}
                             <div>{retainers}</div>
-                        }.into_view(cx)
+                        }.into_view()
                     },
-                    Err(e) => view!{cx, <div>{"Unable to get retainers"}<br/>{e.to_string()}</div>}.into_view(cx)
+                    Err(e) => view!{<div>{"Unable to get retainers"}<br/>{e.to_string()}</div>}.into_view()
                 }
             })
         }}
@@ -143,10 +143,10 @@ pub fn RetainerListings(cx: Scope) -> impl IntoView {
 }
 
 #[component]
-pub fn Retainers(cx: Scope) -> impl IntoView {
-    // let retainers = create_resource(cx, || "retainers", move |_| get_retainer_listings(cx));
+pub fn Retainers() -> impl IntoView {
+    // let retainers = create_resource(|| "retainers", move |_| get_retainer_listings());
     view! {
-        cx,
+        
         <div class="content-nav">
             <A class="btn-secondary" href="/retainers/edit">
                 <span class="fa fa-pen-to-square"></span>

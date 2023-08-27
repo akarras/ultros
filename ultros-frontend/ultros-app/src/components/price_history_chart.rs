@@ -9,11 +9,11 @@ use ultros_charts::draw_sale_history_scatter_plot;
 use crate::global_state::LocalWorldData;
 
 #[component]
-pub fn PriceHistoryChart(cx: Scope, sales: MaybeSignal<Vec<SaleHistory>>) -> impl IntoView {
-    let canvas = create_node_ref::<Canvas>(cx);
-    let local_world_data = use_context::<LocalWorldData>(cx).unwrap();
+pub fn PriceHistoryChart(sales: MaybeSignal<Vec<SaleHistory>>) -> impl IntoView {
+    let canvas = create_node_ref::<Canvas>();
+    let local_world_data = use_context::<LocalWorldData>().unwrap();
     let helper = local_world_data.0.unwrap();
-    let hidden = create_memo(cx, move |_| {
+    let hidden = create_memo(move |_| {
         if let Some(canvas) = canvas() {
             let backend = CanvasBackend::with_canvas_object(canvas.deref().clone()).unwrap();
             // if there's an error drawing, we should hide the canvas
@@ -24,7 +24,7 @@ pub fn PriceHistoryChart(cx: Scope, sales: MaybeSignal<Vec<SaleHistory>>) -> imp
             true
         }
     });
-    view! {cx,
+    view! {
         <div class="content-well">
             <div class:hidden=hidden>
                 <canvas width="750" height="450" _ref=canvas/>
