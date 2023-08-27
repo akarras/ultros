@@ -16,11 +16,7 @@ use ultros_api_types::{
 
 use crate::error::{AppError, AppResult, SystemError};
 
-pub(crate) async fn get_listings(
-    
-    item_id: i32,
-    world: &str,
-) -> AppResult<CurrentlyShownItem> {
+pub(crate) async fn get_listings(item_id: i32, world: &str) -> AppResult<CurrentlyShownItem> {
     if item_id == 0 {
         return Err(AppError::NoItem);
     }
@@ -28,7 +24,6 @@ pub(crate) async fn get_listings(
 }
 
 pub(crate) async fn get_bulk_listings(
-    
     world: &str,
     item_ids: impl Iterator<Item = i32>,
 ) -> AppResult<HashMap<i32, Vec<(ActiveListing, Option<Retainer>)>>> {
@@ -50,18 +45,12 @@ pub(crate) async fn get_login() -> AppResult<UserData> {
 }
 
 /// Get analyzer data
-pub(crate) async fn get_cheapest_listings(
-    
-    world_name: &str,
-) -> AppResult<CheapestListings> {
+pub(crate) async fn get_cheapest_listings(world_name: &str) -> AppResult<CheapestListings> {
     fetch_api(&format!("/api/v1/cheapest/{}", world_name)).await
 }
 
 /// Get most expensive
-pub(crate) async fn get_recent_sales_for_world(
-    
-    region_name: &str,
-) -> AppResult<RecentSales> {
+pub(crate) async fn get_recent_sales_for_world(region_name: &str) -> AppResult<RecentSales> {
     fetch_api(&format!("/api/v1/recentSales/{}", region_name)).await
 }
 
@@ -169,9 +158,7 @@ pub(crate) async fn get_characters() -> AppResult<Vec<FfxivCharacter>> {
 }
 
 /// Gets pending character verifications for this user
-pub(crate) async fn get_character_verifications(
-    
-) -> AppResult<Vec<FfxivCharacterVerification>> {
+pub(crate) async fn get_character_verifications() -> AppResult<Vec<FfxivCharacterVerification>> {
     fetch_api(&format!("/api/v1/characters/verifications")).await
 }
 
@@ -189,10 +176,7 @@ pub(crate) async fn unclaim_character(id: i32) -> AppResult<(i32, String)> {
 }
 
 /// Searches for the given character with the given lodestone ID.
-pub(crate) async fn search_characters(
-    
-    character: String,
-) -> AppResult<Vec<FfxivCharacter>> {
+pub(crate) async fn search_characters(character: String) -> AppResult<Vec<FfxivCharacter>> {
     fetch_api(&format!("/api/v1/characters/search/{character}")).await
 }
 
@@ -201,7 +185,6 @@ pub(crate) async fn get_lists() -> AppResult<Vec<List>> {
 }
 
 pub(crate) async fn get_list_items_with_listings(
-    
     list_id: i32,
 ) -> AppResult<(List, Vec<(ListItem, Vec<ActiveListing>)>)> {
     if list_id == 0 {
@@ -223,18 +206,13 @@ pub(crate) async fn edit_list(list: List) -> AppResult<()> {
 }
 
 pub(crate) async fn bulk_add_item_to_list(
-    
     list_id: i32,
     list_items: Vec<ListItem>,
 ) -> AppResult<()> {
     post_api(&format!("/api/v1/list/{list_id}/add/items"), list_items).await
 }
 
-pub(crate) async fn add_item_to_list(
-    
-    list_id: i32,
-    list_item: ListItem,
-) -> AppResult<()> {
+pub(crate) async fn add_item_to_list(list_id: i32, list_item: ListItem) -> AppResult<()> {
     post_api(&format!("/api/v1/list/{list_id}/add/item"), list_item).await
 }
 
@@ -246,10 +224,7 @@ pub(crate) async fn delete_list_item(list_id: i32) -> AppResult<()> {
     fetch_api(&format!("/api/v1/list/item/{list_id}/delete")).await
 }
 
-pub(crate) async fn update_retainer_order(
-    
-    retainers: Vec<OwnedRetainer>,
-) -> AppResult<()> {
+pub(crate) async fn update_retainer_order(retainers: Vec<OwnedRetainer>) -> AppResult<()> {
     post_api(&format!("/api/v1/retainer/reorder"), retainers).await
 }
 

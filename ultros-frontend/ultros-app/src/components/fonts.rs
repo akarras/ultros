@@ -67,7 +67,7 @@ pub fn ItemSearchCategoryIcon(id: ItemSearchCategoryId) -> impl IntoView {
                 )
                 .into(),
             };
-            
+
             view! {<i class=Some(value)></i>}.into_view()
         }
     })

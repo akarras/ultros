@@ -28,12 +28,7 @@ fn get_cheapest_listing(
 }
 
 #[component]
-pub fn PriceViewer(
-    
-    quantity: i32,
-    hq: Option<bool>,
-    listings: Vec<ActiveListing>,
-) -> impl IntoView {
+pub fn PriceViewer(quantity: i32, hq: Option<bool>, listings: Vec<ActiveListing>) -> impl IntoView {
     let cheapest_listings = get_cheapest_listing(listings, quantity, hq);
     view! {<div class="flex-column">
         {cheapest_listings.iter().map(|listing| view!{

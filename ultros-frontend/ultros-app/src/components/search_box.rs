@@ -42,7 +42,7 @@ pub fn SearchBox() -> impl IntoView {
         })
     };
     view! {
-        
+
         <div style="height: 36px;">
             <input on:input=on_input on:focusin=focus_in on:focusout=focus_out class="search-box" type="text" prop:value=search class:active={move || active()}/>
             <div class="search-results">

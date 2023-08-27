@@ -137,7 +137,8 @@ impl AlertManager {
         if let Some(listener) = self.current_retainer_alerts.get(&alert.id) {
             let _ = listener
                 .cancellation_sender
-                .send(RetainerAlertTx::UpdateMargin(margin));
+                .send(RetainerAlertTx::UpdateMargin(margin))
+                .await;
         }
     }
 }

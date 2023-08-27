@@ -56,7 +56,6 @@ pub fn get_homeworld() -> (Signal<Option<World>>, SignalSetter<Option<World>>) {
 }
 
 pub fn result_to_selector_read(
-    
     selector: Signal<Option<OwnedResult>>,
 ) -> Signal<Option<AnySelector>> {
     let signal = create_memo(move |_| selector().map(|w| w.into()));
@@ -64,7 +63,6 @@ pub fn result_to_selector_read(
 }
 
 pub fn selector_to_setter_signal(
-    
     setter: SignalSetter<Option<OwnedResult>>,
 ) -> SignalSetter<Option<AnySelector>> {
     let signal = move |signal: Option<AnySelector>| {
@@ -79,9 +77,7 @@ pub fn selector_to_setter_signal(
     signal.mapped_signal_setter()
 }
 
-pub fn get_price_zone(
-    
-) -> (
+pub fn get_price_zone() -> (
     Signal<Option<OwnedResult>>,
     SignalSetter<Option<OwnedResult>>,
 ) {

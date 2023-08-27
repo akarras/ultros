@@ -16,7 +16,6 @@ pub fn EditRetainers() -> impl IntoView {
     let (retainer_search, set_retainer_search) = create_signal(String::new());
 
     let search_results = create_resource(
-        
         move || retainer_search(),
         move |search| async move { search_retainers(search).await },
     );
@@ -24,11 +23,9 @@ pub fn EditRetainers() -> impl IntoView {
     let claim = create_action(move |retainer_id| claim_retainer(*retainer_id));
 
     let remove_retainer = create_action(move |owned_id| unclaim_retainer(*owned_id));
-    let update_retainers = create_action(move |owners: &Vec<OwnedRetainer>| {
-        update_retainer_order(owners.clone())
-    });
+    let update_retainers =
+        create_action(move |owners: &Vec<OwnedRetainer>| update_retainer_order(owners.clone()));
     let retainers = create_resource(
-        
         move || {
             (
                 claim.version().get(),
@@ -45,26 +42,26 @@ pub fn EditRetainers() -> impl IntoView {
     let is_retainer_owned = move |retainer_id: i32| {
         retainers
             .with(|retainer| {
-                retainer
-                    .as_ref()
-                    .map(|retainers| {
-                        retainers.as_ref().ok().map(|r| r.retainers.iter().any(|(_character, retainers)| {
+                retainer.as_ref().map(|retainers| {
+                    retainers.as_ref().ok().map(|r| {
+                        r.retainers.iter().any(|(_character, retainers)| {
                             retainers
                                 .iter()
                                 .any(|(_, retainer)| retainer.id == retainer_id)
-                        }))
+                        })
                     })
+                })
             })
             .flatten()
             .unwrap_or_default()
     };
 
-    view! { 
+    view! {
     <div style="width: 500px;" class="retainer-list flex-column">
       <MetaTitle title="Edit Retainers"/>
       <span class="content-title">"Retainers"</span>
       <Transition fallback=move || view!{<div></div>}>
-        {move || retainers.read().map(|retainers| {
+        {move || retainers.get().map(|retainers| {
           match retainers {
             Ok(retainers) => {
 
@@ -115,7 +112,7 @@ pub fn EditRetainers() -> impl IntoView {
                         let retainer_name = retainer.name.to_string();
                         let world_id = retainer.world_id;
                         view!{
-                        
+
                         <div class="flex-row">
                           <div style="width: 300px" class="flex">
                             <span style="width: 200px">{retainer_name}</span>
@@ -139,7 +136,7 @@ pub fn EditRetainers() -> impl IntoView {
       <input prop:value=retainer_search  on:input=move |input| set_retainer_search(event_target_value(&input)) />
       <div class="retainer-results">
         <Suspense fallback=move || view!{<Loading/>}>
-          {move || search_results.read().map(|retainers| {
+          {move || search_results.get().map(|retainers| {
             match retainers {
               Ok(retainers) => view!{<div class="content-well flex-column">
                 <For each=move || retainers.clone()

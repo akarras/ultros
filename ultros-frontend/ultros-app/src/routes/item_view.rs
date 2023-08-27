@@ -18,7 +18,6 @@ fn WorldButton(world_name: String, item_id: i32) -> impl IntoView {
 fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
     // for some reason the context version doesn't work
     let worlds = create_resource(
-        
         move || {},
         move |_| async move {
             let world_data = get_worlds().await;
@@ -28,7 +27,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
     view! {
         <Suspense fallback=move || view!{ <Loading/>}>
         {move || {
-            match worlds.read() {
+            match worlds.get() {
                 Some(Ok(worlds)) => {
                     let world = world_name();
                     let world_name = urlencoding::decode(&world).unwrap_or_default();
@@ -82,13 +81,12 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
 #[component]
 fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
     let listing_resource = create_resource(
-        
         move || (item_id(), world()),
         move |(item_id, world)| async move { get_listings(item_id, &world).await },
     );
-    view! { 
+    view! {
         <Suspense fallback=move || view!{ <Loading/>}>
-        {move || listing_resource.read().map(|listings| {
+        {move || listing_resource.get().map(|listings| {
             match listings {
                 Err(e) => view!{ <div>{format!("Error getting listings\n{e}")}</div>}.into_view(),
                 Ok(currently_shown) => {
@@ -96,7 +94,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
                     let hq_listings = currently_shown.listings.iter().cloned().filter(|(listing, _)| listing.hq).collect::<Vec<_>>();
                     let lq_listings = currently_shown.listings.iter().cloned().filter(|(listing, _)| !listing.hq).collect::<Vec<_>>();
                     let sales = create_memo(move |_| currently_shown.sales.clone());
-                    view! { 
+                    view! {
                         <PriceHistoryChart sales=MaybeSignal::from(sales) />
                         {(!hq_listings.is_empty()).then(move || {
                             view!{ <div class="content-well">
@@ -133,9 +131,7 @@ pub fn ItemView() -> impl IntoView {
             .unwrap_or_default()
     });
     let items = &xiv_gen_db::decompress_data().items;
-    let world = create_memo(move |_| {
-        params.with(|p| p.get("world").cloned().unwrap_or_default())
-    });
+    let world = create_memo(move |_| params.with(|p| p.get("world").cloned().unwrap_or_default()));
     let item_name = move || {
         items
             .get(&ItemId(item_id()))
@@ -149,11 +145,10 @@ pub fn ItemView() -> impl IntoView {
             .unwrap_or_default()
     };
     let categories = &xiv_gen_db::decompress_data().item_ui_categorys;
-    let description = create_memo(move |_| {
-        format!("Current listings for {} on {}", item_name(), world(),)
-    });
+    let description =
+        create_memo(move |_| format!("Current listings for {} on {}", item_name(), world(),));
     view! {
-        
+
         <MetaDescription text=description/>
         <MetaTitle title=move || format!("{} - Market view", item_name())/>
         // TODO: probably shouldn't hard code the domain here

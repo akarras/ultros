@@ -12,15 +12,10 @@ use crate::global_state::home_world::{
 };
 
 #[component]
-fn AddCharacterMenu(
-    
-    claim_character: Action<i32, AppResult<(i32, String)>>,
-) -> impl IntoView {
+fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> impl IntoView {
     let (is_open, set_is_open) = create_signal(false);
     let (character_search, set_character_search) = create_signal("".to_string());
-    let search_action = create_action(move |search: &String| {
-        search_characters(search.to_string())
-    });
+    let search_action = create_action(move |search: &String| search_characters(search.to_string()));
 
     view! {
         <button class="btn" on:click=move |_| set_is_open(!is_open())><i class="fa-solid fa-plus"></i></button>
@@ -49,7 +44,7 @@ fn AddCharacterMenu(
                     {search_action.value()().map(|value| match value {
                         Ok(characters) => view!{<div>
                                 <span class="content-title">"Search Results"</span>
-                                {characters.is_empty().then(|| {
+                                {characters.is_empty().then_some({
                                     "No search results found"
                                 })}
                                 {characters.into_iter().map(|character| view!{
@@ -71,10 +66,8 @@ fn AddCharacterMenu(
 pub fn Profile() -> impl IntoView {
     let claim_character = create_action(move |id: &i32| claim_character(*id));
     let unclaim_character = create_action(move |id: &i32| unclaim_character(*id));
-    let check_verification =
-        create_action(move |id: &i32| check_character_verification(*id));
+    let check_verification = create_action(move |id: &i32| check_character_verification(*id));
     let characters = create_resource(
-        
         move || {
             (
                 unclaim_character.version()(),
@@ -84,7 +77,6 @@ pub fn Profile() -> impl IntoView {
         move |_| get_characters(),
     );
     let pending_verifications = create_resource(
-        
         move || (check_verification.version()(), claim_character.version()()),
         move |_| get_character_verifications(),
     );
@@ -92,17 +84,17 @@ pub fn Profile() -> impl IntoView {
     let (price_region, set_price_region) = get_price_zone();
     let price_region = result_to_selector_read(price_region);
     let set_price_region = selector_to_setter_signal(set_price_region);
-    view! { 
+    view! {
     <div class="main-content">
         <span class="content-title">"Profile"</span>
         <div class="content-well">
             <label>"home world:"</label>
             <Suspense fallback=move || view!{<Loading/>}>
-                <WorldOnlyPicker current_world=homeworld.into() set_current_world=set_homeworld.into()  />
+                <WorldOnlyPicker current_world=homeworld set_current_world=set_homeworld  />
             </Suspense>
                 <label>"Default price selector"</label>
             <Suspense fallback=move || view!{<Loading />}>
-                <WorldPicker current_world=price_region.into() set_current_world=set_price_region.into() />
+                <WorldPicker current_world=price_region set_current_world=set_price_region />
             </Suspense>
         </div>
         <div class="content-well">
@@ -111,7 +103,7 @@ pub fn Profile() -> impl IntoView {
             </span>
             <AddCharacterMenu claim_character/>
             <Suspense fallback=move || view!{<Loading/>}>
-                {move || pending_verifications.read().map(|verifications| {
+                {move || pending_verifications.get().map(|verifications| {
                     match verifications {
                         Ok(verifications) => {
                             view!{<div>
@@ -136,7 +128,7 @@ pub fn Profile() -> impl IntoView {
                 })}
             </Suspense>
             <Suspense fallback=move || view!{<Loading/>}>
-                {move || characters.read().map(|characters| {
+                {move || characters.get().map(|characters| {
                     match characters {
                         Ok(characters) => {
                             if characters.is_empty() {

@@ -5,7 +5,6 @@ use ultros_api_types::{world::World, world_helper::AnySelector};
 
 #[component]
 pub fn WorldOnlyPicker(
-    
     current_world: Signal<Option<World>>,
     set_current_world: SignalSetter<Option<World>>,
 ) -> impl IntoView {
@@ -52,7 +51,6 @@ pub fn WorldOnlyPicker(
 /// Changes a world, but does not allow a null option.
 #[component]
 pub fn WorldPicker(
-    
     current_world: Signal<Option<AnySelector>>,
     set_current_world: SignalSetter<Option<AnySelector>>,
 ) -> impl IntoView {

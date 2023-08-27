@@ -67,7 +67,6 @@ pub fn ListView() -> impl IntoView {
     });
     let edit_item = create_action(move |item: &ListItem| edit_list_item(item.clone()));
     let list_view = create_resource(
-        
         move || {
             (
                 list_id(),
@@ -215,7 +214,7 @@ pub fn ListView() -> impl IntoView {
                 }.into_view(),
         }}
         <Transition fallback=move || view!{<Loading />}>
-        {move || list_view.read().map(move |list| match list {
+        {move || list_view.get().map(move |list| match list {
             Ok((list, items)) => view!{
                 <div class="content-well">
                     <span class="content-title">{list.name}</span>

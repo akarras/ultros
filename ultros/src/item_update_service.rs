@@ -67,7 +67,7 @@ impl UpdateService {
         for item_ids in item_ids.chunks(100) {
             let market_data = self
                 .universalis
-                .marketboard_current_data(world_name, &item_ids)
+                .marketboard_current_data(world_name, item_ids)
                 .await?;
             info!("missing data {item_ids:?}");
 
@@ -127,7 +127,7 @@ impl UpdateService {
             )
             .await?
             .into_iter()
-            .map(|i| CmpListing(i))
+            .map(CmpListing)
             .collect::<Vec<_>>();
         our_recently_updated.sort_by_key(|i| i.0.item_id);
         recently_updated.items.sort_by_key(|i| i.item_id);

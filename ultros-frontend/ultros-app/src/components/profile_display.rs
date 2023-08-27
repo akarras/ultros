@@ -1,16 +1,12 @@
-use crate::{components::loading::Loading, api::get_login};
+use crate::{api::get_login, components::loading::Loading};
 use leptos::*;
 
 #[component]
 pub fn ProfileDisplay() -> impl IntoView {
-    
-    let user = create_resource(
-        move || {},
-        move |_| async move { get_login().await.ok() },
-    );
+    let user = create_resource(move || {}, move |_| async move { get_login().await.ok() });
     view! {
         <Suspense fallback=Loading>
-        {move || user.read().map(|user| match user {
+        {move || user.get().map(|user| match user {
             Some(auth) => view! {
             <a href="/profile">
                 <img class="avatar" src=&auth.avatar alt=&auth.username/>

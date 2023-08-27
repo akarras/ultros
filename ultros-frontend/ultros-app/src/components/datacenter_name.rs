@@ -8,7 +8,7 @@ use super::world_name::*;
 #[component]
 pub(crate) fn DatacenterName(world_id: i32) -> impl IntoView {
     view! {
-        
+
         <Suspense fallback=|| view!{"--"}>
             {move ||
                 match use_context::<LocalWorldData>().expect("Local world data must be verified").0 {

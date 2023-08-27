@@ -78,8 +78,8 @@ fn process_listings(
     Some(ServerClient::Listings(janky_map_event_type(
         l,
         ListingEventData {
-            item_id: item_id,
-            world_id: world_id,
+            item_id,
+            world_id,
             listings,
         },
     )))

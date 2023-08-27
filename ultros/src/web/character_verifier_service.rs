@@ -43,8 +43,8 @@ impl CharacterVerifierService {
         discord_user_id: i64,
     ) -> Result<(i32, String), VerifierError> {
         let mut hasher = Sha256::new();
-        hasher.update(&discord_user_id.to_le_bytes());
-        hasher.update(&character_id.to_le_bytes());
+        hasher.update(discord_user_id.to_le_bytes());
+        hasher.update(character_id.to_le_bytes());
         let auth_token = hasher.finalize();
         let engine = GeneralPurpose::new(&base64::alphabet::URL_SAFE, GeneralPurposeConfig::new());
         let challenge_string = engine.encode(auth_token);
@@ -52,7 +52,7 @@ impl CharacterVerifierService {
             lodestone::model::profile::Profile::get_async(&self.client, character_id).await?;
         let (first_name, last_name) = profile
             .name
-            .split_once(" ")
+            .split_once(' ')
             .expect("Unable to split character name?");
 
         let character = self
@@ -93,7 +93,7 @@ impl CharacterVerifierService {
         if discord_user != *discord_user_id {
             return Err(VerifierError::Unauthorized);
         }
-        self.compare_verification(&challenge, *ffxiv_character_id as u32)
+        self.compare_verification(challenge, *ffxiv_character_id as u32)
             .await?;
         // verification success, now add the owned character
         self.db

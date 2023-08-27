@@ -74,7 +74,7 @@ async fn send_discord_alerts(
                 msg.embed(|e| {
                     e.color(Color::from_rgb(255, 0, 0))
                         .title("🔔😔 Undercut Alert")
-                        .description(&undercut_msg)
+                        .description(undercut_msg)
                 })
                 .allowed_mentions(|mentions| mentions.users([UserId(discord_user_id)]))
                 .content(format!("<@{discord_user_id}>"))

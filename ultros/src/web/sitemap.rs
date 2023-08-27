@@ -64,12 +64,12 @@ pub(crate) async fn world_sitemap(
     // validate that this is a valid world name, then repeat back a sitemap using all the item ids
 
     // handle .xml being in the path potentially
-    let world_name = match world_name.split_once(".") {
+    let world_name = match world_name.split_once('.') {
         Some((left, _)) => left,
         None => &world_name,
     };
 
-    let result = world_cache.lookup_value_by_name(&world_name)?;
+    let result = world_cache.lookup_value_by_name(world_name)?;
     // Create a unique list of item ids
     let items: HashSet<_> = db
         .read_cheapest_items(&AnySelector::from(&result), |items| {

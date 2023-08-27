@@ -20,7 +20,6 @@ impl CheapestPrices {
         let (read, _) = get_price_zone();
         let read_listings = create_resource(read, move |world| async move {
             get_cheapest_listings(
-                
                 world
                     .as_ref()
                     .map(|w| w.get_name())

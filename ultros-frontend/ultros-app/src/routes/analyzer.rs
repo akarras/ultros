@@ -184,10 +184,7 @@ impl Display for SortMode {
     }
 }
 
-fn use_query_item<T>(
-    
-    parameter: &'static str,
-) -> (Signal<Option<T>>, SignalSetter<Option<T>>)
+fn use_query_item<T>(parameter: &'static str) -> (Signal<Option<T>>, SignalSetter<Option<T>>)
 where
     T: FromStr + ToString + PartialEq,
 {
@@ -226,7 +223,6 @@ where
 
 #[component]
 fn AnalyzerTable(
-    
     sales: RecentSales,
     global_cheapest_listings: CheapestListings,
     world_cheapest_listings: CheapestListings,
@@ -261,9 +257,8 @@ fn AnalyzerTable(
             &world_clone.lookup_world_by_name(&world())?,
         ))
     });
-    let predicted_time = create_memo(move |_| {
-        parse_duration(&max_predicted_time().unwrap_or_default())
-    });
+    let predicted_time =
+        create_memo(move |_| parse_duration(&max_predicted_time().unwrap_or_default()));
     let predicted_time_string = move || {
         predicted_time()
             .map(|duration| format_duration(duration).to_string())
@@ -315,7 +310,7 @@ fn AnalyzerTable(
     });
     const DATACENTER_WIDTH: &str = "width: 130px";
     const WORLD_WIDTH: &str = "width: 180px";
-    view! { 
+    view! {
         <MetaTitle title="Price Analayzer"/>
         <MetaDescription text="The analyzer finds the best items to buy on other worlds and sell on your own world."/>
        <div class="flex flex-row content-well">
@@ -433,11 +428,8 @@ fn AnalyzerTable(
 #[component]
 pub fn AnalyzerWorldView() -> impl IntoView {
     let params = use_params_map();
-    let world = create_memo(move |_| {
-        params.with(|p| p.get("world").cloned()).unwrap_or_default()
-    });
+    let world = create_memo(move |_| params.with(|p| p.get("world").cloned()).unwrap_or_default());
     let sales = create_resource(
-        
         move || params.with(|p| p.get("world").cloned()),
         move |world| async move {
             get_recent_sales_for_world(&world.ok_or(AppError::ParamMissing)?).await
@@ -445,7 +437,6 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     );
 
     let world_cheapest_listings = create_resource(
-        
         move || params.with(|p| p.get("world").cloned()),
         move |world| async move {
             let world = world.ok_or(AppError::ParamMissing)?;
@@ -456,7 +447,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
         .expect("Worlds should always be populated here")
         .0;
 
-    view!{ 
+    view!{
         <div class="main-content">
             <span class="title">"Resale Analyzer Results for "{world}</span><br/>
             <AnalyzerWorldNavigator /><br />
@@ -469,7 +460,6 @@ pub fn AnalyzerWorldView() -> impl IntoView {
             {worlds.ok().map(|worlds| {
                 let world_value = store_value(worlds);
                 let global_cheapest_listings = create_resource(
-                    
                     move || params.with(|p| p.get("world").cloned()),
                     move |world| async move {
                         let worlds = world_value();
@@ -484,9 +474,9 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                 );
                 view!{
                         {move || {
-                            let world_cheapest = world_cheapest_listings.read();
-                            let sales = sales.read();
-                            let global_cheapest_listings = global_cheapest_listings.read();
+                            let world_cheapest = world_cheapest_listings.get();
+                            let sales = sales.get();
+                            let global_cheapest_listings = global_cheapest_listings.get();
                             let worlds = world_value();
                             let values = world_cheapest.map(|w| w.ok())
                                 .flatten().and_then(|r| sales.map(|s| s.ok())
@@ -529,7 +519,7 @@ pub fn AnalyzerWorldNavigator() -> impl IntoView {
 #[component]
 pub fn Analyzer() -> impl IntoView {
     view! {
-        
+
         <div class="container">
             <div class="main-content">
                 <span class="content-title">"Analyzer"</span>

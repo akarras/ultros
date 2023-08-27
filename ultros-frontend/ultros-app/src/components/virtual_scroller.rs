@@ -10,7 +10,6 @@ use web_sys::HtmlDivElement;
 /// to use this with tables that have a table header.
 #[component]
 pub fn VirtualScroller<T, D, V, KF, K>(
-    
     each: Signal<Vec<T>>,
     key: KF,
     view: D,

@@ -23,7 +23,7 @@ impl Cookies {
 
     pub fn get_cookie<C>(
         &self,
-        
+
         cookie_name: C,
     ) -> (
         Signal<Option<Cookie<'static>>>,
@@ -49,7 +49,6 @@ impl Cookies {
 }
 
 pub(crate) fn create_slice_non_copy<T, O>(
-    
     signal: RwSignal<T>,
     getter: impl Fn(&T) -> O + Clone + 'static,
     setter: impl Fn(&mut T, O) + Clone + 'static,

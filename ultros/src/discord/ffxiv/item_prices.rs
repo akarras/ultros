@@ -3,7 +3,7 @@ use itertools::Itertools;
 use plotters_svg::SVGBackend;
 use poise::serenity_prelude::AttachmentType;
 use resvg::tiny_skia;
-use resvg::usvg::{self, fontdb, TreeParsing, TreeTextToPath};
+use resvg::usvg::{self, fontdb, Options, TreeParsing, TreeTextToPath};
 use ultros_api_types::SaleHistory;
 use ultros_db::world_cache::AnySelector;
 use xiv_gen::ItemId;
@@ -76,7 +76,7 @@ async fn current(
             f(&format_args!(
                 "{:<10} {:3} {:<7} {}",
                 l.price_per_unit,
-                l.hq.then(|| "✅").unwrap_or_default(),
+                l.hq.then_some("✅").unwrap_or_default(),
                 l.quantity,
                 worlds
                     .lookup_selector(&AnySelector::World(l.world_id))
@@ -126,7 +126,7 @@ async fn history(
         .get_sale_history_from_multiple_worlds(world_ids.into_iter(), item.key_id.0, 1000)
         .await?
         .into_iter()
-        .map(|sales| SaleHistory::from(sales))
+        .map(SaleHistory::from)
         .collect();
     const SIZE: (u32, u32) = (1920 / 3, 1080 / 3);
     let buffer = {
@@ -144,11 +144,13 @@ async fn history(
     };
 
     let png = {
-        let mut opt = usvg::Options::default();
-        // Get file's absolute directory.
-        opt.resources_dir = std::fs::canonicalize(&buffer)
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.to_path_buf()));
+        let opt = Options {
+            resources_dir: std::fs::canonicalize(&buffer)
+                .ok()
+                // Get file's absolute directory.
+                .and_then(|p| p.parent().map(|p| p.to_path_buf())),
+            ..Default::default()
+        };
 
         let mut fontdb = fontdb::Database::new();
         fontdb.load_system_fonts();

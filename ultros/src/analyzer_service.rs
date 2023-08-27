@@ -142,7 +142,7 @@ impl SaleHistory {
         let entries = self
             .item_map
             .entry(sale.into())
-            .or_insert_with(|| SmallVec::new_const());
+            .or_insert_with(SmallVec::new_const);
         if entries.len() == SALE_HISTORY_SIZE {
             let _ = entries.pop();
         }
@@ -198,7 +198,7 @@ impl PartialEq for CheapestListingValue {
 
 impl PartialOrd for CheapestListingValue {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.price.partial_cmp(&other.price)
+        Some(self.cmp(other))
     }
 }
 
@@ -286,8 +286,7 @@ impl AnalyzerService {
             .flat_map(|(region, dcs)| {
                 [AnySelector::Region(region.id)].into_iter().chain(
                     dcs.iter()
-                        .map(|(_dc, worlds)| worlds.iter().map(|w| AnySelector::World(w.id)))
-                        .flatten(),
+                        .flat_map(|(_dc, worlds)| worlds.iter().map(|w| AnySelector::World(w.id))),
                 )
             })
             .map(|s| (s, RwLock::default()))
@@ -513,11 +512,10 @@ impl AnalyzerService {
                 resale_options
                     .filter_sale
                     .as_ref()
-                    .map(|sold| {
+                    .and_then(|sold| {
                         sold.partial_cmp(&sale.sold_within)
                             .map(|c| c.is_gt() || c.is_eq())
                     })
-                    .flatten()
                     .unwrap_or(true)
             })
             .collect();
@@ -618,13 +616,13 @@ impl AnalyzerService {
         if self.initiated.load(Ordering::Relaxed) {
             let read = self
                 .cheapest_items
-                .get(&selector)
+                .get(selector)
                 .ok_or(AnalyzerError::DatacenterNotAvailable)?
                 .read()
                 .await;
             Ok(extract(&read))
         } else {
-            return Err(AnalyzerError::Uninitialized);
+            Err(AnalyzerError::Uninitialized)
         }
     }
 
@@ -648,7 +646,7 @@ impl AnalyzerService {
                 .await;
             Ok(extract(&read))
         } else {
-            return Err(AnalyzerError::Uninitialized);
+            Err(AnalyzerError::Uninitialized)
         }
     }
 }

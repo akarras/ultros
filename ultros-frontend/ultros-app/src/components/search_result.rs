@@ -50,7 +50,6 @@ fn MatchFormatter(m: Match, target: String) -> impl IntoView {
 
 #[component]
 pub fn ItemSearchResult(
-    
     item_id: i32,
     search: ReadSignal<String>,
     set_search: WriteSignal<String>,
@@ -62,7 +61,7 @@ pub fn ItemSearchResult(
     let item = items.get(&ItemId(item_id));
     let (price_zone, _) = get_price_zone();
     view! {
-        
+
         {if let Some(item) = item {
 
             view!{

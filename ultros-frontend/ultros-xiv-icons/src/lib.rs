@@ -10,9 +10,9 @@ use ultros_api_types::icon_size::IconSize;
 
 fn parse_url(str: &str) -> (i32, IconSize) {
     // id_size.webp
-    let (name, _ext) = str.split_once(".").unwrap();
+    let (name, _ext) = str.split_once('.').unwrap();
     // id size
-    let (id, size) = name.split_once("_").unwrap();
+    let (id, size) = name.split_once('_').unwrap();
     (
         id.parse().unwrap(),
         match size {

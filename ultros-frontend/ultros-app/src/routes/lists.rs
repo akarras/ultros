@@ -12,7 +12,6 @@ pub fn EditLists() -> impl IntoView {
     let edit_list = create_action(move |list: &List| edit_list(list.clone()));
     let create_list = create_action(move |list: &CreateList| create_list(list.clone()));
     let lists = create_resource(
-        
         move || {
             (
                 delete_list.version().get(),
@@ -56,7 +55,7 @@ pub fn EditLists() -> impl IntoView {
     <div class="content-well">
         <Suspense fallback=move || view!{<Loading />}>
         <>
-        {move || lists.read().map(|lists| {
+        {move || lists.get().map(|lists| {
             match lists {
                 Ok(lists) => view!{
 

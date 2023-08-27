@@ -86,7 +86,7 @@ impl<'a> TextSpan<'a> {
         clone
     }
 
-    fn to_view(&self, ) -> Option<View> {
+    fn to_view(&self) -> Option<View> {
         let Self { text, .. } = self;
         if text.is_empty() {
             return None;

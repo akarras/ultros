@@ -127,9 +127,9 @@ async fn refresh_world_item_listings(
         let listings = match current_data {
             universalis::MarketView::SingleView(v) => v.listings,
             universalis::MarketView::MultiView(_) => {
-                return Result::<_, anyhow::Error>::Err(
-                    anyhow::Error::msg("multiple listings returned?").into(),
-                )
+                return Result::<_, anyhow::Error>::Err(anyhow::Error::msg(
+                    "multiple listings returned?",
+                ))
             }
         };
 
@@ -370,7 +370,7 @@ pub(crate) async fn user_retainers(
             .into_iter()
             .map(|(character, retainers)| {
                 (
-                    character.map(|character| FfxivCharacter::from(character)),
+                    character.map(FfxivCharacter::from),
                     retainers
                         .into_iter()
                         .map(|(owned, retainer)| {
@@ -405,7 +405,7 @@ pub(crate) async fn user_retainer_listings(
                                 .map(|(_, listings)| {
                                     listings
                                         .into_iter()
-                                        .map(|l| ActiveListing::from(l))
+                                        .map(ActiveListing::from)
                                         .collect::<Vec<_>>()
                                 })
                                 .unwrap_or_default(),
@@ -413,7 +413,7 @@ pub(crate) async fn user_retainer_listings(
                     })
                 }))
                 .await;
-            retainers_with_listings.map(|r| (character.map(|c| FfxivCharacter::from(c)), r))
+            retainers_with_listings.map(|r| (character.map(FfxivCharacter::from), r))
         });
     let listings = try_join_all(listings_iter).await?;
     let retainers = UserRetainerListings {
@@ -438,10 +438,6 @@ pub(crate) async fn retainer_search(
     Path(retainer_name): Path<String>,
 ) -> Result<Json<Vec<Retainer>>, ApiError> {
     let retainers = db.search_retainers(&retainer_name).await?;
-    let retainers = retainers
-        .into_iter()
-        .map(|retainers| retainers.into())
-        .collect();
     Ok(Json(retainers))
 }
 
@@ -471,7 +467,7 @@ pub(crate) async fn get_lists(
         .get_lists_for_user(user.id as i64)
         .await?
         .into_iter()
-        .map(|list| List::try_from(list))
+        .map(List::try_from)
         .collect::<Result<Vec<_>, ApiConversionError>>()?;
     Ok(Json(lists))
 }
@@ -488,7 +484,7 @@ pub(crate) async fn get_list(
     .await?;
     let list_items = list_items
         .into_iter()
-        .map(|item| ListItem::from(item))
+        .map(ListItem::from)
         .collect::<Vec<_>>();
     let list = List::try_from(list)?;
     Ok(Json((list, list_items)))
@@ -517,17 +513,14 @@ pub(crate) async fn get_list_with_listings(
     let list_items = stream::iter(list_items.into_iter().map(|list| async move {
         // get alll the listings that match our item list
         let listings = db
-            .get_all_listings_in_worlds(&world_ids, ItemId(list.item_id))
+            .get_all_listings_in_worlds(world_ids, ItemId(list.item_id))
             .await;
         listings.map(|listings| {
             // return this as a tuple and bring the list that we moved vec
             (
                 ListItem::from(list),
                 // convert our new active listing to the API types
-                listings
-                    .into_iter()
-                    .map(|listing| ActiveListing::from(listing))
-                    .collect(),
+                listings.into_iter().map(ActiveListing::from).collect(),
             )
         })
     }))
@@ -646,7 +639,7 @@ pub(crate) async fn bulk_item_listings(
         .ok_or(anyhow::anyhow!("Invalid world"))?;
     let db = &db;
     // get item ids
-    let item_ids: HashSet<i32> = item_ids.split(",").map(|id| id.parse()).try_collect()?;
+    let item_ids: HashSet<i32> = item_ids.split(',').map(|id| id.parse()).try_collect()?;
     // now perform lookups for all the listings for each world/item pair
     let listings = try_join_all(item_ids.into_iter().map(|item| async move {
         db.get_all_listings_in_worlds_with_retainers(worlds, ItemId(item))
@@ -663,10 +656,7 @@ pub(crate) async fn bulk_item_listings(
                 id,
                 l.into_iter()
                     .map(|(listing, retainer)| {
-                        (
-                            ActiveListing::from(listing),
-                            retainer.map(|retainer| Retainer::from(retainer)),
-                        )
+                        (ActiveListing::from(listing), retainer.map(Retainer::from))
                     })
                     .collect(),
             )

@@ -37,14 +37,11 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
     provide_context(Cookies::new());
     provide_context(LocalWorldData(worlds));
     provide_context(CheapestPrices::new());
-    let login = create_resource(
-        move || {},
-        move |_| async move { get_login().await.ok() },
-    );
+    let login = create_resource(move || {}, move |_| async move { get_login().await.ok() });
     // provide_context(LoggedInUser(login));
     let (homeworld, _set_homeworld) = get_homeworld();
     view! {
-        
+
         <Stylesheet id="leptos" href="/target/site/pkg/ultros.css"/>
         <Stylesheet id="font-awesome" href="/static/fa/css/all.min.css"/>
         <Stylesheet id="xiv-icons" href="/static/classjob-icons/src/xivicon.css"/>
@@ -80,7 +77,7 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
                         }
                     }
                     <Suspense fallback=move || {}>
-                    {move || login.read().flatten().map(|_| view!{<A href="/list">
+                    {move || login.get().flatten().map(|_| view!{<A href="/list">
                         <i class="fa-solid fa-list"></i>
                         "Lists"
                     </A>
