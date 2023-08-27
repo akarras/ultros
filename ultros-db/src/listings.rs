@@ -24,6 +24,11 @@ impl PartialEq<ListingView> for ListingData {
     }
 }
 
+pub type ListingUpdate = (
+    Vec<(ActiveListing, Retainer)>,
+    Vec<(ActiveListing, Retainer)>,
+);
+
 struct ListingData(active_listing::Model, retainer::Model);
 
 impl PartialOrd<ListingView> for ListingData {
@@ -156,10 +161,7 @@ impl UltrosDb {
         mut listings: Vec<ListingView>,
         item_id: ItemId,
         world_id: WorldId,
-    ) -> Result<(
-        Vec<(ActiveListing, Retainer)>,
-        Vec<(ActiveListing, Retainer)>,
-    )> {
+    ) -> Result<ListingUpdate> {
         use active_listing::*;
         // Assumes that we are being given a full list of all the listings for the item and world.
         // First, query the db to see what listings it has

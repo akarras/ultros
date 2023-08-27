@@ -15,10 +15,9 @@ pub fn EditRetainers() -> impl IntoView {
 
     let (retainer_search, set_retainer_search) = create_signal(String::new());
 
-    let search_results = create_resource(
-        move || retainer_search(),
-        move |search| async move { search_retainers(search).await },
-    );
+    let search_results = create_resource(retainer_search, move |search| async move {
+        search_retainers(search).await
+    });
 
     let claim = create_action(move |retainer_id| claim_retainer(*retainer_id));
 

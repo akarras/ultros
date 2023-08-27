@@ -15,7 +15,7 @@ pub fn ListingsTable(listings: Vec<(ActiveListing, Retainer)>) -> impl IntoView 
         if show_more() {
             listings.clone()
         } else {
-            listings.iter().cloned().take(10).collect()
+            listings.iter().take(10).cloned().collect()
         }
     });
     view! {  <table>

@@ -151,7 +151,7 @@ impl UltrosDb {
             .limit(10)
             .all(&self.db)
             .await?;
-        Ok(val.into_iter().map(|val| Retainer::from(val)).collect())
+        Ok(val.into_iter().map(Retainer::from).collect())
     }
 
     #[instrument(skip(self))]

@@ -10,8 +10,8 @@ use ultros_api_types::{
 
 use super::{cookies::Cookies, LocalWorldData};
 
-const HOMEWORLD_COOKIE_NAME: &'static str = "HOME_WORLD";
-const DEFAULT_PRICE_ZONE: &'static str = "PRICE_ZONE";
+const HOMEWORLD_COOKIE_NAME: &str = "HOME_WORLD";
+const DEFAULT_PRICE_ZONE: &str = "PRICE_ZONE";
 
 /// returns the current OffsetDateTime
 fn get_now() -> OffsetDateTime {
@@ -68,8 +68,7 @@ pub fn selector_to_setter_signal(
     let signal = move |signal: Option<AnySelector>| {
         let world_data = use_context::<LocalWorldData>().unwrap().0.ok();
         if let Some(worlds) = signal.and_then(|signal| {
-            world_data
-                .and_then(|worlds| worlds.lookup_selector(signal).map(|s| OwnedResult::from(s)))
+            world_data.and_then(|worlds| worlds.lookup_selector(signal).map(OwnedResult::from))
         }) {
             setter(Some(worlds))
         }

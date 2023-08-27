@@ -29,7 +29,7 @@ pub fn SearchBox() -> impl IntoView {
                 return vec![];
             }
             let mut score = items
-                .into_iter()
+                .iter()
                 .filter(|(_, i)| i.item_search_category.0 > 0)
                 .filter(|_| !s.is_empty())
                 .flat_map(|(id, i)| fuzzy_search(s, &i.name).map(|m| (id, i, m)))
@@ -44,7 +44,7 @@ pub fn SearchBox() -> impl IntoView {
     view! {
 
         <div style="height: 36px;">
-            <input on:input=on_input on:focusin=focus_in on:focusout=focus_out class="search-box" type="text" prop:value=search class:active={move || active()}/>
+            <input on:input=on_input on:focusin=focus_in on:focusout=focus_out class="search-box" type="text" prop:value=search class:active={active}/>
             <div class="search-results">
             // WHY DOES THIS BREAK HYDRATION?
             // <WasmLoadingIndicator />

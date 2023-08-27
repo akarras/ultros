@@ -20,7 +20,7 @@ fn lookup_item_by_name(name: &str) -> Result<ItemId, ParseListError> {
     items
         .iter()
         .find(|(_, item)| item.name == name.trim())
-        .map(|(i, _)| i.clone())
+        .map(|(i, _)| *i)
         .ok_or_else(|| ParseListError::ItemIdNotFound(name.to_string()))
 }
 
@@ -39,8 +39,8 @@ fn parse_list(list: &str) -> Result<Vec<MakePlaceItemData>, ParseListError> {
         // Try to split based on :. If we don't have a :, we don't have an item, and can ignore it
         .peekable()
         // remove furniture + dye
-        .filter(|line| !line.contains("("))
-        .flat_map(|line| line.split_once(":"))
+        .filter(|line| !line.contains('('))
+        .flat_map(|line| line.split_once(':'))
         .map(|(item_name, quantity)| {
             println!("{item_name}: {quantity}");
             let quantity = quantity.trim().parse::<i32>()?;

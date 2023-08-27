@@ -131,7 +131,7 @@ fn job_category_lookup(class_job_category: &ClassJobCategory, job_acronym: &str)
         "sge" => *sge,
         _ => {
             log::warn!("Unknown job acronym {job_acronym}");
-            return false;
+            false
         }
     }
 }
@@ -160,7 +160,7 @@ pub fn CategoryItems() -> impl IntoView {
     let items = create_memo(move |_| {
         let cat = params()
             .get("category")
-            .and_then(|cat| decode(&cat).ok())
+            .and_then(|cat| decode(cat).ok())
             .and_then(|cat| {
                 data.item_search_categorys
                     .iter()
@@ -181,7 +181,7 @@ pub fn CategoryItems() -> impl IntoView {
         params()
             .get("category")
             .as_ref()
-            .and_then(|cat| decode(&cat).ok())
+            .and_then(|cat| decode(cat).ok())
             .map(|c| c.to_string())
             .unwrap_or("Category View".to_string())
             .to_string()

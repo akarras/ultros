@@ -4,8 +4,8 @@ use leptos::*;
 #[derive(Debug, Clone, Default)]
 struct TextSpan<'a> {
     text: &'a str,
-    foreground_color: Option<Rgb>,
-    glow_color: Option<Rgb>,
+    foreground_color: Option<Box<Rgb>>,
+    glow_color: Option<Box<Rgb>>,
     emphasis: bool,
 }
 
@@ -17,8 +17,8 @@ struct TagData<'a> {
 
 impl<'a> TagData<'a> {
     fn find_tag(text: &'a str) -> Option<(&'a str, Self, &'a str)> {
-        let tag_start = text.find("<")?;
-        let tag_end = text.find(">")?;
+        let tag_start = text.find('<')?;
+        let tag_end = text.find('>')?;
         let tag_name = &text[tag_start + 1..tag_end];
         let closing_tag_str = format!("</{tag_name}>");
         let closing_tag = text.find(&closing_tag_str)?;
@@ -28,7 +28,7 @@ impl<'a> TagData<'a> {
                 tag_name,
                 tag_content: &text[&tag_end + 1..closing_tag],
             },
-            &text[&closing_tag + closing_tag_str.len()..],
+            &text[closing_tag + closing_tag_str.len()..],
         ))
     }
 }
@@ -75,11 +75,13 @@ impl<'a> TextSpan<'a> {
             }
             "UIGlow" => match tag_content {
                 "01" => clone.glow_color = None,
-                _ => clone.glow_color = Some(Rgb::from_hex_str(tag_content).unwrap()),
+                _ => clone.glow_color = Some(Box::new(Rgb::from_hex_str(tag_content).unwrap())),
             },
             "UIForeground" => match tag_content {
                 "01" => clone.foreground_color = None,
-                _ => clone.foreground_color = Some(Rgb::from_hex_str(tag_content).unwrap()),
+                _ => {
+                    clone.foreground_color = Some(Box::new(Rgb::from_hex_str(tag_content).unwrap()))
+                }
             },
             _ => panic!("Unknown item description tag: {tag_name}"),
         }

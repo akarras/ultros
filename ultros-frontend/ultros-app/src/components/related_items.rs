@@ -141,11 +141,11 @@ pub fn RelatedItems(item_id: Signal<i32>) -> impl IntoView {
     view! {
         <div class="content-well flex-column" class:hidden=move || item_set().is_empty()>
             <span class="content-title">"related items"</span>
-            <div class="flex-column">{move || item_set()}</div>
+            <div class="flex-column">{item_set}</div>
         </div>
         <div class="content-well flex-column" class:hidden=move || recipes().is_empty()>
             <span class="content-title">"crafting recipes"</span>
-            <div class="flex-wrap">{move || recipes()}</div>
+            <div class="flex-wrap">{recipes}</div>
         </div>
 
     }

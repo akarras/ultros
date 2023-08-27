@@ -19,7 +19,7 @@ pub fn WorldOnlyPicker(
                     let id = event_target_value(&input);
                     // let (_world_type, id) = world_target.split_once(":").unwrap();
                     let id = id.parse().unwrap();
-                    let world = worlds.lookup_selector(AnySelector::World(id)).and_then(|world| world.as_world().map(|w| w.clone()));
+                    let world = worlds.lookup_selector(AnySelector::World(id)).and_then(|world| world.as_world()).cloned();
                     set_current_world(world);
                 }>
             {data.regions.into_iter().map(|region| {
@@ -65,7 +65,7 @@ pub fn WorldPicker(
                 <select on:change=move |input| {
                     let world_target = event_target_value(&input);
                     // world target should be in the form of world_type:id
-                    let (world_type, id) = world_target.split_once(":").unwrap();
+                    let (world_type, id) = world_target.split_once(':').unwrap();
                     let id = id.parse().unwrap();
                     let selector = match world_type {
                         "world" => AnySelector::World(id),

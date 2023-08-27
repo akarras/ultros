@@ -79,7 +79,7 @@ fn compute_summary(sale: SaleData, hq_data: Option<&SaleData>) -> SaleSummary {
     let t = sales
         .last()
         .map(|last| (last.sale_date - now).num_milliseconds().abs() / sales.len() as i64);
-    let avg_sale_duration = t.map(|t| Duration::milliseconds(t));
+    let avg_sale_duration = t.map(Duration::milliseconds);
     SaleSummary {
         item_id,
         hq,
@@ -192,7 +192,7 @@ where
     let query_map = use_query_map();
 
     let read = create_memo(move |_| {
-        query_map.with(|query| query.get(&parameter).and_then(|s| s.parse().ok()))
+        query_map.with(|query| query.get(parameter).and_then(|s| s.parse().ok()))
     });
     let navigate = use_navigate();
     let set = move |value: Option<T>| {
@@ -203,7 +203,7 @@ where
                 query_map.insert(parameter.to_string(), value.to_string());
             }
             None => {
-                query_map.remove(&parameter);
+                query_map.remove(parameter);
             }
         }
         let query_string = query_map.to_query_string();
@@ -243,7 +243,7 @@ fn AnalyzerTable(
     let (datacenter_filter, set_datacenter_filter) = use_query_item::<String>("datacenter");
     let world_clone = worlds.clone(); // cloned to pass into closure
     let world_filter_list = create_memo(move |_| {
-        let world = world_filter().or_else(move || datacenter_filter())?;
+        let world = world_filter().or_else(datacenter_filter)?;
         let filter = world_clone
             .lookup_world_by_name(&world)?
             .all_worlds()
@@ -400,7 +400,7 @@ fn AnalyzerTable(
                     .map(|item| item.name.as_str())
                     .unwrap_or_default();
                 view! {<div class="grid-row" role="row-group" class:even=move || (i % 2) == 0 class:odd=move || (i % 2) == 1>
-                    <div role="cell" style="width: 25px;">{data.sale_summary.hq.then(|| "✅")}</div>
+                    <div role="cell" style="width: 25px;">{data.sale_summary.hq.then_some("✅")}</div>
                     <div role="cell" class="flex flex-row" style="width: 450px;">
                         <a href=format!("/item/{world}/{item_id}")>
                             <ItemIcon item_id icon_size=IconSize::Small/>
@@ -478,9 +478,10 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                             let sales = sales.get();
                             let global_cheapest_listings = global_cheapest_listings.get();
                             let worlds = world_value();
-                            let values = world_cheapest.map(|w| w.ok())
-                                .flatten().and_then(|r| sales.map(|s| s.ok())
-                                .flatten().and_then(|s| global_cheapest_listings.map(|g| g.ok()).flatten().and_then(|g| Some((r, s, g)))));
+                            let values = world_cheapest
+                                .and_then(|w| w.ok())
+                                .and_then(|r| sales.and_then(|s| s.ok())
+                                .and_then(|s| global_cheapest_listings.and_then(|g| g.ok()).map(|g| (r, s, g))));
                             values.map(|(world_cheapest_listings, sales, global_cheapest_listings)| {
                             view!{<AnalyzerTable sales global_cheapest_listings world_cheapest_listings worlds world=world.into() />
                             } }
@@ -502,8 +503,7 @@ pub fn AnalyzerWorldNavigator() -> impl IntoView {
         let world = p.get("world").map(|s| s.as_str()).unwrap_or_default();
         worlds
             .lookup_world_by_name(world)
-            .map(|w| w.as_world().cloned())
-            .flatten()
+            .and_then(|w| w.as_world().cloned())
     });
     info!("{initial_world:?}");
     let (current_world, set_current_world) = create_signal(initial_world);

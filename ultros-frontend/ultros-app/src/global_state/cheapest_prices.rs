@@ -28,10 +28,7 @@ impl CheapestPrices {
             .await
             .map(|cheapest_prices| {
                 let map = CheapestListingsMap::from(cheapest_prices.clone());
-                (
-                    cheapest_prices,
-                    map,
-                )
+                (cheapest_prices, map)
             })
         });
 

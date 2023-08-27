@@ -19,12 +19,12 @@ pub fn ItemSearchCategoryIcon(id: ItemSearchCategoryId) -> impl IntoView {
             let value: Cow<'static, str> = match id.0 {
                 // singular armory items
                 30..=38 | 40..=41 => {
-                    format!("icon xiv-Armoury_{}", category.name.replace(" ", "_")).into()
+                    format!("icon xiv-Armoury_{}", category.name.replace(' ', "_")).into()
                 }
                 // plural armoury
                 42 | 39 => format!(
                     "icon xiv-Armoury_{}",
-                    category.name.remove_last().replace(" ", "_").to_string()
+                    category.name.remove_last().replace(' ', "_").to_string()
                 )
                 .into(),
                 55 => "icon xiv-ItemCategory_Part".into(),
@@ -42,7 +42,7 @@ pub fn ItemSearchCategoryIcon(id: ItemSearchCategoryId) -> impl IntoView {
                 // Removes the last character from the item character
                 17 | 44..=51 | 53..=55 | 58..=59 | 72 | 75..=78 | 82 => format!(
                     "icon xiv-ItemCategory_{}",
-                    category.name.remove_last().replace(" ", "_").to_string()
+                    category.name.remove_last().replace(' ', "_").to_string()
                 )
                 .into(),
                 79 => "icon xiv-ItemCategory_Airship".into(),
@@ -53,7 +53,7 @@ pub fn ItemSearchCategoryIcon(id: ItemSearchCategoryId) -> impl IntoView {
                     category
                         .name
                         .replace(" Items", "")
-                        .replace("-", "")
+                        .replace('-', "")
                         .to_string()
                 )
                 .into(),
@@ -63,7 +63,7 @@ pub fn ItemSearchCategoryIcon(id: ItemSearchCategoryId) -> impl IntoView {
                 }
                 _ => format!(
                     "icon xiv-ItemCategory_{}",
-                    category.name.replace(" ", "_").replace("-", "")
+                    category.name.replace(' ', "_").replace('-', "")
                 )
                 .into(),
             };

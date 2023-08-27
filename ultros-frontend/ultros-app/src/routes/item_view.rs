@@ -21,7 +21,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
         move || {},
         move |_| async move {
             let world_data = get_worlds().await;
-            world_data.map(|data| WorldHelper::new(data))
+            world_data.map(WorldHelper::new)
         },
     );
     view! {
@@ -99,12 +99,12 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
                         {(!hq_listings.is_empty()).then(move || {
                             view!{ <div class="content-well">
                                 <span class="content-title">"high quality listings"</span>
-                                <ListingsTable listings=hq_listings.into() />
+                                <ListingsTable listings=hq_listings />
                             </div> }.into_view()
                         })}
                         <div class="content-well">
                             <span class="content-title">"low quality listings"</span>
-                            <ListingsTable listings=lq_listings.into() />
+                            <ListingsTable listings=lq_listings />
                         </div>
                         <div class="content-well">
                             <span class="content-title">"sale history"</span>
@@ -126,8 +126,7 @@ pub fn ItemView() -> impl IntoView {
     let item_id = create_memo(move |_| {
         params()
             .get("id")
-            .map(|id| id.parse::<i32>().ok())
-            .flatten()
+            .and_then(|id| id.parse::<i32>().ok())
             .unwrap_or_default()
     });
     let items = &xiv_gen_db::data().items;
@@ -148,7 +147,6 @@ pub fn ItemView() -> impl IntoView {
     let description =
         create_memo(move |_| format!("Current listings for {} on {}", item_name(), world(),));
     view! {
-
         <MetaDescription text=description/>
         <MetaTitle title=move || format!("{} - Market view", item_name())/>
         // TODO: probably shouldn't hard code the domain here
@@ -158,8 +156,8 @@ pub fn ItemView() -> impl IntoView {
                 <div class="flex-row">
                     {move || view!{<ItemIcon item_id=item_id() icon_size=IconSize::Large />}}
                     <div class="flex-column" style="padding: 5px">
-                        <span class="flex-row" style="font-size: 36px; line-height 0.5;">{move || item_name()}{move || view!{<Clipboard clipboard_text=item_name().to_string()/>}}</span>
-                        <span style="font-size: 16px">{move || items.get(&ItemId(item_id())).map(|item| categories.get(&item.item_ui_category)).flatten().map(|i| i.name.as_str()).unwrap_or_default()}</span>
+                        <span class="flex-row" style="font-size: 36px; line-height 0.5;">{item_name}{move || view!{<Clipboard clipboard_text=item_name().to_string()/>}}</span>
+                        <span style="font-size: 16px">{move || items.get(&ItemId(item_id())).and_then(|item| categories.get(&item.item_ui_category)).map(|i| i.name.as_str()).unwrap_or_default()}</span>
                         <span>{move || view!{<UIText text=item_description().to_string()/>}}</span>
                     </div>
                 </div>

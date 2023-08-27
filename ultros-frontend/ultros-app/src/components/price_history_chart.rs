@@ -18,7 +18,7 @@ pub fn PriceHistoryChart(sales: MaybeSignal<Vec<SaleHistory>>) -> impl IntoView 
             let backend = CanvasBackend::with_canvas_object(canvas.deref().clone()).unwrap();
             // if there's an error drawing, we should hide the canvas
             sales.with(|sales| {
-                !draw_sale_history_scatter_plot(backend, helper.clone().as_ref(), sales).is_ok()
+                draw_sale_history_scatter_plot(backend, helper.clone().as_ref(), sales).is_err()
             })
         } else {
             true

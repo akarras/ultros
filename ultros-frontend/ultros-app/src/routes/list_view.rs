@@ -32,12 +32,7 @@ pub fn ListView() -> impl IntoView {
     let params = use_params_map();
     let list_id = create_memo(move |_| {
         params
-            .with(|p| {
-                p.get("id")
-                    .as_ref()
-                    .map(|id| id.parse::<i32>().ok())
-                    .flatten()
-            })
+            .with(|p| p.get("id").as_ref().and_then(|id| id.parse::<i32>().ok()))
             .unwrap_or_default()
     });
     let add_item = create_action(move |list_item: &ListItem| {
@@ -46,7 +41,7 @@ pub fn ListView() -> impl IntoView {
     });
     let delete_item = create_action(move |list_item: &i32| delete_list_item(*list_item));
     let recipe_add = create_action(move |data: &(&Recipe, i32, bool, bool)| {
-        let ingredients = IngredientsIter::new(&data.0);
+        let ingredients = IngredientsIter::new(data.0);
         let craft_count = data.1;
         let items: Vec<_> = ingredients
             .map(|(id, amount)| {
@@ -101,7 +96,7 @@ pub fn ListView() -> impl IntoView {
             let item_search = move || {
                 search.with(|s| {
                     let mut score = items
-                        .into_iter()
+                        .iter()
                         .filter(|(_, i)| i.item_search_category.0 > 0)
                         .filter(|_| !s.is_empty())
                         .flat_map(|(id, i)| sublime_fuzzy::best_match(s, &i.name).map(|m| (id, i, m)))
@@ -130,14 +125,13 @@ pub fn ListView() -> impl IntoView {
                                     view!{<div class="flex-row">
                                         <ItemIcon item_id=id.0 icon_size=IconSize::Medium/>
                                         <span style="width: 400px">{&item.name}</span>
-                                        <label for="amount">"quantity:"</label><input on:input=read_input_quantity prop:value=move || quantity()></input>
+                                        <label for="amount">"quantity:"</label><input on:input=read_input_quantity prop:value=quantity></input>
                                         <button class="btn" on:click=move |_| {
                                             let item = ListItem { item_id: id.0, list_id: params
                                                 .with(|p| {
                                                     p.get("id")
                                                         .as_ref()
-                                                        .map(|id| id.parse::<i32>().ok())
-                                                        .flatten()
+                                                        .and_then(|id| id.parse::<i32>().ok())
                                                 })
                                                 .unwrap_or_default(), quantity: Some(quantity()), ..Default::default() };
                                             add_item.dispatch(item);
@@ -149,7 +143,7 @@ pub fn ListView() -> impl IntoView {
                     </div>
                 </div>}
                 }.into_view(),
-                MenuState::None => {}.into_view(),
+                MenuState::None => ().into_view(),
                 MenuState::Recipe => {
                     let (recipe, set_recipe) = create_signal("".to_string());
                     let recipe_data : Vec<(&Item, &Recipe)> = recipes.iter().flat_map(|(_, r)| {
@@ -234,7 +228,7 @@ pub fn ListView() -> impl IntoView {
                             view!{<tr valign="top">
                             {move || if !edit() {
                                 let item = item();
-                                view!{<td>{item.hq.and_then(|hq| hq.then(|| "✅"))}</td>
+                                view!{<td>{item.hq.and_then(|hq| hq.then_some("✅"))}</td>
                                 <td>
                                     <div class="flex-row">
                                         <ItemIcon item_id=item.item_id icon_size=IconSize::Small/>
@@ -254,7 +248,7 @@ pub fn ListView() -> impl IntoView {
                             }
                             } else {
                                 let item = item();
-                                view!{<td><input type="checkbox" prop:checked=move || temp_item.with(|i| i.hq) on:click=move |_| { temp_item.update(|w| w.hq = Some(!w.hq.map(|hq| hq).unwrap_or_default())) }/></td>
+                                view!{<td><input type="checkbox" prop:checked=move || temp_item.with(|i| i.hq) on:click=move |_| { temp_item.update(|w| w.hq = Some(!w.hq.unwrap_or_default())) }/></td>
                                 <td>
                                     <div class="flex-row">
                                         <ItemIcon item_id=item.item_id icon_size=IconSize::Small/>

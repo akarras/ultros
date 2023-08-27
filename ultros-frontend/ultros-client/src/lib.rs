@@ -1,16 +1,14 @@
-use std::{str::from_utf8, sync::Arc};
-
 use anyhow::{anyhow, Result};
 use futures::{future::join, Future};
 use gloo_net::http::Request;
 use leptos::*;
 use leptos_meta::provide_meta_context;
-use log::info;
-use rexie::{Index, ObjectStore, Rexie, Store, Transaction, TransactionMode};
+use rexie::{ObjectStore, Rexie, Store, Transaction, TransactionMode};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use ultros_api_types::{world::WorldData, world_helper::WorldHelper};
 use ultros_app::*;
-use wasm_bindgen::{prelude::wasm_bindgen, JsValue};
+use wasm_bindgen::prelude::wasm_bindgen;
 
 #[derive(Serialize, Deserialize)]
 struct Data {
@@ -117,7 +115,7 @@ async fn try_build_db() -> Result<Rexie> {
         .add_object_store(ObjectStore::new("game_data").key_path("version"))
         .build()
         .await
-        .map_err(|e| anyhow!("failed to build db"))
+        .map_err(|e| anyhow!("failed to build db {e}"))
 }
 
 async fn populate_xiv_gen_data<'a>() {

@@ -91,7 +91,7 @@ pub(crate) async fn get_retainer_undercuts() -> AppResult<UserRetainerListings> 
     let listings_map = listings.into_iter().flatten().fold(
         HashMap::new(),
         |mut world_map, (world_id, item_data)| {
-            if let Some(_) = world_map.insert(world_id, item_data) {
+            if world_map.insert(world_id, item_data).is_some() {
                 unreachable!("Should only be one world id from the set above.");
             }
             world_map

@@ -231,14 +231,12 @@ impl UltrosDb {
             .all(&self.db)
             .await?;
         owned_retainers.sort_by_key(|o| o.weight);
-        let retainers: Vec<(
-            owned_retainers::Model,
-            Result<(retainer::Model, Vec<active_listing::Model>), anyhow::Error>,
-        )> = futures::future::join_all(owned_retainers.into_iter().map(|r| async move {
-            let listings = self.get_retainer_and_listings_for_owned(&r).await;
-            (r, listings)
-        }))
-        .await;
+        let retainers: Vec<_> =
+            futures::future::join_all(owned_retainers.into_iter().map(|r| async move {
+                let listings = self.get_retainer_and_listings_for_owned(&r).await;
+                (r, listings)
+            }))
+            .await;
         let retainers: Result<DiscordUserRetainerListings> = retainers
             .into_iter()
             .map(|(o, r)| r.map(|(r, d)| (o, r, d)))
