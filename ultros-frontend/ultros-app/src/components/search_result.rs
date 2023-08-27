@@ -84,7 +84,7 @@ pub fn ItemSearchResult(
                                 }
                             }</span>
                             <div class="flex-row" style="align-items: start; flex-wrap: nowrap; justify-content:end;">
-                                <CheapestPrice item_id=item.key_id hq=None/>
+                                <CheapestPrice item_id=item.key_id />
                             </div>
                         </div>
                         <div class="flex-row flex-space" style="height: 20px; overflow: clip">

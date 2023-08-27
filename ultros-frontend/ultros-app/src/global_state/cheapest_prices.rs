@@ -1,4 +1,4 @@
-use ultros_api_types::cheapest_listings::CheapestListings;
+use ultros_api_types::cheapest_listings::{CheapestListings, CheapestListingsMap};
 
 use leptos::*;
 
@@ -11,14 +11,14 @@ use super::home_world::get_price_zone;
 pub(crate) struct CheapestPrices {
     pub read_listings: Resource<
         Option<ultros_api_types::world_helper::OwnedResult>,
-        Result<CheapestListings, crate::error::AppError>,
+        Result<(CheapestListings, CheapestListingsMap), crate::error::AppError>,
     >,
 }
 
 impl CheapestPrices {
     pub fn new() -> Self {
         let (read, _) = get_price_zone();
-        let read_listings = create_resource(read, move |world| async move {
+        let read_listings = create_local_resource(read, move |world| async move {
             get_cheapest_listings(
                 world
                     .as_ref()
@@ -26,6 +26,13 @@ impl CheapestPrices {
                     .unwrap_or("North-America"),
             )
             .await
+            .map(|cheapest_prices| {
+                let map = CheapestListingsMap::from(cheapest_prices.clone());
+                (
+                    cheapest_prices,
+                    map,
+                )
+            })
         });
 
         Self { read_listings }

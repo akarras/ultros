@@ -242,7 +242,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
         key=|(id, item)| (id.0, &item.name)
         view=|(id, item)| view!{<div class="flex-row" style="min-width: 500px;">
             <SmallItemDisplay item=item />
-            <CheapestPrice item_id=*id hq=None />
+            <CheapestPrice item_id=*id />
         </div> } viewport_height=800.0 row_height=27.3/>}
 }
 

@@ -1,5 +1,6 @@
 /// Related items links items that are related to the current set
 use leptos::*;
+use ultros_api_types::cheapest_listings::CheapestListingMapKey;
 use xiv_gen::{Item, ItemId, Recipe};
 
 use crate::global_state::cheapest_prices::CheapestPrices;
@@ -77,17 +78,13 @@ fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
                     let hq_amount : i32 = IngredientsIter::new(recipe)
                     .flat_map(|(ingredient, amount)| items.get(&ingredient).map(|item| (item, amount)))
                     .flat_map(|(item, quantity)| {
-                        prices.cheapest_listings.iter()
-                            .find(|l| l.item_id == item.key_id.0 && l.hq == item.can_be_hq)
-                            .map(|listings| (quantity, listings))
-                    }).map(|(quantity, listings)| listings.cheapest_price * quantity as i32).sum();
+                        prices.1.map.get(&CheapestListingMapKey { item_id: item.key_id.0, hq: item.can_be_hq}).map(|data| data.price * quantity as i32)
+                    }).sum();
                     let amount : i32 = IngredientsIter::new(recipe)
                     .flat_map(|(ingredient, amount)| items.get(&ingredient).map(|item| (item, amount)))
                     .flat_map(|(item, quantity)| {
-                        prices.cheapest_listings.iter()
-                            .find(|l| l.item_id == item.key_id.0 && !l.hq)
-                            .map(|listings| (quantity, listings))
-                    }).map(|(quantity, listings)| listings.cheapest_price * quantity as i32).sum();
+                        prices.1.map.get(&CheapestListingMapKey { item_id: item.key_id.0, hq: item.can_be_hq}).map(|data| data.price * quantity as i32)
+                    }).sum();
                     view!{"HQ: " <Gil amount=hq_amount/> " LQ:" <Gil amount />}
                 })
             })}
@@ -103,13 +100,13 @@ fn Recipe(recipe: &'static Recipe) -> impl IntoView {
         .map(|(ingredient, amount)| view! {
             <div class="flex-row">
                 <span style="color:#dab;">{amount.to_string()}</span>"x"<SmallItemDisplay item=ingredient/>
-                <CheapestPrice item_id=ingredient.key_id hq=None />
+                <CheapestPrice item_id=ingredient.key_id />
             </div>})
         .collect::<Vec<_>>();
     let target_item = items.get(&recipe.item_result)?;
     Some(view! {<div class="content-well">
         "Crafting Recipe:"
-        <div class="flex-row"><SmallItemDisplay item=target_item/><CheapestPrice item_id=target_item.key_id hq=None /></div>
+        <div class="flex-row"><SmallItemDisplay item=target_item/><CheapestPrice item_id=target_item.key_id /></div>
         "Ingredients:"
         {ingredients}
         <div class="flex-row">"Price to craft: "</div>
