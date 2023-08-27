@@ -10,7 +10,7 @@ members = [
     "ultros-frontend/ultros-client",
     "ultros-frontend/ultros-app",
     "ultros-frontend/ultros-xiv-icons"]
-
+resolver = "2"
 
 [workspace.dependencies]
 tokio = {version = "1", features = ["full"]}
@@ -31,6 +31,7 @@ sea-orm = {version = "0.12.2", features = ["sqlx-postgres", "runtime-tokio-rustl
 sea-orm-migration = {version = "0.12.2", features = ["sqlx-postgres", "runtime-tokio-rustls"]}
 sea-query = "0.30.0"
 yoke = "0.7.1"
+xiv-gen = {path = "./xiv-gen", features = ["item", "item_ui_category", "item_search_category", "class_job", "recipe", "class_job_category"]}
 
 [profile.release]
 lto = true

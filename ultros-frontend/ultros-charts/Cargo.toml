@@ -8,7 +8,7 @@ edition = "2021"
 [dependencies]
 plotters = "0.3"
 xiv-gen-db = {path = "../../xiv-gen-db"}
-xiv-gen = {path = "../../xiv-gen", features = ["item"]}
+xiv-gen.workspace = true
 ultros-api-types = {path = "../../ultros-api-types"}
 chrono = {workspace = true}
 itertools.workspace = true

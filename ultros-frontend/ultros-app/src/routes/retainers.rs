@@ -11,7 +11,7 @@ use xiv_gen::ItemId;
 
 #[component]
 fn RetainerTable(retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoView {
-    let data = xiv_gen_db::decompress_data();
+    let data = xiv_gen_db::data();
     let items = &data.items;
     let categories = &data.item_search_categorys;
     let mut listings = listings;

@@ -22,7 +22,7 @@ pub fn SearchBox() -> impl IntoView {
     };
     let focus_in = move |_| set_active(true);
     let focus_out = move |_| set_active(false);
-    let items = &xiv_gen_db::decompress_data().items;
+    let items = &xiv_gen_db::data().items;
     let item_search = move || {
         search.with(|s| {
             if s.is_empty() {

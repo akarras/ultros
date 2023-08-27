@@ -27,7 +27,7 @@ pub fn LiveSaleTicker() -> impl IntoView {
             live_sales(sales, sale).await.unwrap();
         }
     });
-    let items = &xiv_gen_db::decompress_data().items;
+    let items = &xiv_gen_db::data().items;
     view! {
         <Suspense fallback=move || view!{<Loading />}>
             {move ||{

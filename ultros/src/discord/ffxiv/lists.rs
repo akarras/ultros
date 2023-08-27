@@ -113,7 +113,7 @@ async fn add_item(
     #[description = "hq? Leave blank for no filter"] hq: Option<bool>,
 ) -> Result<(), Error> {
     let author_id = ctx.author().id.0 as i64;
-    let (i, item) = xiv_gen_db::decompress_data()
+    let (i, item) = xiv_gen_db::data()
         .items
         .iter()
         .find(|(_, i)| i.name == item_name)
@@ -147,7 +147,7 @@ async fn remove_item(
     #[description = "name of the list to remove an item from"] list_name: String,
     #[description = "item to remove"] item_name: String,
 ) -> Result<(), Error> {
-    let items = &xiv_gen_db::decompress_data().items;
+    let items = &xiv_gen_db::data().items;
     let author_id = ctx.author().id.0 as i64;
     let (id, _) = items
         .iter()
@@ -193,7 +193,7 @@ async fn show_list(
     list_listings
         .iter_mut()
         .for_each(|(_, listings)| listings.sort_by_key(|(l, _)| l.price_per_unit));
-    let items = &xiv_gen_db::decompress_data().items;
+    let items = &xiv_gen_db::data().items;
     let description = list_listings
         .iter()
         .map(|(list, listings)| {

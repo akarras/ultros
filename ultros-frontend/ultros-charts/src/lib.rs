@@ -47,7 +47,7 @@ where
     root.fill(&RGBColor(16, 10, 18).mix(0.93))?;
 
     let line = map_sale_history_to_line(world_helper, sales);
-    let item_name = &xiv_gen_db::decompress_data()
+    let item_name = &xiv_gen_db::data()
         .items
         .get(&ItemId(
             sales.first().ok_or(anyhow!("no sales"))?.sold_item_id,
@@ -68,7 +68,7 @@ where
         .into_option()
         .ok_or(anyhow!("bad dates"))?;
     if first_sale == last_sale {
-        return Err(anyhow!("only one sale"))?;
+        Err(anyhow!("only one sale"))?;
     }
     let time_range = last_sale.signed_duration_since(*first_sale);
     let label = if time_range.num_days() > 2 {
@@ -83,7 +83,7 @@ where
         .y_label_area_size(80)
         .margin(10)
         .caption(
-            &item_name,
+            item_name,
             ("Jaldi, sans-serif", 20.0).into_font().color(&WHITE),
         )
         .build_cartesian_2d(*first_sale..*last_sale, 0..*max_sale)?;
@@ -91,8 +91,8 @@ where
     chart
         .configure_mesh()
         .label_style(&WHITE)
-        .bold_line_style(&RGBColor(200, 200, 200).mix(0.2))
-        .light_line_style(&RGBColor(200, 200, 200).mix(0.02))
+        .bold_line_style(RGBColor(200, 200, 200).mix(0.2))
+        .light_line_style(RGBColor(200, 200, 200).mix(0.02))
         .x_desc("Time")
         .y_desc("Price per unit")
         .x_label_formatter(&move |x| match label {
@@ -118,20 +118,20 @@ where
         chart
             .draw_series(sales.into_iter().map(|(date, price, quantity)| {
                 Circle::new(
-                    (date, price).into(),
+                    (date, price),
                     (quantity as f32 / 50.0 * 5.0).clamp(2.5, 5.0),
-                    color.clone(),
+                    color,
                 )
             }))
             .ok()
             .unwrap()
             .label(series_name)
-            .legend(move |l| Circle::new(l, 5.0, color.clone()));
+            .legend(move |l| Circle::new(l, 5.0, color));
     }
 
     chart
         .configure_series_labels()
-        .border_style(&PURPLE_A400)
+        .border_style(PURPLE_A400)
         .label_font(&WHITE)
         .draw()?;
 
@@ -141,11 +141,13 @@ where
     Ok(())
 }
 
+pub type LabelSaleData = Option<(String, Vec<(DateTime<Local>, i32, i32)>)>;
+
 fn map_sales_in(
     world_helper: &WorldHelper,
     selector: AnySelector,
     sales: &[SaleHistory],
-) -> Option<(String, Vec<(DateTime<Local>, i32, i32)>)> {
+) -> LabelSaleData {
     let result = world_helper.lookup_selector(selector)?;
     Some((
         result.get_name().to_string(),
@@ -168,10 +170,12 @@ fn map_sales_in(
     ))
 }
 
+pub type UnlabeledSaleData = Vec<(String, Vec<(DateTime<Local>, i32, i32)>)>;
+
 fn map_sale_history_to_line(
     world_helper: &WorldHelper,
     sales: &[SaleHistory],
-) -> Vec<(String, Vec<(DateTime<Local>, i32, i32)>)> {
+) -> UnlabeledSaleData {
     // figure out whether we want to group these by world or what
     let world_ids: HashSet<_> = sales
         .iter()

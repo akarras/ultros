@@ -20,7 +20,7 @@ async fn autocomplete_item<'a>(
     _ctx: Context<'_>,
     partial: &'a str,
 ) -> impl Iterator<Item = poise::AutocompleteChoice<i32>> + 'a {
-    let items = xiv_gen_db::decompress_data().items.values();
+    let items = xiv_gen_db::data().items.values();
     let partial = partial.to_lowercase();
     items
         .filter(move |item| item.name.to_lowercase().contains(&partial))
@@ -58,7 +58,7 @@ async fn current(
     let world_ids = worlds
         .get_all_worlds_in(&world)
         .ok_or(anyhow!("bad world data"))?;
-    let item_data = xiv_gen_db::decompress_data()
+    let item_data = xiv_gen_db::data()
         .items
         .get(&ItemId(item))
         .ok_or(anyhow!("bad item id"))?;
@@ -110,7 +110,7 @@ async fn history(
     world: String,
 ) -> Result<(), Error> {
     ctx.defer().await?;
-    let item = xiv_gen_db::decompress_data()
+    let item = xiv_gen_db::data()
         .items
         .get(&ItemId(item))
         .ok_or(anyhow!("Invalid item id"))?;

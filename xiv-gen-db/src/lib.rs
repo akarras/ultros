@@ -1,21 +1,42 @@
 use flate2::FlushDecompress;
-use lazy_static::lazy_static;
+use once_cell::sync::OnceCell;
 
-pub fn decompress_data() -> &'static xiv_gen::Data {
-    fn decompress_impl() -> xiv_gen::Data {
-        let mut decompressor = flate2::Decompress::new(true);
-        let mut data = Vec::new();
-        let bytes = include_bytes!(concat!(env!("OUT_DIR"), "/database.bincode"));
-        data.reserve(bytes.len() * 5);
-        decompressor
-            .decompress_vec(bytes, &mut data, FlushDecompress::Sync)
-            .unwrap();
-        let (data, _) = bincode::decode_from_slice(data.as_slice(), bincode::config::standard())
-            .expect("Bin code failed to deserialize, is the database out of date for some reason?");
-        data
+pub static XIV_DATA: OnceCell<xiv_gen::Data> = OnceCell::new();
+
+#[cfg(feature = "embed")]
+pub fn bincode() -> &'static [u8] {
+    include_bytes!(concat!(env!("OUT_DIR"), "/database.bincode"))
+}
+
+#[cfg(feature = "embed")]
+pub fn data() -> &'static xiv_gen::Data {
+    match XIV_DATA.get() {
+        Some(d) => d,
+        None => {
+            XIV_DATA.set(decompress_data(bincode()).unwrap()).unwrap();
+            XIV_DATA.get().unwrap()
+        }
     }
-    lazy_static! {
-        pub static ref XIV_DATA: xiv_gen::Data = decompress_impl();
-    }
-    &XIV_DATA
+}
+
+#[cfg(not(feature = "embed"))]
+pub fn data() -> &'static xiv_gen::Data {
+    XIV_DATA.get().expect("XIV data not initialized")
+}
+
+pub fn try_init(bytes: &[u8]) -> anyhow::Result<()> {
+    XIV_DATA.set(decompress_data(bytes)?).unwrap();
+    Ok(())
+}
+
+pub fn decompress_data(bytes: &[u8]) -> anyhow::Result<xiv_gen::Data> {
+    let mut decompressor = flate2::Decompress::new(true);
+    let mut data: Vec<u8> = Vec::new();
+    data.reserve(bytes.len() * 5);
+    decompressor
+        .decompress_vec(bytes, &mut data, FlushDecompress::Sync)
+        .unwrap();
+
+    let (data, _) = bincode::decode_from_slice(&data, xiv_gen::bincode_config())?;
+    Ok(data)
 }

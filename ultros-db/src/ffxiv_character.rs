@@ -143,10 +143,10 @@ impl UltrosDb {
         &self,
         id: i32,
     ) -> Result<ffxiv_character_verification::Model> {
-        Ok(ffxiv_character_verification::Entity::find_by_id(id)
+        ffxiv_character_verification::Entity::find_by_id(id)
             .one(&self.db)
             .await?
-            .ok_or(anyhow::Error::msg("Challenge ID not found"))?)
+            .ok_or(anyhow::Error::msg("Challenge ID not found"))
     }
 
     pub async fn get_all_pending_verification_challenges(
@@ -160,7 +160,7 @@ impl UltrosDb {
     > {
         Ok(ffxiv_character_verification::Entity::find()
             .find_also_related(final_fantasy_character::Entity)
-            .filter(ffxiv_character_verification::Column::DiscordUserId.eq(discord_user as i64))
+            .filter(ffxiv_character_verification::Column::DiscordUserId.eq(discord_user))
             .all(&self.db)
             .await?)
     }

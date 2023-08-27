@@ -11,7 +11,7 @@ use xiv_gen::{ClassJobCategory, Item, ItemId};
 /// Displays buttons of categories
 #[component]
 fn CategoryView(category: u8) -> impl IntoView {
-    let data = xiv_gen_db::decompress_data();
+    let data = xiv_gen_db::data();
     let search_categories = &data.item_search_categorys;
     // let item_ui_category = &data.item_ui_categorys;
     let mut categories = search_categories
@@ -138,7 +138,7 @@ fn job_category_lookup(class_job_category: &ClassJobCategory, job_acronym: &str)
 
 #[component]
 fn JobsList() -> impl IntoView {
-    let jobs = &xiv_gen_db::decompress_data().class_jobs;
+    let jobs = &xiv_gen_db::data().class_jobs;
     let mut jobs: Vec<_> = jobs.iter().collect();
     jobs.sort_by_key(|(_, job)| job.ui_priority);
     view! {<div class="flex-wrap" style="padding: 5px;">
@@ -156,7 +156,7 @@ fn JobsList() -> impl IntoView {
 #[component]
 pub fn CategoryItems() -> impl IntoView {
     let params = use_params_map();
-    let data = xiv_gen_db::decompress_data();
+    let data = xiv_gen_db::data();
     let items = create_memo(move |_| {
         let cat = params()
             .get("category")
@@ -195,7 +195,7 @@ pub fn CategoryItems() -> impl IntoView {
 #[component]
 pub fn JobItems() -> impl IntoView {
     let params = use_params_map();
-    let data = xiv_gen_db::decompress_data();
+    let data = xiv_gen_db::data();
     let (market_only, set_market_only) = create_signal(true);
     let items = create_memo(move |_| {
         let job_set = match params().get("jobset") {

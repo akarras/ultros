@@ -44,7 +44,7 @@ pub fn get_item_image(item_id: i32, image_size: IconSize) -> Option<&'static [u8
                 entry
                     .path()
                     .ok()
-                    .and_then(|path| path.as_os_str().to_str().map(|str| parse_url(str)))
+                    .and_then(|path| path.as_os_str().to_str().map(parse_url))
                     .map(|key| (key, bytes))
                     .unwrap()
             })

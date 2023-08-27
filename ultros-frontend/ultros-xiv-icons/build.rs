@@ -7,7 +7,7 @@ use std::{
     ffi::OsStr,
     fs::{read_dir, DirEntry},
     io::{Cursor, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::Instant,
 };
 use tar::{Builder, Header};
@@ -15,7 +15,7 @@ use tempdir::TempDir;
 use ultros_api_types::icon_size::IconSize;
 
 /// Resizes all xiv-icons and bundles them
-async fn resize_all_images(out_dir: &PathBuf) {
+async fn resize_all_images(out_dir: &Path) {
     let dir = env::var("CARGO_MANIFEST_DIR").unwrap();
     let assets = format!("{dir}/universalis-assets/icon2x");
     let path = std::fs::canonicalize(&assets).unwrap_or_else(|error| panic!("{error}\n{assets}"));
@@ -30,7 +30,7 @@ async fn resize_all_images(out_dir: &PathBuf) {
     let bar = &progress_bar;
     stream::iter(paths)
         .for_each_concurrent(Some(50), |path| async move {
-            let out_dir = out_dir.clone();
+            let out_dir = out_dir.to_path_buf();
             let handle = tokio::spawn(async move {
                 resize_image(path, &out_dir).await;
                 // bar.inc(1);
@@ -45,7 +45,7 @@ async fn resize_image(entry: DirEntry, out_dir: &PathBuf) -> Option<()> {
     // create three sizes of images
     let file = entry.file_name();
     let file = file.to_str()?;
-    let (file_name, _) = file.split_once(".")?;
+    let (file_name, _) = file.split_once('.')?;
     let path = entry.path();
     let extension = path.extension().and_then(OsStr::to_str)?;
     if extension != "png" {
@@ -131,7 +131,7 @@ async fn main() {
     println!("cargo:rerun-if-change=./build.rs");
     let instant = Instant::now();
     let temp_dir = TempDir::new("tmp-universalis-icons").unwrap();
-    resize_all_images(&temp_dir.path().to_path_buf()).await;
+    resize_all_images(temp_dir.path()).await;
     compress(&temp_dir.path().to_path_buf()).await;
     println!(
         "Finished resizing {}ms",

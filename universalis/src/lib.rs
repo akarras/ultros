@@ -236,8 +236,8 @@ pub struct WorldView {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum HistoryView {
-    SingleView(HistorySingleView),
-    MultiView(HistoryMultiView),
+    SingleView(Box<HistorySingleView>),
+    MultiView(Box<HistoryMultiView>),
 }
 
 #[serde_as]

@@ -2,7 +2,7 @@ use anyhow::Result;
 use futures::{future::try_join_all, Stream};
 use migration::DbErr;
 use sea_orm::{ColumnTrait, DbBackend, EntityTrait, FromQueryResult, QueryFilter, Statement};
-use std::collections::{HashMap, HashSet};
+use std::collections::{hash_map::Entry, HashMap, HashSet};
 use tracing::instrument;
 use ultros_api_types::{ActiveListing, Retainer};
 use universalis::{ItemId, ListingView, WorldId};
@@ -98,11 +98,7 @@ impl UltrosDb {
         .collect();
         Ok(items
             .into_iter()
-            .flat_map(|i| {
-                retainers
-                    .get(&i.retainer_id)
-                    .map(|r| (i.into(), r.clone().into()))
-            })
+            .flat_map(|i| retainers.get(&i.retainer_id).map(|r| (i.into(), r.clone())))
             .collect())
     }
 
@@ -114,7 +110,7 @@ impl UltrosDb {
     ) -> Result<Vec<(active_listing::Model, Option<retainer::Model>)>> {
         let result = try_join_all(
             worlds
-                .into_iter()
+                .iter()
                 .map(|world| self.get_all_listings_with_retainers(*world, item)),
         )
         .await?;
@@ -130,7 +126,7 @@ impl UltrosDb {
     ) -> Result<Vec<active_listing::Model>> {
         let result = try_join_all(
             worlds
-                .into_iter()
+                .iter()
                 .map(|world| self.get_listings_for_world(WorldId(*world), item)),
         )
         .await?;
@@ -197,11 +193,11 @@ impl UltrosDb {
             .collect();
         // determine missing retainers
         for (name, id, retainer_city) in queried_retainers {
-            if !retainers.contains_key(&name) {
+            if let Entry::Vacant(e) = retainers.entry(name.clone()) {
                 let retainer = self
-                    .store_retainer(&id, &name, world_id, retainer_city as i32)
+                    .store_retainer(&id, &name, world_id, retainer_city)
                     .await?;
-                retainers.insert(name, retainer);
+                e.insert(retainer);
             }
         }
         let mut existing_items = Entity::find()
@@ -303,7 +299,7 @@ impl UltrosDb {
             .await;
         let added = added
             .into_iter()
-            .map(|l| {
+            .flat_map(|l| {
                 l.ok().map(|l| {
                     let retainer = retainers
                         .values()
@@ -314,7 +310,6 @@ impl UltrosDb {
                     (l.into(), retainer)
                 })
             })
-            .flatten()
             .collect();
         self.set_last_updated(world_id, item_id).await?;
         Ok((

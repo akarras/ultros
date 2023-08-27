@@ -33,7 +33,7 @@ pub(crate) async fn profit(
         .id;
     // let threshold = number_recently_sold;
     // let window = Duration::days(threshold_days.into());
-    let xiv_data = xiv_gen_db::decompress_data();
+    let xiv_data = xiv_gen_db::data();
     let items = &xiv_data.items;
     let resale = ResaleOptions {
         filter_sale: None,

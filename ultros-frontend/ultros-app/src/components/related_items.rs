@@ -8,7 +8,7 @@ use super::{cheapest_price::*, gil::*, loading::*, small_item_display::*};
 
 /// This iterator will attempt to find related items using the classjobcategory && ilvl
 fn item_set_iter(item: &'static Item) -> impl Iterator<Item = &'static Item> {
-    let items = &xiv_gen_db::decompress_data().items;
+    let items = &xiv_gen_db::data().items;
     items.values().filter(|i| {
         item.class_job_category.0 != 0
             && item.class_job_category.0 == i.class_job_category.0
@@ -57,7 +57,7 @@ impl<'a> Iterator for IngredientsIter<'a> {
 
 /// This iterator will traverse the recipe tree for items that are related to using this item for crafting
 fn recipe_tree_iter(item_id: ItemId) -> impl Iterator<Item = &'static Recipe> {
-    let recipes = &xiv_gen_db::decompress_data().recipes;
+    let recipes = &xiv_gen_db::data().recipes;
     // our item id could be in item_result, or item_ingredient
     recipes.values().filter(move |filter| {
         filter.item_result == item_id
@@ -67,7 +67,7 @@ fn recipe_tree_iter(item_id: ItemId) -> impl Iterator<Item = &'static Recipe> {
 
 #[component]
 fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
-    let items = &xiv_gen_db::decompress_data().items;
+    let items = &xiv_gen_db::data().items;
     let cheapest_prices = use_context::<CheapestPrices>().unwrap();
 
     view! {
@@ -97,7 +97,7 @@ fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
 
 #[component]
 fn Recipe(recipe: &'static Recipe) -> impl IntoView {
-    let items = &xiv_gen_db::decompress_data().items;
+    let items = &xiv_gen_db::data().items;
     let ingredients = IngredientsIter::new(recipe)
         .flat_map(|(ingredient, amount)| items.get(&ingredient).map(|item| (item, amount)))
         .map(|(ingredient, amount)| view! {
@@ -119,7 +119,7 @@ fn Recipe(recipe: &'static Recipe) -> impl IntoView {
 
 #[component]
 pub fn RelatedItems(item_id: Signal<i32>) -> impl IntoView {
-    let db = xiv_gen_db::decompress_data();
+    let db = xiv_gen_db::data();
     let item = move || db.items.get(&ItemId(item_id()));
     let item_set = move || {
         item()

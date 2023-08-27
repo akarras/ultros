@@ -7,7 +7,7 @@ use xiv_gen::{ClassJobId, ItemSearchCategoryId};
 pub fn ItemSearchCategoryIcon(id: ItemSearchCategoryId) -> impl IntoView {
     // the css names match with the english name of the category
     // if there's a class job, use the abbreviation instead
-    let data = &xiv_gen_db::decompress_data();
+    let data = &xiv_gen_db::data();
     let categories = &data.item_search_categorys;
     let class_jobs = &data.class_jobs;
     categories.get(&id).map(|category| {

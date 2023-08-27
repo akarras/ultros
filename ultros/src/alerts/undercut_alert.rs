@@ -335,7 +335,7 @@ impl RetainerAlertListener {
                                     item_id,
                                     undercut_retainers,
                                 }) => {
-                                    let items = &xiv_gen_db::decompress_data().items;
+                                    let items = &xiv_gen_db::data().items;
                                     if let Some(item) = items.get(&xiv_gen::ItemId(item_id)) {
                                         let retainer_names = undercut_retainers
                                             .into_iter()

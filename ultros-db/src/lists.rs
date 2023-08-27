@@ -303,11 +303,11 @@ impl UltrosDb {
             .all(&self.db)
             .await?;
         let worlds = &worlds;
-        Ok(try_join_all(list_items.into_iter().map(|item| async move {
+        try_join_all(list_items.into_iter().map(|item| async move {
             self.get_all_listings_in_worlds_with_retainers(worlds, ItemId(item.item_id))
                 .await
                 .map(|listings| (item, listings))
         }))
-        .await?)
+        .await
     }
 }

@@ -119,7 +119,7 @@ async fn check_undercuts(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     let user_id = ctx.author().id.0;
     let under_cut_items = ctx.data().db.get_retainer_undercut_items(user_id).await?;
-    let data = xiv_gen_db::decompress_data();
+    let data = xiv_gen_db::data();
     let item_db = &data.items;
     ctx.send(|r| {
         for (_, retainer, items) in &under_cut_items {
@@ -174,7 +174,7 @@ async fn check_listings(ctx: Context<'_>) -> Result<(), Error> {
     if retainers.is_empty() {
         ctx.say("No retainers found :(").await?;
     }
-    let data = xiv_gen_db::decompress_data();
+    let data = xiv_gen_db::data();
     let items = &data.items;
     ctx.send(|r| {
         for (_, retainer, listings) in retainers {

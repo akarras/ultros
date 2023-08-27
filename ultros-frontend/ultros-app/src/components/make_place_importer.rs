@@ -16,7 +16,7 @@ pub enum ParseListError {
 }
 
 fn lookup_item_by_name(name: &str) -> Result<ItemId, ParseListError> {
-    let items = &xiv_gen_db::decompress_data().items;
+    let items = &xiv_gen_db::data().items;
     items
         .iter()
         .find(|(_, item)| item.name == name.trim())

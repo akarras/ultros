@@ -5,7 +5,7 @@ use xiv_gen::ItemId;
 #[component]
 pub fn ItemIcon(item_id: i32, icon_size: IconSize) -> impl IntoView {
     // Currently I only have icons for marketboard items, assume that anything without an item search category won't have an icon
-    let valid_icon = xiv_gen_db::decompress_data()
+    let valid_icon = xiv_gen_db::data()
         .items
         .get(&ItemId(item_id))
         .map(|item| item.item_search_category.0 > 0)

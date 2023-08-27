@@ -134,7 +134,7 @@ impl DataDetector {
         }
         lazy_static! {
             // regex: check is number
-            static ref RE: Regex = Regex::new(r#"^(\+|-|)[0-9]+\.[0-9]*$"#).unwrap();
+            static ref RE: Regex = Regex::new(r"^(\+|-|)[0-9]+\.[0-9]*$").unwrap();
         }
 
         if RE.is_match(record) {
@@ -267,7 +267,7 @@ fn create_struct(
                 line_one = "r#trait".to_string();
             } else if line_one == "move" {
                 line_one = "r#move".to_string();
-            } else if ('0'..='9').contains(&line_one.chars().next().unwrap_or_default()) {
+            } else if line_one.chars().next().unwrap_or_default().is_ascii_digit() {
                 line_one = format!("num{line_one}");
             }
 

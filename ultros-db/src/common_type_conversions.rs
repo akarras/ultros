@@ -109,14 +109,14 @@ impl From<&WorldCache> for WorldData {
                         id: *region_id,
                         name: name.to_string(),
                         datacenters: datacenters
-                            .into_iter()
+                            .iter()
                             .map(|(dc, worlds)| {
                                 let datacenter::Model { id, name, .. } = dc;
                                 Datacenter {
                                     id: *id,
                                     name: name.to_string(),
                                     worlds: worlds
-                                        .into_iter()
+                                        .iter()
                                         .map(|world| World::from(*world))
                                         .collect(),
                                     region_id: *region_id,

@@ -130,7 +130,7 @@ pub fn ItemView() -> impl IntoView {
             .flatten()
             .unwrap_or_default()
     });
-    let items = &xiv_gen_db::decompress_data().items;
+    let items = &xiv_gen_db::data().items;
     let world = create_memo(move |_| params.with(|p| p.get("world").cloned().unwrap_or_default()));
     let item_name = move || {
         items
@@ -144,7 +144,7 @@ pub fn ItemView() -> impl IntoView {
             .map(|item| item.description.as_str())
             .unwrap_or_default()
     };
-    let categories = &xiv_gen_db::decompress_data().item_ui_categorys;
+    let categories = &xiv_gen_db::data().item_ui_categorys;
     let description =
         create_memo(move |_| format!("Current listings for {} on {}", item_name(), world(),));
     view! {

@@ -4454,6 +4454,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "rexie"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fef172ff9cdf146cdc934e28cdeb137517bf954fb75e6ee8987dd44b58f351b1"
+dependencies = [
+ "console_error_panic_hook",
+ "js-sys",
+ "num-traits",
+ "thiserror",
+ "tokio",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
 name = "rgb"
 version = "0.8.36"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6379,15 +6394,24 @@ dependencies = [
 name = "ultros-client"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "console_error_panic_hook",
  "console_log",
+ "futures",
  "gloo-net 0.4.0",
  "leptos",
  "leptos_meta",
  "log",
+ "rexie",
+ "serde",
+ "serde-wasm-bindgen",
+ "serde_bytes",
+ "serde_json",
  "ultros-api-types",
  "ultros-app",
  "wasm-bindgen",
+ "xiv-gen",
+ "xiv-gen-db",
 ]
 
 [[package]]
@@ -7102,9 +7126,10 @@ dependencies = [
 name = "xiv-gen-db"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "bincode 2.0.0-rc.3",
  "flate2",
- "lazy_static",
+ "once_cell",
  "serde",
  "xiv-gen",
 ]

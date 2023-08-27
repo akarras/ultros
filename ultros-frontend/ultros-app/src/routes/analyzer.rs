@@ -233,7 +233,7 @@ fn AnalyzerTable(
 
     // get ranges of possible values for our sliders
 
-    let items = &xiv_gen_db::decompress_data().items;
+    let items = &xiv_gen_db::data().items;
     let (sort_mode, set_sort_mode) = use_query_item::<SortMode>("sort");
     let (minimum_profit, set_minimum_profit) = use_query_item::<i32>("profit");
     let (minimum_roi, set_minimum_roi) = use_query_item("roi");
@@ -429,14 +429,14 @@ fn AnalyzerTable(
 pub fn AnalyzerWorldView() -> impl IntoView {
     let params = use_params_map();
     let world = create_memo(move |_| params.with(|p| p.get("world").cloned()).unwrap_or_default());
-    let sales = create_resource(
+    let sales = create_local_resource(
         move || params.with(|p| p.get("world").cloned()),
         move |world| async move {
             get_recent_sales_for_world(&world.ok_or(AppError::ParamMissing)?).await
         },
     );
 
-    let world_cheapest_listings = create_resource(
+    let world_cheapest_listings = create_local_resource(
         move || params.with(|p| p.get("world").cloned()),
         move |world| async move {
             let world = world.ok_or(AppError::ParamMissing)?;
@@ -459,7 +459,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
             <a class="btn" href="?next-sale=1M&roi=500&profit=200000&">"500% return with 200K min gil profit within 1 month"</a>
             {worlds.ok().map(|worlds| {
                 let world_value = store_value(worlds);
-                let global_cheapest_listings = create_resource(
+                let global_cheapest_listings = create_local_resource(
                     move || params.with(|p| p.get("world").cloned()),
                     move |world| async move {
                         let worlds = world_value();
@@ -498,7 +498,7 @@ pub fn AnalyzerWorldNavigator() -> impl IntoView {
         .expect("Should always have local world data")
         .0
         .unwrap();
-    let initial_world = params.with(|p| {
+    let initial_world = params.with_untracked(|p| {
         let world = p.get("world").map(|s| s.as_str()).unwrap_or_default();
         worlds
             .lookup_world_by_name(world)

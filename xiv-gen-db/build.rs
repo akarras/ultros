@@ -7,7 +7,7 @@ use xiv_gen::csv_to_bincode::read_data;
 
 fn main() {
     let data = read_data();
-    let vec = bincode::encode_to_vec(data, bincode::config::standard()).unwrap();
+    let vec = bincode::encode_to_vec(data, xiv_gen::bincode_config()).unwrap();
     let mut flate = flate2::Compress::new(Compression::best(), true);
     let mut output = Vec::new();
     output.reserve(vec.len());

@@ -177,7 +177,7 @@ impl WorldHelper {
                 .chain(region.datacenters.iter().flat_map(|dc| {
                     [AnyResult::Datacenter(dc)]
                         .into_iter()
-                        .chain(dc.worlds.iter().map(|world| AnyResult::World(world)))
+                        .chain(dc.worlds.iter().map(AnyResult::World))
                 }))
         });
         worlds.find(|any| any.get_name().eq_ignore_ascii_case(name))
@@ -192,21 +192,21 @@ impl<'a> WorldHelper {
                 .regions
                 .iter()
                 .find(|region| region.id == r)
-                .map(|r| AnyResult::Region(r)),
+                .map(AnyResult::Region),
             AnySelector::Datacenter(dc) => self
                 .world_data
                 .regions
                 .iter()
                 .flat_map(|r| r.datacenters.iter())
                 .find(|d| d.id == dc)
-                .map(|d| AnyResult::Datacenter(d)),
+                .map(AnyResult::Datacenter),
             AnySelector::World(w) => self
                 .world_data
                 .regions
                 .iter()
                 .flat_map(|r| r.datacenters.iter().flat_map(|dc| dc.worlds.iter()))
                 .find(|world| world.id == w)
-                .map(|w| AnyResult::World(w)),
+                .map(AnyResult::World),
         }
     }
 

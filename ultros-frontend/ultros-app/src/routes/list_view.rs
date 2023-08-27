@@ -25,7 +25,7 @@ enum MenuState {
 
 #[component]
 pub fn ListView() -> impl IntoView {
-    let data = xiv_gen_db::decompress_data();
+    let data = xiv_gen_db::data();
     let game_items = &data.items;
     let recipes = &data.recipes;
 
@@ -97,7 +97,7 @@ pub fn ListView() -> impl IntoView {
         {move || match menu() {
             MenuState::Item => {
             let (search, set_search) = create_signal("".to_string());
-            let items = &xiv_gen_db::decompress_data().items;
+            let items = &xiv_gen_db::data().items;
             let item_search = move || {
                 search.with(|s| {
                     let mut score = items

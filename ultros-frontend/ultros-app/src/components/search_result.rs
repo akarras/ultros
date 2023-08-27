@@ -55,7 +55,7 @@ pub fn ItemSearchResult(
     set_search: WriteSignal<String>,
     // matches: Match,
 ) -> impl IntoView {
-    let data = xiv_gen_db::decompress_data();
+    let data = xiv_gen_db::data();
     let categories = &data.item_ui_categorys;
     let items = &data.items;
     let item = items.get(&ItemId(item_id));

@@ -11,12 +11,12 @@ ultros-db = {path = "../ultros-db"}
 anyhow = {workspace = true}
 axum = {version = "0.6.0", features = ["ws", "headers", "json"]}
 axum-extra = {version = "0.7.4", features = ["cookie", "cookie-private"]}
-xiv-gen-db = {path = "../xiv-gen-db"}
-poise = {version = "0.5.2"}
+xiv-gen-db = {path = "../xiv-gen-db", features = ["embed"]}
+poise = {version = "0.5.5"}
 chrono = "0.4.23"
 lodestone = {git = "https://github.com/akarras/lodestone.git", branch = 'async', default-features = false, features = ["rustls-tls"]}
 reqwest = {version = "0.11", default-features = false, features = ["rustls-tls"]}
-xiv-gen = {path = "../xiv-gen", features = ["recipe", "recipe_lookup", "item", "item_ui_category"]}
+xiv-gen.workspace = true
 serde = {version = "^1", features = ["derive"]}
 include_dir = "0.7.2"
 mime_guess = "2.0.4"

@@ -779,6 +779,10 @@ async fn reorder_retainer(
     Ok(Json(()))
 }
 
+async fn get_bincode() -> &'static [u8] {
+    xiv_gen_db::bincode()
+}
+
 pub(crate) async fn start_web(state: WebState) {
     // build our application with a route
     let app = Router::new()
@@ -830,6 +834,10 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/static/*path", get(static_path))
         .route("/static/itemicon/fallback", get(fallback_item_icon))
         .route("/static/itemicon/:path", get(get_item_icon))
+        .route(
+            &["/static/data/", xiv_gen::data_version(), ".bincode"].concat(),
+            get(get_bincode),
+        )
         .route("/redirect", get(self::oauth::redirect))
         .route("/login", get(begin_login))
         .route("/logout", get(logout))
