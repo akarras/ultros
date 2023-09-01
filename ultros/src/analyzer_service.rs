@@ -10,6 +10,7 @@ use std::{
 
 use chrono::{Duration, NaiveDateTime, Utc};
 use futures::StreamExt;
+use itertools::Itertools;
 use poise::serenity_prelude::Timestamp;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -244,9 +245,10 @@ impl CheapestListings {
                     .flatten()
                     .expect("Should have worlds");
                 if let Ok(listings) = ultros_db
-                    .get_multiple_listings_for_worlds(
+                    .get_multiple_listings_for_worlds_hq_sensitive(
                         worlds.iter().map(|w| WorldId(*w)),
                         [ItemId(listing.item_id)].into_iter(),
+                        key.hq,
                         1,
                     )
                     .await
@@ -530,7 +532,11 @@ impl AnalyzerService {
         world_cache: &Arc<WorldCache>,
     ) {
         // process all listings from one world at a time
-        let listings = listings.iter().flat_map(|(l, _)| {
+        let listings = listings
+            .iter()
+            .into_grouping_map_by(|l| l.0.world_id)
+            .min_by_key(|_key, val| val.0.price_per_unit);
+        let listings = listings.into_iter().flat_map(|(_, (l, _))| {
             let result = world_cache
                 .lookup_selector(&AnySelector::World(l.world_id))
                 .ok()?;
@@ -540,7 +546,6 @@ impl AnalyzerService {
                 l,
             ))
         });
-
         for (world_selector, region_selector, listing) in listings {
             let entry = self
                 .cheapest_items
