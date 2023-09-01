@@ -16,7 +16,7 @@ use reqwest::StatusCode;
 use sitemap_rs::{sitemap_index_error::SitemapIndexError, url_set_error::UrlSetError};
 use thiserror::Error;
 use tokio::{sync::broadcast::error::SendError, time::error::Elapsed};
-use tracing::log::error;
+use tracing::{log::error, info};
 use ultros_api_types::result::JsonError;
 use ultros_db::{
     common_type_conversions::ApiConversionError, world_cache::WorldCacheError, SeaDbErr,
@@ -83,23 +83,26 @@ pub enum ApiError {
     ),
     #[error("API conversions error {0}")]
     ApiConversionError(#[from] ApiConversionError),
-    #[error("Not authenticated")]
-    NotAuthenticated,
+    #[error("No Auth Cookie")]
+    NoAuthCookie,
     #[error("Discord token was invalid")]
     DiscordTokenInvalid(PrivateCookieJar<Key>),
 }
 
 impl ApiError {
     fn as_status_code(&self) -> StatusCode {
-        StatusCode::INTERNAL_SERVER_ERROR
+        match self {
+            ApiError::NoAuthCookie => StatusCode::OK, // In this case I don't want a real error.
+            _ => StatusCode::INTERNAL_SERVER_ERROR
+        }
     }
 }
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        error!("error {}", self);
         if let ApiError::DiscordTokenInvalid(mut cookies) = self {
             // remove the discord user cookie
+            info!("Removed invalid Discord token");
             cookies = cookies.remove(Cookie::named("discord_auth"));
             return (
                 cookies,
@@ -109,7 +112,7 @@ impl IntoResponse for ApiError {
             )
                 .into_response();
         }
-        if let ApiError::NotAuthenticated = self {
+        if let ApiError::NoAuthCookie = self {
             return (
                 self.as_status_code(),
                 Json(JsonError::ApiError(
@@ -118,7 +121,7 @@ impl IntoResponse for ApiError {
             )
                 .into_response();
         }
-
+        error!("error {}", self);
         (self.as_status_code(), Json(JsonError::from(self))).into_response()
     }
 }

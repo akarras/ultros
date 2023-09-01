@@ -232,7 +232,7 @@ where
             .unwrap();
         let discord_auth = cookie_jar
             .get("discord_auth")
-            .ok_or(ApiError::NotAuthenticated)?;
+            .ok_or(ApiError::NoAuthCookie)?;
         // get the discord user
         let State(ultros): State<UltrosDb> = State::from_request_parts(parts, state).await.unwrap();
         let State(user_cache): State<AuthUserCache> =
