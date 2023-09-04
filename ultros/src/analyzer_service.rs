@@ -1,6 +1,6 @@
 use std::{
     cmp::Reverse,
-    collections::{BTreeMap, HashMap},
+    collections::{hash_map::Entry, BTreeMap, HashMap},
     fmt::Display,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -236,30 +236,35 @@ impl CheapestListings {
     ) {
         // if this was the cheapest listing we need to ask the database for the new cheapest item
         let key = listing.into();
-        if let Some(entry) = self.item_map.remove(&key) {
-            if listing.price_per_unit <= entry.price {
-                let worlds = world_cache
-                    .lookup_selector(&id)
-                    .map(|r| world_cache.get_all_worlds_in(&r))
-                    .ok()
-                    .flatten()
-                    .expect("Should have worlds");
-                if let Ok(listings) = ultros_db
-                    .get_multiple_listings_for_worlds_hq_sensitive(
-                        worlds.iter().map(|w| WorldId(*w)),
-                        [ItemId(listing.item_id)].into_iter(),
-                        key.hq,
-                        1,
-                    )
-                    .await
-                {
-                    for db_listing in &listings {
-                        if key == ItemKey::from(db_listing) {
-                            self.add_listing(db_listing);
+        match self.item_map.entry(key) {
+            Entry::Occupied(entry) => {
+                // only remove a listing if we see a lower price
+                if listing.price_per_unit <= entry.get().price {
+                    entry.remove();
+                    let worlds = world_cache
+                        .lookup_selector(&id)
+                        .map(|r| world_cache.get_all_worlds_in(&r))
+                        .ok()
+                        .flatten()
+                        .expect("Should have worlds");
+                    if let Ok(listings) = ultros_db
+                        .get_multiple_listings_for_worlds_hq_sensitive(
+                            worlds.iter().map(|w| WorldId(*w)),
+                            [ItemId(listing.item_id)].into_iter(),
+                            key.hq,
+                            1,
+                        )
+                        .await
+                    {
+                        for db_listing in &listings {
+                            if key == ItemKey::from(db_listing) {
+                                self.add_listing(db_listing);
+                            }
                         }
                     }
                 }
             }
+            Entry::Vacant(_) => {}
         }
     }
 }
