@@ -454,8 +454,6 @@ div>.search-box {
   padding: 5px 15px;
   background-color: rgba(13, 5, 14, .7);
   border-radius: 8px;
-  max-height: 800px;
-  overflow: auto;
   flex-grow: 1;
 }
 
@@ -470,8 +468,8 @@ div>.search-box {
 }
 
 .icon-small {
-  width: 30px;
-  height: 30px;
+  width: 25px;
+  height: 25px;
   margin: 0px 5px -7px 0px;
 }
 
@@ -481,8 +479,8 @@ div>.search-box {
 }
 
 .icon-large {
-  height: 80px;
-  width: 80px;
+  height: 60px;
+  width: 60px;
 }
 
 tr:nth-child(even) {

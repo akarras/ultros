@@ -20,9 +20,9 @@ impl IconSize {
 
     pub fn get_px_size(&self) -> u32 {
         match self {
-            IconSize::Small => 30,
+            IconSize::Small => 25,
             IconSize::Medium => 40,
-            IconSize::Large => 80,
+            IconSize::Large => 60,
         }
     }
 }

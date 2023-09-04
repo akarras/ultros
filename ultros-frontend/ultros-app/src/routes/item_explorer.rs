@@ -1,8 +1,6 @@
 use std::{cmp::Reverse, collections::HashSet};
 
-use crate::components::{
-    cheapest_price::*, fonts::*, meta::*, small_item_display::*, tooltip::*, virtual_scroller::*,
-};
+use crate::components::{cheapest_price::*, fonts::*, meta::*, small_item_display::*, tooltip::*};
 use leptos::*;
 use leptos_router::*;
 use urlencoding::{decode, encode};
@@ -24,7 +22,7 @@ fn CategoryView(category: u8) -> impl IntoView {
         .collect::<Vec<_>>();
     categories.sort_by_key(|(order, _, _)| *order);
     view! {
-        <div class="flex flex-row flex-wrap">
+        <div class="flex flex-row flex-wrap text-2xl p-2">
         {categories.into_iter()
             .map(|(_, name, id)| view! {
                 <Tooltip tooltip_text=name.to_string()>
@@ -141,7 +139,7 @@ fn JobsList() -> impl IntoView {
     let jobs = &xiv_gen_db::data().class_jobs;
     let mut jobs: Vec<_> = jobs.iter().collect();
     jobs.sort_by_key(|(_, job)| job.ui_priority);
-    view! {<div class="flex-wrap" style="padding: 5px;">
+    view! {<div class="flex flex-wrap text-2xl p-2">
         {jobs.into_iter()
             // .filter(|(_id, job)| job.class_job_parent.0 == 0)
             .map(|(_id, job)| view!{<A href=["/items/jobset/", &job.abbreviation].concat()>
@@ -237,13 +235,13 @@ pub fn JobItems() -> impl IntoView {
 #[component]
 fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView {
     view! {
-    <VirtualScroller
-        each=items.into()
+    <For
+        each=items
         key=|(id, item)| (id.0, &item.name)
         view=|(id, item)| view!{<div class="flex-row" style="min-width: 500px;">
             <SmallItemDisplay item=item />
             <CheapestPrice item_id=*id />
-        </div> } viewport_height=800.0 row_height=27.3/>}
+        </div> }/>}
 }
 
 #[component]

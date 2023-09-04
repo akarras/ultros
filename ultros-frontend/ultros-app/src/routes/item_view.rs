@@ -17,7 +17,7 @@ fn WorldButton<'a>(world: AnyResult<'a>, item_id: i32) -> impl IntoView {
         AnyResult::Datacenter(_d) => "bg-fuchsia-800",
         AnyResult::World(_w) => "bg-violet-600",
     };
-    view! { <A class=["rounded-t-lg text-sm p-1 aria-current:bold aria-current:text-white mx-1 ", bg_color].concat() href=format!("/item/{}/{item_id}", urlencoding::encode(&world_name))>{world_name}</A>}
+    view! { <A class=["rounded-t-lg text-sm p-1 aria-current:fontbold aria-current:text-white mx-1 ", bg_color].concat() href=format!("/item/{}/{item_id}", urlencoding::encode(&world_name))>{world_name}</A>}
 }
 
 #[component]
@@ -142,7 +142,8 @@ pub fn ItemView() -> impl IntoView {
             .and_then(|id| id.parse::<i32>().ok())
             .unwrap_or_default()
     });
-    let items = &xiv_gen_db::data().items;
+    let data = &xiv_gen_db::data();
+    let items = &data.items;
     let world = create_memo(move |_| params.with(|p| p.get("world").cloned().unwrap_or_default()));
     let item_name = move || {
         items
@@ -156,9 +157,16 @@ pub fn ItemView() -> impl IntoView {
             .map(|item| item.description.as_str())
             .unwrap_or_default()
     };
-    let categories = &xiv_gen_db::data().item_ui_categorys;
+    let categories = &data.item_ui_categorys;
+    let search_categories = &data.item_search_categorys;
     let description =
         create_memo(move |_| format!("Current listings for {} on {}", item_name(), world(),));
+    let item_category = items
+        .get(&ItemId(item_id()))
+        .and_then(|item| categories.get(&item.item_ui_category));
+    let item_search_category = items
+        .get(&ItemId(item_id()))
+        .and_then(|item| search_categories.get(&item.item_search_category));
     view! {
         <MetaDescription text=description/>
         <MetaTitle title=move || format!("{} - Market view", item_name())/>
@@ -175,7 +183,9 @@ pub fn ItemView() -> impl IntoView {
                             <a style="height: 45px" class="btn" href=move || format!("https://garlandtools.org/db/#item/{}", item_id())>"Garland Tools"</a>
                         </div>
                     </div>
-                    <span style="font-size: 16px">{move || items.get(&ItemId(item_id())).and_then(|item| categories.get(&item.item_ui_category)).map(|i| i.name.as_str()).unwrap_or_default()}</span>
+                    <span style="font-size: 16px">{move || item_category.and_then(|c| item_search_category.map(|s| (c, s))).map(|(c, s)| view!{<a class="text-fuchsia-300 a:text-fuchsia-600" href=["/items/category/", &s.name].concat()>
+                        {c.name.as_str()}</a>})}
+                    </span>
                     <span>{move || view!{<UIText text=item_description().to_string()/>}}</span>
                     {move || view!{<ItemStats item_id=ItemId(item_id()) />}}
                 </div>
