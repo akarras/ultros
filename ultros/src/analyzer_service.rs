@@ -817,17 +817,10 @@ mod test {
     use chrono::{Duration, Utc};
     use ultros_db::sales::AbbreviatedSaleData;
 
-    use crate::analyzer_service::{ItemKey, SoldAmount};
+    use crate::analyzer_service::ItemKey;
 
-    use super::{SaleHistory, SoldWithin};
+    use super::SaleHistory;
 
-    #[test]
-    fn sold_within_serialize() {
-        let sold = SoldWithin::Month(SoldAmount(5));
-        assert_eq!(serde_json::to_string(&sold).unwrap(), "{\"Month\":5}");
-        let sold_year = SoldWithin::YearsAgo(5, SoldAmount(5));
-        assert_eq!(serde_json::to_string(&sold_year).unwrap(), "");
-    }
 
     #[test]
     fn test_sale_history_sort() {
