@@ -1,80 +1,91 @@
 use crate::api::get_listings;
-use crate::api::get_worlds;
 use crate::components::{
     clipboard::*, item_icon::*, listings_table::*, loading::*, meta::*, price_history_chart::*,
     related_items::*, sale_history_table::*, stats_display::*, ui_text::*,
 };
+use crate::global_state::LocalWorldData;
 use leptos::*;
 use leptos_router::*;
-use ultros_api_types::world_helper::{AnyResult, WorldHelper};
+use ultros_api_types::world_helper::AnyResult;
 use xiv_gen::ItemId;
 
 #[component]
-fn WorldButton(world_name: String, item_id: i32) -> impl IntoView {
-    view! { <A class="btn-secondary" href=format!("/item/{}/{item_id}", urlencoding::encode(&world_name))>{world_name}</A>}
+fn WorldButton<'a>(world: AnyResult<'a>, item_id: i32) -> impl IntoView {
+    let world_name = world.get_name().to_owned();
+    let bg_color = match world {
+        AnyResult::Region(_r) => "bg-fuchsia-950",
+        AnyResult::Datacenter(_d) => "bg-fuchsia-800",
+        AnyResult::World(_w) => "bg-violet-600",
+    };
+    view! { <A class=["rounded-t-lg text-sm p-1 aria-current:bold aria-current:text-white mx-1 ", bg_color].concat() href=format!("/item/{}/{item_id}", urlencoding::encode(&world_name))>{world_name}</A>}
 }
 
 #[component]
 fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
     // for some reason the context version doesn't work
-    let worlds = create_resource(
-        move || {},
-        move |_| async move {
-            let world_data = get_worlds().await;
-            world_data.map(WorldHelper::new)
-        },
-    );
-    view! {
-        <Transition fallback=move || view!{ <Loading/>}>
-        {move || {
-            match worlds.get() {
-                Some(Ok(worlds)) => {
-                    let world = world_name();
-                    let world_name = urlencoding::decode(&world).unwrap_or_default();
-                    if let Some(world) = worlds.lookup_world_by_name(&world_name) {
-                        let create_world_button = move |name| view!{<WorldButton world_name=name item_id=item_id()/>};
-                        match world {
-                            AnyResult::World(world) => {
-                                // display the region, datacenter, and sibling worlds to this datacenter (excluding this world)
-                                let region = worlds.get_region(AnyResult::World(world));
-                                let datacenters = worlds.get_datacenters(&AnyResult::World(world));
-                                let views : Vec<_> = [region.name.to_string()]
-                                    .into_iter()
-                                    .chain(datacenters.iter().map(|dc| dc.name.to_string()))
-                                    .chain(datacenters.iter().flat_map(|dc| dc.worlds.iter()
-                                        .map(|world| world.name.to_string())))
-                                        .map(move |name| view!{<WorldButton world_name=name item_id=item_id()/>})
-                                    .collect();
-                                views.into_view()
-                            },
-                            AnyResult::Datacenter(dc) => {
-                                // show all worlds in this datacenter, other datacenters in this region, the region this datacenter belongs to
-                                let region = worlds.get_region(AnyResult::Datacenter(dc));
-                                let views : Vec<_> = [region.name.to_string()].into_iter()
-                                    .chain(region.datacenters.iter().map(|d| d.name.to_string()))
-                                    .chain(dc.worlds.iter().map(|w| w.name.to_string()))
-                                    .map(create_world_button)
-                                    .collect();
-                                views.into_view()
-                            },
-                            AnyResult::Region(region) => {
-                                // show all regions, and datacenters in this region
-                                let regions = worlds.get_all().regions.iter().map(|r| r.name.to_string());
-                                let datacenters = worlds.get_datacenters(&AnyResult::Region(region));
-                                let views : Vec<_> = regions.chain(datacenters.iter()
-                                    .map(|dc| dc.name.to_string()))
-                                    .map(move |name| view!{<WorldButton world_name=name item_id=item_id()/>}).collect();
-                                views.into_view()
-                            }
-                        }
-                    } else {
-                        view!{<div>"No worlds"</div>}.into_view()
-                    }
+    let world_data = use_context::<LocalWorldData>().unwrap().0.unwrap();
+    move || {
+        let world = world_name();
+        let world_name = urlencoding::decode(&world).unwrap_or_default();
+        if let Some(world) = world_data.lookup_world_by_name(&world_name) {
+            let create_world_button = move |world| view! {<WorldButton world item_id=item_id()/>};
+            match world {
+                AnyResult::World(world) => {
+                    // display the region, datacenter, and sibling worlds to this datacenter (excluding this world)
+                    let region = world_data.get_region(AnyResult::World(world));
+                    let datacenters = world_data.get_datacenters(&AnyResult::World(world));
+                    let views: Vec<_> =
+                        [AnyResult::Region(region)]
+                            .into_iter()
+                            .chain(datacenters.iter().map(|dc| AnyResult::Datacenter(dc)))
+                            .chain(datacenters.iter().flat_map(|dc| {
+                                dc.worlds.iter().map(|world| AnyResult::World(world))
+                            }))
+                            .map(move |world| view! {<WorldButton world item_id=item_id()/>})
+                            .collect();
+                    views.into_view()
                 }
-                _ => view!{<Loading/>}.into_view()
+                AnyResult::Datacenter(dc) => {
+                    // show all worlds in this datacenter, other datacenters in this region, the region this datacenter belongs to
+                    let region = world_data.get_region(AnyResult::Datacenter(dc));
+                    let views: Vec<_> = [AnyResult::Region(region)]
+                        .into_iter()
+                        .chain(region.datacenters.iter().map(|d| AnyResult::Datacenter(d)))
+                        .chain(dc.worlds.iter().map(|w| AnyResult::World(w)))
+                        .map(create_world_button)
+                        .collect();
+                    views.into_view()
+                }
+                AnyResult::Region(region) => {
+                    // show all regions, and datacenters in this region
+                    let regions = world_data
+                        .get_all()
+                        .regions
+                        .iter()
+                        .map(|r| AnyResult::Region(r));
+                    let datacenters = world_data.get_datacenters(&AnyResult::Region(region));
+                    let views: Vec<_> = regions
+                        .chain(datacenters.iter().map(|dc| AnyResult::Datacenter(dc)))
+                        .map(move |world| view! {<WorldButton world item_id=item_id()/>})
+                        .collect();
+                    views.into_view()
+                }
             }
-        }}
-        </Transition>
+        } else {
+            let regions = world_data
+                .get_all()
+                .regions
+                .iter()
+                .map(|r| AnyResult::Region(r));
+            let region = world_data.lookup_world_by_name("North-America").unwrap();
+            let datacenters = world_data.get_datacenters(&region);
+            let datacenters = datacenters.iter().map(|dc| AnyResult::Datacenter(dc));
+            let views: Vec<_> = regions
+                .chain(datacenters)
+                .map(move |world| view! {<WorldButton world item_id=item_id()/>})
+                .collect();
+            views.into_view()
+        }
     }
 }
 
@@ -158,13 +169,13 @@ pub fn ItemView() -> impl IntoView {
                 {move || view!{<ItemIcon item_id=item_id() icon_size=IconSize::Large />}}
                 <div class="flex flex-column grow" style="padding: 5px">
                     <div class="flex flex-row">
-                        <span class="flex flex-row" style="font-size: 36px; line-height 0.5;">{move || item_name()}{move || view!{<Clipboard clipboard_text=item_name().to_string()/>}}</span>
+                        <span class="flex flex-row" style="font-size: 36px; line-height 0.5;">{item_name}{move || view!{<Clipboard clipboard_text=item_name().to_string()/>}}</span>
                         <div class="ml-auto flex flex-row" style="align-items:start">
                             <a style="height: 45px" class="btn" href=move || format!("https://universalis.app/market/{}", item_id())>"Universalis"</a>
                             <a style="height: 45px" class="btn" href=move || format!("https://garlandtools.org/db/#item/{}", item_id())>"Garland Tools"</a>
                         </div>
                     </div>
-                    <span style="font-size: 16px">{move || items.get(&ItemId(item_id())).map(|item| categories.get(&item.item_ui_category)).flatten().map(|i| i.name.as_str()).unwrap_or_default()}</span>
+                    <span style="font-size: 16px">{move || items.get(&ItemId(item_id())).and_then(|item| categories.get(&item.item_ui_category)).map(|i| i.name.as_str()).unwrap_or_default()}</span>
                     <span>{move || view!{<UIText text=item_description().to_string()/>}}</span>
                     {move || view!{<ItemStats item_id=ItemId(item_id()) />}}
                 </div>

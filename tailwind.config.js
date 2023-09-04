@@ -5,7 +5,11 @@
         files: ["*.html", "./**/*.rs"],
       },
       theme: {
-        extend: {},
+        extend: {
+          aria: {
+            current: 'current'
+          }
+        },
       },
       plugins: [],
     }

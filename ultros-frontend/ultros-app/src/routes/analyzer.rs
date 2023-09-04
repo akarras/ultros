@@ -218,7 +218,7 @@ where
             },
         )
     };
-    (read.into(), set.mapped_signal_setter())
+    (read.into(), set.into_signal_setter())
 }
 
 #[component]
@@ -400,7 +400,7 @@ fn AnalyzerTable(
                     .map(|item| item.name.as_str())
                     .unwrap_or_default();
                 view! {<div class="grid-row" role="row-group" class:even=move || (i % 2) == 0 class:odd=move || (i % 2) == 1>
-                    <div role="cell" style="width: 25px;">{data.sale_summary.hq.then(|| "✅")}</div>
+                    <div role="cell" style="width: 25px;">{data.sale_summary.hq.then_some("✅")}</div>
                     <div role="cell" class="flex flex-row w-[450px]">
                         <a class="flex flex-row" href=format!("/item/{world}/{item_id}")>
                             <ItemIcon item_id icon_size=IconSize::Small/>

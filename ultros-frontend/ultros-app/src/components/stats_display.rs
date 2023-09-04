@@ -72,8 +72,7 @@ fn get_param_data_for_item(item: ItemId) -> Option<Vec<ParamData>> {
             }
             acc
         })
-        .into_iter()
-        .map(|(_key, test)| test)
+        .into_values()
         .collect::<Vec<_>>();
 
     params.sort_by_key(|param| param.base_param.order_priority);

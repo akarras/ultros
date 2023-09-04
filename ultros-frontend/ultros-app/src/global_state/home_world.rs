@@ -52,7 +52,7 @@ pub fn get_homeworld() -> (Signal<Option<World>>, SignalSetter<Option<World>>) {
             set_cookie(world);
         }
     };
-    (world.into(), set_world.mapped_signal_setter())
+    (world.into(), set_world.into_signal_setter())
 }
 
 pub fn result_to_selector_read(
@@ -73,7 +73,7 @@ pub fn selector_to_setter_signal(
             setter(Some(worlds))
         }
     };
-    signal.mapped_signal_setter()
+    signal.into_signal_setter()
 }
 
 pub fn get_price_zone() -> (
@@ -106,5 +106,5 @@ pub fn get_price_zone() -> (
             set_cookie(world);
         }
     };
-    (world.into(), set_world.mapped_signal_setter())
+    (world.into(), set_world.into_signal_setter())
 }

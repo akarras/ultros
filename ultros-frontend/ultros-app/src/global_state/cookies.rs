@@ -58,7 +58,7 @@ where
 {
     let getter = create_memo(move |_| signal.with(getter.clone()));
     let setter = move |value| signal.update(|x| setter(x, value));
-    (getter.into(), setter.mapped_signal_setter())
+    (getter.into(), setter.into_signal_setter())
 }
 
 #[cfg(not(feature = "ssr"))]

@@ -821,7 +821,6 @@ mod test {
 
     use super::SaleHistory;
 
-
     #[test]
     fn test_sale_history_sort() {
         let mut sale_history = SaleHistory::default();

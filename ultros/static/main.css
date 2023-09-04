@@ -157,7 +157,8 @@ nav a>* {
   padding: 5px;
 }
 
-.nav-item:hover {
+nav>a:hover,
+nav>*>a:hover {
   color: #846D8F;
   transition: .25s;
 }
