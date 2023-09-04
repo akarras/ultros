@@ -84,8 +84,10 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
         move || (item_id(), world()),
         move |(item_id, world)| async move { get_listings(item_id, &world).await },
     );
+    let (pending, set_pending) = create_signal(false);
     view! {
-        <Transition fallback=move || view!{ <Loading/>}>
+        {move || pending().then(|| view!{ <Loading/> })}
+        <Transition set_pending=set_pending.into() fallback=move || view!{ <Loading/>}>
         {move || listing_resource.get().map(|listings| {
             match listings {
                 Err(e) => view!{ <div>{format!("Error getting listings\n{e}")}</div>}.into_view(),
