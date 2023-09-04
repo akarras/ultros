@@ -28,7 +28,7 @@ fn CategoryView(category: u8) -> impl IntoView {
         {categories.into_iter()
             .map(|(_, name, id)| view! {
                 <Tooltip tooltip_text=name.to_string()>
-                    <A  href=format!("/items/category/{}", encode(name))>
+                    <A  href=["/items/category/", &encode(name)].concat()>
                         <ItemSearchCategoryIcon id=*id />
                     </A>
                 </Tooltip>
@@ -144,7 +144,7 @@ fn JobsList() -> impl IntoView {
     view! {<div class="flex-wrap" style="padding: 5px;">
         {jobs.into_iter()
             // .filter(|(_id, job)| job.class_job_parent.0 == 0)
-            .map(|(_id, job)| view!{<A href=format!("/items/jobset/{}", job.abbreviation)>
+            .map(|(_id, job)| view!{<A href=["/items/jobset/", &job.abbreviation].concat()>
             // {&job.abbreviation}
             <Tooltip tooltip_text=job.name_english.clone()>
                 <ClassJobIcon id=job.key_id />
@@ -188,7 +188,7 @@ pub fn CategoryItems() -> impl IntoView {
     });
     view! {
     <MetaTitle title=category_view_name/>
-    <MetaDescription text=move || format!("List of items for the item category {}", category_view_name())/>
+    <MetaDescription text=move || ["List of items for the item category ", &category_view_name()].concat()/>
     <ItemList items />}
 }
 
@@ -223,8 +223,8 @@ pub fn JobItems() -> impl IntoView {
         job_items
     });
     view! {
-        <MetaTitle title=move || format!("{}", params().get("jobset").as_ref().map(|s| s.as_str()).unwrap_or("Job Set"))/>
-        <MetaDescription text=move || format!("All items equippable by {}", params().get("jobset").as_ref().map(|s| s.as_str()).unwrap_or_default())/>
+        <MetaTitle title=move || params().get("jobset").as_ref().map(|s| s.as_str()).unwrap_or("Job Set").to_string()/>
+        <MetaDescription text=move || ["All items equippable by ", params().get("jobset").as_ref().map(|s| s.as_str()).unwrap_or_default()].concat()/>
     <div class="flex-row">
         <label for="marketable-only">"Marketable Only"</label>
         <input type="checkbox" prop:checked=market_only name="market-only" on:change=move |_e| {

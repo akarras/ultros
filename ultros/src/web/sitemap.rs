@@ -29,7 +29,7 @@ pub(crate) async fn sitemap_index(
     State(world_cache): State<Arc<WorldCache>>,
 ) -> Result<Xml, WebError> {
     // Get all the worlds from the world cache and then populate the listings sitemap to point to all the world subsitemaps
-    let listings_sitemaps: Vec<_> = world_cache
+    let mut sitemap_list: Vec<_> = world_cache
         .get_all()
         .iter()
         .flat_map(|(r, dcs)| {
@@ -48,12 +48,45 @@ pub(crate) async fn sitemap_index(
             )
         })
         .collect();
-    let index = SitemapIndex::new(listings_sitemaps)?;
+    // add general page sitemap
+    sitemap_list.push(Sitemap::new(
+        "https://ultros.app/sitemap/pages.xml".to_string(),
+        None,
+    ));
+    let index = SitemapIndex::new(sitemap_list)?;
     let mut index_xml = Vec::new();
     index
         .write(&mut index_xml)
         .map_err(|_| anyhow!("Error creating sitemap"))?;
     Ok(Xml(index_xml))
+}
+
+pub(crate) async fn generic_pages_sitemap() -> Result<Xml, WebError> {
+    let sitemap_urls = ["https://ultros.app", "https://ultros.app/items"]
+        .iter()
+        .map(|i| i.to_string());
+    let mut url_xml = Vec::new();
+    let data = xiv_gen_db::data();
+    let class_jobs = data
+        .class_jobs
+        .values()
+        .map(|class| ["https://ultros.app/items/jobset/", &class.abbreviation].concat());
+    let item_categories = data
+        .item_search_categorys
+        .values()
+        .filter(|cat| (1..=4).contains(&cat.category))
+        .map(|cat| ["https://ultros.app/items/category/", &cat.name].concat());
+    let url_set = UrlSet::new(
+        sitemap_urls
+            .chain(class_jobs)
+            .chain(item_categories)
+            .map(|url| Url::builder(url).build().unwrap())
+            .collect(),
+    )?;
+    url_set
+        .write(&mut url_xml)
+        .map_err(|_| anyhow!("Error creating sitemap"))?;
+    Ok(Xml(url_xml))
 }
 
 pub(crate) async fn world_sitemap(
