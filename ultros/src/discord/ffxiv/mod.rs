@@ -9,7 +9,10 @@ use analyze::analyze;
 use character::character;
 use item_prices::prices;
 use lists::list;
+use poise::serenity_prelude::Color;
 use retainer::retainer;
+
+pub(crate) const ULTROS_COLOR: Color = Color::DARK_PURPLE;
 
 #[poise::command(
     slash_command,

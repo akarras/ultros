@@ -8,6 +8,8 @@ use ultros_api_types::SaleHistory;
 use ultros_db::world_cache::AnySelector;
 use xiv_gen::ItemId;
 
+use crate::discord::ffxiv::ULTROS_COLOR;
+
 use super::{Context, Error};
 
 /// Lookup price information from the marketboard
@@ -170,8 +172,12 @@ async fn history(
         filename: "chart.png".to_string(),
     };
     ctx.send(|r| {
-        r.embed(|e| e.title(&item.name).image("attachment://chart.png"))
-            .attachment(attachment)
+        r.embed(|e| {
+            e.title(&[&item.name, " - ", world.get_name()].concat())
+                .color(ULTROS_COLOR)
+                .image("attachment://chart.png")
+        })
+        .attachment(attachment)
     })
     .await?;
     Ok(())

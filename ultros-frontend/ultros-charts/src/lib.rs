@@ -90,7 +90,6 @@ where
 
     chart
         .configure_mesh()
-        .label_style(&WHITE)
         .bold_line_style(RGBColor(200, 200, 200).mix(0.2))
         .light_line_style(RGBColor(200, 200, 200).mix(0.02))
         .x_desc("Time")
@@ -102,6 +101,7 @@ where
         })
         .y_label_formatter(&|y| short_number(*y))
         .x_labels(5)
+        .label_style(("Jaldi, sans-serif", 10.0).into_font().color(&WHITE))
         .draw()?;
 
     let colors = vec![
@@ -132,7 +132,7 @@ where
     chart
         .configure_series_labels()
         .border_style(PURPLE_A400)
-        .label_font(&WHITE)
+        .label_font(("Jaldi, sans-serif", 10.0).into_font().color(&WHITE))
         .draw()?;
 
     // To avoid the IO failure being ignored silently, we manually call the present function
