@@ -36,6 +36,7 @@ xiv-gen = {path = "./xiv-gen", features = ["item", "item_ui_category", "item_sea
 
 [patch.crates-io]
 leptos = { git = "https://github.com/leptos-rs/leptos.git" }
+pathfinder_simd = { git = "https://github.com/servo/pathfinder.git" } # needed on ARM Mac until pathfinder_simd has new release
 
 [profile.release]
 lto = true

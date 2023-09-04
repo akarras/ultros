@@ -4,17 +4,33 @@ use leptos::*;
 use leptos_meta::*;
 use ultros_api_types::{ActiveListing, Retainer};
 
-use crate::{components::gil::Gil, routes::retainers::CharacterRetainerList};
+use crate::{
+    components::{gil::Gil, live_sale_ticker::LiveSaleTicker, related_items::RelatedItems},
+    routes::retainers::CharacterRetainerList,
+};
 
 #[component]
 pub fn HomePage() -> impl IntoView {
     view! {
-    <div class="main-content">
+    <div class="main-content p-4">
         <h1 class="text-2xl">"Ultros Alpha"</h1>
         <Title text="Ultros The Ultra Fast Market Tool"/>
-        // <LiveSaleTicker />
+        <LiveSaleTicker />
         <div class="flex flex-col">
-            <div class="p-8 grow flex-auto flex-row">
+            <div>
+                <h2 class="text-xxl">"fast prices"</h2>
+                <div class="flex p-8 md:flex-row">
+                    <div class="overflow-hidden max-h-56 w-96">
+                        <RelatedItems item_id=2 />
+                    </div>
+                    <ul>
+                        <li>"quickly search prices"</li>
+                        <li>"discover items with a similar item level"</li>
+                        <li>"view associated recipes with an item and the price to craft it"</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="p-8 grow flex-auto flex md:flex-row">
                 <div class="flex flex-col">
                     <span class="content-title">"Analyzer"</span>
                     <br/>
@@ -23,7 +39,7 @@ pub fn HomePage() -> impl IntoView {
                         <li>"Quickly filter by roi, profit, and estimated sale date"</li>
                     </ul>
                 </div>
-                <div class="flex grow flex-col text-right align-top">
+                <div class="flex md:ml-20 flex-col text-right align-top">
                     <div class="flex flex-row text-red-700 gap-1">"BUY:" <Gil amount=30000/>"on Balmung"</div>
                     <div class="flex flex-row text-green-700 gap-1">"SELL:" <Gil amount=100000/>"on Gilgamesh"</div>
                     <div class="flex flex-row text-green-400 gap-1">"PROFIT:"<Gil amount={100000 - 30000}/></div>
@@ -80,16 +96,16 @@ pub fn HomePage() -> impl IntoView {
                         timestamp: Utc::now().naive_utc(),
                     }])] />
                 </div>
-                <div class="flex flex-col grow">
+                <div class="flex flex-col ml-auto">
                     <span class="content-title">"Retainers"</span>
                     <br/>
                     <ul>
-                        <li>"Track your sales without getting on the game"</li>
-                        <li>"Update all listings faster by only updating listings that are actually undercut"</li>
-                        <li>"Get alerted on Discord or on this site when someone undercuts you"</li>
+                        <li>"Track your retainer's listings online"</li>
+                        <li>"View undercut items in one place"</li>
+                        <li>"WIP - Get alerted on Discord or on this site when someone undercuts you"</li>
                     </ul>
                 </div>
-                
+
             </div>
             <div class="p-8 grow">
                 <span class="content-title">"Lists"</span>

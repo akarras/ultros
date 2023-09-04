@@ -32,7 +32,7 @@ pub fn PriceViewer(quantity: i32, hq: Option<bool>, listings: Vec<ActiveListing>
     let cheapest_listings = get_cheapest_listing(listings, quantity, hq);
     view! {<div class="flex-column">
         {cheapest_listings.iter().map(|listing| view!{
-            <div style="display: block;">
+            <div class="flex flex-row gap-1">
                 {listing.quantity}"x"
                 <Gil amount=listing.price_per_unit/>" on "
                 <WorldName id=AnySelector::World(listing.world_id)/>"-"

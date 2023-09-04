@@ -1,26 +1,23 @@
 use std::collections::HashMap;
 
-use leptos::*;
-use xiv_gen::{ItemId, BaseParam, Item};
 use super::tooltip::*;
+use leptos::*;
+use xiv_gen::{BaseParam, Item, ItemId};
 
 struct ParamData {
     base_param: &'static BaseParam,
     normal_value: i16,
-    special_value: Option<i16>
+    special_value: Option<i16>,
 }
 
 struct ParamIterator {
     index: u8,
-    item: &'static Item
+    item: &'static Item,
 }
 
 impl ParamIterator {
     fn new(item: &'static Item) -> Self {
-        Self {
-            index: 0,
-            item,
-        }
+        Self { index: 0, item }
     }
 }
 
@@ -43,11 +40,11 @@ impl Iterator for ParamIterator {
                 9 => (item.base_param_special_3, item.base_param_value_special_3),
                 10 => (item.base_param_special_4, item.base_param_value_special_4),
                 11 => (item.base_param_special_5, item.base_param_value_special_5),
-                _ => return None
+                _ => return None,
             };
             self.index += 1;
             if let Some(base_param) = xiv_gen_db::data().base_params.get(&param) {
-                return Some((base_param, self.index > 5, value))
+                return Some((base_param, self.index > 5, value));
             }
         }
     }
@@ -59,34 +56,35 @@ impl Iterator for ParamIterator {
 
 fn get_param_data_for_item(item: ItemId) -> Option<Vec<ParamData>> {
     let item = xiv_gen_db::data().items.get(&item)?;
-    let mut params = ParamIterator::new(item).map(|(param, hq, value)| {
-        ((param.key_id, hq), (param, value))
-    }).fold(HashMap::new(), |mut acc, ((bp, hq), (param, value))| {
-        let entry = acc.entry(bp).or_insert(ParamData {
-            base_param: param,
-            normal_value: 0,
-            special_value: None,
-        });
-        if hq {
-            entry.special_value = Some(value);
-        } else {
-            entry.normal_value = value;
-        }
-        acc
-    }).into_iter().map(|(_key, test)| {
-        test
-    }).collect::<Vec<_>>();
-    
+    let mut params = ParamIterator::new(item)
+        .map(|(param, hq, value)| ((param.key_id, hq), (param, value)))
+        .fold(HashMap::new(), |mut acc, ((bp, hq), (param, value))| {
+            let entry = acc.entry(bp).or_insert(ParamData {
+                base_param: param,
+                normal_value: 0,
+                special_value: None,
+            });
+            if hq {
+                entry.special_value = Some(value);
+            } else {
+                entry.normal_value = value;
+            }
+            acc
+        })
+        .into_iter()
+        .map(|(_key, test)| test)
+        .collect::<Vec<_>>();
+
     params.sort_by_key(|param| param.base_param.order_priority);
     Some(params)
 }
 
 #[component]
 fn ParamView(data: ParamData) -> impl IntoView {
-    view!{
+    view! {
         <div>
             <Tooltip tooltip_text=data.base_param.description.clone()>
-            {&data.base_param.name}"  "{data.normal_value} {data.special_value.map(|special| view!{" hq: " {data.normal_value + special}})}
+            <span class="w-48">{&data.base_param.name}</span>"  "{data.normal_value} {data.special_value.map(|special| view!{" hq: " {data.normal_value + special}})}
             </Tooltip>
         </div>
     }
@@ -95,7 +93,11 @@ fn ParamView(data: ParamData) -> impl IntoView {
 #[component]
 pub(crate) fn ItemStats(item_id: ItemId) -> impl IntoView {
     let params = get_param_data_for_item(item_id);
-    params.map(|p| {
-        p.into_iter().map(|p| view! {<ParamView data=p />}).collect::<Vec<_>>()
-    }).into_view()
+    params
+        .map(|p| {
+            p.into_iter()
+                .map(|p| view! {<ParamView data=p />})
+                .collect::<Vec<_>>()
+        })
+        .into_view()
 }

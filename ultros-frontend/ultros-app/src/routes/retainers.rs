@@ -56,7 +56,8 @@ fn RetainerTable(retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoV
                         <Gil amount=total/>
                     </td>
                 </tr>
-            }})
+            }
+        })
         .collect();
     view! {
         <div class="content-well">

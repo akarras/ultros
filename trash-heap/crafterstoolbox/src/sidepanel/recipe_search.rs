@@ -100,7 +100,7 @@ impl RecipeSearchPanel {
     /// Prepares all the recipe data we need for recipes
     fn create_recipe_list() -> Vec<(RecipeId, String, Vec<CraftJob>)> {
         // this might be good to store somewhere
-        let game_data = xiv_gen_db::decompress_data();
+        let game_data = xiv_gen_db::data();
         let recipes = &game_data.recipes;
         let items = &game_data.items;
         let recipe_lookup = &game_data.recipe_lookups;

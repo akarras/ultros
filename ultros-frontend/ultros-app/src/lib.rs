@@ -98,7 +98,7 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
                         </Tooltip>
                     </A>
                     <div class="flex-row">
-                        <a rel="external" class="btn nav-item" href="/invitebot">
+                        <a rel="external" class="btn" href="/invitebot">
                             "Invite Bot"
                         </a>
                         <ProfileDisplay />

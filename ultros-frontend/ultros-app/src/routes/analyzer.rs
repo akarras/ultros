@@ -519,7 +519,7 @@ pub fn AnalyzerWorldNavigator() -> impl IntoView {
 #[component]
 pub fn Analyzer() -> impl IntoView {
     view! {
-        <div class="container mx-auto">
+        <div class="mx-auto">
             <div class="main-content">
                 <span class="content-title">"Analyzer"</span>
                 <div class="flex-column">

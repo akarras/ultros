@@ -2,7 +2,7 @@ use crate::api::get_listings;
 use crate::api::get_worlds;
 use crate::components::{
     clipboard::*, item_icon::*, listings_table::*, loading::*, meta::*, price_history_chart::*,
-    related_items::*, sale_history_table::*, ui_text::*, stats_display::*
+    related_items::*, sale_history_table::*, stats_display::*, ui_text::*,
 };
 use leptos::*;
 use leptos_router::*;
@@ -151,21 +151,24 @@ pub fn ItemView() -> impl IntoView {
         <MetaTitle title=move || format!("{} - Market view", item_name())/>
         // TODO: probably shouldn't hard code the domain here
         <MetaImage url=move || { format!("https://ultros.app/static/itemicon/{}?size=Large", item_id())}/>
-        <div class="flex-column">
-            <div class="flex-wrap" style="background-color: rgb(16, 10, 18); margin-bottom: 15px; border-radius: 12px; padding: 14px; line-height: .9; justify-content: space-between;">
-                <div class="flex-row">
+        <div class="flex flex-column">
+            <div class="flex flex-wrap" class="p-6 pb-6 -mb-8 rounded-l bg-gradient-to-r from-neutral-950 to-transparent">
+                <div class="flex flex-row">
                     {move || view!{<ItemIcon item_id=item_id() icon_size=IconSize::Large />}}
-                    <div class="flex-column" style="padding: 5px">
-                        <span class="flex-row" style="font-size: 36px; line-height 0.5;">{move || item_name()}{move || view!{cx, <Clipboard clipboard_text=item_name().to_string()/>}}</span>
+                    <div class="flex flex-column grow" style="padding: 5px">
+                        <div class="flex flex-row">
+                            <span class="flex flex-row" style="font-size: 36px; line-height 0.5;">{move || item_name()}{move || view!{<Clipboard clipboard_text=item_name().to_string()/>}}</span>
+                            <div class="ml-auto flex flex-row" style="align-items:start">
+                                <a style="height: 45px" class="btn" href=move || format!("https://universalis.app/market/{}", item_id())>"Universalis"</a>
+                                <a style="height: 45px" class="btn" href=move || format!("https://garlandtools.org/db/#item/{}", item_id())>"Garland Tools"</a>
+                            </div>
+                        </div>
                         <span style="font-size: 16px">{move || items.get(&ItemId(item_id())).map(|item| categories.get(&item.item_ui_category)).flatten().map(|i| i.name.as_str()).unwrap_or_default()}</span>
                         <span>{move || view!{<UIText text=item_description().to_string()/>}}</span>
                         {move || view!{<ItemStats item_id=ItemId(item_id()) />}}
                     </div>
                 </div>
-                <div class="flex-row" style="align-items:start">
-                    <a style="height: 45px" class="btn" href=move || format!("https://universalis.app/market/{}", item_id())>"Universalis"</a>
-                    <a style="height: 45px" class="btn" href=move || format!("https://garlandtools.org/db/#item/{}", item_id())>"Garland Tools"</a>
-                </div>
+
             </div>
             <div class="content-nav">
                 <WorldMenu world_name=world item_id />

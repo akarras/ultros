@@ -85,7 +85,7 @@ impl ItemPanel {
     }
 
     fn get_item_data() -> Vec<(ItemId, String, String)> {
-        let data = xiv_gen_db::decompress_data();
+        let data = xiv_gen_db::data();
         let items = &data.items;
         let ui_category_ids = &data.item_ui_categorys;
 
