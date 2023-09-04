@@ -13,14 +13,15 @@ use crate::{
 pub fn HomePage() -> impl IntoView {
     view! {
     <div class="main-content p-4">
-        <h1 class="text-2xl">"Ultros Alpha"</h1>
+        <h1 class="text-3xl">"Ultros Alpha"</h1>
         <Title text="Ultros The Ultra Fast Market Tool"/>
+        <span class="text-2xl">"Live sales"</span>
         <LiveSaleTicker />
         <div class="flex flex-col">
             <div>
-                <h2 class="text-xxl">"fast prices"</h2>
+                <h2 class="text-2xl">"fast prices"</h2>
                 <div class="flex p-8 md:flex-row">
-                    <div class="overflow-hidden max-h-56 w-96">
+                    <div class="overflow-hidden md:w-[60vw] h-96">
                         <RelatedItems item_id=2 />
                     </div>
                     <ul>
@@ -96,7 +97,7 @@ pub fn HomePage() -> impl IntoView {
                         timestamp: Utc::now().naive_utc(),
                     }])] />
                 </div>
-                <div class="flex flex-col ml-auto">
+                <div class="flex flex-col p-3">
                     <span class="content-title">"Retainers"</span>
                     <br/>
                     <ul>

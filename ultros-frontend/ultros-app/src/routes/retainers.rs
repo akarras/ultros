@@ -215,7 +215,7 @@ pub fn Retainers() -> impl IntoView {
             class="main-content"
             style="display: flex; flex-direction: column; align-items: start;"
         >
-            <AnimatedOutlet/>
+            <AnimatedOutlet outro="route-out" intro="route-in" outro_back="route-out-back" intro_back="route-in-back"/>
         </div>
     }
 }

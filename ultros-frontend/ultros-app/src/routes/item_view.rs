@@ -25,7 +25,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
         },
     );
     view! {
-        <Suspense fallback=move || view!{ <Loading/>}>
+        <Transition fallback=move || view!{ <Loading/>}>
         {move || {
             match worlds.get() {
                 Some(Ok(worlds)) => {
@@ -74,7 +74,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                 _ => view!{<Loading/>}.into_view()
             }
         }}
-        </Suspense>
+        </Transition>
     }
 }
 
@@ -85,7 +85,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
         move |(item_id, world)| async move { get_listings(item_id, &world).await },
     );
     view! {
-        <Suspense fallback=move || view!{ <Loading/>}>
+        <Transition fallback=move || view!{ <Loading/>}>
         {move || listing_resource.get().map(|listings| {
             match listings {
                 Err(e) => view!{ <div>{format!("Error getting listings\n{e}")}</div>}.into_view(),
@@ -114,7 +114,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
                 }
             }
         })}
-        </Suspense>
+        </Transition>
     }
 }
 

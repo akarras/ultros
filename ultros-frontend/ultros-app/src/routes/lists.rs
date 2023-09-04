@@ -135,7 +135,7 @@ pub fn Lists() -> impl IntoView {
             </A>
         </div>
         <div class="main-content flex-column">
-            <AnimatedOutlet/>
+            <AnimatedOutlet outro="route-out" intro="route-in" outro_back="route-out-back" intro_back="route-in-back" />
         </div>
     </div>
     }
