@@ -17,7 +17,7 @@ fn WorldButton<'a>(world: AnyResult<'a>, item_id: i32) -> impl IntoView {
         AnyResult::Datacenter(_d) => "bg-fuchsia-800",
         AnyResult::World(_w) => "bg-violet-600",
     };
-    view! { <A class=["rounded-t-lg text-sm p-1 aria-current:fontbold aria-current:text-white mx-1 ", bg_color].concat() href=format!("/item/{}/{item_id}", urlencoding::encode(&world_name))>{world_name}</A>}
+    view! { <A class=["rounded-t-lg text-sm p-1 aria-current:font-bold aria-current:text-white mx-1 ", bg_color].concat() href=format!("/item/{}/{item_id}", urlencoding::encode(&world_name))>{world_name}</A>}
 }
 
 #[component]
