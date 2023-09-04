@@ -34,15 +34,16 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                     // display the region, datacenter, and sibling worlds to this datacenter (excluding this world)
                     let region = world_data.get_region(AnyResult::World(world));
                     let datacenters = world_data.get_datacenters(&AnyResult::World(world));
-                    let views: Vec<_> =
-                        [AnyResult::Region(region)]
-                            .into_iter()
-                            .chain(datacenters.iter().map(|dc| AnyResult::Datacenter(dc)))
-                            .chain(datacenters.iter().flat_map(|dc| {
-                                dc.worlds.iter().map(|world| AnyResult::World(world))
-                            }))
-                            .map(move |world| view! {<WorldButton world item_id=item_id()/>})
-                            .collect();
+                    let views: Vec<_> = [AnyResult::Region(region)]
+                        .into_iter()
+                        .chain(datacenters.iter().map(|dc| AnyResult::Datacenter(dc)))
+                        .chain(
+                            datacenters
+                                .iter()
+                                .flat_map(|dc| dc.worlds.iter().map(AnyResult::World)),
+                        )
+                        .map(move |world| view! {<WorldButton world item_id=item_id()/>})
+                        .collect();
                     views.into_view()
                 }
                 AnyResult::Datacenter(dc) => {
@@ -50,8 +51,8 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                     let region = world_data.get_region(AnyResult::Datacenter(dc));
                     let views: Vec<_> = [AnyResult::Region(region)]
                         .into_iter()
-                        .chain(region.datacenters.iter().map(|d| AnyResult::Datacenter(d)))
-                        .chain(dc.worlds.iter().map(|w| AnyResult::World(w)))
+                        .chain(region.datacenters.iter().map(AnyResult::Datacenter))
+                        .chain(dc.worlds.iter().map(AnyResult::World))
                         .map(create_world_button)
                         .collect();
                     views.into_view()

@@ -9,8 +9,7 @@ fn main() {
     let data = read_data();
     let vec = bincode::encode_to_vec(data, xiv_gen::bincode_config()).unwrap();
     let mut flate = flate2::Compress::new(Compression::best(), true);
-    let mut output = Vec::new();
-    output.reserve(vec.len());
+    let mut output = Vec::with_capacity(vec.len());
     flate
         .compress_vec(vec.as_slice(), &mut output, FlushCompress::Full)
         .unwrap();
