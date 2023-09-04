@@ -58,6 +58,7 @@ fn get_param_data_for_item(item: ItemId) -> Option<Vec<ParamData>> {
     let item = xiv_gen_db::data().items.get(&item)?;
     let mut params = ParamIterator::new(item)
         .map(|(param, hq, value)| ((param.key_id, hq), (param, value)))
+        // .filter(|((_, _), (_, v))| *v > 0)
         .fold(HashMap::new(), |mut acc, ((bp, hq), (param, value))| {
             let entry = acc.entry(bp).or_insert(ParamData {
                 base_param: param,
