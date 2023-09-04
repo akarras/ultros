@@ -9,11 +9,11 @@ on:
   schedule:
     - cron: '44 0 * * *'
   push:
-    branches: [ "master" ]
+    branches: [ "main" ]
     # Publish semver tags as releases.
     tags: [ 'v*.*.*' ]
   pull_request:
-    branches: [ "master" ]
+    branches: [ "main" ]
 
 env:
   # Use docker.io for Docker Hub if empty
@@ -36,6 +36,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
+        with:
+          submodules: recursive
 
       # Install the cosign tool except on PR
       # https://github.com/sigstore/cosign-installer
