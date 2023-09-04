@@ -1,12 +1,14 @@
 name: rust
 
 on:
-  workflow_call:
-    inputs:
-      rust-version:
-        type: string
-        required: false
-        default: nightly
+  schedule:
+    - cron: '44 0 * * *'
+  push:
+    branches: [ "main" ]
+    # Publish semver tags as releases.
+    tags: [ 'v*.*.*' ]
+  pull_request:
+    branches: [ "main" ]
 
 jobs:
   check:
@@ -20,7 +22,7 @@ jobs:
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
-          toolchain: ${{ inputs.rust-version }}
+          toolchain: nightly
           override: true
           components: rustfmt, clippy
       - name: Set up cargo cache
