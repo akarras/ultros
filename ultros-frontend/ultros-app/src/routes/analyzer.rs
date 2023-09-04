@@ -336,8 +336,8 @@ fn AnalyzerTable(
        </div>
        <div class="grid-table" role="table">
         <div class="grid-header" role="rowgroup">
-            <div role="columnheader" style="width: 25px">"HQ"</div>
-            <div role="columnheader first" style="width: 450px">"Item"</div>
+            <div role="columnheader" class="w-[25px]">"HQ"</div>
+            <div role="columnheader first" class="w-[450px]">"Item"</div>
             <div role="columnheader" style="width:100px;" on:click=move |_| set_sort_mode(Some(SortMode::Profit))>
                 <div class="flex-row flex-space">
                 {move || {
@@ -400,9 +400,9 @@ fn AnalyzerTable(
                     .map(|item| item.name.as_str())
                     .unwrap_or_default();
                 view! {<div class="grid-row" role="row-group" class:even=move || (i % 2) == 0 class:odd=move || (i % 2) == 1>
-                    <div role="cell" style="width: 25px;">{data.sale_summary.hq.then_some("✅")}</div>
-                    <div role="cell" class="flex flex-row" style="width: 450px;">
-                        <a href=format!("/item/{world}/{item_id}")>
+                    <div role="cell" style="width: 25px;">{data.sale_summary.hq.then(|| "✅")}</div>
+                    <div role="cell" class="flex flex-row w-[450px]">
+                        <a class="flex flex-row" href=format!("/item/{world}/{item_id}")>
                             <ItemIcon item_id icon_size=IconSize::Small/>
                             {item}
                         </a>
@@ -519,8 +519,7 @@ pub fn AnalyzerWorldNavigator() -> impl IntoView {
 #[component]
 pub fn Analyzer() -> impl IntoView {
     view! {
-
-        <div class="container">
+        <div class="mx-auto">
             <div class="main-content">
                 <span class="content-title">"Analyzer"</span>
                 <div class="flex-column">

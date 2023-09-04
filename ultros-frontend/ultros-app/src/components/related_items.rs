@@ -1,3 +1,4 @@
+use itertools::Itertools;
 /// Related items links items that are related to the current set
 use leptos::*;
 use ultros_api_types::cheapest_listings::CheapestListingMapKey;
@@ -10,13 +11,16 @@ use super::{cheapest_price::*, gil::*, loading::*, small_item_display::*};
 /// This iterator will attempt to find related items using the classjobcategory && ilvl
 fn item_set_iter(item: &'static Item) -> impl Iterator<Item = &'static Item> {
     let items = &xiv_gen_db::data().items;
-    items.values().filter(|i| {
-        item.class_job_category.0 != 0
-            && item.class_job_category.0 == i.class_job_category.0
-            && item.level_item.0 == i.level_item.0
-            && i.key_id != item.key_id
-            && item.item_search_category.0 != 0
-    })
+    items
+        .values()
+        .filter(|i| {
+            item.class_job_category.0 != 0
+                && item.class_job_category.0 == i.class_job_category.0
+                && item.level_item.0 == i.level_item.0
+                && i.key_id != item.key_id
+                && item.item_search_category.0 != 0
+        })
+        .sorted_by_key(|i| i.key_id.0)
 }
 
 /// Creates an iterator over the ingredients in a recipe
@@ -60,10 +64,13 @@ impl<'a> Iterator for IngredientsIter<'a> {
 fn recipe_tree_iter(item_id: ItemId) -> impl Iterator<Item = &'static Recipe> {
     let recipes = &xiv_gen_db::data().recipes;
     // our item id could be in item_result, or item_ingredient
-    recipes.values().filter(move |filter| {
-        filter.item_result == item_id
-            || IngredientsIter::new(filter).any(|(i, _amount)| i.0 == item_id.0)
-    })
+    recipes
+        .values()
+        .filter(move |filter| {
+            filter.item_result == item_id
+                || IngredientsIter::new(filter).any(|(i, _amount)| i.0 == item_id.0)
+        })
+        .sorted_by_key(|r| r.key_id.0)
 }
 
 #[component]
@@ -85,7 +92,7 @@ fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
                     .flat_map(|(item, quantity)| {
                         prices.1.map.get(&CheapestListingMapKey { item_id: item.key_id.0, hq: item.can_be_hq}).map(|data| data.price * quantity as i32)
                     }).sum();
-                    view!{"HQ: " <Gil amount=hq_amount/> " LQ:" <Gil amount />}
+                    view!{<span class="flex flex-row gap-1">"HQ: " <Gil amount=hq_amount/> " LQ:" <Gil amount /></span>}
                 })
             })}
         </Suspense>
@@ -106,19 +113,19 @@ fn Recipe(recipe: &'static Recipe) -> impl IntoView {
     let target_item = items.get(&recipe.item_result)?;
     Some(view! {<div class="content-well">
         "Crafting Recipe:"
-        <div class="flex-row"><SmallItemDisplay item=target_item/><CheapestPrice item_id=target_item.key_id /></div>
+        <div class="flex flex-row"><SmallItemDisplay item=target_item/><CheapestPrice item_id=target_item.key_id /></div>
         "Ingredients:"
         {ingredients}
-        <div class="flex-row">"Price to craft: "</div>
+        <div class="flex flex-row">"Price to craft: "</div>
         <RecipePriceEstimate recipe />
     </div>})
 }
 
 #[component]
-pub fn RelatedItems(item_id: Signal<i32>) -> impl IntoView {
+pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     let db = xiv_gen_db::data();
-    let item = move || db.items.get(&ItemId(item_id()));
-    let item_set = move || {
+    let item = create_memo(move |_| db.items.get(&ItemId(item_id())));
+    let item_set = create_memo(move |_| {
         item()
             .map(|item| {
                 item_set_iter(item)
@@ -131,15 +138,15 @@ pub fn RelatedItems(item_id: Signal<i32>) -> impl IntoView {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default()
-    };
-    let recipes = move || {
+    });
+    let recipes = create_memo(move |_| {
         recipe_tree_iter(ItemId(item_id()))
             .map(|recipe| view! {<Recipe recipe/>})
             .take(10)
             .collect::<Vec<_>>()
-    };
-    view! {
-        <div class="content-well flex-column" class:hidden=move || item_set().is_empty()>
+    });
+
+    view! { <div class="content-well flex-column" class:hidden=move || item_set().is_empty()>
             <span class="content-title">"related items"</span>
             <div class="flex-column">{item_set}</div>
         </div>
@@ -147,6 +154,5 @@ pub fn RelatedItems(item_id: Signal<i32>) -> impl IntoView {
             <span class="content-title">"crafting recipes"</span>
             <div class="flex-wrap">{recipes}</div>
         </div>
-
     }
 }

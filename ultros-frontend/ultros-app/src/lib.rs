@@ -57,10 +57,13 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
         <div class="gradient-outer">
             <div class="gradient"></div>
         </div>
-        <div class="container">
+        <div class="">
             <Router>
                 <nav class="header">
-                <b><i>"ULTRA ALPHA™"</i></b>
+                    <A href="/" exact=true>
+                    // <Icon icon=Icon::from(BiIcon::BiHomeSolid) height="1.7em" width="1.7em"/>
+                        "Home"
+                    </A>
                     // <Suspense fallback=move || {}>
                     // {move || login.read().flatten().map(|_| view!{<A href="/alerts">
                     //     <i class="fa-solid fa-bell"></i>
@@ -95,7 +98,7 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
                         </Tooltip>
                     </A>
                     <div class="flex-row">
-                        <a rel="external" class="btn nav-item" href="/invitebot">
+                        <a rel="external" class="btn" href="/invitebot">
                             "Invite Bot"
                         </a>
                         <ProfileDisplay />

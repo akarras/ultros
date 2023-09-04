@@ -263,7 +263,7 @@ impl Default for CraftersToolbox {
             network_channel: None,
             user_data: Default::default(),
             universalis_query_target: "".to_string(),
-            game_data: xiv_gen_db::decompress_data(),
+            game_data: xiv_gen_db::data(),
             universalis_data: UniversalisData::default(),
             sidebar_state: SidePanel::ItemLookup(ItemPanel::new()),
         }

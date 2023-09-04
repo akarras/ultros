@@ -127,7 +127,7 @@ pub fn EditLists() -> impl IntoView {
 #[component]
 pub fn Lists() -> impl IntoView {
     view! {
-    <div class="container">
+    <div class="mx-auto">
         <div class="content-nav">
             <A class="btn-secondary" href="/list">
                 <i class="fa-solid fa-list"></i>
@@ -135,7 +135,7 @@ pub fn Lists() -> impl IntoView {
             </A>
         </div>
         <div class="main-content flex-column">
-            <AnimatedOutlet/>
+            <AnimatedOutlet outro="route-out" intro="route-in" outro_back="route-out-back" intro_back="route-in-back" />
         </div>
     </div>
     }

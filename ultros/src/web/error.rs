@@ -16,7 +16,7 @@ use reqwest::StatusCode;
 use sitemap_rs::{sitemap_index_error::SitemapIndexError, url_set_error::UrlSetError};
 use thiserror::Error;
 use tokio::{sync::broadcast::error::SendError, time::error::Elapsed};
-use tracing::{log::error, info};
+use tracing::{info, log::error};
 use ultros_api_types::result::JsonError;
 use ultros_db::{
     common_type_conversions::ApiConversionError, world_cache::WorldCacheError, SeaDbErr,
@@ -93,7 +93,7 @@ impl ApiError {
     fn as_status_code(&self) -> StatusCode {
         match self {
             ApiError::NoAuthCookie => StatusCode::OK, // In this case I don't want a real error.
-            _ => StatusCode::INTERNAL_SERVER_ERROR
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 }

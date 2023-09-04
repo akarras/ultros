@@ -13,7 +13,7 @@ fn main() {
     let native_options = eframe::NativeOptions::default();
     let (app_tx_sender, mut app_tx_receiver) = tokio::sync::mpsc::channel(10);
     let (app_rx_sender, app_rx_receiver) = tokio::sync::mpsc::channel(10);
-    let data = xiv_gen_db::decompress_data();
+    let data = xiv_gen_db::data();
     info!("Starting network thread");
 
     std::thread::scope(move |s| {

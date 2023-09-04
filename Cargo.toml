@@ -20,6 +20,7 @@ futures = "0.3.24"
 anyhow = "1.0.72"
 leptos = { git = "https://github.com/leptos-rs/leptos.git", default-features = false, features = [
   "serde",
+  "nightly"
 ] }
 leptos_axum = { git = "https://github.com/leptos-rs/leptos.git" }
 leptos_router = { git = "https://github.com/leptos-rs/leptos.git", default-features = false }
@@ -31,7 +32,11 @@ sea-orm = {version = "0.12.2", features = ["sqlx-postgres", "runtime-tokio-rustl
 sea-orm-migration = {version = "0.12.2", features = ["sqlx-postgres", "runtime-tokio-rustls"]}
 sea-query = "0.30.0"
 yoke = "0.7.1"
-xiv-gen = {path = "./xiv-gen", features = ["item", "item_ui_category", "item_search_category", "class_job", "recipe", "class_job_category"]}
+xiv-gen = {path = "./xiv-gen", features = ["item", "item_ui_category", "item_search_category", "class_job", "recipe", "class_job_category", "base_param"]}
+
+[patch.crates-io]
+leptos = { git = "https://github.com/leptos-rs/leptos.git" }
+pathfinder_simd = { git = "https://github.com/servo/pathfinder.git" } # needed on ARM Mac until pathfinder_simd has new release
 
 [profile.release]
 lto = true
@@ -72,6 +77,8 @@ site-pkg-dir = "pkg"
 #
 # Optional. Env: LEPTOS_STYLE_FILE.
 style-file = "./ultros/static/main.css"
+
+tailwind-input-file = "style/tailwind.css"
 
 # The browserlist https://browsersl.ist query used for optimizing the CSS.
 #

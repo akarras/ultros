@@ -2,7 +2,7 @@ use crate::api::get_listings;
 use crate::api::get_worlds;
 use crate::components::{
     clipboard::*, item_icon::*, listings_table::*, loading::*, meta::*, price_history_chart::*,
-    related_items::*, sale_history_table::*, ui_text::*,
+    related_items::*, sale_history_table::*, stats_display::*, ui_text::*,
 };
 use leptos::*;
 use leptos_router::*;
@@ -25,7 +25,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
         },
     );
     view! {
-        <Suspense fallback=move || view!{ <Loading/>}>
+        <Transition fallback=move || view!{ <Loading/>}>
         {move || {
             match worlds.get() {
                 Some(Ok(worlds)) => {
@@ -74,7 +74,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                 _ => view!{<Loading/>}.into_view()
             }
         }}
-        </Suspense>
+        </Transition>
     }
 }
 
@@ -85,7 +85,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
         move |(item_id, world)| async move { get_listings(item_id, &world).await },
     );
     view! {
-        <Suspense fallback=move || view!{ <Loading/>}>
+        <Transition fallback=move || view!{ <Loading/>}>
         {move || listing_resource.get().map(|listings| {
             match listings {
                 Err(e) => view!{ <div>{format!("Error getting listings\n{e}")}</div>}.into_view(),
@@ -114,7 +114,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
                 }
             }
         })}
-        </Suspense>
+        </Transition>
     }
 }
 
@@ -151,19 +151,20 @@ pub fn ItemView() -> impl IntoView {
         <MetaTitle title=move || format!("{} - Market view", item_name())/>
         // TODO: probably shouldn't hard code the domain here
         <MetaImage url=move || { format!("https://ultros.app/static/itemicon/{}?size=Large", item_id())}/>
-        <div class="flex-column">
-            <div class="flex-wrap" style="background-color: rgb(16, 10, 18); margin-bottom: 15px; border-radius: 12px; padding: 14px; line-height: .9; justify-content: space-between;">
-                <div class="flex-row">
-                    {move || view!{<ItemIcon item_id=item_id() icon_size=IconSize::Large />}}
-                    <div class="flex-column" style="padding: 5px">
-                        <span class="flex-row" style="font-size: 36px; line-height 0.5;">{item_name}{move || view!{<Clipboard clipboard_text=item_name().to_string()/>}}</span>
-                        <span style="font-size: 16px">{move || items.get(&ItemId(item_id())).and_then(|item| categories.get(&item.item_ui_category)).map(|i| i.name.as_str()).unwrap_or_default()}</span>
-                        <span>{move || view!{<UIText text=item_description().to_string()/>}}</span>
+        <div class="flex flex-column">
+            <div class="flex flex-row grow p-6 pb-10 -mb-8 rounded-l bg-gradient-to-r from-slate-950">
+                {move || view!{<ItemIcon item_id=item_id() icon_size=IconSize::Large />}}
+                <div class="flex flex-column grow" style="padding: 5px">
+                    <div class="flex flex-row">
+                        <span class="flex flex-row" style="font-size: 36px; line-height 0.5;">{move || item_name()}{move || view!{<Clipboard clipboard_text=item_name().to_string()/>}}</span>
+                        <div class="ml-auto flex flex-row" style="align-items:start">
+                            <a style="height: 45px" class="btn" href=move || format!("https://universalis.app/market/{}", item_id())>"Universalis"</a>
+                            <a style="height: 45px" class="btn" href=move || format!("https://garlandtools.org/db/#item/{}", item_id())>"Garland Tools"</a>
+                        </div>
                     </div>
-                </div>
-                <div class="flex-row" style="align-items:start">
-                    <a style="height: 45px" class="btn" href=move || format!("https://universalis.app/market/{}", item_id())>"Universalis"</a>
-                    <a style="height: 45px" class="btn" href=move || format!("https://garlandtools.org/db/#item/{}", item_id())>"Garland Tools"</a>
+                    <span style="font-size: 16px">{move || items.get(&ItemId(item_id())).map(|item| categories.get(&item.item_ui_category)).flatten().map(|i| i.name.as_str()).unwrap_or_default()}</span>
+                    <span>{move || view!{<UIText text=item_description().to_string()/>}}</span>
+                    {move || view!{<ItemStats item_id=ItemId(item_id()) />}}
                 </div>
             </div>
             <div class="content-nav">

@@ -46,7 +46,7 @@ pub(crate) async fn live_sales(
                                             sales.make_contiguous().sort_by_key(|(sale, _)| {
                                                 std::cmp::Reverse(sale.sold_date)
                                             });
-                                            while sales.len() > 50 {
+                                            while sales.len() > 8 {
                                                 sales.pop_back();
                                             }
                                         })

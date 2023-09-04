@@ -249,7 +249,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
 #[component]
 pub fn ItemExplorer() -> impl IntoView {
     view! {
-        <div class="container">
+        <div class="mx-auto">
             <div class="main-content flex">
                 <div class="flex-column" style="width: 250px; font-size: 1.2em">
                     "Weapons"
@@ -264,7 +264,7 @@ pub fn ItemExplorer() -> impl IntoView {
                     <JobsList />
                 </div>
                 <div class="flex-column" style="flex-grow: 1;">
-                    <AnimatedOutlet/>
+                    <AnimatedOutlet outro="route-out" intro="route-in" outro_back="route-out-back" intro_back="route-in-back"/>
                 </div>
             </div>
         </div>

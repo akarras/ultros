@@ -6,7 +6,9 @@ pub fn Tooltip(tooltip_text: String, children: Box<dyn Fn() -> Fragment>) -> imp
 
         <div class="tooltip">
             {children()}
-            <div class="top">{tooltip_text}</div>
+            {(!tooltip_text.is_empty()).then(|| {
+                view!{<div class="top">{tooltip_text}</div>}
+            })}
         </div>
     }
 }
