@@ -4,7 +4,7 @@ Ultros is a Final Fantasy XIV marketboard analysis tool that utilizes data sourc
 
 Uses Axum, Leptos, SeaOrm, and Serenity to create something that works most the time!
 
-Currently hosted on https://fly.io via https://ultros.app
+Currently hosted with linode via https://ultros.app
 
 ### Development
 
@@ -12,9 +12,9 @@ Ultros requires a nightly rust toolchain which can be acquired with `rustup`. Ch
 
 This project utilizes git submodules to bring in assets. Since I'm not smart enough to put this into a build script, you must use `git submodule update --init` or `git clone --recursive` when cloning the project.
 
-The project can be run with `cargo leptos serve` or `cargo leptos watch`. Add `--release` to enable optimizations.
+The project can be run with `cargo-leptos`, assuming a Rust toolchain is installed you can install it with `cargo install cargo-leptos --locked`. Then use `cargo leptos serve` or `cargo leptos watch`. Add `--release` to enable optimizations.
 
-If you have need of it, you can also use `cargo run -p ultros --profile fastdev` to enable optimizations that don't take as long to compile.
+The application also requires a Postgresql database to operate and a Discord application token.
 
 ### Environment Variables
 * `DISCORD_TOKEN` - A discord bot token
