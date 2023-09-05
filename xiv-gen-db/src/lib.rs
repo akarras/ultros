@@ -31,8 +31,7 @@ pub fn try_init(bytes: &[u8]) -> anyhow::Result<()> {
 
 pub fn decompress_data(bytes: &[u8]) -> anyhow::Result<xiv_gen::Data> {
     let mut decompressor = flate2::Decompress::new(true);
-    let mut data: Vec<u8> = Vec::new();
-    data.reserve(bytes.len() * 5);
+    let mut data: Vec<u8> = Vec::with_capacity(bytes.len() * 5);
     decompressor
         .decompress_vec(bytes, &mut data, FlushDecompress::Sync)
         .unwrap();
