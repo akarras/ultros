@@ -25,12 +25,6 @@ use leptos_meta::*;
 use leptos_router::*;
 use ultros_api_types::world_helper::WorldHelper;
 
-#[cfg(feature = "ssr")]
-pub fn register_server_functions() -> Result<(), Box<dyn std::error::Error>> {
-    // EditRetainerOrder::register()?;
-    Ok(())
-}
-
 #[component]
 pub fn App(worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
     provide_meta_context();
@@ -42,7 +36,7 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
     let (homeworld, _set_homeworld) = get_homeworld();
     view! {
 
-        <Stylesheet id="leptos" href="/target/site/pkg/ultros.css"/>
+        <Stylesheet id="leptos" href="/pkg/ultros.css"/>
         <Stylesheet id="font-awesome" href="/static/fa/css/all.min.css"/>
         <Stylesheet id="xiv-icons" href="/static/classjob-icons/src/xivicon.css"/>
         <MetaTitle title="Ultros" />

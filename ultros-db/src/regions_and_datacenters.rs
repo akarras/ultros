@@ -72,7 +72,7 @@ impl UltrosDb {
                 })
                 .collect();
             if !added_regions.is_empty() {
-                tracing::info!("new regions {added_regions:?}");
+                tracing::warn!("new regions {added_regions:?}");
                 let _just_inserted = region::Entity::insert_many(added_regions)
                     .exec(&self.db)
                     .await?;

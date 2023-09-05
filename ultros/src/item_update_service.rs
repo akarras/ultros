@@ -58,7 +58,7 @@ impl UpdateService {
             }
         });
     }
-    #[instrument(skip(self))]
+    #[instrument(level = "trace", skip(self))]
     async fn do_full_world_update(&self, world: &world::Model) -> Result<(), anyhow::Error> {
         let world_name = &world.name;
         let world_id = WorldId(world.id);

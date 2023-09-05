@@ -42,8 +42,6 @@ pub(crate) async fn create_leptos_app(
     use axum::{error_handling::HandleError, http::StatusCode};
     use tower_http::services::ServeDir;
 
-    register_server_functions()?;
-
     let conf = get_configuration(None).await?;
     let leptos_options = conf.leptos_options;
     let site_root = &leptos_options.site_root;
