@@ -13,9 +13,9 @@ use xiv_gen::ItemId;
 fn WorldButton<'a>(world: AnyResult<'a>, item_id: i32) -> impl IntoView {
     let world_name = world.get_name().to_owned();
     let bg_color = match world {
-        AnyResult::Region(_r) => "bg-fuchsia-950",
-        AnyResult::Datacenter(_d) => "bg-fuchsia-800",
-        AnyResult::World(_w) => "bg-violet-600",
+        AnyResult::Region(_r) => "bg-violet-950 hover:bg-violet-900",
+        AnyResult::Datacenter(_d) => "bg-violet-800 hover:bg-violet-700",
+        AnyResult::World(_w) => "bg-violet-600 hover:bg-violet-500",
     };
     view! { <A class=["rounded-t-lg text-sm p-1 aria-current:font-bold aria-current:text-white mx-1 ", bg_color].concat() href=format!("/item/{}/{item_id}", urlencoding::encode(&world_name))>{world_name}</A>}
 }
@@ -97,8 +97,9 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
         move |(item_id, world)| async move { get_listings(item_id, &world).await },
     );
     let (pending, set_pending) = create_signal(false);
+    let _class_opacity = "opacity-0 opacity-50"; // this is just here to get tailwind to compile
     view! {
-        {move || pending().then(|| view!{ <Loading/> })}
+        <div class:opacity-50=pending class:opacity-0=move || !pending() class="bg-violet-950 absolute left-0 right-0 z-40 transition ease-in-out delay-250"><div class="ml-[50%]"><Loading/></div></div>
         <Transition set_pending=set_pending.into() fallback=move || view!{ <Loading/>}>
         {move || listing_resource.get().map(|listings| {
             match listings {
@@ -162,12 +163,16 @@ pub fn ItemView() -> impl IntoView {
     let search_categories = &data.item_search_categorys;
     let description =
         create_memo(move |_| format!("Current listings for {} on {}", item_name(), world(),));
-    let item_category = items
-        .get(&ItemId(item_id()))
-        .and_then(|item| categories.get(&item.item_ui_category));
-    let item_search_category = items
-        .get(&ItemId(item_id()))
-        .and_then(|item| search_categories.get(&item.item_search_category));
+    let item_category = move || {
+        items
+            .get(&ItemId(item_id()))
+            .and_then(|item| categories.get(&item.item_ui_category))
+    };
+    let item_search_category = move || {
+        items
+            .get(&ItemId(item_id()))
+            .and_then(|item| search_categories.get(&item.item_search_category))
+    };
     view! {
         <MetaDescription text=description/>
         <MetaTitle title=move || format!("{} - Market view", item_name())/>
@@ -184,7 +189,7 @@ pub fn ItemView() -> impl IntoView {
                             <a style="height: 45px" class="btn" href=move || format!("https://garlandtools.org/db/#item/{}", item_id())>"Garland Tools"</a>
                         </div>
                     </div>
-                    <span style="font-size: 16px">{move || item_category.and_then(|c| item_search_category.map(|s| (c, s))).map(|(c, s)| view!{<a class="text-fuchsia-300 a:text-fuchsia-600" href=["/items/category/", &s.name].concat()>
+                    <span style="font-size: 16px">{move || item_category().and_then(|c| item_search_category().map(|s| (c, s))).map(|(c, s)| view!{<a class="text-fuchsia-300 a:text-fuchsia-600" href=["/items/category/", &s.name].concat()>
                         {c.name.as_str()}</a>})}
                     </span>
                     <span>{move || view!{<UIText text=item_description().to_string()/>}}</span>

@@ -19,24 +19,25 @@ pub fn HomePage() -> impl IntoView {
         <LiveSaleTicker />
         <div class="flex flex-col">
             <div>
-                <h2 class="text-2xl">"fast prices"</h2>
                 <div class="flex p-8 md:flex-row">
                     <div class="overflow-hidden md:w-[60vw] h-96">
                         <RelatedItems item_id=2 />
                     </div>
                     <ul>
-                        <li>"quickly search prices"</li>
-                        <li>"discover items with a similar item level"</li>
-                        <li>"view associated recipes with an item and the price to craft it"</li>
+                        <h2 class="text-3xl p-1">"Fast Prices"</h2>
+                        <ul class="list-disc text-xl p-2">
+                            <li>"quickly search prices"</li>
+                            <li>"discover items with a similar item level"</li>
+                            <li>"view associated recipes with an item and the price to craft it"</li>
+                        </ul>
                     </ul>
                 </div>
             </div>
             <div class="p-8 grow flex-auto flex md:flex-row">
                 <div class="flex flex-col">
-                    <span class="content-title">"Analyzer"</span>
-                    <br/>
-                    <ul>
-                        <li>"Make tons of gil reselling items"</li>
+                    <span class="text-3xl p-1">"Analyzer"</span>
+                    <ul class="list-disc text-xl p-2">
+                        <li>"Make tons of gil with market arbitrage, find items cheap on other worlds and resell on yours"</li>
                         <li>"Quickly filter by roi, profit, and estimated sale date"</li>
                     </ul>
                 </div>
@@ -98,15 +99,14 @@ pub fn HomePage() -> impl IntoView {
                     }])] />
                 </div>
                 <div class="flex flex-col p-3">
-                    <span class="content-title">"Retainers"</span>
+                    <span class="text-3xl p-1">"Retainers"</span>
                     <br/>
-                    <ul>
+                    <ul class="list-disc text-xl p-2">
                         <li>"Track your retainer's listings online"</li>
                         <li>"View undercut items in one place"</li>
                         <li>"WIP - Get alerted on Discord or on this site when someone undercuts you"</li>
                     </ul>
                 </div>
-
             </div>
             <div class="p-8 grow">
                 <span class="content-title">"Lists"</span>
@@ -114,15 +114,22 @@ pub fn HomePage() -> impl IntoView {
                 <ul>
                     <li>"Make shopping lists and find the cheapest prices"</li>
                     <li>"Import entire recipes"</li>
+                    <li>"Honestly not as good as Teamcraft, but maybe it'll be better one day"</li>
                 </ul>
             </div>
-            <div class="p-8 grow">
-                <span class="content-title">"Discord Bot"</span>
-                <br/>
-                <ul>
-                    <li>"Use many features of the site through a Discord bot"</li>
-                    <li>"Get alerts via notifications through the bot"</li>
-                </ul>
+            <div class="p-8 flex md:flex-row">
+                <div class="flex flex-col p-2">
+                    <span class="content-title">"Discord Bot"</span>
+                    <br/>
+                    <ul>
+                        <li>"Use many features of the site through a Discord bot"</li>
+                        <li>"Get alerts via notifications through the bot"</li>
+                    </ul>
+                </div>
+                <a class="flex flex-col p-2 bg-violet-800 p-16 text-6xl rounded-md b-solid border-2 border-violet-950 text-white align-middle text-center ml-10" href="/invitebot">
+                    <i class="fa-brands fa-discord"></i>
+                    <span>"Invite Bot"</span>
+                </a>
             </div>
         </div>
     </div>}
