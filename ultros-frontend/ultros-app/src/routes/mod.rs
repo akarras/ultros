@@ -6,5 +6,5 @@ pub mod item_explorer;
 pub mod item_view;
 pub mod list_view;
 pub mod lists;
-pub mod profile;
 pub mod retainers;
+pub mod settings;

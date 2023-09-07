@@ -1,4 +1,5 @@
 use leptos::*;
+use leptos_icons::*;
 use leptos_router::*;
 
 use crate::api::{create_list, delete_list, edit_list, get_lists};
@@ -25,8 +26,8 @@ pub fn EditLists() -> impl IntoView {
     view! {
     <div class="flex-row">
         <span class="content-title">"Edit Lists"</span>
-        <Tooltip tooltip_text="Create list".to_string()>
-            <button class="btn" on:click=move |_| set_creating(!creating())><i class="fa-solid fa-plus"></i></button>
+        <Tooltip tooltip_text=MaybeSignal::Static("Create list".into())>
+            <button class="btn" on:click=move |_| set_creating(!creating())><Icon icon=Icon::from(BiIcon::BiPlusRegular)/></button>
         </Tooltip>
     </div>
     {move || creating().then(|| {
@@ -48,7 +49,7 @@ pub fn EditLists() -> impl IntoView {
                     set_new_list("".to_string());
                     set_creating(false);
                 }
-            }><i class="fa-solid fa-floppy-disk"></i></button>
+            }><Icon icon=Icon::from(BiIcon::BiSaveSolid)/></button>
         </div>
     }
     })}
@@ -84,7 +85,7 @@ pub fn EditLists() -> impl IntoView {
                                     <td>
                                         {move || if is_edit() {
                                             view!{
-                                            <Tooltip tooltip_text="Save changes to this list".to_string()>
+                                            <Tooltip tooltip_text=Oco::from("Save changes to this list")>
                                                 <button class="btn" on:click=move |_| {
                                                     let mut list = list();
                                                     list.name = name();
@@ -93,20 +94,20 @@ pub fn EditLists() -> impl IntoView {
                                                     }
                                                     edit_list.dispatch(list);
                                                 } >
-                                                    <i class="fa-solid fa-check"></i>
+
                                                 </button>
                                             </Tooltip>
-                                            <Tooltip tooltip_text="Delete this list".to_string()>
+                                            <Tooltip tooltip_text=Oco::from("Delete this list")>
                                                 <button class="btn" on:click=move |_| delete_list.dispatch(list().id)>
-                                                    <i class="fa-solid fa-trash"></i>
+                                                    <Icon icon=Icon::from(BiIcon::BiTrashSolid) />
                                                 </button>
                                             </Tooltip>
                                         }.into_view()
                                         } else {
                                             view!{
-                                        <Tooltip tooltip_text="Edit this list".to_string()>
+                                        <Tooltip tooltip_text=Oco::from("Edit this list")>
                                             <button class="btn" on:click=move |_| set_is_edit(true)>
-                                                <i class="fa-solid fa-pencil"></i>
+                                                <Icon icon=Icon::from(BsIcon::BsPencilFill) />
                                             </button>
                                         </Tooltip>
                                         }.into_view()
@@ -129,8 +130,8 @@ pub fn Lists() -> impl IntoView {
     view! {
     <div class="mx-auto">
         <div class="content-nav">
-            <A class="btn-secondary" href="/list">
-                <i class="fa-solid fa-list"></i>
+            <A class="btn-secondary flex flex-row" href="/list">
+                <Icon height="2em" width="2em" icon=Icon::from(AiIcon::AiOrderedListOutlined) />
                 "Lists"
             </A>
         </div>

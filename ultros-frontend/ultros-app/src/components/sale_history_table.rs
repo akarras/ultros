@@ -1,5 +1,6 @@
 use super::{datacenter_name::*, gil::*, relative_time::*, world_name::*};
 use leptos::*;
+use leptos_icons::*;
 use ultros_api_types::{world_helper::AnySelector, SaleHistory};
 
 #[component]
@@ -32,7 +33,7 @@ pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
                     let total = sale.price_per_item * sale.quantity;
                     view! {
                         <tr>
-                            <td>{sale.hq.then(||{view!{<span class="fa-solid fa-check"></span>}.into_view()})}</td>
+                            <td>{sale.hq.then(||{view!{<Icon icon=Icon::from(BsIcon::BsCheck) />}.into_view()})}</td>
                             <td><Gil amount=sale.price_per_item/></td>
                             <td>{sale.quantity}</td>
                             <td><Gil amount=total /></td>

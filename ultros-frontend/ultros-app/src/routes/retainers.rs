@@ -4,6 +4,7 @@ use crate::api::{get_retainer_listings, get_retainer_undercuts};
 use crate::components::gil::*;
 use crate::components::{item_icon::*, loading::*, meta::*, world_name::*};
 use leptos::*;
+use leptos_icons::*;
 use leptos_router::*;
 use ultros_api_types::icon_size::IconSize;
 use ultros_api_types::{world_helper::AnySelector, ActiveListing, FfxivCharacter, Retainer};
@@ -33,7 +34,7 @@ fn RetainerTable(retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoV
                         {listing
                             .hq
                             .then(|| {
-                                view! { <i class="fa-solid fa-sparkles"></i> }
+                                "HQ"
                             })}
                     </td>
                     <td class="flex flex-row">
@@ -198,16 +199,15 @@ pub fn Retainers() -> impl IntoView {
     // let retainers = create_resource(|| "retainers", move |_| get_retainer_listings(cx));
     view! {
         <div class="content-nav">
-            <A class="btn-secondary" href="/retainers/edit">
-                <span class="fa fa-pen-to-square"></span>
+            <A class="btn-secondary flex flex-row" href="/retainers/edit">
+                <Icon width="1.75em" height="1.75em" icon=Icon::from(BsIcon::BsPencilFill)/>
                 "Edit"
             </A>
             <A class="btn-secondary" href="/retainers/listings">
-                <span class="fa fa-pencil"></span>
                 "All Listings"
             </A>
-            <A class="btn-secondary" href="/retainers/undercuts">
-                <span class="fa fa-exclamation"></span>
+            <A class="btn-secondary flex flex-row" href="/retainers/undercuts">
+                <Icon width="1.75em" height="1.75em" icon=Icon::from(AiIcon::AiExclamationOutlined) />
                 "Undercuts"
             </A>
         </div>

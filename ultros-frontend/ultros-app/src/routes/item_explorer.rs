@@ -25,7 +25,7 @@ fn CategoryView(category: u8) -> impl IntoView {
         <div class="flex flex-row flex-wrap text-2xl p-2">
         {categories.into_iter()
             .map(|(_, name, id)| view! {
-                <Tooltip tooltip_text=name.to_string()>
+                <Tooltip tooltip_text=Oco::from(name.as_str())>
                     <A  href=["/items/category/", &encode(name)].concat()>
                         <ItemSearchCategoryIcon id=*id />
                     </A>
@@ -144,7 +144,7 @@ fn JobsList() -> impl IntoView {
             // .filter(|(_id, job)| job.class_job_parent.0 == 0)
             .map(|(_id, job)| view!{<A href=["/items/jobset/", &job.abbreviation].concat()>
             // {&job.abbreviation}
-            <Tooltip tooltip_text=job.name_english.clone()>
+            <Tooltip tooltip_text=Oco::from(job.name_english.as_str())>
                 <ClassJobIcon id=job.key_id />
             </Tooltip>
         </A>}).collect::<Vec<_>>()}

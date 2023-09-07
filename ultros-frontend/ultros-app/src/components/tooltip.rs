@@ -1,14 +1,15 @@
 use leptos::*;
 
 #[component]
-pub fn Tooltip(tooltip_text: String, children: Box<dyn Fn() -> Fragment>) -> impl IntoView {
+pub fn Tooltip(
+    #[prop(into)] tooltip_text: MaybeSignal<Oco<'static, str>>,
+    children: Box<dyn Fn() -> Fragment>,
+) -> impl IntoView {
     view! {
 
         <div class="tooltip">
             {children()}
-            {(!tooltip_text.is_empty()).then(|| {
-                view!{<div class="top">{tooltip_text}</div>}
-            })}
+            <div class="top">{move || tooltip_text().to_string()}</div>
         </div>
     }
 }

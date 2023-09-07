@@ -2,6 +2,7 @@ use std::cmp::Reverse;
 
 use crate::components::{search_result::*, virtual_scroller::*};
 use leptos::*;
+use leptos_icons::*;
 use sublime_fuzzy::{FuzzySearch, Match, Scoring};
 
 pub(crate) fn fuzzy_search(query: &str, target: &str) -> Option<Match> {
@@ -43,8 +44,9 @@ pub fn SearchBox() -> impl IntoView {
     };
     view! {
 
-        <div style="height: 36px;">
+        <div class="relative" style="height: 36px;">
             <input on:input=on_input on:focusin=focus_in on:focusout=focus_out class="search-box" type="text" prop:value=search class:active={active}/>
+            <div class="absolute right-4 top-4 z-10"><Icon icon=Icon::from(AiIcon::AiSearchOutlined) /></div>
             <div class="search-results">
             // WHY DOES THIS BREAK HYDRATION?
             // <WasmLoadingIndicator />

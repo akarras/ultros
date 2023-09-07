@@ -1,6 +1,7 @@
 use std::cmp::Reverse;
 
 use leptos::*;
+use leptos_icons::*;
 use leptos_router::use_params_map;
 use ultros_api_types::list::ListItem;
 use xiv_gen::{Item, ItemId, Recipe};
@@ -78,13 +79,13 @@ pub fn ListView() -> impl IntoView {
     let (menu, set_menu) = create_signal(MenuState::None);
     view! {
         <div class="flex-row">
-            <Tooltip tooltip_text="Add an item to the list".to_string()>
-                <button class="btn" class:active=move || menu() == MenuState::Item on:click=move |_| set_menu(match menu() { MenuState::Item => MenuState::None, _ => MenuState::Item  })><i class="fa-solid fa-plus" style="padding-right: 5px;"></i><span>"Add Item"</span></button>
+            <Tooltip tooltip_text=Oco::from("Add an item to the list")>
+                <button class="btn" class:active=move || menu() == MenuState::Item on:click=move |_| set_menu(match menu() { MenuState::Item => MenuState::None, _ => MenuState::Item  })><i style="padding-right: 5px;"><Icon icon=Icon::from(BiIcon::BiPlusRegular) /></i><span>"Add Item"</span></button>
             </Tooltip>
-            <Tooltip tooltip_text="Add a recipe's ingredients to the list".to_string()>
+            <Tooltip tooltip_text=Oco::from("Add a recipe's ingredients to the list")>
                 <button class="btn" class:active=move || menu() == MenuState::Recipe on:click=move |_| set_menu(match menu() { MenuState::Recipe => MenuState::None, _ => MenuState::Recipe })>"Add Recipe"</button>
             </Tooltip>
-            <Tooltip tooltip_text="Import an item".to_string()>
+            <Tooltip tooltip_text=Oco::from("Import an item")>
                 <button class="btn" class:active=move || menu() == MenuState::MakePlace on:click=move |_| set_menu(match menu() { MenuState::MakePlace => MenuState::None, _ => MenuState::MakePlace})>"Make Place"</button>
             </Tooltip>
 
@@ -135,7 +136,7 @@ pub fn ListView() -> impl IntoView {
                                                 })
                                                 .unwrap_or_default(), quantity: Some(quantity()), ..Default::default() };
                                             add_item.dispatch(item);
-                                        }><i class="fa-solid fa-plus"></i></button>
+                                        }><Icon icon=Icon::from(BiIcon::BiPlusRegular) /></button>
                                     </div>}
                                 }).collect::<Vec<_>>()
                         }}
@@ -234,7 +235,7 @@ pub fn ListView() -> impl IntoView {
                                         {game_items.get(&ItemId(item.item_id)).map(|item| &item.name)}
                                         <Clipboard clipboard_text=game_items.get(&ItemId(item.item_id)).map(|item| item.name.to_string()).unwrap_or_default()/>
                                         {game_items.get(&ItemId(item.item_id)).map(|item| item.item_search_category.0 <= 1).unwrap_or_default().then(move || {
-                                            view!{<div><Tooltip tooltip_text="This item is not available on the marketboard".to_string()><i class="fa-solid fa-circle-exclamation"></i></Tooltip></div>}
+                                            view!{<div><Tooltip tooltip_text=Oco::from("This item is not available on the marketboard")><Icon icon=Icon::from(BiIcon::BiTrashSolid)/></Tooltip></div>}
                                         })}
                                     </div>
                                 </td>
@@ -254,7 +255,7 @@ pub fn ListView() -> impl IntoView {
                                         {game_items.get(&ItemId(item.item_id)).map(|item| &item.name)}
                                         <Clipboard clipboard_text=game_items.get(&ItemId(item.item_id)).map(|item| item.name.to_string()).unwrap_or_default()/>
                                         {game_items.get(&ItemId(item.item_id)).map(|item| item.item_search_category.0 <= 1).unwrap_or_default().then(move || {
-                                            view!{<div><Tooltip tooltip_text="This item is not available on the marketboard".to_string()><i class="fa-solid fa-circle-exclamation"></i></Tooltip></div>}
+                                            view!{<div><Tooltip tooltip_text=Oco::from("This item is not available on the marketboard")><Icon icon=Icon::from(AiIcon::AiExclamationOutlined)/></Tooltip></div>}
                                         })}
                                     </div>
                                 </td>
@@ -271,7 +272,7 @@ pub fn ListView() -> impl IntoView {
                             }}
                             <td>
                                 <button class="btn" on:click=move |_| {delete_item.dispatch(item().id)}>
-                                    <i class="fa-solid fa-trash"></i>
+                                    <Icon icon=Icon::from(BiIcon::BiTrashSolid) />
                                 </button>
                                 <button class="btn" on:click=move |_| {
                                     if temp_item() != item() {
@@ -279,7 +280,7 @@ pub fn ListView() -> impl IntoView {
                                     }
                                     set_edit(!edit())
                                 }>
-                                    <i class="fa-solid" class:fa-check=edit class:fa-pencil=move || !edit()></i>
+                                    <Icon icon=MaybeSignal::derive(move || if edit() { Icon::from(BsIcon::BsCheck) } else { Icon::from(BsIcon::BsPencilFill) }) />
                                 </button>
                             </td>
                         </tr>}

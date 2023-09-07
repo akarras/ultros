@@ -11,7 +11,7 @@ use std::{
     time::Instant,
 };
 use tar::{Builder, Header};
-use tempdir::TempDir;
+use tempfile::TempDir;
 use ultros_api_types::icon_size::IconSize;
 
 /// Resizes all xiv-icons and bundles them
@@ -130,7 +130,7 @@ async fn main() {
     println!("cargo:rerun-if-changed=./universalis-assets/icon2x");
     println!("cargo:rerun-if-change=./build.rs");
     let instant = Instant::now();
-    let temp_dir = TempDir::new("tmp-universalis-icons").unwrap();
+    let temp_dir = TempDir::new().unwrap();
     resize_all_images(temp_dir.path()).await;
     compress(&temp_dir.path().to_path_buf()).await;
     println!(

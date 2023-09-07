@@ -83,7 +83,7 @@ fn get_param_data_for_item(item: ItemId) -> Option<Vec<ParamData>> {
 fn ParamView(data: ParamData) -> impl IntoView {
     view! {
         <div>
-            <Tooltip tooltip_text=data.base_param.description.clone()>
+            <Tooltip tooltip_text=Oco::from(data.base_param.description.as_str())>
             <span class="w-48">{&data.base_param.name}</span>"  "{data.normal_value} {data.special_value.map(|special| view!{" hq: " {data.normal_value + special}})}
             </Tooltip>
         </div>

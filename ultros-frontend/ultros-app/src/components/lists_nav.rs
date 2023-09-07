@@ -1,15 +1,16 @@
 use leptos::*;
 use leptos_router::*;
+use leptos_icons::*;
 
 #[component]
 pub fn ListsNav() -> impl IntoView {
     view! {<div class="content-nav">
         <A class="btn-secondary" href="/list/edit">
-            <span class="fa fa-pen-to-square"></span>
+            <Icon icon=Icon::from(AiIcon::AiEditFilled)
             "Edit"
         </A>
         <A class="btn-secondary" href="/list">
-            <i class="fa-solid fa-list"></i>
+            <Icon icon=Icon::from(AiIcon::AiOrderedListOutlined) />
             "Lists"
         </A>
     </div>}

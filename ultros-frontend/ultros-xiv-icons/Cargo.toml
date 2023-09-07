@@ -17,6 +17,6 @@ image = {workspace = true, features = ["webp-encoder", "png"]}
 tokio = {version = "^1", features = ["rt-multi-thread", "macros", "fs"]}
 indicatif = {version = "*"}
 futures = "0.3.26"
-tempdir = "0.3.7"
+tempfile = "3"
 tar = "0.4.38"
 flate2 = "1.0.25"

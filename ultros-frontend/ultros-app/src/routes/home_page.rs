@@ -1,6 +1,7 @@
 use chrono::Utc;
 // use crate::components::live_sale_ticker::*;
 use leptos::*;
+use leptos_icons::*;
 use leptos_meta::*;
 use ultros_api_types::{ActiveListing, Retainer};
 
@@ -126,8 +127,8 @@ pub fn HomePage() -> impl IntoView {
                         <li>"Get alerts via notifications through the bot"</li>
                     </ul>
                 </div>
-                <a class="flex flex-col p-2 bg-violet-800 p-16 text-6xl rounded-md b-solid border-2 border-violet-950 text-white align-middle text-center ml-10" href="/invitebot">
-                    <i class="fa-brands fa-discord"></i>
+                <a class="flex flex-col p-16 bg-violet-800 text-6xl rounded-md b-solid border-2 border-violet-950 text-white align-middle text-center ml-10" href="/invitebot">
+                    <Icon icon=Icon::from(BsIcon::BsDiscord) />
                     <span>"Invite Bot"</span>
                 </a>
             </div>

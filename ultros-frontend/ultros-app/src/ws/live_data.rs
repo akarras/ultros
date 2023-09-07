@@ -19,7 +19,14 @@ pub(crate) async fn live_sales(
     use log::info;
 
     log::info!("CONNECTING TO SALES!");
-    let socket = WebSocket::open("ws://localhost:8080/api/v1/realtime/events").unwrap();
+    // TODO - better way to switch to wss
+    let environment = "production";
+    let url = if environment == "production" {
+        "wss://ultros.app/api/v1/realtime/events"
+    } else {
+        "ws://localhost:8080/api/v1/realtime/events"
+    };
+    let socket = WebSocket::open(url).unwrap();
     let (mut write, mut read) = socket.split();
     let client = ClientMessage::AddSubscribe {
         filter: FilterPredicate::World(price_zone),

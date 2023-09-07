@@ -39,6 +39,7 @@ tracing = "0.1"
 serde_json = "1.0.94"
 ultros-charts = {path = "../ultros-charts" }
 plotters-canvas = "0.3"
+leptos_icons.workspace = true
 
 [features]
 default = ["ssr"] # this is mostly so if I run cargo check, it has a flavor to work on

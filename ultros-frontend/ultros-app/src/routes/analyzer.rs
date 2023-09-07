@@ -1,6 +1,7 @@
 use chrono::{Duration, Utc};
 use humantime::{format_duration, parse_duration};
 use leptos::*;
+use leptos_icons::*;
 use leptos_router::*;
 use log::info;
 use std::{cmp::Reverse, collections::HashMap, fmt::Display, str::FromStr, sync::Arc};
@@ -14,8 +15,8 @@ use xiv_gen::ItemId;
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
-        clipboard::*, gil::*, item_icon::*, meta::*, tooltip::*, virtual_scroller::*,
-        world_picker::*,
+        clipboard::*, gil::*, item_icon::*, loading::LargeLoading, meta::*, tooltip::*,
+        virtual_scroller::*, world_picker::*,
     },
     error::AppError,
     global_state::LocalWorldData,
@@ -343,9 +344,9 @@ fn AnalyzerTable(
                 {move || {
                     match sort_mode().unwrap_or(SortMode::Roi) {
                         SortMode::Profit => {
-                            view!{"Profit"<i class="fa-solid fa-sort-down"></i>}.into_view()
+                            view!{"Profit"<Icon icon=Icon::from(BiIcon::BiSortDownRegular) />}.into_view()
                         },
-                        _ => view!{<Tooltip tooltip_text="Sort by profit".to_string()>"Profit"</Tooltip>}.into_view(),
+                        _ => view!{<Tooltip tooltip_text=MaybeSignal::Static("Sort by profit".into())>"Profit"</Tooltip>}.into_view(),
                     }
                 }}
                 </div>
@@ -355,18 +356,18 @@ fn AnalyzerTable(
                 {move || {
                     match sort_mode().unwrap_or(SortMode::Roi) {
                         SortMode::Roi => {
-                            view!{"R.O.I"<i class="fa-solid fa-sort-down"></i>}.into_view()
+                            view!{"R.O.I"<Icon icon=Icon::from(BiIcon::BiSortDownRegular) />}.into_view()
                         },
-                        _ => view!{<Tooltip tooltip_text="Sort by return on investment".to_string()>"R.O.I."</Tooltip>}.into_view(),
+                        _ => view!{<Tooltip tooltip_text=MaybeSignal::Static("Sort by return on investment".into())>"R.O.I."</Tooltip>}.into_view(),
                     }
                 }}
                 </div>
             </div>
             <div role="columnheader" style=WORLD_WIDTH>
-                "World" {move || world_filter().map(move |world| view!{<a on:click=move |_| set_world_filter(None)><Tooltip tooltip_text="Clear this world filter".to_string()>"[" {&world} "]"</Tooltip></a>})}
+                "World" {move || world_filter().map(move |world| view!{<a on:click=move |_| set_world_filter(None)><Tooltip tooltip_text=Oco::from("Clear this world filter")>"[" {&world} "]"</Tooltip></a>})}
             </div>
             <div role="columnheader" style=DATACENTER_WIDTH>
-                "Datacenter" {move || datacenter_filter().map(move |datacenter| view!{<a on:click=move |_| set_datacenter_filter(None)><Tooltip tooltip_text="Clear this datacenter filter".to_string()>"[" {&datacenter} "]"</Tooltip></a>})}
+                "Datacenter" {move || datacenter_filter().map(move |datacenter| view!{<a on:click=move |_| set_datacenter_filter(None)><Tooltip tooltip_text=Oco::from("Clear this datacenter filter")>"[" {&datacenter} "]"</Tooltip></a>})}
             </div>
             <div role="columnheader" style="width: 300px;">"Next sale"</div>
         </div>
@@ -445,7 +446,10 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     );
     let worlds = use_context::<LocalWorldData>()
         .expect("Worlds should always be populated here")
-        .0;
+        .0
+        .unwrap();
+    let world_value = store_value(worlds);
+    let (pending, set_pending) = create_signal(false);
 
     view!{
         <div class="main-content">
@@ -455,10 +459,10 @@ pub fn AnalyzerWorldView() -> impl IntoView {
             <span>"These estimates aren't very accurate, but are meant to be easily accessible and fast to use."</span><br/>
             <span>"Be extra careful to make sure that the price you buy things for matches the price"</span><br/>
             <span>"Sample filters"</span>
-            <a class="btn" href="?next-sale=7d&roi=300&profit=0&sort=profit&">"300% return within 7 days"</a>
-            <a class="btn" href="?next-sale=1M&roi=500&profit=200000&">"500% return with 200K min gil profit within 1 month"</a>
-            {worlds.ok().map(|worlds| {
-                let world_value = store_value(worlds);
+            <a class="btn" href="?next-sale=7d&roi=300&profit=0&sort=profit&">"300% return + 7 days"</a>
+            <a class="btn" href="?next-sale=1M&roi=500&profit=200000&">"500% return + 200K min gil + 1 month"</a>
+            {view!{<Transition set_pending=set_pending.into() fallback=move || ()>
+                {move || {
                 let global_cheapest_listings = create_local_resource(
                     move || params.with(|p| p.get("world").cloned()),
                     move |world| async move {
@@ -473,6 +477,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                     },
                 );
                 view!{
+                    <LargeLoading pending />
                         {move || {
                             let world_cheapest = world_cheapest_listings.get();
                             let sales = sales.get();
@@ -485,9 +490,11 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                             values.map(|(world_cheapest_listings, sales, global_cheapest_listings)| {
                             view!{<AnalyzerTable sales global_cheapest_listings world_cheapest_listings worlds world=world.into() />
                             } }
-                        )}}
-                }
-            })}
+                        )
+                    }}
+                }}}
+                </Transition>
+            }}
     </div>}.into_view()
 }
 

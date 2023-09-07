@@ -17,10 +17,11 @@ use crate::{
     components::{meta::*, profile_display::*, search_box::*, tooltip::*},
     routes::{
         analyzer::*, edit_retainers::*, home_page::*, item_explorer::*, item_view::*, list_view::*,
-        lists::*, profile::*, retainers::*,
+        lists::*, retainers::*, settings::*,
     },
 };
 use leptos::*;
+use leptos_icons::*;
 use leptos_meta::*;
 use leptos_router::*;
 use ultros_api_types::world_helper::WorldHelper;
@@ -28,16 +29,18 @@ use ultros_api_types::world_helper::WorldHelper;
 #[component]
 pub fn App(worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
     provide_meta_context();
-    provide_context(Cookies::new());
+    let cookies = Cookies::new();
+    provide_context(cookies.clone());
     provide_context(LocalWorldData(worlds));
     provide_context(CheapestPrices::new());
     let login = create_resource(move || {}, move |_| async move { get_login().await.ok() });
     // provide_context(LoggedInUser(login));
+    // HIDE_ADS is user set, entirely optional whether users want to opt in or not.
+    let (ads, _set_ads) = cookies.get_cookie("HIDE_ADS");
     let (homeworld, _set_homeworld) = get_homeworld();
     view! {
 
         <Stylesheet id="leptos" href="/pkg/ultros.css"/>
-        <Stylesheet id="font-awesome" href="/static/fa/css/all.min.css"/>
         <Stylesheet id="xiv-icons" href="/static/classjob-icons/src/xivicon.css"/>
         <MetaTitle title="Ultros" />
         <MetaDescription text="Ultros is a FAST FFXIV marketboard analysis tool, keep up to date with all of your retainers and ensure you've got the best prices!" />
@@ -47,7 +50,7 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
         <Meta property="og:type" content="website"/>
         <Meta property="og:locale" content="en_US" />
         <Meta property="og:site_name" content="Ultros" />
-
+        {move || ads().is_none().then(|| view!{<Script async_="async" src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-8789160460804755" crossorigin="anonymous"></Script>})}
         <div class="gradient-outer">
             <div class="gradient"></div>
         </div>
@@ -55,7 +58,7 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
             <Router>
                 <nav class="header">
                     <A href="/" exact=true>
-                    // <Icon icon=Icon::from(BiIcon::BiHomeSolid) height="1.7em" width="1.7em"/>
+                    <Icon icon=Icon::from(BiIcon::BiHomeSolid) height="1.75em" width="1.75em"/>
                         "Home"
                     </A>
                     // <Suspense fallback=move || {}>
@@ -68,18 +71,18 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
                         {
                             view!{
                             <A href=homeworld().map(|w| format!("/analyzer/{}", w.name)).unwrap_or("/analyzer".to_string())>
-                                <i class="fa-solid fa-money-bill-trend-up"></i>
+                                <Icon width="1.75em" height="1.75em" icon=Icon::from(FaIcon::FaMoneyBillTrendUpSolid)/>
                                 "Analyzer"
                             </A>}
                         }
                     }
                     <Suspense fallback=move || {}>
                     {move || login.get().flatten().map(|_| view!{<A href="/list">
-                        <i class="fa-solid fa-list"></i>
+                        <Icon width="1.75em" height="1.75em" icon=Icon::from(AiIcon::AiOrderedListOutlined) />
                         "Lists"
                     </A>
                     <A href="/retainers/listings">
-                        <i class="fa-solid fa-user-group"></i>
+                        <Icon width="1.75em" height="1.75em" icon=Icon::from(BiIcon::BiGroupSolid) />
                         "Retainers"
                     </A>})}
                     </Suspense>
@@ -87,8 +90,8 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
                         <SearchBox/>
                     </div>
                     <A href="/items">
-                        <Tooltip tooltip_text="All Items".to_string()>
-                            <i class="fa-solid fa-screwdriver-wrench"></i>
+                        <Tooltip tooltip_text=Oco::from("All Items")>
+                            <Icon width="1.75em" height="1.75em" icon=Icon::from(FaIcon::FaScrewdriverWrenchSolid) />
                         </Tooltip>
                     </A>
                     <div class="flex-row">
@@ -119,6 +122,7 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
 
                     <Route path="analyzer" view=Analyzer/>
                     <Route path="analyzer/:world" view=AnalyzerWorldView />
+                    <Route path="settings" view=Settings/>
                     <Route path="profile" view=Profile/>
                 </AnimatedRoutes>
             </Router>
