@@ -1,4 +1,5 @@
 use crate::EventType;
+use itertools::Itertools;
 use poise::serenity_prelude::Color;
 use std::fmt::Write;
 use std::sync::Arc;
@@ -35,7 +36,17 @@ pub(crate) async fn retainer(ctx: Context<'_>) -> Result<(), Error> {
 /// Returns the users retainers
 #[poise::command(slash_command, prefix_command)]
 async fn list(ctx: Context<'_>) -> Result<(), Error> {
-    ctx.say("Hello world").await?;
+    let retainers = ctx
+        .data()
+        .db
+        .get_retainer_listings_for_discord_user(ctx.author().id.0)
+        .await?;
+    let embed_text = retainers.into_iter().format_with("\n", |(_r, d, l), f| {
+        f(&format_args!("{} - {} listings", d.name, l.len()))
+    });
+    let embed_text = format!("Use `/ffxiv retainer add ` to add more retainers to your list. Or check your undercuts with `/ffxiv retainer undercuts`\n\n```\n{embed_text}\n```");
+    ctx.send(|reply| reply.embed(|e| e.title("Retainers").description(embed_text)))
+        .await?;
     Ok(())
 }
 
