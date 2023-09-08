@@ -130,7 +130,7 @@ async fn history(
         .into_iter()
         .map(SaleHistory::from)
         .collect();
-    const SIZE: (u32, u32) = (1920 / 3, 1080 / 3);
+    const SIZE: (u32, u32) = (1920 / 2, 1080 / 2);
     let buffer = {
         let mut buffer = String::new();
         // let mut image = RgbImage::new(size.0, size.1);

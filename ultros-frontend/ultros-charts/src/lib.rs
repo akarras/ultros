@@ -80,11 +80,11 @@ where
     };
     let mut chart = ChartBuilder::on(&root)
         .x_label_area_size(60)
-        .y_label_area_size(80)
+        .y_label_area_size(100)
         .margin(10)
         .caption(
-            item_name,
-            ("Jaldi, sans-serif", 20.0).into_font().color(&WHITE),
+            format!("{} - Sale History", item_name),
+            ("Jaldi, sans-serif", 25.0).into_font().color(&WHITE),
         )
         .build_cartesian_2d(*first_sale..*last_sale, 0..*max_sale)?;
 
@@ -101,7 +101,7 @@ where
         })
         .y_label_formatter(&|y| short_number(*y))
         .x_labels(5)
-        .label_style(("Jaldi, sans-serif", 10.0).into_font().color(&WHITE))
+        .label_style(("Jaldi, sans-serif", 20.0).into_font().color(&WHITE))
         .draw()?;
 
     let colors = vec![
@@ -132,7 +132,8 @@ where
     chart
         .configure_series_labels()
         .border_style(PURPLE_A400)
-        .label_font(("Jaldi, sans-serif", 10.0).into_font().color(&WHITE))
+        .position(SeriesLabelPosition::UpperRight)
+        .label_font(("Jaldi, sans-serif", 18.0).into_font().color(&WHITE))
         .draw()?;
 
     // To avoid the IO failure being ignored silently, we manually call the present function

@@ -15,6 +15,8 @@ FROM rustlang/rust:nightly-bullseye as runner
 COPY --from=builder /app/target/server/x86_64-unknown-linux-gnu/release/ultros /app/
 COPY --from=builder /app/target/site /app/site
 COPY --from=builder /app/Cargo.toml /app/
+# copy font into local font dirs
+COPY --from=builder /app/ultros/static/*.ttf /usr/local/share/fonts
 WORKDIR /app
 ENV RUST_LOG="info"
 ENV LEPTOS_OUTPUT_NAME="ultros"
