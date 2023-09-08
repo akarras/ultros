@@ -30,7 +30,7 @@ use ultros_api_types::world_helper::WorldHelper;
 pub fn App(worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
     provide_meta_context();
     let cookies = Cookies::new();
-    provide_context(cookies.clone());
+    provide_context(cookies);
     provide_context(LocalWorldData(worlds));
     provide_context(CheapestPrices::new());
     let login = create_resource(move || {}, move |_| async move { get_login().await.ok() });

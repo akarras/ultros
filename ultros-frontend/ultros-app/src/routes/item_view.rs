@@ -63,7 +63,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                         .get_all()
                         .regions
                         .iter()
-                        .map(|r| AnyResult::Region(r));
+                        .map(AnyResult::Region);
                     let datacenters = world_data.get_datacenters(&AnyResult::Region(region));
                     let views: Vec<_> = regions
                         .chain(datacenters.iter().map(|dc| AnyResult::Datacenter(dc)))

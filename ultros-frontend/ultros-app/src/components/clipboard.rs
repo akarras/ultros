@@ -32,7 +32,7 @@ pub fn Clipboard(clipboard_text: String) -> impl IntoView {
     }>
     <Tooltip tooltip_text=MaybeSignal::derive(move || {
         if !copied() {
-            Oco::Owned(format!("Copy {clipboard_text_2} to clipboard").into())
+            Oco::Owned(format!("Copy {clipboard_text_2} to clipboard"))
         }
         else {
             Oco::from("Text copied!")

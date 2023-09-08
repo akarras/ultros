@@ -33,9 +33,7 @@ fn RetainerTable(retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoV
                     <td>
                         {listing
                             .hq
-                            .then(|| {
-                                "HQ"
-                            })}
+                            .then_some("HQ")}
                     </td>
                     <td class="flex flex-row">
                         {if let Some(item) = item {
