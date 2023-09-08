@@ -112,16 +112,16 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
                     view! {
                         <PriceHistoryChart sales=MaybeSignal::from(sales) />
                         {(!hq_listings.is_empty()).then(move || {
-                            view!{ <div class="content-well">
+                            view!{ <div class="content-well max-h-[30em] overflow-y-auto">
                                 <span class="content-title">"high quality listings"</span>
                                 <ListingsTable listings=hq_listings />
                             </div> }.into_view()
                         })}
-                        <div class="content-well">
+                        <div class="content-well max-h-[30em] overflow-y-auto">
                             <span class="content-title">"low quality listings"</span>
                             <ListingsTable listings=lq_listings />
                         </div>
-                        <div class="content-well">
+                        <div class="content-well max-h-[30em] overflow-y-auto">
                             <span class="content-title">"sale history"</span>
                             <SaleHistoryTable sales=Signal::from(sales) />
                         </div>
