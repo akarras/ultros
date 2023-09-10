@@ -1,8 +1,6 @@
 name: rust
 
 on:
-  schedule:
-    - cron: '44 0 * * *'
   push:
     branches: [ "main" ]
     # Publish semver tags as releases.
