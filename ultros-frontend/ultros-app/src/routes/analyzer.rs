@@ -184,43 +184,6 @@ impl Display for SortMode {
     }
 }
 
-fn use_query_item<T>(parameter: &'static str) -> (Signal<Option<T>>, SignalSetter<Option<T>>)
-where
-    T: FromStr + ToString + PartialEq,
-{
-    let router = use_router();
-    let query_map = use_query_map();
-
-    let read = create_memo(move |_| {
-        query_map.with(|query| query.get(parameter).and_then(|s| s.parse().ok()))
-    });
-    let navigate = use_navigate();
-    let set = move |value: Option<T>| {
-        let mut query_map = query_map();
-        let path_name = router.pathname()();
-        match value {
-            Some(value) => {
-                query_map.insert(parameter.to_string(), value.to_string());
-            }
-            None => {
-                query_map.remove(parameter);
-            }
-        }
-        let query_string = query_map.to_query_string();
-
-        navigate(
-            &format!("{path_name}{query_string}"),
-            NavigateOptions {
-                resolve: false,
-                replace: true,
-                scroll: true,
-                state: State(None),
-            },
-        )
-    };
-    (read.into(), set.into_signal_setter())
-}
-
 #[component]
 fn AnalyzerTable(
     sales: RecentSales,
@@ -234,13 +197,13 @@ fn AnalyzerTable(
     // get ranges of possible values for our sliders
 
     let items = &xiv_gen_db::data().items;
-    let (sort_mode, set_sort_mode) = use_query_item::<SortMode>("sort");
-    let (minimum_profit, set_minimum_profit) = use_query_item::<i32>("profit");
-    let (minimum_roi, set_minimum_roi) = use_query_item("roi");
+    let (sort_mode, set_sort_mode) = create_query_signal::<SortMode>("sort");
+    let (minimum_profit, set_minimum_profit) = create_query_signal::<i32>("profit");
+    let (minimum_roi, set_minimum_roi) = create_query_signal("roi");
     // let (max_predicted_time, set_max_predicted_time) = create_signal("1 week".to_string());
-    let (max_predicted_time, set_max_predicted_time) = use_query_item::<String>("next-sale");
-    let (world_filter, set_world_filter) = use_query_item::<String>("world");
-    let (datacenter_filter, set_datacenter_filter) = use_query_item::<String>("datacenter");
+    let (max_predicted_time, set_max_predicted_time) = create_query_signal::<String>("next-sale");
+    let (world_filter, set_world_filter) = create_query_signal::<String>("world");
+    let (datacenter_filter, set_datacenter_filter) = create_query_signal::<String>("datacenter");
     let world_clone = worlds.clone(); // cloned to pass into closure
     let world_filter_list = create_memo(move |_| {
         let world = world_filter().or_else(datacenter_filter)?;
@@ -259,11 +222,11 @@ fn AnalyzerTable(
     });
     let predicted_time =
         create_memo(move |_| parse_duration(&max_predicted_time().unwrap_or_default()));
-    let predicted_time_string = move || {
+    let predicted_time_string = create_memo(move |_| {
         predicted_time()
             .map(|duration| format_duration(duration).to_string())
             .unwrap_or("---".to_string())
-    };
+    });
     let sorted_data = create_memo(move |_| {
         let mut sorted_data = profits
             .0
@@ -322,12 +285,26 @@ fn AnalyzerTable(
                }.into_view()).unwrap_or("---".into_view())}
                </label><br/>
                <input id="minimum_profit" min=0 max=100000 type="number" prop:value=minimum_profit
-                    on:input=move |input| set_minimum_profit(event_target_value(&input).parse::<i32>().ok()) />
+                    on:input=move |input| { let value = event_target_value(&input);
+                        if let Ok(profit) = value.parse::<i32>() {
+                            set_minimum_profit(Some(profit))
+                        } else if value.is_empty() {
+                            info!("clearing profit");
+                            set_minimum_profit(None);
+                        } }/>
            </div>
            <div class="flex-column">
                 <label for="minimum_roi">"minimum ROI:"<br/>{move || minimum_roi().map(|roi| format!("{roi}%")).unwrap_or("---".to_string())}</label><br/>
                <input min=0 max=100000 type="number" prop:value=minimum_roi
-                on:input=move |input| set_minimum_roi(event_target_value(&input).parse::<i32>().ok()) />
+                on:input=move |input| {
+                    let value = event_target_value(&input);
+                    if let Ok(roi) = value.parse::<i32>() {
+                        set_minimum_roi(Some(roi));
+                    } else if value.is_empty() {
+                        info!("clearing roi");
+                        set_minimum_roi(None);
+                    }} />
+
            </div>
            <div class="flex-column">
                <label for="predicted_time">"minimum time (use time notation, ex. 1w 30m) :" <br/>{predicted_time_string}</label><br/>
@@ -507,10 +484,16 @@ pub fn AnalyzerWorldNavigator() -> impl IntoView {
     });
     info!("{initial_world:?}");
     let (current_world, set_current_world) = create_signal(initial_world);
+    let query = use_query_map();
     create_effect(move |_| {
         if let Some(world) = current_world() {
             let world = world.name;
-            nav(&format!("/analyzer/{world}"), NavigateOptions::default());
+            let query_map = query.get_untracked();
+            let query = serde_qs::to_string(&query_map).unwrap();
+            nav(
+                &format!("/analyzer/{world}?{query}"),
+                NavigateOptions::default(),
+            );
         }
     });
     view! {<label>"Analyzer World: "</label><WorldOnlyPicker current_world=current_world.into() set_current_world=set_current_world.into() />}

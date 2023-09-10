@@ -3,6 +3,7 @@ use futures::{future::join, Future};
 use gloo_net::http::Request;
 use leptos::*;
 use leptos_meta::provide_meta_context;
+use log::error;
 use rexie::{ObjectStore, Rexie, Store, Transaction, TransactionMode};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -130,7 +131,7 @@ async fn get_world_data() -> Arc<WorldHelper> {
         .send()
         .await
         .map_err(|e| {
-            log!("{e}");
+            error!("{e}");
             e
         })
         .unwrap()

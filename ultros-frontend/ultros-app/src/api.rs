@@ -262,13 +262,13 @@ where
 {
     let abort_controller = web_sys::AbortController::new().ok();
     let abort_signal = abort_controller.as_ref().map(|a| a.signal());
-
+    use log::info;
     let json: String = gloo_net::http::Request::get(path)
         .abort_signal(abort_signal.as_ref())
         .send()
         .await
         .map_err(|e| {
-            log!("{e}");
+            log::error!("{}", e);
             e
         })?
         .text()
@@ -338,7 +338,7 @@ where
         .send()
         .await
         .map_err(|e| {
-            log!("{e}");
+            log::error!("{e}");
             e
         })?
         .text()

@@ -1,5 +1,5 @@
 use super::loading::*;
-use leptos::{leptos_dom::console_log, *};
+use leptos::*;
 
 #[component]
 pub fn WasmLoadingIndicator() -> impl IntoView {
@@ -9,7 +9,6 @@ pub fn WasmLoadingIndicator() -> impl IntoView {
     // set `loading` to false if we're on the client
     create_effect(move |_| {
         set_loading(false);
-        console_log("Loading done");
     });
     {
         move || {

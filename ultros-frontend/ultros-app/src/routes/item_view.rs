@@ -59,11 +59,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                 }
                 AnyResult::Region(region) => {
                     // show all regions, and datacenters in this region
-                    let regions = world_data
-                        .get_all()
-                        .regions
-                        .iter()
-                        .map(AnyResult::Region);
+                    let regions = world_data.get_all().regions.iter().map(AnyResult::Region);
                     let datacenters = world_data.get_datacenters(&AnyResult::Region(region));
                     let views: Vec<_> = regions
                         .chain(datacenters.iter().map(|dc| AnyResult::Datacenter(dc)))
@@ -110,7 +106,9 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
                     let lq_listings = currently_shown.listings.iter().cloned().filter(|(listing, _)| !listing.hq).collect::<Vec<_>>();
                     let sales = create_memo(move |_| currently_shown.sales.clone());
                     view! {
-                        <PriceHistoryChart sales=MaybeSignal::from(sales) />
+                        <div class="content-well max-h-[30em] overflow-y-auto">
+                            <PriceHistoryChart sales=MaybeSignal::from(sales) />
+                        </div>
                         {(!hq_listings.is_empty()).then(move || {
                             view!{ <div class="content-well max-h-[30em] overflow-y-auto">
                                 <span class="content-title">"high quality listings"</span>
