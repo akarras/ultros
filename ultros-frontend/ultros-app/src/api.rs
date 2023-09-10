@@ -2,6 +2,7 @@ use futures::future::join_all;
 use itertools::Itertools;
 use leptos::Serializable;
 use leptos::*;
+use log::error;
 use std::collections::HashMap;
 use tracing::instrument;
 use ultros_api_types::{
@@ -262,13 +263,12 @@ where
 {
     let abort_controller = web_sys::AbortController::new().ok();
     let abort_signal = abort_controller.as_ref().map(|a| a.signal());
-    use log::info;
     let json: String = gloo_net::http::Request::get(path)
         .abort_signal(abort_signal.as_ref())
         .send()
         .await
         .map_err(|e| {
-            log::error!("{}", e);
+            error!("{}", e);
             e
         })?
         .text()
@@ -314,7 +314,7 @@ where
         .instrument(tracing::trace_span!("HTTP FETCH"))
         .into_inner()
         .map_err(|e| {
-            log::error!("Response {e}. {path}");
+            error!("Response {e}. {path}");
             e
         })?
         .text()
@@ -338,7 +338,7 @@ where
         .send()
         .await
         .map_err(|e| {
-            log::error!("{e}");
+            error!("{e}");
             e
         })?
         .text()

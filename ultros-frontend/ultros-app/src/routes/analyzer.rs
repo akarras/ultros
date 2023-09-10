@@ -200,7 +200,6 @@ fn AnalyzerTable(
     let (sort_mode, set_sort_mode) = create_query_signal::<SortMode>("sort");
     let (minimum_profit, set_minimum_profit) = create_query_signal::<i32>("profit");
     let (minimum_roi, set_minimum_roi) = create_query_signal("roi");
-    // let (max_predicted_time, set_max_predicted_time) = create_signal("1 week".to_string());
     let (max_predicted_time, set_max_predicted_time) = create_query_signal::<String>("next-sale");
     let (world_filter, set_world_filter) = create_query_signal::<String>("world");
     let (datacenter_filter, set_datacenter_filter) = create_query_signal::<String>("datacenter");
@@ -221,7 +220,7 @@ fn AnalyzerTable(
         ))
     });
     let predicted_time =
-        create_memo(move |_| parse_duration(&max_predicted_time().unwrap_or_default()));
+        create_memo(move |_| max_predicted_time().and_then(|d| parse_duration(&d).ok()));
     let predicted_time_string = create_memo(move |_| {
         predicted_time()
             .map(|duration| format_duration(duration).to_string())
@@ -276,7 +275,7 @@ fn AnalyzerTable(
     view! {
         <MetaTitle title="Price Analayzer"/>
         <MetaDescription text="The analyzer finds the best items to buy on other worlds and sell on your own world."/>
-       <div class="flex flex-row content-well">
+       <div class="flex flex-row gap-2">
             <span>"filter:"</span><br/>
            <div class="flex-column">
                 <label for>"minimum profit:"<br/>
@@ -308,7 +307,10 @@ fn AnalyzerTable(
            </div>
            <div class="flex-column">
                <label for="predicted_time">"minimum time (use time notation, ex. 1w 30m) :" <br/>{predicted_time_string}</label><br/>
-               <input id="predicted_time" prop:value=max_predicted_time on:input=move |input| set_max_predicted_time(Some(event_target_value(&input))) />
+               <input id="predicted_time" prop:value=move || max_predicted_time().unwrap_or_default() on:input=move |input| {
+                    let value = event_target_value(&input);
+                    set_max_predicted_time(Some(value))
+                } />
            </div>
        </div>
        <div class="grid-table" role="table">
@@ -432,8 +434,8 @@ pub fn AnalyzerWorldView() -> impl IntoView {
             <span>"These estimates aren't very accurate, but are meant to be easily accessible and fast to use."</span><br/>
             <span>"Be extra careful to make sure that the price you buy things for matches the price"</span><br/>
             <span>"Sample filters"</span>
-            <a class="btn" href="?next-sale=7d&roi=300&profit=0&sort=profit&">"300% return within 7 days"</a>
-            <a class="btn" href="?next-sale=1M&roi=500&profit=200000&">"500% return with 200K min gil profit within 1 month"</a>
+            <a class="btn" href="?next-sale=7d&roi=300&profit=0&sort=profit&">"300% return - 7 days"</a>
+            <a class="btn" href="?next-sale=1M&roi=500&profit=200000&">"500% return - 200K min profit - 1 month"</a>
             {worlds.ok().map(|worlds| {
                 let world_value = store_value(worlds);
                 let global_cheapest_listings = create_local_resource(
