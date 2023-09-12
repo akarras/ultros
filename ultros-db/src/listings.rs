@@ -155,7 +155,7 @@ impl UltrosDb {
     }
 
     /// Updates listings assuming a pure view of the listing board
-    #[instrument(skip(self, listings))]
+    #[instrument(skip(self, listings), level = "trace")]
     pub async fn update_listings(
         &self,
         mut listings: Vec<ListingView>,
