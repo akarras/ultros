@@ -7,7 +7,7 @@ use anyhow::Result;
 use itertools::Itertools;
 use migration::Order;
 use sea_orm::{ActiveValue, EntityTrait, QueryOrder, Set};
-use tracing::{info, instrument};
+use tracing::{error, info, instrument, warn};
 use universalis::{DataCenterView, DataCentersView, WorldsView};
 use universalis::{RegionName, WorldView};
 
@@ -56,9 +56,11 @@ impl UltrosDb {
     ) -> Result<()> {
         {
             let current_regions = region::Entity::find()
-                .order_by(region::Column::Name, Order::Asc)
                 .all(&self.db)
-                .await?;
+                .await?
+                .into_iter()
+                .sorted_by_cached_key(|c| c.name.to_string())
+                .collect::<Vec<_>>();
             let new_regions: BTreeSet<RegionName> =
                 datacenter.0.iter().map(|d| &d.region).cloned().collect();
             let diff = PartialDiffIterator::from((new_regions.iter(), current_regions.iter()));
@@ -73,19 +75,19 @@ impl UltrosDb {
                 .collect();
             if !added_regions.is_empty() {
                 tracing::warn!("new regions {added_regions:?}");
-                let _just_inserted = region::Entity::insert_many(added_regions)
+                if let Err(e) = region::Entity::insert_many(added_regions)
                     .exec(&self.db)
-                    .await?;
+                    .await
+                {
+                    error!("Error updating regions {e}");
+                }
             } else {
                 info!("no new regions");
             }
         }
         {
             let regions = region::Entity::find().all(&self.db).await?;
-            let existing_datacenters = datacenter::Entity::find()
-                .order_by(datacenter::Column::Name, Order::Asc)
-                .all(&self.db)
-                .await?;
+            let existing_datacenters = datacenter::Entity::find().all(&self.db).await?;
             let new_datacenters: Vec<DataCenterView> = datacenter
                 .0
                 .iter()
@@ -112,9 +114,12 @@ impl UltrosDb {
                     .collect();
             if !new_datacenters.is_empty() {
                 info!("new datacenters {new_datacenters:?}");
-                datacenter::Entity::insert_many(new_datacenters)
+                if let Err(e) = datacenter::Entity::insert_many(new_datacenters)
                     .exec(&self.db)
-                    .await?;
+                    .await
+                {
+                    error!("Error updating datacenters {e}");
+                }
             } else {
                 info!("no new datacenters");
             }
@@ -154,7 +159,9 @@ impl UltrosDb {
                 .collect();
             if !worlds.is_empty() {
                 info!("new worlds {worlds:?}");
-                let _world = world::Entity::insert_many(worlds).exec(&self.db).await?;
+                if let Err(e) = world::Entity::insert_many(worlds).exec(&self.db).await {
+                    error!("Error inserting worlds {e}");
+                }
             } else {
                 info!("no new worlds");
             }
