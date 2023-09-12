@@ -327,7 +327,6 @@ impl RetainerAlertListener {
                         {
                             Err(e) => {
                                 error!("{e:?}");
-                                break;
                             }
                             Ok(undercuts) => match undercuts {
                                 None => {}
@@ -354,6 +353,7 @@ impl RetainerAlertListener {
                                         .await
                                         {
                                             error!("Error sending discord alerts {e}");
+                                            break;
                                         }
                                     }
                                 }
