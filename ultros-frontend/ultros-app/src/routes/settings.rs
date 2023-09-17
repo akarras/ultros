@@ -1,16 +1,17 @@
-use leptos::*;
-use leptos_icons::*;
-use ultros_api_types::world_helper::AnySelector;
-
 use crate::api::{
     check_character_verification, claim_character, get_character_verifications, get_characters,
     search_characters, unclaim_character,
 };
-use crate::components::{loading::*, world_name::*, world_picker::*};
+use crate::components::{ad::*, loading::*, toggle::Toggle, world_name::*, world_picker::*};
 use crate::error::AppResult;
+use crate::global_state::cookies::Cookies;
 use crate::global_state::home_world::{
     get_homeworld, get_price_zone, result_to_selector_read, selector_to_setter_signal,
 };
+use leptos::*;
+use leptos_icons::*;
+use log::info;
+use ultros_api_types::world_helper::AnySelector;
 
 #[component]
 fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> impl IntoView {
@@ -64,24 +65,57 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
 }
 
 #[component]
-pub fn Settings() -> impl IntoView {
+fn HomeWorldPicker() -> impl IntoView {
     let (homeworld, set_homeworld) = get_homeworld();
     let (price_region, set_price_region) = get_price_zone();
     let price_region = result_to_selector_read(price_region);
     let set_price_region = selector_to_setter_signal(set_price_region);
     view! {
-    <div class="main-content">
-        <span class="content-title">"Settings"</span>
-        <div class="content-well">
-            <label>"home world:"</label>
-            <Suspense fallback=move || view!{<Loading/>}>
-                <WorldOnlyPicker current_world=homeworld set_current_world=set_homeworld  />
-            </Suspense>
-                <label>"Default price selector"</label>
-            <Suspense fallback=move || view!{<Loading />}>
-                <WorldPicker current_world=price_region set_current_world=set_price_region />
-            </Suspense>
+
+    <div class="content-well container">
+        <h3 class="text-xl">"World settings"</h3>
+        <div class="grid md:grid-cols-3 gap-3">
+            <label class="text-lg">"home world"</label>
+            <WorldOnlyPicker current_world=homeworld set_current_world=set_homeworld  />
+            <span>"The home world will default for the analyzer and several other pages"</span>
+            <label class="text-lg">"default price zone"</label>
+            <WorldPicker current_world=price_region set_current_world=set_price_region />
+            <span>"The price zone is where each price will be shown"</span>
         </div>
+    </div>}
+}
+
+#[component]
+fn AdChoice() -> impl IntoView {
+    let ad_choice = use_context::<Cookies>().unwrap();
+    let (cookie, set_cookie) = ad_choice.use_cookie_typed::<_, bool>("HIDE_ADS");
+    view! {
+        <div class="content-well container grid md:grid-cols-3 gap-3">
+            <h3 class="text-xl">"Ad opt-out"</h3>
+            <span>"If you do not wish to see ads, this toggle will remove them entirely from the site. Use of adblockers is fine as well.
+            If you wish to support the site, do consider leaving this disabled."<i class="italic">"This is mostly an experiment for the time being."</i></span>
+            <Toggle checked=Signal::derive(move || {
+                let cookie = cookie();
+                info!("{cookie:?}");
+                cookie.unwrap_or_default()
+            })
+                set_checked={move |checked: bool| set_cookie(checked.then(|| true))}.into_signal_setter()
+                checked_label="ads disabled"
+                unchecked_label="ads enabled" />
+            <div class="cols-pan-3">
+                <Ad />
+            </div>
+        </div>
+    }
+}
+
+#[component]
+pub fn Settings() -> impl IntoView {
+    view! {
+    <div class="main-content">
+        <h3 class="text-2xl">"Settings"</h3>
+        <HomeWorldPicker />
+        <AdChoice />
     </div>}
 }
 
@@ -103,28 +137,17 @@ pub fn Profile() -> impl IntoView {
         move || (check_verification.version()(), claim_character.version()()),
         move |_| get_character_verifications(),
     );
-    let (homeworld, set_homeworld) = get_homeworld();
-    let (price_region, set_price_region) = get_price_zone();
-    let price_region = result_to_selector_read(price_region);
-    let set_price_region = selector_to_setter_signal(set_price_region);
     view! {
     <div class="main-content">
         <span class="content-title">"Settings"</span>
-        <div class="content-well">
-            <label>"home world:"</label>
-            <Suspense fallback=move || view!{<Loading/>}>
-                <WorldOnlyPicker current_world=homeworld set_current_world=set_homeworld  />
-            </Suspense>
-                <label>"Default price selector"</label>
-            <Suspense fallback=move || view!{<Loading />}>
-                <WorldPicker current_world=price_region set_current_world=set_price_region />
-            </Suspense>
-        </div>
+        <HomeWorldPicker />
+        <AdChoice />
         <div class="content-well">
             <span class="content-title">
                 "Characters"
             </span>
             <AddCharacterMenu claim_character/>
+
             <Suspense fallback=move || view!{<Loading/>}>
                 {move || pending_verifications.get().map(|verifications| {
                     match verifications {

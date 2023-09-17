@@ -7,7 +7,7 @@ use anyhow::Result;
 use itertools::Itertools;
 use migration::Order;
 use sea_orm::{ActiveValue, EntityTrait, QueryOrder, Set};
-use tracing::{error, info, instrument, warn};
+use tracing::{error, info, instrument};
 use universalis::{DataCenterView, DataCentersView, WorldsView};
 use universalis::{RegionName, WorldView};
 

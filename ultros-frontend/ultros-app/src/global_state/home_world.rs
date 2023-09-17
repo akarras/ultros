@@ -1,29 +1,17 @@
-use cookie::{
-    time::{Duration, OffsetDateTime},
-    Cookie, SameSite,
-};
+use cookie::{time::Duration, Cookie, SameSite};
 use leptos::*;
 use ultros_api_types::{
     world::World,
     world_helper::{AnySelector, OwnedResult},
 };
 
-use super::{cookies::Cookies, LocalWorldData};
+use super::{
+    cookies::{get_now, Cookies},
+    LocalWorldData,
+};
 
 const HOMEWORLD_COOKIE_NAME: &str = "HOME_WORLD";
 const DEFAULT_PRICE_ZONE: &str = "PRICE_ZONE";
-
-/// returns the current OffsetDateTime
-fn get_now() -> OffsetDateTime {
-    #[cfg(not(feature = "ssr"))]
-    {
-        js_sys::Date::new_0().into()
-    }
-    #[cfg(feature = "ssr")]
-    {
-        OffsetDateTime::now_utc()
-    }
-}
 
 pub fn get_homeworld() -> (Signal<Option<World>>, SignalSetter<Option<World>>) {
     let cookies = use_context::<Cookies>().unwrap();

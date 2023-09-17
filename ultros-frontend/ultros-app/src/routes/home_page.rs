@@ -6,7 +6,7 @@ use leptos_meta::*;
 use ultros_api_types::{ActiveListing, Retainer};
 
 use crate::{
-    components::{gil::Gil, live_sale_ticker::LiveSaleTicker, related_items::RelatedItems},
+    components::{ad::Ad, gil::Gil, live_sale_ticker::LiveSaleTicker, related_items::RelatedItems},
     routes::retainers::CharacterRetainerList,
 };
 
@@ -18,6 +18,7 @@ pub fn HomePage() -> impl IntoView {
         <Title text="Ultros The Ultra Fast Market Tool"/>
         <span class="text-2xl">"Live sales"</span>
         <LiveSaleTicker />
+        <Ad />
         <div class="flex flex-col">
             <div>
                 <div class="flex p-8 md:flex-row">

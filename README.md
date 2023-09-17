@@ -16,6 +16,11 @@ The project can be run with `cargo-leptos`, assuming a Rust toolchain is install
 
 The application also requires a Postgresql database to operate and a Discord application token.
 
+### Ads
+
+Currently am experimenting with running ads on the site to see how much revenue can be generated. Ideally, I'd like to get the site hosting expenses
+covered without trying to coerce community members into donating. The ads are entirely opt out via the settings page, and adblocks will continue working.
+
 ### Environment Variables
 * `DISCORD_TOKEN` - A discord bot token
 * `DATABASE_URL` - Postgres connection string

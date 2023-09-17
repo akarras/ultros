@@ -1,7 +1,7 @@
 use crate::api::get_listings;
 use crate::components::{
-    clipboard::*, item_icon::*, listings_table::*, loading::*, meta::*, price_history_chart::*,
-    related_items::*, sale_history_table::*, stats_display::*, ui_text::*,
+    ad::Ad, clipboard::*, item_icon::*, listings_table::*, loading::*, meta::*,
+    price_history_chart::*, related_items::*, sale_history_table::*, stats_display::*, ui_text::*,
 };
 use crate::global_state::LocalWorldData;
 use leptos::*;
@@ -200,6 +200,7 @@ pub fn ItemView() -> impl IntoView {
         </div>
         <div class="main-content flex-wrap">
             <ListingsContent item_id world />
+            <Ad />
             <RelatedItems item_id=Signal::from(item_id) />
         </div>
     }

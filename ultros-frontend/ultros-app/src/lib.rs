@@ -14,7 +14,7 @@ use crate::global_state::cookies::Cookies;
 use crate::global_state::home_world::get_homeworld;
 use crate::global_state::LocalWorldData;
 use crate::{
-    components::{meta::*, profile_display::*, search_box::*, tooltip::*},
+    components::{ad::Ad, meta::*, profile_display::*, search_box::*, tooltip::*},
     routes::{
         analyzer::*, edit_retainers::*, home_page::*, item_explorer::*, item_view::*, list_view::*,
         lists::*, retainers::*, settings::*,
@@ -36,10 +36,8 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
     let login = create_resource(move || {}, move |_| async move { get_login().await.ok() });
     // provide_context(LoggedInUser(login));
     // HIDE_ADS is user set, entirely optional whether users want to opt in or not.
-    let (ads, _set_ads) = cookies.get_cookie("HIDE_ADS");
     let (homeworld, _set_homeworld) = get_homeworld();
     view! {
-
         <Stylesheet id="leptos" href="/pkg/ultros.css"/>
         <Stylesheet id="xiv-icons" href="/static/classjob-icons/src/xivicon.css"/>
         <MetaTitle title="Ultros" />
@@ -50,7 +48,6 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
         <Meta property="og:type" content="website"/>
         <Meta property="og:locale" content="en_US" />
         <Meta property="og:site_name" content="Ultros" />
-        {move || ads().is_none().then(|| view!{<Script async_="async" src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-8789160460804755" crossorigin="anonymous"></Script>})}
         <div class="gradient-outer">
             <div class="gradient"></div>
         </div>
@@ -128,6 +125,7 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
             </Router>
         </div>
         <footer class="flex-column flex-space flex-center">
+            <Ad />
             <div class="flex-row column-pad flex-center">
                 <a href="https://discord.gg/pgdq9nGUP2">"Discord"</a>"|"
                 <a href="https://github.com/akarras/ultros">"GitHub"</a>"|"

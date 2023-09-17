@@ -1,7 +1,22 @@
+use cookie::SameSite;
 use cookie::{Cookie, CookieJar};
+use std::{borrow::Cow, str::FromStr};
+use time::{Duration, OffsetDateTime};
 
 use leptos::*;
-use log::info;
+use log::{error, info};
+
+/// returns the current OffsetDateTime
+pub fn get_now() -> OffsetDateTime {
+    #[cfg(not(feature = "ssr"))]
+    {
+        js_sys::Date::new_0().into()
+    }
+    #[cfg(feature = "ssr")]
+    {
+        OffsetDateTime::now_utc()
+    }
+}
 
 #[derive(Clone, Copy)]
 pub struct Cookies {
@@ -42,9 +57,49 @@ impl Cookies {
             move |cookies, value| {
                 if let Some(cookie) = value {
                     cookies.add(cookie.clone());
+                } else {
+                    cookies.remove(Cookie::named(cookie_name.as_ref().to_string()));
                 }
             },
         )
+    }
+    pub fn use_cookie_typed<C, T>(
+        &self,
+        cookie_name: C,
+    ) -> (Memo<Option<T>>, SignalSetter<Option<T>>)
+    where
+        C: Copy + Clone + AsRef<str> + 'static,
+        Cow<'static, str>: From<C>,
+        T: FromStr + ToString + PartialEq,
+        <T as FromStr>::Err: std::fmt::Display,
+    {
+        let (cookie, set_cookie) = self.get_cookie(cookie_name);
+        let typed_cookie = create_memo(move |_| {
+            let cookie = cookie();
+            cookie.and_then(|c| {
+                T::from_str(c.value())
+                    .map_err(|e| {
+                        error!(
+                            "Error parsing value from typed cookie {} {}",
+                            e,
+                            std::any::type_name::<T>()
+                        );
+                    })
+                    .ok()
+            })
+        });
+        let set_typed_cookie = move |value: Option<T>| {
+            let cookie = value.map(|cookie| cookie.to_string()).map(|value| {
+                let mut cookie = Cookie::new(cookie_name, value);
+                cookie.set_same_site(SameSite::Strict);
+                cookie.set_secure(Some(true));
+                cookie.set_path("/");
+                cookie.set_expires(get_now() + Duration::days(365));
+                cookie
+            });
+            set_cookie(cookie);
+        };
+        (typed_cookie, set_typed_cookie.into_signal_setter())
     }
 }
 
