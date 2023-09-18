@@ -14,7 +14,6 @@ pub struct Model {
     pub price_per_unit: i32,
     pub quantity: i32,
     pub hq: bool,
-    #[sea_orm(primary_key, auto_increment = false)]
     pub timestamp: DateTime,
 }
 

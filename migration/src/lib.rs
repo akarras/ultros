@@ -19,6 +19,7 @@ mod m20221112_211028_add_final_fantasy_character_relation_to_verification;
 mod m20221227_164853_price_alert;
 mod m20230311_230232_cleanup_fks;
 mod m20230312_184157_add_last_updated_table;
+mod m20230918_033709_remove_junk_pk_from_listing;
 
 pub struct Migrator;
 
@@ -47,6 +48,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20221227_164853_price_alert::Migration),
             Box::new(m20230311_230232_cleanup_fks::Migration),
             Box::new(m20230312_184157_add_last_updated_table::Migration),
+            Box::new(m20230918_033709_remove_junk_pk_from_listing::Migration),
         ]
     }
 }

@@ -83,7 +83,7 @@ impl UltrosDb {
                 _ => None,
             })
             .map(|listing| async move {
-                active_listing::Entity::delete_by_id((listing.id, listing.timestamp))
+                active_listing::Entity::delete_by_id(listing.id)
                     .exec(&self.db)
                     .await
                     .map(|_| listing)
@@ -292,9 +292,10 @@ impl UltrosDb {
         });
         let (added, _removed_result) =
             futures::future::join(futures::future::join_all(added), async move {
-                let remove_result = futures::future::try_join_all(remove_iter.map(|(l, _)| {
-                    active_listing::Entity::delete_by_id((l.id, l.timestamp)).exec(&self.db)
-                }))
+                let remove_result = futures::future::try_join_all(
+                    remove_iter
+                        .map(|(l, _)| active_listing::Entity::delete_by_id(l.id).exec(&self.db)),
+                )
                 .await?;
                 Result::<usize>::Ok(remove_result.len())
             })

@@ -134,12 +134,21 @@ impl UltrosDb {
             let buyer = match buyer {
                 Some(buyer) => buyer,
                 None => {
-                    unknown_final_fantasy_character::ActiveModel {
+                    let result = unknown_final_fantasy_character::ActiveModel {
                         name: ActiveValue::Set(name.to_string()),
                         ..Default::default()
                     }
                     .insert(&self.db)
-                    .await?
+                    .await;
+                    match result {
+                        Ok(m) => m,
+                        // the most common error here is a duplicate key, in this case we can just look them up now.
+                        Err(e) => unknown_final_fantasy_character::Entity::find()
+                            .filter(unknown_final_fantasy_character::Column::Name.eq(name))
+                            .one(&self.db)
+                            .await?
+                            .ok_or(e)?,
+                    }
                 }
             };
             Ok::<_, anyhow::Error>((buyer.name.clone(), buyer))

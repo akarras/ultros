@@ -15,10 +15,10 @@ pub struct Model {
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
+    #[sea_orm(has_many = "super::active_listing::Entity")]
+    ActiveListing,
     #[sea_orm(has_many = "super::owned_retainers::Entity")]
     OwnedRetainers,
-    #[sea_orm(has_many = "super::active_listing::Entity")]
-    ActiveListings,
     #[sea_orm(
         belongs_to = "super::retainer_city::Entity",
         from = "Column::RetainerCityId",
@@ -37,6 +37,12 @@ pub enum Relation {
     World,
 }
 
+impl Related<super::active_listing::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::ActiveListing.def()
+    }
+}
+
 impl Related<super::owned_retainers::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::OwnedRetainers.def()
@@ -51,16 +57,7 @@ impl Related<super::retainer_city::Entity> for Entity {
 
 impl Related<super::world::Entity> for Entity {
     fn to() -> RelationDef {
-        super::active_listing::Relation::World.def()
-    }
-    fn via() -> Option<RelationDef> {
-        Some(super::active_listing::Relation::Retainer.def().rev())
-    }
-}
-
-impl Related<super::active_listing::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::ActiveListings.def()
+        Relation::World.def()
     }
 }
 
