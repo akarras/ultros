@@ -21,7 +21,7 @@ pub fn HomePage() -> impl IntoView {
         <Ad />
         <div class="flex flex-col">
             <div>
-                <div class="flex p-8 md:flex-row">
+                <div class="flex p-8 flex-col md:flex-row">
                     <div class="overflow-hidden md:w-[60vw] h-96">
                         <RelatedItems item_id=2 />
                     </div>
@@ -35,7 +35,7 @@ pub fn HomePage() -> impl IntoView {
                     </ul>
                 </div>
             </div>
-            <div class="p-8 grow flex-auto flex md:flex-row">
+            <div class="p-8 grow flex-auto flex flex-col md:flex-row">
                 <div class="flex flex-col">
                     <span class="text-3xl p-1">"Analyzer"</span>
                     <ul class="list-disc text-xl p-2">
@@ -49,7 +49,7 @@ pub fn HomePage() -> impl IntoView {
                     <div class="flex flex-row text-green-400 gap-1">"PROFIT:"<Gil amount={100000 - 30000}/></div>
                 </div>
             </div>
-            <div class="p-8 grow flex-auto flex-row items-start">
+            <div class="p-8 grow flex-auto flex flex-col md:flex-row items-start">
                 <div class="flex flex-col">
                     <CharacterRetainerList character=None retainers=vec![(Retainer {
                         id: 0,
@@ -119,7 +119,7 @@ pub fn HomePage() -> impl IntoView {
                     <li>"Honestly not as good as Teamcraft, but maybe it'll be better one day"</li>
                 </ul>
             </div>
-            <div class="p-8 flex md:flex-row">
+            <div class="p-8 flex flex-col md:flex-row">
                 <div class="flex flex-col p-2">
                     <span class="content-title">"Discord Bot"</span>
                     <br/>
@@ -128,7 +128,7 @@ pub fn HomePage() -> impl IntoView {
                         <li>"Get alerts via notifications through the bot"</li>
                     </ul>
                 </div>
-                <a class="flex flex-col p-16 bg-violet-800 text-6xl rounded-md b-solid border-2 border-violet-950 text-white align-middle text-center ml-10" href="/invitebot">
+                <a class="flex flex-col p-4 bg-violet-900 text-6xl rounded-md b-solid border-2 border-violet-950 text-white items-center text-center ml-10" href="/invitebot">
                     <Icon icon=Icon::from(BsIcon::BsDiscord) />
                     <span>"Invite Bot"</span>
                 </a>
