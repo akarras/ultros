@@ -2842,8 +2842,8 @@ checksum = "03087c2bad5e1034e8cace5926dec053fb3790248370865f5117a7d0213354c8"
 
 [[package]]
 name = "leptos"
-version = "0.5.0-rc2"
-source = "git+https://github.com/leptos-rs/leptos.git?rev=baa5ea83faffcc4d45b757a0ccd6d8470b3925e5#baa5ea83faffcc4d45b757a0ccd6d8470b3925e5"
+version = "0.5.0-rc3"
+source = "git+https://github.com/leptos-rs/leptos.git?branch=1775#be7cf1c141c0c0f12894b7a0ea205ef40d5a5e50"
 dependencies = [
  "cfg-if",
  "leptos_config",
@@ -2861,8 +2861,8 @@ dependencies = [
 
 [[package]]
 name = "leptos_axum"
-version = "0.5.0-rc2"
-source = "git+https://github.com/leptos-rs/leptos.git?rev=baa5ea83faffcc4d45b757a0ccd6d8470b3925e5#baa5ea83faffcc4d45b757a0ccd6d8470b3925e5"
+version = "0.5.0-rc3"
+source = "git+https://github.com/leptos-rs/leptos.git?branch=1775#be7cf1c141c0c0f12894b7a0ea205ef40d5a5e50"
 dependencies = [
  "axum",
  "futures",
@@ -2882,8 +2882,8 @@ dependencies = [
 
 [[package]]
 name = "leptos_config"
-version = "0.5.0-rc2"
-source = "git+https://github.com/leptos-rs/leptos.git?rev=baa5ea83faffcc4d45b757a0ccd6d8470b3925e5#baa5ea83faffcc4d45b757a0ccd6d8470b3925e5"
+version = "0.5.0-rc3"
+source = "git+https://github.com/leptos-rs/leptos.git?branch=1775#be7cf1c141c0c0f12894b7a0ea205ef40d5a5e50"
 dependencies = [
  "config",
  "regex",
@@ -2894,8 +2894,8 @@ dependencies = [
 
 [[package]]
 name = "leptos_dom"
-version = "0.5.0-rc2"
-source = "git+https://github.com/leptos-rs/leptos.git?rev=baa5ea83faffcc4d45b757a0ccd6d8470b3925e5#baa5ea83faffcc4d45b757a0ccd6d8470b3925e5"
+version = "0.5.0-rc3"
+source = "git+https://github.com/leptos-rs/leptos.git?branch=1775#be7cf1c141c0c0f12894b7a0ea205ef40d5a5e50"
 dependencies = [
  "async-recursion",
  "cfg-if",
@@ -2923,8 +2923,8 @@ dependencies = [
 
 [[package]]
 name = "leptos_hot_reload"
-version = "0.5.0-rc2"
-source = "git+https://github.com/leptos-rs/leptos.git?rev=baa5ea83faffcc4d45b757a0ccd6d8470b3925e5#baa5ea83faffcc4d45b757a0ccd6d8470b3925e5"
+version = "0.5.0-rc3"
+source = "git+https://github.com/leptos-rs/leptos.git?branch=1775#be7cf1c141c0c0f12894b7a0ea205ef40d5a5e50"
 dependencies = [
  "anyhow",
  "camino",
@@ -2951,8 +2951,8 @@ dependencies = [
 
 [[package]]
 name = "leptos_integration_utils"
-version = "0.5.0-rc2"
-source = "git+https://github.com/leptos-rs/leptos.git?rev=baa5ea83faffcc4d45b757a0ccd6d8470b3925e5#baa5ea83faffcc4d45b757a0ccd6d8470b3925e5"
+version = "0.5.0-rc3"
+source = "git+https://github.com/leptos-rs/leptos.git?branch=1775#be7cf1c141c0c0f12894b7a0ea205ef40d5a5e50"
 dependencies = [
  "futures",
  "leptos",
@@ -2964,8 +2964,8 @@ dependencies = [
 
 [[package]]
 name = "leptos_macro"
-version = "0.5.0-rc2"
-source = "git+https://github.com/leptos-rs/leptos.git?rev=baa5ea83faffcc4d45b757a0ccd6d8470b3925e5#baa5ea83faffcc4d45b757a0ccd6d8470b3925e5"
+version = "0.5.0-rc3"
+source = "git+https://github.com/leptos-rs/leptos.git?branch=1775#be7cf1c141c0c0f12894b7a0ea205ef40d5a5e50"
 dependencies = [
  "attribute-derive",
  "cfg-if",
@@ -2986,8 +2986,8 @@ dependencies = [
 
 [[package]]
 name = "leptos_meta"
-version = "0.5.0-rc2"
-source = "git+https://github.com/leptos-rs/leptos.git?rev=baa5ea83faffcc4d45b757a0ccd6d8470b3925e5#baa5ea83faffcc4d45b757a0ccd6d8470b3925e5"
+version = "0.5.0-rc3"
+source = "git+https://github.com/leptos-rs/leptos.git?branch=1775#be7cf1c141c0c0f12894b7a0ea205ef40d5a5e50"
 dependencies = [
  "cfg-if",
  "indexmap 2.0.0",
@@ -2999,8 +2999,8 @@ dependencies = [
 
 [[package]]
 name = "leptos_reactive"
-version = "0.5.0-rc2"
-source = "git+https://github.com/leptos-rs/leptos.git?rev=baa5ea83faffcc4d45b757a0ccd6d8470b3925e5#baa5ea83faffcc4d45b757a0ccd6d8470b3925e5"
+version = "0.5.0-rc3"
+source = "git+https://github.com/leptos-rs/leptos.git?branch=1775#be7cf1c141c0c0f12894b7a0ea205ef40d5a5e50"
 dependencies = [
  "base64 0.21.4",
  "cfg-if",
@@ -3024,8 +3024,8 @@ dependencies = [
 
 [[package]]
 name = "leptos_router"
-version = "0.5.0-rc2"
-source = "git+https://github.com/leptos-rs/leptos.git?rev=baa5ea83faffcc4d45b757a0ccd6d8470b3925e5#baa5ea83faffcc4d45b757a0ccd6d8470b3925e5"
+version = "0.5.0-rc3"
+source = "git+https://github.com/leptos-rs/leptos.git?branch=1775#be7cf1c141c0c0f12894b7a0ea205ef40d5a5e50"
 dependencies = [
  "cached",
  "cfg-if",
@@ -3034,6 +3034,8 @@ dependencies = [
  "js-sys",
  "lazy_static",
  "leptos",
+ "leptos_integration_utils",
+ "leptos_meta",
  "linear-map",
  "lru",
  "once_cell",
@@ -3052,8 +3054,8 @@ dependencies = [
 
 [[package]]
 name = "leptos_server"
-version = "0.5.0-rc2"
-source = "git+https://github.com/leptos-rs/leptos.git?rev=baa5ea83faffcc4d45b757a0ccd6d8470b3925e5#baa5ea83faffcc4d45b757a0ccd6d8470b3925e5"
+version = "0.5.0-rc3"
+source = "git+https://github.com/leptos-rs/leptos.git?branch=1775#be7cf1c141c0c0f12894b7a0ea205ef40d5a5e50"
 dependencies = [
  "inventory",
  "lazy_static",
@@ -5139,8 +5141,8 @@ dependencies = [
 
 [[package]]
 name = "server_fn"
-version = "0.5.0-rc2"
-source = "git+https://github.com/leptos-rs/leptos.git?rev=baa5ea83faffcc4d45b757a0ccd6d8470b3925e5#baa5ea83faffcc4d45b757a0ccd6d8470b3925e5"
+version = "0.5.0-rc3"
+source = "git+https://github.com/leptos-rs/leptos.git?branch=1775#be7cf1c141c0c0f12894b7a0ea205ef40d5a5e50"
 dependencies = [
  "ciborium",
  "const_format",
@@ -5163,8 +5165,8 @@ dependencies = [
 
 [[package]]
 name = "server_fn_macro"
-version = "0.5.0-rc2"
-source = "git+https://github.com/leptos-rs/leptos.git?rev=baa5ea83faffcc4d45b757a0ccd6d8470b3925e5#baa5ea83faffcc4d45b757a0ccd6d8470b3925e5"
+version = "0.5.0-rc3"
+source = "git+https://github.com/leptos-rs/leptos.git?branch=1775#be7cf1c141c0c0f12894b7a0ea205ef40d5a5e50"
 dependencies = [
  "const_format",
  "proc-macro-error",
@@ -5177,8 +5179,8 @@ dependencies = [
 
 [[package]]
 name = "server_fn_macro_default"
-version = "0.5.0-rc2"
-source = "git+https://github.com/leptos-rs/leptos.git?rev=baa5ea83faffcc4d45b757a0ccd6d8470b3925e5#baa5ea83faffcc4d45b757a0ccd6d8470b3925e5"
+version = "0.5.0-rc3"
+source = "git+https://github.com/leptos-rs/leptos.git?branch=1775#be7cf1c141c0c0f12894b7a0ea205ef40d5a5e50"
 dependencies = [
  "server_fn_macro",
  "syn 2.0.37",
