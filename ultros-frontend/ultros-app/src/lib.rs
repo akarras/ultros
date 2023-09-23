@@ -98,7 +98,9 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
                         <ProfileDisplay />
                     </div>
                 </nav>
-                <AnimatedRoutes outro="route-out" intro="route-in" outro_back="route-out-back" intro_back="route-in-back">
+                // <AnimatedRoutes outro="route-out" intro="route-in" outro_back="route-out-back" intro_back="route-in-back">
+                // https://github.com/leptos-rs/leptos/issues/1754
+                <Routes>
                     <Route path="" view=HomePage/>
                     <Route path="retainers" view=Retainers>
                         <Route path="edit" view=EditRetainers/>
@@ -121,7 +123,7 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
                     <Route path="analyzer/:world" view=AnalyzerWorldView />
                     <Route path="settings" view=Settings/>
                     <Route path="profile" view=Profile/>
-                </AnimatedRoutes>
+                </Routes>
             </Router>
         </div>
         <footer class="flex-column flex-space flex-center">
