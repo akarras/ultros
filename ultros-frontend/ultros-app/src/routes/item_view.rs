@@ -106,20 +106,20 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
                     let lq_listings = currently_shown.listings.iter().cloned().filter(|(listing, _)| !listing.hq).collect::<Vec<_>>();
                     let sales = create_memo(move |_| currently_shown.sales.clone());
                     view! {
-                        <div class="content-well max-h-[30em] overflow-y-auto">
+                        <div class="content-well max-h-[35em] overflow-y-auto">
                             <PriceHistoryChart sales=MaybeSignal::from(sales) />
                         </div>
                         {(!hq_listings.is_empty()).then(move || {
-                            view!{ <div class="content-well max-h-[30em] overflow-y-auto">
+                            view!{ <div class="content-well max-h-[35em] overflow-y-auto">
                                 <span class="content-title">"high quality listings"</span>
                                 <ListingsTable listings=hq_listings />
                             </div> }.into_view()
                         })}
-                        <div class="content-well max-h-[30em] overflow-y-auto">
+                        <div class="content-well max-h-[35em] overflow-y-auto">
                             <span class="content-title">"low quality listings"</span>
                             <ListingsTable listings=lq_listings />
                         </div>
-                        <div class="content-well max-h-[30em] overflow-y-auto">
+                        <div class="content-well max-h-[35em] overflow-y-auto">
                             <span class="content-title">"sale history"</span>
                             <SaleHistoryTable sales=Signal::from(sales) />
                         </div>

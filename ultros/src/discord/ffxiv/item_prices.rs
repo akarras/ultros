@@ -138,7 +138,8 @@ async fn history(
         let backend = SVGBackend::with_string(&mut buffer, SIZE);
 
         let world_helper = &*ctx.data().world_helper;
-        if let Err(e) = ultros_charts::draw_sale_history_scatter_plot(backend, world_helper, &sales)
+        if let Err(e) =
+            ultros_charts::draw_sale_history_scatter_plot(backend, world_helper, true, &sales)
         {
             Err(anyhow!("can't draw scatter plot {e}"))?
         }

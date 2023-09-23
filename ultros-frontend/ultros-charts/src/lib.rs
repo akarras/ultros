@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashSet;
 
 use anyhow::anyhow;
@@ -35,18 +36,59 @@ enum DayLabelMode {
     Minute,
 }
 
+/// Returns a filter where Some((min, max))
+fn get_iqr_filter(sales: &[SaleHistory]) -> Option<(i32, i32)> {
+    if sales.len() < 10 {
+        return None;
+    }
+    let sales_prices = sales
+        .into_iter()
+        .map(|sales| sales.price_per_item)
+        .sorted()
+        .collect::<Vec<_>>();
+    let first_quartile_index = sales_prices.len() / 4;
+    let last_quartile_index = sales_prices.len() - first_quartile_index;
+    let first_quartile_value = sales_prices.get(first_quartile_index)?;
+    let third_quartile_value = sales_prices.get(last_quartile_index)?;
+    let interquartile_range = ((third_quartile_value - first_quartile_value) as f32 * 2.5) as i32;
+    Some((
+        first_quartile_value - interquartile_range,
+        third_quartile_value + interquartile_range,
+    ))
+}
+
+fn filter_outliers<'a>(sales: &'a [SaleHistory]) -> Cow<'a, [SaleHistory]> {
+    if let Some((min, max)) = get_iqr_filter(sales) {
+        let range = min..=max;
+        Cow::Owned(
+            sales
+                .into_iter()
+                .filter(|sales| range.contains(&sales.price_per_item))
+                .cloned()
+                .collect(),
+        )
+    } else {
+        Cow::Borrowed(sales)
+    }
+}
+
 pub fn draw_sale_history_scatter_plot<'a, T>(
     backend: T,
     world_helper: &WorldHelper,
+    remove_outliers: bool,
     sales: &[SaleHistory],
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'a>>
 where
     T: 'a + DrawingBackend,
 {
+    let sales = if remove_outliers {
+        filter_outliers(sales)
+    } else {
+        Cow::Borrowed(sales)
+    };
     let root = backend.into_drawing_area();
-    root.fill(&RGBColor(16, 10, 18).mix(0.93))?;
-
-    let line = map_sale_history_to_line(world_helper, sales);
+    root.fill(&RGBColor(16, 10, 18))?;
+    let line = map_sale_history_to_line(world_helper, &sales);
     let item_name = &xiv_gen_db::data()
         .items
         .get(&ItemId(
@@ -59,6 +101,7 @@ where
         .flat_map(|(_, sales)| sales)
         .map(|(_, price, _)| price)
         .max()
+        .copied()
         .ok_or(anyhow!("price hidden"))?;
     let (first_sale, last_sale) = line
         .iter()
@@ -78,6 +121,7 @@ where
     } else {
         DayLabelMode::Minute
     };
+    let pad_top = (max_sale as f32 * 1.5).ceil() as i32;
     let mut chart = ChartBuilder::on(&root)
         .x_label_area_size(60)
         .y_label_area_size(100)
@@ -86,7 +130,7 @@ where
             format!("{} - Sale History", item_name),
             ("Jaldi, sans-serif", 25.0).into_font().color(&WHITE),
         )
-        .build_cartesian_2d(*first_sale..*last_sale, 0..*max_sale)?;
+        .build_cartesian_2d(*first_sale..*last_sale, 0..pad_top)?;
 
     chart
         .configure_mesh()
@@ -210,5 +254,6 @@ fn map_sale_history_to_line(
     selector_source
         .into_iter()
         .flat_map(|w| map_sales_in(world_helper, w, sales))
+        .sorted_by_cached_key(|(name, _)| name.clone())
         .collect()
 }
