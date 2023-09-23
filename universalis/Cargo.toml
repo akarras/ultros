@@ -13,14 +13,14 @@ thiserror = "1.0.32"
 url = "2"
 log = "0.4.17"
 bson = "2.4.0"
-async-tungstenite = {version = "0.20", default-features = false, features = ["tokio-runtime", "tokio-rustls-webpki-roots"], optional = true}
+async-tungstenite = {version = "0.23", default-features = false, features = ["tokio-runtime", "tokio-rustls-webpki-roots"], optional = true}
 tokio = {version = "1", optional = true, features = ["full"]}
 futures = "0.3.23"
-serde_with = {version = "2.0.0", features = ["chrono"]}
+serde_with = {version = "3.3.0", features = ["chrono"]}
 chrono = {version = "0.4.23", features = ["serde"]}
 
 [dev-dependencies]
-pretty_env_logger = "0.4"
+pretty_env_logger = "0.5"
 clap = {version = "4.0.18", features = ["derive"]}
 
 [features]
