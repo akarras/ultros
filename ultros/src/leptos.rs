@@ -68,7 +68,11 @@ pub(crate) async fn create_leptos_app(
         (StatusCode::NOT_FOUND, format!("File Not Found: {}", err))
     }
     let worlds = Ok(worlds);
-    let routes = generate_route_list(|| view! { <App worlds /> }).await;
+    let routes = generate_route_list(move || {
+        let worlds = worlds.clone();
+        view! { <App worlds /> }
+    })
+    .await;
 
     // simple_logger::init_with_level(log::Level::Debug).expect("couldn't initialize logging");
 

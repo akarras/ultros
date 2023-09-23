@@ -509,6 +509,15 @@ impl UltrosDb {
 
         Ok(items.into_iter().map(|i| i.item).collect())
     }
+
+    pub async fn delete_discord_user(&self, discord_id: i64) -> Result<()> {
+        let user = discord_user::Entity::find_by_id(discord_id)
+            .one(&self.db)
+            .await?
+            .ok_or(anyhow::anyhow!("user not found"))?;
+        user.delete(&self.db).await?;
+        Ok(())
+    }
 }
 #[derive(Debug, FromQueryResult)]
 pub struct UniqueItemId {

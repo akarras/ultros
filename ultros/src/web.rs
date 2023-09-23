@@ -11,9 +11,10 @@ use axum::extract::{FromRef, Path, Query, State};
 use axum::headers::ContentType;
 use axum::http::{HeaderValue, Response, StatusCode};
 use axum::response::{IntoResponse, Redirect};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{body, middleware, Json, Router, TypedHeader};
-use axum_extra::extract::cookie::Key;
+use axum_extra::extract::cookie::{Cookie, Key};
+use axum_extra::extract::CookieJar;
 use futures::future::{try_join, try_join_all};
 use futures::stream::TryStreamExt;
 use futures::{stream, StreamExt};
@@ -779,6 +780,26 @@ async fn reorder_retainer(
     Ok(Json(()))
 }
 
+async fn delete_user(
+    user: AuthDiscordUser,
+    State(cache): State<AuthUserCache>,
+    State(db): State<UltrosDb>,
+    cookie_jar: CookieJar,
+) -> Result<(CookieJar, Redirect), ApiError> {
+    let id = user.id;
+    db.delete_discord_user(id as i64).await?;
+    let token = cookie_jar
+        .get("discord_auth")
+        .ok_or(anyhow::anyhow!("Failed to get icon"))?
+        .value()
+        .to_owned();
+    cache.remove_token(&token).await;
+    let cookie_jar = cookie_jar.remove(Cookie::named("discord_auth"));
+    // remove the token from the cache
+    // remove the auth cookie from the cache
+    Ok((cookie_jar, Redirect::to("/")))
+}
+
 async fn get_bincode() -> &'static [u8] {
     xiv_gen_db::bincode()
 }
@@ -841,6 +862,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/redirect", get(self::oauth::redirect))
         .route("/login", get(begin_login))
         .route("/logout", get(logout))
+        .route("/api/v1/current_user", delete(delete_user))
         .route("/invitebot", get(invite))
         .route("/favicon.ico", get(favicon))
         .route("/robots.txt", get(robots))

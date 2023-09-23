@@ -16,7 +16,8 @@ use crate::global_state::LocalWorldData;
 use crate::{
     components::{ad::Ad, meta::*, profile_display::*, search_box::*, tooltip::*},
     routes::{
-        analyzer::*, edit_retainers::*, home_page::*, item_explorer::*, item_view::*, list_view::*,
+        analyzer::*, edit_retainers::*, home_page::*, item_explorer::*, item_view::*,
+        legal::cookie_policy::CookiePolicy, legal::privacy_policy::PrivacyPolicy, list_view::*,
         lists::*, retainers::*, settings::*,
     },
 };
@@ -123,6 +124,8 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
                     <Route path="analyzer/:world" view=AnalyzerWorldView />
                     <Route path="settings" view=Settings/>
                     <Route path="profile" view=Profile/>
+                    <Route path="privacy" view=PrivacyPolicy/>
+                    <Route path="cookie-policy" view=CookiePolicy/>
                 </Routes>
             </Router>
         </div>

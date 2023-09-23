@@ -1,6 +1,6 @@
 use crate::api::{
-    check_character_verification, claim_character, get_character_verifications, get_characters,
-    search_characters, unclaim_character,
+    check_character_verification, claim_character, delete_user, get_character_verifications,
+    get_characters, search_characters, unclaim_character,
 };
 use crate::components::{ad::*, loading::*, toggle::Toggle, world_name::*, world_picker::*};
 use crate::error::AppResult;
@@ -120,10 +120,38 @@ pub fn Settings() -> impl IntoView {
 }
 
 #[component]
+pub fn DeleteUser() -> impl IntoView {
+    let (confirmed, set_confirmed) = create_signal(false);
+    view! {
+        <div>
+            <h3 class="text-xl text-red-600">"Delete user"</h3>
+            "DANGER: If you wish to delete your account and all information associated with it, confirm with the toggle and then press the delete button"
+            <div class="flex flex-col">
+                <Toggle checked=confirmed
+                    set_checked=set_confirmed
+                    checked_label="Yes, delete my account"
+                    unchecked_label="" />
+                <button class=move || if confirmed() { "bg-red-800 p-2 rounded-md" } else { "bg-neutral-300 p-2 rounded-md"} on:click=move |_| {
+                    if confirmed.get_untracked() {
+                        spawn_local(async move {
+                            if let Ok(()) = delete_user().await {
+                                // let navigate = use_navigate();
+                                // TODO navigate back to the root
+                            }
+                        });
+                    }
+                }>"Delete my account"</button>
+            </div>
+        </div>
+    }
+}
+
+#[component]
 pub fn Profile() -> impl IntoView {
     let claim_character = create_action(move |id: &i32| claim_character(*id));
     let unclaim_character = create_action(move |id: &i32| unclaim_character(*id));
     let check_verification = create_action(move |id: &i32| check_character_verification(*id));
+
     let characters = create_resource(
         move || {
             (
@@ -200,5 +228,6 @@ pub fn Profile() -> impl IntoView {
                 })}
             </Suspense>
         </div>
+        <DeleteUser />
     </div>}
 }

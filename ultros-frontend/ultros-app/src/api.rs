@@ -45,6 +45,10 @@ pub(crate) async fn get_login() -> AppResult<UserData> {
     fetch_api("/api/v1/current_user").await
 }
 
+pub(crate) async fn delete_user() -> AppResult<()> {
+    delete_api("/api/v1/current_user").await
+}
+
 /// Get analyzer data
 pub(crate) async fn get_cheapest_listings(world_name: &str) -> AppResult<CheapestListings> {
     fetch_api(&format!("/api/v1/cheapest/{}", world_name)).await
@@ -222,7 +226,7 @@ pub(crate) async fn edit_list_item(list_item: ListItem) -> AppResult<()> {
 }
 
 pub(crate) async fn delete_list_item(list_id: i32) -> AppResult<()> {
-    fetch_api(&format!("/api/v1/list/item/{list_id}/delete")).await
+    delete_api(&format!("/api/v1/list/item/{list_id}/delete")).await
 }
 
 pub(crate) async fn update_retainer_order(retainers: Vec<OwnedRetainer>) -> AppResult<()> {
@@ -253,6 +257,73 @@ where
             }
         }
     }
+}
+
+#[cfg(not(feature = "ssr"))]
+#[instrument(skip())]
+pub(crate) async fn delete_api<T>(path: &str) -> AppResult<T>
+where
+    T: Serializable,
+{
+    let abort_controller = web_sys::AbortController::new().ok();
+    let abort_signal = abort_controller.as_ref().map(|a| a.signal());
+    let json: String = gloo_net::http::Request::delete(path)
+        .abort_signal(abort_signal.as_ref())
+        .send()
+        .await
+        .map_err(|e| {
+            error!("{}", e);
+            e
+        })?
+        .text()
+        .await?;
+
+    // abort in-flight requests if the Scope is disposed
+    // i.e., if we've navigated away from this page
+    on_cleanup(move || {
+        if let Some(abort_controller) = abort_controller {
+            abort_controller.abort()
+        }
+    });
+    deserialize(&json)
+}
+
+#[cfg(feature = "ssr")]
+#[instrument(skip())]
+pub(crate) async fn delete_api<T>(path: &str) -> AppResult<T>
+where
+    T: Serializable,
+{
+    // use the original headers of the scope
+    // add the hostname when using the ssr path.
+    use tracing::Instrument;
+
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    let client = CLIENT.get_or_init(|| {
+        reqwest::ClientBuilder::new()
+            .tcp_keepalive(std::time::Duration::from_secs(60))
+            .build()
+            .unwrap()
+    });
+    let req_parts = use_context::<leptos_axum::RequestParts>().ok_or(AppError::ParamMissing)?;
+    let headers = req_parts.headers;
+    let hostname = "http://localhost:8080";
+    let path = format!("{hostname}{path}");
+    // headers.remove("Accept-Encoding");
+
+    let request = client.delete(&path).headers(headers).build()?;
+    let json = client
+        .execute(request)
+        .await
+        .instrument(tracing::trace_span!("HTTP FETCH"))
+        .into_inner()
+        .map_err(|e| {
+            error!("Response {e}. {path}");
+            e
+        })?
+        .text()
+        .await?;
+    deserialize(&json)
 }
 
 #[cfg(not(feature = "ssr"))]

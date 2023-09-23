@@ -208,6 +208,11 @@ impl AuthUserCache {
         let users = self.users.read().await;
         users.get(token).cloned()
     }
+
+    pub(crate) async fn remove_token(&self, token: &str) {
+        let mut users = self.users.write().await;
+        users.remove(token);
+    }
 }
 
 #[derive(Debug, Clone)]
