@@ -96,7 +96,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
     let _class_opacity = "opacity-0 opacity-50"; // this is just here to get tailwind to compile
     view! {
         <LargeLoading pending />
-        <Transition set_pending=set_pending.into() fallback=move || view!{ <Loading/>}>
+        <Transition set_pending=set_pending fallback=move || view!{ <Loading/>}>
         {move || listing_resource.get().map(|listings| {
             match listings {
                 Err(e) => view!{ <div>{format!("Error getting listings\n{e}")}</div>}.into_view(),
