@@ -71,11 +71,11 @@ async fn run_socket_listener(
                             let listings = Arc::new(ListingEventData { item_id: item.0, world_id: world.0, listings });
                             let removed = Arc::new(ListingEventData { item_id: item.0, world_id: world.0, listings: removed });
                             match listings_tx.send(EventType::Remove(removed)) {
-                                Ok(o) => info!("sent removed listings {o} updates"),
+                                Ok(o) => info!("sent removed listings {o} slack remaining"),
                                 Err(e) => error!("Error removing listings {e}"),
                             }
                             match listings_tx.send(EventType::Add(listings)) {
-                                Ok(o) => info!("updated listings, sent {o:?} updates"),
+                                Ok(o) => info!("updated listings, sent {o} slack remaining"),
                                 Err(e) => error!("Error adding listings {e}"),
                             };
                         }
@@ -103,7 +103,7 @@ async fn run_socket_listener(
                                     "Stored sale data. Last id: {added_sales:?} {item:?} {world:?}"
                                 );
                                 match sales_tx.send(EventType::Add(Arc::new(SaleEventData{sales: added_sales}))) {
-                                    Ok(o) => info!("Sent sale {o} updates"),
+                                    Ok(o) => info!("Sent sale {o} slack remaining"),
                                     Err(e) => error!("Error sending sale update {e:?}"),
                                 }
                             }

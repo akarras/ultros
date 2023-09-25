@@ -105,19 +105,18 @@ fn Recipe(recipe: &'static Recipe) -> impl IntoView {
     let ingredients = IngredientsIter::new(recipe)
         .flat_map(|(ingredient, amount)| items.get(&ingredient).map(|item| (item, amount)))
         .map(|(ingredient, amount)| view! {
-            <div class="flex-row">
-                <span style="color:#dab;">{amount.to_string()}</span>"x"<SmallItemDisplay item=ingredient/>
+            <div class="flex md:flex-row flex-col">
+                <div class="flex flex-row"><span style="color:#dab;">{amount.to_string()}</span>"x"<SmallItemDisplay item=ingredient/></div>
                 <CheapestPrice item_id=ingredient.key_id />
             </div>})
         .collect::<Vec<_>>();
     let target_item = items.get(&recipe.item_result)?;
     Some(view! {<div class="content-well">
         "Crafting Recipe:"
-        <div class="flex flex-row"><SmallItemDisplay item=target_item/><CheapestPrice item_id=target_item.key_id /></div>
+        <div class="flex md:flex-row flex-col"><SmallItemDisplay item=target_item/><CheapestPrice item_id=target_item.key_id /></div>
         "Ingredients:"
         {ingredients}
-        <div class="flex flex-row">"Price to craft: "</div>
-        <RecipePriceEstimate recipe />
+        <div class="flex md:flex-row flex-col">"Price to craft: "<RecipePriceEstimate recipe /></div>
     </div>})
 }
 

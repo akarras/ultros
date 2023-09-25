@@ -176,20 +176,23 @@ pub fn ItemView() -> impl IntoView {
         <MetaTitle title=move || format!("{} - Market view", item_name())/>
         // TODO: probably shouldn't hard code the domain here
         <MetaImage url=move || { format!("https://ultros.app/static/itemicon/{}?size=Large", item_id())}/>
-        <div class="flex flex-column">
-            <div class="flex flex-row grow p-6 pb-10 -mb-8 rounded-l bg-gradient-to-r from-slate-950">
-                {move || view!{<ItemIcon item_id=item_id() icon_size=IconSize::Large />}}
+        <div class="flex flex-column bg-gradient-to-r from-slate-950 -mt-96 pt-96 ">
+            <div class="flex flex-row grow p-6 rounded-l ">
                 <div class="flex flex-column grow" style="padding: 5px">
-                    <div class="flex flex-row">
-                        <span class="flex flex-row" style="font-size: 36px; line-height 0.5;">{item_name}{move || view!{<Clipboard clipboard_text=item_name().to_string()/>}}</span>
-                        <div class="ml-auto flex flex-row" style="align-items:start">
+                    <div class="flex md:flex-row flex-col flex-wrap">
+                        <span class="flex flex-row text-2xl gap-1">
+                            <ItemIcon item_id icon_size=IconSize::Large />
+                            <div class="flex flex-col">
+                                <span>{item_name}</span>
+                                <span style="font-size: 16px">{move || item_category().and_then(|c| item_search_category().map(|s| (c, s))).map(|(c, s)| view!{<a class="text-fuchsia-300 a:text-fuchsia-600" href=["/items/category/", &s.name].concat()>
+                                    {c.name.as_str()}
+                                </a>})}
+                            </span></div><Clipboard clipboard_text=MaybeSignal::derive(move || item_name().to_string())/></span>
+                        <div class="md:ml-auto flex flex-row" style="align-items:start">
                             <a style="height: 45px" class="btn" href=move || format!("https://universalis.app/market/{}", item_id())>"Universalis"</a>
                             <a style="height: 45px" class="btn" href=move || format!("https://garlandtools.org/db/#item/{}", item_id())>"Garland Tools"</a>
                         </div>
                     </div>
-                    <span style="font-size: 16px">{move || item_category().and_then(|c| item_search_category().map(|s| (c, s))).map(|(c, s)| view!{<a class="text-fuchsia-300 a:text-fuchsia-600" href=["/items/category/", &s.name].concat()>
-                        {c.name.as_str()}</a>})}
-                    </span>
                     <span>{move || view!{<UIText text=item_description().to_string()/>}}</span>
                     {move || view!{<ItemStats item_id=ItemId(item_id()) />}}
                 </div>

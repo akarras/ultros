@@ -10,6 +10,7 @@ use std::sync::Arc;
 use crate::api::get_login;
 use crate::error::AppResult;
 use crate::global_state::cheapest_prices::CheapestPrices;
+use crate::global_state::clipboard_text::GlobalLastCopiedText;
 use crate::global_state::cookies::Cookies;
 use crate::global_state::home_world::get_homeworld;
 use crate::global_state::LocalWorldData;
@@ -34,6 +35,7 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
     provide_context(cookies);
     provide_context(LocalWorldData(worlds));
     provide_context(CheapestPrices::new());
+    provide_context(GlobalLastCopiedText(create_rw_signal(None)));
     let login = create_resource(move || {}, move |_| async move { get_login().await.ok() });
     // provide_context(LoggedInUser(login));
     // HIDE_ADS is user set, entirely optional whether users want to opt in or not.
@@ -52,7 +54,7 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
         <div class="gradient-outer">
             <div class="gradient"></div>
         </div>
-        <div class="">
+        <div>
             <Router>
                 <nav class="header">
                     <A href="/" exact=true>

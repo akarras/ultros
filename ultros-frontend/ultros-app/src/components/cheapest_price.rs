@@ -46,10 +46,12 @@ pub fn CheapestPrice(item_id: ItemId) -> impl IntoView {
                 hq.or(lq)
                 .map(|(label, listing)| {
                     view! {
-                        {label}
-                        <Gil amount=listing.price/>
-                        <span style="padding-right: 5px"></span>
-                        <span><WorldName id=AnySelector::World(listing.world_id)/></span>
+                        <div class="flex flex-row">
+                            {label}
+                            <Gil amount=listing.price/>
+                            <span style="padding-right: 5px"></span>
+                            <span><WorldName id=AnySelector::World(listing.world_id)/></span>
+                        </div>
                     }.into_view()
                 }).unwrap_or(view!{"----"}.into_view())
             })

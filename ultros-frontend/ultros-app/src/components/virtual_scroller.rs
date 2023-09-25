@@ -49,7 +49,9 @@ where
         }
       style=format!(r#"
         height: {}px;
-        overflow: auto;
+        overflow-y: auto;
+        overflow-x: visible;
+        width: fit-content;
       "#, viewport_height.ceil() as u32)
     >
       <div
@@ -57,9 +59,11 @@ where
         style=move || {
             format!(r#"
           height: {}px;
-          overflow: hidden;
+          overflow-y: hidden;
+          overflow-x: visible;
           will-change: transform;
           position: relative;
+          width: fit-content;
         "#, (each.with(|children| children.len() + render_ahead as usize) as f64 * row_height).ceil() as u32)}
       >
         <div // offset for visible nodes

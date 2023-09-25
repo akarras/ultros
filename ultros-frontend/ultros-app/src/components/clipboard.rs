@@ -1,10 +1,18 @@
+use crate::global_state::clipboard_text::GlobalLastCopiedText;
+
 use super::tooltip::*;
 use leptos::*;
 use leptos_icons::*;
 
 #[component]
-pub fn Clipboard(clipboard_text: String) -> impl IntoView {
-    let (copied, set_copied) = create_signal(false);
+pub fn Clipboard(#[prop(into)] clipboard_text: MaybeSignal<String>) -> impl IntoView {
+    let last_copied_text = use_context::<GlobalLastCopiedText>().unwrap();
+    let clipboard_text = create_memo(move |_| clipboard_text());
+    let copied = create_memo(move |_| {
+        last_copied_text.0()
+            .map(|t| clipboard_text() == t)
+            .unwrap_or_default()
+    });
     let icon = create_memo(move |_| {
         if !copied() {
             Icon::from(BsIcon::BsClipboard2Fill)
@@ -12,7 +20,6 @@ pub fn Clipboard(clipboard_text: String) -> impl IntoView {
             Icon::from(BsIcon::BsClipboard2CheckFill)
         }
     });
-    let clipboard_text_2 = clipboard_text.clone();
     view! {<div class="clipboard" on:click=move |_| {
         #[cfg(all(web_sys_unstable_apis, feature = "hydrate"))]
         {
@@ -20,19 +27,16 @@ pub fn Clipboard(clipboard_text: String) -> impl IntoView {
             {
                 let navigator = window.navigator();
                 if let Some(clipboard) = navigator.clipboard() {
-                    let _ = clipboard.write_text(&clipboard_text);
-                    set_copied(true);
+                    let text = clipboard_text.get_untracked();
+                    let _ = clipboard.write_text(&text);
+                    last_copied_text.0.set(Some(text));
                 }
             }
-        }
-        #[cfg(any(not(web_sys_unstable_apis), not(feature = "hydrate")))]
-        {
-            set_copied(false);
         }
     }>
     <Tooltip tooltip_text=MaybeSignal::derive(move || {
         if !copied() {
-            Oco::Owned(format!("Copy {clipboard_text_2} to clipboard"))
+            Oco::Owned(format!("Copy {} to clipboard", clipboard_text()))
         }
         else {
             Oco::from("Text copied!")

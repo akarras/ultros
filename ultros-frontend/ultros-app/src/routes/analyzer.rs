@@ -15,7 +15,7 @@ use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
         clipboard::*, gil::*, item_icon::*, meta::*, tooltip::*, virtual_scroller::*,
-        world_picker::*,
+        world_picker::*, ad::Ad,
     },
     error::AppError,
     global_state::LocalWorldData,
@@ -313,93 +313,96 @@ fn AnalyzerTable(
                 } />
            </div>
        </div>
-       <div class="grid-table" role="table">
-        <div class="grid-header" role="rowgroup">
-            <div role="columnheader" class="w-[25px]">"HQ"</div>
-            <div role="columnheader first" class="w-[450px]">"Item"</div>
-            <div role="columnheader" style="width:100px;" on:click=move |_| set_sort_mode(Some(SortMode::Profit))>
-                <div class="flex-row flex-space">
-                {move || {
-                    match sort_mode().unwrap_or(SortMode::Roi) {
-                        SortMode::Profit => {
-                            view!{"Profit"<i class="fa-solid fa-sort-down"></i>}.into_view()
-                        },
-                        _ => view!{<Tooltip tooltip_text=Oco::from("Sort by profit")>"Profit"</Tooltip>}.into_view(),
-                    }
-                }}
-                </div>
-            </div>
-            <div role="columnheader" style="width: 100px;" on:click=move |_| set_sort_mode(Some(SortMode::Roi))>
-                <div class="flex-row flex-space">
-                {move || {
-                    match sort_mode().unwrap_or(SortMode::Roi) {
-                        SortMode::Roi => {
-                            view!{"R.O.I"<i class="fa-solid fa-sort-down"></i>}.into_view()
-                        },
-                        _ => view!{<Tooltip tooltip_text=Oco::from("Sort by return on investment")>"R.O.I."</Tooltip>}.into_view(),
-                    }
-                }}
-                </div>
-            </div>
-            <div role="columnheader" style=WORLD_WIDTH>
-                "World" {move || world_filter().map(move |world| view!{<a on:click=move |_| set_world_filter(None)><Tooltip tooltip_text=Oco::from("Clear this world filter")>"[" {&world} "]"</Tooltip></a>})}
-            </div>
-            <div role="columnheader" style=DATACENTER_WIDTH>
-                "Datacenter" {move || datacenter_filter().map(move |datacenter| view!{<a on:click=move |_| set_datacenter_filter(None)><Tooltip tooltip_text=Oco::from("Clear this datacenter filter")>"[" {&datacenter} "]"</Tooltip></a>})}
-            </div>
-            <div role="columnheader" style="width: 300px;">"Next sale"</div>
-        </div>
-        <VirtualScroller
-            viewport_height=1000.0
-            row_height=32.3333
-            each=sorted_data.into()
-            key=move |(i, data)| {
-                (*i, data.sale_summary.item_id, data.cheapest_world_id, data.sale_summary.hq)
-            }
-            view=move |(i, data)| {
-                let world = worlds.lookup_selector(AnySelector::World(data.cheapest_world_id));
-                let datacenter = world
-                    .as_ref()
-                    .and_then(|world| {
-                        let datacenters = worlds.get_datacenters(world);
-                        datacenters.first().map(|dc| dc.name.as_str())
-                    })
-                    .unwrap_or_default()
-                    .to_string();
-                let world = world
-                    .as_ref()
-                    .map(|r| r.get_name())
-                    .unwrap_or_default()
-                    .to_string();
-                let world_event = world.clone();
-                let datacenter_event = datacenter.clone();
-                let item_id = data.sale_summary.item_id;
-                let item = items
-                    .get(&ItemId(item_id))
-                    .map(|item| item.name.as_str())
-                    .unwrap_or_default();
-                view! {<div class="grid-row" role="row-group" class:even=move || (i % 2) == 0 class:odd=move || (i % 2) == 1>
-                    <div role="cell" style="width: 25px;">{data.sale_summary.hq.then_some("✅")}</div>
-                    <div role="cell" class="flex flex-row w-[450px]">
-                        <a class="flex flex-row" href=format!("/item/{world}/{item_id}")>
-                            <ItemIcon item_id icon_size=IconSize::Small/>
-                            {item}
-                        </a>
-                        <Clipboard clipboard_text=item.to_string()/>
+       <div class="flex flex-col-reverse md:flex-row">
+        <div class="grid-table" role="table">
+            <div class="grid-header" role="rowgroup">
+                <div role="columnheader" class="w-[25px]">"HQ"</div>
+                <div role="columnheader first" class="w-[450px]">"Item"</div>
+                <div role="columnheader" style="width:100px;" on:click=move |_| set_sort_mode(Some(SortMode::Profit))>
+                    <div class="flex-row flex-space">
+                    {move || {
+                        match sort_mode().unwrap_or(SortMode::Roi) {
+                            SortMode::Profit => {
+                                view!{"Profit"<i class="fa-solid fa-sort-down"></i>}.into_view()
+                            },
+                            _ => view!{<Tooltip tooltip_text=Oco::from("Sort by profit")>"Profit"</Tooltip>}.into_view(),
+                        }
+                    }}
                     </div>
-                    <div role="cell" style="width: 100px;"><Gil amount=data.profit /></div>
-                    <div role="cell" style="width: 100px;">{data.return_on_investment}"%"</div>
-                    <div role="cell" style=WORLD_WIDTH><Gil amount=data.cheapest_price/>" on "<a on:click=move |_| { set_datacenter_filter(None); set_world_filter(Some(world_event.clone())); }>{world}</a></div>
-                    <div role="cell" style=DATACENTER_WIDTH><a on:click= move |_| { set_world_filter(None); set_datacenter_filter(Some(datacenter_event.clone())) }>{&datacenter}</a></div>
-                    <div role="cell" style="width: 300px;">{data.sale_summary
-                            .avg_sale_duration
-                            .and_then(|sale_duration| {
-                                let duration = sale_duration.to_std().ok()?;
-                                Some(format_duration(duration).to_string())
-                            })
-                    }</div>
-                    </div>}
-            }/>
+                </div>
+                <div role="columnheader" style="width: 100px;" on:click=move |_| set_sort_mode(Some(SortMode::Roi))>
+                    <div class="flex-row flex-space">
+                    {move || {
+                        match sort_mode().unwrap_or(SortMode::Roi) {
+                            SortMode::Roi => {
+                                view!{"R.O.I"<i class="fa-solid fa-sort-down"></i>}.into_view()
+                            },
+                            _ => view!{<Tooltip tooltip_text=Oco::from("Sort by return on investment")>"R.O.I."</Tooltip>}.into_view(),
+                        }
+                    }}
+                    </div>
+                </div>
+                <div role="columnheader" style=WORLD_WIDTH>
+                    "World" {move || world_filter().map(move |world| view!{<a on:click=move |_| set_world_filter(None)><Tooltip tooltip_text=Oco::from("Clear this world filter")>"[" {&world} "]"</Tooltip></a>})}
+                </div>
+                <div role="columnheader" style=DATACENTER_WIDTH>
+                    "Datacenter" {move || datacenter_filter().map(move |datacenter| view!{<a on:click=move |_| set_datacenter_filter(None)><Tooltip tooltip_text=Oco::from("Clear this datacenter filter")>"[" {&datacenter} "]"</Tooltip></a>})}
+                </div>
+                <div role="columnheader" style="width: 300px;">"Next sale"</div>
+            </div>
+            <VirtualScroller
+                viewport_height=1000.0
+                row_height=32.3333
+                each=sorted_data.into()
+                key=move |(i, data)| {
+                    (*i, data.sale_summary.item_id, data.cheapest_world_id, data.sale_summary.hq)
+                }
+                view=move |(i, data)| {
+                    let world = worlds.lookup_selector(AnySelector::World(data.cheapest_world_id));
+                    let datacenter = world
+                        .as_ref()
+                        .and_then(|world| {
+                            let datacenters = worlds.get_datacenters(world);
+                            datacenters.first().map(|dc| dc.name.as_str())
+                        })
+                        .unwrap_or_default()
+                        .to_string();
+                    let world = world
+                        .as_ref()
+                        .map(|r| r.get_name())
+                        .unwrap_or_default()
+                        .to_string();
+                    let world_event = world.clone();
+                    let datacenter_event = datacenter.clone();
+                    let item_id = data.sale_summary.item_id;
+                    let item = items
+                        .get(&ItemId(item_id))
+                        .map(|item| item.name.as_str())
+                        .unwrap_or_default();
+                    view! {<div class="grid-row" role="row-group" class:even=move || (i % 2) == 0 class:odd=move || (i % 2) == 1>
+                        <div role="cell" style="width: 25px;">{data.sale_summary.hq.then_some("✅")}</div>
+                        <div role="cell" class="flex flex-row w-[450px]">
+                            <a class="flex flex-row" href=format!("/item/{world}/{item_id}")>
+                                <ItemIcon item_id icon_size=IconSize::Small/>
+                                {item}
+                            </a>
+                            <Clipboard clipboard_text=item.to_string()/>
+                        </div>
+                        <div role="cell" style="width: 100px;"><Gil amount=data.profit /></div>
+                        <div role="cell" style="width: 100px;">{data.return_on_investment}"%"</div>
+                        <div role="cell" style=WORLD_WIDTH><Gil amount=data.cheapest_price/>" on "<a on:click=move |_| { set_datacenter_filter(None); set_world_filter(Some(world_event.clone())); }>{world}</a></div>
+                        <div role="cell" style=DATACENTER_WIDTH><a on:click= move |_| { set_world_filter(None); set_datacenter_filter(Some(datacenter_event.clone())) }>{&datacenter}</a></div>
+                        <div role="cell" style="width: 300px;">{data.sale_summary
+                                .avg_sale_duration
+                                .and_then(|sale_duration| {
+                                    let duration = sale_duration.to_std().ok()?;
+                                    Some(format_duration(duration).to_string())
+                                })
+                        }</div>
+                        </div>}
+                }/>
+        </div>
+        <Ad class="h-screen" />
        </div>
     }
 }
@@ -424,10 +427,24 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     );
     let worlds = use_context::<LocalWorldData>()
         .expect("Worlds should always be populated here")
-        .0;
-
+        .0.unwrap();
+    let worlds_value = store_value(worlds);
+    let global_cheapest_listings = create_local_resource(
+        move || params.with(|p| p.get("world").cloned()),
+        move |world| async move {
+            let worlds = worlds_value();
+            // use the world cache to lookup the region for this world
+            let world = world.ok_or(AppError::ParamMissing)?;
+            let region = worlds.lookup_world_by_name(&world).map(|world| {
+                let region = worlds.get_region(world);
+                AnyResult::Region(region).get_name().to_string()
+            }).ok_or(AppError::ParamMissing)?;
+            get_cheapest_listings(&region).await
+        },
+    );
     view!{
         <div class="main-content">
+            <div class="container mx-auto">
             <span class="title">"Resale Analyzer Results for "{world}</span><br/>
             <AnalyzerWorldNavigator /><br />
             <span>"The analyzer will show items that sell more on "{world}" than they can be purchased for."</span><br/>
@@ -436,37 +453,20 @@ pub fn AnalyzerWorldView() -> impl IntoView {
             <span>"Sample filters"</span>
             <a class="btn" href="?next-sale=7d&roi=300&profit=0&sort=profit&">"300% return - 7 days"</a>
             <a class="btn" href="?next-sale=1M&roi=500&profit=200000&">"500% return - 200K min profit - 1 month"</a>
-            {worlds.ok().map(|worlds| {
-                let world_value = store_value(worlds);
-                let global_cheapest_listings = create_local_resource(
-                    move || params.with(|p| p.get("world").cloned()),
-                    move |world| async move {
-                        let worlds = world_value();
-                        // use the world cache to lookup the region for this world
-                        let world = world.ok_or(AppError::ParamMissing)?;
-                        let region = worlds.lookup_world_by_name(&world).map(|world| {
-                            let region = worlds.get_region(world);
-                            AnyResult::Region(region).get_name().to_string()
-                        }).ok_or(AppError::ParamMissing)?;
-                        get_cheapest_listings(&region).await
-                    },
-                );
-                view!{
-                        {move || {
-                            let world_cheapest = world_cheapest_listings.get();
-                            let sales = sales.get();
-                            let global_cheapest_listings = global_cheapest_listings.get();
-                            let worlds = world_value();
-                            let values = world_cheapest
-                                .and_then(|w| w.ok())
-                                .and_then(|r| sales.and_then(|s| s.ok())
-                                .and_then(|s| global_cheapest_listings.and_then(|g| g.ok()).map(|g| (r, s, g))));
-                            values.map(|(world_cheapest_listings, sales, global_cheapest_listings)| {
-                            view!{<AnalyzerTable sales global_cheapest_listings world_cheapest_listings worlds world=world.into() />
-                            } }
-                        )}}
-                }
-            })}
+            {move || {
+                let world_cheapest = world_cheapest_listings.get();
+                let sales = sales.get();
+                let global_cheapest_listings = global_cheapest_listings.get();
+                let worlds = worlds_value();
+                let values = world_cheapest
+                    .and_then(|w| w.ok())
+                    .and_then(|r| sales.and_then(|s| s.ok())
+                    .and_then(|s| global_cheapest_listings.and_then(|g| g.ok()).map(|g| (r, s, g))));
+                values.map(|(world_cheapest_listings, sales, global_cheapest_listings)| {
+                view!{<AnalyzerTable sales global_cheapest_listings world_cheapest_listings worlds world=world.into() />
+                } }
+            )}}
+        </div>
     </div>}.into_view()
 }
 
@@ -504,8 +504,8 @@ pub fn AnalyzerWorldNavigator() -> impl IntoView {
 #[component]
 pub fn Analyzer() -> impl IntoView {
     view! {
-        <div class="mx-auto">
-            <div class="main-content">
+        <div class="main-content">
+            <div class="mx-auto container">
                 <span class="content-title">"Analyzer"</span>
                 <div class="flex-column">
                     <span>"The analyzer helps find items that are cheaper on other worlds that sell for more on your world."</span><br/>

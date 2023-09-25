@@ -53,9 +53,9 @@ body {
   background-image: url('/static/images/flower_4.webp');
   background-size: 500px;
   background-position: top;
-
+  max-width: 100vw;
   color: #fff;
-  /* overflow-x: sh; */
+  overflow-x: hidden;
 }
 
 @keyframes fadeInAnimation {
@@ -190,12 +190,7 @@ nav>*>a:hover {
   height: 52px;
 }
 
-div>.search-box {
-  width: 424px;
-}
-
 .search-box {
-  width: 424px;
   height: 36px;
   margin: 5px;
   padding: 0px 10px;
@@ -223,12 +218,13 @@ div>.search-box {
 }
 
 .search-box.active~.search-results,
-.search-box:active~.search-results {
+.search-box:active~.search-results,
+.search-results:focus-within {
   visibility: visible;
   opacity: 1;
   animation: .25s cubic-bezier(.76, 0, .24, 1) search-open;
   margin-left: 5px;
-  width: 420px;
+  height: 500px;
   border-top: 0px;
   margin-top: -5px;
 }
@@ -243,10 +239,9 @@ div>.search-box {
   display: flex;
   flex-direction: column;
   align-items: center;
-  height: 500px;
+  height: 0px;
   width: 424px;
   position: relative;
-  visibility: hidden;
   overflow-y: scroll;
   overflow-x: hidden;
   opacity: 0.0;
@@ -552,7 +547,7 @@ th {
   }
 }
 
-@media screen and (max-width: 500px) {
+@media screen and (max-width: 640px) {
   nav {
     margin-top: 44px;
   }
@@ -562,26 +557,9 @@ th {
     max-width: 100%;
   }
 
-  div>.search-box {
-    position: absolute;
-    top: 0px;
-    left: 0px;
-    right: 0px;
-    width: 100%;
-  }
-
-  .search-box {
-    width: 100%;
-    margin: 0px;
-    padding: 2px;
-    left: 0px;
-    right: 0px;
-  }
-
 
   .search-results {
     width: 100vw;
-    max-width: 100%;
     position: absolute;
     top: 44px;
     left: 0px;
@@ -687,7 +665,7 @@ select optgroup {
   box-sizing: border-box;
   border: 1px solid #000000;
   box-shadow: 0 1px 8px rgba(0, 0, 0, 0.5);
-  visibility: hidden;
+  visibility: collapse;
   opacity: 0;
   transition: opacity 0.8s;
 }
@@ -834,8 +812,8 @@ select optgroup {
 .lds-ellipsis {
   display: inline-block;
   position: relative;
-  width: 80px;
-  height: 80px;
+  width: 25px;
+  height: 18px;
 }
 
 .lds-ellipsis div {
@@ -849,22 +827,22 @@ select optgroup {
 }
 
 .lds-ellipsis div:nth-child(1) {
-  left: 8px;
+  left: 2px;
   animation: lds-ellipsis1 0.6s infinite;
 }
 
 .lds-ellipsis div:nth-child(2) {
-  left: 8px;
+  left: 3px;
   animation: lds-ellipsis2 0.6s infinite;
 }
 
 .lds-ellipsis div:nth-child(3) {
-  left: 32px;
+  left: 10px;
   animation: lds-ellipsis2 0.6s infinite;
 }
 
 .lds-ellipsis div:nth-child(4) {
-  left: 56px;
+  left: 18px;
   animation: lds-ellipsis3 0.6s infinite;
 }
 
@@ -909,7 +887,6 @@ select optgroup {
 .grid-table {
   display: flex;
   flex-direction: column;
-  width: calc(100vw - 5px);
   overflow-x: auto;
 }
 
@@ -1057,8 +1034,8 @@ select optgroup {
     transform: translateY(-100px) scaleY(110%);
     background-color: rgba(0, 0, 0, 1.0);
   }
-  75% {
-    transform: translateY(-100px) scaleY(110%);
+  50% {
+    transform: translateY(-110px) scaleY(50%);
     background-color: rgba(0, 0, 0, 1.0);
   }
   100% {

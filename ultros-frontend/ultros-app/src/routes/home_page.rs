@@ -14,15 +14,14 @@ use crate::{
 pub fn HomePage() -> impl IntoView {
     view! {
     <div class="main-content p-4">
-        <h1 class="text-3xl">"Ultros Alpha"</h1>
-        <Title text="Ultros The Ultra Fast Market Tool"/>
-        <span class="text-2xl">"Live sales"</span>
-        <LiveSaleTicker />
-        <Ad />
-        <div class="flex flex-col">
+        <div class="flex flex-col container mx-auto">
+            <h1 class="text-3xl">"Ultros Alpha"</h1>
+            <Title text="Ultros The Ultra Fast Market Tool"/>
+            <span class="text-2xl">"Live sales"</span>
+            <LiveSaleTicker />
             <div>
                 <div class="flex p-8 flex-col md:flex-row">
-                    <div class="overflow-hidden md:w-[60vw] h-96">
+                    <div class="overflow-hidden md:w-[40vw] h-96">
                         <RelatedItems item_id=2 />
                     </div>
                     <ul>
@@ -35,6 +34,7 @@ pub fn HomePage() -> impl IntoView {
                     </ul>
                 </div>
             </div>
+            <Ad />
             <div class="p-8 grow flex-auto flex flex-col md:flex-row">
                 <div class="flex flex-col">
                     <span class="text-3xl p-1">"Analyzer"</span>
@@ -106,7 +106,7 @@ pub fn HomePage() -> impl IntoView {
                     <ul class="list-disc text-xl p-2">
                         <li>"Track your retainer's listings online"</li>
                         <li>"View undercut items in one place"</li>
-                        <li>"WIP - Get alerted on Discord or on this site when someone undercuts you"</li>
+                        <li>"Get alerted on Discord or on this site when someone undercuts you, try /ffxiv retainer add_undercut_alert"</li>
                     </ul>
                 </div>
             </div>

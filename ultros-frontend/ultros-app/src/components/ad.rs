@@ -3,14 +3,17 @@ use leptos::*;
 use leptos_router::*;
 
 #[component]
-pub fn Ad() -> impl IntoView {
+pub fn Ad(
+    #[prop(optional)] class: Option<&'static str>
+) -> impl IntoView {
+    let ad_class = class.unwrap_or("h-40");
     let cookies = use_context::<Cookies>().unwrap();
     let (hide_ads, _) = cookies.use_cookie_typed::<_, bool>("HIDE_ADS");
     move || {
-        (!hide_ads().unwrap_or_default()).then(||view!{
+        (!hide_ads().unwrap_or_default()).then(move ||view!{
         <div>
             <span class="text-lg">"Ad"</span>
-            <div class="h-40">
+            <div class=ad_class>
             <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-8789160460804755"
                 crossorigin="anonymous"></script>
             // <!-- Ultros-Ad-Main -->

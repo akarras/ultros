@@ -41,6 +41,7 @@ ultros-charts = {path = "../ultros-charts" }
 plotters-canvas = "0.3"
 leptos_icons.workspace = true
 serde_qs = "0.12.0"
+gloo-timers = {version = "0.3.0", features = ["futures"]}
 
 [features]
 default = ["ssr"] # this is mostly so if I run cargo check, it has a flavor to work on
