@@ -1,6 +1,7 @@
 use std::cmp::Reverse;
 
 use crate::api::{get_retainer_listings, get_retainer_undercuts};
+use crate::components::ad::Ad;
 use crate::components::gil::*;
 use crate::components::{item_icon::*, loading::*, meta::*, world_name::*};
 use leptos::*;
@@ -211,9 +212,15 @@ pub fn Retainers() -> impl IntoView {
         </div>
         <div
             class="main-content"
-            style="display: flex; flex-direction: column; align-items: start;"
         >
-            <AnimatedOutlet outro="route-out" intro="route-in" outro_back="route-out-back" intro_back="route-in-back"/>
+        <div class="container mx-auto flex flex-col md:flex-row items-start">
+            <div class="grow">
+                <AnimatedOutlet outro="route-out" intro="route-in" outro_back="route-out-back" intro_back="route-in-back" />
+            </div>
+            <div class="w-96">
+                <Ad class="h-96 md:h-[50vh]"/>
+            </div>
+        </div>
         </div>
     }
 }

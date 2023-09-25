@@ -3,9 +3,7 @@ use leptos::*;
 use leptos_router::*;
 
 #[component]
-pub fn Ad(
-    #[prop(optional)] class: Option<&'static str>
-) -> impl IntoView {
+pub fn Ad(#[prop(optional)] class: Option<&'static str>) -> impl IntoView {
     let ad_class = class.unwrap_or("h-40");
     let cookies = use_context::<Cookies>().unwrap();
     let (hide_ads, _) = cookies.use_cookie_typed::<_, bool>("HIDE_ADS");

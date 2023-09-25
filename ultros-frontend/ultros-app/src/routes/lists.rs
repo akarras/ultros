@@ -3,6 +3,7 @@ use leptos_icons::*;
 use leptos_router::*;
 
 use crate::api::{create_list, delete_list, edit_list, get_lists};
+use crate::components::ad::Ad;
 use crate::components::{loading::*, tooltip::*, world_name::*, world_picker::*};
 use crate::global_state::home_world::get_price_zone;
 use ultros_api_types::list::{CreateList, List};
@@ -39,7 +40,7 @@ pub fn EditLists() -> impl IntoView {
         view!{
             <div class="content-well">
                 <label for="list-name">"List name:"</label>
-                <input id="list-name" prop:value=new_list on:input=move |input| set_new_list(event_target_value(&input)) />
+                <input class="w-52" id="list-name" prop:value=new_list on:input=move |input| set_new_list(event_target_value(&input)) />
                 <label>"World/Datacenter/Region:"</label>
                 <WorldPicker current_world=wdr_filter.into() set_current_world=set_wdr_filter.into() />
                 <button prop:disabled=move || wdr_filter().is_none() class="btn" on:click=move |_| {
@@ -73,7 +74,7 @@ pub fn EditLists() -> impl IntoView {
                                 view!{<tr>
                                     {move || if is_edit() {
                                         view!{<td>
-                                                <input prop:value=name on:input=move |input| set_name(event_target_value(&input))/>
+                                                <input class="w-52" prop:value=name on:input=move |input| set_name(event_target_value(&input))/>
                                             </td>
                                             <td>
                                                 <WorldPicker current_world=current_world.into() set_current_world=set_current_world.into() />
@@ -94,7 +95,7 @@ pub fn EditLists() -> impl IntoView {
                                                     }
                                                     edit_list.dispatch(list);
                                                 } >
-
+                                                    <Icon icon=Icon::from(BiIcon::BiSaveSolid)/>
                                                 </button>
                                             </Tooltip>
                                             <Tooltip tooltip_text=Oco::from("Delete this list")>
@@ -136,7 +137,14 @@ pub fn Lists() -> impl IntoView {
             </A>
         </div>
         <div class="main-content flex-column">
-            <AnimatedOutlet outro="route-out" intro="route-in" outro_back="route-out-back" intro_back="route-in-back" />
+            <div class="container mx-auto flex flex-col md:flex-row items-start">
+                <div class="grow">
+                    <AnimatedOutlet outro="route-out" intro="route-in" outro_back="route-out-back" intro_back="route-in-back" />
+                </div>
+                <div class="w-96">
+                    <Ad class="h-96 md:h-[50vh]"/>
+                </div>
+            </div>
         </div>
     </div>
     }

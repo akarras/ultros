@@ -1,6 +1,8 @@
 use std::{cmp::Reverse, collections::HashSet};
 
-use crate::components::{cheapest_price::*, fonts::*, meta::*, small_item_display::*, tooltip::*};
+use crate::components::{
+    ad::Ad, cheapest_price::*, fonts::*, meta::*, small_item_display::*, tooltip::*,
+};
 use leptos::*;
 use leptos_router::*;
 use urlencoding::{decode, encode};
@@ -187,6 +189,7 @@ pub fn CategoryItems() -> impl IntoView {
     view! {
     <MetaTitle title=category_view_name/>
     <MetaDescription text=move || ["List of items for the item category ", &category_view_name()].concat()/>
+    <h3 class="text-xl">{category_view_name}</h3>
     <ItemList items />}
 }
 
@@ -220,9 +223,18 @@ pub fn JobItems() -> impl IntoView {
         job_items.sort_by_key(|(_, item)| Reverse(item.level_item.0));
         job_items
     });
+    let job_set = create_memo(move |_| {
+        params()
+            .get("jobset")
+            .as_ref()
+            .map(|s| s.as_str())
+            .unwrap_or("Job Set")
+            .to_string()
+    });
     view! {
-        <MetaTitle title=move || params().get("jobset").as_ref().map(|s| s.as_str()).unwrap_or("Job Set").to_string()/>
-        <MetaDescription text=move || ["All items equippable by ", params().get("jobset").as_ref().map(|s| s.as_str()).unwrap_or_default()].concat()/>
+        <MetaTitle title=job_set/>
+        <MetaDescription text=move || ["All items equippable by ", &job_set()].concat()/>
+        <h3 class="text-xl">{job_set}</h3>
     <div class="flex-row">
         <label for="marketable-only">"Marketable Only"</label>
         <input type="checkbox" prop:checked=market_only name="market-only" on:change=move |_e| {
@@ -247,22 +259,27 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
 #[component]
 pub fn ItemExplorer() -> impl IntoView {
     view! {
-        <div class="mx-auto">
-            <div class="main-content flex">
-                <div class="flex-column" style="width: 250px; font-size: 1.2em">
-                    "Weapons"
-                    <CategoryView category=1 />
-                    "Armor"
-                    <CategoryView category=2 />
-                    "Items"
-                    <CategoryView category=3 />
-                    "Housing"
-                    <CategoryView category=4 />
-                    "Job Set"
-                    <JobsList />
+        <div class="main-content">
+            <div class="mx-auto container flex flex-col md:flex-row items-start">
+                <div class="flex flex-row items-start">
+                    <div class="flex flex-col sm:text-3xl text-lg max-w-sm shrink">
+                        "Weapons"
+                        <CategoryView category=1 />
+                        "Armor"
+                        <CategoryView category=2 />
+                        "Items"
+                        <CategoryView category=3 />
+                        "Housing"
+                        <CategoryView category=4 />
+                        "Job Set"
+                        <JobsList />
+                    </div>
+                    <div class="flex flex-col grow">
+                        <AnimatedOutlet outro="route-out" intro="route-in" outro_back="route-out-back" intro_back="route-in-back"/>
+                    </div>
                 </div>
-                <div class="flex-column" style="flex-grow: 1;">
-                    <AnimatedOutlet outro="route-out" intro="route-in" outro_back="route-out-back" intro_back="route-in-back"/>
+                <div>
+                    <Ad class="h-96 md:h-[50vh]"/>
                 </div>
             </div>
         </div>

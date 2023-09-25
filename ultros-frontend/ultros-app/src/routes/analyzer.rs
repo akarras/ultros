@@ -14,8 +14,8 @@ use xiv_gen::ItemId;
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
-        clipboard::*, gil::*, item_icon::*, meta::*, tooltip::*, virtual_scroller::*,
-        world_picker::*, ad::Ad,
+        ad::Ad, clipboard::*, gil::*, item_icon::*, meta::*, tooltip::*, virtual_scroller::*,
+        world_picker::*,
     },
     error::AppError,
     global_state::LocalWorldData,
@@ -427,7 +427,8 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     );
     let worlds = use_context::<LocalWorldData>()
         .expect("Worlds should always be populated here")
-        .0.unwrap();
+        .0
+        .unwrap();
     let worlds_value = store_value(worlds);
     let global_cheapest_listings = create_local_resource(
         move || params.with(|p| p.get("world").cloned()),
@@ -435,16 +436,19 @@ pub fn AnalyzerWorldView() -> impl IntoView {
             let worlds = worlds_value();
             // use the world cache to lookup the region for this world
             let world = world.ok_or(AppError::ParamMissing)?;
-            let region = worlds.lookup_world_by_name(&world).map(|world| {
-                let region = worlds.get_region(world);
-                AnyResult::Region(region).get_name().to_string()
-            }).ok_or(AppError::ParamMissing)?;
+            let region = worlds
+                .lookup_world_by_name(&world)
+                .map(|world| {
+                    let region = worlds.get_region(world);
+                    AnyResult::Region(region).get_name().to_string()
+                })
+                .ok_or(AppError::ParamMissing)?;
             get_cheapest_listings(&region).await
         },
     );
     view!{
         <div class="main-content">
-            <div class="container mx-auto">
+            <div class="container mx-auto flex flex-col">
             <span class="title">"Resale Analyzer Results for "{world}</span><br/>
             <AnalyzerWorldNavigator /><br />
             <span>"The analyzer will show items that sell more on "{world}" than they can be purchased for."</span><br/>
