@@ -343,10 +343,10 @@ fn AnalyzerTable(
                     </div>
                 </div>
                 <div role="columnheader" style=WORLD_WIDTH>
-                    "World" {move || world_filter().map(move |world| view!{<a on:click=move |_| set_world_filter(None)><Tooltip tooltip_text=Oco::from("Clear this world filter")>"[" {&world} "]"</Tooltip></a>})}
+                    "World" {move || world_filter().map(move |world| view!{<a class="cursor-pointer" on:click=move |_| set_world_filter(None)><Tooltip tooltip_text=Oco::from("Clear this world filter")>"[" {&world} "]"</Tooltip></a>})}
                 </div>
                 <div role="columnheader" style=DATACENTER_WIDTH>
-                    "Datacenter" {move || datacenter_filter().map(move |datacenter| view!{<a on:click=move |_| set_datacenter_filter(None)><Tooltip tooltip_text=Oco::from("Clear this datacenter filter")>"[" {&datacenter} "]"</Tooltip></a>})}
+                    "Datacenter" {move || datacenter_filter().map(move |datacenter| view!{<a class="cursor-pointer" on:click=move |_| set_datacenter_filter(None)><Tooltip tooltip_text=Oco::from("Clear this datacenter filter")>"[" {&datacenter} "]"</Tooltip></a>})}
                 </div>
                 <div role="columnheader" style="width: 300px;">"Next sale"</div>
             </div>
@@ -390,8 +390,8 @@ fn AnalyzerTable(
                         </div>
                         <div role="cell" style="width: 100px;"><Gil amount=data.profit /></div>
                         <div role="cell" style="width: 100px;">{data.return_on_investment}"%"</div>
-                        <div role="cell" style=WORLD_WIDTH><Gil amount=data.cheapest_price/>" on "<a on:click=move |_| { set_datacenter_filter(None); set_world_filter(Some(world_event.clone())); }>{world}</a></div>
-                        <div role="cell" style=DATACENTER_WIDTH><a on:click= move |_| { set_world_filter(None); set_datacenter_filter(Some(datacenter_event.clone())) }>{&datacenter}</a></div>
+                        <div role="cell" style=WORLD_WIDTH><Gil amount=data.cheapest_price/>" on "<a class="cursor-pointer" on:click=move |_| { set_datacenter_filter(None); set_world_filter(Some(world_event.clone())); }>{world}</a></div>
+                        <div role="cell" style=DATACENTER_WIDTH><a class="cursor-pointer" on:click=move |_| { set_world_filter(None); set_datacenter_filter(Some(datacenter_event.clone())) }>{&datacenter}</a></div>
                         <div role="cell" style="width: 300px;">{data.sale_summary
                                 .avg_sale_duration
                                 .and_then(|sale_duration| {
