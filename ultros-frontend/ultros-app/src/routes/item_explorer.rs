@@ -275,7 +275,7 @@ pub fn ItemExplorer() -> impl IntoView {
                         <JobsList />
                     </div>
                     <div class="flex flex-col grow">
-                        <AnimatedOutlet outro="route-out" intro="route-in" outro_back="route-out-back" intro_back="route-in-back"/>
+                        <Outlet />
                     </div>
                 </div>
                 <div>

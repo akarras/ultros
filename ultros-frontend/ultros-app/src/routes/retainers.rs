@@ -215,7 +215,7 @@ pub fn Retainers() -> impl IntoView {
         >
         <div class="container mx-auto flex flex-col md:flex-row items-start">
             <div class="grow">
-                <AnimatedOutlet outro="route-out" intro="route-in" outro_back="route-out-back" intro_back="route-in-back" />
+                <Outlet />
             </div>
             <div class="w-96">
                 <Ad class="h-96 md:h-[50vh]"/>

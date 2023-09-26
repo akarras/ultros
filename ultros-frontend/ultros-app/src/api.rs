@@ -199,7 +199,7 @@ pub(crate) async fn get_list_items_with_listings(
 }
 
 pub(crate) async fn delete_list(list_id: i32) -> AppResult<()> {
-    fetch_api(&format!("/api/v1/list/{list_id}/delete")).await
+    delete_api(&format!("/api/v1/list/{list_id}/delete")).await
 }
 
 pub(crate) async fn create_list(list: CreateList) -> AppResult<()> {

@@ -9,7 +9,7 @@ use anyhow::Result;
 use futures::future::try_join_all;
 use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, IntoActiveModel, ModelTrait,
-    QueryFilter,
+    QueryFilter, TransactionTrait,
 };
 use std::{collections::HashMap, sync::Arc};
 use tracing::instrument;
@@ -96,7 +96,13 @@ impl UltrosDb {
         if list.owner != discord_user {
             return Err(anyhow::anyhow!("List not owned by that user"));
         }
-        list.delete(&self.db).await?;
+        let txn = self.db.begin().await?;
+        let _items = list_item::Entity::delete_many()
+            .filter(list_item::Column::ListId.eq(list.id))
+            .exec(&txn)
+            .await?;
+        list.delete(&txn).await?;
+        txn.commit().await?;
         Ok(())
     }
 
