@@ -261,7 +261,7 @@ pub fn ItemExplorer() -> impl IntoView {
     view! {
         <div class="main-content">
             <div class="mx-auto container flex flex-col md:flex-row items-start">
-                <div class="flex flex-row items-start">
+                <div class="flex grow flex-row items-start">
                     <div class="flex flex-col sm:text-3xl text-lg max-w-sm shrink">
                         "Weapons"
                         <CategoryView category=1 />
