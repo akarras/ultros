@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use futures::{stream, StreamExt};
 use tokio::time::Instant;
@@ -46,13 +46,14 @@ impl UpdateService {
                 // check all worlds
                 info!("Checking all worlds");
                 // Create this 30 minute duration check now so that our refresh interval includes the time we spent checking
-                let next_interval = Instant::now() + tokio::time::Duration::from_secs(60 * 30);
+                let next_interval = Instant::now() + tokio::time::Duration::from_secs(60 * 5);
                 for world in self.world_cache.get_all_worlds() {
                     info!("{world:?}");
                     let world = self.do_full_world_update(world).await;
                     if let Err(w) = world {
                         info!("{w:?}");
                     }
+                    tokio::time::sleep(Duration::from_secs(1)).await;
                 }
                 tokio::time::sleep_until(next_interval).await;
             }
