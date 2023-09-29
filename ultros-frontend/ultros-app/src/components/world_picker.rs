@@ -15,7 +15,7 @@ pub fn WorldOnlyPicker(
         Ok(worlds) => {
             let data = worlds.get_all().clone();
             view!{
-                <select on:change=move |input| {
+                <select class="p-1" on:change=move |input| {
                     let id = event_target_value(&input);
                     // let (_world_type, id) = world_target.split_once(":").unwrap();
                     let id = id.parse().unwrap();
@@ -62,7 +62,7 @@ pub fn WorldPicker(
             let data = worlds.get_all().clone();
             // TODO: include a current world default option in the picker
             view!{
-                <select on:change=move |input| {
+                <select class="p-1" on:change=move |input| {
                     let world_target = event_target_value(&input);
                     // world target should be in the form of world_type:id
                     let (world_type, id) = world_target.split_once(':').unwrap();

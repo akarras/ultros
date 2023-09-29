@@ -402,7 +402,7 @@ fn AnalyzerTable(
                         </div>}
                 }/>
         </div>
-        <Ad class="h-screen" />
+        <Ad class="h-48 md:h-[48vh]" />
        </div>
     }
 }
@@ -455,8 +455,11 @@ pub fn AnalyzerWorldView() -> impl IntoView {
             <span>"These estimates aren't very accurate, but are meant to be easily accessible and fast to use."</span><br/>
             <span>"Be extra careful to make sure that the price you buy things for matches the price"</span><br/>
             <span>"Sample filters"</span>
-            <a class="btn" href="?next-sale=7d&roi=300&profit=0&sort=profit&">"300% return - 7 days"</a>
-            <a class="btn" href="?next-sale=1M&roi=500&profit=200000&">"500% return - 200K min profit - 1 month"</a>
+            <div class="flex flex-col md:flex-row flex-wrap">
+                <a class="btn p-1" href="?next-sale=7d&roi=300&profit=0&sort=profit&">"300% return - 7 days"</a>
+                <a class="btn p-1" href="?next-sale=1M&roi=500&profit=200000&">"500% return - 200K min profit - 1 month"</a>
+                <a class="btn p-1" href="?profit=100000">"100K profit"</a>
+            </div>
             {move || {
                 let world_cheapest = world_cheapest_listings.get();
                 let sales = sales.get();
