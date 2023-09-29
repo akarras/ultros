@@ -3,8 +3,8 @@ use chrono::Utc;
 use leptos::*;
 use leptos_icons::*;
 use leptos_meta::*;
-use ultros_api_types::{ActiveListing, Retainer};
 use leptos_router::*;
+use ultros_api_types::{ActiveListing, Retainer};
 
 use crate::{
     components::{

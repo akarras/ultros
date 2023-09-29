@@ -54,7 +54,7 @@ use crate::event::{EventReceivers, EventSenders, EventType};
 use crate::leptos::create_leptos_app;
 use crate::web::api::real_time_data::real_time_data;
 use crate::web::api::{cheapest_per_world, recent_sales};
-use crate::web::sitemap::{generic_pages_sitemap, sitemap_index, world_sitemap};
+use crate::web::sitemap::{generic_pages_sitemap, item_sitemap, sitemap_index, world_sitemap};
 use crate::web::{
     alerts_websocket::connect_websocket,
     oauth::{begin_login, logout},
@@ -867,6 +867,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/favicon.ico", get(favicon))
         .route("/robots.txt", get(robots))
         .route("/sitemap/world/:s.xml", get(world_sitemap))
+        .route("/sitemap/items.xml", get(item_sitemap))
         .route("/sitemap.xml", get(sitemap_index))
         .route("/sitemap/pages.xml", get(generic_pages_sitemap))
         .nest(

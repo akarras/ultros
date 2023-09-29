@@ -6,11 +6,12 @@ use axum::{
     http::HeaderValue,
     response::{IntoResponse, Response},
 };
+use itertools::Itertools;
 use mime_guess::mime;
 use reqwest::header;
 use sitemap_rs::{sitemap::Sitemap, sitemap_index::SitemapIndex, url::Url, url_set::UrlSet};
 use std::{collections::HashSet, sync::Arc};
-use ultros_db::world_cache::{AnyResult, AnySelector, WorldCache};
+use ultros_db::world_cache::{AnySelector, WorldCache};
 
 pub(crate) struct Xml(Vec<u8>);
 
@@ -25,30 +26,30 @@ impl IntoResponse for Xml {
     }
 }
 
-pub(crate) async fn sitemap_index(
-    State(world_cache): State<Arc<WorldCache>>,
+pub(crate) async fn sitemap_index(// State(world_cache): State<Arc<WorldCache>>,
 ) -> Result<Xml, WebError> {
     // Get all the worlds from the world cache and then populate the listings sitemap to point to all the world subsitemaps
-    let mut sitemap_list: Vec<_> = world_cache
-        .get_all()
-        .iter()
-        .flat_map(|(r, dcs)| {
-            [AnyResult::Region(r)]
-                .into_iter()
-                .chain(dcs.iter().flat_map(|(dc, worlds)| {
-                    [AnyResult::Datacenter(dc)]
-                        .into_iter()
-                        .chain(worlds.iter().map(|w| AnyResult::World(w)))
-                }))
-        })
-        .map(|name| {
-            Sitemap::new(
-                format!("https://ultros.app/sitemap/world/{}.xml", name.get_name()),
-                None,
-            )
-        })
-        .collect();
+    // let mut sitemap_list: Vec<_> = world_cache
+    //     .get_all()
+    //     .iter()
+    //     .flat_map(|(r, dcs)| {
+    //         [AnyResult::Region(r)]
+    //             .into_iter()
+    //             .chain(dcs.iter().flat_map(|(dc, worlds)| {
+    //                 [AnyResult::Datacenter(dc)]
+    //                     .into_iter()
+    //                     .chain(worlds.iter().map(|w| AnyResult::World(w)))
+    //             }))
+    //     })
+    //     .map(|name| {
+    //         Sitemap::new(
+    //             format!("https://ultros.app/sitemap/world/{}.xml", name.get_name()),
+    //             None,
+    //         )
+    //     })
+    //     .collect();
     // add general page sitemap
+    let mut sitemap_list = vec![];
     sitemap_list.push(Sitemap::new(
         "https://ultros.app/sitemap/pages.xml".to_string(),
         None,
@@ -125,4 +126,26 @@ pub(crate) async fn world_sitemap(
         .write(&mut url_xml)
         .map_err(|_| anyhow!("Error creating sitemap"))?;
     Ok(Xml(url_xml))
+}
+
+pub(crate) fn item_sitemap() -> Result<Xml, WebError> {
+    let items = UrlSet::new(
+        xiv_gen_db::data()
+            .items
+            .iter()
+            .filter(|(_, item)| item.item_search_category.0 > 0)
+            .map(|(key, _)| key.0)
+            .sorted()
+            .map(|id| {
+                Url::builder(format!("https://ultros.app/item/{id}"))
+                    .build()
+                    .unwrap()
+            })
+            .collect(),
+    )?;
+    let mut url_xml = Vec::new();
+    items
+        .write(&mut url_xml)
+        .map_err(|_| anyhow!("Error creating site map"))?;
+    Ok((Xml(url_xml)))
 }

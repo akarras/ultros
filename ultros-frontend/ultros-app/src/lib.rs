@@ -122,6 +122,7 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
                         <Route path="" view=move || view!{"Choose a category to search!"}/>
                     </Route>
                     <Route path="item/:world/:id" view=ItemView/>
+                    <Route path="item/:id" view=ItemView/>
                     // <Route path="*listings" view=move || view! { <h1>"Listings"</h1>}/>
 
                     <Route path="analyzer" view=Analyzer/>

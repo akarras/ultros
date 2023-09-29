@@ -4,6 +4,7 @@ use crate::components::{
     ad::Ad, clipboard::*, item_icon::*, listings_table::*, loading::*, meta::*,
     price_history_chart::*, related_items::*, sale_history_table::*, stats_display::*, ui_text::*,
 };
+use crate::global_state::home_world::get_price_zone;
 use crate::global_state::LocalWorldData;
 use leptos::*;
 use leptos_router::*;
@@ -149,7 +150,17 @@ pub fn ItemView() -> impl IntoView {
     });
     let data = &xiv_gen_db::data();
     let items = &data.items;
-    let world = create_memo(move |_| params.with(|p| p.get("world").cloned().unwrap_or_default()));
+    let (price_zone, _) = get_price_zone();
+    let world = create_memo(move |_| {
+        params.with(|p| {
+            p.get("world").cloned().unwrap_or_else(move || {
+                price_zone
+                    .get()
+                    .map(|zone| zone.get_name().to_string())
+                    .unwrap_or_else(|| "North-America".to_string())
+            })
+        })
+    });
     let item_name = move || {
         items
             .get(&ItemId(item_id()))
