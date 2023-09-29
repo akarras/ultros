@@ -128,7 +128,7 @@ pub(crate) async fn world_sitemap(
     Ok(Xml(url_xml))
 }
 
-pub(crate) fn item_sitemap() -> Result<Xml, WebError> {
+pub(crate) async fn item_sitemap() -> Result<Xml, WebError> {
     let items = UrlSet::new(
         xiv_gen_db::data()
             .items
@@ -147,5 +147,5 @@ pub(crate) fn item_sitemap() -> Result<Xml, WebError> {
     items
         .write(&mut url_xml)
         .map_err(|_| anyhow!("Error creating site map"))?;
-    Ok((Xml(url_xml)))
+    Ok(Xml(url_xml))
 }
