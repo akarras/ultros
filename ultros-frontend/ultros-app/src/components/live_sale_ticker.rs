@@ -37,7 +37,7 @@ pub fn LiveSaleTicker() -> impl IntoView {
                 view!{
                     <div class="content-well">
                         <div class="text-xl">{move || format!("Sales on {}", homeworld().map(|world| world.name).unwrap_or_default())}</div>
-                        <div class="flex flex-row-reverse flex-nowrap h-28 gap-3 overflow-x-auto">
+                        <div class="flex flex-col flex-nowrap">
                             <For each=sales
                                 // the sale ID is just zero because I haven't figured out how to insert and fetch in an effiecient way...
                                 // use the timestamp instead!

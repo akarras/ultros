@@ -8,6 +8,7 @@ pub(crate) mod ws;
 use std::sync::Arc;
 
 use crate::api::get_login;
+use crate::components::recently_viewed::RecentItems;
 use crate::error::AppResult;
 use crate::global_state::cheapest_prices::CheapestPrices;
 use crate::global_state::clipboard_text::GlobalLastCopiedText;
@@ -36,6 +37,7 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
     provide_context(LocalWorldData(worlds));
     provide_context(CheapestPrices::new());
     provide_context(GlobalLastCopiedText(create_rw_signal(None)));
+    provide_context(RecentItems::new());
     let login = create_resource(move || {}, move |_| async move { get_login().await.ok() });
     // provide_context(LoggedInUser(login));
     // HIDE_ADS is user set, entirely optional whether users want to opt in or not.

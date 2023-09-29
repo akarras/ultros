@@ -13,6 +13,7 @@ pub mod meta;
 pub mod price_history_chart;
 pub mod price_viewer;
 pub mod profile_display;
+pub mod recently_viewed;
 pub mod related_items;
 pub mod relative_time;
 pub mod reorderable_list;

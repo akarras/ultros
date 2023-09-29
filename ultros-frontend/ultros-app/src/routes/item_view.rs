@@ -1,4 +1,5 @@
 use crate::api::get_listings;
+use crate::components::recently_viewed::RecentItems;
 use crate::components::{
     ad::Ad, clipboard::*, item_icon::*, listings_table::*, loading::*, meta::*,
     price_history_chart::*, related_items::*, sale_history_table::*, stats_display::*, ui_text::*,
@@ -141,6 +142,10 @@ pub fn ItemView() -> impl IntoView {
             .get("id")
             .and_then(|id| id.parse::<i32>().ok())
             .unwrap_or_default()
+    });
+    let recently_viewed = use_context::<RecentItems>().unwrap();
+    create_effect(move |_| {
+        recently_viewed.add_item(item_id());
     });
     let data = &xiv_gen_db::data();
     let items = &data.items;

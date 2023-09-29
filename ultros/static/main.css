@@ -78,14 +78,14 @@ html {
 .gradient-outer {
   position: absolute;
   width: 120vw;
-  height: 500vh;
+  height: 200vh;
   margin: 0vh -10vw;
   z-index: -500;
   overflow: clip;
 }
 
 .gradient {
-  background: linear-gradient(black 100px, transparent 50%);
+  background: linear-gradient(black 100px, transparent 200vh);
   position: relative;
   width: 100%;
   height: 110%;

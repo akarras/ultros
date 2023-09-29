@@ -275,7 +275,7 @@ fn AnalyzerTable(
     view! {
         <MetaTitle title="Price Analayzer"/>
         <MetaDescription text="The analyzer finds the best items to buy on other worlds and sell on your own world."/>
-       <div class="flex flex-row gap-2">
+       <div class="flex flex-col md:flex-row gap-2">
             <span>"filter:"</span><br/>
            <div class="flex-column">
                 <label for>"minimum profit:"<br/>
@@ -283,7 +283,7 @@ fn AnalyzerTable(
                     view!{<Gil amount=profit /> }
                }.into_view()).unwrap_or("---".into_view())}
                </label><br/>
-               <input id="minimum_profit" min=0 max=100000 type="number" prop:value=minimum_profit
+               <input class="p-1 w-40" id="minimum_profit" min=0 max=100000 type="number" prop:value=minimum_profit
                     on:input=move |input| { let value = event_target_value(&input);
                         if let Ok(profit) = value.parse::<i32>() {
                             set_minimum_profit(Some(profit))
@@ -294,7 +294,7 @@ fn AnalyzerTable(
            </div>
            <div class="flex-column">
                 <label for="minimum_roi">"minimum ROI:"<br/>{move || minimum_roi().map(|roi| format!("{roi}%")).unwrap_or("---".to_string())}</label><br/>
-               <input min=0 max=100000 type="number" prop:value=minimum_roi
+               <input class="p-1 w-40"  min=0 max=100000 type="number" prop:value=minimum_roi
                 on:input=move |input| {
                     let value = event_target_value(&input);
                     if let Ok(roi) = value.parse::<i32>() {
@@ -306,8 +306,8 @@ fn AnalyzerTable(
 
            </div>
            <div class="flex-column">
-               <label for="predicted_time">"minimum time (use time notation, ex. 1w 30m) :" <br/>{predicted_time_string}</label><br/>
-               <input id="predicted_time" prop:value=move || max_predicted_time().unwrap_or_default() on:input=move |input| {
+               <label for="predicted_time">"minimum time (use time notation, ex. 1w 30m):"<br/>{predicted_time_string}</label><br/>
+               <input class="p-1 w-40" id="predicted_time" prop:value=move || max_predicted_time().unwrap_or_default() on:input=move |input| {
                     let value = event_target_value(&input);
                     set_max_predicted_time(Some(value))
                 } />
@@ -453,7 +453,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
             <AnalyzerWorldNavigator /><br />
             <span>"The analyzer will show items that sell more on "{world}" than they can be purchased for."</span><br/>
             <span>"These estimates aren't very accurate, but are meant to be easily accessible and fast to use."</span><br/>
-            <span>"Be extra careful to make sure that the price you buy things for matches the price"</span><br/>
+            <span>"Be extra careful to make sure that the price you buy things for matches"</span><br/>
             <span>"Sample filters"</span>
             <div class="flex flex-col md:flex-row flex-wrap">
                 <a class="btn p-1" href="?next-sale=7d&roi=300&profit=0&sort=profit&">"300% return - 7 days"</a>
