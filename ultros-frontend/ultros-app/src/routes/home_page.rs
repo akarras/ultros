@@ -17,7 +17,7 @@ use crate::{
 pub fn HomePage() -> impl IntoView {
     view! {
     <div class="main-content p-4">
-        <div class="flex flex-col md:flex-row-reverse mx-auto items-start">
+        <div class="flex flex-col lg:flex-row-reverse mx-auto container items-start">
             <div class="flex flex-col">
                 <LiveSaleTicker />
                 <RecentlyViewed />
