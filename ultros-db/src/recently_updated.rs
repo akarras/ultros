@@ -23,8 +23,8 @@ impl UltrosDb {
             Ok(_updated) => {}
             Err(_e) => {
                 match model.clone().insert(&self.db).await {
-                    Ok(ok) => {}
-                    Err(e) => {
+                    Ok(_ok) => {}
+                    Err(_e) => {
                         // ok now can we update?
                         model.clone().update(&self.db).await?;
                     }

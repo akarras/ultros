@@ -4,11 +4,11 @@ use leptos::*;
 use leptos_icons::*;
 use leptos_meta::*;
 use ultros_api_types::{ActiveListing, Retainer};
+use leptos_router::*;
 
 use crate::{
     components::{
         ad::Ad, gil::Gil, live_sale_ticker::LiveSaleTicker, recently_viewed::RecentlyViewed,
-        related_items::RelatedItems,
     },
     routes::retainers::CharacterRetainerList,
 };
@@ -17,11 +17,11 @@ use crate::{
 pub fn HomePage() -> impl IntoView {
     view! {
     <div class="main-content p-4">
-        <div class="flex flex-col md:flex-row-reverse container mx-auto items-start">
+        <div class="flex flex-col md:flex-row-reverse mx-auto items-start">
             <div class="flex flex-col">
                 <LiveSaleTicker />
                 <RecentlyViewed />
-                // <Ad />
+                <Ad />
             </div>
             <div class="flex flex-col">
                 <h1 class="text-3xl">"Ultros Alpha"</h1>
@@ -31,9 +31,9 @@ pub fn HomePage() -> impl IntoView {
                         <ul>
                             <h2 class="text-3xl p-1">"Fast Prices"</h2>
                             <ul class="list-disc text-xl p-2">
-                                <li>"quickly search prices"</li>
-                                <li>"discover items with a similar item level"</li>
+                                <li>"fastest search in the west"</li>
                                 <li>"view associated recipes with an item and the price to craft it"</li>
+                                <li>"explore prices to buy job gear quickly and easily, for example- "<A href="/items/jobset/SAM">"all Samurai gear"</A></li>
                             </ul>
                         </ul>
                     </div>
@@ -52,8 +52,8 @@ pub fn HomePage() -> impl IntoView {
                         <div class="flex flex-row text-green-400 gap-1">"PROFIT:"<Gil amount={100000 - 30000}/></div>
                     </div>
                 </div>
-                <div class="p-8 grow flex-auto flex flex-col md:flex-row items-start">
-                    <div class="flex flex-col">
+                <div class="grow relative">
+                    <div class="flex flex-col absolute -z-40 right-0">
                         <CharacterRetainerList character=None retainers=vec![(Retainer {
                             id: 0,
                             world_id: 9,
@@ -78,38 +78,14 @@ pub fn HomePage() -> impl IntoView {
                             hq: true,
                             timestamp: Utc::now().naive_utc(),
                         }])] />
-                        <CharacterRetainerList character=None retainers=vec![(Retainer {
-                            id: 0,
-                            world_id: 9,
-                            name: "Retainer 2".to_string(),
-                            retainer_city_id: 1
-                        }, vec![ActiveListing {
-                            id: 0,
-                            world_id: 3,
-                            item_id: 39643,
-                            retainer_id: 0,
-                            price_per_unit: 13000,
-                            quantity: 3,
-                            hq: true,
-                            timestamp: Utc::now().naive_utc(),
-                        }, ActiveListing {
-                            id: 0,
-                            world_id: 3,
-                            item_id: 34693,
-                            retainer_id: 0,
-                            price_per_unit: 13000,
-                            quantity: 1,
-                            hq: true,
-                            timestamp: Utc::now().naive_utc(),
-                        }])] />
                     </div>
-                    <div class="flex flex-col p-3">
+                    <div class="flex flex-col p-8 h-full w-full bg-gradient-to-br from-[#100a13] to-transparent">
                         <span class="text-3xl p-1">"Retainers"</span>
                         <br/>
                         <ul class="list-disc text-xl p-2">
                             <li>"Track your retainer's listings online"</li>
                             <li>"View undercut items in one place"</li>
-                            <li>"Get alerted on Discord or on this site when someone undercuts you, try /ffxiv retainer add_undercut_alert"</li>
+                            <li>"Get undercut alerts on Discord"</li>
                         </ul>
                     </div>
                 </div>
@@ -122,6 +98,7 @@ pub fn HomePage() -> impl IntoView {
                         <li>"Honestly not as good as Teamcraft, but maybe it'll be better one day"</li>
                     </ul>
                 </div>
+                <Ad />
                 <div class="p-8 flex flex-col md:flex-row">
                     <div class="flex flex-col p-2">
                         <span class="content-title">"Discord Bot"</span>
