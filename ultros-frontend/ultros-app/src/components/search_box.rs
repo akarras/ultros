@@ -53,7 +53,7 @@ pub fn SearchBox() -> impl IntoView {
         <div class="absolute top-0 left-0 right-0 sm:relative" style="height: 36px;">
             <input on:input=on_input on:focusin=focus_in on:focusout=focus_out class="search-box w-screen m-0 sm:w-[424px]" type="text" prop:value=search class:active={active}/>
             <div class="absolute right-3 top-3 z-10"><Icon icon=Icon::from(AiIcon::AiSearchOutlined) /></div>
-            <div class="search-results w-screen sm:w-[424px] z-50">
+            <div class="search-results w-screen sm:w-[424px] z-50 mx-0">
             // WHY DOES THIS BREAK HYDRATION?
             // <WasmLoadingIndicator />
             <VirtualScroller

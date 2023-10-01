@@ -230,7 +230,6 @@ nav>*>a:hover {
   visibility: visible;
   opacity: 1;
   animation: .25s cubic-bezier(.76, 0, .24, 1) search-open;
-  margin-left: 5px;
   height: 500px;
   border-top: 0px;
   margin-top: -5px;
@@ -247,7 +246,6 @@ nav>*>a:hover {
   flex-direction: column;
   align-items: center;
   height: 0px;
-  width: 424px;
   position: relative;
   overflow-y: scroll;
   overflow-x: hidden;
