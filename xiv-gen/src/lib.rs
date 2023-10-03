@@ -15,7 +15,7 @@ pub fn bincode_config() -> impl Config {
 
 pub fn data_version() -> &'static str {
     // TODO somehow get a macro to get the HASH of ffxiv-datamining?
-    "1.0"
+    "5.5"
 }
 
 #[cfg(test)]
