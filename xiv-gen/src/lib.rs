@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 include!(concat!(env!("OUT_DIR"), "/types.rs"));
 
 pub fn bincode_config() -> impl Config {
-    bincode::config::legacy()
+    bincode::config::standard()
 }
 
 pub fn data_version() -> &'static str {
