@@ -28,7 +28,7 @@ fn CategoryView(category: u8) -> impl IntoView {
         {categories.into_iter()
             .map(|(_, name, id)| view! {
                 <Tooltip tooltip_text=Oco::from(name.as_str())>
-                    <A  href=["/items/category/", &encode(name)].concat()>
+                    <A href=["/items/category/", &encode(name)].concat()>
                         <ItemSearchCategoryIcon id=*id />
                     </A>
                 </Tooltip>
@@ -86,6 +86,7 @@ fn job_category_lookup(class_job_category: &ClassJobCategory, job_acronym: &str)
         dnc,
         rpr,
         sge,
+        ..
     } = class_job_category;
     match lower_case.as_str() {
         "adv" => *adv,
