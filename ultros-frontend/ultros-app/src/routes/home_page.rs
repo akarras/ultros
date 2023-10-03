@@ -108,7 +108,7 @@ pub fn HomePage() -> impl IntoView {
                             <li>"Get alerts via notifications through the bot"</li>
                         </ul>
                     </div>
-                    <a class="flex flex-col p-4 bg-violet-900 text-6xl rounded-md b-solid border-2 border-violet-950 text-white items-center text-center ml-10" href="/invitebot">
+                    <a class="flex flex-col p-4 bg-slate-950 text-lg rounded-md b-solid border-2 border-violet-950 text-white items-center text-center ml-10" href="/invitebot">
                         <Icon icon=Icon::from(BsIcon::BsDiscord) />
                         <span>"Invite Bot"</span>
                     </a>
