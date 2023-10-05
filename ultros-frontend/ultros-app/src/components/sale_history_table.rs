@@ -29,7 +29,7 @@ pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
         <tbody>
             <For each=sale_history
                 key=move |sale| sale.sold_date.timestamp()
-                view=move |sale| {
+                children=move |sale| {
                     let total = sale.price_per_item * sale.quantity;
                     view! {
                         <tr>

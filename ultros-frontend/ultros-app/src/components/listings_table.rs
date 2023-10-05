@@ -31,7 +31,7 @@ pub fn ListingsTable(listings: Vec<(ActiveListing, Retainer)>) -> impl IntoView 
         <tbody>
         {move || view!{<For each=listings
         key=move |(listing, _retainer)| listing.id
-        view=move |(listing, retainer)| {
+        children=move |(listing, retainer)| {
             let total = listing.price_per_unit * listing.quantity;
             view! { <tr>
                 <td><Gil amount=listing.price_per_unit/></td>

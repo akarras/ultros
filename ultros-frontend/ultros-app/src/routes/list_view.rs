@@ -220,7 +220,7 @@ pub fn ListView() -> impl IntoView {
                             <th>"Price"</th>
                             <th>"Options"</th>
                         </tr>
-                        <For each=move || items.clone() key=|(item, _)| item.id view=move |(item, listings)| {
+                        <For each=move || items.clone() key=|(item, _)| item.id children=move |(item, listings)| {
                             let (edit, set_edit) = create_signal(false);
                             let item = create_rw_signal(item);
                             let temp_item = create_rw_signal(item());

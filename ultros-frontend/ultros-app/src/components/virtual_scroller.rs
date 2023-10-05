@@ -76,7 +76,7 @@ where
         // https://github.com/leptos-rs/leptos/issues/533
         <For each=virtual_children
          key=key
-         view=view
+         children=view
         />
         </div>
       </div>

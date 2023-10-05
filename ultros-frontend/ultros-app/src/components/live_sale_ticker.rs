@@ -42,7 +42,7 @@ pub fn LiveSaleTicker() -> impl IntoView {
                                 // the sale ID is just zero because I haven't figured out how to insert and fetch in an effiecient way...
                                 // use the timestamp instead!
                                 key=|(sale, _character)| sale.sold_date
-                                view=|(sale, character)| items.get(&ItemId(sale.sold_item_id)).map(|item| (item, sale, character))
+                                children=|(sale, character)| items.get(&ItemId(sale.sold_item_id)).map(|item| (item, sale, character))
                                     .map(|(item, sale, character)| { view!{
                                         <div class="flex flex-col gap-1 whitespace-nowrap">
                                             <div class="flex flex-row flex-nowrap">

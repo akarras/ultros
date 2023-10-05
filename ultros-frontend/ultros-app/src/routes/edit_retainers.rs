@@ -73,7 +73,7 @@ pub fn EditRetainers() -> impl IntoView {
                   })}
                   <For each=move || retainers.retainers.clone()
                     key=move |(character, retainers)| (character.as_ref().map(|c| c.id).unwrap_or_default(), retainers.iter().map(|(o, _r)| o.id).collect::<Vec<_>>())
-                    view=move |(character, retainers)| {
+                    children=move |(character, retainers)| {
                       let retainers = create_rw_signal(retainers);
                       create_effect(move |_| {
                         let retainers = retainers();
@@ -140,7 +140,7 @@ pub fn EditRetainers() -> impl IntoView {
               Ok(retainers) => view!{<div class="content-well flex-column">
                 <For each=move || retainers.clone()
                       key=move |retainer| retainer.id
-                      view=move |retainer| {
+                      children=move |retainer| {
                         let world = AnySelector::World(retainer.world_id);
                         view!{ <div class="card flex-row">
                           <div style="width: 300px" class="flex">

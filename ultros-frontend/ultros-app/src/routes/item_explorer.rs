@@ -251,7 +251,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
     <For
         each=items
         key=|(id, item)| (id.0, &item.name)
-        view=|(id, item)| view!{<div class="flex md:flex-row flex-col min-w-96">
+        children=|(id, item)| view!{<div class="flex md:flex-row flex-col min-w-96">
             <SmallItemDisplay item=item />
             <CheapestPrice item_id=*id />
         </div> }/>}

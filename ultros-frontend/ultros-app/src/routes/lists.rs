@@ -66,7 +66,7 @@ pub fn EditLists() -> impl IntoView {
                     <tr><td>"List Name"</td><td>"World"</td></tr>
                         <For each=move || lists.clone()
                             key=move |list| list.id
-                            view=move |list| {
+                            children=move |list| {
                                 let (is_edit, set_is_edit) = create_signal(false);
                                 let (list, _set_list) = create_signal(list);
                                 let (name, set_name) = create_signal(list().name);
