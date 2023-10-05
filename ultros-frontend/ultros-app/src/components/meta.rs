@@ -3,7 +3,7 @@ use leptos_meta::*;
 
 #[component]
 pub fn MetaTitle(#[prop(into)] title: TextProp) -> impl IntoView {
-    view! {<Title text=title/> }
+    view! {<Title text=title.clone() /><Meta name="og:title" content=title /> }
 }
 
 /// Creates appropriate meta tags to indicate an image is present on the page

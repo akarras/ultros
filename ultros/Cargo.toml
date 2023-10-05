@@ -45,7 +45,7 @@ leptos_router = {workspace = true, features = ["ssr"]}
 ultros-app = {path = "../ultros-frontend/ultros-app", features = ["ssr"]}
 hyper = "0.14.24"
 tokio-stream = {version = "0.1.12", features = ["sync"]}
-ultros-charts = {path = "../ultros-frontend/ultros-charts"}
-plotters-svg = "0.3.2"
+ultros-charts = {path = "../ultros-frontend/ultros-charts", features = ["image"]}
+plotters-svg = {version = "0.3.2", features = ["bitmap_encoder"]}
 resvg = "0.33.0"
 image.workspace = true

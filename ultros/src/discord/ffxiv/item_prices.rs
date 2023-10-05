@@ -1,14 +1,11 @@
 use anyhow::anyhow;
 use itertools::Itertools;
-use plotters_svg::SVGBackend;
 use poise::serenity_prelude::AttachmentType;
-use resvg::tiny_skia;
-use resvg::usvg::{self, fontdb, Options, TreeParsing, TreeTextToPath};
-use ultros_api_types::SaleHistory;
 use ultros_db::world_cache::AnySelector;
 use xiv_gen::ItemId;
 
 use crate::discord::ffxiv::ULTROS_COLOR;
+use crate::web::item_card::generate_image;
 
 use super::{Context, Error};
 
@@ -112,62 +109,16 @@ async fn history(
     world: String,
 ) -> Result<(), Error> {
     ctx.defer().await?;
+    let data = ctx.data();
     let item = xiv_gen_db::data()
         .items
         .get(&ItemId(item))
-        .ok_or(anyhow!("Invalid item id"))?;
-    let world = ctx.data().world_cache.lookup_value_by_name(&world)?;
-    let world_ids = ctx
-        .data()
-        .world_cache
-        .get_all_worlds_in(&world)
-        .ok_or(anyhow!("invalid world"))?;
-    let sales: Vec<SaleHistory> = ctx
-        .data()
-        .db
-        .get_sale_history_from_multiple_worlds(world_ids.into_iter(), item.key_id.0, 1000)
-        .await?
-        .into_iter()
-        .map(SaleHistory::from)
-        .collect();
-    const SIZE: (u32, u32) = (1920 / 2, 1080 / 2);
-    let buffer = {
-        let mut buffer = String::new();
-        // let mut image = RgbImage::new(size.0, size.1);
-
-        let backend = SVGBackend::with_string(&mut buffer, SIZE);
-
-        let world_helper = &*ctx.data().world_helper;
-        if let Err(e) =
-            ultros_charts::draw_sale_history_scatter_plot(backend, world_helper, true, &sales)
-        {
-            Err(anyhow!("can't draw scatter plot {e}"))?
-        }
-        buffer
-    };
-
-    let png = {
-        let opt = Options {
-            resources_dir: std::fs::canonicalize(&buffer)
-                .ok()
-                // Get file's absolute directory.
-                .and_then(|p| p.parent().map(|p| p.to_path_buf())),
-            ..Default::default()
-        };
-
-        let mut fontdb = fontdb::Database::new();
-        fontdb.load_system_fonts();
-
-        let mut tree = usvg::Tree::from_str(&buffer, &opt).unwrap();
-        tree.convert_text(&fontdb);
-        let rtree = resvg::Tree::from_usvg(&tree);
-        let pixmap_size = resvg::IntSize::from_usvg(rtree.size);
-        let mut pixmap = tiny_skia::Pixmap::new(pixmap_size.width(), pixmap_size.height())
-            .ok_or(anyhow!("failed to make pixmap"))?;
-        rtree.render(tiny_skia::Transform::default(), &mut pixmap.as_mut());
-        pixmap.encode_png()?
-    };
-
+        .ok_or(anyhow!("Item not found"))?;
+    let world = data
+        .world_helper
+        .lookup_world_by_name(&world)
+        .ok_or(anyhow!("Unable to find world"))?;
+    let png = generate_image(&data.db, &data.world_helper, item, &world).await?;
     let attachment = AttachmentType::Bytes {
         data: png.into(),
         filename: "chart.png".to_string(),

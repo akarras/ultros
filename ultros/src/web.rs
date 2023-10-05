@@ -2,6 +2,7 @@ mod alerts_websocket;
 pub mod api;
 pub(crate) mod character_verifier_service;
 pub mod error;
+pub mod item_card;
 pub mod oauth;
 pub mod sitemap;
 
@@ -57,6 +58,7 @@ use crate::web::api::{cheapest_per_world, recent_sales};
 use crate::web::sitemap::{generic_pages_sitemap, item_sitemap, sitemap_index, world_sitemap};
 use crate::web::{
     alerts_websocket::connect_websocket,
+    item_card::item_card,
     oauth::{begin_login, logout},
 };
 use crate::web_metrics::{start_metrics_server, track_metrics};
@@ -866,6 +868,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/invitebot", get(invite))
         .route("/favicon.ico", get(favicon))
         .route("/robots.txt", get(robots))
+        .route("/itemcard/:world/:id", get(item_card))
         .route("/sitemap/world/:s.xml", get(world_sitemap))
         .route("/sitemap/items.xml", get(item_sitemap))
         .route("/sitemap.xml", get(sitemap_index))

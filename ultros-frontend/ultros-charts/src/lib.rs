@@ -1,5 +1,9 @@
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::collections::HashSet;
+use std::rc::Rc;
+#[cfg(feature = "image")]
+use image::EncodableLayout;
 
 use anyhow::anyhow;
 use chrono::DateTime;
@@ -12,10 +16,14 @@ use plotters::{
         RGBColor,
     },
 };
+#[cfg(feature = "image")]
+use ultros_api_types::icon_size::IconSize;
 use ultros_api_types::{
     world_helper::{AnySelector, WorldHelper},
     SaleHistory,
 };
+#[cfg(feature = "image")]
+use ultros_xiv_icons::get_item_image;
 use xiv_gen::ItemId;
 
 fn short_number(value: i32) -> String {
@@ -72,21 +80,36 @@ fn filter_outliers<'a>(sales: &'a [SaleHistory]) -> Cow<'a, [SaleHistory]> {
     }
 }
 
+#[derive(Default)]
+pub struct ChartOptions {
+    pub remove_outliers: bool,
+    pub icon_item_id: i32,
+    pub draw_icon: bool,
+}
+
 pub fn draw_sale_history_scatter_plot<'a, T>(
-    backend: T,
+    backend: Rc<RefCell<T>>,
     world_helper: &WorldHelper,
-    remove_outliers: bool,
     sales: &[SaleHistory],
+    ChartOptions {
+        remove_outliers,
+        icon_item_id,
+        draw_icon,
+    }: ChartOptions,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'a>>
 where
     T: 'a + DrawingBackend,
 {
+    let _ = remove_outliers;
+    let _ = icon_item_id;
+    let _ = draw_icon;
     let sales = if remove_outliers {
         filter_outliers(sales)
     } else {
         Cow::Borrowed(sales)
     };
-    let root = backend.into_drawing_area();
+
+    let root = DrawingArea::from(&backend);
     root.fill(&RGBColor(16, 10, 18))?;
     let line = map_sale_history_to_line(world_helper, &sales);
     let item_name = &xiv_gen_db::data()
@@ -121,6 +144,7 @@ where
     } else {
         DayLabelMode::Minute
     };
+    let title_size = if draw_icon { 40.0 } else { 25.0 };
     let pad_top = (max_sale as f32 * 1.5).ceil() as i32;
     let mut chart = ChartBuilder::on(&root)
         .x_label_area_size(60)
@@ -128,7 +152,7 @@ where
         .margin(10)
         .caption(
             format!("{} - Sale History", item_name),
-            ("Jaldi, sans-serif", 25.0).into_font().color(&WHITE),
+            ("Jaldi, sans-serif", title_size).into_font().color(&WHITE),
         )
         .build_cartesian_2d(*first_sale..*last_sale, 0..pad_top)?;
 
@@ -179,6 +203,19 @@ where
         .position(SeriesLabelPosition::UpperRight)
         .label_font(("Jaldi, sans-serif", 18.0).into_font().color(&WHITE))
         .draw()?;
+
+    #[cfg(feature = "image")]
+    if draw_icon {
+        if let Some(image) = get_item_image(icon_item_id, IconSize::Medium) {
+            let image = image::load_from_memory_with_format(image, image::ImageFormat::WebP)?;
+            let width = image.width();
+            let height = image.height();
+            let buffer = image.into_rgb8();
+            backend
+                .borrow_mut()
+                .blit_bitmap((25, 5), (width, height), buffer.as_bytes())?;
+        }
+    }
 
     // To avoid the IO failure being ignored silently, we manually call the present function
     root.present()?;

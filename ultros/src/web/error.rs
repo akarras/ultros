@@ -183,6 +183,10 @@ pub enum WebError {
             StandardErrorResponse<BasicErrorResponseType>,
         >,
     ),
+    #[error("Item id {0} is not valid")]
+    InvalidItemId(i32),
+    #[error("World not found {0}")]
+    WorldNotFound(String),
 }
 
 impl WebError {

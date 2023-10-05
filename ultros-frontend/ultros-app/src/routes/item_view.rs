@@ -7,6 +7,7 @@ use crate::components::{
 use crate::global_state::home_world::get_price_zone;
 use crate::global_state::LocalWorldData;
 use leptos::*;
+use leptos_meta::Meta;
 use leptos_router::*;
 use ultros_api_types::world_helper::AnyResult;
 use xiv_gen::ItemId;
@@ -175,8 +176,13 @@ pub fn ItemView() -> impl IntoView {
     };
     let categories = &data.item_ui_categorys;
     let search_categories = &data.item_search_categorys;
-    let description =
-        create_memo(move |_| format!("Current listings for {} on {}", item_name(), world(),));
+    let description = create_memo(move |_| {
+        format!(
+            "Current listings and sale history for the item {} in {}",
+            item_name(),
+            world(),
+        )
+    });
     let item_category = move || {
         items
             .get(&ItemId(item_id()))
@@ -191,7 +197,9 @@ pub fn ItemView() -> impl IntoView {
         <MetaDescription text=description/>
         <MetaTitle title=move || format!("{} - Market view", item_name())/>
         // TODO: probably shouldn't hard code the domain here
-        <MetaImage url=move || { format!("https://ultros.app/static/itemicon/{}?size=Large", item_id())}/>
+        <Meta name="twitter:card" content="summary_large_image"/>
+        <MetaImage url=move || { format!("https://ultros.app/itemcard/{}/{}", world(), item_id()) }/>
+        <Meta property="og:image" content=move || { format!("https://ultros.app/static/itemicon/{}?size=Large", item_id())} />
         <div class="flex flex-column bg-gradient-to-r from-slate-950 -mt-96 pt-96 ">
             <div class="flex flex-row grow p-6 rounded-l ">
                 <div class="flex flex-column grow" style="padding: 5px">

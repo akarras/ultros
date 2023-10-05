@@ -3858,6 +3858,7 @@ version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "38f6d39893cca0701371e3c27294f09797214b86f1fb951b89ade8ec04e2abab"
 dependencies = [
+ "image",
  "plotters-backend",
 ]
 
@@ -6208,9 +6209,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "image",
  "itertools 0.11.0",
+ "log",
  "plotters",
  "ultros-api-types",
+ "ultros-xiv-icons",
  "xiv-gen",
  "xiv-gen-db",
 ]

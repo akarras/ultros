@@ -1,10 +1,13 @@
+use std::cell::RefCell;
 use std::ops::Deref;
+use std::rc::Rc;
 
 use leptos::{html::Canvas, *};
 use plotters_canvas::CanvasBackend;
 use ultros_api_types::SaleHistory;
 
 use ultros_charts::draw_sale_history_scatter_plot;
+use ultros_charts::ChartOptions;
 
 use crate::{components::toggle::Toggle, global_state::LocalWorldData};
 
@@ -20,10 +23,13 @@ pub fn PriceHistoryChart(sales: MaybeSignal<Vec<SaleHistory>>) -> impl IntoView 
             // if there's an error drawing, we should hide the canvas
             sales.with(|sales| {
                 draw_sale_history_scatter_plot(
-                    backend,
+                    Rc::new(RefCell::new(backend)),
                     helper.clone().as_ref(),
-                    filter_outliers(),
                     sales,
+                    ChartOptions {
+                        remove_outliers: filter_outliers(),
+                        ..Default::default()
+                    },
                 )
                 .is_err()
             })

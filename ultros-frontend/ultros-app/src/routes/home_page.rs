@@ -8,7 +8,8 @@ use ultros_api_types::{ActiveListing, Retainer};
 
 use crate::{
     components::{
-        ad::Ad, gil::Gil, live_sale_ticker::LiveSaleTicker, recently_viewed::RecentlyViewed,
+        ad::Ad, gil::Gil, live_sale_ticker::LiveSaleTicker, meta::MetaDescription,
+        recently_viewed::RecentlyViewed,
     },
     routes::retainers::CharacterRetainerList,
 };
@@ -16,6 +17,7 @@ use crate::{
 #[component]
 pub fn HomePage() -> impl IntoView {
     view! {
+        <MetaDescription text="Ultros is a FAST FFXIV marketboard analysis tool, keep up to date with all of your retainers and ensure you've got the best prices!" />
     <div class="main-content p-4">
         <div class="flex flex-col lg:flex-row-reverse mx-auto container items-start">
             <div class="flex flex-col">

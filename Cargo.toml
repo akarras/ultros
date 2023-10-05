@@ -29,6 +29,7 @@ leptos-use = { git = "https://github.com/Synphonyte/leptos-use.git", features = 
 chrono = "0.4.23"
 itertools = "0.11.0"
 image = "0.24.6"
+plotters = "0.3"
 sea-orm = {version = "0.12.2", features = ["sqlx-postgres", "runtime-tokio-rustls"]}
 sea-orm-migration = {version = "0.12.2", features = ["sqlx-postgres", "runtime-tokio-rustls"]}
 sea-query = "0.30.0"
