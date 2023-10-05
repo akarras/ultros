@@ -7,7 +7,11 @@ use crate::components::{
 use crate::global_state::home_world::get_price_zone;
 use crate::global_state::LocalWorldData;
 use leptos::*;
+<<<<<<< Updated upstream
 use leptos_meta::Meta;
+=======
+use leptos_meta::Link;
+>>>>>>> Stashed changes
 use leptos_router::*;
 use ultros_api_types::world_helper::AnyResult;
 use xiv_gen::ItemId;
@@ -200,6 +204,7 @@ pub fn ItemView() -> impl IntoView {
         <Meta name="twitter:card" content="summary_large_image"/>
         <MetaImage url=move || { format!("https://ultros.app/itemcard/{}/{}", world(), item_id()) }/>
         <Meta property="og:image" content=move || { format!("https://ultros.app/static/itemicon/{}?size=Large", item_id())} />
+        {move || view!{ <Link rel="canonical" href=format!("https://ultros.app/item/{}", item_id()) /> }}
         <div class="flex flex-column bg-gradient-to-r from-slate-950 -mt-96 pt-96 ">
             <div class="flex flex-row grow p-6 rounded-l ">
                 <div class="flex flex-column grow" style="padding: 5px">
