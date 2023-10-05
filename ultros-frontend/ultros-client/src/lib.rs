@@ -44,6 +44,17 @@ async fn open_transaction(rexie: &Rexie) -> Result<(Transaction, Store)> {
     Ok((transaction, game_data))
 }
 
+async fn init_data() -> anyhow::Result<Vec<u8>> {
+    let version = xiv_gen::data_version();
+    let response = Request::get(&["/static/data/", version, ".bincode"].concat())
+        .send()
+        .await?
+        .binary()
+        .await?;
+    xiv_gen_db::try_init(&response)?;
+    Ok(response)
+}
+
 async fn try_populate_xiv_gen_data<'a>(rexie: &Rexie) -> anyhow::Result<()> {
     // load local storage data for the current game version, if we don't have it get it from the server, store it, and init db
     let version = xiv_gen::data_version();
@@ -69,11 +80,7 @@ async fn try_populate_xiv_gen_data<'a>(rexie: &Rexie) -> anyhow::Result<()> {
                 .map_err(|e| anyhow!("error closing first transaction {e}"))?;
         }
     }
-    let response = Request::get(&["/static/data/", version, ".bincode"].concat())
-        .send()
-        .await?
-        .binary()
-        .await?;
+    let response = init_data().await?;
     let data = serde_wasm_bindgen::to_value(&Data {
         version: version.to_string(),
         data: response.clone(),
@@ -81,7 +88,6 @@ async fn try_populate_xiv_gen_data<'a>(rexie: &Rexie) -> anyhow::Result<()> {
     .map_err(|e| anyhow!("error serializing data {e}"))?;
     let (transaction, game_data) = open_transaction(rexie).await?;
     // allow the app to run if we can init
-    xiv_gen_db::try_init(&response)?;
     // soft fail if we can't store
     for (key, _) in game_data
         .get_all(None, None, None, None)
@@ -119,11 +125,16 @@ async fn try_build_db() -> Result<Rexie> {
         .map_err(|e| anyhow!("failed to build db {e}"))
 }
 
-async fn populate_xiv_gen_data<'a>() {
-    let rexie = try_build_db().await.unwrap();
-    retry(|| try_populate_xiv_gen_data(&rexie), 3)
-        .await
-        .unwrap();
+async fn populate_xiv_gen_data<'a>() -> anyhow::Result<()> {
+    if let Ok(rexie) = try_build_db().await {
+        if let Err(_e) = retry(|| try_populate_xiv_gen_data(&rexie), 3).await {
+            let _ = init_data().await?;
+        }
+    } else {
+        let _ = init_data().await?;
+    }
+
+    Ok(())
 }
 
 async fn get_world_data() -> Arc<WorldHelper> {

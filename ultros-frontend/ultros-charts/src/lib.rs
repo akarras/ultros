@@ -1,9 +1,9 @@
+#[cfg(feature = "image")]
+use image::EncodableLayout;
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
-#[cfg(feature = "image")]
-use image::EncodableLayout;
 
 use anyhow::anyhow;
 use chrono::DateTime;

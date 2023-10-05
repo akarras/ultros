@@ -36,6 +36,7 @@ sea-query = "0.30.0"
 yoke = "0.7.1"
 xiv-gen = {path = "./xiv-gen", features = ["item", "item_ui_category", "item_search_category", "class_job", "recipe", "class_job_category", "base_param"]}
 leptos_icons = {version = "0.0.16-beta", features = ["IoSettingsSharp", "AiOrderedListOutlined", "BsDiscord", "BsClipboard2Fill", "BsClipboard2CheckFill", "AiEditFilled", "FaMoneyBillTrendUpSolid", "BsCheck", "BsPencilFill", "BiSortDownRegular", "BiPlusRegular", "BiTrashSolid", "AiExclamationOutlined", "BiSaveSolid", "BiGroupSolid", "BiHomeSolid", "FaScrewdriverWrenchSolid", "AiSearchOutlined"]}
+cfg-if = "1.0.0"
 
 [patch.crates-io]
 leptos = { git = "https://github.com/leptos-rs/leptos.git"}

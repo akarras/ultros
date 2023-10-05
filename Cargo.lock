@@ -6165,6 +6165,7 @@ name = "ultros-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "cfg-if",
  "chrono",
  "colorsys",
  "cookie",

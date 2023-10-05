@@ -1,8 +1,12 @@
-use std::{sync::Arc, rc::Rc, cell::RefCell};
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use super::{error::WebError, WebState};
 use anyhow::{anyhow, Result};
-use axum::{extract::{Path, State}, response::{Response, IntoResponse}, body::{self, Full}};
+use axum::{
+    body::{self, Full},
+    extract::{Path, State},
+    response::{IntoResponse, Response},
+};
 use hyper::header;
 use plotters_svg::SVGBackend;
 use resvg::{

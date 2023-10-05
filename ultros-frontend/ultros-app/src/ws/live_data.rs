@@ -1,5 +1,7 @@
 use std::collections::VecDeque;
 
+use crate::components::live_sale_ticker::SaleView;
+use crate::error::AppError;
 use futures::{SinkExt, StreamExt};
 use gloo_net::websocket::{futures::WebSocket, Message};
 use leptos::{RwSignal, SignalUpdate};
@@ -7,25 +9,20 @@ use log::error;
 use ultros_api_types::{
     websocket::{ClientMessage, EventType, FilterPredicate, ServerClient, SocketMessageType},
     world_helper::AnySelector,
-    SaleHistory, UnknownCharacter,
 };
 
-use crate::error::AppError;
-
 pub(crate) async fn live_sales(
-    signal: RwSignal<VecDeque<(SaleHistory, UnknownCharacter)>>,
+    signal: RwSignal<VecDeque<SaleView>>,
     price_zone: AnySelector,
 ) -> Result<(), AppError> {
     use log::info;
 
     log::info!("CONNECTING TO SALES!");
     // TODO - better way to switch to wss
-    let environment = "production";
-    let url = if environment == "production" {
-        "wss://ultros.app/api/v1/realtime/events"
-    } else {
-        "ws://localhost:8080/api/v1/realtime/events"
-    };
+    #[cfg(debug_assertions)]
+    let url = "ws://localhost:8080/api/v1/realtime/events";
+    #[cfg(not(debug_assertions))]
+    let url = "wss://ultros.app/api/v1/realtime/events";
     let socket = WebSocket::open(url).unwrap();
     let (mut write, mut read) = socket.split();
     let client = ClientMessage::AddSubscribe {
@@ -47,10 +44,14 @@ pub(crate) async fn live_sales(
                                 EventType::Added(add) => {
                                     if signal
                                         .try_update(|sales| {
-                                            for sale in add.sales {
-                                                sales.push_front(sale);
+                                            for (sale, _) in add.sales {
+                                                sales.push_front(SaleView {
+                                                    item_id: sale.sold_item_id,
+                                                    price: sale.price_per_item,
+                                                    sold_date: sale.sold_date,
+                                                });
                                             }
-                                            sales.make_contiguous().sort_by_key(|(sale, _)| {
+                                            sales.make_contiguous().sort_by_key(|sale| {
                                                 std::cmp::Reverse(sale.sold_date)
                                             });
                                             while sales.len() > 8 {
