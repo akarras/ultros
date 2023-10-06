@@ -25,7 +25,7 @@ fn Item(item_id: i32) -> impl IntoView {
     let item = xiv_gen_db::data().items.get(&ItemId(item_id))?;
     Some(view! {
         <div class="flex flex-row">
-            
+
             <div class="flex flex-row">{&item.name}</div>
         </div>
     })

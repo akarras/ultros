@@ -1,10 +1,13 @@
-use std::{cmp::Reverse, collections::HashSet};
+use std::{collections::HashSet, str::FromStr};
 
 use crate::components::{
     ad::Ad, cheapest_price::*, fonts::*, meta::*, small_item_display::*, tooltip::*,
 };
+use crate::CheapestPrices;
+use itertools::Itertools;
 use leptos::*;
 use leptos_router::*;
+use paginate::Pages;
 use urlencoding::{decode, encode};
 use xiv_gen::{ClassJobCategory, Item, ItemId};
 
@@ -168,12 +171,11 @@ pub fn CategoryItems() -> impl IntoView {
                     .find(|(_id, category)| category.name == cat)
             })
             .map(|(id, _)| {
-                let mut items = data
+                let items = data
                     .items
                     .iter()
                     .filter(|(_, item)| item.item_search_category == *id)
                     .collect::<Vec<_>>();
-                items.sort_by_key(|(_, item)| Reverse(item.level_item.0));
                 items
             });
         cat.unwrap_or_default()
@@ -214,14 +216,12 @@ pub fn JobItems() -> impl IntoView {
             .map(|(id, _)| *id)
             .collect();
         let market_only = market_only();
-        let mut job_items: Vec<_> = data
+        let job_items: Vec<_> = data
             .items
             .iter()
             .filter(|(_id, item)| job_categories.contains(&item.class_job_category))
             .filter(|(_id, item)| !market_only || item.item_search_category.0 > 0)
             .collect();
-
-        job_items.sort_by_key(|(_, item)| Reverse(item.level_item.0));
         job_items
     });
     let job_set = create_memo(move |_| {
@@ -245,15 +245,197 @@ pub fn JobItems() -> impl IntoView {
     <ItemList items />}
 }
 
+#[derive(PartialEq, PartialOrd, Copy, Clone)]
+enum ItemSortOption {
+    ItemLevel,
+    Price,
+    Name,
+    Key,
+}
+
+impl FromStr for ItemSortOption {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "ilvl" => ItemSortOption::ItemLevel,
+            "price" => ItemSortOption::Price,
+            "name" => ItemSortOption::Name,
+            "key" => ItemSortOption::Key,
+            _ => return Err(()),
+        })
+    }
+}
+
+impl ToString for ItemSortOption {
+    fn to_string(&self) -> String {
+        match self {
+            ItemSortOption::ItemLevel => "ilvl",
+            ItemSortOption::Price => "price",
+            ItemSortOption::Name => "name",
+            ItemSortOption::Key => "key",
+        }
+        .to_string()
+    }
+}
+
+#[derive(PartialEq, PartialOrd, Copy, Clone)]
+enum SortDirection {
+    Asc,
+    Desc,
+}
+
+impl FromStr for SortDirection {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "asc" => SortDirection::Asc,
+            "dsc" => SortDirection::Desc,
+            _ => return Err(()),
+        })
+    }
+}
+
+impl ToString for SortDirection {
+    fn to_string(&self) -> String {
+        match self {
+            SortDirection::Asc => "asc",
+            SortDirection::Desc => "desc",
+        }
+        .to_string()
+    }
+}
+
+/// A button that sets the query property to the given value
+#[component]
+pub fn QueryButton(
+    #[prop(into)] query_name: TextProp,
+    /// default state classes
+    #[prop(into)]
+    class: TextProp,
+    /// classes that will replace the main classes when this is active
+    #[prop(into)]
+    active_classes: TextProp,
+    #[prop(into)] value: TextProp,
+    #[prop(optional)] default: bool,
+    children: Box<dyn Fn() -> Fragment>,
+) -> impl IntoView {
+    let Location {
+        pathname, query, ..
+    } = use_location();
+    let query_1 = query_name.clone();
+    let value_1 = value.clone();
+    let is_active = move || {
+        let query_name = query_1.get();
+        let value = value_1.get();
+        query
+            .with(|q| q.get(&query_name).map(|query_value| query_value == &value))
+            .unwrap_or(default)
+    };
+    view! { <a class=move || if is_active() { active_classes.get() } else { class.get() }.to_string() href=move || {
+        let mut query = query();
+        let _ = query.insert(query_name.get().to_string(), value.get().to_string());
+        format!("{}{}", pathname(), query.to_query_string())
+    }>{children}</a> }
+}
+
 #[component]
 fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView {
+    let (page, _set_page) = create_query_signal::<i32>("page");
+    let (direction, _set_direction) = create_query_signal::<SortDirection>("dir");
+    let (sort, _set_sort) = create_query_signal::<ItemSortOption>("sort");
+
+    let cheapest_prices = use_context::<CheapestPrices>().unwrap();
+    let items = create_memo(move |_| {
+        let direction = direction().unwrap_or(SortDirection::Desc);
+        let item_property = sort().unwrap_or(ItemSortOption::ItemLevel);
+        let price_map = cheapest_prices.read_listings.get().and_then(|r| r.ok());
+        items()
+            .into_iter()
+            .filter(|(id, _)| {
+                if ItemSortOption::Price == item_property {
+                    // filter items without a price if we're sorting by price
+                    if let Some((_, map)) = &price_map {
+                        map.find_matching_listings(id.0).lowest_gil().is_some()
+                    } else {
+                        true
+                    }
+                } else {
+                    true
+                }
+            })
+            .sorted_by(|a, b| {
+                let ((_, item_a), (_, item_b)) = match direction {
+                    SortDirection::Asc => (a, b),
+                    SortDirection::Desc => (b, a),
+                };
+                match item_property {
+                    ItemSortOption::ItemLevel => item_a.level_item.0.cmp(&item_b.level_item.0),
+                    ItemSortOption::Name => item_a.name.cmp(&item_b.name),
+                    // TODO lookup price data for this case
+                    ItemSortOption::Price => {
+                        if let Some((_, price_map)) = &price_map {
+                            let price_a = price_map
+                                .find_matching_listings(item_a.key_id.0)
+                                .lowest_gil();
+                            let price_b = price_map
+                                .find_matching_listings(item_b.key_id.0)
+                                .lowest_gil();
+                            price_a.cmp(&price_b)
+                        } else {
+                            item_a.level_item.0.cmp(&item_b.level_item.0)
+                        }
+                    }
+                    ItemSortOption::Key => item_a.key_id.0.cmp(&item_b.key_id.0),
+                }
+            })
+            .collect::<Vec<_>>()
+    });
+    let items_len = create_memo(move |_| items.with(|i| i.len()));
+    let pages = move || Pages::new(items_len(), 50);
+    let items = move || {
+        // now take a subslice of the items
+        let page = pages().with_offset((page().unwrap_or_default() - 1).try_into().unwrap_or(0));
+        items()[page.start..=page.end].to_vec()
+    };
     view! {
+    <div class="flex flex-row">
+        <QueryButton query_name="dir" value="asc" class="p-1 !text-violet-200 hover:text-violet-600" active_classes="p-1 !text-violet-500">
+            "ASC"
+        </QueryButton>
+        <QueryButton query_name="dir" value="desc" class="p-1 !text-violet-200 hover:text-violet-600" active_classes="p-1 !text-violet-500" default=true>
+            "DESC"
+        </QueryButton>
+        <QueryButton query_name="sort" value="key" class="p-1 !text-violet-200 hover:text-violet-600" active_classes="p-1 !text-violet-500">
+            "ADDED"
+        </QueryButton>
+        <QueryButton query_name="sort" value="price" class="p-1 !text-violet-200 hover:text-violet-600" active_classes="p-1 !text-violet-500">
+            "PRICE"
+        </QueryButton>
+        <QueryButton query_name="sort" value="name" class="p-1 !text-violet-200 hover:text-violet-600" active_classes="p-1 !text-violet-500">
+            "NAME"
+        </QueryButton>
+        <QueryButton query_name="sort" value="ilvl" class="p-1 !text-violet-200 hover:text-violet-600" active_classes="p-1 !text-violet-500" default=true>
+            "ILVL"
+        </QueryButton>
+    </div>
+    <div class="flex flex-row flex-wrap">
+        {pages().into_iter().map(|page| {
+            view!{
+                <QueryButton query_name="page" value=(page.offset + 1).to_string() class="p-1 !text-violet-200 hover:text-violet-600" active_classes="p-1 !text-violet-500" default=page.offset == 0>
+                    {page.offset + 1}
+                </QueryButton>
+            }
+        }).collect::<Vec<_>>()}
+    </div>
     <For
         each=items
         key=|(id, item)| (id.0, &item.name)
-        children=|(id, item)| view!{<div class="flex md:flex-row flex-col min-w-96">
-            <SmallItemDisplay item=item />
-            <CheapestPrice item_id=*id />
+        children=|(id, item)| view!{<div class="grid xl:grid-cols-4 grid-flow-row gap-1">
+            <div class="xl:col-span-2"><SmallItemDisplay item=item /></div>
+            <CheapestPrice item_id=*id show_hq=false />
+            {item.can_be_hq.then(|| view!{<CheapestPrice item_id=*id show_hq=true />})}
         </div> }/>}
 }
 
@@ -279,7 +461,7 @@ pub fn ItemExplorer() -> impl IntoView {
                         <Outlet />
                     </div>
                 </div>
-                <div>
+                <div class="w-40">
                     <Ad class="h-96 md:h-[50vh]"/>
                 </div>
             </div>

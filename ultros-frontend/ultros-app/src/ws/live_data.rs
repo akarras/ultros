@@ -4,13 +4,13 @@ use crate::components::live_sale_ticker::SaleView;
 use crate::error::AppError;
 use futures::{SinkExt, StreamExt};
 use gloo_net::websocket::{futures::WebSocket, Message};
+use itertools::Itertools;
 use leptos::{RwSignal, SignalUpdate};
 use log::error;
 use ultros_api_types::{
     websocket::{ClientMessage, EventType, FilterPredicate, ServerClient, SocketMessageType},
     world_helper::AnySelector,
 };
-use itertools::Itertools;
 
 pub(crate) async fn live_sales(
     signal: RwSignal<VecDeque<SaleView>>,
@@ -56,8 +56,12 @@ pub(crate) async fn live_sales(
                                             sales.make_contiguous().sort_by_key(|sale| {
                                                 std::cmp::Reverse(sale.sold_date)
                                             });
-                                            *sales = sales.iter().unique_by(|sale| (sale.item_id, sale.hq)).take(8).cloned().collect();
-                                            
+                                            *sales = sales
+                                                .iter()
+                                                .unique_by(|sale| (sale.item_id, sale.hq))
+                                                .take(8)
+                                                .cloned()
+                                                .collect();
                                         })
                                         .is_none()
                                     {
