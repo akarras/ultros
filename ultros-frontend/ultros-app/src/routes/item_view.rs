@@ -7,11 +7,8 @@ use crate::components::{
 use crate::global_state::home_world::get_price_zone;
 use crate::global_state::LocalWorldData;
 use leptos::*;
-<<<<<<< Updated upstream
 use leptos_meta::Meta;
-=======
 use leptos_meta::Link;
->>>>>>> Stashed changes
 use leptos_router::*;
 use ultros_api_types::world_helper::AnyResult;
 use xiv_gen::ItemId;

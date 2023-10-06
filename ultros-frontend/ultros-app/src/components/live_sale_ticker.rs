@@ -25,7 +25,7 @@ fn Item(item_id: i32) -> impl IntoView {
     let item = xiv_gen_db::data().items.get(&ItemId(item_id))?;
     Some(view! {
         <div class="flex flex-row">
-            <ItemIcon item_id icon_size=IconSize::Small />
+            
             <div class="flex flex-row">{&item.name}</div>
         </div>
     })
@@ -94,19 +94,22 @@ pub fn LiveSaleTicker() -> impl IntoView {
                     view!{
                         <div class="flex flex-col">
                             <h3 class="text-xl">{move || format!("recent sales on {}", homeworld().map(|world| world.name).unwrap_or_default())}</h3>
-                            <div>
+                            <div class="gap-1">
                                 <For each=sales
                                     key=|sale| sale.sold_date
                                     let:sale>
                                     <A href=move || format!("/item/{}/{}", homeworld().map(|world| world.name).unwrap_or_default(), sale.item_id)>
-                                        <div class="flex flex-col gap-1 whitespace-nowrap text-white bg-neutral-950 hover:bg-neutral-800 transition-colors">
-                                            <div class="flex flex-row">
-                                                <Item item_id=sale.item_id />
-                                            </div>
-                                            <div class="flex flex-row gap-5">
-                                                {sale.hq.then(|| "HQ")}
-                                                <Gil amount=sale.price />
-                                                <RelativeToNow timestamp=sale.sold_date />
+                                        <div class="flex flex-row gap-1 p-1 whitespace-nowrap text-white bg-neutral-950 hover:bg-neutral-800 transition-colors">
+                                            <ItemIcon item_id=sale.item_id icon_size=IconSize::Medium />
+                                            <div class="flex flex-col">
+                                                <div class="flex flex-row gap-5">
+                                                    <Item item_id=sale.item_id />
+                                                    {sale.hq.then(|| "HQ")}
+                                                </div>
+                                                <div class="flex flex-row gap-5 text-sm">
+                                                    <Gil amount=sale.price />
+                                                    <RelativeToNow timestamp=sale.sold_date />
+                                                </div>
                                             </div>
                                         </div>
                                     </A>
