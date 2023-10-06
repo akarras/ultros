@@ -10,6 +10,7 @@ use ultros_api_types::{
     websocket::{ClientMessage, EventType, FilterPredicate, ServerClient, SocketMessageType},
     world_helper::AnySelector,
 };
+use itertools::Itertools;
 
 pub(crate) async fn live_sales(
     signal: RwSignal<VecDeque<SaleView>>,
@@ -49,14 +50,14 @@ pub(crate) async fn live_sales(
                                                     item_id: sale.sold_item_id,
                                                     price: sale.price_per_item,
                                                     sold_date: sale.sold_date,
+                                                    hq: sale.hq,
                                                 });
                                             }
                                             sales.make_contiguous().sort_by_key(|sale| {
                                                 std::cmp::Reverse(sale.sold_date)
                                             });
-                                            while sales.len() > 8 {
-                                                sales.pop_back();
-                                            }
+                                            *sales = sales.iter().unique_by(|sale| (sale.item_id, sale.hq)).take(8).cloned().collect();
+                                            
                                         })
                                         .is_none()
                                     {

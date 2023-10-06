@@ -17,6 +17,7 @@ pub(crate) struct SaleView {
     pub(crate) item_id: i32,
     pub(crate) price: i32,
     pub(crate) sold_date: NaiveDateTime,
+    pub(crate) hq: bool,
 }
 
 #[component]
@@ -61,6 +62,7 @@ pub fn LiveSaleTicker() -> impl IntoView {
                                 item_id: sale.item_id,
                                 price: sale_data.price_per_unit,
                                 sold_date: sale_data.sale_date,
+                                hq: sale.hq,
                             })
                         })
                         .sorted_by_key(|s| std::cmp::Reverse(s.sold_date))
@@ -94,17 +96,15 @@ pub fn LiveSaleTicker() -> impl IntoView {
                             <h3 class="text-xl">{move || format!("recent sales on {}", homeworld().map(|world| world.name).unwrap_or_default())}</h3>
                             <div>
                                 <For each=sales
-                                    // the sale ID is just zero because I haven't figured out how to insert and fetch in an effiecient way...
-                                    // use the timestamp instead!
                                     key=|sale| sale.sold_date
                                     let:sale>
                                     <A href=move || format!("/item/{}/{}", homeworld().map(|world| world.name).unwrap_or_default(), sale.item_id)>
-                                        <div class="flex flex-col gap-1 whitespace-nowrap bg-neutral-950 hover:bg-neutral-800 transition-colors">
+                                        <div class="flex flex-col gap-1 whitespace-nowrap text-white bg-neutral-950 hover:bg-neutral-800 transition-colors">
                                             <div class="flex flex-row">
                                                 <Item item_id=sale.item_id />
-
                                             </div>
-                                            <div class="flex flex-row">
+                                            <div class="flex flex-row gap-5">
+                                                {sale.hq.then(|| "HQ")}
                                                 <Gil amount=sale.price />
                                                 <RelativeToNow timestamp=sale.sold_date />
                                             </div>
