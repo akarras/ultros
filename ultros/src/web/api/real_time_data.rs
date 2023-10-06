@@ -11,7 +11,7 @@ use axum::{
 use futures::{
     future::{select, Either},
     stream::{BoxStream, SelectAll},
-    SinkExt, StreamExt,
+    SinkExt, Stream, StreamExt,
 };
 
 use tokio_stream::wrappers::BroadcastStream;
@@ -122,6 +122,7 @@ async fn handle_socket(
     } = events;
     let (mut sender, mut receiver) = socket.split();
     let mut subscriptions = SelectAll::<BoxStream<ServerClient>>::new();
+    subscriptions.push(Box::pin(futures::stream::pending()));
     sender
         .send(Message::Text(serde_json::to_string(
             &ServerClient::SocketConnected,
@@ -190,6 +191,7 @@ async fn handle_socket(
                     }
                 } else {
                     // client disconnected
+                    info!("websocket disconnect");
                     return Ok(());
                 };
             }
@@ -199,12 +201,13 @@ async fn handle_socket(
                     .send(Message::Text(serde_json::to_string(&right)?))
                     .await?;
             }
-            Either::Left((_left, _l)) => {
-                // info!("Received none: {left:?}");
+            Either::Left((left, _l)) => {
+                info!("Received none: {left:?}");
                 break;
             }
-            Either::Right((_right, _r)) => {
-                // info!("Right {right:?}");
+            Either::Right((right, _r)) => {
+                info!("Right {right:?}");
+                break;
             }
         };
     }

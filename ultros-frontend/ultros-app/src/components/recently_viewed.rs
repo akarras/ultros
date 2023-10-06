@@ -67,7 +67,7 @@ pub fn RecentlyViewed() -> impl IntoView {
     let items = item_data.reader();
     let local_items = create_local_resource(move || items(), move |items| async move { items });
     let (empty_search, set_empty_search) = create_signal("".to_string());
-    
+
     view! {
         <div class:hidden=move || {
             local_items.with(|i| i.as_ref().map(|i| i.is_empty()).unwrap_or(true))
