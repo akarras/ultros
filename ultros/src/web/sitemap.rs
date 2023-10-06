@@ -54,6 +54,8 @@ pub(crate) async fn sitemap_index(// State(world_cache): State<Arc<WorldCache>>,
         "https://ultros.app/sitemap/pages.xml".to_string(),
         None,
     ));
+    // TODO: Can we make the last modified for this reflect the game data?
+    sitemap_list.push(Sitemap::new("https://ultros.app/sitemap/items.xml".to_string(), None));
     let index = SitemapIndex::new(sitemap_list)?;
     let mut index_xml = Vec::new();
     index
