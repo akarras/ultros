@@ -31,6 +31,7 @@ fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> imp
             let listing = undercut_data.current;
             let item = items.get(&ItemId(listing.item_id));
             let total = listing.quantity * listing.price_per_unit;
+            let new_best_price = undercut_data.cheapest - 1;
             view! {
                 <tr>
                     <td>
@@ -59,8 +60,8 @@ fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> imp
                     </td>
                     <td>
                         <div class="flex flex-row">
-                            <Gil amount=undercut_data.cheapest/>
-                            <Clipboard clipboard_text=undercut_data.cheapest.to_string() />
+                            <Gil amount=new_best_price/>
+                            <Clipboard clipboard_text=new_best_price.to_string() />
                         </div>
                     </td>
                 </tr>
@@ -80,7 +81,7 @@ fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> imp
                         <th>"Price Per Unit"</th>
                         <th>"Quantity"</th>
                         <th>"Total"</th>
-                        <th>"Price to beat"</th>
+                        <th>"Undercut by one"</th>
                     </tr>
                 </thead>
                 <tbody>{listings}</tbody>
