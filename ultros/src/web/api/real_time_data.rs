@@ -11,7 +11,7 @@ use axum::{
 use futures::{
     future::{select, Either},
     stream::{BoxStream, SelectAll},
-    SinkExt, Stream, StreamExt,
+    SinkExt, StreamExt,
 };
 
 use tokio_stream::wrappers::BroadcastStream;

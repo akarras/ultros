@@ -1,6 +1,7 @@
 mod alerts_websocket;
 pub mod api;
 pub(crate) mod character_verifier_service;
+pub mod country_code_decoder;
 pub mod error;
 pub mod item_card;
 pub mod oauth;
@@ -30,7 +31,7 @@ use tokio::time::timeout;
 use tower_http::compression::predicate::{NotForContentType, SizeAbove};
 use tower_http::compression::{CompressionLayer, Predicate};
 use tower_http::trace::TraceLayer;
-use tracing::debug;
+use tracing::{debug, warn};
 use ultros_api_types::icon_size::IconSize;
 use ultros_api_types::list::{CreateList, List, ListItem};
 use ultros_api_types::user::{OwnedRetainer, UserData, UserRetainerListings, UserRetainers};
@@ -48,6 +49,7 @@ use ultros_xiv_icons::get_item_image;
 use universalis::{ItemId, ListingView, UniversalisClient, WorldId};
 
 use self::character_verifier_service::CharacterVerifierService;
+use self::country_code_decoder::Region;
 use self::error::{ApiError, WebError};
 use self::oauth::{AuthDiscordUser, AuthUserCache, DiscordAuthConfig};
 use crate::analyzer_service::AnalyzerService;
@@ -806,6 +808,14 @@ async fn get_bincode() -> &'static [u8] {
     xiv_gen_db::bincode()
 }
 
+/// Returns a region- attempts to guess it from the CF Region header
+async fn detect_region(region: Option<Region>) -> Region {
+    if region.is_none() {
+        warn!("Unable to detect region");
+    }
+    region.unwrap_or(Region::NorthAmerica)
+}
+
 pub(crate) async fn start_web(state: WebState) {
     // build our application with a route
     let app = Router::new()
@@ -852,6 +862,7 @@ pub(crate) async fn start_web(state: WebState) {
             "/api/v1/characters/verifications",
             get(pending_verifications),
         )
+        .route("/api/v1/detectregion", get(detect_region))
         .route("/retainers/add/:id", get(add_retainer))
         .route("/retainers/remove/:id", get(remove_owned_retainer))
         .route("/static/*path", get(static_path))

@@ -13,7 +13,7 @@ use crate::error::AppResult;
 use crate::global_state::cheapest_prices::CheapestPrices;
 use crate::global_state::clipboard_text::GlobalLastCopiedText;
 use crate::global_state::cookies::Cookies;
-use crate::global_state::home_world::get_homeworld;
+use crate::global_state::home_world::{get_homeworld, GuessedRegion};
 use crate::global_state::LocalWorldData;
 use crate::{
     components::{ad::Ad, profile_display::*, search_box::*, tooltip::*},
@@ -30,9 +30,10 @@ use leptos_router::*;
 use ultros_api_types::world_helper::WorldHelper;
 
 #[component]
-pub fn App(worlds: AppResult<Arc<WorldHelper>>) -> impl IntoView {
+pub fn App(worlds: AppResult<Arc<WorldHelper>>, region: String) -> impl IntoView {
     provide_meta_context();
     let cookies = Cookies::new();
+    provide_context(GuessedRegion(region));
     provide_context(cookies);
     provide_context(LocalWorldData(worlds));
     provide_context(CheapestPrices::new());

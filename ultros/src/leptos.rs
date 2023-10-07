@@ -20,18 +20,19 @@ use tracing::instrument;
 use ultros_api_types::world_helper::WorldHelper;
 use ultros_app::*;
 
-use crate::web::WebState;
+use crate::web::{country_code_decoder::Region, WebState};
 
 #[instrument(skip(worlds, options, req))]
 async fn custom_handler(
     State(worlds): State<Arc<WorldHelper>>,
     Extension(options): Extension<Arc<LeptosOptions>>,
+    region: Option<Region>,
     req: Request<Body>,
 ) -> Response {
     let handler = leptos_axum::render_app_to_stream_with_context(
         (*options).clone(),
         move || {},
-        move || view! { <App worlds=Ok(worlds.clone())/> },
+        move || view! { <App worlds=Ok(worlds.clone()) region=region.unwrap_or(Region::NorthAmerica).to_string() /> },
     );
     handler(req).await.into_response()
 }
@@ -70,7 +71,7 @@ pub(crate) async fn create_leptos_app(
     let worlds = Ok(worlds);
     let routes = generate_route_list(move || {
         let worlds = worlds.clone();
-        view! { <App worlds /> }
+        view! { <App worlds region="North-America".to_string() /> }
     });
 
     // simple_logger::init_with_level(log::Level::Debug).expect("couldn't initialize logging");

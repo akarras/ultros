@@ -152,6 +152,16 @@ async fn get_world_data() -> Arc<WorldHelper> {
     Arc::new(WorldHelper::from(json))
 }
 
+async fn get_region() -> String {
+    gloo_net::http::Request::get("/api/v1/detectregion")
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap()
+}
+
 #[wasm_bindgen]
 pub fn hydrate() {
     _ = console_log::init_with_level(log::Level::Debug);
@@ -160,12 +170,17 @@ pub fn hydrate() {
 
     log::info!("hydrate mode - hydrating");
     leptos::spawn_local(async move {
-        let (_, worlds) = join(populate_xiv_gen_data(), get_world_data()).await;
+        let (_, (worlds, region)) = join(
+            populate_xiv_gen_data(),
+            join(get_world_data(), get_region()),
+        )
+        .await;
         leptos::mount_to_body(move || {
             let worlds = worlds.clone();
+            let region = region.clone();
             let worlds = Ok(worlds);
             provide_meta_context();
-            view! { <App worlds/> }
+            view! { <App worlds region /> }
         });
     });
 }

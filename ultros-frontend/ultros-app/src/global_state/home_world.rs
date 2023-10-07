@@ -13,6 +13,9 @@ use super::{
 const HOMEWORLD_COOKIE_NAME: &str = "HOME_WORLD";
 const DEFAULT_PRICE_ZONE: &str = "PRICE_ZONE";
 
+#[derive(Clone)]
+pub struct GuessedRegion(pub String);
+
 pub fn get_homeworld() -> (Signal<Option<World>>, SignalSetter<Option<World>>) {
     let cookies = use_context::<Cookies>().unwrap();
     let (cookie, set_cookie) = cookies.get_cookie(HOMEWORLD_COOKIE_NAME);
@@ -75,7 +78,12 @@ pub fn get_price_zone() -> (
         let worlds = use_context::<LocalWorldData>().unwrap().0.ok();
         worlds.and_then(|w| {
             cookie()
-                .and_then(move |cookie| w.lookup_world_by_name(cookie.value()).map(|w| w.into()))
+                .map(|cookie| cookie.value().to_string())
+                .or_else(|| {
+                    let region = use_context::<GuessedRegion>().unwrap();
+                    Some(region.0)
+                })
+                .and_then(move |cookie| w.lookup_world_by_name(&cookie).map(|w| w.into()))
         })
     });
 
