@@ -13,6 +13,7 @@ use axum::{
     routing::get,
     Extension, Router,
 };
+use git_const::git_short_hash;
 use leptos::*;
 use leptos_axum::generate_route_list;
 use leptos_router::RouteListing;
@@ -44,7 +45,7 @@ pub(crate) async fn create_leptos_app(
     use tower_http::services::ServeDir;
 
     let conf = get_configuration(None).await?;
-    let leptos_options = conf.leptos_options;
+    let mut leptos_options = conf.leptos_options;
     let site_root = &leptos_options.site_root;
     let pkg_dir = &leptos_options.site_pkg_dir;
 
@@ -62,6 +63,8 @@ pub(crate) async fn create_leptos_app(
     // because all Errors are converted into Responses
     // let static_service = HandleError::new(ServeDir::new("./static"), handle_file_error);
     //let pkg_service = HandleError::new(ServeDir::new("./pkg"), handle_file_error);
+    let git_hash = git_short_hash!();
+    leptos_options.site_pkg_dir = ["pkg/", git_hash].concat();
     let cargo_leptos_service = HandleError::new(ServeDir::new(&bundle_filepath), handle_file_error);
     tracing::info!("Serving pkg dir: {bundle_filepath}");
     /// Convert the Errors from ServeDir to a type that implements IntoResponse
@@ -79,7 +82,10 @@ pub(crate) async fn create_leptos_app(
     // build our application with a route
     Ok(Router::new()
         // `GET /` goes to `root`
-        .nest_service("/pkg", cargo_leptos_service.clone()) // Only need if using wasm-pack. Can be deleted if using cargo-leptos
+        .nest_service(
+            &["/", &leptos_options.site_pkg_dir].concat(),
+            cargo_leptos_service.clone(),
+        ) // Only need if using wasm-pack. Can be deleted if using cargo-leptos
         .nest_service(&bundle_path, cargo_leptos_service) // Only needed if using cargo-leptos. Can be deleted if using wasm-pack and cargo-run
         //.nest_service("/static", static_service)
         .leptos_routes_with_handler_stateful(routes, custom_handler)

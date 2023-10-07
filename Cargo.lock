@@ -1973,6 +1973,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6fb8d784f27acf97159b40fc4db5ecd8aa23b9ad5ef69cdd136d3bc80665f0c0"
 
 [[package]]
+name = "git-const"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa4f63cc0cd93d91bcc11b46f61db771bc36c405d96043506ae40facd87b31f7"
+
+[[package]]
 name = "glob"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6139,6 +6145,7 @@ dependencies = [
  "base64 0.21.4",
  "chrono",
  "futures",
+ "git-const",
  "hyper",
  "image",
  "include_dir",
@@ -6197,6 +6204,7 @@ dependencies = [
  "colorsys",
  "cookie",
  "futures",
+ "git-const",
  "gloo",
  "gloo-net 0.4.0",
  "gloo-timers 0.3.0",

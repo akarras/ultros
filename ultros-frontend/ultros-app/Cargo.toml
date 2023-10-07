@@ -45,6 +45,7 @@ serde_qs = "0.12.0"
 gloo-timers = {version = "0.3.0", features = ["futures"]}
 cfg-if.workspace = true
 paginate = "1.1.11"
+git-const.workspace = true
 
 [features]
 default = ["ssr"] # this is mostly so if I run cargo check, it has a flavor to work on

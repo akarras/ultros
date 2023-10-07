@@ -23,6 +23,7 @@ use crate::{
         lists::*, retainers::*, settings::*,
     },
 };
+use git_const::git_short_hash;
 use leptos::*;
 use leptos_icons::*;
 use leptos_meta::*;
@@ -40,11 +41,11 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>, region: String) -> impl IntoView
     provide_context(GlobalLastCopiedText(create_rw_signal(None)));
     provide_context(RecentItems::new());
     let login = create_resource(move || {}, move |_| async move { get_login().await.ok() });
-    // provide_context(LoggedInUser(login));
-    // HIDE_ADS is user set, entirely optional whether users want to opt in or not.
     let (homeworld, _set_homeworld) = get_homeworld();
+    let git_hash = git_short_hash!();
+    let sheet_url = ["/pkg/", git_hash, "/ultros.css"].concat();
     view! {
-        <Stylesheet id="leptos" href="/pkg/ultros.css"/>
+        <Stylesheet id="leptos" href=sheet_url/>
         <Stylesheet id="xiv-icons" href="/static/classjob-icons/src/xivicon.css"/>
         <Title text="Ultros" />
         // <Meta name="twitter:card" content="summary_large_image"/>
@@ -143,7 +144,7 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>, region: String) -> impl IntoView
                 <a href="https://leekspin.com">"Patreon"</a>
             </div>
             <span>"Made using "<a href="https://universalis.app/">"universalis"</a>"' API.Please contribute to Universalis to help this site stay up to date."</span>
-            <span></span>
+            <span>"Version: "{git_hash}</span>
             <span>"FINAL FANTASY XIV © 2010 - 2020 SQUARE ENIX CO., LTD. All Rights Reserved."</span>
         </footer>
     }
