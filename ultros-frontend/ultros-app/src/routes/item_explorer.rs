@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::{collections::HashSet, str::FromStr};
 
 use crate::components::{
@@ -8,8 +9,9 @@ use itertools::Itertools;
 use leptos::*;
 use leptos_icons::*;
 use leptos_router::*;
+use log::info;
 use paginate::Pages;
-use urlencoding::{decode, encode};
+use percent_encoding::percent_decode_str;
 use xiv_gen::{ClassJobCategory, Item, ItemId};
 
 /// Displays buttons of categories
@@ -32,9 +34,9 @@ fn CategoryView(category: u8) -> impl IntoView {
         {categories.into_iter()
             .map(|(_, name, id)| view! {
                 <Tooltip tooltip_text=Oco::from(name.as_str())>
-                    <A href=["/items/category/", &encode(name)].concat()>
+                    <APersistQuery href=["/items/category/", &name].concat() remove_values=&["page"]>
                         <ItemSearchCategoryIcon id=*id />
-                    </A>
+                    </APersistQuery>
                 </Tooltip>
             })
             .collect::<Vec<_>>()}
@@ -149,12 +151,14 @@ fn JobsList() -> impl IntoView {
     view! {<div class="flex flex-wrap text-2xl p-2">
         {jobs.into_iter()
             // .filter(|(_id, job)| job.class_job_parent.0 == 0)
-            .map(|(_id, job)| view!{<A href=["/items/jobset/", &job.abbreviation].concat()>
-            // {&job.abbreviation}
-            <Tooltip tooltip_text=Oco::from(job.name_english.as_str())>
-                <ClassJobIcon id=job.key_id />
-            </Tooltip>
-        </A>}).collect::<Vec<_>>()}
+            .map(|(_id, job)| view!{
+                <APersistQuery href=["/items/jobset/", &job.abbreviation].concat() remove_values=&["page"]>
+                    // {&job.abbreviation}
+                    <Tooltip tooltip_text=Oco::from(job.name_english.as_str())>
+                        <ClassJobIcon id=job.key_id />
+                    </Tooltip>
+                </APersistQuery>
+            }).collect::<Vec<_>>()}
     </div>}
 }
 
@@ -165,11 +169,11 @@ pub fn CategoryItems() -> impl IntoView {
     let items = create_memo(move |_| {
         let cat = params()
             .get("category")
-            .and_then(|cat| decode(cat).ok())
+            .and_then(|cat| percent_encoding::percent_decode_str(cat).decode_utf8().ok())
             .and_then(|cat| {
                 data.item_search_categorys
                     .iter()
-                    .find(|(_id, category)| category.name == cat)
+                    .find(|(_id, category)| &category.name == &cat)
             })
             .map(|(id, _)| {
                 let items = data
@@ -185,9 +189,8 @@ pub fn CategoryItems() -> impl IntoView {
         params()
             .get("category")
             .as_ref()
-            .and_then(|cat| decode(cat).ok())
-            .map(|c| c.to_string())
-            .unwrap_or("Category View".to_string())
+            .and_then(|cat| percent_decode_str(cat).decode_utf8().ok())
+            .unwrap_or(Cow::from("Category View"))
             .to_string()
     });
     view! {
@@ -341,6 +344,40 @@ pub fn QueryButton(
     }>{children}</a> }
 }
 
+/// A URL that copies the existing query string but replaces the path
+#[component]
+pub fn APersistQuery(
+    #[prop(into)] href: TextProp,
+    children: Box<dyn Fn() -> Fragment>,
+    #[prop(optional)] remove_values: &'static [&'static str],
+) -> impl IntoView {
+    let location = use_location();
+    let query = location.query;
+    let path = location.pathname;
+    let href_2 = href.clone();
+    let query = create_memo(move |_| {
+        let mut query = query();
+        for value in remove_values {
+            query.remove(value);
+        }
+        query
+    });
+    let url = move || format!("{}{}", href_2.get(), query().to_query_string());
+    let is_active = create_memo(move |_| {
+        let link_path = href.get();
+
+        path.with(|path| {
+            info!("{link_path} {path}");
+            &escape(&link_path) == path
+        })
+    });
+    view! {
+        <a aria-current=move || is_active.get().then(|| "page") href=url>
+            {children}
+        </a>
+    }
+}
+
 #[component]
 fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView {
     let (page, _set_page) = create_query_signal::<i32>("page");
@@ -398,7 +435,12 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
     let items = move || {
         // now take a subslice of the items
         let page = pages().with_offset((page().unwrap_or_default() - 1).try_into().unwrap_or(0));
-        items()[page.start..=page.end].to_vec()
+        items.with(|items| {
+            items
+                .get(page.start..=page.end)
+                .unwrap_or_default()
+                .to_vec()
+        })
     };
     view! {
     <div class="flex flex-row justify-between">

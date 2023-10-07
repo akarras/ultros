@@ -9,6 +9,7 @@ use crate::global_state::LocalWorldData;
 use leptos::*;
 use leptos_meta::Link;
 use leptos_meta::Meta;
+use leptos_router::escape;
 use leptos_router::*;
 use ultros_api_types::world_helper::AnyResult;
 use xiv_gen::ItemId;
@@ -21,7 +22,7 @@ fn WorldButton<'a>(world: AnyResult<'a>, item_id: i32) -> impl IntoView {
         AnyResult::Datacenter(_d) => "bg-violet-800 hover:bg-violet-700",
         AnyResult::World(_w) => "bg-violet-600 hover:bg-violet-500",
     };
-    view! { <A class=["rounded-t-lg text-sm p-1 aria-current:font-bold aria-current:text-white mx-1 ", bg_color].concat() href=format!("/item/{}/{item_id}", urlencoding::encode(&world_name))>{world_name}</A>}
+    view! { <A class=["rounded-t-lg text-sm p-1 aria-current:font-bold aria-current:text-white mx-1 ", bg_color].concat() href=format!("/item/{}/{item_id}", escape(&world_name))>{world_name}</A>}
 }
 
 #[component]
@@ -30,7 +31,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
     let world_data = use_context::<LocalWorldData>().unwrap().0.unwrap();
     move || {
         let world = world_name();
-        let world_name = urlencoding::decode(&world).unwrap_or_default();
+        let world_name = escape(&world);
         if let Some(world) = world_data.lookup_world_by_name(&world_name) {
             let create_world_button = move |world| view! {<WorldButton world item_id=item_id()/>};
             match world {

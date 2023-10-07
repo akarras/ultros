@@ -30,7 +30,6 @@ humantime = "2.1"
 colorsys = "0.6.6"
 thiserror = "1.0"
 log = "0.4"
-urlencoding = "2.1.2"
 anyhow = "1.0.69"
 cookie = {version = "0.17", features = ["percent-encode"]}
 wasm-bindgen = {version = "0.2", optional = true}
@@ -46,6 +45,7 @@ gloo-timers = {version = "0.3.0", features = ["futures"]}
 cfg-if.workspace = true
 paginate = "1.1.11"
 git-const.workspace = true
+percent-encoding = "2.3.0"
 
 [features]
 default = ["ssr"] # this is mostly so if I run cargo check, it has a flavor to work on
