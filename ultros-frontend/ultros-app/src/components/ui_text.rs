@@ -1,5 +1,5 @@
 use colorsys::{ColorTransform, Rgb};
-use leptos::*;
+use leptos::{html::br, *};
 
 #[derive(Debug, Clone, Default)]
 struct TextSpan<'a> {
@@ -111,18 +111,26 @@ impl<'a> TextSpan<'a> {
         .flatten()
         .collect::<Vec<String>>();
         let text = text.to_string();
-        Some(view! {<span style=styles.join(";")>{text}</span>}.into_view())
+        Some(view! {<span style=styles.join(";")><RawText text=&text /></span>}.into_view())
     }
 }
 
-/// A UI component that takes the raw FFXIV text and converts it into HTML
-/// For example: "This is unstyled <UIGlow>32113</UIGlow>blah blah<Emphasis>Hello world</Emphasis><UIGlow>01</UIGlow>" -> "This is unstyled <span style="color: #32113"><i>blah blah</i></span>"
 #[component]
-pub fn UIText(text: String) -> impl IntoView {
+fn RawText<'a>(text: &'a str) -> impl IntoView {
+    let mut text_parts = vec![];
+    for line in text.lines() {
+        text_parts.push(line.to_owned().into_view());
+        text_parts.push(br().into_view());
+    }
+    let _ = text_parts.pop();
+    text_parts
+}
+
+fn into_parts(text: &str) -> Vec<View> {
     let mut text_parts = vec![];
     if let Some((begin, span, end)) = TextSpan::new(&text) {
         if !begin.is_empty() {
-            text_parts.push(begin.to_string().into_view());
+            text_parts.push(view! {<RawText text=begin/>}.into_view());
         }
         if let Some(view) = span.to_view() {
             text_parts.push(view);
@@ -157,8 +165,16 @@ pub fn UIText(text: String) -> impl IntoView {
             }
         }
     } else {
-        text_parts.push(text.into_view())
+        text_parts.push(view! {<RawText text=&text/>}.into_view());
     }
+    text_parts
+}
+
+/// A UI component that takes the raw FFXIV text and converts it into HTML
+/// For example: "This is unstyled <UIGlow>32113</UIGlow>blah blah<Emphasis>Hello world</Emphasis><UIGlow>01</UIGlow>" -> "This is unstyled <span style="color: #32113"><i>blah blah</i></span>"
+#[component]
+pub fn UIText(text: String) -> impl IntoView {
+    let text_parts = into_parts(&text);
     view! {<div class="ui-text">{text_parts}</div>}
 }
 
@@ -169,7 +185,7 @@ mod tests {
     #[test]
     fn find_tags() {
         let test_string =
-            "blah blah hello world <UiColor>01</UiColor> test 123 <Emphasis>Hello world</Emphasis>";
+            "blah blah hello world <UiColor>01</UiColor>test 123 <Emphasis>Hello world</Emphasis>";
         assert_eq!(
             TagData::find_tag(test_string),
             Some((
