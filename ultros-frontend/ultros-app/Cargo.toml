@@ -50,4 +50,4 @@ percent-encoding = "2.3.0"
 [features]
 default = ["ssr"] # this is mostly so if I run cargo check, it has a flavor to work on
 hydrate = ["leptos/hydrate", "leptos_meta/hydrate", "leptos_router/hydrate", "gloo", "gloo-net", "web-sys", "wasm-bindgen", "time/wasm-bindgen", "js-sys", "leptos-use"]
-ssr = ["leptos/ssr", "leptos_meta/ssr", "leptos_router/ssr", "reqwest", "leptos_axum", "web-sys", "ultros-db"]
+ssr = ["leptos/ssr", "leptos_meta/ssr", "leptos_router/ssr", "reqwest", "leptos_axum", "web-sys", "ultros-db", "xiv-gen-db/embed"]

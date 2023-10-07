@@ -185,7 +185,7 @@ mod tests {
     #[test]
     fn find_tags() {
         let test_string =
-            "blah blah hello world <UiColor>01</UiColor>test 123 <Emphasis>Hello world</Emphasis>";
+            "blah blah hello world <UiColor>01</UiColor> test 123 <Emphasis>Hello world</Emphasis>";
         assert_eq!(
             TagData::find_tag(test_string),
             Some((

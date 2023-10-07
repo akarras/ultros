@@ -1,5 +1,3 @@
-use std::cmp::Reverse;
-
 use crate::api::{get_retainer_listings, get_retainer_undercuts, UndercutData};
 use crate::components::ad::Ad;
 use crate::components::clipboard::Clipboard;
@@ -12,19 +10,37 @@ use ultros_api_types::icon_size::IconSize;
 use ultros_api_types::{world_helper::AnySelector, ActiveListing, FfxivCharacter, Retainer};
 use xiv_gen::ItemId;
 
+#[derive(PartialOrd, Ord, Eq, PartialEq, Debug)]
+struct ItemSortKey(u8, i32, bool);
+
+impl From<(ItemId, bool)> for ItemSortKey {
+    fn from((item_id, hq): (ItemId, bool)) -> Self {
+        let inner = move || {
+            let data = xiv_gen_db::data();
+            let items = &data.items;
+            let sort_category = &data.item_sort_categorys;
+            let item = items.get(&item_id)?;
+            let sort_weight = sort_category
+                .get(&item.item_sort_category)
+                .map(|category| category.param)?;
+            Some(Self(sort_weight, item.key_id.0, hq))
+        };
+        inner().unwrap_or(Self(u8::MAX, i32::MAX, hq))
+    }
+}
+
+impl From<&ActiveListing> for ItemSortKey {
+    fn from(listing: &ActiveListing) -> Self {
+        ItemSortKey::from((ItemId(listing.item_id), listing.hq))
+    }
+}
+
 #[component]
 fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> impl IntoView {
+    let mut listings = listings;
     let data = xiv_gen_db::data();
     let items = &data.items;
-    let categories = &data.item_search_categorys;
-    let mut listings = listings;
-    listings.sort_by_key(|u| {
-        items.get(&ItemId(u.current.item_id)).and_then(|item| {
-            categories
-                .get(&item.item_search_category)
-                .map(|category| (category.order, Reverse(item.level_item.0)))
-        })
-    });
+    listings.sort_by_key(|u| ItemSortKey::from(&u.current));
     let listings: Vec<_> = listings
         .into_iter()
         .map(|undercut_data| {
@@ -44,6 +60,7 @@ fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> imp
                             view! {
                                 <ItemIcon icon_size=IconSize::Small item_id=listing.item_id/>
                                 {&item.name}
+                                <Clipboard clipboard_text=item.name.as_str() />
                             }
                                 .into_view()
                         } else {
@@ -94,15 +111,8 @@ fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> imp
 fn RetainerTable(retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoView {
     let data = xiv_gen_db::data();
     let items = &data.items;
-    let categories = &data.item_search_categorys;
     let mut listings = listings;
-    listings.sort_by_key(|listing| {
-        items.get(&ItemId(listing.item_id)).and_then(|item| {
-            categories
-                .get(&item.item_search_category)
-                .map(|category| (category.order, Reverse(item.level_item.0)))
-        })
-    });
+    listings.sort_by_key(|u| ItemSortKey::from(u));
     let listings: Vec<_> = listings
         .into_iter()
         .map(|listing| {
@@ -120,6 +130,7 @@ fn RetainerTable(retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoV
                             view! {
                                 <ItemIcon icon_size=IconSize::Small item_id=listing.item_id/>
                                 {&item.name}
+                                <Clipboard clipboard_text=item.name.as_str() />
                             }
                                 .into_view()
                         } else {
@@ -321,5 +332,53 @@ pub fn Retainers() -> impl IntoView {
             </div>
         </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod test {
+
+    use super::ItemSortKey;
+
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn test_sort_order() {
+        // these item ids are in the correct order- so if we run it through our sort, it should still match up
+        use chrono::NaiveDateTime;
+        use ultros_api_types::ActiveListing;
+        let item_ids = vec![
+            29417, 30842, 36837, 31840, 17325, 9050, 15532, 4737, 19853, 24250,
+        ];
+        let mut item_vec: Vec<_> = item_ids
+            .into_iter()
+            .map(|item| ActiveListing {
+                id: 0,
+                world_id: 0,
+                item_id: item,
+                retainer_id: 0,
+                price_per_unit: 1000,
+                quantity: 1,
+                hq: true,
+                timestamp: NaiveDateTime::MIN,
+            })
+            .collect();
+        let original = item_vec.clone();
+        item_vec.sort_by_key(|i| ItemSortKey::from(i));
+        assert_eq!(original, item_vec);
+    }
+
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn same_sort_category() {
+        use xiv_gen::ItemId;
+
+        let expected_order = vec![
+            41509, // red corsage
+            41516, // black corsage
+            41517,
+        ]; // rainbow corsage
+        let mut rearranged = vec![41516, 41517, 41509];
+        rearranged.sort_by_key(|id| ItemSortKey::from((ItemId(*id), true)));
+        assert_eq!(expected_order, rearranged);
     }
 }

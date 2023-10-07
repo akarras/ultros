@@ -34,8 +34,11 @@ sea-orm = {version = "0.12.2", features = ["sqlx-postgres", "runtime-tokio-rustl
 sea-orm-migration = {version = "0.12.2", features = ["sqlx-postgres", "runtime-tokio-rustls"]}
 sea-query = "0.30.0"
 yoke = "0.7.1"
-xiv-gen = {path = "./xiv-gen", features = ["item", "item_ui_category", "item_search_category", "class_job", "recipe", "class_job_category", "base_param"]}
-leptos_icons = {version = "0.0.16-beta", features = ["IoSettingsSharp", "AiOrderedListOutlined", "BsDiscord", "BsClipboard2Fill", "BsClipboard2CheckFill", "AiEditFilled", "FaMoneyBillTrendUpSolid", "BsCheck", "BsPencilFill", "BiSortDownRegular", "BiSortUpRegular", "BiPlusRegular", "BiTrashSolid", "AiExclamationOutlined", "BiSaveSolid", "BiGroupSolid", "BiHomeSolid", "FaScrewdriverWrenchSolid", "AiSearchOutlined", "ImPriceTag", "BiCalendarAltRegular"]}
+xiv-gen = {path = "./xiv-gen", features = ["item", "item_ui_category", "item_search_category", "class_job", "recipe",
+  "class_job_category", "base_param", "item_sort_category"]}
+leptos_icons = {version = "0.0.16-beta", features = ["IoSettingsSharp", "AiOrderedListOutlined", "BsDiscord", "BsClipboard2Fill", "BsClipboard2CheckFill",
+  "AiEditFilled", "FaMoneyBillTrendUpSolid", "BsCheck", "BsPencilFill", "BiSortDownRegular", "BiSortUpRegular", "BiPlusRegular", "BiTrashSolid",
+  "AiExclamationOutlined", "BiSaveSolid", "BiGroupSolid", "BiHomeSolid", "FaScrewdriverWrenchSolid", "AiSearchOutlined", "ImPriceTag", "BiCalendarAltRegular"]}
 cfg-if = "1.0.0"
 git-const = "1.1.0"
 
