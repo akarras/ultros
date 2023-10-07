@@ -7,6 +7,7 @@ RUN rustup target add wasm32-unknown-unknown
 RUN mkdir -p /app
 WORKDIR /app
 COPY . .
+COPY .git/ ./.git/
 ENV LEPTOS_BIN_TARGET_TRIPLE="x86_64-unknown-linux-gnu"
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
 RUN cargo leptos --manifest-path=./Cargo.toml build --release -vv
