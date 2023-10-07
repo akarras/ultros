@@ -6,6 +6,7 @@ use crate::components::{
 use crate::CheapestPrices;
 use itertools::Itertools;
 use leptos::*;
+use leptos_icons::*;
 use leptos_router::*;
 use paginate::Pages;
 use urlencoding::{decode, encode};
@@ -400,28 +401,36 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
         items()[page.start..=page.end].to_vec()
     };
     view! {
-    <div class="flex flex-row">
-        <QueryButton query_name="dir" value="asc" class="p-1 !text-violet-200 hover:text-violet-600" active_classes="p-1 !text-violet-500">
-            "ASC"
-        </QueryButton>
-        <QueryButton query_name="dir" value="desc" class="p-1 !text-violet-200 hover:text-violet-600" active_classes="p-1 !text-violet-500" default=true>
-            "DESC"
-        </QueryButton>
-        <QueryButton query_name="sort" value="key" class="p-1 !text-violet-200 hover:text-violet-600" active_classes="p-1 !text-violet-500">
-            "ADDED"
-        </QueryButton>
-        <QueryButton query_name="sort" value="price" class="p-1 !text-violet-200 hover:text-violet-600" active_classes="p-1 !text-violet-500">
-            "PRICE"
-        </QueryButton>
-        <QueryButton query_name="sort" value="name" class="p-1 !text-violet-200 hover:text-violet-600" active_classes="p-1 !text-violet-500">
-            "NAME"
-        </QueryButton>
-        <QueryButton query_name="sort" value="ilvl" class="p-1 !text-violet-200 hover:text-violet-600" active_classes="p-1 !text-violet-500" default=true>
-            "ILVL"
-        </QueryButton>
+    <div class="flex flex-row justify-between">
+        <div class="flex flex-row">
+            <QueryButton query_name="sort" value="key" class="p-1 !text-violet-200 hover:text-violet-600" active_classes="p-1 !text-violet-500">
+                <div class="flex flex-row">
+                    <Icon icon=Icon::from(BiIcon::BiCalendarAltRegular)/>
+                     "ADDED"
+                </div>
+            </QueryButton>
+            <QueryButton query_name="sort" value="price" class="p-1 !text-violet-200 hover:text-violet-600" active_classes="p-1 !text-violet-500">
+                <div class="flex flex-row"><Icon icon=Icon::from(ImIcon::ImPriceTag)/>"PRICE"</div>
+            </QueryButton>
+            <QueryButton query_name="sort" value="name" class="p-1 !text-violet-200 hover:text-violet-600" active_classes="p-1 !text-violet-500">
+                "NAME"
+            </QueryButton>
+            <QueryButton query_name="sort" value="ilvl" class="p-1 !text-violet-200 hover:text-violet-600" active_classes="p-1 !text-violet-500" default=true>
+                "ILVL"
+            </QueryButton>
+        </div>
+        <div class="flex flex-row">
+            <QueryButton query_name="dir" value="asc" class="p-1 !text-violet-200 hover:text-violet-600" active_classes="p-1 !text-violet-500">
+                <div class="flex flex-row"><Icon icon=Icon::from(BiIcon::BiSortUpRegular)/>"ASC"</div>
+            </QueryButton>
+            <QueryButton query_name="dir" value="desc" class="p-1 !text-violet-200 hover:text-violet-600" active_classes="p-1 !text-violet-500" default=true>
+                <div class="flex flex-row"><Icon icon=Icon::from(BiIcon::BiSortDownRegular)/>"DESC"</div>
+            </QueryButton>
+        </div>
+
     </div>
     <div class="flex flex-row flex-wrap">
-        {pages().into_iter().map(|page| {
+        {move || pages().into_iter().map(|page| {
             view!{
                 <QueryButton query_name="page" value=(page.offset + 1).to_string() class="p-1 !text-violet-200 hover:text-violet-600" active_classes="p-1 !text-violet-500" default=page.offset == 0>
                     {page.offset + 1}
@@ -436,7 +445,19 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
             <div class="xl:col-span-2"><SmallItemDisplay item=item /></div>
             <CheapestPrice item_id=*id show_hq=false />
             {item.can_be_hq.then(|| view!{<CheapestPrice item_id=*id show_hq=true />})}
-        </div> }/>}
+        </div> }/>
+    <QueryButton query_name="page" value=move || (page().unwrap_or(1) + 1).to_string() class=move || {
+        let pages = pages();
+        let page = page();
+        if pages.page_count() > page.unwrap_or(1).try_into().unwrap_or(1) {
+            "p-1 !text-violet-200 hover:text-violet-600"
+        } else {
+            "hidden"
+        }
+        } active_classes="p-1 !text-violet-500">
+        "Next page: "{page().unwrap_or(1) + 1}
+    </QueryButton>
+    }
 }
 
 #[component]
