@@ -91,7 +91,7 @@ impl Cookies {
         let set_typed_cookie = move |value: Option<T>| {
             let cookie = value.map(|cookie| cookie.to_string()).map(|value| {
                 let mut cookie = Cookie::new(cookie_name, value);
-                cookie.set_same_site(SameSite::Strict);
+                cookie.set_same_site(SameSite::None);
                 cookie.set_secure(Some(true));
                 cookie.set_path("/");
                 cookie.set_expires(get_now() + Duration::days(365));

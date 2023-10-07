@@ -34,7 +34,7 @@ pub fn get_homeworld() -> (Signal<Option<World>>, SignalSetter<Option<World>>) {
         if world_2.is_some() {
             let world = world.map(|w| {
                 let mut cookie = Cookie::new(HOMEWORLD_COOKIE_NAME, w.name);
-                cookie.set_same_site(SameSite::Strict);
+                cookie.set_same_site(SameSite::Lax);
                 cookie.set_secure(Some(true));
                 cookie.set_path("/");
                 cookie.set_expires(get_now() + Duration::days(365));

@@ -1,6 +1,5 @@
 use super::gil::*;
 use super::item_icon::*;
-use super::loading::*;
 use super::relative_time::RelativeToNow;
 use chrono::NaiveDateTime;
 use leptos::*;
@@ -79,47 +78,35 @@ pub fn LiveSaleTicker() -> impl IntoView {
     });
 
     view! {
-        <Suspense fallback=move || view!{<Loading />}>
-            {move || {
-                if homeworld().is_none() {
-                    view!{
-                        <div class="flex flex-col">
-                            <h3 class="text-xl">"No homeworld set"</h3>
-                            <div>
-                                "No homeworld is set currently. Go to "<A href="/settings">"Settings"</A>" to set your homeworld."
+        <div class="flex flex-col" class:hidden=move || homeworld.with(|w| w.is_some())>
+            <h3 class="text-xl">"No homeworld set"</h3>
+            <div>
+                "No homeworld is set currently. Go to "<A href="/settings">"Settings"</A>" to set your homeworld."
+            </div>
+        </div>
+        <div class="flex flex-col" class:hidden=move || homeworld.with(|w| w.is_none())>
+            <h3 class="text-xl">"recent sales on "{move || homeworld().map(|world| world.name).unwrap_or_default()}</h3>
+            <div class="gap-1">
+                <For each=sales
+                    key=|sale| sale.sold_date
+                    let:sale>
+                    <A href=move || format!("/item/{}/{}", homeworld().map(|world| world.name).unwrap_or_default(), sale.item_id)>
+                        <div class="flex flex-row gap-1 p-1 whitespace-nowrap text-white bg-neutral-950 hover:bg-neutral-800 transition-colors">
+                            <ItemIcon item_id=sale.item_id icon_size=IconSize::Medium />
+                            <div class="flex flex-col">
+                                <div class="flex flex-row gap-5">
+                                    <Item item_id=sale.item_id />
+                                    {sale.hq.then(|| "HQ")}
+                                </div>
+                                <div class="flex flex-row gap-5 text-sm">
+                                    <Gil amount=sale.price />
+                                    <RelativeToNow timestamp=sale.sold_date />
+                                </div>
                             </div>
                         </div>
-                    }.into_view()
-                } else {
-                    view!{
-                        <div class="flex flex-col">
-                            <h3 class="text-xl">{move || format!("recent sales on {}", homeworld().map(|world| world.name).unwrap_or_default())}</h3>
-                            <div class="gap-1">
-                                <For each=sales
-                                    key=|sale| sale.sold_date
-                                    let:sale>
-                                    <A href=move || format!("/item/{}/{}", homeworld().map(|world| world.name).unwrap_or_default(), sale.item_id)>
-                                        <div class="flex flex-row gap-1 p-1 whitespace-nowrap text-white bg-neutral-950 hover:bg-neutral-800 transition-colors">
-                                            <ItemIcon item_id=sale.item_id icon_size=IconSize::Medium />
-                                            <div class="flex flex-col">
-                                                <div class="flex flex-row gap-5">
-                                                    <Item item_id=sale.item_id />
-                                                    {sale.hq.then(|| "HQ")}
-                                                </div>
-                                                <div class="flex flex-row gap-5 text-sm">
-                                                    <Gil amount=sale.price />
-                                                    <RelativeToNow timestamp=sale.sold_date />
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </A>
-                                </For>
-                        </div>
-                    </div>}.into_view()
-                }
-
-            }}
-
-    </Suspense>
+                    </A>
+                </For>
+            </div>
+        </div>
     }
 }

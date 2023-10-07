@@ -1,7 +1,8 @@
 use std::cmp::Reverse;
 
-use crate::api::{get_retainer_listings, get_retainer_undercuts};
+use crate::api::{get_retainer_listings, get_retainer_undercuts, UndercutData};
 use crate::components::ad::Ad;
+use crate::components::clipboard::Clipboard;
 use crate::components::gil::*;
 use crate::components::{item_icon::*, loading::*, meta::*, world_name::*};
 use leptos::*;
@@ -10,6 +11,83 @@ use leptos_router::*;
 use ultros_api_types::icon_size::IconSize;
 use ultros_api_types::{world_helper::AnySelector, ActiveListing, FfxivCharacter, Retainer};
 use xiv_gen::ItemId;
+
+#[component]
+fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> impl IntoView {
+    let data = xiv_gen_db::data();
+    let items = &data.items;
+    let categories = &data.item_search_categorys;
+    let mut listings = listings;
+    listings.sort_by_key(|u| {
+        items.get(&ItemId(u.current.item_id)).and_then(|item| {
+            categories
+                .get(&item.item_search_category)
+                .map(|category| (category.order, Reverse(item.level_item.0)))
+        })
+    });
+    let listings: Vec<_> = listings
+        .into_iter()
+        .map(|undercut_data| {
+            let listing = undercut_data.current;
+            let item = items.get(&ItemId(listing.item_id));
+            let total = listing.quantity * listing.price_per_unit;
+            view! {
+                <tr>
+                    <td>
+                        {listing
+                            .hq
+                            .then_some("HQ")}
+                    </td>
+                    <td class="flex flex-row">
+                        {if let Some(item) = item {
+                            view! {
+                                <ItemIcon icon_size=IconSize::Small item_id=listing.item_id/>
+                                {&item.name}
+                            }
+                                .into_view()
+                        } else {
+                            view! { "Item not found" }
+                                .into_view()
+                        }}
+                    </td>
+                    <td>
+                        <Gil amount=listing.price_per_unit/>
+                    </td>
+                    <td>{listing.quantity}</td>
+                    <td>
+                        <Gil amount=total/>
+                    </td>
+                    <td>
+                        <div class="flex flex-row">
+                            <Gil amount=undercut_data.cheapest/>
+                            <Clipboard clipboard_text=undercut_data.cheapest.to_string() />
+                        </div>
+                    </td>
+                </tr>
+            }
+        })
+        .collect();
+    view! {
+        <div class="content-well">
+            <span class="content-title">
+                {retainer.name} " - " <WorldName id=AnySelector::World(retainer.world_id)/>
+            </span>
+            <table>
+                <thead>
+                    <tr>
+                        <th>"HQ"</th>
+                        <th>"Item"</th>
+                        <th>"Price Per Unit"</th>
+                        <th>"Quantity"</th>
+                        <th>"Total"</th>
+                        <th>"Price to beat"</th>
+                    </tr>
+                </thead>
+                <tbody>{listings}</tbody>
+            </table>
+        </div>
+    }
+}
 
 #[component]
 fn RetainerTable(retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoView {
@@ -102,6 +180,27 @@ pub(crate) fn CharacterRetainerList(
 }
 
 #[component]
+pub(crate) fn CharacterRetainerUndercutList(
+    character: Option<FfxivCharacter>,
+    retainers: Vec<(Retainer, Vec<UndercutData>)>,
+) -> impl IntoView {
+    let listings: Vec<_> = retainers
+        .into_iter()
+        .map(|(retainer, listings)| view! { <RetainerUndercutTable retainer listings/> })
+        .collect();
+    view! {
+        <div>
+            {if let Some(character) = character {
+                view! { <span>{character.first_name} {character.last_name}</span> }
+                    .into_view()
+            } else {
+                listings.into_view()
+            }}
+        </div>
+    }
+}
+
+#[component]
 pub fn RetainerUndercuts() -> impl IntoView {
     let retainers = create_resource(|| "undercuts", move |_| get_retainer_undercuts());
     view! {
@@ -125,10 +224,9 @@ pub fn RetainerUndercuts() -> impl IntoView {
                         match retainer {
                             Ok(retainers) => {
                                 let retainers: Vec<_> = retainers
-                                    .retainers
                                     .into_iter()
                                     .map(|(character, retainers)| {
-                                        view! { <CharacterRetainerList character retainers/> }
+                                        view! { <CharacterRetainerUndercutList character retainers/> }
                                     })
                                     .collect();
                                 view! { <div>{retainers}</div> }

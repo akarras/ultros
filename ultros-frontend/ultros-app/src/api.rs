@@ -3,6 +3,7 @@ use itertools::Itertools;
 use leptos::Serializable;
 use leptos::*;
 use log::error;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::instrument;
 use ultros_api_types::{
@@ -68,9 +69,17 @@ pub(crate) async fn get_retainer_listings() -> AppResult<UserRetainerListings> {
     fetch_api("/api/v1/user/retainer/listings").await
 }
 
-pub(crate) async fn get_retainer_undercuts() -> AppResult<UserRetainerListings> {
+#[derive(Deserialize, Serialize, Clone)]
+pub(crate) struct UndercutData {
+    pub(crate) current: ActiveListing,
+    pub(crate) cheapest: i32,
+}
+
+pub type Undercuts = Vec<(Option<FfxivCharacter>, Vec<(Retainer, Vec<UndercutData>)>)>;
+
+pub(crate) async fn get_retainer_undercuts() -> AppResult<Undercuts> {
     // get our retainer data
-    let mut retainer_data = get_retainer_listings().await?;
+    let retainer_data = get_retainer_listings().await?;
     // build a unique list of worlds and item ids so we can fetch additional info about them
     // todo: couldn't I just use cheapest listings for each world & avoid looking up literally every retainer?
     let world_items: HashMap<i32, Vec<i32>> = retainer_data
@@ -103,38 +112,49 @@ pub(crate) async fn get_retainer_undercuts() -> AppResult<UserRetainerListings> 
         },
     );
     // Now remove every listing from the user retainer listings that is already the cheapest listing per world
-    for (_, retainers) in &mut retainer_data.retainers {
-        for (_retainer, listings) in retainers {
-            let mut new_listings = vec![];
-            for listing in listings.iter() {
-                // use the world/item_id as keys to lookup the rest of the listings that match this retainer
-                if let Some(cheapest) = listings_map
-                    .get(&listing.world_id)
-                    .and_then(|world_map| world_map.get(&listing.item_id))
-                    .and_then(|listings| {
-                        listings
+    let retainer_data = retainer_data
+        .retainers
+        .into_iter()
+        .map(|(c, retainers)| {
+            (
+                c,
+                retainers
+                    .into_iter()
+                    .map(|(r, listings)| {
+                        let new_listings = listings
                             .iter()
-                            .filter(|(cheapest, _)| {
-                                if listing.hq {
-                                    listing.hq == cheapest.hq
-                                } else {
-                                    true
-                                }
+                            .filter_map(|listing| {
+                                // use the world/item_id as keys to lookup the rest of the listings that match this retainer
+                                listings_map
+                                    .get(&listing.world_id)
+                                    .and_then(|world_map| world_map.get(&listing.item_id))
+                                    .and_then(|listings| {
+                                        listings
+                                            .iter()
+                                            .filter(|(cheapest, _)| {
+                                                if listing.hq {
+                                                    listing.hq == cheapest.hq
+                                                } else {
+                                                    true
+                                                }
+                                            })
+                                            .map(|(l, _)| l.price_per_unit)
+                                            .min()
+                                    })
+                                    .and_then(|cheapest| {
+                                        (listing.price_per_unit > cheapest).then(|| UndercutData {
+                                            current: listing.clone(),
+                                            cheapest,
+                                        })
+                                    })
                             })
-                            .map(|(l, _)| l.price_per_unit)
-                            .min()
+                            .collect();
+                        (r, new_listings)
                     })
-                {
-                    if listing.price_per_unit > cheapest {
-                        new_listings.push(listing.clone());
-                    }
-                } else {
-                    return Err(AppError::NoRetainerItems); // in theory this shouldn't happen, but mark as false to leave it in the set?
-                };
-            }
-            *listings = new_listings;
-        }
-    }
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect::<Vec<_>>();
 
     Ok(retainer_data)
 }
