@@ -206,16 +206,16 @@ impl WorldCache {
             .expect("World query shouldn't ever fail");
         let name_map: HashMap<_, _> = worlds
             .iter()
-            .map(|i| (i.name.clone(), AnySelector::World(i.id)))
+            .map(|i| (i.name.to_lowercase(), AnySelector::World(i.id)))
             .chain(
                 datacenters
                     .iter()
-                    .map(|i| (i.name.clone(), AnySelector::Datacenter(i.id))),
+                    .map(|i| (i.name.to_lowercase(), AnySelector::Datacenter(i.id))),
             )
             .chain(
                 regions
                     .iter()
-                    .map(|i| (i.name.clone(), AnySelector::Region(i.id))),
+                    .map(|i| (i.name.to_lowercase(), AnySelector::Region(i.id))),
             )
             .collect();
 
@@ -284,8 +284,9 @@ impl WorldCache {
     }
 
     pub fn lookup_value_by_name(&self, name: &str) -> Result<AnyResult, WorldCacheError> {
+        let name = name.to_lowercase();
         self.name_map
-            .get(name)
+            .get(&name)
             .and_then(|selector| self.lookup_selector(selector).ok())
             // if there's a world id that we could match with, try using that
             .or_else(|| {

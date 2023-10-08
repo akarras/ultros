@@ -90,27 +90,29 @@ impl UltrosDb {
             let new_datacenters: Vec<DataCenterView> = datacenter
                 .0
                 .iter()
-                .sorted_by(|a, b| a.name.cmp(&b.name))
+                .sorted_by_key(|d| &d.name)
                 .cloned()
                 .collect();
-            let new_datacenters: Vec<_> =
-                PartialDiffIterator::from((new_datacenters.iter(), existing_datacenters.iter()))
-                    .flat_map(|m| match m {
-                        crate::partial_diff_iterator::DiffItem::Same(_, _) => None,
-                        crate::partial_diff_iterator::DiffItem::Left(datacenter) => {
-                            Some(datacenter::ActiveModel {
-                                id: ActiveValue::default(),
-                                name: Set(datacenter.name.0.clone()),
-                                region_id: Set(regions
-                                    .iter()
-                                    .find(|r| r.name == datacenter.region.0)
-                                    .map(|m| m.id)
-                                    .expect("We should have all regions stored at this point.")),
-                            })
-                        }
-                        crate::partial_diff_iterator::DiffItem::Right(_) => None,
+            let new_datacenters: Vec<_> = PartialDiffIterator::from((
+                new_datacenters.iter(),
+                existing_datacenters.iter().sorted_by_key(|d| &d.name),
+            ))
+            .flat_map(|m| match m {
+                crate::partial_diff_iterator::DiffItem::Same(_, _) => None,
+                crate::partial_diff_iterator::DiffItem::Left(datacenter) => {
+                    Some(datacenter::ActiveModel {
+                        id: ActiveValue::default(),
+                        name: Set(datacenter.name.0.clone()),
+                        region_id: Set(regions
+                            .iter()
+                            .find(|r| r.name == datacenter.region.0)
+                            .map(|m| m.id)
+                            .expect("We should have all regions stored at this point.")),
                     })
-                    .collect();
+                }
+                crate::partial_diff_iterator::DiffItem::Right(_) => None,
+            })
+            .collect();
             if !new_datacenters.is_empty() {
                 info!("new datacenters {new_datacenters:?}");
                 if let Err(e) = datacenter::Entity::insert_many(new_datacenters)
