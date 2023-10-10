@@ -11,7 +11,7 @@ use leptos_meta::Link;
 use leptos_meta::Meta;
 use leptos_router::escape;
 use leptos_router::*;
-use ultros_api_types::world_helper::AnyResult;
+use ultros_api_types::world_helper::{AnyResult, OwnedResult};
 use xiv_gen::ItemId;
 
 #[component]
@@ -178,11 +178,19 @@ pub fn ItemView() -> impl IntoView {
     };
     let categories = &data.item_ui_categorys;
     let search_categories = &data.item_search_categorys;
+    let region_type = move || match get_price_zone().0() {
+        Some(OwnedResult::Region(_)) => "region",
+        Some(OwnedResult::Datacenter(_)) => "datacenter",
+        Some(OwnedResult::World(_)) => "world",
+        None => "unknown",
+    };
     let description = create_memo(move |_| {
         format!(
-            "Current listings and sale history for the item {} in {}",
+            "Current lowest prices and sale history for the item {} within the {} {}. Discover related items and view crafting recipes. {}",
             item_name(),
+            region_type(),
             world(),
+            item_description()
         )
     });
     let item_category = move || {

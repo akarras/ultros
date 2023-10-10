@@ -34,7 +34,8 @@ fn CategoryView(category: u8) -> impl IntoView {
         {categories.into_iter()
             .map(|(_, name, id)| view! {
                 <Tooltip tooltip_text=Oco::from(name.as_str())>
-                    <APersistQuery href=["/items/category/", &name].concat() remove_values=&["page"]>
+                    // for submarine parts, there's a slash in the name that needs to be sanitized
+                    <APersistQuery href=["/items/category/", &name.replace("/", "%2F")].concat() remove_values=&["page"]>
                         <ItemSearchCategoryIcon id=*id />
                     </APersistQuery>
                 </Tooltip>
@@ -247,6 +248,19 @@ pub fn JobItems() -> impl IntoView {
         } />
     </div>
     <ItemList items />}
+}
+
+#[component]
+pub fn DefaultItems() -> impl IntoView {
+    view! {
+        <MetaTitle title="Items Explorer"/>
+        <MetaDescription text="Lookup items by their category. Similar to the marketboard categories that are visible in Final Fantasy 14. Find the cheapest minions, or find that new piece of glamour for your Summoner."/>
+        <div class="flex flex-col">
+            <div>"Choose a category from the menu to explore items."</div>
+            <div>"Once you choose a category, you will be able to sort the items by price, date added, alphabetically, or by item level."</div>
+            <div>""</div>
+        </div>
+    }
 }
 
 #[derive(PartialEq, PartialOrd, Copy, Clone)]
@@ -507,25 +521,22 @@ pub fn ItemExplorer() -> impl IntoView {
     view! {
         <div class="main-content">
             <div class="mx-auto container flex flex-col md:flex-row items-start">
-                <div class="flex grow flex-row items-start">
-                    <div class="flex flex-col sm:text-3xl text-lg max-w-sm shrink">
-                        "Weapons"
-                        <CategoryView category=1 />
-                        "Armor"
-                        <CategoryView category=2 />
-                        "Items"
-                        <CategoryView category=3 />
-                        "Housing"
-                        <CategoryView category=4 />
-                        "Job Set"
-                        <JobsList />
-                    </div>
-                    <div class="flex flex-col grow">
-                        <Outlet />
-                    </div>
+                <div class="flex flex-col text-lg max-w-sm shrink">
+                    "Weapons"
+                    <CategoryView category=1 />
+                    "Armor"
+                    <CategoryView category=2 />
+                    "Items"
+                    <CategoryView category=3 />
+                    "Housing"
+                    <CategoryView category=4 />
+                    "Job Set"
+                    <JobsList />
+                    <Ad class="h-40 md:h-[50vh]"/>
                 </div>
-                <div class="w-40">
-                    <Ad class="h-96 md:h-[50vh]"/>
+                <div class="flex flex-col grow">
+                    <h2 class="text-2xl">"Item Explorer"</h2>
+                    <Outlet />
                 </div>
             </div>
         </div>
