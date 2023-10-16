@@ -213,7 +213,7 @@ async fn show_list(
             f(&format_args!("- {item_name} 🪙{price}"))
         })
         .to_string();
-    ctx.send(|r| r.embed(|e| e.title(format!("{}", list.name)).description(description)))
+    ctx.send(|r| r.embed(|e| e.title(list.name.to_string()).description(description)))
         .await?;
     Ok(())
 }

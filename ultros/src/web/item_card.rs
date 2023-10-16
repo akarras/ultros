@@ -42,7 +42,7 @@ pub(crate) async fn generate_image<'a>(
         let backend = SVGBackend::with_string(&mut buffer, SIZE);
         if let Err(e) = ultros_charts::draw_sale_history_scatter_plot(
             Rc::new(RefCell::new(backend)),
-            &world_helper,
+            world_helper,
             &sales,
             ChartOptions {
                 remove_outliers: true,
