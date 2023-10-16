@@ -15,11 +15,12 @@ use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
         ad::Ad, clipboard::*, gil::*, item_icon::*, meta::*, tooltip::*, virtual_scroller::*,
-        world_picker::*,
+        world_picker::*, query_button::QueryButton,
     },
     error::AppError,
     global_state::LocalWorldData,
 };
+use leptos_icons::*;
 
 /// Computed sale stats
 #[derive(Hash, Clone, Debug, PartialEq)]
@@ -197,12 +198,12 @@ fn AnalyzerTable(
     // get ranges of possible values for our sliders
 
     let items = &xiv_gen_db::data().items;
-    let (sort_mode, set_sort_mode) = create_query_signal::<SortMode>("sort");
+    let (sort_mode, _set_sort_mode) = create_query_signal::<SortMode>("sort");
     let (minimum_profit, set_minimum_profit) = create_query_signal::<i32>("profit");
     let (minimum_roi, set_minimum_roi) = create_query_signal("roi");
     let (max_predicted_time, set_max_predicted_time) = create_query_signal::<String>("next-sale");
-    let (world_filter, set_world_filter) = create_query_signal::<String>("world");
-    let (datacenter_filter, set_datacenter_filter) = create_query_signal::<String>("datacenter");
+    let (world_filter, _set_world_filter) = create_query_signal::<String>("world");
+    let (datacenter_filter, _set_datacenter_filter) = create_query_signal::<String>("datacenter");
     let world_clone = worlds.clone(); // cloned to pass into closure
     let world_filter_list = create_memo(move |_| {
         let world = world_filter().or_else(datacenter_filter)?;
@@ -273,8 +274,7 @@ fn AnalyzerTable(
     const DATACENTER_WIDTH: &str = "width: 130px";
     const WORLD_WIDTH: &str = "width: 180px";
     view! {
-        <MetaTitle title="Price Analayzer"/>
-        <MetaDescription text="The analyzer finds the best items to buy on other worlds and sell on your own world."/>
+
        <div class="flex flex-col md:flex-row gap-2">
             <span>"filter:"</span><br/>
            <div class="flex-column">
@@ -318,35 +318,29 @@ fn AnalyzerTable(
             <div class="grid-header" role="rowgroup">
                 <div role="columnheader" class="w-[25px]">"HQ"</div>
                 <div role="columnheader first" class="w-[450px]">"Item"</div>
-                <div role="columnheader" style="width:100px;" on:click=move |_| set_sort_mode(Some(SortMode::Profit))>
-                    <div class="flex-row flex-space">
-                    {move || {
-                        match sort_mode().unwrap_or(SortMode::Roi) {
-                            SortMode::Profit => {
-                                view!{"Profit"<i class="fa-solid fa-sort-down"></i>}.into_view()
-                            },
-                            _ => view!{<Tooltip tooltip_text=Oco::from("Sort by profit")>"Profit"</Tooltip>}.into_view(),
-                        }
-                    }}
-                    </div>
+                <div role="columnheader" style="width:100px;">
+                    <Tooltip tooltip_text=Oco::from("Sort by profit")>
+                        <QueryButton class="!text-fuchsia-300 hover:text-fuchsia-200" active_classes="!text-neutral-300 hover:text-neutral-200" query_name="sort" value="profit">
+                            <div class="flex-row flex-space">
+                                "Profit" {move || (sort_mode() == Some(SortMode::Profit)).then(|| { view!{<Icon icon=Icon::from(BiIcon::BiSortDownRegular) /> }})}
+                            </div>
+                        </QueryButton>
+                    </Tooltip>
                 </div>
-                <div role="columnheader" style="width: 100px;" on:click=move |_| set_sort_mode(Some(SortMode::Roi))>
-                    <div class="flex-row flex-space">
-                    {move || {
-                        match sort_mode().unwrap_or(SortMode::Roi) {
-                            SortMode::Roi => {
-                                view!{"R.O.I"<i class="fa-solid fa-sort-down"></i>}.into_view()
-                            },
-                            _ => view!{<Tooltip tooltip_text=Oco::from("Sort by return on investment")>"R.O.I."</Tooltip>}.into_view(),
-                        }
-                    }}
-                    </div>
+                <div role="columnheader" style="width:100px;">
+                    <Tooltip tooltip_text=Oco::from("Sort by R.O.I")>
+                        <QueryButton class="!text-fuchsia-300 hover:text-fuchsia-200" active_classes="!text-neutral-300 hover:text-neutral-200" query_name="sort" value="roi" default=true>
+                            <div class="flex-row flex-space">
+                                "R.O.I." {move || (sort_mode() == Some(SortMode::Roi)).then(|| { view!{<Icon icon=Icon::from(BiIcon::BiSortDownRegular) /> }})}
+                            </div>
+                        </QueryButton>
+                    </Tooltip>
                 </div>
                 <div role="columnheader" style=WORLD_WIDTH>
-                    "World" {move || world_filter().map(move |world| view!{<a class="cursor-pointer" on:click=move |_| set_world_filter(None)><Tooltip tooltip_text=Oco::from("Clear this world filter")>"[" {&world} "]"</Tooltip></a>})}
+                    "World" <QueryButton query_name="world" value="" class="!text-fuchsia-300 hover:text-fuchsia-200" active_classes="hidden"><Tooltip tooltip_text=Oco::from("Clear this world filter")>{move || ["[", &world_filter().unwrap_or_default(), "]"].concat()}</Tooltip></QueryButton>
                 </div>
                 <div role="columnheader" style=DATACENTER_WIDTH>
-                    "Datacenter" {move || datacenter_filter().map(move |datacenter| view!{<a class="cursor-pointer" on:click=move |_| set_datacenter_filter(None)><Tooltip tooltip_text=Oco::from("Clear this datacenter filter")>"[" {&datacenter} "]"</Tooltip></a>})}
+                    "Datacenter" <QueryButton query_name="datacenter" value="" class="!text-fuchsia-300 hover:text-fuchsia-200" active_classes="hidden"><Tooltip tooltip_text=Oco::from("Clear this datacenter filter")>{move || ["[", &datacenter_filter().unwrap_or_default(), "]"].concat()}</Tooltip></QueryButton>
                 </div>
                 <div role="columnheader" style="width: 300px;">"Next sale"</div>
             </div>
@@ -390,8 +384,8 @@ fn AnalyzerTable(
                         </div>
                         <div role="cell" style="width: 100px;"><Gil amount=data.profit /></div>
                         <div role="cell" style="width: 100px;">{data.return_on_investment}"%"</div>
-                        <div role="cell" style=WORLD_WIDTH><Gil amount=data.cheapest_price/>" on "<a class="cursor-pointer" on:click=move |_| { set_datacenter_filter(None); set_world_filter(Some(world_event.clone())); }>{world}</a></div>
-                        <div role="cell" style=DATACENTER_WIDTH><a class="cursor-pointer" on:click=move |_| { set_world_filter(None); set_datacenter_filter(Some(datacenter_event.clone())) }>{&datacenter}</a></div>
+                        <div role="cell" style=WORLD_WIDTH><Gil amount=data.cheapest_price/>" on "<QueryButton query_name="world" value=world_event class="!text-fuchsia-300" active_classes="!text-neutral-300 hover:text-neutral-200" remove_queries=&["datacenter"]>{&world}</QueryButton></div>
+                        <div role="cell" style=DATACENTER_WIDTH><QueryButton query_name="datacenter" value=datacenter_event class="!text-fuchsia-300" active_classes="!text-neutral-300 hover:text-neutral-200" remove_queries=&["world"]>{&datacenter}</QueryButton></div>
                         <div role="cell" style="width: 300px;">{data.sale_summary
                                 .avg_sale_duration
                                 .and_then(|sale_duration| {
@@ -402,7 +396,6 @@ fn AnalyzerTable(
                         </div>}
                 }/>
         </div>
-        <Ad class="h-48 md:h-[48vh]" />
        </div>
     }
 }
@@ -449,30 +442,37 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     view!{
         <div class="main-content">
             <div class="container mx-auto flex flex-col">
-            <span class="title">"Resale Analyzer Results for "{world}</span><br/>
-            <AnalyzerWorldNavigator /><br />
-            <span>"The analyzer will show items that sell more on "{world}" than they can be purchased for."</span><br/>
-            <span>"These estimates aren't very accurate, but are meant to be easily accessible and fast to use."</span><br/>
-            <span>"Be extra careful to make sure that the price you buy things for matches"</span><br/>
-            <span>"Sample filters"</span>
-            <div class="flex flex-col md:flex-row flex-wrap">
-                <a class="btn p-1" href="?next-sale=7d&roi=300&profit=0&sort=profit&">"300% return - 7 days"</a>
-                <a class="btn p-1" href="?next-sale=1M&roi=500&profit=200000&">"500% return - 200K min profit - 1 month"</a>
-                <a class="btn p-1" href="?profit=100000">"100K profit"</a>
-            </div>
-            {move || {
-                let world_cheapest = world_cheapest_listings.get();
-                let sales = sales.get();
-                let global_cheapest_listings = global_cheapest_listings.get();
-                let worlds = worlds_value();
-                let values = world_cheapest
-                    .and_then(|w| w.ok())
-                    .and_then(|r| sales.and_then(|s| s.ok())
-                    .and_then(|s| global_cheapest_listings.and_then(|g| g.ok()).map(|g| (r, s, g))));
-                values.map(|(world_cheapest_listings, sales, global_cheapest_listings)| {
-                view!{<AnalyzerTable sales global_cheapest_listings world_cheapest_listings worlds world=world.into() />
-                } }
-            )}}
+                <div class="flex flex-col md:flex-row">
+                    <div class="flex flex-col">
+                        <span class="title">"Resale Analyzer Results for "{world}</span><br/>
+                        <MetaTitle title=move || format!("Price Analayzer - {}", world())/>
+                        <MetaDescription text=move || format!("The analyzer enables ffxiv merchants to find the best items to buy on other worlds and sell on {}. Filter for the best profits or return, make gil through market arbritrage.", world())/>
+                        <AnalyzerWorldNavigator /><br />
+                        <span>"The analyzer will show items that sell more on "{world}" than they can be purchased for."</span><br/>
+                        <span>"These estimates aren't very accurate, but are meant to be easily accessible and fast to use."</span><br/>
+                        <span>"Be extra careful to make sure that the price you buy things for matches"</span><br/>
+                        <span>"Sample filters"</span>
+                        <div class="flex flex-col md:flex-row flex-wrap">
+                            <a class="btn p-1" href="?next-sale=7d&roi=300&profit=0&sort=profit&">"300% return - 7 days"</a>
+                            <a class="btn p-1" href="?next-sale=1M&roi=500&profit=200000&">"500% return - 200K min profit - 1 month"</a>
+                            <a class="btn p-1" href="?profit=100000">"100K profit"</a>
+                        </div>
+                    </div>
+                    <Ad class="h-32" />
+                </div>
+                {move || {
+                    let world_cheapest = world_cheapest_listings.get();
+                    let sales = sales.get();
+                    let global_cheapest_listings = global_cheapest_listings.get();
+                    let worlds = worlds_value();
+                    let values = world_cheapest
+                        .and_then(|w| w.ok())
+                        .and_then(|r| sales.and_then(|s| s.ok())
+                        .and_then(|s| global_cheapest_listings.and_then(|g| g.ok()).map(|g| (r, s, g))));
+                    values.map(|(world_cheapest_listings, sales, global_cheapest_listings)| {
+                    view!{<AnalyzerTable sales global_cheapest_listings world_cheapest_listings worlds world=world.into() />
+                    } }
+                )}}
         </div>
     </div>}.into_view()
 }

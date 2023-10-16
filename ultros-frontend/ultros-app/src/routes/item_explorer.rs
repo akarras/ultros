@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::{collections::HashSet, str::FromStr};
 
+use crate::components::query_button::QueryButton;
 use crate::components::{
     ad::Ad, cheapest_price::*, fonts::*, meta::*, small_item_display::*, tooltip::*,
 };
@@ -323,39 +324,6 @@ impl ToString for SortDirection {
         }
         .to_string()
     }
-}
-
-/// A button that sets the query property to the given value
-#[component]
-pub fn QueryButton(
-    #[prop(into)] query_name: TextProp,
-    /// default state classes
-    #[prop(into)]
-    class: TextProp,
-    /// classes that will replace the main classes when this is active
-    #[prop(into)]
-    active_classes: TextProp,
-    #[prop(into)] value: TextProp,
-    #[prop(optional)] default: bool,
-    children: Box<dyn Fn() -> Fragment>,
-) -> impl IntoView {
-    let Location {
-        pathname, query, ..
-    } = use_location();
-    let query_1 = query_name.clone();
-    let value_1 = value.clone();
-    let is_active = move || {
-        let query_name = query_1.get();
-        let value = value_1.get();
-        query
-            .with(|q| q.get(&query_name).map(|query_value| query_value == &value))
-            .unwrap_or(default)
-    };
-    view! { <a class=move || if is_active() { active_classes.get() } else { class.get() }.to_string() href=move || {
-        let mut query = query();
-        let _ = query.insert(query_name.get().to_string(), value.get().to_string());
-        format!("{}{}", pathname(), query.to_query_string())
-    }>{children}</a> }
 }
 
 /// A URL that copies the existing query string but replaces the path
