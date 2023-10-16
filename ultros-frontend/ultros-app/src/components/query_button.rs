@@ -27,11 +27,8 @@ pub fn QueryButton(
         let query_name = query_1.get();
         let value = value_1.get();
         query.with(|q| {
-            q.get(&query_name)
-                .as_ref()
-                .map(|s| s.as_str())
-                .unwrap_or_default()
-                == &value
+            let query_val = q.get(&query_name).as_ref().map(|s| s.as_str());
+            query_val.unwrap_or_default() == &value || (default == true && query_val.is_none())
         })
     };
     view! { <a class=move || if is_active() { active_classes.get() } else { class.get() }.to_string() href=move || {

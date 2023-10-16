@@ -14,8 +14,8 @@ use xiv_gen::ItemId;
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
-        ad::Ad, clipboard::*, gil::*, item_icon::*, meta::*, tooltip::*, virtual_scroller::*,
-        world_picker::*, query_button::QueryButton,
+        ad::Ad, clipboard::*, gil::*, item_icon::*, meta::*, query_button::QueryButton, tooltip::*,
+        virtual_scroller::*, world_picker::*,
     },
     error::AppError,
     global_state::LocalWorldData,
