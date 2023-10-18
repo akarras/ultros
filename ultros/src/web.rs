@@ -335,7 +335,7 @@ async fn get_item_icon(
     let bytes =
         get_item_image(item_id as i32, query.size).ok_or(anyhow::anyhow!("Failed to get icon"))?;
     let mime_type = mime_guess::from_path("icon.webp").first_or_text_plain();
-    let age_header = HeaderValue::from_str("max-age=86400").unwrap();
+    let age_header = HeaderValue::from_static("max-age=86400");
     Ok(Response::builder()
         .header(header::CACHE_CONTROL, age_header)
         .header(header::CONTENT_TYPE, mime_type.as_ref())

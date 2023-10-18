@@ -5,7 +5,7 @@ use axum::{
     extract::{Path, State},
     headers::CacheControl,
     http::HeaderValue,
-    response::{IntoResponse, Response},
+    response::{AppendHeaders, IntoResponse, Response},
 };
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use futures::future::{join_all, try_join_all};
@@ -34,6 +34,10 @@ impl IntoResponse for Xml {
         response.headers_mut().insert(
             header::CONTENT_TYPE,
             HeaderValue::from_static(mime::XML.as_ref()),
+        );
+        response.headers_mut().insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("max-age=86400"),
         );
         response
     }
@@ -141,10 +145,11 @@ pub(crate) async fn world_sitemap(
     Ok(Xml(url_xml))
 }
 
+#[axum::debug_handler]
 pub(crate) async fn item_sitemap(
     State(world_cache): State<Arc<WorldHelper>>,
     State(analyzer_service): State<AnalyzerService>,
-) -> Result<(CacheControl, Xml), WebError> {
+) -> Result<Xml, WebError> {
     let mut item_id_map: HashMap<_, Vec<_>> = HashMap::new();
     let a = &analyzer_service;
     let sales = try_join_all(
