@@ -3,12 +3,11 @@ use crate::analyzer_service::AnalyzerService;
 use anyhow::anyhow;
 use axum::{
     extract::{Path, State},
-    headers::CacheControl,
     http::HeaderValue,
-    response::{AppendHeaders, IntoResponse, Response},
+    response::{IntoResponse, Response},
 };
-use chrono::{DateTime, Duration, NaiveDateTime, Utc};
-use futures::future::{join_all, try_join_all};
+use chrono::Utc;
+use futures::future::try_join_all;
 use itertools::Itertools;
 use mime_guess::mime;
 use reqwest::header;
@@ -145,7 +144,6 @@ pub(crate) async fn world_sitemap(
     Ok(Xml(url_xml))
 }
 
-#[axum::debug_handler]
 pub(crate) async fn item_sitemap(
     State(world_cache): State<Arc<WorldHelper>>,
     State(analyzer_service): State<AnalyzerService>,
@@ -238,8 +236,5 @@ pub(crate) async fn item_sitemap(
     items
         .write(&mut url_xml)
         .map_err(|_| anyhow!("Error creating site map"))?;
-    Ok((
-        CacheControl::new().with_max_age(std::time::Duration::from_secs(60 * 10)),
-        Xml(url_xml),
-    ))
+    Ok(Xml(url_xml))
 }
