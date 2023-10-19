@@ -12,7 +12,7 @@ ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
 RUN cargo leptos --manifest-path=./Cargo.toml build --release -vv
 
 FROM rustlang/rust:nightly-bullseye as runner
-COPY --from=builder /app/target/server/release/ultros /app/
+COPY --from=builder /app/target/release/ultros /app/
 COPY --from=builder /app/target/site /app/site
 COPY --from=builder /app/Cargo.toml /app/
 # copy font into local font dirs
