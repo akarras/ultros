@@ -7,12 +7,12 @@ pub fn Ad(#[prop(optional)] class: Option<&'static str>) -> impl IntoView {
     let ad_class = class.unwrap_or("h-64");
     let cookies = use_context::<Cookies>().unwrap();
     let (hide_ads, _) = cookies.use_cookie_typed::<_, bool>("HIDE_ADS");
-    let location = use_location();
-    let pathname = location.pathname;
-    let search = location.search;
+    // let location = use_location();
+    // let pathname = location.pathname;
+    // let search = location.search;
     move || {
-        let _ = pathname(); // reading from the path to reload this component on page load
-        let _ = search();
+        // let _ = pathname(); // reading from the path to reload this component on page load
+        // let _ = search();
         (!hide_ads().unwrap_or_default()).then(move ||view!{
         <div class=ad_class>
             <div class="flex flex-col h-full">
