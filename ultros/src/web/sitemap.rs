@@ -46,7 +46,7 @@ pub(crate) async fn sitemap_index(// State(world_cache): State<Arc<WorldCache>>,
 ) -> Result<Xml, WebError> {
     // Get all the worlds from the world cache and then populate the listings sitemap to point to all the world subsitemaps
     // let mut sitemap_list: Vec<_> = world_cache
-    //     .get_all()
+    //     .get_inner_data()
     //     .iter()
     //     .flat_map(|(r, dcs)| {
     //         [AnyResult::Region(r)]
@@ -152,7 +152,7 @@ pub(crate) async fn item_sitemap(
     let a = &analyzer_service;
     let sales = try_join_all(
         world_cache
-            .get_all()
+            .get_inner_data()
             .regions
             .iter()
             .flat_map(move |region| {

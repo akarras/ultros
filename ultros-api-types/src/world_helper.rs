@@ -248,7 +248,19 @@ impl<'a> WorldHelper {
         }
     }
 
-    pub fn get_all(&'a self) -> &'a WorldData {
+    pub fn iter(&'a self) -> impl Iterator<Item = AnyResult<'a>> {
+        self.world_data.regions.iter().flat_map(|r| {
+            [AnyResult::Region(r)]
+                .into_iter()
+                .chain(r.datacenters.iter().flat_map(|d| {
+                    [AnyResult::Datacenter(&d)]
+                        .into_iter()
+                        .chain(d.worlds.iter().map(|w| AnyResult::World(w)))
+                }))
+        })
+    }
+
+    pub fn get_inner_data(&'a self) -> &'a WorldData {
         &self.world_data
     }
 

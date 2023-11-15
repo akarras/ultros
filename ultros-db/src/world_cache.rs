@@ -347,12 +347,12 @@ impl WorldCache {
         regions.values().collect()
     }
 
-    pub fn get_all(&self) -> &AllWorldsAndRegions {
+    pub fn get_inner_data(&self) -> &AllWorldsAndRegions {
         &self.yoke.get().all
     }
 
     pub fn get_all_results(&self) -> impl Iterator<Item = AnyResult> {
-        self.get_all().iter().flat_map(|(r, d)| {
+        self.get_inner_data().iter().flat_map(|(r, d)| {
             [AnyResult::Region(r)]
                 .into_iter()
                 .chain(d.iter().flat_map(|(d, w)| {

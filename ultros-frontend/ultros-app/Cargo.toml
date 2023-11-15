@@ -10,7 +10,7 @@ leptos = { workspace = true, features = ["nightly"] }
 leptos_meta = { workspace = true, features = ["nightly"] }
 leptos_router = { workspace = true, features = ["nightly"] }
 leptos_axum = { workspace = true, optional = true }
-leptos-use = { workspace = true, optional = true }
+leptos-use = { workspace = true }
 xiv-gen-db = {path = "../../xiv-gen-db"}
 xiv-gen.workspace = true
 sublime_fuzzy = "0.7"
@@ -49,5 +49,5 @@ percent-encoding = "2.3.0"
 
 [features]
 default = ["ssr"] # this is mostly so if I run cargo check, it has a flavor to work on
-hydrate = ["leptos/hydrate", "leptos_meta/hydrate", "leptos_router/hydrate", "gloo", "gloo-net", "web-sys", "wasm-bindgen", "time/wasm-bindgen", "js-sys", "leptos-use"]
+hydrate = ["leptos/hydrate", "leptos_meta/hydrate", "leptos_router/hydrate", "gloo", "gloo-net", "web-sys", "wasm-bindgen", "time/wasm-bindgen", "js-sys"]
 ssr = ["leptos/ssr", "leptos_meta/ssr", "leptos_router/ssr", "reqwest", "leptos_axum", "web-sys", "ultros-db", "xiv-gen-db/embed"]

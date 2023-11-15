@@ -98,7 +98,7 @@ impl From<&WorldCache> for WorldData {
     fn from(value: &WorldCache) -> Self {
         Self {
             regions: value
-                .get_all()
+                .get_inner_data()
                 .iter()
                 .map(|(region, datacenters)| {
                     let region::Model {

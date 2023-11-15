@@ -1,6 +1,6 @@
 use leptos::*;
 
-use crate::global_state::LocalWorldData;
+use crate::{components::select::Select, global_state::LocalWorldData};
 use ultros_api_types::{world::World, world_helper::AnySelector};
 
 #[component]
@@ -13,7 +13,7 @@ pub fn WorldOnlyPicker(
         .0;
     match local_worlds {
         Ok(worlds) => {
-            let data = worlds.get_all().clone();
+            let data = worlds.get_inner_data().clone();
             view!{
                 <select class="p-1" on:change=move |input| {
                     let id = event_target_value(&input);
@@ -57,39 +57,50 @@ pub fn WorldPicker(
     let local_worlds = use_context::<LocalWorldData>()
         .expect("Local world data should always be present")
         .0;
+
     match local_worlds {
         Ok(worlds) => {
-            let data = worlds.get_all().clone();
-            // TODO: include a current world default option in the picker
-            view!{
-                <select class="p-1" on:change=move |input| {
-                    let world_target = event_target_value(&input);
-                    // world target should be in the form of world_type:id
-                    let (world_type, id) = world_target.split_once(':').unwrap();
-                    let id = id.parse().unwrap();
-                    let selector = match world_type {
-                        "world" => AnySelector::World(id),
-                        "datacenter" => AnySelector::Datacenter(id),
-                        "region" => AnySelector::Region(id),
-                        _ => panic!("Input type was a correct format {world_target}")
-                    };
-                    set_current_world(Some(selector))
-                }>
-                    {data.regions.into_iter().map(|region| {
-                        view!{<option value=move || format!("region:{}", region.id) prop:selected=move || current_world().map(|w| w == AnySelector::Region(region.id)).unwrap_or_default()>{&region.name}</option>
-                        {region.datacenters.into_iter().map(|datacenter| {
-                            view!{<option value=move || format!("datacenter:{}", datacenter.id) prop:selected=move || current_world().map(|w| w == AnySelector::Datacenter(datacenter.id)).unwrap_or_default()>{&datacenter.name}</option>
-                            {datacenter.worlds.into_iter().map(|world| {
-                                view!{<option value=move || {format!("world:{}", world.id)} prop:selected=move || current_world().map(|w| w == AnySelector::World(world.id)).unwrap_or_default()>
-                                    {&world.name}
-                                    </option>}
-                            }).collect::<Vec<_>>()}
-                            }
-                        }).collect::<Vec<_>>()}
-                        }
-                    }).collect::<Vec<_>>()}
-                    </select>
-                    }.into_view()
+            let worlds_1 = worlds.clone();
+            let data = create_memo(move |_| {
+                worlds
+                    .iter()
+                    .map(|l| (l.get_name().to_string(), AnySelector::from(&l)))
+                    .collect::<Vec<_>>()
+            });
+            let choice = create_memo(move |_| {
+                current_world().and_then(|world| {
+                    worlds_1
+                        .lookup_selector(world)
+                        .map(|r| (r.get_name().to_string(), world))
+                })
+            })
+            .into();
+            let set_choice = move |option: Option<(String, AnySelector)>| {
+                set_current_world(option.map(|(_, s)| s));
+            };
+            let set_choice = set_choice.into_signal_setter();
+            view! { <Select items=data.into()
+                choice=choice
+                set_choice=set_choice
+                as_label=move |(d, _)| d.clone()
+                children=move |(_, s), view| view!{
+                    <div class="flex flex-row gap-4"><div>{view}</div><div>{match s{
+                    AnySelector::World(_) => "world",
+                    AnySelector::Region(_) => "region",
+                    AnySelector::Datacenter(_) => "datacenter",
+                }}</div>
+                </div>
+                }
+
+                />
+            }
+            .into_view()
+
+            // data.regions.into_iter().map(|r| {
+            //     r.datacenters
+            //         .into_iter()
+            //         .map(|d| d.worlds.into_iter().map(|w| AnyResult::World(w)))
+            // })
         }
         Err(e) => view! {<div><span>"No worlds"</span>
         <span>{e.to_string()}</span></div>}

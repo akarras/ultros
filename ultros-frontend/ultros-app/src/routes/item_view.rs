@@ -64,7 +64,11 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                 }
                 AnyResult::Region(region) => {
                     // show all regions, and datacenters in this region
-                    let regions = world_data.get_all().regions.iter().map(AnyResult::Region);
+                    let regions = world_data
+                        .get_inner_data()
+                        .regions
+                        .iter()
+                        .map(AnyResult::Region);
                     let datacenters = world_data.get_datacenters(&AnyResult::Region(region));
                     let views: Vec<_> = regions
                         .chain(datacenters.iter().map(|dc| AnyResult::Datacenter(dc)))
@@ -75,7 +79,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
             }
         } else {
             let regions = world_data
-                .get_all()
+                .get_inner_data()
                 .regions
                 .iter()
                 .map(|r| AnyResult::Region(r));

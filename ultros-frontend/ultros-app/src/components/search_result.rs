@@ -8,7 +8,7 @@ use xiv_gen::ItemId;
 
 /// Leptos version of sublime_fuzzy::format_simple
 #[component]
-fn MatchFormatter(m: Match, target: String) -> impl IntoView {
+pub fn MatchFormatter(m: Match, target: String) -> impl IntoView {
     let mut pieces = Vec::new();
 
     let mut last_end = 0;

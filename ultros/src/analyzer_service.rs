@@ -288,7 +288,7 @@ impl AnalyzerService {
         world_cache: Arc<WorldCache>,
     ) -> Self {
         let cheapest_items: HashMap<AnySelector, RwLock<CheapestListings>> = world_cache
-            .get_all()
+            .get_inner_data()
             .iter()
             .flat_map(|(region, dcs)| {
                 [AnySelector::Region(region.id)].into_iter().chain(
@@ -301,7 +301,7 @@ impl AnalyzerService {
         let cheapest_items = Arc::new(cheapest_items);
         let recent_sale_history = Arc::new(
             world_cache
-                .get_all()
+                .get_inner_data()
                 .iter()
                 .flat_map(|(_, dcs)| dcs.iter().flat_map(|(_, w)| w.iter().map(|w| w.id)))
                 .map(|w| (w, RwLock::default()))
