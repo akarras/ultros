@@ -7,6 +7,7 @@ use leptos_router::*;
 use std::collections::VecDeque;
 use xiv_gen::ItemId;
 
+use crate::components::skeleton::BoxSkeleton;
 use crate::global_state::home_world::get_homeworld;
 #[cfg(not(feature = "ssr"))]
 use crate::ws::live_data::live_sales;
@@ -32,6 +33,7 @@ fn Item(item_id: i32) -> impl IntoView {
 
 #[component]
 pub fn LiveSaleTicker() -> impl IntoView {
+    let (done_loading, set_done_loading) = create_signal(false);
     let sales = create_rw_signal::<VecDeque<SaleView>>(VecDeque::new());
     let (homeworld, _) = get_homeworld();
     create_effect(move |_| {
@@ -72,8 +74,10 @@ pub fn LiveSaleTicker() -> impl IntoView {
                             s.push_back(sale);
                         }
                     });
+                    set_done_loading(true);
                 }
             }
+            set_done_loading(true);
         });
     });
 
@@ -87,25 +91,27 @@ pub fn LiveSaleTicker() -> impl IntoView {
         <div class="flex flex-col" class:hidden=move || homeworld.with(|w| w.is_none())>
             <h3 class="text-xl">"recent sales on "{move || homeworld().map(|world| world.name).unwrap_or_default()}</h3>
             <div class="gap-1">
-                <For each=sales
-                    key=|sale| sale.sold_date
-                    let:sale>
-                    <A href=move || format!("/item/{}/{}", homeworld().map(|world| world.name).unwrap_or_default(), sale.item_id)>
-                        <div class="flex flex-row gap-1 p-1 whitespace-nowrap text-white bg-neutral-950 hover:bg-neutral-800 transition-colors">
-                            <ItemIcon item_id=sale.item_id icon_size=IconSize::Medium />
-                            <div class="flex flex-col">
-                                <div class="flex flex-row gap-5">
-                                    <Item item_id=sale.item_id />
-                                    {sale.hq.then(|| "HQ")}
-                                </div>
-                                <div class="flex flex-row gap-5 text-sm">
-                                    <Gil amount=sale.price />
-                                    <RelativeToNow timestamp=sale.sold_date />
+                <Show when=done_loading fallback=move || view!{ <div class="h-[416px]"><BoxSkeleton/></div> } >
+                    <For each=sales
+                        key=|sale| sale.sold_date
+                        let:sale>
+                        <A href=move || format!("/item/{}/{}", homeworld().map(|world| world.name).unwrap_or_default(), sale.item_id)>
+                            <div class="flex flex-row gap-1 p-1 whitespace-nowrap text-white bg-neutral-950 hover:bg-neutral-800 transition-colors">
+                                <ItemIcon item_id=sale.item_id icon_size=IconSize::Medium />
+                                <div class="flex flex-col">
+                                    <div class="flex flex-row gap-5">
+                                        <Item item_id=sale.item_id />
+                                        {sale.hq.then(|| "HQ")}
+                                    </div>
+                                    <div class="flex flex-row gap-5 text-sm">
+                                        <Gil amount=sale.price />
+                                        <RelativeToNow timestamp=sale.sold_date />
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                    </A>
-                </For>
+                        </A>
+                    </For>
+                </Show>
             </div>
         </div>
     }

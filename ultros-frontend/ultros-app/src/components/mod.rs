@@ -21,6 +21,7 @@ pub mod reorderable_list;
 pub mod sale_history_table;
 pub mod search_box;
 pub mod search_result;
+pub mod skeleton;
 pub mod small_item_display;
 pub mod stats_display;
 pub mod toggle;

@@ -4,9 +4,11 @@ use leptos::*;
 use ultros_api_types::cheapest_listings::CheapestListingMapKey;
 use xiv_gen::{Item, ItemId, Recipe};
 
-use crate::global_state::cheapest_prices::CheapestPrices;
+use crate::{
+    components::skeleton::SingleLineSkeleton, global_state::cheapest_prices::CheapestPrices,
+};
 
-use super::{cheapest_price::*, gil::*, loading::*, small_item_display::*};
+use super::{cheapest_price::*, gil::*, small_item_display::*};
 
 /// This iterator will attempt to find related items using the classjobcategory && ilvl
 fn item_set_iter(item: &'static Item) -> impl Iterator<Item = &'static Item> {
@@ -79,7 +81,7 @@ fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
     let cheapest_prices = use_context::<CheapestPrices>().unwrap();
 
     view! {
-        <Suspense fallback=move || view!{<Loading />}>
+        <Suspense fallback=move || view!{<SingleLineSkeleton />}>
             {move || cheapest_prices.read_listings.with(|prices| {
                 prices.as_ref().and_then(|prices| prices.as_ref().ok()).map(|prices| {
                     let hq_amount : i32 = IngredientsIter::new(recipe)

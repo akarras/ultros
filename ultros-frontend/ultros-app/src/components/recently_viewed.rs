@@ -2,9 +2,9 @@ use std::collections::VecDeque;
 
 use leptos::*;
 #[cfg(feature = "hydrate")]
-use leptos_use::storage::use_local_storage;
+use leptos_use::storage::{use_local_storage, JsonCodec};
 
-use crate::components::search_result::ItemSearchResult;
+use crate::components::{search_result::ItemSearchResult, skeleton::BoxSkeleton};
 
 #[derive(Clone, Copy)]
 pub struct RecentItems {
@@ -18,7 +18,7 @@ impl RecentItems {
     #[cfg(feature = "hydrate")]
     pub fn new() -> Self {
         let (read_signal, write_signal, _delete_fn) =
-            use_local_storage::<VecDeque<i32>, _>("recently_viewed", VecDeque::new());
+            use_local_storage::<VecDeque<i32>, JsonCodec>("recently_viewed");
         Self {
             read_signal,
             write_signal,
@@ -69,19 +69,21 @@ pub fn RecentlyViewed() -> impl IntoView {
     let (empty_search, set_empty_search) = create_signal("".to_string());
 
     view! {
-        <div class:hidden=move || {
-            local_items.with(|i| i.as_ref().map(|i| i.is_empty()).unwrap_or(true))
-        }>
-            <h4 class="text-lg">"Recently Viewed"</h4>
-            <div class="flex flex-col">
-                {move || {
-                    let items = local_items();
-                    Some(items?.iter().map(|item| {
-                        view!{ <ItemSearchResult item_id=*item search=empty_search set_search=set_empty_search /> }
-                    }).collect::<Vec<_>>())
-                }}
-                {}
+        <Suspense fallback=move || view!{<div class="h-[400px]"><BoxSkeleton/></div>}>
+            <div class:hidden=move || {
+                local_items.with(|i| i.as_ref().map(|i| i.is_empty()).unwrap_or(true))
+            }>
+                <h4 class="text-lg">"Recently Viewed"</h4>
+                <div class="flex flex-col">
+                    {move || {
+                        let items = local_items();
+                        Some(items?.iter().map(|item| {
+                            view!{ <ItemSearchResult item_id=*item search=empty_search set_search=set_empty_search /> }
+                        }).collect::<Vec<_>>())
+                    }}
+                    {}
+                </div>
             </div>
-        </div>
+        </Suspense>
     }
 }

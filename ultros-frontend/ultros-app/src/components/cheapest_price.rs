@@ -1,8 +1,10 @@
 use leptos::*;
 use xiv_gen::ItemId;
 
-use super::{gil::*, loading::*, world_name::*};
-use crate::global_state::cheapest_prices::CheapestPrices;
+use super::{gil::*, world_name::*};
+use crate::{
+    components::skeleton::SingleLineSkeleton, global_state::cheapest_prices::CheapestPrices,
+};
 use ultros_api_types::world_helper::AnySelector;
 
 /// Always shows the lowest price
@@ -10,7 +12,7 @@ use ultros_api_types::world_helper::AnySelector;
 pub fn CheapestPrice(item_id: ItemId, #[prop(optional)] show_hq: Option<bool>) -> impl IntoView {
     let cheapest = use_context::<CheapestPrices>().unwrap().read_listings;
     view! {
-        <Suspense fallback=move || view!{<Loading />}>
+        <Suspense fallback=move || view!{<SingleLineSkeleton />}>
         {move || cheapest
         .with(|data| {
             data.as_ref().and_then(|data| data.as_ref().ok()).map(|data| {
