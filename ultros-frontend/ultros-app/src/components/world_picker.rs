@@ -13,34 +13,19 @@ pub fn WorldOnlyPicker(
         .0;
     match local_worlds {
         Ok(worlds) => {
-            let data = worlds.get_inner_data().clone();
+            let data = create_memo(move |_| worlds.iter().filter_map(|w| w.as_world()).cloned().collect::<Vec<_>>());
             view!{
-                <select class="p-1" on:change=move |input| {
-                    let id = event_target_value(&input);
-                    // let (_world_type, id) = world_target.split_once(":").unwrap();
-                    let id = id.parse().unwrap();
-                    let world = worlds.lookup_selector(AnySelector::World(id)).and_then(|world| world.as_world()).cloned();
-                    set_current_world(world);
-                }>
-            {data.regions.into_iter().map(|region| {
-                view!{// <optgroup label=region.name>
-                {region.datacenters.into_iter().map(|datacenter| {
-                    view!{// <optgroup label=datacenter.name>
-                    {datacenter.worlds.into_iter().map(|world| {
-                        view!{<option value=world.id prop:selected=move || {
-                            current_world.with(|w| w.as_ref().map(|w| w.id).unwrap_or_default() == world.id)
-                        }>
-                            {&world.name}
-                            </option>}
-                    }).collect::<Vec<_>>()}
-                    // </optgroup>
+                <Select items=data.into()
+                as_label=move |w| w.name.clone()
+                choice=current_world
+                set_choice=set_current_world
+                children=move |_w, label| {
+                    view!{
+                        <div>{label}</div>
                     }
-                }).collect::<Vec<_>>()}
-                // </optgroup>
                 }
-            }).collect::<Vec<_>>()}
-
-            </select>}.into_view()
+                 />
+            }
         }
         Err(e) => view! {<div><span>"No worlds"</span>
         <span>{e.to_string()}</span></div>}

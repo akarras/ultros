@@ -1,4 +1,4 @@
-use leptos::{html::Div, *};
+use leptos::{html::{Div, Input}, *};
 #[cfg(feature = "hydrate")]
 use leptos_use::use_element_hover;
 
@@ -23,6 +23,7 @@ where
     let (current_input, set_current_input) = create_signal("".to_string());
     let (has_focus, set_focused) = create_signal(false);
     let dropdown = create_node_ref::<Div>();
+    let input = create_node_ref::<Input>();
     #[cfg(feature = "hydrate")]
     let hovered = use_element_hover(dropdown);
     #[cfg(not(feature = "hydrate"))]
@@ -63,18 +64,24 @@ where
     });
     view! {
         <div class="relative">
-            <input class="p-2 rounded-sm bg-purple-900 border-solid border-purple-950 w-96"
+            <input node_ref=input
+                class:cursor=move || !has_focus()
+                class="p-2 rounded-md bg-purple-900 border-solid border-1 border-violet-600 w-96 hover:bg-purple-700 hover:border-violet-950"
                 on:focus=move |_| set_focused(true)
                 on:focusout=move |_| set_focused(false)
                 on:input=move |e| { set_current_input(event_target_value(&e)); }
                 prop:value=current_input />
-            <div class="absolute top-2 left-2 select-none" class:hidden=has_focus>
+            <div class="absolute top-2 left-2 select-none cursor" class:hidden=move || has_focus() || !current_input().is_empty() on:click=move |_| {
+                if let Some(input) = input() {
+                    let _ = input.focus();
+                }
+            }>
                 {move || choice().map(|c| {
                     children(c.clone(), as_label(&c).into_view())
                 })}
             </div>
             <div node_ref=dropdown class:hidden=move || !has_focus() && !hovered()
-                class="focus-within:visible absolute w-96 h-96 overflow-y-auto top-10 bg-purple-950">
+                class="focus-within:visible absolute w-96 h-96 overflow-y-auto top-10 bg-purple-950 z-20">
                 <For each=final_result
                     key=move |(l, _)| *l
                     let:data
@@ -93,7 +100,7 @@ where
                                 let target = data.1.clone();
                                 view!{ <div class="flex flex-row"><MatchFormatter m=m target=target /></div> }
                             } else {
-                                view!{ <div>{&data.1}</div>}
+                                view!{ <div class="flex flex-row">{&data.1}</div>}
                             }
                         }}.into_view()))}</div>
                     </button>

@@ -20,7 +20,7 @@ pub fn HomePage() -> impl IntoView {
         <MetaDescription text="Ultros is a FAST FFXIV marketboard analysis tool, keep up to date with all of your retainers and ensure you've got the best prices!" />
     <div class="main-content p-4">
         <div class="flex flex-col lg:flex-row-reverse mx-auto container items-start">
-            <div class="flex flex-col">
+            <div class="flex flex-col md:w-[424px]">
                 <LiveSaleTicker />
                 <RecentlyViewed />
                 <Ad />
