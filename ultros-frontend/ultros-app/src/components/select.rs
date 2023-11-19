@@ -1,4 +1,7 @@
-use leptos::{html::{Div, Input}, *};
+use leptos::{
+    html::{Div, Input},
+    *,
+};
 #[cfg(feature = "hydrate")]
 use leptos_use::use_element_hover;
 

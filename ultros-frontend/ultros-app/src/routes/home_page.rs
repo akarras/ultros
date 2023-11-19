@@ -27,16 +27,14 @@ pub fn HomePage() -> impl IntoView {
             </div>
             <div class="flex flex-col">
                 <h1 class="text-3xl">"Ultros Alpha"</h1>
-                <Title text="Ultros The Ultra Fast Market Tool"/>
-                <div>
-                    <div class="flex p-8 flex-col md:flex-row">
-                        <ul>
-                            <h2 class="text-3xl p-1">"Fast Prices"</h2>
-                            <ul class="list-disc text-xl p-2">
-                                <li>"fastest search in the west"</li>
-                                <li>"view associated recipes with an item and the price to craft it"</li>
-                                <li>"explore prices to buy job gear quickly and easily, for example- "<A href="/items/jobset/SAM">"all Samurai gear"</A></li>
-                            </ul>
+                <Title text="Ultros: The Ultra Fast Market Tool"/>
+                <div class="p-8 flex flex-col md:flex-row">
+                    <div class="flex flex-col">
+                        <h2 class="text-3xl p-1">"Fast Prices"</h2>
+                        <ul class="list-disc text-xl p-2">
+                            <li>"Fastest search in the west"</li>
+                            <li>"View associated recipes and crafting costs"</li>
+                            <li>"Explore prices for job gear, e.g., "<A href="/items/jobset/SAM">"all Samurai gear"</A></li>
                         </ul>
                     </div>
                 </div>
@@ -44,8 +42,8 @@ pub fn HomePage() -> impl IntoView {
                     <div class="flex flex-col">
                         <span class="text-3xl p-1">"Analyzer"</span>
                         <ul class="list-disc text-xl p-2">
-                            <li>"Make tons of gil with market arbitrage, find items cheap on other worlds and resell on yours"</li>
-                            <li>"Quickly filter by roi, profit, and estimated sale date"</li>
+                            <li>"Profit from market arbitrage"</li>
+                            <li>"Filter by ROI, profit, and estimated sale date"</li>
                         </ul>
                     </div>
                     <div class="flex md:ml-20 flex-col text-right align-top">
@@ -59,7 +57,7 @@ pub fn HomePage() -> impl IntoView {
                         <CharacterRetainerList character=None retainers=vec![(Retainer {
                             id: 0,
                             world_id: 9,
-                            name: "Retainer 1".to_string(),
+                            name: "your-best-retainer".to_string(),
                             retainer_city_id: 1
                         }, vec![ActiveListing {
                             id: 0,
@@ -83,7 +81,6 @@ pub fn HomePage() -> impl IntoView {
                     </div>
                     <div class="flex flex-col p-8 h-full w-full bg-gradient-to-br from-[#100a13] to-transparent">
                         <span class="text-3xl p-1">"Retainers"</span>
-                        <br/>
                         <ul class="list-disc text-xl p-2">
                             <li>"Track your retainer's listings online"</li>
                             <li>"View undercut items in one place"</li>
@@ -93,21 +90,19 @@ pub fn HomePage() -> impl IntoView {
                 </div>
                 <div class="p-8 grow">
                     <span class="content-title">"Lists"</span>
-                    <br/>
-                    <ul>
-                        <li>"Make shopping lists and find the cheapest prices"</li>
+                    <ul class="list-disc text-xl p-2">
+                        <li>"Create shopping lists with the best prices"</li>
                         <li>"Import entire recipes"</li>
-                        <li>"Honestly not as good as Teamcraft, but maybe it'll be better one day"</li>
+                        <li>"Ongoing improvements for a better experience"</li>
                     </ul>
                 </div>
                 <Ad />
                 <div class="p-8 flex flex-col md:flex-row">
                     <div class="flex flex-col p-2">
                         <span class="content-title">"Discord Bot"</span>
-                        <br/>
                         <ul>
-                            <li>"Use many features of the site through a Discord bot"</li>
-                            <li>"Get alerts via notifications through the bot"</li>
+                            <li>"Use site features through a Discord bot"</li>
+                            <li>"Receive alerts via bot notifications"</li>
                         </ul>
                     </div>
                     <a class="flex flex-col p-4 bg-slate-950 text-lg rounded-md b-solid border-2 border-violet-950 text-white items-center text-center ml-10" href="/invitebot">

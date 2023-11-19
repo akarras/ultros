@@ -13,8 +13,14 @@ pub fn WorldOnlyPicker(
         .0;
     match local_worlds {
         Ok(worlds) => {
-            let data = create_memo(move |_| worlds.iter().filter_map(|w| w.as_world()).cloned().collect::<Vec<_>>());
-            view!{
+            let data = create_memo(move |_| {
+                worlds
+                    .iter()
+                    .filter_map(|w| w.as_world())
+                    .cloned()
+                    .collect::<Vec<_>>()
+            });
+            view! {
                 <Select items=data.into()
                 as_label=move |w| w.name.clone()
                 choice=current_world

@@ -80,7 +80,7 @@ fn HomeWorldPicker() -> impl IntoView {
             <span>"The home world will default for the analyzer and several other pages"</span>
             <label class="text-lg">"default price zone"</label>
             <WorldPicker current_world=price_region set_current_world=set_price_region />
-            <span>"The price zone is where each price will be shown"</span>
+            <span>"what world/region to show prices by default for within search/"<a href="/items">"items"</a>" pages"</span>
         </div>
     </div>}
 }
