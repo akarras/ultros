@@ -56,7 +56,7 @@ impl WebsocketClient {
     ///
     /// ###Example:
     /// ```
-    /// use universalis::{WebsocketClient, SubscribeMode, EventChannel, WorldId};
+    /// use universalis::{WebsocketClient, websocket::event_types::{SubscribeMode, EventChannel}, WorldId};
     ///
     /// #[tokio::main]
     /// async fn main() {

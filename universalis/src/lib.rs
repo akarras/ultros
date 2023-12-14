@@ -116,6 +116,7 @@ pub struct ListingView {
     #[serde(rename = "sellerID")]
     pub seller_id: String,
     pub total: u32,
+    pub tax: i32,
 }
 
 #[serde_as]
@@ -129,6 +130,7 @@ pub struct SaleView {
     pub timestamp: DateTime<Local>,
     pub on_mannequin: bool,
     pub world_name: Option<String>,
+    #[serde(rename = "worldID")]
     pub world_id: Option<WorldId>,
     pub buyer_name: String,
     pub total: i32,
@@ -253,7 +255,7 @@ pub struct HistoryEntry {
     pub timestamp: DateTime<Local>,
     pub world_name: Option<WorldName>,
     #[serde(rename = "worldID")]
-    pub world_id: WorldId,
+    pub world_id: Option<WorldId>,
 }
 
 #[serde_as]
@@ -471,14 +473,14 @@ mod test {
     #[tokio::test]
     async fn test_local_world_history() {
         let client = UniversalisClient::new();
-        assert!(client
+        client
             .get_item_history("Sargatanas", &[36693])
             .await
-            .is_ok());
-        assert!(client
+            .unwrap();
+        client
             .get_item_history("Sargatanas", &[36693, 2])
             .await
-            .is_ok());
+            .unwrap();
     }
 
     #[tokio::test]
