@@ -10,9 +10,9 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 RUN rustup component add rust-src
 RUN rustup target add wasm32-unknown-unknown
 # cargo-leptos 0.2.5 has a dependency on openssl, but the git version doesn't
-RUN curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
-RUN cargo binstall cargo-leptos -y
-# RUN cargo install --locked --git https://github.com/leptos-rs/cargo-leptos cargo-leptos
+# RUN curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+# RUN cargo binstall cargo-leptos -y
+RUN cargo install --locked --git https://github.com/leptos-rs/cargo-leptos cargo-leptos
 RUN rustup target add aarch64-unknown-linux-gnu
 RUN rustup update
 # Thank you benwis https://github.com/benwis/benwis_leptos/blob/main/Dockerfile
