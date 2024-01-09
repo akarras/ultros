@@ -28,10 +28,10 @@ COPY --from=builder /app/target/release/ultros /app/
 COPY --from=builder /app/target/site /app/site
 COPY --from=builder /app/Cargo.toml /app/
 # copy font into local font dirs
+RUN mkdir /usr/local/share/fonts
 COPY --from=builder /app/ultros/static/*.ttf /usr/local/share/fonts
 RUN apt update; apt upgrade -y
-RUN apt install libfreetype6 fontconfig -y
-RUN apt-get clean
+RUN apt install libfreetype6 fontconfig -y; apt-get clean; rm -rf /var/lib/apt/lists/*;
 WORKDIR /app
 ENV RUST_LOG="info"
 ENV LEPTOS_OUTPUT_NAME="ultros"
