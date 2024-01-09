@@ -1,0 +1,134 @@
+[workspace]
+members = [
+    "ultros",
+    "ultros-db",
+    "ultros-api-types",
+    "migration",
+    "universalis",
+    "xiv-gen",
+    "xiv-gen-db",
+    "ultros-frontend/ultros-client",
+    "ultros-frontend/ultros-app",
+    "ultros-frontend/ultros-xiv-icons"]
+resolver = "2"
+
+[workspace.dependencies]
+tokio = {version = "1", features = ["full"]}
+tracing = "0.1.36"
+tracing-subscriber = "0.3"
+futures = "0.3.24"
+anyhow = "1.0.72"
+leptos = { git = "https://github.com/leptos-rs/leptos.git", default-features = false, features = [
+  "serde",
+  "nightly"
+] }
+leptos_axum = { git = "https://github.com/leptos-rs/leptos.git" }
+leptos_router = { git = "https://github.com/leptos-rs/leptos.git", default-features = false, features = ["nightly"] }
+leptos_meta = { git = "https://github.com/leptos-rs/leptos.git", default-features = false, features = ["nightly"] }
+leptos-use = { git = "https://github.com/Synphonyte/leptos-use.git", features = ["serde"] }
+chrono = "0.4.23"
+itertools = "0.11.0"
+image = "0.24.6"
+plotters = "0.3"
+sea-orm = {version = "0.12.2", features = ["sqlx-postgres", "runtime-tokio-rustls"]}
+sea-orm-migration = {version = "0.12.2", features = ["sqlx-postgres", "runtime-tokio-rustls"]}
+sea-query = "0.30.0"
+yoke = "0.7.1"
+xiv-gen = {path = "./xiv-gen", features = ["item", "item_ui_category", "item_search_category", "class_job", "recipe",
+  "class_job_category", "base_param", "item_sort_category"]}
+leptos_icons = {version = "0.0.16-beta", features = ["IoSettingsSharp", "AiOrderedListOutlined", "BsDiscord", "BsClipboard2Fill", "BsClipboard2CheckFill",
+  "AiEditFilled", "FaMoneyBillTrendUpSolid", "BsCheck", "BsPencilFill", "BiSortDownRegular", "BiSortUpRegular", "BiPlusRegular", "BiTrashSolid",
+  "AiExclamationOutlined", "BiSaveSolid", "BiGroupSolid", "BiHomeSolid", "FaScrewdriverWrenchSolid", "AiSearchOutlined", "ImPriceTag", "BiCalendarAltRegular"]}
+cfg-if = "1.0.0"
+git-const = "1.1.0"
+
+[patch.crates-io]
+leptos = { git = "https://github.com/leptos-rs/leptos.git"}
+leptos_reactive = { git = "https://github.com/leptos-rs/leptos.git"}
+pathfinder_simd = { git = "https://github.com/servo/pathfinder.git" } # needed on ARM Mac until pathfinder_simd has new release
+
+[profile.release]
+lto = true
+opt-level = 3
+codegen-units = 1
+
+[profile.dev]
+opt-level = 1
+
+[profile.sane]
+inherits = "release"
+codegen-units = 16
+lto = false
+
+[profile.fastdev]
+inherits = "dev"
+opt-level = 1
+
+[[workspace.metadata.leptos]]
+name = "ultros"
+bin-package = "ultros"
+lib-package = "ultros-client"
+output-name = "ultros"
+# The site root folder is where cargo-leptos generate all output.
+# NOTE: It is relative to the workspace root when running in a workspace.
+# WARNING: all content of this folder will be erased on a rebuild.
+#
+# Optional, defaults to "target/site". Env: LEPTOS_SITE_ROOT.
+site-root = "target/site"
+
+# The site-root relative folder where all compiled output (JS, WASM and CSS) is written.
+#
+# Optional, defaults to "pkg". Env: LEPTOS_SITE_PKG_DIR.
+site-pkg-dir = "pkg"
+
+# The source style file. If it ends with _.sass_ or _.scss_ then it will be compiled by `dart-sass`
+# into CSS and processed by lightning css. When release is set, then it will also be minified.
+#
+# Optional. Env: LEPTOS_STYLE_FILE.
+style-file = "./ultros/static/main.css"
+
+tailwind-input-file = "style/tailwind.css"
+
+# The browserlist https://browsersl.ist query used for optimizing the CSS.
+#
+# Optional, defaults to "defaults". Env: LEPTOS_BROWSERQUERY.
+browserquery = "defaults"
+
+env = "DEV"
+
+# Assets source dir. All files found here will be copied and synchronized to site-root.
+# The assets-dir cannot have a sub directory with the same name/path as site-pkg-dir.
+#
+# Optional. Env: LEPTOS_ASSETS_DIR.
+# assets-dir = "assets"
+
+# The IP and port where the server serves the content. Use it in your server setup.
+#
+# Optional, defaults to 127.0.0.1:3000. Env: LEPTOS_SITE_ADDR.
+site-address = "127.0.0.1:8080"
+
+# The port number used by the reload server (only used in watch mode).
+#
+# Optional, defaults 3001. Env: LEPTOS_RELOAD_PORT
+reload-port = 3001
+
+# The command used for running end-to-end tests.
+#
+# Optional. Env: LEPTOS_END2END_CMD.
+end2end-cmd = "npx playwright test"
+
+# The directory from which the end-to-end tests are run.
+#
+# Optional. Env: LEPTOS_END2END_DIR
+end2end-dir = "integration"
+
+# prevents recompiles when using cargo leptos serve
+separate-front-target-dir = true
+
+[profile.dev.build-override]
+opt-level = 1
+codegen-units = 256
+
+[profile.release.build-override]
+opt-level = 3
+codegen-units = 256

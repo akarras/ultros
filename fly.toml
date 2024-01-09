@@ -1,0 +1,43 @@
+# fly.toml file generated for ultros on 2022-09-08T01:41:56-06:00
+
+app = "ultros"
+kill_signal = "SIGINT"
+kill_timeout = 5
+
+[env]
+  RUST_LOG='warn'
+  PORT = "8080"
+  HOSTNAME = "https://ultros.app/"
+  DISCORD_CLIENT_ID = 1018657822344478741
+[experimental]
+  auto_rollback = false
+  cmd = "./ultros"
+
+[[services]]
+  http_checks = []
+  internal_port = 8080
+  protocol = "tcp"
+  script_checks = []
+  [services.concurrency]
+    hard_limit = 2000000
+    soft_limit = 1000000
+    type = "requests"
+
+  [[services.ports]]
+    force_https = true
+    handlers = ["http"]
+    port = 80
+
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 443
+
+  [[services.tcp_checks]]
+    grace_period = "2s"
+    interval = "15s"
+    restart_limit = 6
+    timeout = "3s"
+
+[metrics]
+port = 9091 # default for most prometheus clients
+path = "/metrics" # default for most prometheus clients
