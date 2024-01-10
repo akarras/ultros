@@ -2,8 +2,6 @@ name: user book
 
 on:
   push:
-    paths:
-      - '/userguide'
     branches:
       - main
   pull_request:
