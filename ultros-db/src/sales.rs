@@ -12,6 +12,7 @@ use anyhow::Result;
 use chrono::NaiveDateTime;
 
 use futures::{future::try_join_all, Stream};
+use itertools::Itertools;
 use metrics::histogram;
 use migration::{
     sea_orm::{ColumnTrait, EntityTrait, QueryFilter, Set},
@@ -182,6 +183,7 @@ impl UltrosDb {
             sale_history
                 .iter()
                 .map(|s| s.buying_character_id)
+                .unique()
                 .map(|c| unknown_final_fantasy_character::Entity::find_by_id(c).one(&self.db)),
         )
         .await?;
