@@ -1,1 +1,3 @@
 # Characters
+
+Login and go to profile page...
