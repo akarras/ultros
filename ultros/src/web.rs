@@ -816,6 +816,10 @@ async fn detect_region(region: Option<Region>) -> Region {
     region.unwrap_or(Region::NorthAmerica)
 }
 
+async fn listings_redirect(Path((world, id)): Path<(String, i32)>) -> Redirect {
+    Redirect::permanent(&format!("/item/{world}/{id}"))
+}
+
 pub(crate) async fn start_web(state: WebState) {
     // build our application with a route
     let app = Router::new()
@@ -884,6 +888,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/sitemap/items.xml", get(item_sitemap))
         .route("/sitemap.xml", get(sitemap_index))
         .route("/sitemap/pages.xml", get(generic_pages_sitemap))
+        .route("/listings/:world/:item", get(listings_redirect))
         .nest(
             "/",
             create_leptos_app(state.world_helper.clone()).await.unwrap(),
