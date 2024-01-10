@@ -881,11 +881,11 @@ select optgroup {
   }
 }
 
-[aria-current="page"] {
+[aria-current="a"] {
   color: rgb(151, 79, 151)
 }
 
-.main-content [aria-current="page"] {
+.main-content [aria-current="a"] {
   color: rgb(151, 79, 151)
 }
 
