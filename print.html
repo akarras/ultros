@@ -1,0 +1,258 @@
+<!DOCTYPE HTML>
+<html lang="en" class="sidebar-visible no-js light">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>ultros user guide</title>
+                <meta name="robots" content="noindex" />
+                
+
+        <!-- Custom HTML head -->
+        
+
+        <meta content="text/html; charset=utf-8" http-equiv="Content-Type">
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff" />
+
+                <link rel="icon" href="favicon.svg">
+                        <link rel="shortcut icon" href="favicon.png">
+                <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+                <link rel="stylesheet" href="css/print.css" media="print">
+        
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+                <link rel="stylesheet" href="fonts/fonts.css">
+        
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="highlight.css">
+        <link rel="stylesheet" href="tomorrow-night.css">
+        <link rel="stylesheet" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        
+            </head>
+    <body>
+        <!-- Provide site root to javascript -->
+        <script type="text/javascript">
+            var path_to_root = "";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script type="text/javascript">
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script type="text/javascript">
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('no-js')
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add('js');
+        </script>
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script type="text/javascript">
+            var html = document.querySelector('html');
+            var sidebar = 'hidden';
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            }
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item expanded "><a href="intro.html"><strong aria-hidden="true">1.</strong> Intro</a></li><li class="chapter-item expanded "><div><strong aria-hidden="true">2.</strong> Characters</div></li><li><ol class="section"><li class="chapter-item expanded "><div><strong aria-hidden="true">2.1.</strong> Add character</div></li></ol></li><li class="chapter-item expanded "><a href="retainers/retainers.html"><strong aria-hidden="true">3.</strong> Retainers</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="retainers/managing.html"><strong aria-hidden="true">3.1.</strong> Managing retainers</a></li><li class="chapter-item expanded "><a href="retainers/viewing.html"><strong aria-hidden="true">3.2.</strong> Tracking retainers</a></li><li class="chapter-item expanded "><a href="retainers/alerts.html"><strong aria-hidden="true">3.3.</strong> Configuring Discord Undercut Alerts</a></li></ol></li><li class="chapter-item expanded "><div><strong aria-hidden="true">4.</strong> Analyzer</div></li><li class="chapter-item expanded "><a href="data.html"><strong aria-hidden="true">5.</strong> Data notice</a></li></ol>            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky bordered">
+                    <div class="left-buttons">
+                        <button id="sidebar-toggle" class="icon-button" type="button" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </button>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light (default)</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                                                <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                                            </div>
+
+                    <h1 class="menu-title">ultros user guide</h1>
+
+                    <div class="right-buttons">
+                                                <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                                                                        
+                    </div>
+                </div>
+
+                                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+                
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script type="text/javascript">
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="intro"><a class="header" href="#intro">Intro</a></h1>
+<p>Ultros is a performant marketboard tool for Final Fantasy 14.</p>
+<h2 id="discord-bot"><a class="header" href="#discord-bot">Discord bot</a></h2>
+<p>To make the most out of ultros, you should consider <a href="https://ultros.app/invitebot">inviting the Discord bot</a>. The website is mostly more featured than the bot, except for <a href="./retainers/alerts.html">alerts</a></p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="retainers"><a class="header" href="#retainers">Retainers</a></h1>
+<p>Ultros is able to track retainers and give a summary. You must be logged into a Discord account.</p>
+<p>The website and Discord bot stay in sync, so as long as you use the same account you should be able to view retainers added via the website
+on the bot, or retainers added via the bot on the website.</p>
+<p>Once you add retainers to your account you should be able to view them on the website like this:
+<img src="retainers/./undercuts_page.png" alt="An example of the website undercuts page" /></p>
+<p>If you're logged in, you can view this page yourself <a href="https://ultros.app/retainers/undercuts">here</a>, or by clicking on the retainers button
+and then clicking the undercuts button.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="managing-retainers"><a class="header" href="#managing-retainers">Managing retainers</a></h1>
+<p>This chapter covers managing retainers via the <a href="retainers/managing.html#using-website">website</a> and <a href="retainers/managing.html#using-discord">discord</a>.</p>
+<h2 id="using-website"><a class="header" href="#using-website">Using website</a></h2>
+<p>Once you're logged into <a href="https://ultros.app/retainers/edit">ultros</a> you should be able to join the server.
+https://ultros.app/retainers/edit</p>
+<p>From there- you should be able to see all of the retainers that you have added to your account. in a table and a search bar.</p>
+<h3 id="adding-a-retainer"><a class="header" href="#adding-a-retainer">Adding a retainer</a></h3>
+<p>Type the name of your retainer into the search box and then click the claim button when the retainer shows up.</p>
+<p><img src="retainers/./edit_retainers_search.png" alt="searching for a retainer" /></p>
+<h3 id="updating-retainers"><a class="header" href="#updating-retainers">Updating retainers</a></h3>
+<p>Once you have retainers added, you should see them listed here:
+<img src="retainers/./edit_retainers_view.png" alt="retainers" /></p>
+<p>It is possible to associate a retainer to a specific character, which is why we see &quot;No character&quot; above. Character management is covered <a href="retainers/../characters/character.html">here</a></p>
+<p>To reorder the retainers (I highly suggest you match the order of your retainers in game), you may simply drag and drop them.</p>
+<p>To remove them, you just need to click unclaim!</p>
+<h2 id="using-discord"><a class="header" href="#using-discord">Using Discord</a></h2>
+<h3 id="adding-a-retainer-on-discord"><a class="header" href="#adding-a-retainer-on-discord">Adding a retainer on Discord</a></h3>
+<p>In discord, use the command
+<code>/ffxiv retainer add retainer_name</code> to add a retainer. As you type the retainer name, the autocomplete should show the name and server of the retainer like this.
+<img src="retainers/./discord_retainer_add.png" alt="auto complete example" />
+make sure you click on the retainer and server that matches yours. Typing th complete name won't work- it must be chosen from the autocomplete list.</p>
+<h3 id="remove"><a class="header" href="#remove">Remove</a></h3>
+<p><code>/ffxiv retainer remove</code></p>
+<h3 id="list"><a class="header" href="#list">List</a></h3>
+<p>You can check the list of all of your retainers with
+<code>/ffxiv retainer list</code></p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="tracking-retainers"><a class="header" href="#tracking-retainers">Tracking retainers</a></h1>
+<p>Once you've gotten retainers, you should now be able to view their listings that Ultros is aware of. </p>
+<h2 id="website"><a class="header" href="#website">Website</a></h2>
+<p>The website should be fairly intuitive. Just click on <a href="https://ultros.app/retainers/listings">retainers</a>, and then all listings and you should see this page.</p>
+<p><img src="retainers/./all_listings.png" alt="all listings image of the website" /></p>
+<p>This page shows all of the listings that are currently known to Ultros that belong to your retainer. This likely won't match what your retainer sees in game, but this should match what people searching Universalis and Ultros should see.</p>
+<p>The more useful page is the <a href="https://ultros.app/retainers/undercuts">undercuts page</a> which shows just the listings that your retainer has been undercut on.</p>
+<p><img src="retainers/./undercut_listings.png" alt="just undercut listings" /></p>
+<p>The undercut by one option shows the lowest price minus one, thus is the price you need to be the cheapest on the marketboard.</p>
+<p>Any listings that aren't undercut aren't available on this page.</p>
+<h2 id="discord"><a class="header" href="#discord">Discord</a></h2>
+<ul>
+<li><code>ffxiv retainer check_listings</code> will show all of your retainer's listings</li>
+<li><code>/ffxiv retainer check_undercuts</code> will show just the listings that you've been undercut on.
+<img src="retainers/./discord_check_undercuts.png" alt="check undercuts" /></li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="retainer-undercut-alerts"><a class="header" href="#retainer-undercut-alerts">Retainer Undercut Alerts</a></h1>
+<h2 id="adding-alerts-to-a-channel"><a class="header" href="#adding-alerts-to-a-channel">Adding alerts to a channel</a></h2>
+<p>Currently ultros only supports alerting via Discord.</p>
+<p>Once you've added retainers to your account, you can request to get alerts from the bot using <code>/ffxiv retainer add_undercut_alert</code></p>
+<p>If you have the bot in the server you're in, it should look something like this:
+<img src="retainers/./undercut_alert_command.png" alt="discord command picker" /></p>
+<p>Once you use this command in a Discord channel- it should send an alert similar to this to that channel.</p>
+<p>By default, alerts will mention you and look like this
+<img src="retainers/./discord_alert.png" alt="undercut" /></p>
+<h2 id="turning-alerts-off"><a class="header" href="#turning-alerts-off">Turning alerts off</a></h2>
+<p>To remove alerts from a channel, you may use the <code>/ffxiv retainer remove_undercut_alert</code> command to stop alerts from being sent to a channel</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="data-notice"><a class="header" href="#data-notice">Data notice</a></h1>
+<p>Ultros relies on Universalis for data- and might not be always up to date. If you are at the retainer bell and check your retainer's related prices, it will remove the listing from Universalis and thus Ultros as well. If you need the listing to show up immediately, you should check the marketboard without using the retainer bell.</p>
+<p>In order to update Ultros' data, you should <a href="https://universalis.app/contribute">contribute to Universalis</a>.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                        
+                        
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                
+                            </nav>
+
+        </div>
+
+        
+        
+        
+                <script type="text/javascript">
+            window.playground_copyable = true;
+        </script>
+        
+        
+                <script src="elasticlunr.min.js" type="text/javascript" charset="utf-8"></script>
+        <script src="mark.min.js" type="text/javascript" charset="utf-8"></script>
+        <script src="searcher.js" type="text/javascript" charset="utf-8"></script>
+        
+        <script src="clipboard.min.js" type="text/javascript" charset="utf-8"></script>
+        <script src="highlight.js" type="text/javascript" charset="utf-8"></script>
+        <script src="book.js" type="text/javascript" charset="utf-8"></script>
+
+        <!-- Custom JS scripts -->
+        
+                        <script type="text/javascript">
+        window.addEventListener('load', function() {
+            window.setTimeout(window.print, 100);
+        });
+        </script>
+                
+    </body>
+</html>

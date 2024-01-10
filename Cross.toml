@@ -1,6 +1,0 @@
-# This file is used by cross to map custom dockerfiles to platforms.
-# These docker files simply install the extra libraries needed for this app to run
-# on the given platform. Currently only aarch64 is supported by this app.
-
-[target.aarch64-unknown-linux-musl]
-dockerfile = "./Dockerfile-aarch64"
