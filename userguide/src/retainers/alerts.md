@@ -1,5 +1,8 @@
 # Retainer Undercut Alerts
 
+Ultros is able to send a Discord message to a channel whenever one of your retainers gets undercut.
+The bot must be added to your Discord server, so ensure you've [invited the bot](https://ultros.app/invitebot)
+
 ## Adding alerts to a channel
 Currently ultros only supports alerting via Discord.
 
