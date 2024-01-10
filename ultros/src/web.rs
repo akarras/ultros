@@ -99,7 +99,7 @@ async fn world_item_listings(
     let world_iter = worlds.iter().copied();
     let (listings, sales) = try_join(
         db_clone.get_all_listings_in_worlds_with_retainers(&worlds, ItemId(item_id)),
-        db.get_sale_history_from_multiple_worlds(world_iter, item_id, 1000),
+        db.get_sale_history_from_multiple_worlds(world_iter, item_id, 200),
     )
     .await?;
     let currently_shown = CurrentlyShownItem {

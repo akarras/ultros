@@ -175,14 +175,30 @@ impl UltrosDb {
             .filter(sale_history::Column::SoldItemId.eq(item_id))
             .filter(sale_history::Column::WorldId.eq(world_id))
             .order_by_desc(sale_history::Column::SoldDate)
-            .find_also_related(unknown_final_fantasy_character::Entity)
             .limit(limit)
             .all(&self.db)
-            .await?
+            .await?;
+        let character_ids = try_join_all(
+            sale_history
+                .iter()
+                .map(|s| s.buying_character_id)
+                .map(|c| unknown_final_fantasy_character::Entity::find_by_id(c).one(&self.db)),
+        )
+        .await?;
+        let character_map: HashMap<i32, _> = character_ids
             .into_iter()
-            .map(|(sale, character)| SaleHistoryReturn(sale, character))
+            .flatten()
+            .map(|f| (f.id, f))
             .collect();
-        histogram!("ultros_db_query_sale_history_with_character_duration_seconds").record(instant.elapsed());
+        let sale_history = sale_history
+            .into_iter()
+            .map(|sale| {
+                let character = character_map.get(&sale.buying_character_id).cloned();
+                SaleHistoryReturn(sale, character)
+            })
+            .collect::<Vec<_>>();
+        histogram!("ultros_db_query_sale_history_with_character_duration_seconds")
+            .record(instant.elapsed());
         Ok(sale_history)
     }
 
