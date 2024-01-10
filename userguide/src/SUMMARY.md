@@ -1,3 +1,10 @@
 # Summary
-
-- [Retainers](./retainers.md)
+- [Intro](./intro.md)
+- [Characters]()
+    - [Add character]()
+- [Retainers](./retainers/retainers.md)
+    - [Managing retainers](./retainers/managing.md)
+    - [Tracking retainers](./retainers/viewing.md)
+    - [Configuring Discord Undercut Alerts](./retainers/alerts.md)
+- [Analyzer]()
+- [Data notice](./data.md)

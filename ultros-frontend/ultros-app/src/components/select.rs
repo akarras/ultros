@@ -69,7 +69,10 @@ where
         <div class="relative">
             <input node_ref=input
                 class:cursor=move || !has_focus()
-                class="p-2 rounded-md bg-purple-900 border-solid border-1 border-violet-600 w-96 hover:bg-purple-700 hover:border-violet-950"
+                class="p-2 rounded-md bg-purple-950
+                border-solid border-1 border-violet-600 w-96 
+                hover:bg-purple-700 hover:border-violet-950 
+                active:bg-purple-700 active:border-violet-400"
                 on:focus=move |_| set_focused(true)
                 on:focusout=move |_| set_focused(false)
                 on:input=move |e| { set_current_input(event_target_value(&e)); }

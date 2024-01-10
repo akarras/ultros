@@ -4,7 +4,9 @@ Ultros is a Final Fantasy XIV marketboard analysis tool that utilizes data sourc
 
 Uses Axum, Leptos, SeaOrm, and Serenity to create something that works most the time!
 
-Currently hosted with linode via https://ultros.app
+Currently hosted with hetzner via https://ultros.app
+
+A userguide is available [here](https://book.ultros.app)
 
 ### Development
 
