@@ -157,7 +157,7 @@ impl UltrosDb {
             .find_also_related(retainer::Entity)
             .all(&self.db)
             .await?;
-        histogram!("ultros_db_query_listings_with_retainers_duration_seconds", "world" => world.to_string(), "item" => item.0.to_string()).record(instant.elapsed());
+        histogram!("ultros_db_query_listings_with_retainers_duration_seconds").record(instant.elapsed());
         Ok(query)
     }
 
@@ -331,7 +331,7 @@ impl UltrosDb {
             .increment(added.len() as u64);
         counter!("ultros_db_removed_items", "world_id" => world_id.0.to_string())
             .increment(removed.len() as u64);
-        histogram!("ultros_db_update_listings_duration_seconds", "world_id" => world_id.0.to_string())
+        histogram!("ultros_db_update_listings_duration_seconds")
             .record(instant.elapsed());
         Ok((added, removed))
     }

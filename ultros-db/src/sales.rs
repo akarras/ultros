@@ -34,6 +34,7 @@ impl UltrosDb {
         item_id: ItemId,
         world_id: WorldId,
     ) -> Result<Vec<(SaleHistory, UnknownCharacter)>> {
+        let instant = Instant::now();
         use sale_history::*;
         // check if the sales have already been logged
         if sales.is_empty() {
@@ -102,6 +103,7 @@ impl UltrosDb {
         }))
         .exec_without_returning(&self.db)
         .await?;
+        histogram!("ultrso_db_update_sales_duration_seconds").record(instant.elapsed());
         Ok(recorded_sales)
     }
 
@@ -190,13 +192,16 @@ impl UltrosDb {
         item_id: i32,
         limit: u64,
     ) -> Result<Vec<sale_history::Model>, anyhow::Error> {
-        Ok(sale_history::Entity::find()
+        let start = Instant::now();
+        let data = sale_history::Entity::find()
             .filter(sale_history::Column::SoldItemId.eq(item_id))
             .filter(sale_history::Column::WorldId.eq(world_id))
             .order_by_desc(sale_history::Column::SoldDate)
             .limit(limit)
             .all(&self.db)
-            .await?)
+            .await?;
+        histogram!("ultros_db_query_sale_history_duration_seconds").record(start.elapsed());
+        Ok(data)
     }
 
     pub async fn last_n_sales(
