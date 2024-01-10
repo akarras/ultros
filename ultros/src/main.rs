@@ -57,7 +57,8 @@ async fn run_socket_listener(
             let sales_tx = sales_tx.clone();
             if let SocketRx::Event(Ok(e)) = &msg {
                 let world_id = WorldId::from(e);
-                metrics::counter!("ultros_websocket_rx", 1, "WorldId" => world_id.0.to_string());
+                metrics::counter!("ultros_websocket_rx", "WorldId" => world_id.0.to_string())
+                    .increment(1);
             }
             tokio::spawn(async move {
                 let db = &db;

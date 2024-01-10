@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Instant,
+};
 
 use crate::{
     common_type_conversions::SaleHistoryReturn,
@@ -9,6 +12,7 @@ use anyhow::Result;
 use chrono::NaiveDateTime;
 
 use futures::{future::try_join_all, Stream};
+use metrics::histogram;
 use migration::{
     sea_orm::{ColumnTrait, EntityTrait, QueryFilter, Set},
     DbErr,
@@ -164,7 +168,8 @@ impl UltrosDb {
         item_id: i32,
         limit: u64,
     ) -> Result<Vec<SaleHistoryReturn>, anyhow::Error> {
-        Ok(sale_history::Entity::find()
+        let instant = Instant::now();
+        let sale_history = sale_history::Entity::find()
             .filter(sale_history::Column::SoldItemId.eq(item_id))
             .filter(sale_history::Column::WorldId.eq(world_id))
             .order_by_desc(sale_history::Column::SoldDate)
@@ -174,7 +179,9 @@ impl UltrosDb {
             .await?
             .into_iter()
             .map(|(sale, character)| SaleHistoryReturn(sale, character))
-            .collect())
+            .collect();
+        histogram!("ultros_db_query_sale_history_with_character_duration_seconds").record(instant.elapsed());
+        Ok(sale_history)
     }
 
     pub async fn get_sale_history_for_item(

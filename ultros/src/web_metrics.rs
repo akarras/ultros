@@ -26,8 +26,8 @@ pub(crate) async fn track_metrics<B>(req: Request<B>, next: Next<B>) -> impl Int
         ("status", status),
     ];
 
-    metrics::increment_counter!("ultros_http_requests_total", &labels);
-    metrics::histogram!("ultros_http_requests_duration_seconds", latency, &labels);
+    metrics::counter!("ultros_http_requests_total", &labels).increment(1);
+    metrics::histogram!("ultros_http_requests_duration_seconds", &labels).record(latency);
 
     response
 }

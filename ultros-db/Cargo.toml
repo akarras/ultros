@@ -19,3 +19,4 @@ itertools.workspace = true
 yoke.workspace = true
 thiserror = "1.0.38"
 ultros-api-types = {path = "../ultros-api-types"}
+metrics = "0.22.0"

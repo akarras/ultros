@@ -1,8 +1,12 @@
 use anyhow::Result;
 use futures::{future::try_join_all, Stream};
+use metrics::{counter, histogram};
 use migration::DbErr;
 use sea_orm::{ColumnTrait, DbBackend, EntityTrait, FromQueryResult, QueryFilter, Statement};
-use std::collections::{hash_map::Entry, HashMap, HashSet};
+use std::{
+    collections::{hash_map::Entry, HashMap, HashSet},
+    time::Instant,
+};
 use tracing::instrument;
 use ultros_api_types::{ActiveListing, Retainer};
 use universalis::{ItemId, ListingView, WorldId};
@@ -146,12 +150,15 @@ impl UltrosDb {
         item: ItemId,
     ) -> Result<Vec<(active_listing::Model, Option<retainer::Model>)>> {
         use active_listing::*;
-        Ok(Entity::find()
+        let instant = Instant::now();
+        let query = Entity::find()
             .filter(Column::ItemId.eq(item.0))
             .filter(Column::WorldId.eq(world))
             .find_also_related(retainer::Entity)
             .all(&self.db)
-            .await?)
+            .await?;
+        histogram!("ultros_db_query_listings_with_retainers_duration_seconds", "world" => world.to_string(), "item" => item.0.to_string()).record(instant.elapsed());
+        Ok(query)
     }
 
     /// Updates listings assuming a pure view of the listing board
@@ -163,6 +170,7 @@ impl UltrosDb {
         world_id: WorldId,
     ) -> Result<ListingUpdate> {
         use active_listing::*;
+        let instant = Instant::now();
         // Assumes that we are being given a full list of all the listings for the item and world.
         // First, query the db to see what listings it has
         // Then diff against the listings that we have
@@ -300,7 +308,7 @@ impl UltrosDb {
                 Result::<usize>::Ok(remove_result.len())
             })
             .await;
-        let added = added
+        let added: Vec<_> = added
             .into_iter()
             .flat_map(|l| {
                 l.ok().map(|l| {
@@ -314,14 +322,18 @@ impl UltrosDb {
                 })
             })
             .collect();
+        let removed: Vec<_> = removed
+            .into_iter()
+            .flat_map(|(m, r)| r.map(|r| (m.into(), r.into())))
+            .collect();
         self.set_last_updated(world_id, item_id).await?;
-        Ok((
-            added,
-            removed
-                .into_iter()
-                .flat_map(|(m, r)| r.map(|r| (m.into(), r.into())))
-                .collect(),
-        ))
+        counter!("ultros_db_inserted_items", "world_id" => world_id.0.to_string())
+            .increment(added.len() as u64);
+        counter!("ultros_db_removed_items", "world_id" => world_id.0.to_string())
+            .increment(removed.len() as u64);
+        histogram!("ultros_db_update_listings_duration_seconds", "world_id" => world_id.0.to_string())
+            .record(instant.elapsed());
+        Ok((added, removed))
     }
 
     pub async fn get_all_listings_for_world(
