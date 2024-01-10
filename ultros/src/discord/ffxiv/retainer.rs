@@ -17,7 +17,8 @@ use super::{Context, Error};
         "remove",
         "check_listings",
         "check_undercuts",
-        "add_undercut_alert"
+        "add_undercut_alert",
+        "remove_undercut_alert"
     )
 )]
 pub(crate) async fn retainer(ctx: Context<'_>) -> Result<(), Error> {
@@ -27,7 +28,8 @@ pub(crate) async fn retainer(ctx: Context<'_>) -> Result<(), Error> {
         `remove`,
         `check_listings`,
         `check_undercuts`,
-        `add_undercut_alert`",
+        `add_undercut_alert`
+        `remove_undercut_alert`",
     )
     .await?;
     Ok(())
