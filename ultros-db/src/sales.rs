@@ -115,16 +115,33 @@ impl UltrosDb {
         limit: u64,
     ) -> Result<Vec<SaleHistoryReturn>, anyhow::Error> {
         let all = futures::future::try_join_all(
-            world_ids
-                .map(|world_id| self.get_sale_history_with_character(world_id, item_id, limit)),
+            world_ids.map(|world_id| self.get_sale_history_for_item(world_id, item_id, limit)),
         )
         .await;
 
-        let mut val: Vec<SaleHistoryReturn> =
-            all?.into_iter().flat_map(|w| w.into_iter()).collect();
-        val.sort_by_key(|sale| std::cmp::Reverse(sale.0.sold_date));
-        val.truncate(limit as usize);
-        Ok(val)
+        let mut sales: Vec<_> = all?.into_iter().flat_map(|w| w.into_iter()).collect();
+        sales.sort_by_key(|sale| std::cmp::Reverse(sale.sold_date));
+        sales.truncate(limit as usize);
+
+        let buyers = try_join_all(
+            sales
+                .iter()
+                .map(|s| s.buying_character_id)
+                .unique()
+                .map(|c| unknown_final_fantasy_character::Entity::find_by_id(c).one(&self.db)),
+        )
+        .await?
+        .into_iter()
+        .filter_map(|c| c.map(|c| (c.id, c)))
+        .collect::<HashMap<_, _>>();
+        let sales = sales
+            .into_iter()
+            .map(|sale| {
+                let buyer = buyers.get(&sale.buying_character_id).cloned();
+                SaleHistoryReturn(sale, buyer)
+            })
+            .collect();
+        Ok(sales)
     }
 
     async fn lookup_buyer_names(
@@ -163,45 +180,6 @@ impl UltrosDb {
         .await?
         .into_iter()
         .collect())
-    }
-
-    pub async fn get_sale_history_with_character(
-        &self,
-        world_id: i32,
-        item_id: i32,
-        limit: u64,
-    ) -> Result<Vec<SaleHistoryReturn>, anyhow::Error> {
-        let instant = Instant::now();
-        let sale_history = sale_history::Entity::find()
-            .filter(sale_history::Column::SoldItemId.eq(item_id))
-            .filter(sale_history::Column::WorldId.eq(world_id))
-            .order_by_desc(sale_history::Column::SoldDate)
-            .limit(limit)
-            .all(&self.db)
-            .await?;
-        let character_ids = try_join_all(
-            sale_history
-                .iter()
-                .map(|s| s.buying_character_id)
-                .unique()
-                .map(|c| unknown_final_fantasy_character::Entity::find_by_id(c).one(&self.db)),
-        )
-        .await?;
-        let character_map: HashMap<i32, _> = character_ids
-            .into_iter()
-            .flatten()
-            .map(|f| (f.id, f))
-            .collect();
-        let sale_history = sale_history
-            .into_iter()
-            .map(|sale| {
-                let character = character_map.get(&sale.buying_character_id).cloned();
-                SaleHistoryReturn(sale, character)
-            })
-            .collect::<Vec<_>>();
-        histogram!("ultros_db_query_sale_history_with_character_duration_seconds")
-            .record(instant.elapsed());
-        Ok(sale_history)
     }
 
     pub async fn get_sale_history_for_item(
