@@ -11,9 +11,10 @@ use ultros_api_types::{
     list::{CreateList, List, ListItem},
     recent_sales::RecentSales,
     result::JsonError,
+    retainer::{Retainer, RetainerListings},
     user::{OwnedRetainer, UserData, UserRetainerListings, UserRetainers},
     world::WorldData,
-    ActiveListing, CurrentlyShownItem, FfxivCharacter, FfxivCharacterVerification, Retainer,
+    ActiveListing, CurrentlyShownItem, FfxivCharacter, FfxivCharacterVerification,
 };
 
 use crate::error::{AppError, AppResult, SystemError};
@@ -65,7 +66,11 @@ pub(crate) async fn get_retainers() -> AppResult<UserRetainers> {
     fetch_api("/api/v1/user/retainer").await
 }
 
-pub(crate) async fn get_retainer_listings() -> AppResult<UserRetainerListings> {
+pub(crate) async fn get_retainer_listings(retainer_id: i32) -> AppResult<RetainerListings> {
+    fetch_api(&format!("/api/v1/retainer/listings/{retainer_id}")).await
+}
+
+pub(crate) async fn get_user_retainer_listings() -> AppResult<UserRetainerListings> {
     fetch_api("/api/v1/user/retainer/listings").await
 }
 
@@ -79,7 +84,7 @@ pub type Undercuts = Vec<(Option<FfxivCharacter>, Vec<(Retainer, Vec<UndercutDat
 
 pub(crate) async fn get_retainer_undercuts() -> AppResult<Undercuts> {
     // get our retainer data
-    let retainer_data = get_retainer_listings().await?;
+    let retainer_data = get_user_retainer_listings().await?;
     // build a unique list of worlds and item ids so we can fetch additional info about them
     // todo: couldn't I just use cheapest listings for each world & avoid looking up literally every retainer?
     let world_items: HashMap<i32, Vec<i32>> = retainer_data

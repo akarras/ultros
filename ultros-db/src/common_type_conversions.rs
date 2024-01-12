@@ -8,10 +8,11 @@ use crate::{
 use thiserror::Error;
 use ultros_api_types::{
     list::{List, ListItem},
+    retainer::Retainer,
     user::OwnedRetainer,
     world::{Datacenter, Region, World, WorldData},
     world_helper::AnySelector,
-    ActiveListing, FfxivCharacter, Retainer, SaleHistory, UnknownCharacter,
+    ActiveListing, FfxivCharacter, SaleHistory, UnknownCharacter,
 };
 
 #[derive(Debug, Error)]

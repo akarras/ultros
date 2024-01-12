@@ -1,4 +1,6 @@
-use crate::api::{get_retainer_listings, get_retainer_undercuts, UndercutData};
+use crate::api::{
+    get_retainer_listings, get_retainer_undercuts, get_user_retainer_listings, UndercutData,
+};
 use crate::components::ad::Ad;
 use crate::components::clipboard::Clipboard;
 use crate::components::gil::*;
@@ -256,8 +258,32 @@ pub fn RetainerUndercuts() -> impl IntoView {
 }
 
 #[component]
+pub fn SingleRetainerListings() -> impl IntoView {
+    let params = use_params_map();
+    let retainer_listings = create_resource(
+        move || params().get("id").and_then(|id| id.parse::<i32>().ok()),
+        move |id| async move {
+            if let Some(id) = id {
+                Some(get_retainer_listings(id).await)
+            } else {
+                None
+            }
+        },
+    );
+    view! {
+        <Suspense fallback=Loading>
+            {move || {
+                retainer_listings.get().map(|r| r.and_then(|r| r.ok().map(|r| view! {
+                    <RetainerTable retainer=r.retainer listings=r.listings />
+                })))
+            }}
+        </Suspense>
+    }
+}
+
+#[component]
 pub fn RetainerListings() -> impl IntoView {
-    let retainers = create_resource(|| "undercuts", move |_| get_retainer_listings());
+    let retainers = create_resource(|| "undercuts", move |_| get_user_retainer_listings());
     view! {
         <span class="content-title">"All Listings"</span>
         <MetaTitle title="All Listings"/>

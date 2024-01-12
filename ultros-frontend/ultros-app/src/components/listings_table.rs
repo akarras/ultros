@@ -2,7 +2,8 @@ use super::gil::*;
 use super::relative_time::*;
 use crate::components::{datacenter_name::*, world_name::*};
 use leptos::*;
-use ultros_api_types::{world_helper::AnySelector, ActiveListing, Retainer};
+use leptos_router::A;
+use ultros_api_types::{retainer::Retainer, world_helper::AnySelector, ActiveListing};
 
 #[component]
 pub fn ListingsTable(listings: Vec<(ActiveListing, Retainer)>) -> impl IntoView {
@@ -37,7 +38,7 @@ pub fn ListingsTable(listings: Vec<(ActiveListing, Retainer)>) -> impl IntoView 
                 <td><Gil amount=listing.price_per_unit/></td>
                 <td>{listing.quantity}</td>
                 <td><Gil amount=total /></td>
-                <td>{retainer.name}</td>
+                <td><A href=format!("/retainers/listings/{}", retainer.id)>{retainer.name}</A></td>
                 <td><WorldName id=AnySelector::World(listing.world_id) /></td>
                 <td><DatacenterName world_id=listing.world_id/> </td>
                 <td><RelativeToNow timestamp=listing.timestamp/></td>

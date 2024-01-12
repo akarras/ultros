@@ -8,7 +8,7 @@ use std::{
     time::Instant,
 };
 use tracing::instrument;
-use ultros_api_types::{ActiveListing, Retainer};
+use ultros_api_types::{retainer::Retainer, ActiveListing};
 use universalis::{ItemId, ListingView, WorldId};
 
 use crate::{

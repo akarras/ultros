@@ -1,13 +1,12 @@
-mod ffxiv_character;
-mod listings;
-mod retainer;
-mod sale_history;
-
 pub mod cheapest_listings;
+mod ffxiv_character;
 pub mod icon_size;
 pub mod list;
+mod listings;
 pub mod recent_sales;
 pub mod result;
+pub mod retainer;
+mod sale_history;
 pub mod user;
 pub mod websocket;
 pub mod world;

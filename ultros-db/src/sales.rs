@@ -123,17 +123,25 @@ impl UltrosDb {
         sales.sort_by_key(|sale| std::cmp::Reverse(sale.sold_date));
         sales.truncate(limit as usize);
 
-        let buyers = try_join_all(
-            sales
-                .iter()
-                .map(|s| s.buying_character_id)
-                .unique()
-                .map(|c| unknown_final_fantasy_character::Entity::find_by_id(c).one(&self.db)),
-        )
-        .await?
-        .into_iter()
-        .filter_map(|c| c.map(|c| (c.id, c)))
-        .collect::<HashMap<_, _>>();
+        let buyer_ids = sales.iter().map(|s| s.buying_character_id);
+        let buyers = unknown_final_fantasy_character::Entity::find()
+            .filter(unknown_final_fantasy_character::Column::Id.is_in(buyer_ids))
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .map(|c| (c.id, c))
+            .collect::<HashMap<_, _>>();
+        // let buyers = try_join_all(
+        //     sales
+        //         .iter()
+        //         .map(|s| s.buying_character_id)
+        //         .unique()
+        //         .map(|c| unknown_final_fantasy_character::Entity::find_by_id(c).one(&self.db)),
+        // )
+        // .await?
+        // .into_iter()
+        // .filter_map(|c| c.map(|c| (c.id, c)))
+        // .collect::<HashMap<_, _>>();
         let sales = sales
             .into_iter()
             .map(|sale| {

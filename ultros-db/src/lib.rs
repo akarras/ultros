@@ -158,14 +158,17 @@ impl UltrosDb {
     pub async fn get_retainer_listings(
         &self,
         retainer_id: i32,
-    ) -> Result<Option<(retainer::Model, Vec<active_listing::Model>)>> {
+    ) -> Result<(retainer::Model, Vec<active_listing::Model>)> {
         use retainer::*;
         let query = Entity::find()
             .filter(Column::Id.eq(retainer_id))
             .find_with_related(active_listing::Entity)
             .all(&self.db)
             .await?;
-        Ok(query.into_iter().next())
+        query
+            .into_iter()
+            .next()
+            .ok_or(DbErr::RecordNotFound(retainer_id.to_string()).into())
     }
 
     /// Looks up a world via it's world name. Requires exact match

@@ -34,6 +34,7 @@ use tower_http::trace::TraceLayer;
 use tracing::{debug, warn};
 use ultros_api_types::icon_size::IconSize;
 use ultros_api_types::list::{CreateList, List, ListItem};
+use ultros_api_types::retainer::RetainerListings;
 use ultros_api_types::user::{OwnedRetainer, UserData, UserRetainerListings, UserRetainers};
 use ultros_api_types::websocket::ListingEventData;
 use ultros_api_types::world::WorldData;
@@ -363,6 +364,18 @@ pub(crate) async fn current_user(user: AuthDiscordUser) -> Json<UserData> {
     })
 }
 
+pub(crate) async fn retainer_listings(
+    State(db): State<UltrosDb>,
+    Path(id): Path<i32>,
+) -> Result<Json<RetainerListings>, ApiError> {
+    let (retainer, listings) = db.get_retainer_listings(id).await?;
+    let listings = RetainerListings {
+        retainer: retainer.into(),
+        listings: listings.into_iter().map(ActiveListing::from).collect(),
+    };
+    Ok(Json(listings))
+}
+
 pub(crate) async fn user_retainers(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
@@ -403,17 +416,13 @@ pub(crate) async fn user_retainer_listings(
             let retainers_with_listings =
                 try_join_all(retainers.into_iter().map(|(_owned, retainer)| async move {
                     let listings = db.get_retainer_listings(retainer.id).await;
-                    listings.map(|listings| {
+                    listings.map(|(_retainer, listings)| {
                         (
                             Retainer::from(retainer),
                             listings
-                                .map(|(_, listings)| {
-                                    listings
-                                        .into_iter()
-                                        .map(ActiveListing::from)
-                                        .collect::<Vec<_>>()
-                                })
-                                .unwrap_or_default(),
+                                .into_iter()
+                                .map(ActiveListing::from)
+                                .collect::<Vec<_>>(),
                         )
                     })
                 }))
@@ -857,6 +866,7 @@ pub(crate) async fn start_web(state: WebState) {
             "/item/refresh/:worldid/:itemid",
             get(refresh_world_item_listings),
         )
+        .route("/api/v1/retainer/listings/:id", get(retainer_listings))
         .route("/api/v1/characters/search/:name", get(character_search))
         .route("/api/v1/characters/claim/:id", get(claim_character))
         .route("/api/v1/characters/unclaim/:id", get(unclaim_character))

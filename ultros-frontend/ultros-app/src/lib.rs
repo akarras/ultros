@@ -113,6 +113,7 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>, region: String) -> impl IntoView
                         <Route path="edit" view=EditRetainers/>
                         <Route path="undercuts" view=RetainerUndercuts/>
                         <Route path="listings" view=RetainerListings/>
+                        <Route path="listings/:id" view=SingleRetainerListings />
                     </Route>
                     <Route path="list" view=Lists>
                         <Route path=":id" view=ListView/>

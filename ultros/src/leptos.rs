@@ -161,10 +161,10 @@ mod test {
     #[test]
     fn test_handler_with_ref_state() {
         #[derive(Clone, Copy, Debug)]
-        struct AState(i32);
+        struct AState();
 
         #[derive(Clone, Copy, Debug)]
-        struct OtherState(i32);
+        struct OtherState();
 
         #[derive(Clone, Debug)]
         struct WebState {
@@ -185,7 +185,7 @@ mod test {
         }
 
         // Wrapper that returns AState directly as a request part
-        struct InnerData(i32);
+        struct InnerData();
 
         #[async_trait]
         impl<S> FromRequestParts<S> for InnerData
@@ -198,11 +198,11 @@ mod test {
                 parts: &mut Parts,
                 state: &S,
             ) -> Result<Self, Self::Rejection> {
-                let State(inner) = <State<AState>>::from_request_parts(parts, state)
+                let State(_) = <State<AState>>::from_request_parts(parts, state)
                     .await
                     .map_err(|_| ())?;
 
-                Ok(Self(inner.0))
+                Ok(Self())
             }
         }
 
@@ -212,8 +212,8 @@ mod test {
         let _ = Router::<WebState, Body>::new()
             .leptos_routes_with_handler_stateful(vec![], handler)
             .with_state::<WebState>(WebState {
-                a_state: AState(1),
-                other: OtherState(2),
+                a_state: AState(),
+                other: OtherState(),
             });
     }
 }

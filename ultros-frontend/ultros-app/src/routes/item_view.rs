@@ -101,16 +101,15 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
         move || (item_id(), world()),
         move |(item_id, world)| async move { get_listings(item_id, &world).await },
     );
-    let (pending, set_pending) = create_signal(false);
+    let (_pending, set_pending) = create_signal(false);
     let _class_opacity = "opacity-0 opacity-50"; // this is just here to get tailwind to compile
     view! {
-        <LargeLoading pending />
-        <Transition set_pending=set_pending fallback=move || view!{ <Loading/>}>
+        // <LargeLoading pending />
+        <Transition set_pending=set_pending fallback=Loading>
         {move || listing_resource.get().map(|listings| {
             match listings {
                 Err(e) => view!{ <div>{format!("Error getting listings\n{e}")}</div>}.into_view(),
                 Ok(currently_shown) => {
-
                     let hq_listings = currently_shown.listings.iter().cloned().filter(|(listing, _)| listing.hq).collect::<Vec<_>>();
                     let lq_listings = currently_shown.listings.iter().cloned().filter(|(listing, _)| !listing.hq).collect::<Vec<_>>();
                     let sales = create_memo(move |_| currently_shown.sales.clone());
