@@ -52,9 +52,9 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>, region: String) -> impl IntoView
         <Meta name="viewport" content="initial-scale=1.0,width=device-width"/>
         <Meta name="theme-color" content="#0f0710"/>
         <Meta property="og:type" content="website"/>
-        <Meta property="og:locale" content="en_US" />
+        <Meta property="og:locale" content="en-US" />
         <Meta property="og:site_name" content="Ultros" />
-
+        <Html lang="en-US" />
         <div class="gradient-outer">
             <div class="gradient"></div>
         </div>
