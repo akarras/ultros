@@ -1,8 +1,11 @@
 use anyhow::Result;
 use futures::{future::try_join_all, Stream};
+use itertools::Itertools;
 use metrics::{counter, histogram};
 use migration::DbErr;
-use sea_orm::{ColumnTrait, DbBackend, EntityTrait, FromQueryResult, QueryFilter, Statement};
+use sea_orm::{
+    ColumnTrait, DbBackend, EntityTrait, FromQueryResult, QueryFilter, QuerySelect, Statement,
+};
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
     time::Instant,
@@ -94,17 +97,14 @@ impl UltrosDb {
             }),
         )
         .await?;
-        let retainers: HashSet<_> = items.iter().map(|i| i.retainer_id).collect();
-        let retainers: HashMap<i32, Retainer> = try_join_all(
-            retainers
-                .into_iter()
-                .map(|r| retainer::Entity::find_by_id(r).one(&self.db)),
-        )
-        .await?
-        .into_iter()
-        .flatten()
-        .map(|r| (r.id, r.into()))
-        .collect();
+        let retainers = items.iter().map(|i| i.retainer_id).unique();
+        let retainers: HashMap<i32, Retainer> = retainer::Entity::find()
+            .filter(retainer::Column::Id.is_in(retainers))
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .map(|r| (r.id, r.into()))
+            .collect();
         Ok(items
             .into_iter()
             .flat_map(|i| retainers.get(&i.retainer_id).map(|r| (i.into(), r.clone())))
@@ -141,6 +141,21 @@ impl UltrosDb {
         .await?;
         let data = result.into_iter().flat_map(|s| s.into_iter()).collect();
         Ok(data)
+    }
+
+    #[instrument(skip(self))]
+    pub async fn get_listings_for_world(
+        &self,
+        world: WorldId,
+        item: ItemId,
+    ) -> Result<Vec<active_listing::Model>> {
+        use active_listing::*;
+        let listings = Entity::find()
+            .filter(Column::ItemId.eq(item.0))
+            .filter(Column::WorldId.eq(world.0))
+            .all(&self.db)
+            .await?;
+        Ok(listings)
     }
 
     #[instrument(skip(self))]

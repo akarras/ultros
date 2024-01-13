@@ -19,9 +19,8 @@ pub use sea_orm::error::DbErr as SeaDbErr;
 pub use sea_orm::ActiveValue;
 
 use anyhow::Result;
-use chrono::{Duration, Utc};
-use futures::{future::try_join_all, Stream};
-use migration::{sea_orm::QueryOrder, DbErr, Migrator, MigratorTrait};
+use futures::future::try_join_all;
+use migration::{Migrator, MigratorTrait};
 
 use sea_orm::{
     ActiveModelTrait, ActiveValue::NotSet, ColumnTrait, ConnectOptions, Database,
@@ -58,14 +57,7 @@ impl UltrosDb {
                     .ok()
             })
             .unwrap_or(300);
-        opt.max_connections(max_connections)
-            .min_connections(0)
-            // .connect_timeout(Duration::from_secs(8))
-            // .idle_timeout(Duration::from_secs(8))
-            // .max_lifetime(Duration::from_secs(8))
-        //    .sqlx_logging(false)
-        //    .sqlx_logging_level(log::LevelFilter::Info)
-        ;
+        opt.max_connections(max_connections).min_connections(10);
         let db: DatabaseConnection = Database::connect(opt).await?;
         Migrator::up(&db, None).await?;
 
@@ -239,38 +231,6 @@ impl UltrosDb {
     }
 
     #[instrument(skip(self))]
-    pub async fn get_listings_for_world(
-        &self,
-        world: WorldId,
-        item: ItemId,
-    ) -> Result<Vec<active_listing::Model>> {
-        use active_listing::*;
-        let listings = Entity::find()
-            .filter(Column::ItemId.eq(item.0))
-            .filter(Column::WorldId.eq(world.0))
-            .all(&self.db)
-            .await?;
-        Ok(listings)
-    }
-
-    #[instrument(skip(self))]
-    pub async fn get_cheapest_listing_by_world(
-        &self,
-        world: i32,
-        item: i32,
-        is_hq: bool,
-    ) -> Result<Option<active_listing::Model>> {
-        use active_listing::*;
-        Ok(Entity::find()
-            .filter(Column::ItemId.eq(item))
-            .filter(Column::WorldId.eq(world))
-            .filter(Column::Hq.eq(is_hq))
-            .order_by_asc(Column::PricePerUnit)
-            .one(&self.db)
-            .await?)
-    }
-
-    #[instrument(skip(self))]
     pub async fn create_alert(&self, owner: discord_user::Model) -> Result<alert::Model> {
         use alert::ActiveModel;
         Ok(ActiveModel {
@@ -391,19 +351,6 @@ impl UltrosDb {
         .flatten()
         .collect();
         Ok(retainers)
-    }
-
-    #[instrument(skip(self))]
-    pub async fn stream_sales_within_days(
-        &self,
-        days: i64,
-        world_id: i32,
-    ) -> Result<impl Stream<Item = Result<sale_history::Model, DbErr>> + '_, anyhow::Error> {
-        Ok(sale_history::Entity::find()
-            .filter(sale_history::Column::WorldId.eq(world_id))
-            .filter(sale_history::Column::SoldDate.gt(Utc::now() - Duration::days(days)))
-            .stream(&self.db)
-            .await?)
     }
 
     /// Stores a region. This generally assumes the regions haven't changed and really is just querying for region IDs

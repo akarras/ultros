@@ -9,7 +9,7 @@ use crate::{
     UltrosDb,
 };
 use anyhow::Result;
-use chrono::NaiveDateTime;
+use chrono::{Duration, NaiveDateTime, Utc};
 
 use futures::{future::try_join_all, Stream};
 use itertools::Itertools;
@@ -43,12 +43,9 @@ impl UltrosDb {
         }
 
         // check for any sales that have already been posted
-        let already_recorded_sales = Entity::find()
-            .filter(sale_history::Column::SoldItemId.eq(item_id.0))
-            .filter(sale_history::Column::WorldId.eq(world_id.0))
-            .order_by_desc(sale_history::Column::SoldDate)
-            .limit(sales.len() as u64)
-            .all(&self.db)
+        let limit = sales.len() as u64;
+        let already_recorded_sales = self
+            .get_sale_history_for_item(world_id.0, item_id.0, limit)
             .await?;
         let buyers = self.lookup_buyer_names(&sales).await?;
         sales.retain(|sale| {
@@ -123,25 +120,16 @@ impl UltrosDb {
         sales.sort_by_key(|sale| std::cmp::Reverse(sale.sold_date));
         sales.truncate(limit as usize);
 
-        let buyer_ids = sales.iter().map(|s| s.buying_character_id);
         let buyers = unknown_final_fantasy_character::Entity::find()
-            .filter(unknown_final_fantasy_character::Column::Id.is_in(buyer_ids))
+            .filter(
+                unknown_final_fantasy_character::Column::Id
+                    .is_in(sales.iter().map(|s| s.buying_character_id).unique()),
+            )
             .all(&self.db)
             .await?
             .into_iter()
             .map(|c| (c.id, c))
             .collect::<HashMap<_, _>>();
-        // let buyers = try_join_all(
-        //     sales
-        //         .iter()
-        //         .map(|s| s.buying_character_id)
-        //         .unique()
-        //         .map(|c| unknown_final_fantasy_character::Entity::find_by_id(c).one(&self.db)),
-        // )
-        // .await?
-        // .into_iter()
-        // .filter_map(|c| c.map(|c| (c.id, c)))
-        // .collect::<HashMap<_, _>>();
         let sales = sales
             .into_iter()
             .map(|sale| {
@@ -223,6 +211,19 @@ impl UltrosDb {
             ))
             .stream(&self.db)
             .await
+    }
+
+    #[instrument(skip(self))]
+    pub async fn stream_sales_within_days(
+        &self,
+        days: i64,
+        world_id: i32,
+    ) -> Result<impl Stream<Item = Result<sale_history::Model, DbErr>> + '_, anyhow::Error> {
+        Ok(sale_history::Entity::find()
+            .filter(sale_history::Column::WorldId.eq(world_id))
+            .filter(sale_history::Column::SoldDate.gt(Utc::now() - Duration::days(days)))
+            .stream(&self.db)
+            .await?)
     }
 }
 
