@@ -9,7 +9,6 @@ use crate::CheapestPrices;
 use itertools::Itertools;
 use leptos::*;
 use leptos_icons::*;
-use leptos_meta::Title;
 use leptos_router::*;
 use log::info;
 use paginate::Pages;

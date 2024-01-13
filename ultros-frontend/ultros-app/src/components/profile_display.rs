@@ -11,7 +11,7 @@ pub fn ProfileDisplay() -> impl IntoView {
         {move || user.get().map(|user| match user {
             Some(auth) => view! {
             <A href="/profile">
-                <img class="avatar" src=&auth.avatar alt=&auth.username/>
+                <img alt="User profile picture" class="avatar" src=&auth.avatar alt=&auth.username/>
             </A>
             <a rel="external" class="btn" href="/logout">
                 "Logout"
