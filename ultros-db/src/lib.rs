@@ -24,8 +24,8 @@ use migration::{Migrator, MigratorTrait};
 
 use sea_orm::{
     ActiveModelTrait, ActiveValue::NotSet, ColumnTrait, ConnectOptions, Database,
-    DatabaseConnection, EntityTrait, FromQueryResult, IntoActiveModel, ModelTrait, QueryFilter,
-    QuerySelect, Set,
+    DatabaseConnection, DbErr, EntityTrait, FromQueryResult, IntoActiveModel, ModelTrait,
+    QueryFilter, QuerySelect, Set,
 };
 
 use tracing::{error, info, instrument};
