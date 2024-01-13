@@ -511,11 +511,13 @@ pub fn AnalyzerWorldNavigator() -> impl IntoView {
 #[component]
 pub fn Analyzer() -> impl IntoView {
     view! {
+        <MetaTitle title="Analyzer - Ultros"/>
+        <MetaDescription text="Find items on the Final Fantasy 14 marketboard that are great for resale. Used to earn gil quickly."/>
         <div class="main-content">
             <div class="mx-auto container">
                 <span class="content-title">"Analyzer"</span>
                 <div class="flex-column">
-                    <span>"The analyzer helps find items that are cheaper on other worlds that sell for more on your world."</span><br/>
+                    <span>"The analyzer helps find items on the Final Fantasy 14 marketboard that are cheaper on other worlds that sell for more on your world, enabling you to earn gil through market arbitrage."</span><br/>
                     <span>"Adjust parameters to try and find items that sell well"</span><br/>
                     "Choose a world to get started:"<br/>
                     <AnalyzerWorldNavigator />

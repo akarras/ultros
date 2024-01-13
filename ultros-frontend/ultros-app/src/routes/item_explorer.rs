@@ -9,6 +9,7 @@ use crate::CheapestPrices;
 use itertools::Itertools;
 use leptos::*;
 use leptos_icons::*;
+use leptos_meta::Title;
 use leptos_router::*;
 use log::info;
 use paginate::Pages;
@@ -196,7 +197,7 @@ pub fn CategoryItems() -> impl IntoView {
             .to_string()
     });
     view! {
-    <MetaTitle title=category_view_name/>
+    <MetaTitle title=move || format!("{} - Item Explorer", category_view_name())/>
     <MetaDescription text=move || ["List of items for the item category ", &category_view_name()].concat()/>
     <h3 class="text-xl">{category_view_name}</h3>
     <ItemList items />}
@@ -239,7 +240,7 @@ pub fn JobItems() -> impl IntoView {
             .to_string()
     });
     view! {
-        <MetaTitle title=job_set/>
+        <MetaTitle title=move || format!("{} - Item Explorer", job_set())/>
         <MetaDescription text=move || ["All items equippable by ", &job_set()].concat()/>
         <h3 class="text-xl">{job_set}</h3>
     <div class="flex-row">
@@ -487,6 +488,8 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
 #[component]
 pub fn ItemExplorer() -> impl IntoView {
     view! {
+        <MetaTitle title="Ultros Item Explorer"/>
+        <MetaDescription text="Find the cheapest items available on the marketboard!"/>
         <div class="main-content">
             <div class="mx-auto container flex flex-col md:flex-row items-start">
                 <div class="flex flex-col text-lg max-w-sm shrink">
@@ -503,7 +506,7 @@ pub fn ItemExplorer() -> impl IntoView {
                     <Ad class="h-40 md:h-[50vh]"/>
                 </div>
                 <div class="flex flex-col grow">
-                    <h2 class="text-2xl">"Item Explorer"</h2>
+                    <h1 class="text-2xl">"Item Explorer"</h1>
                     <Outlet />
                 </div>
             </div>

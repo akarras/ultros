@@ -2,6 +2,7 @@ use crate::api::{
     check_character_verification, claim_character, delete_user, get_character_verifications,
     get_characters, search_characters, unclaim_character,
 };
+use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::components::{ad::*, loading::*, toggle::Toggle, world_name::*, world_picker::*};
 use crate::error::AppResult;
 use crate::global_state::cookies::Cookies;
@@ -113,7 +114,9 @@ fn AdChoice() -> impl IntoView {
 pub fn Settings() -> impl IntoView {
     view! {
     <div class="main-content">
-        <h3 class="text-2xl">"Settings"</h3>
+        <h1 class="text-2xl">"Settings"</h1>
+        <MetaTitle title="Ultros settings page"/>
+        <MetaDescription text="Manage settings such as homeworld or other for Ultros"/>
         <HomeWorldPicker />
         <AdChoice />
     </div>}
