@@ -1,8 +1,9 @@
 use crate::api::get_listings;
 use crate::components::recently_viewed::RecentItems;
+use crate::components::skeleton::BoxSkeleton;
 use crate::components::{
-    ad::Ad, clipboard::*, item_icon::*, listings_table::*, loading::*, meta::*,
-    price_history_chart::*, related_items::*, sale_history_table::*, stats_display::*, ui_text::*,
+    ad::Ad, clipboard::*, item_icon::*, listings_table::*, meta::*, price_history_chart::*,
+    related_items::*, sale_history_table::*, stats_display::*, ui_text::*,
 };
 use crate::global_state::home_world::get_price_zone;
 use crate::global_state::LocalWorldData;
@@ -101,28 +102,34 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
         move || (item_id(), world()),
         move |(item_id, world)| async move { get_listings(item_id, &world).await },
     );
-    let (_pending, set_pending) = create_signal(false);
     let _class_opacity = "opacity-0 opacity-50"; // this is just here to get tailwind to compile
     view! {
-        // <LargeLoading pending />
-        <Transition set_pending=set_pending fallback=Loading>
-        {move || listing_resource.get().map(|listings| {
-            match listings {
-                Err(e) => view!{ <div>{format!("Error getting listings\n{e}")}</div>}.into_view(),
-                Ok(currently_shown) => {
-                    let hq_listings = currently_shown.listings.iter().cloned().filter(|(listing, _)| listing.hq).collect::<Vec<_>>();
-                    let lq_listings = currently_shown.listings.iter().cloned().filter(|(listing, _)| !listing.hq).collect::<Vec<_>>();
-                    let sales = create_memo(move |_| currently_shown.sales.clone());
-                    view! {
+        <Transition fallback=move || view !{
+            <div class="h-[35em]">
+                <BoxSkeleton />
+            </div>
+            <div class="h-[35em]">
+                <BoxSkeleton />
+            </div>
+            <div class="h-[35em]">
+                <BoxSkeleton />
+            </div>
+            <div class="h-[35em]">
+                <BoxSkeleton />
+            </div>
+        }>
+        {
+            let hq_listings = create_memo(move |_| listing_resource.with(|l| l.as_ref().and_then(|l| l.as_ref().ok().map(|l| l.listings.iter().cloned().filter(|(l, _)| l.hq).collect::<Vec<_>>()))).unwrap_or_default());
+            let lq_listings = create_memo(move |_| listing_resource.with(|l| l.as_ref().and_then(|l| l.as_ref().ok().map(|l| l.listings.iter().cloned().filter(|(l, _)| !l.hq).collect::<Vec<_>>()))).unwrap_or_default());
+            let sales = create_memo(move |_| listing_resource.with(|l| l.as_ref().and_then(|l| l.as_ref().map(|l| l.sales.clone()).ok())).unwrap_or_default());
+            view! {
                         <div class="content-well max-h-[35em] overflow-y-auto">
                             <PriceHistoryChart sales=MaybeSignal::from(sales) />
                         </div>
-                        {(!hq_listings.is_empty()).then(move || {
-                            view!{ <div class="content-well max-h-[35em] overflow-y-auto">
-                                <span class="content-title">"high quality listings"</span>
-                                <ListingsTable listings=hq_listings />
-                            </div> }.into_view()
-                        })}
+                        <div class="content-well max-h-[35em] overflow-y-auto" class:hidden=move || hq_listings.with(|l| l.is_empty())>
+                            <span class="content-title">"high quality listings"</span>
+                            <ListingsTable listings=hq_listings />
+                        </div>
                         <div class="content-well max-h-[35em] overflow-y-auto">
                             <span class="content-title">"low quality listings"</span>
                             <ListingsTable listings=lq_listings />
@@ -131,10 +138,8 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
                             <span class="content-title">"sale history"</span>
                             <SaleHistoryTable sales=Signal::from(sales) />
                         </div>
-                    }.into_view()
-                }
             }
-        })}
+        }
         </Transition>
     }
 }

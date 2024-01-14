@@ -5,6 +5,7 @@ use crate::components::ad::Ad;
 use crate::components::clipboard::Clipboard;
 use crate::components::gil::*;
 use crate::components::{item_icon::*, loading::*, meta::*, world_name::*};
+use crate::global_state::LocalWorldData;
 use leptos::*;
 use leptos_icons::*;
 use leptos_router::*;
@@ -43,6 +44,9 @@ fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> imp
     let data = xiv_gen_db::data();
     let items = &data.items;
     listings.sort_by_key(|u| ItemSortKey::from(&u.current));
+    let worlds = use_context::<LocalWorldData>().unwrap().0.unwrap();
+    let world = worlds.lookup_selector(AnySelector::World(retainer.world_id));
+    let world_name = world.as_ref().map(|w| w.get_name()).unwrap_or_default();
     let listings: Vec<_> = listings
         .into_iter()
         .map(|undercut_data| {
@@ -60,8 +64,10 @@ fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> imp
                     <td class="flex flex-row">
                         {if let Some(item) = item {
                             view! {
-                                <ItemIcon icon_size=IconSize::Small item_id=listing.item_id/>
-                                {&item.name}
+                                <A class="flex flex-row" href=format!("/item/{world_name}/{}", listing.item_id)>
+                                    <ItemIcon icon_size=IconSize::Small item_id=listing.item_id/>
+                                    {&item.name}
+                                </A>
                                 <Clipboard clipboard_text=item.name.as_str() />
                             }
                                 .into_view()
@@ -115,6 +121,10 @@ fn RetainerTable(retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoV
     let items = &data.items;
     let mut listings = listings;
     listings.sort_by_key(|u| ItemSortKey::from(u));
+    let world_data = use_context::<LocalWorldData>().unwrap();
+    let worlds = world_data.0.unwrap();
+    let world = worlds.lookup_selector(AnySelector::World(retainer.world_id));
+    let world_name = world.as_ref().map(|w| w.get_name()).unwrap_or_default();
     let listings: Vec<_> = listings
         .into_iter()
         .map(|listing| {
@@ -130,8 +140,10 @@ fn RetainerTable(retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoV
                     <td class="flex flex-row">
                         {if let Some(item) = item {
                             view! {
-                                <ItemIcon icon_size=IconSize::Small item_id=listing.item_id/>
-                                {&item.name}
+                                <A class="flex flex-row" href=format!("/item/{}/{}", world_name, listing.item_id)>
+                                    <ItemIcon icon_size=IconSize::Small item_id=listing.item_id/>
+                                    {&item.name}
+                                </A>
                                 <Clipboard clipboard_text=item.name.as_str() />
                             }
                                 .into_view()

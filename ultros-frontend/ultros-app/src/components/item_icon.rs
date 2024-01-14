@@ -15,9 +15,12 @@ pub fn ItemIcon(#[prop(into)] item_id: MaybeSignal<i32>, icon_size: IconSize) ->
     let (failed, set_failed) = create_signal(0);
     let failed_item = move || failed() == item_id();
     let data = xiv_gen_db::data();
-    let item_name = move || { 
+    let item_name = move || {
         let item = data.items.get(&ItemId(item_id()));
-        format!("Image for item {}", item.as_ref().map(|i| i.name.as_str()).unwrap_or_default())
+        format!(
+            "Image for item {}",
+            item.as_ref().map(|i| i.name.as_str()).unwrap_or_default()
+        )
     };
     view! {
         <img prop:alt=item_name class=icon_size.get_class()

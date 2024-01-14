@@ -12,7 +12,6 @@ use anyhow::Result;
 use chrono::{Duration, NaiveDateTime, Utc};
 
 use futures::{future::try_join_all, Stream};
-use itertools::Itertools;
 use metrics::histogram;
 use migration::{
     sea_orm::{ColumnTrait, EntityTrait, QueryFilter, Set},
