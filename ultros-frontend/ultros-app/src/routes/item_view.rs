@@ -227,7 +227,7 @@ pub fn ItemView() -> impl IntoView {
                             <ItemIcon item_id icon_size=IconSize::Large />
                             <div class="flex flex-col">
                                 <span>{item_name}</span>
-                                <span style="font-size: 16px">{move || item_category().and_then(|c| item_search_category().map(|s| (c, s))).map(|(c, s)| view!{<a class="text-fuchsia-300 a:text-fuchsia-600" href=["/items/category/", &s.name].concat()>
+                                <span style="font-size: 16px">{move || item_category().and_then(|c| item_search_category().map(|s| (c, s))).map(|(c, s)| view!{<a class="text-fuchsia-300 a:text-fuchsia-600" href=["/items/category/", &s.name.replace("/", "%2F")].concat()>
                                     {c.name.as_str()}
                                 </a>})}
                             </span></div><Clipboard clipboard_text=MaybeSignal::derive(move || item_name().to_string())/></span>
