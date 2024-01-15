@@ -142,10 +142,11 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>, region: String) -> impl IntoView
             <div class="flex-row column-pad flex-center">
                 <a href="https://discord.gg/pgdq9nGUP2">"Discord"</a>"|"
                 <a href="https://github.com/akarras/ultros">"GitHub"</a>"|"
-                <a href="https://leekspin.com">"Patreon"</a>
+                <a href="https://leekspin.com">"Patreon"</a>"|"
+                <a href="https://book.ultros.app">"Book"</a>
             </div>
             <span>"Made using "<a href="https://universalis.app/">"universalis"</a>"' API.Please contribute to Universalis to help this site stay up to date."</span>
-            <span>"Version: "{git_hash}</span>
+            <span>"Version: "<a href={format!("https://github.com/akarras/ultros/commit/{git_hash}")}>{git_hash}</a></span>
             <span>"FINAL FANTASY XIV © 2010 - 2020 SQUARE ENIX CO., LTD. All Rights Reserved."</span>
         </footer>
     }
