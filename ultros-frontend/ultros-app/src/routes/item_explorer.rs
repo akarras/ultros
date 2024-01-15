@@ -2,9 +2,8 @@ use std::borrow::Cow;
 use std::{collections::HashSet, str::FromStr};
 
 use crate::components::query_button::QueryButton;
-use crate::components::{
-    ad::Ad, cheapest_price::*, fonts::*, meta::*, small_item_display::*, tooltip::*,
-};
+use crate::components::toggle::Toggle;
+use crate::components::{ad::Ad, cheapest_price::*, fonts::*, meta::*, small_item_display::*};
 use crate::CheapestPrices;
 use itertools::Itertools;
 use leptos::*;
@@ -14,6 +13,17 @@ use log::info;
 use paginate::Pages;
 use percent_encoding::percent_decode_str;
 use xiv_gen::{ClassJobCategory, Item, ItemId};
+
+#[component]
+fn SideMenuButton(href: String, children: Box<dyn Fn() -> Fragment>) -> impl IntoView {
+    view! {
+        <APersistQuery href remove_values=&["page", "menu-open"]>
+            <div class="p-2 hover:bg-gray-700 border border-solid border-gray-600 transition-all flex flex-row gap-2">
+                {children()}
+            </div>
+        </APersistQuery>
+    }
+}
 
 /// Displays buttons of categories
 #[component]
@@ -31,15 +41,13 @@ fn CategoryView(category: u8) -> impl IntoView {
         .collect::<Vec<_>>();
     categories.sort_by_key(|(order, _, _)| *order);
     view! {
-        <div class="flex flex-row flex-wrap text-2xl p-2">
+        <div class="flex flex-col text-xl">
         {categories.into_iter()
             .map(|(_, name, id)| view! {
-                <Tooltip tooltip_text=Oco::from(name.as_str())>
-                    // for submarine parts, there's a slash in the name that needs to be sanitized
-                    <APersistQuery href=["/items/category/", &name.replace("/", "%2F")].concat() remove_values=&["page"]>
-                        <ItemSearchCategoryIcon id=*id />
-                    </APersistQuery>
-                </Tooltip>
+                <SideMenuButton href=["/items/category/", &name.replace("/", "%2F")].concat()>
+                    <ItemSearchCategoryIcon id=*id />
+                    {name}
+                </SideMenuButton>
             })
             .collect::<Vec<_>>()}
         </div>
@@ -150,16 +158,15 @@ fn JobsList() -> impl IntoView {
     let jobs = &xiv_gen_db::data().class_jobs;
     let mut jobs: Vec<_> = jobs.iter().collect();
     jobs.sort_by_key(|(_, job)| job.ui_priority);
-    view! {<div class="flex flex-wrap text-2xl p-2">
+    view! {<div class="flex flex-col text-xl">
         {jobs.into_iter()
-            // .filter(|(_id, job)| job.class_job_parent.0 == 0)
+            .filter(|(_id, job)| job.class_job_parent.0 != 0)
             .map(|(_id, job)| view!{
-                <APersistQuery href=["/items/jobset/", &job.abbreviation].concat() remove_values=&["page"]>
+                <SideMenuButton href=["/items/jobset/", &job.abbreviation].concat()>
+                    <ClassJobIcon id=job.key_id />
                     // {&job.abbreviation}
-                    <Tooltip tooltip_text=Oco::from(job.name_english.as_str())>
-                        <ClassJobIcon id=job.key_id />
-                    </Tooltip>
-                </APersistQuery>
+                    {job.name_english.as_str()}
+                </SideMenuButton>
             }).collect::<Vec<_>>()}
     </div>}
 }
@@ -206,7 +213,10 @@ pub fn CategoryItems() -> impl IntoView {
 pub fn JobItems() -> impl IntoView {
     let params = use_params_map();
     let data = xiv_gen_db::data();
-    let (market_only, set_market_only) = create_signal(true);
+    let (non_market, set_non_market) = create_query_signal::<bool>("show-non-market");
+    let market_only = create_memo(move |_| !non_market().unwrap_or_default());
+    let set_market_only =
+        SignalSetter::map(move |market: bool| set_non_market((!market).then_some(true)));
     let items = create_memo(move |_| {
         let job_set = match params().get("jobset") {
             Some(p) => p.clone(),
@@ -243,10 +253,7 @@ pub fn JobItems() -> impl IntoView {
         <MetaDescription text=move || ["All items equippable by ", &job_set()].concat()/>
         <h3 class="text-xl">{job_set}</h3>
     <div class="flex-row">
-        <label for="marketable-only">"Marketable Only"</label>
-        <input type="checkbox" prop:checked=market_only name="market-only" on:change=move |_e| {
-            set_market_only(!market_only())
-        } />
+        <Toggle checked=market_only set_checked=set_market_only checked_label="Filtering Unmarketable Items" unchecked_label="Showing all items" />
     </div>
     <ItemList items />}
 }
@@ -486,21 +493,32 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
 
 #[component]
 pub fn ItemExplorer() -> impl IntoView {
+    let (menu_open, set_open) = create_query_signal("menu-open");
+    let menu_open = create_memo(move |_| menu_open().unwrap_or_default());
+    let set_open = SignalSetter::map(move |collapse: bool| set_open(collapse.then_some(true)));
+    // class="invisible right-full"
+    // class="collapse right-6 bg-neutral-700"
     view! {
         <MetaTitle title="Ultros Item Explorer"/>
         <MetaDescription text="Find the cheapest items available on the marketboard!"/>
-        <div class="main-content">
+        <button class="p-2 text-3xl bg-neutral-800 text-gray-300 hover:bg-neutral-600 gap-1 flex flex-row rounded" class:bg-neutral-700=menu_open class:bg-neutral-800=move || !menu_open() on:click=move |_| {
+            set_open(!menu_open.get_untracked());
+        }>
+            <Icon icon=Icon::from(BiIcon::BiMenuRegular) />
+            <span>"Categories"</span>
+        </button>
+        <div class="main-content relative">
             <div class="mx-auto container flex flex-col md:flex-row items-start">
-                <div class="flex flex-col text-lg max-w-sm shrink">
-                    "Weapons"
+                <div class="bg-neutral-950 flex flex-col max-w-sm shrink h-[70vh] overflow-y-scroll absolute top-0 bottom-0 left-0 right-6 transition-all z-50" class:right-6=menu_open class:right-full=move || !menu_open() class:collapse=move || !menu_open()>
+                    <h2 class="text-6xl p-2">"Weapons"</h2>
                     <CategoryView category=1 />
-                    "Armor"
+                    <h2 class="text-6xl p-2">"Armor"</h2>
                     <CategoryView category=2 />
-                    "Items"
+                    <h2 class="text-6xl p-2">"Items"</h2>
                     <CategoryView category=3 />
-                    "Housing"
+                    <h2 class="text-6xl p-2">"Housing"</h2>
                     <CategoryView category=4 />
-                    "Job Set"
+                    <h2 class="text-6xl p-2">"Job Set"</h2>
                     <JobsList />
                     <Ad class="h-40 md:h-[50vh]"/>
                 </div>
