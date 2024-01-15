@@ -38,7 +38,7 @@ xiv-gen = {path = "./xiv-gen", features = ["item", "item_ui_category", "item_sea
   "class_job_category", "base_param", "item_sort_category"]}
 leptos_icons = {version = "0.0.16-beta", features = ["IoSettingsSharp", "AiOrderedListOutlined", "BsDiscord", "BsClipboard2Fill", "BsClipboard2CheckFill",
   "AiEditFilled", "FaMoneyBillTrendUpSolid", "BsCheck", "BsPencilFill", "BiSortDownRegular", "BiSortUpRegular", "BiPlusRegular", "BiTrashSolid",
-  "AiExclamationOutlined", "BiSaveSolid", "BiGroupSolid", "BiHomeSolid", "FaScrewdriverWrenchSolid", "AiSearchOutlined", "ImPriceTag", "BiCalendarAltRegular"]}
+  "AiExclamationOutlined", "BiSaveSolid", "BiGroupSolid", "BiHomeSolid", "FaScrewdriverWrenchSolid", "AiSearchOutlined", "ImPriceTag", "BiCalendarAltRegular", "BiMenuRegular"]}
 cfg-if = "1.0.0"
 git-const = "1.1.0"
 
@@ -121,9 +121,6 @@ end2end-cmd = "npx playwright test"
 #
 # Optional. Env: LEPTOS_END2END_DIR
 end2end-dir = "integration"
-
-# prevents recompiles when using cargo leptos serve
-separate-front-target-dir = true
 
 [profile.dev.build-override]
 opt-level = 1
