@@ -1,5 +1,8 @@
 # Summary
-- [Intro](./intro.md)
+- [Intro](./intro/intro.md)
+    - [Set your home world](./intro/homeworld.md)
+- [Search](./search/search.md)
+- [Item Explorer](./item_explorer.md)
 - [Characters]()
     - [Add character]()
 - [Retainers](./retainers/retainers.md)
