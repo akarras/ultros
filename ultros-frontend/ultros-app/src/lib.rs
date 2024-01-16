@@ -93,10 +93,11 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>, region: String) -> impl IntoView
                     <div>
                         <SearchBox/>
                     </div>
-                    <A href="/items">
-                        <Tooltip tooltip_text=Oco::from("All Items")>
+                    <A href="/items?menu-open=true">
+                        <Tooltip tooltip_text=Oco::from("Item Explorer")>
                             <Icon width="1.75em" height="1.75em" icon=Icon::from(FaIcon::FaScrewdriverWrenchSolid) />
                         </Tooltip>
+                        <div class="sr-only">"Item Explorer"</div>
                     </A>
                     <div class="flex-row">
                         <a rel="external" class="btn" href="/invitebot">

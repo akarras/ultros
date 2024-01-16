@@ -4,7 +4,7 @@ use itertools::Itertools;
 use metrics::{counter, histogram};
 use migration::DbErr;
 use sea_orm::{
-    ColumnTrait, DbBackend, EntityTrait, FromQueryResult, QueryFilter, QuerySelect, Statement,
+    ColumnTrait, DbBackend, EntityTrait, FromQueryResult, QueryFilter, Statement,
 };
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},

@@ -2,8 +2,9 @@ use leptos::{
     html::{Div, Input},
     *,
 };
-#[cfg(feature = "hydrate")]
 use leptos_use::use_element_hover;
+use web_sys::wasm_bindgen::JsCast;
+use web_sys::KeyboardEvent;
 
 use crate::components::search_result::MatchFormatter;
 
@@ -27,12 +28,7 @@ where
     let (has_focus, set_focused) = create_signal(false);
     let dropdown = create_node_ref::<Div>();
     let input = create_node_ref::<Input>();
-    #[cfg(feature = "hydrate")]
     let hovered = use_element_hover(dropdown);
-    #[cfg(not(feature = "hydrate"))]
-    let hovered: Signal<bool> = create_memo(move |_| false).into();
-    #[cfg(not(feature = "hydrate"))]
-    let _dropdown = dropdown;
     let labels = create_memo(move |_| {
         items.with(|i| {
             i.iter()
@@ -65,19 +61,36 @@ where
             search_results
         }
     });
+    let keydown = move |e: KeyboardEvent| {
+        if e.key() == "Enter" {
+            if let Some(id) = search_results.with_untracked(|s| s.first().map(|(i, _)| *i)) {
+                if let Some(item) = items.with(|i| i.get(id).cloned()) {
+                    set_choice(Some(item));
+                    set_current_input("".to_string());
+                    if let Some(element) = document().active_element().and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok()) {
+                        element.blur().unwrap();
+                    }
+                    let input = input().unwrap();
+                    input.focus().unwrap();
+                    input.blur().unwrap();
+                }
+            }
+        }
+    };
     view! {
         <div class="relative">
             <input node_ref=input
                 class:cursor=move || !has_focus()
-                class="p-2 rounded-md bg-purple-950
-                border-solid border-1 border-violet-600 w-96 
-                hover:bg-purple-700 hover:border-violet-950 
-                active:bg-purple-700 active:border-violet-400"
+                class="p-2 rounded-md bg-violet-950
+                border-solid border border-violet-600 w-96 
+                hover:bg-violet-800 hover:border-violet-950 
+                focus:bg-violet-700 active:border-violet-400"
                 on:focus=move |_| set_focused(true)
                 on:focusout=move |_| set_focused(false)
                 on:input=move |e| { set_current_input(event_target_value(&e)); }
+                on:keydown=keydown
                 prop:value=current_input />
-            <div class="absolute top-2 left-2 select-none cursor" class:hidden=move || has_focus() || !current_input().is_empty() on:click=move |_| {
+            <div class="absolute top-2 left-2 select-none cursor" class:invisible=move || has_focus() || !current_input().is_empty() on:click=move |_| {
                 if let Some(input) = input() {
                     let _ = input.focus();
                 }
@@ -86,7 +99,7 @@ where
                     children(c.clone(), as_label(&c).into_view())
                 })}
             </div>
-            <div node_ref=dropdown class:hidden=move || !has_focus() && !hovered()
+            <div node_ref=dropdown class:invisible=move || !has_focus() && !hovered()
                 class="focus-within:visible absolute w-96 h-96 overflow-y-auto top-10 bg-purple-950 z-20">
                 <For each=final_result
                     key=move |(l, _)| *l
@@ -97,6 +110,9 @@ where
                             set_choice(Some(item));
                             set_focused(false);
                             set_current_input("".to_string());
+                            if let Some(element) = document().active_element().and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok()) {
+                                element.blur().unwrap();
+                            }
                         }
                     }>
                         <div class="hover:bg-purple-700 hover:border-solid hover:border-violet-600 rounded-sm p-2" class:bg-purple-500=move || {

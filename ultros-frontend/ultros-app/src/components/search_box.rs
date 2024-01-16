@@ -8,7 +8,6 @@ use gloo_timers::future::TimeoutFuture;
 use leptos::{html::Input, *};
 use leptos_icons::*;
 use leptos_router::{use_navigate, NavigateOptions};
-use log::info;
 use sublime_fuzzy::{FuzzySearch, Match, Scoring};
 use web_sys::KeyboardEvent;
 
@@ -57,7 +56,6 @@ pub fn SearchBox() -> impl IntoView {
         })
     };
     let keydown = move |e: KeyboardEvent| {
-        info!("{}", e.key());
         if e.key() == "Enter" {
             if let Some((id, _)) = item_search().first() {
                 let (zone, _) = get_price_zone();
