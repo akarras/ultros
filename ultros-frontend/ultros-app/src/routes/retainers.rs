@@ -270,6 +270,16 @@ pub fn RetainerUndercuts() -> impl IntoView {
 }
 
 #[component]
+pub fn RetainersBasePath() -> impl IntoView {
+    view! {
+        <div>
+            <h3>"Retainers"</h3>
+            "Retainers can be added added to your account while logged in and tracked. To get started get logged in and click the tabs above."
+        </div>
+    }
+}
+
+#[component]
 pub fn SingleRetainerListings() -> impl IntoView {
     let params = use_params_map();
     let retainer_listings = create_resource(
@@ -346,14 +356,14 @@ pub fn Retainers() -> impl IntoView {
     // let retainers = create_resource(|| "retainers", move |_| get_retainer_listings(cx));
     view! {
         <div class="content-nav">
-            <A class="btn-secondary flex flex-row" href="/retainers/edit">
+            <A exact=true class="btn-secondary flex flex-row" href="/retainers/edit">
                 <Icon width="1.75em" height="1.75em" icon=Icon::from(BsIcon::BsPencilFill)/>
                 "Edit"
             </A>
-            <A class="btn-secondary" href="/retainers/listings">
+            <A exact=true class="btn-secondary" href="/retainers/listings">
                 "All Listings"
             </A>
-            <A class="btn-secondary flex flex-row" href="/retainers/undercuts">
+            <A exact=true class="btn-secondary flex flex-row" href="/retainers/undercuts">
                 <Icon width="1.75em" height="1.75em" icon=Icon::from(AiIcon::AiExclamationOutlined) />
                 "Undercuts"
             </A>

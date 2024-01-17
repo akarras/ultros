@@ -67,7 +67,10 @@ where
                 if let Some(item) = items.with(|i| i.get(id).cloned()) {
                     set_choice(Some(item));
                     set_current_input("".to_string());
-                    if let Some(element) = document().active_element().and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok()) {
+                    if let Some(element) = document()
+                        .active_element()
+                        .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
+                    {
                         element.blur().unwrap();
                     }
                     let input = input().unwrap();

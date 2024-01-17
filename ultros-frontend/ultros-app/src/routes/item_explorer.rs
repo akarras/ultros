@@ -3,7 +3,7 @@ use std::{collections::HashSet, str::FromStr};
 
 use crate::components::query_button::QueryButton;
 use crate::components::toggle::Toggle;
-use crate::components::{ad::Ad, cheapest_price::*, fonts::*, meta::*, small_item_display::*};
+use crate::components::{cheapest_price::*, fonts::*, meta::*, small_item_display::*};
 use crate::CheapestPrices;
 use itertools::Itertools;
 use leptos::*;
@@ -520,7 +520,6 @@ pub fn ItemExplorer() -> impl IntoView {
                     <CategoryView category=4 />
                     <h2 class="text-6xl p-2">"Job Set"</h2>
                     <JobsList />
-                    <Ad class="h-40 md:h-[50vh]"/>
                 </div>
                 <div class="flex flex-col grow">
                     <h1 class="text-2xl">"Item Explorer"</h1>

@@ -369,7 +369,6 @@ nav>*>a:hover {
 
 .main-content {
   background-color: rgba(16, 10, 18, .97);
-  backdrop-filter: blur(2.25px);
   padding: 2em;
   min-height: 90vh;
   overflow-x: auto;

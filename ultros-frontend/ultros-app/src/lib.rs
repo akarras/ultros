@@ -115,6 +115,7 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>, region: String) -> impl IntoView
                         <Route path="undercuts" view=RetainerUndercuts/>
                         <Route path="listings" view=RetainerListings/>
                         <Route path="listings/:id" view=SingleRetainerListings />
+                        <Route path="" view=RetainersBasePath />
                     </Route>
                     <Route path="list" view=Lists>
                         <Route path=":id" view=ListView/>
@@ -146,6 +147,9 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>, region: String) -> impl IntoView
                 <a href="https://leekspin.com">"Patreon"</a>"|"
                 <a href="https://book.ultros.app">"Book"</a>
             </div>
+            <span>
+                "Ultros is still under constant development. If you have suggestions or feedback, feel free to leave suggestions in the discord."
+            </span>
             <span>"Made using "<a href="https://universalis.app/">"universalis"</a>"' API.Please contribute to Universalis to help this site stay up to date."</span>
             <span>"Version: "<a href={format!("https://github.com/akarras/ultros/commit/{git_hash}")}>{git_hash}</a></span>
             <span>"FINAL FANTASY XIV © 2010 - 2020 SQUARE ENIX CO., LTD. All Rights Reserved."</span>
