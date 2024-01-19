@@ -2,7 +2,7 @@ use crate::api::get_listings;
 use crate::components::recently_viewed::RecentItems;
 use crate::components::skeleton::BoxSkeleton;
 use crate::components::{
-    ad::Ad, clipboard::*, item_icon::*, listings_table::*, meta::*, price_history_chart::*,
+    clipboard::*, item_icon::*, listings_table::*, meta::*, price_history_chart::*,
     related_items::*, sale_history_table::*, stats_display::*, ui_text::*,
 };
 use crate::global_state::home_world::get_price_zone;
@@ -104,43 +104,69 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
     );
     let _class_opacity = "opacity-0 opacity-50"; // this is just here to get tailwind to compile
     view! {
-        <Transition fallback=move || view !{
-            <div class="h-[35em]">
-                <BoxSkeleton />
-            </div>
-            <div class="h-[35em]">
-                <BoxSkeleton />
-            </div>
-            <div class="h-[35em]">
-                <BoxSkeleton />
-            </div>
-            <div class="h-[35em]">
+        <div>
+        <Transition fallback=move || view!{
+            <div class="h-[35em] grow">
                 <BoxSkeleton />
             </div>
         }>
-        {
+        {move || {
+            let sales = create_memo(move |_| listing_resource.with(|l| l.as_ref().and_then(|l| l.as_ref().map(|l| l.sales.clone()).ok())).unwrap_or_default());
+            view!{ <div class="content-well max-h-[35em] overflow-y-auto">
+                <PriceHistoryChart sales=MaybeSignal::from(sales) />
+            </div>}
+        }}
+        </Transition>
+        </div>
+        <div>
+        <Transition fallback=move || view !{
+            <div class="h-[35em] grow">
+                <BoxSkeleton />
+            </div>
+        }>
+        {move || {
             let hq_listings = create_memo(move |_| listing_resource.with(|l| l.as_ref().and_then(|l| l.as_ref().ok().map(|l| l.listings.iter().cloned().filter(|(l, _)| l.hq).collect::<Vec<_>>()))).unwrap_or_default());
+            view!{<div class="content-well max-h-[35em] overflow-y-auto" class:hidden=move || hq_listings.with(|l| l.is_empty())>
+                    <div class="content-title">"high quality listings"</div>
+                    <ListingsTable listings=hq_listings />
+                </div>}
+        }}
+        </Transition>
+        </div>
+        <div>
+        <Transition fallback=move || view !{
+            <div class="h-[35em] grow">
+                <BoxSkeleton />
+            </div>
+        }>
+        {move || {
             let lq_listings = create_memo(move |_| listing_resource.with(|l| l.as_ref().and_then(|l| l.as_ref().ok().map(|l| l.listings.iter().cloned().filter(|(l, _)| !l.hq).collect::<Vec<_>>()))).unwrap_or_default());
+            view!{<div class="content-well max-h-[35em] overflow-y-auto" class:hidden=move || lq_listings.with(|l| l.is_empty())>
+                <div class="content-title">"low quality listings"</div>
+                <ListingsTable listings=lq_listings />
+            </div>}
+        }}
+        </Transition>
+        </div>
+        <div>
+        <Transition fallback=move || view !{
+            <div class="h-[35em] min-w-[400px] grow">
+                <BoxSkeleton />
+            </div>
+        }>
+        {move || {
             let sales = create_memo(move |_| listing_resource.with(|l| l.as_ref().and_then(|l| l.as_ref().map(|l| l.sales.clone()).ok())).unwrap_or_default());
             view! {
-                        <div class="content-well max-h-[35em] overflow-y-auto">
-                            <PriceHistoryChart sales=MaybeSignal::from(sales) />
-                        </div>
-                        <div class="content-well max-h-[35em] overflow-y-auto" class:hidden=move || hq_listings.with(|l| l.is_empty())>
-                            <span class="content-title">"high quality listings"</span>
-                            <ListingsTable listings=hq_listings />
-                        </div>
-                        <div class="content-well max-h-[35em] overflow-y-auto">
-                            <span class="content-title">"low quality listings"</span>
-                            <ListingsTable listings=lq_listings />
-                        </div>
-                        <div class="content-well max-h-[35em] overflow-y-auto">
-                            <span class="content-title">"sale history"</span>
-                            <SaleHistoryTable sales=Signal::from(sales) />
-                        </div>
+                <div class="content-well max-h-[35em] overflow-y-auto">
+                    <div class="content-title">"sale history"</div>
+                    <div>
+                        <SaleHistoryTable sales=Signal::from(sales) />
+                    </div>
+                </div>
             }
-        }
+        }}
         </Transition>
+        </div>
     }
 }
 
@@ -223,21 +249,22 @@ pub fn ItemView() -> impl IntoView {
             <div class="flex flex-row grow p-6 rounded-l ">
                 <div class="flex flex-column grow" style="padding: 5px">
                     <div class="flex md:flex-row flex-col flex-wrap">
-                        <span class="flex flex-row text-2xl gap-1">
+                        <div class="flex flex-row text-2xl gap-1">
                             <ItemIcon item_id icon_size=IconSize::Large />
                             <div class="flex flex-col">
-                                <span>{item_name}</span>
-                                <span style="font-size: 16px">{move || item_category().and_then(|c| item_search_category().map(|s| (c, s))).map(|(c, s)| view!{<a class="text-fuchsia-300 a:text-fuchsia-600" href=["/items/category/", &s.name.replace("/", "%2F")].concat()>
+                                <div>{item_name}</div>
+                                <div style="font-size: 16px">
+                                <div>{move || item_category().and_then(|c| item_search_category().map(|s| (c, s))).map(|(c, s)| view!{<a class="text-fuchsia-300 a:text-fuchsia-600" href=["/items/category/", &s.name.replace("/", "%2F")].concat()>
                                     {c.name.as_str()}
-                                </a>})}
-                            </span></div><Clipboard clipboard_text=MaybeSignal::derive(move || item_name().to_string())/></span>
+                                </a>})}</div>
+                            </div></div><Clipboard clipboard_text=MaybeSignal::derive(move || item_name().to_string())/></div>
                         <div class="md:ml-auto flex flex-row" style="align-items:start">
                             <a style="height: 45px" class="btn" href=move || format!("https://universalis.app/market/{}", item_id())>"Universalis"</a>
                             <a style="height: 45px" class="btn" href=move || format!("https://garlandtools.org/db/#item/{}", item_id())>"Garland Tools"</a>
                         </div>
                     </div>
-                    <span>{move || view!{<UIText text=item_description().to_string()/>}}</span>
-                    {move || view!{<ItemStats item_id=ItemId(item_id()) />}}
+                    <div>{move || view!{<UIText text=item_description().to_string()/>}}</div>
+                    <div>{move || view!{<ItemStats item_id=ItemId(item_id()) />}}</div>
                 </div>
             </div>
             <div class="content-nav">
@@ -246,7 +273,7 @@ pub fn ItemView() -> impl IntoView {
         </div>
         <div class="main-content flex-wrap">
             <ListingsContent item_id world />
-            <Ad class="h-96"/>
+            // <Ad class="h-96"/>
             <RelatedItems item_id=Signal::from(item_id) />
         </div>
     }

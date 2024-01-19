@@ -4,7 +4,7 @@ use std::{borrow::Cow, str::FromStr};
 use time::{Duration, OffsetDateTime};
 
 use leptos::*;
-use log::{error, info};
+use log::error;
 
 /// returns the current OffsetDateTime
 pub fn get_now() -> OffsetDateTime {
@@ -30,7 +30,6 @@ impl Cookies {
         let cookies = create_rw_signal(get_cookies().unwrap_or_default());
         create_effect(move |_| {
             let cookie_jar = cookies();
-            info!("updating cookies {cookie_jar:?}");
             set_cookies(cookie_jar);
         });
         Self { cookies }
