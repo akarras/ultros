@@ -6,17 +6,19 @@ use std::{error::Error, sync::Arc};
 /// you should be able to build and serve leptos with one install step.
 ///
 use axum::{
-    body::{Body, HttpBody},
+    body::Body,
     extract::State,
-    http::Request,
+    http::{HeaderValue, Request},
     response::{IntoResponse, Response},
     routing::get,
     Extension, Router,
 };
 use git_const::git_short_hash;
+use hyper::{body::HttpBody, header};
 use leptos::*;
 use leptos_axum::generate_route_list;
 use leptos_router::RouteListing;
+use tower_http::set_header::SetResponseHeader;
 use tracing::instrument;
 use ultros_api_types::world_helper::WorldHelper;
 use ultros_app::*;
@@ -66,6 +68,12 @@ pub(crate) async fn create_leptos_app(
     let git_hash = git_short_hash!();
     leptos_options.site_pkg_dir = ["pkg/", git_hash].concat();
     let cargo_leptos_service = HandleError::new(ServeDir::new(&bundle_filepath), handle_file_error);
+    // #[cfg(not(debug_assertions))]
+    let cargo_leptos_service = SetResponseHeader::appending(
+        cargo_leptos_service,
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("max-age=86400"),
+    );
     tracing::info!("Serving pkg dir: {bundle_filepath}");
     /// Convert the Errors from ServeDir to a type that implements IntoResponse
     async fn handle_file_error(err: std::io::Error) -> (StatusCode, String) {

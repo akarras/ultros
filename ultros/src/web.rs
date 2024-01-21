@@ -1,11 +1,11 @@
 mod alerts_websocket;
-pub mod api;
+pub(crate) mod api;
 pub(crate) mod character_verifier_service;
-pub mod country_code_decoder;
-pub mod error;
-pub mod item_card;
-pub mod oauth;
-pub mod sitemap;
+pub(crate) mod country_code_decoder;
+pub(crate) mod error;
+pub(crate) mod item_card;
+pub(crate) mod oauth;
+pub(crate) mod sitemap;
 
 use anyhow::Error;
 use axum::body::{Empty, Full};
