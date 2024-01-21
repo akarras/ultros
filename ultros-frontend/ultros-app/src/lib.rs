@@ -24,6 +24,7 @@ use crate::{
     },
 };
 use git_const::git_short_hash;
+use icondata as i;
 use leptos::*;
 use leptos_icons::*;
 use leptos_meta::*;
@@ -62,7 +63,7 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>, region: String) -> impl IntoView
             <Router>
                 <nav class="header">
                     <A href="/" exact=true>
-                    <Icon icon=Icon::from(BiIcon::BiHomeSolid) height="1.75em" width="1.75em"/>
+                    <Icon icon=i::BiHomeSolid height="1.75em" width="1.75em"/>
                         "Home"
                     </A>
                     // <Suspense fallback=move || {}>
@@ -75,18 +76,18 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>, region: String) -> impl IntoView
                         {
                             view!{
                             <A href=homeworld().map(|w| format!("/analyzer/{}", w.name)).unwrap_or("/analyzer".to_string())>
-                                <Icon width="1.75em" height="1.75em" icon=Icon::from(FaIcon::FaMoneyBillTrendUpSolid)/>
+                                <Icon width="1.75em" height="1.75em" icon=i::FaMoneyBillTrendUpSolid/>
                                 "Analyzer"
                             </A>}
                         }
                     }
                     <Suspense fallback=move || {}>
                     {move || login.get().flatten().map(|_| view!{<A href="/list">
-                        <Icon width="1.75em" height="1.75em" icon=Icon::from(AiIcon::AiOrderedListOutlined) />
+                        <Icon width="1.75em" height="1.75em" icon=i::AiOrderedListOutlined />
                         "Lists"
                     </A>
                     <A href="/retainers/listings">
-                        <Icon width="1.75em" height="1.75em" icon=Icon::from(BiIcon::BiGroupSolid) />
+                        <Icon width="1.75em" height="1.75em" icon=i::BiGroupSolid />
                         "Retainers"
                     </A>})}
                     </Suspense>
@@ -95,7 +96,7 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>, region: String) -> impl IntoView
                     </div>
                     <A href="/items?menu-open=true">
                         <Tooltip tooltip_text=Oco::from("Item Explorer")>
-                            <Icon width="1.75em" height="1.75em" icon=Icon::from(FaIcon::FaScrewdriverWrenchSolid) />
+                            <Icon width="1.75em" height="1.75em" icon=i::FaScrewdriverWrenchSolid />
                         </Tooltip>
                         <div class="sr-only">"Item Explorer"</div>
                     </A>

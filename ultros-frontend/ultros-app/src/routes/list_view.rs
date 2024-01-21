@@ -1,5 +1,6 @@
 use std::cmp::Reverse;
 
+use icondata as i;
 use leptos::*;
 use leptos_icons::*;
 use leptos_router::use_params_map;
@@ -80,7 +81,7 @@ pub fn ListView() -> impl IntoView {
     view! {
         <div class="flex-row">
             <Tooltip tooltip_text=Oco::from("Add an item to the list")>
-                <button class="btn" class:active=move || menu() == MenuState::Item on:click=move |_| set_menu(match menu() { MenuState::Item => MenuState::None, _ => MenuState::Item  })><i style="padding-right: 5px;"><Icon icon=Icon::from(BiIcon::BiPlusRegular) /></i><span>"Add Item"</span></button>
+                <button class="btn" class:active=move || menu() == MenuState::Item on:click=move |_| set_menu(match menu() { MenuState::Item => MenuState::None, _ => MenuState::Item  })><i style="padding-right: 5px;"><Icon icon=i::BiPlusRegular /></i><span>"Add Item"</span></button>
             </Tooltip>
             <Tooltip tooltip_text=Oco::from("Add a recipe's ingredients to the list")>
                 <button class="btn" class:active=move || menu() == MenuState::Recipe on:click=move |_| set_menu(match menu() { MenuState::Recipe => MenuState::None, _ => MenuState::Recipe })>"Add Recipe"</button>
@@ -136,7 +137,7 @@ pub fn ListView() -> impl IntoView {
                                                 })
                                                 .unwrap_or_default(), quantity: Some(quantity()), ..Default::default() };
                                             add_item.dispatch(item);
-                                        }><Icon icon=Icon::from(BiIcon::BiPlusRegular) /></button>
+                                        }><Icon icon=i::BiPlusRegular /></button>
                                     </div>}
                                 }).collect::<Vec<_>>()
                         }}
@@ -235,7 +236,7 @@ pub fn ListView() -> impl IntoView {
                                         {game_items.get(&ItemId(item.item_id)).map(|item| &item.name)}
                                         <Clipboard clipboard_text=game_items.get(&ItemId(item.item_id)).map(|item| item.name.to_string()).unwrap_or_default()/>
                                         {game_items.get(&ItemId(item.item_id)).map(|item| item.item_search_category.0 <= 1).unwrap_or_default().then(move || {
-                                            view!{<div><Tooltip tooltip_text=Oco::from("This item is not available on the marketboard")><Icon icon=Icon::from(BiIcon::BiTrashSolid)/></Tooltip></div>}
+                                            view!{<div><Tooltip tooltip_text=Oco::from("This item is not available on the marketboard")><Icon icon=i::BiTrashSolid/></Tooltip></div>}
                                         })}
                                     </div>
                                 </td>
@@ -255,7 +256,7 @@ pub fn ListView() -> impl IntoView {
                                         {game_items.get(&ItemId(item.item_id)).map(|item| &item.name)}
                                         <Clipboard clipboard_text=game_items.get(&ItemId(item.item_id)).map(|item| item.name.to_string()).unwrap_or_default()/>
                                         {game_items.get(&ItemId(item.item_id)).map(|item| item.item_search_category.0 <= 1).unwrap_or_default().then(move || {
-                                            view!{<div><Tooltip tooltip_text=Oco::from("This item is not available on the marketboard")><Icon icon=Icon::from(AiIcon::AiExclamationOutlined)/></Tooltip></div>}
+                                            view!{<div><Tooltip tooltip_text=Oco::from("This item is not available on the marketboard")><Icon icon=i::AiExclamationOutlined/></Tooltip></div>}
                                         })}
                                     </div>
                                 </td>
@@ -272,7 +273,7 @@ pub fn ListView() -> impl IntoView {
                             }}
                             <td>
                                 <button class="btn" on:click=move |_| {delete_item.dispatch(item().id)}>
-                                    <Icon icon=Icon::from(BiIcon::BiTrashSolid) />
+                                    <Icon icon=i::BiTrashSolid />
                                 </button>
                                 <button class="btn" on:click=move |_| {
                                     if temp_item() != item() {
@@ -280,7 +281,7 @@ pub fn ListView() -> impl IntoView {
                                     }
                                     set_edit(!edit())
                                 }>
-                                    <Icon icon=MaybeSignal::derive(move || if edit() { Icon::from(BsIcon::BsCheck) } else { Icon::from(BsIcon::BsPencilFill) }) />
+                                    <Icon icon=MaybeSignal::derive(move || if edit() { i::BsCheck } else { i::BsPencilFill }) />
                                 </button>
                             </td>
                         </tr>}

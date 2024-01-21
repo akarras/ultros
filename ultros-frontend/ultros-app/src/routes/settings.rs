@@ -10,7 +10,9 @@ use crate::global_state::home_world::{
     get_homeworld, get_price_zone, result_to_selector_read, selector_to_setter_signal,
 };
 use leptos::*;
-use leptos_icons::*;
+use leptos_icons::Icon;
+
+use icondata as i;
 use log::info;
 use ultros_api_types::world_helper::AnySelector;
 
@@ -21,7 +23,7 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
     let search_action = create_action(move |search: &String| search_characters(search.to_string()));
 
     view! {
-        <button class="btn" on:click=move |_| set_is_open(!is_open())><Icon icon=Icon::from(BiIcon::BiPlusRegular)/></button>
+        <button class="btn" on:click=move |_| set_is_open(!is_open())><Icon icon=i::BiPlusRegular/></button>
         {move || claim_character.value()().map(|result| {
             view!{<div class="content-well">{
                 match result {
@@ -40,7 +42,7 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
                     <div class="flex-row">
                         <input prop:value=character_search id="character-name" on:input=move |input| set_character_search(event_target_value(&input)) />
                         <button class="btn" on:click=move |_| search_action.dispatch(character_search())>
-                            <Icon icon=Icon::from(AiIcon::AiSearchOutlined) />
+                            <Icon icon=i::AiSearchOutlined />
                         </button>
                     </div>
                     {search_action.pending()().then(|| view!{<Loading/>})}
@@ -217,7 +219,7 @@ pub fn Profile() -> impl IntoView {
                                             <div class="flex flex-row">
                                                 <span style="width: 250px;">{character.first_name}" "{character.last_name}</span>
                                                 <span style="width: 150px"><WorldName id=AnySelector::World(character.world_id)/></span>
-                                                <button class="btn" on:click=move |_| unclaim_character.dispatch(character.id)><Icon icon=Icon::from(BiIcon::BiTrashSolid) /></button>
+                                                <button class="btn" on:click=move |_| unclaim_character.dispatch(character.id)><Icon icon=i::BiTrashSolid /></button>
                                             </div>
                                         }
                                     }).collect::<Vec<_>>()}

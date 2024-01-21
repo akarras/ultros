@@ -1,4 +1,5 @@
 // use crate::components::live_sale_ticker::*;
+use icondata as i;
 use leptos::*;
 use leptos_icons::*;
 use leptos_meta::*;
@@ -40,35 +41,35 @@ pub fn HomePage() -> impl IntoView {
                 <div class="flex flex-1 flex-col md:flex-row md:flex-wrap gap-4">
                     <a href="/items?menu-open=true">
                         <FeatureCard>
-                            <Icon width="1.75em" height="1.75em" icon=Icon::from(FaIcon::FaScrewdriverWrenchSolid) />
+                            <Icon width="1.75em" height="1.75em" icon=i::FaScrewdriverWrenchSolid />
                             <h3 class="text-xl p-1 text-yellow-100">"Item Finder"</h3>
                             <span>"Explore all the items on the marketboard"</span>
                         </FeatureCard>
                     </a>
                     <a href="/analyzer">
                         <FeatureCard>
-                            <Icon width="1.75em" height="1.75em" icon=Icon::from(FaIcon::FaMoneyBillTrendUpSolid)/>
+                            <Icon width="1.75em" height="1.75em" icon=i::FaMoneyBillTrendUpSolid/>
                             <h3 class="text-xl p-1 text-yellow-100">"Analyzer"</h3>
                             <span>"Earn gil by buying low, selling high"</span>
                         </FeatureCard>
                     </a>
                     <a href="/retainers">
                         <FeatureCard>
-                            <Icon width="1.75em" height="1.75em" icon=Icon::from(BiIcon::BiGroupSolid) />
+                            <Icon width="1.75em" height="1.75em" icon=i::BiGroupSolid />
                             <h3 class="text-xl p-1 text-yellow-100">"Retainers"</h3>
                             <span>"Track your retainers online"</span>
                         </FeatureCard>
                     </a>
                     <a href="/list">
                         <FeatureCard>
-                            <Icon width="1.75em" height="1.75em" icon=Icon::from(AiIcon::AiOrderedListOutlined) />
+                            <Icon width="1.75em" height="1.75em" icon=i::AiOrderedListOutlined />
                             <h3 class="text-xl text-yellow-100">"Lists"</h3>
                             <span>"Create lists & buy the cheapest items"</span>
                         </FeatureCard>
                     </a>
                     <a href="/invitebot">
                         <FeatureCard>
-                            <Icon width="1.75em" height="1.75em" icon=Icon::from(BsIcon::BsDiscord) />
+                            <Icon width="1.75em" height="1.75em" icon=i::BsDiscord />
                             <span class="text-xl text-yellow-100">"Discord Bot"</span>
                             <span>
                                 "Get alerts when your retainer is undercut"

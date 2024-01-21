@@ -1,6 +1,7 @@
 use crate::global_state::clipboard_text::GlobalLastCopiedText;
 
 use super::tooltip::*;
+use icondata as i;
 use leptos::*;
 use leptos_icons::*;
 
@@ -15,9 +16,9 @@ pub fn Clipboard(#[prop(into)] clipboard_text: MaybeSignal<String>) -> impl Into
     });
     let icon = create_memo(move |_| {
         if !copied() {
-            Icon::from(BsIcon::BsClipboard2Fill)
+            i::BsClipboard2Fill
         } else {
-            Icon::from(BsIcon::BsClipboard2CheckFill)
+            i::BsClipboard2CheckFill
         }
     });
     view! {<div class="clipboard" on:click=move |_| {
@@ -42,7 +43,7 @@ pub fn Clipboard(#[prop(into)] clipboard_text: MaybeSignal<String>) -> impl Into
             Oco::from("Text copied!")
         }
     }) >
-        {move || {let icon = icon(); view!{<Icon icon/>}}}
+        <Icon icon/>
     </Tooltip>
     </div>
     }

@@ -6,6 +6,7 @@ use crate::components::clipboard::Clipboard;
 use crate::components::gil::*;
 use crate::components::{item_icon::*, loading::*, meta::*, world_name::*};
 use crate::global_state::LocalWorldData;
+use icondata as i;
 use leptos::*;
 use leptos_icons::*;
 use leptos_router::*;
@@ -357,14 +358,14 @@ pub fn Retainers() -> impl IntoView {
     view! {
         <div class="content-nav">
             <A exact=true class="btn-secondary flex flex-row" href="/retainers/edit">
-                <Icon width="1.75em" height="1.75em" icon=Icon::from(BsIcon::BsPencilFill)/>
+                <Icon width="1.75em" height="1.75em" icon=i::BsPencilFill/>
                 "Edit"
             </A>
             <A exact=true class="btn-secondary" href="/retainers/listings">
                 "All Listings"
             </A>
             <A exact=true class="btn-secondary flex flex-row" href="/retainers/undercuts">
-                <Icon width="1.75em" height="1.75em" icon=Icon::from(AiIcon::AiExclamationOutlined) />
+                <Icon width="1.75em" height="1.75em" icon=i::AiExclamationOutlined />
                 "Undercuts"
             </A>
         </div>

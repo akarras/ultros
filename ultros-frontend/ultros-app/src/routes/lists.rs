@@ -1,3 +1,4 @@
+use icondata as i;
 use leptos::*;
 use leptos_icons::*;
 use leptos_router::*;
@@ -28,7 +29,7 @@ pub fn EditLists() -> impl IntoView {
     <div class="flex-row">
         <span class="content-title">"Edit Lists"</span>
         <Tooltip tooltip_text=MaybeSignal::Static("Create list".into())>
-            <button class="btn" on:click=move |_| set_creating(!creating())><Icon icon=Icon::from(BiIcon::BiPlusRegular)/></button>
+            <button class="btn" on:click=move |_| set_creating(!creating())><Icon icon=i::BiPlusRegular/></button>
         </Tooltip>
     </div>
     {move || creating().then(|| {
@@ -50,7 +51,7 @@ pub fn EditLists() -> impl IntoView {
                     set_new_list("".to_string());
                     set_creating(false);
                 }
-            }><Icon icon=Icon::from(BiIcon::BiSaveSolid)/></button>
+            }><Icon icon=i::BiSaveSolid/></button>
         </div>
     }
     })}
@@ -95,12 +96,12 @@ pub fn EditLists() -> impl IntoView {
                                                     }
                                                     edit_list.dispatch(list);
                                                 } >
-                                                    <Icon icon=Icon::from(BiIcon::BiSaveSolid)/>
+                                                    <Icon icon=i::BiSaveSolid/>
                                                 </button>
                                             </Tooltip>
                                             <Tooltip tooltip_text=Oco::from("Delete this list")>
                                                 <button class="btn" on:click=move |_| delete_list.dispatch(list().id)>
-                                                    <Icon icon=Icon::from(BiIcon::BiTrashSolid) />
+                                                    <Icon icon=i::BiTrashSolid />
                                                 </button>
                                             </Tooltip>
                                         }.into_view()
@@ -108,7 +109,7 @@ pub fn EditLists() -> impl IntoView {
                                             view!{
                                         <Tooltip tooltip_text=Oco::from("Edit this list")>
                                             <button class="btn" on:click=move |_| set_is_edit(true)>
-                                                <Icon icon=Icon::from(BsIcon::BsPencilFill) />
+                                                <Icon icon=i::BsPencilFill />
                                             </button>
                                         </Tooltip>
                                         }.into_view()
@@ -132,7 +133,7 @@ pub fn Lists() -> impl IntoView {
     <div class="mx-auto">
         <div class="content-nav">
             <A class="btn-secondary flex flex-row" href="/list">
-                <Icon height="2em" width="2em" icon=Icon::from(AiIcon::AiOrderedListOutlined) />
+                <Icon height="2em" width="2em" icon=i::AiOrderedListOutlined />
                 "Lists"
             </A>
         </div>

@@ -29,7 +29,7 @@ pub(crate) async fn generate_image<'a>(
 ) -> Result<Vec<u8>> {
     let world_ids: Vec<_> = world.all_worlds().map(|w| w.id).collect();
     let sales: Vec<SaleHistory> = db
-        .get_sale_history_from_multiple_worlds(world_ids.into_iter(), item.key_id.0, 1000)
+        .get_sale_history_from_multiple_worlds(world_ids.into_iter(), item.key_id.0, 200)
         .await?
         .into_iter()
         .map(SaleHistory::from)

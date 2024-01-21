@@ -1,13 +1,13 @@
-use std::cmp::Reverse;
-
 use crate::{
     components::{search_result::*, virtual_scroller::*},
     global_state::home_world::get_price_zone,
 };
 use gloo_timers::future::TimeoutFuture;
+use icondata as i;
 use leptos::{html::Input, *};
 use leptos_icons::*;
 use leptos_router::{use_navigate, NavigateOptions};
+use std::cmp::Reverse;
 use sublime_fuzzy::{FuzzySearch, Match, Scoring};
 use web_sys::KeyboardEvent;
 
@@ -79,7 +79,7 @@ pub fn SearchBox() -> impl IntoView {
 
         <div class="absolute top-0 left-0 right-0 sm:relative" style="height: 36px;">
             <input ref=text_input on:keydown=keydown on:input=on_input on:focusin=focus_in on:focusout=focus_out class="search-box w-screen m-0 sm:w-[424px]" type="text" prop:value=search class:active={active}/>
-            <div class="absolute right-3 top-3 z-10"><Icon icon=Icon::from(AiIcon::AiSearchOutlined) /></div>
+            <div class="absolute right-3 top-3 z-10"><Icon icon=i::AiSearchOutlined /></div>
             <div id="search-results" class="search-results w-screen sm:w-[424px] z-50 mx-0">
             // WHY DOES THIS BREAK HYDRATION?
             // <WasmLoadingIndicator />

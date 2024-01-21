@@ -5,6 +5,7 @@ use crate::components::query_button::QueryButton;
 use crate::components::toggle::Toggle;
 use crate::components::{cheapest_price::*, fonts::*, meta::*, small_item_display::*};
 use crate::CheapestPrices;
+use icondata as i;
 use itertools::Itertools;
 use leptos::*;
 use leptos_icons::*;
@@ -436,12 +437,12 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
         <div class="flex flex-row">
             <QueryButton query_name="sort" value="key" class="p-1 !text-violet-200 hover:text-violet-600" active_classes="p-1 !text-violet-500">
                 <div class="flex flex-row">
-                    <Icon icon=Icon::from(BiIcon::BiCalendarAltRegular)/>
+                    <Icon icon=i::BiCalendarAltRegular/>
                      "ADDED"
                 </div>
             </QueryButton>
             <QueryButton query_name="sort" value="price" class="p-1 !text-violet-200 hover:text-violet-600" active_classes="p-1 !text-violet-500">
-                <div class="flex flex-row"><Icon icon=Icon::from(ImIcon::ImPriceTag)/>"PRICE"</div>
+                <div class="flex flex-row"><Icon icon=i::ImPriceTag/>"PRICE"</div>
             </QueryButton>
             <QueryButton query_name="sort" value="name" class="p-1 !text-violet-200 hover:text-violet-600" active_classes="p-1 !text-violet-500">
                 "NAME"
@@ -452,10 +453,10 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
         </div>
         <div class="flex flex-row">
             <QueryButton query_name="dir" value="asc" class="p-1 !text-violet-200 hover:text-violet-600" active_classes="p-1 !text-violet-500">
-                <div class="flex flex-row"><Icon icon=Icon::from(BiIcon::BiSortUpRegular)/>"ASC"</div>
+                <div class="flex flex-row"><Icon icon=i::BiSortUpRegular/>"ASC"</div>
             </QueryButton>
             <QueryButton query_name="dir" value="desc" class="p-1 !text-violet-200 hover:text-violet-600" active_classes="p-1 !text-violet-500" default=true>
-                <div class="flex flex-row"><Icon icon=Icon::from(BiIcon::BiSortDownRegular)/>"DESC"</div>
+                <div class="flex flex-row"><Icon icon=i::BiSortDownRegular/>"DESC"</div>
             </QueryButton>
         </div>
 
@@ -504,7 +505,7 @@ pub fn ItemExplorer() -> impl IntoView {
         <button class="p-2 text-3xl bg-neutral-800 text-gray-300 hover:bg-neutral-600 gap-1 flex flex-row rounded" class:bg-neutral-700=menu_open class:bg-neutral-800=move || !menu_open() on:click=move |_| {
             set_open(!menu_open.get_untracked());
         }>
-            <Icon icon=Icon::from(BiIcon::BiMenuRegular) />
+            <Icon icon=i::BiMenuRegular />
             <span>"Categories"</span>
         </button>
         <div class="main-content relative">

@@ -18,16 +18,16 @@ tracing = "0.1.36"
 tracing-subscriber = "0.3"
 futures = "0.3.24"
 anyhow = "1.0.72"
-leptos = { git = "https://github.com/leptos-rs/leptos.git", default-features = false, features = [
+leptos = { version = "0.5.7", default-features = false, features = [
   "serde",
   "nightly"
 ] }
-leptos_axum = { git = "https://github.com/leptos-rs/leptos.git" }
-leptos_router = { git = "https://github.com/leptos-rs/leptos.git", default-features = false, features = ["nightly"] }
-leptos_meta = { git = "https://github.com/leptos-rs/leptos.git", default-features = false, features = ["nightly"] }
-leptos-use = { git = "https://github.com/Synphonyte/leptos-use.git", features = ["serde"] }
+leptos_axum = { version = "0.5.7" }
+leptos_router = { version = "0.5.7", default-features = false, features = ["nightly"] }
+leptos_meta = { version = "0.5.7", default-features = false, features = ["nightly"] }
+leptos-use = { verion = "0.9.0", features = ["serde"] }
 chrono = "0.4.23"
-itertools = "0.11.0"
+itertools = "0.12.0"
 image = "0.24.6"
 plotters = "0.3"
 sea-orm = {version = "0.12.2", features = ["sqlx-postgres", "runtime-tokio-rustls"]}
@@ -36,15 +36,14 @@ sea-query = "0.30.0"
 yoke = "0.7.1"
 xiv-gen = {path = "./xiv-gen", features = ["item", "item_ui_category", "item_search_category", "class_job", "recipe",
   "class_job_category", "base_param", "item_sort_category"]}
-leptos_icons = {version = "0.0.16-beta", features = ["IoSettingsSharp", "AiOrderedListOutlined", "BsDiscord", "BsClipboard2Fill", "BsClipboard2CheckFill",
-  "AiEditFilled", "FaMoneyBillTrendUpSolid", "BsCheck", "BsPencilFill", "BiSortDownRegular", "BiSortUpRegular", "BiPlusRegular", "BiTrashSolid",
-  "AiExclamationOutlined", "BiSaveSolid", "BiGroupSolid", "BiHomeSolid", "FaScrewdriverWrenchSolid", "AiSearchOutlined", "ImPriceTag", "BiCalendarAltRegular", "BiMenuRegular"]}
+icondata = "0.3"
+leptos_icons = {version = "0.2.1" }
 cfg-if = "1.0.0"
 git-const = "1.1.0"
 
 [patch.crates-io]
-leptos = { git = "https://github.com/leptos-rs/leptos.git"}
-leptos_reactive = { git = "https://github.com/leptos-rs/leptos.git"}
+#leptos = { git = "https://github.com/leptos-rs/leptos.git" }
+#leptos_reactive = { git = "https://github.com/leptos-rs/leptos.git" }
 pathfinder_simd = { git = "https://github.com/servo/pathfinder.git" } # needed on ARM Mac until pathfinder_simd has new release
 
 [profile.release]

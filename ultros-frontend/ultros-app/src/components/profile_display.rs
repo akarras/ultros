@@ -1,4 +1,5 @@
 use crate::{api::get_login, components::loading::Loading};
+use icondata as i;
 use leptos::*;
 use leptos_icons::*;
 use leptos_router::*;
@@ -17,10 +18,10 @@ pub fn ProfileDisplay() -> impl IntoView {
                 "Logout"
             </a>}.into_view(),
             _ => view! {<a rel="external" class="btn" href="/login">
-                <Icon height="2rem" width="2em" icon=Icon::from(BsIcon::BsDiscord) />"Login"
+                <Icon height="2rem" width="2em" icon=i::BsDiscord />"Login"
             </a>
             <A href="/settings">
-                <Icon height="2em" width="2em" icon=Icon::from(IoIcon::IoSettingsSharp)/>
+                <Icon height="2em" width="2em" icon=i::IoSettingsSharp/>
                 <span class="sr-only">Settings</span>
             </A>
             }.into_view(),

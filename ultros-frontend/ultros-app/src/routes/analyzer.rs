@@ -1,16 +1,3 @@
-use chrono::{Duration, Utc};
-use humantime::{format_duration, parse_duration};
-use leptos::*;
-use leptos_router::*;
-use log::info;
-use std::{cmp::Reverse, collections::HashMap, fmt::Display, str::FromStr, sync::Arc};
-use ultros_api_types::{
-    cheapest_listings::CheapestListings,
-    recent_sales::{RecentSales, SaleData},
-    world_helper::{AnyResult, AnySelector, WorldHelper},
-};
-use xiv_gen::ItemId;
-
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
@@ -20,7 +7,20 @@ use crate::{
     error::AppError,
     global_state::LocalWorldData,
 };
+use chrono::{Duration, Utc};
+use humantime::{format_duration, parse_duration};
+use icondata as i;
+use leptos::*;
 use leptos_icons::*;
+use leptos_router::*;
+use log::info;
+use std::{cmp::Reverse, collections::HashMap, fmt::Display, str::FromStr, sync::Arc};
+use ultros_api_types::{
+    cheapest_listings::CheapestListings,
+    recent_sales::{RecentSales, SaleData},
+    world_helper::{AnyResult, AnySelector, WorldHelper},
+};
+use xiv_gen::ItemId;
 
 /// Computed sale stats
 #[derive(Hash, Clone, Debug, PartialEq)]
@@ -322,7 +322,7 @@ fn AnalyzerTable(
                     <Tooltip tooltip_text=Oco::from("Sort by profit")>
                         <QueryButton class="!text-fuchsia-300 hover:text-fuchsia-200" active_classes="!text-neutral-300 hover:text-neutral-200" query_name="sort" value="profit">
                             <div class="flex-row flex-space">
-                                "Profit" {move || (sort_mode() == Some(SortMode::Profit)).then(|| { view!{<Icon icon=Icon::from(BiIcon::BiSortDownRegular) /> }})}
+                                "Profit" {move || (sort_mode() == Some(SortMode::Profit)).then(|| { view!{<Icon icon=i::BiSortDownRegular /> }})}
                             </div>
                         </QueryButton>
                     </Tooltip>
@@ -331,7 +331,7 @@ fn AnalyzerTable(
                     <Tooltip tooltip_text=Oco::from("Sort by R.O.I")>
                         <QueryButton class="!text-fuchsia-300 hover:text-fuchsia-200" active_classes="!text-neutral-300 hover:text-neutral-200" query_name="sort" value="roi" default=true>
                             <div class="flex-row flex-space">
-                                "R.O.I." {move || (sort_mode() == Some(SortMode::Roi)).then(|| { view!{<Icon icon=Icon::from(BiIcon::BiSortDownRegular) /> }})}
+                                "R.O.I." {move || (sort_mode() == Some(SortMode::Roi)).then(|| { view!{<Icon icon=i::BiSortDownRegular /> }})}
                             </div>
                         </QueryButton>
                     </Tooltip>
