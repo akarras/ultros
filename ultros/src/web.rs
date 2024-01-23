@@ -348,15 +348,14 @@ pub(crate) async fn invite() -> Redirect {
     Redirect::to(&format!("https://discord.com/oauth2/authorize?client_id={client_id}&scope=bot&permissions=2147483648"))
 }
 
-pub(crate) async fn world_data(
-    State(world_cache): State<Arc<WorldCache>>,
-) -> (CacheControl, Json<&'static WorldData>) {
+pub(crate) async fn world_data(State(world_cache): State<Arc<WorldCache>>) -> impl IntoResponse {
     static ONCE: OnceLock<WorldData> = OnceLock::new();
     let world_data = ONCE.get_or_init(move || WorldData::from(world_cache.as_ref()));
-    (
-        CacheControl::new().with_max_age(Duration::from_secs(60 * 60 * 24 * 7)),
-        Json(world_data),
-    )
+    let mut response = Json(world_data).into_response();
+    response
+        .headers_mut()
+        .typed_insert(CacheControl::new().with_max_age(Duration::from_secs(60 * 60 * 24 * 7)));
+    response
 }
 
 pub(crate) async fn current_user(user: AuthDiscordUser) -> Json<UserData> {

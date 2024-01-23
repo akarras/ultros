@@ -1,7 +1,9 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use axum::{
     extract::{Path, State},
+    headers::{CacheControl, HeaderMapExt},
+    response::IntoResponse,
     Json,
 };
 use serde::Serialize;
@@ -26,7 +28,7 @@ pub(crate) async fn cheapest_per_world(
     State(analyzer): State<AnalyzerService>,
     State(world_cache): State<Arc<WorldCache>>,
     Path(world): Path<String>,
-) -> Result<Json<CheapestPerWorld>, WebError> {
+) -> Result<impl IntoResponse, WebError> {
     let value = world_cache.lookup_value_by_name(&world)?;
     let selector = AnySelector::from(&value);
     let cheapest_listings = analyzer
@@ -43,5 +45,9 @@ pub(crate) async fn cheapest_per_world(
                 .collect::<Vec<_>>()
         })
         .await?;
-    Ok(Json(CheapestPerWorld { cheapest_listings }))
+    let mut response = Json(CheapestPerWorld { cheapest_listings }).into_response();
+    response
+        .headers_mut()
+        .typed_insert(CacheControl::new().with_max_age(Duration::from_secs(15)));
+    Ok(response)
 }

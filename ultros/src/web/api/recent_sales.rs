@@ -1,7 +1,9 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use axum::{
     extract::{Path, State},
+    headers::{CacheControl, HeaderMapExt},
+    response::IntoResponse,
     Json,
 };
 use ultros_api_types::recent_sales::{RecentSales, SaleData, Sales};
@@ -13,7 +15,7 @@ pub(crate) async fn recent_sales(
     State(analyzer): State<AnalyzerService>,
     State(world_cache): State<Arc<WorldCache>>,
     Path(world): Path<String>,
-) -> Result<Json<RecentSales>, WebError> {
+) -> Result<impl IntoResponse, WebError> {
     let sales: Vec<_> = analyzer
         .read_sale_history(
             &AnySelector::from(&world_cache.lookup_value_by_name(&world)?),
@@ -36,5 +38,9 @@ pub(crate) async fn recent_sales(
             },
         )
         .await?;
-    Ok(Json(RecentSales { sales }))
+    let mut response = Json(RecentSales { sales }).into_response();
+    response
+        .headers_mut()
+        .typed_insert(CacheControl::new().with_max_age(Duration::from_secs(30)));
+    Ok(response)
 }
