@@ -10,7 +10,7 @@ pub(crate) mod sitemap;
 use anyhow::Error;
 use axum::body::{Empty, Full};
 use axum::extract::{FromRef, Path, Query, State};
-use axum::headers::ContentType;
+use axum::headers::{CacheControl, ContentType, HeaderMapExt};
 use axum::http::{HeaderValue, Response, StatusCode};
 use axum::response::{IntoResponse, Redirect};
 use axum::routing::{delete, get, post};
@@ -350,10 +350,13 @@ pub(crate) async fn invite() -> Redirect {
 
 pub(crate) async fn world_data(
     State(world_cache): State<Arc<WorldCache>>,
-) -> Json<&'static WorldData> {
+) -> (CacheControl, Json<&'static WorldData>) {
     static ONCE: OnceLock<WorldData> = OnceLock::new();
     let world_data = ONCE.get_or_init(move || WorldData::from(world_cache.as_ref()));
-    Json(world_data)
+    (
+        CacheControl::new().with_max_age(Duration::from_secs(60 * 60 * 24 * 7)),
+        Json(world_data),
+    )
 }
 
 pub(crate) async fn current_user(user: AuthDiscordUser) -> Json<UserData> {
@@ -818,11 +821,17 @@ async fn get_bincode() -> &'static [u8] {
 }
 
 /// Returns a region- attempts to guess it from the CF Region header
-async fn detect_region(region: Option<Region>) -> Region {
+async fn detect_region(region: Option<Region>) -> impl IntoResponse {
     if region.is_none() {
         warn!("Unable to detect region");
     }
-    region.unwrap_or(Region::NorthAmerica)
+    let mut response = region.unwrap_or(Region::NorthAmerica).into_response();
+    response.headers_mut().typed_insert(
+        CacheControl::new()
+            .with_private()
+            .with_max_age(Duration::from_secs(604800)),
+    );
+    response
 }
 
 async fn listings_redirect(Path((world, id)): Path<(String, i32)>) -> Redirect {
