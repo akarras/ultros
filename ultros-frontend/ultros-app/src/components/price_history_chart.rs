@@ -9,6 +9,7 @@ use ultros_api_types::SaleHistory;
 use ultros_charts::draw_sale_history_scatter_plot;
 use ultros_charts::ChartOptions;
 
+use crate::components::skeleton::BoxSkeleton;
 use crate::{components::toggle::Toggle, global_state::LocalWorldData};
 
 #[component]
@@ -38,6 +39,9 @@ pub fn PriceHistoryChart(sales: MaybeSignal<Vec<SaleHistory>>) -> impl IntoView 
         }
     });
     view! {
+        <div class="min-w-[750px] min-h-[440px]" class:hidden=move || !hidden()>
+            <BoxSkeleton />
+        </div>
         <div class="flex flex-col max-h-[480px] mx-auto" class:hidden=hidden>
             <canvas width="750" height="440" style="width: 750px; height: 440px" _ref=canvas/>
             <Toggle checked=filter_outliers set_checked=set_filter_outliers

@@ -106,13 +106,13 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
     view! {
         <div>
         <Transition fallback=move || view!{
-            <div class="h-[35em] grow">
+            <div class="h-[35em] grow w-screen md:w-[780px]">
                 <BoxSkeleton />
             </div>
         }>
         {move || {
             let sales = create_memo(move |_| listing_resource.with(|l| l.as_ref().and_then(|l| l.as_ref().map(|l| l.sales.clone()).ok())).unwrap_or_default());
-            view!{ <div class="content-well max-h-[35em] overflow-y-auto">
+            view!{ <div class="content-well max-h-[35em] overflow-y-auto min-w-[750px] min-h-[440px]">
                 <PriceHistoryChart sales=MaybeSignal::from(sales) />
             </div>}
         }}
@@ -120,7 +120,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
         </div>
         <div>
         <Transition fallback=move || view !{
-            <div class="h-[35em] grow">
+            <div class="h-[35em] grow  w-screen md:w-[780px]">
                 <BoxSkeleton />
             </div>
         }>
@@ -135,7 +135,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
         </div>
         <div>
         <Transition fallback=move || view !{
-            <div class="h-[35em] grow">
+            <div class="h-[35em] grow  w-screen md:w-[780px]">
                 <BoxSkeleton />
             </div>
         }>
@@ -150,7 +150,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
         </div>
         <div>
         <Transition fallback=move || view !{
-            <div class="h-[35em] min-w-[400px] grow">
+            <div class="h-[35em] grow w-screen md:w-[780px]">
                 <BoxSkeleton />
             </div>
         }>

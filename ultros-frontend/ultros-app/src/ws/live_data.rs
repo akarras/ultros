@@ -16,9 +16,6 @@ pub(crate) async fn live_sales(
     signal: RwSignal<VecDeque<SaleView>>,
     price_zone: AnySelector,
 ) -> Result<(), AppError> {
-    use log::info;
-
-    log::info!("CONNECTING TO SALES!");
     // TODO - better way to switch to wss
     #[cfg(debug_assertions)]
     let url = "ws://localhost:8080/api/v1/realtime/events";
@@ -39,7 +36,6 @@ pub(crate) async fn live_sales(
             Ok(o) => match o {
                 Message::Text(o) => {
                     if let Ok(val) = serde_json::from_str::<ServerClient>(&o) {
-                        info!("{val:?}");
                         match val {
                             ServerClient::Sales(sig) => match sig {
                                 EventType::Added(add) => {
@@ -65,13 +61,12 @@ pub(crate) async fn live_sales(
                                         })
                                         .is_none()
                                     {
-                                        info!("Socket closed");
                                         return Ok(());
                                     }
                                 }
                                 _ => {}
                             },
-                            ServerClient::Listings(l) => log::info!("Listings {l:?}"),
+                            ServerClient::Listings(l) => {}
                             ServerClient::SubscriptionCreated => {
                                 log::info!("Subscription created");
                             }

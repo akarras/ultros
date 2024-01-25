@@ -1,8 +1,8 @@
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
-        ad::Ad, clipboard::*, gil::*, item_icon::*, meta::*, query_button::QueryButton, tooltip::*,
-        virtual_scroller::*, world_picker::*,
+        ad::Ad, clipboard::*, gil::*, item_icon::*, meta::*, query_button::QueryButton,
+        skeleton::BoxSkeleton, tooltip::*, virtual_scroller::*, world_picker::*,
     },
     error::AppError,
     global_state::LocalWorldData,
@@ -404,14 +404,14 @@ fn AnalyzerTable(
 pub fn AnalyzerWorldView() -> impl IntoView {
     let params = use_params_map();
     let world = create_memo(move |_| params.with(|p| p.get("world").cloned()).unwrap_or_default());
-    let sales = create_local_resource(
+    let sales = create_resource(
         move || params.with(|p| p.get("world").cloned()),
         move |world| async move {
             get_recent_sales_for_world(&world.ok_or(AppError::ParamMissing)?).await
         },
     );
 
-    let world_cheapest_listings = create_local_resource(
+    let world_cheapest_listings = create_resource(
         move || params.with(|p| p.get("world").cloned()),
         move |world| async move {
             let world = world.ok_or(AppError::ParamMissing)?;
@@ -423,7 +423,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
         .0
         .unwrap();
     let worlds_value = store_value(worlds);
-    let global_cheapest_listings = create_local_resource(
+    let global_cheapest_listings = create_resource(
         move || params.with(|p| p.get("world").cloned()),
         move |world| async move {
             let worlds = worlds_value();
@@ -460,6 +460,8 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                     </div>
                     <Ad class="h-32" />
                 </div>
+                <div class="min-h-screen w-full">
+                <Suspense fallback=BoxSkeleton>
                 {move || {
                     let world_cheapest = world_cheapest_listings.get();
                     let sales = sales.get();
@@ -469,10 +471,17 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                         .and_then(|w| w.ok())
                         .and_then(|r| sales.and_then(|s| s.ok())
                         .and_then(|s| global_cheapest_listings.and_then(|g| g.ok()).map(|g| (r, s, g))));
-                    values.map(|(world_cheapest_listings, sales, global_cheapest_listings)| {
-                    view!{<AnalyzerTable sales global_cheapest_listings world_cheapest_listings worlds world=world.into() />
-                    } }
-                )}}
+                    match values {
+                        Some((world_cheapest_listings, sales, global_cheapest_listings)) => {view!{<AnalyzerTable sales global_cheapest_listings world_cheapest_listings worlds world=world.into() />}.into_view()},
+                        None => {view!{
+                            <div class="h3">
+                                "Failed to load analyzer - try again in 30 seconds"
+                            </div>
+                        }.into_view()}
+                    }
+                }}
+                </Suspense>
+                </div>
         </div>
     </div>}.into_view()
 }

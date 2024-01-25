@@ -46,7 +46,6 @@ pub fn LiveSaleTicker() -> impl IntoView {
             if let Some(sale) =
                 hw_1.map(|h| ultros_api_types::world_helper::AnySelector::World(h.id))
             {
-                log::info!("live sale");
                 live_sales(sales, sale).await.unwrap();
             }
         });
