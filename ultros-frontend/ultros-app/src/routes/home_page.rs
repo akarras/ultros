@@ -36,7 +36,7 @@ pub fn HomePage() -> impl IntoView {
                 <div class="text-xl">
                     "Ultros is a marketboard tool for Final Fantasy 14."<br/>
                     "Get started by reading the "<b><a href="https://book.ultros.app">"book"</a></b>" and inviting the "
-                    <a href="/invitebot">"discord bot to your server"</a>"!"
+                    <a rel="external" href="/invitebot">"discord bot to your server"</a>"!"
                 </div>
                 <div class="flex flex-1 flex-col md:flex-row md:flex-wrap gap-4">
                     <a href="/items?menu-open=true">
@@ -67,7 +67,7 @@ pub fn HomePage() -> impl IntoView {
                             <span>"Create lists & buy the cheapest items"</span>
                         </FeatureCard>
                     </a>
-                    <a href="/invitebot">
+                    <a rel="external" href="/invitebot">
                         <FeatureCard>
                             <Icon width="1.75em" height="1.75em" icon=i::BsDiscord />
                             <span class="text-xl text-yellow-100">"Discord Bot"</span>
