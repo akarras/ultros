@@ -1,4 +1,5 @@
 use crate::api::get_listings;
+use crate::components::ad::Ad;
 use crate::components::recently_viewed::RecentItems;
 use crate::components::skeleton::BoxSkeleton;
 use crate::components::{
@@ -112,7 +113,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
         }>
         {move || {
             let sales = create_memo(move |_| listing_resource.with(|l| l.as_ref().and_then(|l| l.as_ref().map(|l| l.sales.clone()).ok())).unwrap_or_default());
-            view!{ <div class="content-well max-h-[35em] overflow-y-auto min-w-[750px] min-h-[440px]">
+            view!{ <div class="content-well max-h-[35em] overflow-y-auto">
                 <PriceHistoryChart sales=MaybeSignal::from(sales) />
             </div>}
         }}
@@ -273,7 +274,7 @@ pub fn ItemView() -> impl IntoView {
         </div>
         <div class="main-content flex-wrap">
             <ListingsContent item_id world />
-            // <Ad class="h-96"/>
+            <Ad class="h-96"/>
             <RelatedItems item_id=Signal::from(item_id) />
         </div>
     }

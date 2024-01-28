@@ -68,11 +68,11 @@ pub(crate) async fn create_leptos_app(
     let git_hash = git_short_hash!();
     leptos_options.site_pkg_dir = ["pkg/", git_hash].concat();
     let cargo_leptos_service = HandleError::new(ServeDir::new(&bundle_filepath), handle_file_error);
-    // #[cfg(not(debug_assertions))]
+    #[cfg(not(debug_assertions))]
     let cargo_leptos_service = SetResponseHeader::appending(
         cargo_leptos_service,
         header::CACHE_CONTROL,
-        HeaderValue::from_static("max-age=86400"),
+        HeaderValue::from_static("public, max-age=86400, immutable"),
     );
     tracing::info!("Serving pkg dir: {bundle_filepath}");
     /// Convert the Errors from ServeDir to a type that implements IntoResponse
