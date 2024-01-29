@@ -97,7 +97,7 @@ impl UpdateService {
                         if let Ok(added) = self.db.update_sales(sales, item_id, world_id).await {
                             let _ = self
                                 .sales
-                                .send(EventType::Add(Arc::new(SaleEventData { sales: added })));
+                                .send(EventType::added(SaleEventData { sales: added }));
                         }
                     }),
             )

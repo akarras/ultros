@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use tokio::sync::broadcast::channel;
 use ultros_api_types::{
+    user::OwnedRetainer,
     websocket::{ListingEventData, SaleEventData},
-    Retainer,
 };
 use ultros_db::entity::*;
 
@@ -24,6 +24,20 @@ impl<T> AsRef<T> for EventType<T> {
             EventType::Add(t) => t,
             EventType::Update(t) => t,
         }
+    }
+}
+
+impl<T> EventType<Arc<T>> {
+    pub(crate) fn removed(data: T) -> Self {
+        EventType::Remove(Arc::new(data))
+    }
+
+    pub(crate) fn added(data: T) -> Self {
+        EventType::Add(Arc::new(data))
+    }
+
+    pub(crate) fn updated(data: T) -> Self {
+        EventType::Update(Arc::new(data))
     }
 }
 
@@ -53,7 +67,7 @@ pub(crate) fn create_event_busses() -> (EventSenders, EventReceivers) {
 
 #[derive(Clone)]
 pub(crate) struct EventSenders {
-    pub(crate) retainers: EventProducer<Retainer>,
+    pub(crate) retainers: EventProducer<OwnedRetainer>,
     pub(crate) listings: EventProducer<ListingEventData>,
     pub(crate) alerts: EventProducer<alert::Model>,
     pub(crate) retainer_undercut: EventProducer<alert_retainer_undercut::Model>,
@@ -63,7 +77,7 @@ pub(crate) struct EventSenders {
 /// Base event type for communicating across different parts of the app
 #[derive(Debug)]
 pub(crate) struct EventReceivers {
-    pub(crate) retainers: EventBus<Retainer>,
+    pub(crate) retainers: EventBus<OwnedRetainer>,
     pub(crate) listings: EventBus<ListingEventData>,
     pub(crate) alerts: EventBus<alert::Model>,
     pub(crate) retainer_undercut: EventBus<alert_retainer_undercut::Model>,

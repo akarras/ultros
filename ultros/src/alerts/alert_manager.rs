@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use futures::future::{self, Either};
 use poise::serenity_prelude;
 use tracing::error;
-use ultros_api_types::{websocket::ListingEventData, Retainer};
+use ultros_api_types::{user::OwnedRetainer, websocket::ListingEventData, Retainer};
 use ultros_db::{
     entity::{alert, alert_retainer_undercut},
     UltrosDb,
@@ -21,7 +21,7 @@ pub(crate) struct AlertManager {
 impl AlertManager {
     pub(crate) async fn start_manager(
         ultros_db: UltrosDb,
-        (retainers, listings): (EventBus<Retainer>, EventBus<ListingEventData>),
+        (retainers, listings): (EventBus<OwnedRetainer>, EventBus<ListingEventData>),
         (mut alerts, mut undercuts): (
             EventBus<alert::Model>,
             EventBus<alert_retainer_undercut::Model>,
@@ -97,7 +97,7 @@ impl AlertManager {
         ultros_db: &UltrosDb,
         ctx: &serenity_prelude::Context,
         listings: EventBus<ListingEventData>,
-        active_retainers: EventBus<Retainer>,
+        active_retainers: EventBus<OwnedRetainer>,
     ) {
         let alert_retainer_undercut::Model {
             id,

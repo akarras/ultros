@@ -13,6 +13,7 @@ use sea_orm::QueryFilter;
 use sea_orm::Set;
 use tracing::info;
 use tracing::instrument;
+use ultros_api_types::user::OwnedRetainer;
 use universalis::ItemId;
 use universalis::WorldId;
 
@@ -101,7 +102,7 @@ impl UltrosDb {
         &self,
         discord_owner: u64,
         owned_retainer_id: i32,
-    ) -> Result<()> {
+    ) -> Result<OwnedRetainer> {
         // validate that the discord user id matches the entity we're about to delete
         let owned_retainer = owned_retainers::Entity::find_by_id(owned_retainer_id)
             .one(&self.db)
@@ -110,11 +111,11 @@ impl UltrosDb {
         if discord_owner as i64 != owned_retainer.discord_id {
             return Err(anyhow::Error::msg("You do not own this retainer record"));
         }
-        let value = owned_retainers::Entity::delete(owned_retainer.into_active_model())
+        let value = owned_retainers::Entity::delete_by_id(owned_retainer.id)
             .exec(&self.db)
             .await?;
         info!("Deleted retainer {value:?}");
-        Ok(())
+        Ok(owned_retainer.into())
     }
 
     /// Only returns the undercut items for retainers

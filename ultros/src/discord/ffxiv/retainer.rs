@@ -97,7 +97,7 @@ async fn add_undercut_alert(
     ctx.data()
         .event_senders
         .retainer_undercut
-        .send(EventType::Add(Arc::new(alert)))?;
+        .send(EventType::added(alert))?;
     ctx.say(&format!("Now sending alerts to this channel anytime someone undercuts your retainer by {margin_percent}%")).await?;
     Ok(())
 }
@@ -116,12 +116,12 @@ async fn remove_undercut_alert(ctx: Context<'_>) -> Result<(), Error> {
     ctx.data()
         .event_senders
         .alerts
-        .send(EventType::Remove(Arc::new(alert)))?;
+        .send(EventType::removed(alert))?;
     for undercut in undercuts {
         ctx.data()
             .event_senders
             .retainer_undercut
-            .send(EventType::Remove(Arc::new(undercut)))?;
+            .send(EventType::removed(undercut))?;
     }
     Ok(())
 }
@@ -295,10 +295,16 @@ async fn remove(
     owned_retainer_id: i32,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
-    ctx.data()
+    let removed = ctx
+        .data()
         .db
         .remove_owned_retainer(ctx.author().id.0, owned_retainer_id)
         .await?;
     ctx.say("Removed retainer successfully!").await?;
+    let _ = ctx
+        .data()
+        .event_senders
+        .retainers
+        .send(EventType::removed(removed));
     Ok(())
 }

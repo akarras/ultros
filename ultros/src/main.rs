@@ -90,7 +90,7 @@ async fn run_socket_listener(
                         match db.remove_listings(listings.clone(), item, world).await {
                             Ok(listings) => {
                                 info!("Removed listings {listings:?} {item:?} {world:?}");
-                                if let Err(e) = listings_tx.send(EventType::Remove(Arc::new(ListingEventData { item_id: item.0, world_id: world.0, listings }))) {
+                                if let Err(e) = listings_tx.send(EventType::removed(ListingEventData { item_id: item.0, world_id: world.0, listings })) {
                                     error!("Error sending remove listings {e:?}");
                                 }
                             },
@@ -103,7 +103,7 @@ async fn run_socket_listener(
                                 info!(
                                     "Stored sale data. Last id: {added_sales:?} {item:?} {world:?}"
                                 );
-                                match sales_tx.send(EventType::Add(Arc::new(SaleEventData{sales: added_sales}))) {
+                                match sales_tx.send(EventType::added(SaleEventData{sales: added_sales})) {
                                     Ok(o) => info!("Sent sale {o} slack remaining"),
                                     Err(e) => error!("Error sending sale update {e:?}"),
                                 }

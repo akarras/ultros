@@ -4,15 +4,11 @@ use std::{
 };
 
 use anyhow::Result;
-use futures::{
-    future::{self, Either},
-    lock::Mutex,
-    Stream, StreamExt,
-};
+use futures::future::{self, Either};
 use poise::serenity_prelude::{self, Color, UserId};
 use serde::Serialize;
 use tracing::{debug, error, instrument};
-use ultros_api_types::{websocket::ListingEventData, Retainer};
+use ultros_api_types::{user::OwnedRetainer, websocket::ListingEventData};
 use ultros_db::UltrosDb;
 
 use crate::event::{EventBus, EventType};
@@ -142,20 +138,20 @@ impl UndercutTracker {
         })
     }
 
-    pub(crate) fn into_stream<E>(self, listing_events: E) -> impl Stream<Item = Undercut>
-    where
-        E: Stream<Item = Result<EventType<Arc<ListingEventData>>, anyhow::Error>>,
-    {
-        let value = Arc::new(Mutex::new(self));
-        listing_events.filter_map(move |s| {
-            let value = value.clone();
-            async move {
-                let value = value.clone();
-                let mut lock = value.lock().await;
-                lock.handle_listing_event(s).await.ok()?
-            }
-        })
-    }
+    // pub(crate) fn into_stream<E>(self, listing_events: E) -> impl Stream<Item = Undercut>
+    // where
+    //     E: Stream<Item = Result<EventType<Arc<ListingEventData>>, anyhow::Error>>,
+    // {
+    //     let value = Arc::new(Mutex::new(self));
+    //     listing_events.filter_map(move |s| {
+    //         let value = value.clone();
+    //         async move {
+    //             let value = value.clone();
+    //             let mut lock = value.lock().await;
+    //             lock.handle_listing_event(s).await.ok()?
+    //         }
+    //     })
+    // }
 
     pub(crate) async fn handle_listing_event(
         &mut self,
@@ -290,7 +286,7 @@ impl RetainerAlertListener {
         margin: i32,
         ultros_db: UltrosDb,
         mut listings: EventBus<ListingEventData>,
-        active_retainers: EventBus<Retainer>,
+        active_retainers: EventBus<OwnedRetainer>,
         ctx: serenity_prelude::Context,
     ) -> Result<Self> {
         let alert = ultros_db
