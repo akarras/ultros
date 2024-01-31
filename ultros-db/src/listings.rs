@@ -73,7 +73,7 @@ impl UltrosDb {
         world_id: WorldId,
     ) -> Result<Vec<(ActiveListing, Retainer)>> {
         let listings = self
-            .get_all_listings_with_retainers(world_id.0, item_id)
+            .get_all_listings_in_worlds_with_retainers(&[world_id.0], item_id)
             .await?;
 
         let items = try_join_all(
@@ -112,16 +112,42 @@ impl UltrosDb {
     #[instrument(skip(self))]
     pub async fn get_all_listings_in_worlds_with_retainers(
         &self,
-        worlds: &Vec<i32>,
+        worlds: &[i32],
         item: ItemId,
     ) -> Result<Vec<(active_listing::Model, Option<retainer::Model>)>> {
-        let result = try_join_all(
+        let instant = Instant::now();
+        let listings = try_join_all(
             worlds
                 .iter()
-                .map(|world| self.get_all_listings_with_retainers(*world, item)),
+                .map(|world| self.get_all_listings(*world, item)),
         )
         .await?;
-        let data = result.into_iter().flat_map(|s| s.into_iter()).collect();
+
+        let retainers = retainer::Entity::find()
+            .filter(
+                retainer::Column::Id.is_in(
+                    listings
+                        .iter()
+                        .flat_map(|l| l.iter().map(|l| l.retainer_id))
+                        .unique(),
+                ),
+            )
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .map(|r| (r.id, r))
+            .collect::<HashMap<_, _>>();
+        let data = listings
+            .into_iter()
+            .flat_map(|s| {
+                s.into_iter().map(|l| {
+                    let retainer = retainers.get(&l.retainer_id).cloned();
+                    (l, retainer)
+                })
+            })
+            .collect();
+        histogram!("ultros_db_query_listings_all_world_with_retainers_duration_seconds")
+            .record(instant.elapsed());
         Ok(data)
     }
 
@@ -157,11 +183,11 @@ impl UltrosDb {
     }
 
     #[instrument(skip(self))]
-    pub async fn get_all_listings_with_retainers(
+    pub async fn get_all_listings(
         &self,
         world: i32,
         item: ItemId,
-    ) -> Result<Vec<(active_listing::Model, Option<retainer::Model>)>> {
+    ) -> Result<Vec<active_listing::Model>> {
         use active_listing::*;
         let instant = Instant::now();
         let listings = Entity::find()
@@ -169,23 +195,9 @@ impl UltrosDb {
             .filter(Column::WorldId.eq(world))
             .all(&self.db)
             .await?;
-        let retainers = retainer::Entity::find()
-            .filter(retainer::Column::Id.is_in(listings.iter().map(|l| l.retainer_id).unique()))
-            .all(&self.db)
-            .await?
-            .into_iter()
-            .map(|r| (r.id, r))
-            .collect::<HashMap<_, _>>();
-        let query = listings
-            .into_iter()
-            .map(|l| {
-                let retainer = retainers.get(&l.retainer_id).cloned();
-                (l, retainer)
-            })
-            .collect::<Vec<_>>();
-        histogram!("ultros_db_query_listings_with_retainers_duration_seconds")
-            .record(instant.elapsed());
-        Ok(query)
+
+        histogram!("ultros_db_query_listings_duration_seconds").record(instant.elapsed());
+        Ok(listings)
     }
 
     /// Updates listings assuming a pure view of the listing board
@@ -360,16 +372,6 @@ impl UltrosDb {
             .increment(removed.len() as u64);
         histogram!("ultros_db_update_listings_duration_seconds").record(instant.elapsed());
         Ok((added, removed))
-    }
-
-    pub async fn get_all_listings_for_world(
-        &self,
-        world_id: i32,
-    ) -> Result<impl Stream<Item = Result<active_listing::Model, DbErr>> + '_, anyhow::Error> {
-        Ok(active_listing::Entity::find()
-            .filter(active_listing::Column::WorldId.eq(world_id))
-            .stream(&self.db)
-            .await?)
     }
 
     pub async fn cheapest_listings(
