@@ -6,7 +6,6 @@ mod ffxiv_character;
 pub mod listings;
 pub mod lists;
 pub mod partial_diff_iterator;
-pub mod price_optimizer;
 pub mod recently_updated;
 mod regions_and_datacenters;
 pub mod retainers;
