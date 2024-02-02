@@ -264,6 +264,7 @@ pub fn ItemView() -> impl IntoView {
                             <a style="height: 45px" class="btn" href=move || format!("https://garlandtools.org/db/#item/{}", item_id())>"Garland Tools"</a>
                         </div>
                     </div>
+                    <div>"Item level: "<span style="color: #abc; width: 50px;">{move || items.get(&ItemId(item_id())).map(|item| item.level_item.0).unwrap_or_default()}</span></div>
                     <div>{move || view!{<UIText text=item_description().to_string()/>}}</div>
                     <div>{move || view!{<ItemStats item_id=ItemId(item_id()) />}}</div>
                 </div>

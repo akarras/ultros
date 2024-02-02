@@ -1,11 +1,13 @@
 use itertools::Itertools;
 /// Related items links items that are related to the current set
 use leptos::*;
-use ultros_api_types::cheapest_listings::CheapestListingMapKey;
+use leptos_router::A;
+use ultros_api_types::{cheapest_listings::CheapestListingMapKey, icon_size::IconSize};
 use xiv_gen::{Item, ItemId, Recipe};
 
 use crate::{
-    components::skeleton::SingleLineSkeleton, global_state::cheapest_prices::CheapestPrices,
+    components::{item_icon::ItemIcon, skeleton::SingleLineSkeleton},
+    global_state::{cheapest_prices::CheapestPrices, home_world::get_price_zone},
 };
 
 use super::{cheapest_price::*, gil::*, small_item_display::*};
@@ -156,6 +158,7 @@ fn Recipe(recipe: &'static Recipe) -> impl IntoView {
 pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     let db = xiv_gen_db::data();
     let item = create_memo(move |_| db.items.get(&ItemId(item_id())));
+    let (price_zone, _) = get_price_zone();
     let item_set = move || {
         item()
             .map(|item| {
@@ -164,12 +167,19 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                     .chain(suffix_item_iterator(item))
                     .unique_by(|i| i.key_id)
                     .filter(|i| i.item_search_category.0 > 0)
+                    .filter(|i| i.key_id.0 != item.key_id.0)
                     .map(|item| {
                         view! {
-                            <div class="flex flex-col gap-1 rounded p-1 border bg-size-200 transition-all duration-500 bg-pos-0 hover:bg-pos-100 border-violet-950 from-violet-950 via-neutral-950 to-yellow-300 bg-gradient-to-tr text-xl">
-                                <SmallItemDisplay item/>
-                                <div class="min-w-60">"price: "<CheapestPrice item_id=item.key_id /></div>
-                            </div>
+                            <A class="flex flex-col gap-1 rounded border border-violet-950
+                            transition-all duration-500 bg-gradient-to-br to-fuchsia-950 via-black from-violet-950 bg-size-200 bg-pos-0
+                            hover:bg-pos-100 p-2" exact=true href=format!("/item/{}/{}", price_zone().as_ref().map(|z| z.get_name()).unwrap_or("North-America"), item.key_id.0)>
+                                <div class="flex flex-row">
+                                    <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
+                                    <span style="width: 300px;">{&item.name}</span>
+                                    <span style="color: #abc; width: 50px;">{item.level_item.0}</span>
+                                </div>
+                                <div class="min-w-60 h-5"><CheapestPrice item_id=item.key_id /></div>
+                            </A>
                         }
                     })
                     .take(15)
@@ -184,9 +194,9 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
             .collect::<Vec<_>>()
     });
 
-    view! { <div class="content-well flex-col flex-wrap p-2" class:hidden=move || item_set().is_empty()>
+    view! { <div class="content-well flex-col flex-auto flex-wrap p-2" class:hidden=move || item_set().is_empty()>
             <span class="content-title">"related items"</span>
-            <div class="flex-row flex-wrap gap-1">{item_set}</div>
+            <div class="flex-row flex-wrap gap-3">{item_set}</div>
         </div>
         <div class="content-well flex-col p-2" class:hidden=move || recipes().is_empty()>
             <span class="content-title">"crafting recipes"</span>
