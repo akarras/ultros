@@ -45,16 +45,13 @@ fn suffix_item_iterator(item: &'static Item) -> impl Iterator<Item = &'static It
 /// This iterator will attempt to find related items using the classjobcategory && ilvl
 fn item_set_iter(item: &'static Item) -> impl Iterator<Item = &'static Item> {
     let items = &xiv_gen_db::data().items;
-    items
-        .values()
-        .filter(|i| {
-            item.class_job_category.0 != 0
-                && item.class_job_category.0 == i.class_job_category.0
-                && item.level_item.0 == i.level_item.0
-                && i.key_id != item.key_id
-                && item.item_search_category.0 > 0
-        })
-        .sorted_by_key(|i| i.key_id.0)
+    items.values().filter(|i| {
+        item.class_job_category.0 != 0
+            && item.class_job_category.0 == i.class_job_category.0
+            && item.level_item.0 == i.level_item.0
+            && i.key_id != item.key_id
+            && item.item_search_category.0 > 0
+    })
 }
 
 /// Creates an iterator over the ingredients in a recipe
@@ -165,6 +162,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                 item_set_iter(item)
                     .chain(prefix_item_iterator(item))
                     .chain(suffix_item_iterator(item))
+                    .sorted_by_key(|i| i.key_id.0)
                     .unique_by(|i| i.key_id)
                     .filter(|i| i.item_search_category.0 > 0)
                     .filter(|i| i.key_id.0 != item.key_id.0)
