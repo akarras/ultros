@@ -17,7 +17,9 @@ fn prefix_item_iterator(item: &'static Item) -> impl Iterator<Item = &'static It
     let prefix = item.name.split_once(' ').map(|(prefix, _)| prefix);
     items.values().filter(move |f| {
         if let Some(prefix) = prefix {
-            f.name.starts_with(prefix) && f.item_search_category.0 != 0 && f.level_item.0 == item.level_item.0
+            f.name.starts_with(prefix)
+                && f.item_search_category.0 != 0
+                && f.level_item.0 == item.level_item.0
         } else {
             false
         }
@@ -29,7 +31,9 @@ fn suffix_item_iterator(item: &'static Item) -> impl Iterator<Item = &'static It
     let suffix = item.name.rsplit_once(' ').map(|(_, suffix)| suffix);
     items.values().filter(move |f| {
         if let Some(suffix) = suffix {
-            f.name.ends_with(suffix) && f.item_search_category.0 != 0 && f.level_item.0 == item.level_item.0
+            f.name.ends_with(suffix)
+                && f.item_search_category.0 != 0
+                && f.level_item.0 == item.level_item.0
         } else {
             false
         }

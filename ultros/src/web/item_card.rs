@@ -3,7 +3,7 @@ use std::{cell::RefCell, rc::Rc, sync::Arc};
 use super::{error::WebError, WebState};
 use anyhow::{anyhow, Result};
 use axum::{
-    body::{self, Body},
+    body::Body,
     extract::{Path, State},
     response::{IntoResponse, Response},
 };

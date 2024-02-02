@@ -4,8 +4,8 @@ pub fn deserialize_i64_from_u8_array<'de, D>(deserializer: D) -> Result<i64, D::
 where
     D: Deserializer<'de>,
 {
-    #[derive(Deserialize)]
-    struct I64Slice([u16; 4]);
+    // #[derive(Deserialize)]
+    // struct I64Slice([u16; 4]);
     let _ = String::deserialize(deserializer);
     // let slice = I64Slice::deserialize(deserializer)?;
     // let bytes : Vec<_> = slice.0.into_iter().map(|m| m.to_le_bytes()).flatten().collect();

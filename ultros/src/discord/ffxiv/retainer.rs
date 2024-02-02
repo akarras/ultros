@@ -2,7 +2,6 @@ use crate::EventType;
 use itertools::Itertools;
 use poise::serenity_prelude::Color;
 use std::fmt::Write;
-use std::sync::Arc;
 use ultros_db::{entity::active_listing, world_cache::AnySelector};
 use xiv_gen::ItemId;
 

@@ -1,5 +1,7 @@
 use std::{error::Error, sync::Arc};
 
+#[cfg(not(debug_assertions))]
+use axum::http::HeaderValue;
 /// Ultros UI server contains all the axum routes required to serve and bundle leptos wasm files
 /// # Building
 /// I recommend you use cargo-leptos, once you go through the steps to install cargo-leptos
@@ -8,16 +10,18 @@ use std::{error::Error, sync::Arc};
 use axum::{
     body::Body,
     extract::State,
-    http::{HeaderValue, Request},
+    http::Request,
     response::{IntoResponse, Response},
     routing::get,
     Extension, Router,
 };
 use git_const::git_short_hash;
+#[cfg(not(debug_assertions))]
 use hyper::header;
 use leptos::*;
 use leptos_axum::generate_route_list;
 use leptos_router::RouteListing;
+#[cfg(not(debug_assertions))]
 use tower_http::set_header::SetResponseHeader;
 use tracing::instrument;
 use ultros_api_types::world_helper::WorldHelper;
@@ -43,7 +47,7 @@ async fn custom_handler(
 pub(crate) async fn create_leptos_app(
     worlds: Arc<WorldHelper>,
 ) -> Result<Router<WebState>, Box<dyn Error>> {
-    use axum::{error_handling::HandleError, http::StatusCode};
+    use axum::http::StatusCode;
     use tower_http::services::ServeDir;
 
     let conf = get_configuration(None).await?;
@@ -133,12 +137,12 @@ impl<S> StatefulRoutes<S> for axum::Router<S> {
 mod test {
     use super::StatefulRoutes;
     use axum::{
-        async_trait, debug_handler,
+        async_trait,
         extract::{FromRef, FromRequestParts, State},
         http::request::Parts,
         Router,
     };
-    use hyper::Body;
+    use axum_macros::debug_handler;
     use std::sync::Arc;
 
     #[test]
@@ -148,7 +152,7 @@ mod test {
             "Hello world".to_string()
         }
 
-        let _ = Router::<(), Body>::new().leptos_routes_with_handler_stateful(vec![], handler);
+        let _ = Router::<()>::new().leptos_routes_with_handler_stateful(vec![], handler);
     }
 
     #[test]
@@ -160,7 +164,7 @@ mod test {
             state.0.to_string()
         }
         let state = AppState(Arc::new("Hello world".to_string()));
-        let _router = Router::<AppState, Body>::new()
+        let _router = Router::<AppState>::new()
             .leptos_routes_with_handler_stateful(vec![], handler)
             .with_state::<AppState>(state);
     }
@@ -216,7 +220,7 @@ mod test {
         #[debug_handler]
         async fn handler(State(_other_state): State<WebState>, _data: InnerData) {}
 
-        let _ = Router::<WebState, Body>::new()
+        let _ = Router::<WebState>::new()
             .leptos_routes_with_handler_stateful(vec![], handler)
             .with_state::<WebState>(WebState {
                 a_state: AState(),

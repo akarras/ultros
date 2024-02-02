@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use futures::future::{self, Either};
 use poise::serenity_prelude;
 use tracing::error;
-use ultros_api_types::{user::OwnedRetainer, websocket::ListingEventData, Retainer};
+use ultros_api_types::{user::OwnedRetainer, websocket::ListingEventData};
 use ultros_db::{
     entity::{alert, alert_retainer_undercut},
     UltrosDb,

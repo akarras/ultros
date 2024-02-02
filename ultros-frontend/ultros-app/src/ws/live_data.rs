@@ -66,7 +66,7 @@ pub(crate) async fn live_sales(
                                 }
                                 _ => {}
                             },
-                            ServerClient::Listings(l) => {}
+                            ServerClient::Listings(_l) => {}
                             ServerClient::SubscriptionCreated => {
                                 log::info!("Subscription created");
                             }
