@@ -8,9 +8,9 @@ use axum::{
 };
 use chrono::Utc;
 use futures::future::try_join_all;
+use hyper::header;
 use itertools::Itertools;
 use mime_guess::mime;
-use reqwest::header;
 use sitemap_rs::{
     image::Image,
     sitemap::Sitemap,

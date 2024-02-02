@@ -8,6 +8,7 @@ use axum_extra::extract::{
     cookie::{Cookie, Key, SameSite},
     PrivateCookieJar,
 };
+use cookie::CookieBuilder;
 use oauth2::{
     basic::BasicClient, AccessToken, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken,
     PkceCodeChallenge, RedirectUrl, RevocationUrl, Scope, StandardRevocableToken, TokenResponse,
@@ -115,7 +116,7 @@ pub async fn begin_login(
     // todo: send redirect handler for discord
 
     let cookies = cookies.add(
-        Cookie::build("pkce_challenge", pkce_challenge.as_str().to_string())
+        CookieBuilder::new("pkce_challenge", pkce_challenge.as_str().to_string())
             .same_site(SameSite::Strict)
             .secure(true)
             .finish(),

@@ -2,13 +2,13 @@ use std::iter;
 
 use async_trait::async_trait;
 use axum::{
-    extract::{rejection::TypedHeaderRejection, FromRequestParts},
-    headers::Header,
+    extract::FromRequestParts,
     http::{request::Parts, HeaderName, HeaderValue},
     response::IntoResponse,
-    TypedHeader,
 };
+use axum_extra::{headers::Header, typed_header::TypedHeaderRejection, TypedHeader};
 use isocountry::CountryCode;
+use thiserror::Error;
 
 #[derive(Debug, Copy, Clone)]
 pub(crate) enum Region {
@@ -26,6 +26,12 @@ impl IntoResponse for Region {
     }
 }
 
+#[derive(Error, Debug)]
+enum CountryCodeError {
+    #[error("Country code was not found")]
+    NotFound,
+}
+
 struct CloudflareCountryCode(CountryCode);
 
 static CFCOUNTRY_CODE: HeaderName = HeaderName::from_static("cf-ipcountry");
@@ -36,7 +42,7 @@ impl Header for CloudflareCountryCode {
         &CFCOUNTRY_CODE
     }
 
-    fn decode<'i, I>(values: &mut I) -> Result<Self, axum::headers::Error>
+    fn decode<'i, I>(values: &mut I) -> Result<Self, axum_extra::headers::Error>
     where
         Self: Sized,
         I: Iterator<Item = &'i axum::http::HeaderValue>,
@@ -50,7 +56,7 @@ impl Header for CloudflareCountryCode {
                     .and_then(|value| CountryCode::for_alpha2_caseless(value).ok())
             })
             .map(CloudflareCountryCode);
-        value.ok_or(axum::headers::Error::invalid())
+        value.ok_or(axum_extra::headers::Error::invalid())
     }
 
     fn encode<E: Extend<axum::http::HeaderValue>>(&self, values: &mut E) {

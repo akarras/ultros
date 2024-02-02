@@ -153,9 +153,9 @@ pub(crate) fn get_cookies() -> Option<CookieJar> {
 
 #[cfg(feature = "ssr")]
 pub(crate) fn get_cookies() -> Option<CookieJar> {
-    use leptos_axum::RequestParts;
-    let cookies = use_context::<RequestParts>()?;
-    let cookie = cookies.headers.get("Cookie")?;
+    use axum::http::request::Parts;
+    let request_parts = use_context::<Parts>()?;
+    let cookie = request_parts.headers.get("Cookie")?;
     let value = cookie.to_str().ok()?.to_string();
     let mut cookie_jar = CookieJar::new();
     for cookie in Cookie::split_parse_encoded(value) {

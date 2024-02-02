@@ -8,11 +8,11 @@ use axum_extra::extract::{
     cookie::{Cookie, Key},
     PrivateCookieJar,
 };
+use hyper::StatusCode;
 use oauth2::{
     basic::BasicErrorResponseType, ConfigurationError, RequestTokenError,
     RevocationErrorResponseType, StandardErrorResponse,
 };
-use reqwest::StatusCode;
 use sitemap_rs::{sitemap_index_error::SitemapIndexError, url_set_error::UrlSetError};
 use thiserror::Error;
 use tokio::{sync::broadcast::error::SendError, time::error::Elapsed};

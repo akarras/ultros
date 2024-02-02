@@ -319,6 +319,7 @@ pub(crate) async fn delete_api<T>(path: &str) -> AppResult<T>
 where
     T: Serializable,
 {
+    use axum::http::request::Parts;
     // use the original headers of the scope
     // add the hostname when using the ssr path.
     use tracing::Instrument;
@@ -330,13 +331,22 @@ where
             .build()
             .unwrap()
     });
-    let req_parts = use_context::<leptos_axum::RequestParts>().ok_or(AppError::ParamMissing)?;
+    let req_parts = use_context::<Parts>().ok_or(AppError::ParamMissing)?;
     let headers = req_parts.headers;
     let hostname = "http://localhost:8080";
     let path = format!("{hostname}{path}");
     // headers.remove("Accept-Encoding");
-
-    let request = client.delete(&path).headers(headers).build()?;
+    // this is only necessary because reqwest isn't updated to http 1.0- and I'm being lazy
+    let mut new_map = reqwest::header::HeaderMap::new();
+    for (name, value) in headers.into_iter().filter_map(|(name, value)| {
+        Some((
+            reqwest::header::HeaderName::from_lowercase(name?.as_str().as_bytes()).ok()?,
+            reqwest::header::HeaderValue::from_bytes(value.as_bytes()).ok()?,
+        ))
+    }) {
+        new_map.insert(name, value);
+    }
+    let request = client.delete(&path).headers(new_map).build()?;
     let json = client
         .execute(request)
         .await
@@ -388,6 +398,7 @@ where
 {
     // use the original headers of the scope
     // add the hostname when using the ssr path.
+    use axum::http::request::Parts;
     use tracing::Instrument;
 
     static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
@@ -397,13 +408,21 @@ where
             .build()
             .unwrap()
     });
-    let req_parts = use_context::<leptos_axum::RequestParts>().ok_or(AppError::ParamMissing)?;
+    let req_parts = use_context::<Parts>().ok_or(AppError::ParamMissing)?;
     let headers = req_parts.headers;
     let hostname = "http://localhost:8080";
     let path = format!("{hostname}{path}");
-    // headers.remove("Accept-Encoding");
-
-    let request = client.get(&path).headers(headers).build()?;
+    // this is only necessary because reqwest isn't updated to http 1.0- and I'm being lazy
+    let mut new_map = reqwest::header::HeaderMap::new();
+    for (name, value) in headers.into_iter().filter_map(|(name, value)| {
+        Some((
+            reqwest::header::HeaderName::from_lowercase(name?.as_str().as_bytes()).ok()?,
+            reqwest::header::HeaderValue::from_bytes(value.as_bytes()).ok()?,
+        ))
+    }) {
+        new_map.insert(name, value);
+    }
+    let request = client.get(&path).headers(new_map).build()?;
     let json = client
         .execute(request)
         .await

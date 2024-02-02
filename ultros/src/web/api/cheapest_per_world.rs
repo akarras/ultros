@@ -2,10 +2,10 @@ use std::{sync::Arc, time::Duration};
 
 use axum::{
     extract::{Path, State},
-    headers::{CacheControl, HeaderMapExt},
     response::IntoResponse,
     Json,
 };
+use axum_extra::headers::{CacheControl, HeaderMapExt};
 use serde::Serialize;
 use ultros_db::world_cache::{AnySelector, WorldCache};
 

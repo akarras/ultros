@@ -34,7 +34,7 @@ pub fn CheapestPrice(item_id: ItemId, #[prop(optional)] show_hq: Option<bool>) -
                             <span><WorldName id=AnySelector::World(listing.world_id)/></span>
                         </div>
                     }.into_view()
-                }).unwrap_or(view!{"----"}.into_view())
+                }).unwrap_or("----".into_view())
             })
         })}
         </Suspense>

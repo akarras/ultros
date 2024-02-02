@@ -1,22 +1,20 @@
 use std::collections::VecDeque;
 
 use leptos::*;
-#[cfg(feature = "hydrate")]
-use leptos_use::storage::{use_local_storage, JsonCodec};
+use leptos_use::storage::use_local_storage;
 
 use crate::components::{search_result::ItemSearchResult, skeleton::BoxSkeleton};
 
 #[derive(Clone, Copy)]
 pub struct RecentItems {
-    #[cfg(feature = "hydrate")]
     read_signal: Signal<VecDeque<i32>>,
-    #[cfg(feature = "hydrate")]
     write_signal: WriteSignal<VecDeque<i32>>,
 }
 
 impl RecentItems {
-    #[cfg(feature = "hydrate")]
     pub fn new() -> Self {
+        use leptos_use::utils::JsonCodec;
+
         let (read_signal, write_signal, _delete_fn) =
             use_local_storage::<VecDeque<i32>, JsonCodec>("recently_viewed");
         Self {
@@ -25,22 +23,10 @@ impl RecentItems {
         }
     }
 
-    #[cfg(not(feature = "hydrate"))]
-    pub fn new() -> Self {
-        Self {}
-    }
-
-    #[cfg(feature = "hydrate")]
     pub fn reader(&self) -> Signal<VecDeque<i32>> {
         self.read_signal
     }
 
-    #[cfg(not(feature = "hydrate"))]
-    pub fn reader(&self) -> Signal<VecDeque<i32>> {
-        create_memo(|_| VecDeque::new()).into()
-    }
-
-    #[cfg(feature = "hydrate")]
     pub fn add_item(&self, item_id: i32) {
         use itertools::Itertools;
 
@@ -51,13 +37,6 @@ impl RecentItems {
                 items.pop_back();
             }
         });
-    }
-
-    #[cfg(not(feature = "hydrate"))]
-    pub fn add_item(&self, _item_id: i32) {
-        use log::warn;
-
-        warn!("added item to recently view ssr side.");
     }
 }
 

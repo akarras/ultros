@@ -3,7 +3,7 @@ use std::{cell::RefCell, rc::Rc, sync::Arc};
 use super::{error::WebError, WebState};
 use anyhow::{anyhow, Result};
 use axum::{
-    body::{self, Full},
+    body::{self, Body},
     extract::{Path, State},
     response::{IntoResponse, Response},
 };
@@ -77,7 +77,7 @@ pub(crate) async fn generate_image<'a>(
     Ok(pixmap.encode_png()?)
 }
 
-#[axum::debug_handler(state = WebState)]
+#[axum_macros::debug_handler(state = WebState)]
 pub(crate) async fn item_card(
     Path((world, item_id)): Path<(String, i32)>,
     State(db): State<UltrosDb>,
@@ -94,5 +94,5 @@ pub(crate) async fn item_card(
     let mime_type = mime_guess::from_path("icon.png").first_or_text_plain();
     Ok(Response::builder()
         .header(header::CONTENT_TYPE, mime_type.as_ref())
-        .body(body::boxed(Full::from(bytes)))?)
+        .body(Body::new(http_body_util::Full::from(bytes)))?)
 }

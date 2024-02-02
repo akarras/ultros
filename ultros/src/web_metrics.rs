@@ -1,12 +1,12 @@
 use std::{future::ready, net::SocketAddr, time::Instant};
 
 use axum::{
-    extract::MatchedPath, http::Request, middleware::Next, response::IntoResponse, routing::get,
+    extract::MatchedPath, extract::Request, middleware::Next, response::IntoResponse, routing::get,
     Router,
 };
 use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
 
-pub(crate) async fn track_metrics<B>(req: Request<B>, next: Next<B>) -> impl IntoResponse {
+pub(crate) async fn track_metrics(req: Request, next: Next) -> impl IntoResponse {
     let start = Instant::now();
     let path = if let Some(matched_path) = req.extensions().get::<MatchedPath>() {
         matched_path.as_str().to_owned()
@@ -58,8 +58,6 @@ pub(crate) async fn start_metrics_server() {
     // NOTE: expose metrics enpoint on a different port
     let addr = SocketAddr::from(([0, 0, 0, 0], 9091));
     tracing::debug!("listening on {}", addr);
-    axum::Server::bind(&addr)
-        .serve(app.into_make_service())
-        .await
-        .unwrap()
+    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+    axum::serve(listener, app).await.unwrap()
 }

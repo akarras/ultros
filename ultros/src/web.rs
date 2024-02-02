@@ -8,25 +8,29 @@ pub(crate) mod oauth;
 pub(crate) mod sitemap;
 
 use anyhow::Error;
-use axum::body::{Empty, Full};
+use axum::body::Body;
 use axum::extract::{FromRef, Path, Query, State};
-use axum::headers::{CacheControl, ContentType, HeaderMapExt};
 use axum::http::{HeaderValue, Response, StatusCode};
 use axum::response::{IntoResponse, Redirect};
 use axum::routing::{delete, get, post};
-use axum::{body, middleware, Json, Router, TypedHeader};
+use axum::{body, middleware, Json, Router};
 use axum_extra::extract::cookie::{Cookie, Key};
 use axum_extra::extract::CookieJar;
+use axum_extra::headers::{CacheControl, ContentType, HeaderMapExt};
+use axum_extra::TypedHeader;
 use futures::future::{try_join, try_join_all};
 use futures::stream::TryStreamExt;
 use futures::{stream, StreamExt};
+use hyper::body::Bytes;
+use hyper::header;
+use image::EncodableLayout;
 use itertools::Itertools;
-use reqwest::header;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
+use tokio::net::TcpListener;
 use tokio::time::timeout;
 use tower_http::compression::predicate::{NotForContentType, SizeAbove};
 use tower_http::compression::{CompressionLayer, Predicate};
@@ -288,7 +292,7 @@ async fn get_file(path: &str) -> Result<impl IntoResponse, WebError> {
     match get_static_file(path) {
         None => Ok(Response::builder()
             .status(StatusCode::NOT_FOUND)
-            .body(body::boxed(Empty::new()))?),
+            .body(Body::new(http_body_util::Empty::new()))?),
         Some(file) => Ok(Response::builder()
             .status(StatusCode::OK)
             .header(
@@ -302,7 +306,7 @@ async fn get_file(path: &str) -> Result<impl IntoResponse, WebError> {
                 #[cfg(debug_assertions)]
                 HeaderValue::from_str("none").unwrap(),
             )
-            .body(body::boxed(Full::from(file)))?),
+            .body(Body::new(http_body_util::Full::from(file)))?),
     }
 }
 
@@ -340,7 +344,7 @@ async fn get_item_icon(
     Ok(Response::builder()
         .header(header::CACHE_CONTROL, age_header)
         .header(header::CONTENT_TYPE, mime_type.as_ref())
-        .body(body::boxed(Full::from(bytes)))?)
+        .body(body::Body::new(http_body_util::Full::from(bytes)))?)
 }
 
 pub(crate) async fn invite() -> Redirect {
@@ -809,7 +813,7 @@ async fn delete_user(
         .value()
         .to_owned();
     cache.remove_token(&token).await;
-    let cookie_jar = cookie_jar.remove(Cookie::named("discord_auth"));
+    let cookie_jar = cookie_jar.remove(Cookie::from("discord_auth"));
     // remove the token from the cache
     // remove the auth cookie from the cache
     Ok((cookie_jar, Redirect::to("/")))
@@ -929,10 +933,13 @@ pub(crate) async fn start_web(state: WebState) {
         .ok()
         .flatten()
         .unwrap_or(8080);
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    tracing::info!("listening on {}", addr);
     let (_main_app, _metrics_app) = futures::future::join(
-        axum::Server::bind(&addr).serve(app.into_make_service()),
+        async move {
+            let addr = SocketAddr::from(([0, 0, 0, 0], port));
+            tracing::info!("listening on {}", addr);
+            let listener = TcpListener::bind(addr).await.unwrap();
+            axum::serve(listener, app).await.unwrap();
+        },
         start_metrics_server(),
     )
     .await;

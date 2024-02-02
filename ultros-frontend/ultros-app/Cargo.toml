@@ -10,13 +10,14 @@ leptos = { workspace = true, features = ["nightly"] }
 leptos_meta = { workspace = true, features = ["nightly"] }
 leptos_router = { workspace = true, features = ["nightly"] }
 leptos_axum = { workspace = true, optional = true }
+axum = { workspace = true, optional = true }
 leptos-use = { workspace = true }
 xiv-gen-db = {path = "../../xiv-gen-db"}
 xiv-gen.workspace = true
 sublime_fuzzy = "0.7"
 reqwest = {version = "0.11.0", optional = true, default-features = false, features = ["json", "rustls-tls", "brotli", "gzip", "deflate"]}
-gloo-net = {version = "0.4", optional = true, features = ["http", "websocket"]}
-gloo = {version = "0.10.0", optional = true}
+gloo-net = {workspace = true, optional = true}
+gloo = {version = "0.11.0", optional = true}
 web-sys = {version = "0.3", optional = true, features = ["AbortController", "Clipboard", "Window", "Navigator", "HtmlCanvasElement", "HtmlDivElement", "HtmlElement", "HtmlDocument"]}
 ultros-api-types = {path = "../../ultros-api-types"}
 ultros-db = {path = "../../ultros-db", optional = true}
@@ -51,4 +52,4 @@ percent-encoding = "2.3.0"
 [features]
 default = ["ssr"] # this is mostly so if I run cargo check, it has a flavor to work on
 hydrate = ["leptos/hydrate", "leptos_meta/hydrate", "leptos_router/hydrate", "gloo", "gloo-net", "web-sys", "wasm-bindgen", "time/wasm-bindgen", "js-sys"]
-ssr = ["leptos/ssr", "leptos_meta/ssr", "leptos_router/ssr", "reqwest", "leptos_axum", "web-sys", "ultros-db", "xiv-gen-db/embed", "leptos-use/ssr"]
+ssr = ["leptos/ssr", "leptos_meta/ssr", "leptos_router/ssr", "reqwest", "leptos_axum", "web-sys", "ultros-db", "xiv-gen-db/embed", "leptos-use/ssr", "axum"]

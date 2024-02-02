@@ -14,7 +14,7 @@ use axum::{
     Extension, Router,
 };
 use git_const::git_short_hash;
-use hyper::{body::HttpBody, header};
+use hyper::header;
 use leptos::*;
 use leptos_axum::generate_route_list;
 use leptos_router::RouteListing;
@@ -67,7 +67,8 @@ pub(crate) async fn create_leptos_app(
     //let pkg_service = HandleError::new(ServeDir::new("./pkg"), handle_file_error);
     let git_hash = git_short_hash!();
     leptos_options.site_pkg_dir = ["pkg/", git_hash].concat();
-    let cargo_leptos_service = HandleError::new(ServeDir::new(&bundle_filepath), handle_file_error);
+    // let cargo_leptos_service = HandleError::new(ServeDir::new(&bundle_filepath), handle_file_error);
+    let cargo_leptos_service = ServeDir::new(&bundle_filepath);
     #[cfg(not(debug_assertions))]
     let cargo_leptos_service = SetResponseHeader::appending(
         cargo_leptos_service,
@@ -101,26 +102,24 @@ pub(crate) async fn create_leptos_app(
         .layer(Extension(Arc::new(leptos_options))))
 }
 
-pub trait StatefulRoutes<S, B> {
+pub trait StatefulRoutes<S> {
     fn leptos_routes_with_handler_stateful<H, T>(
         self,
         paths: Vec<RouteListing>,
         handler: H,
     ) -> Self
     where
-        H: axum::handler::Handler<T, S, B>,
+        H: axum::handler::Handler<T, S>,
         S: Clone + Send + Sync + 'static,
-        T: 'static,
-        B: HttpBody + Send + 'static;
+        T: 'static;
 }
 
-impl<S, B> StatefulRoutes<S, B> for axum::Router<S, B> {
+impl<S> StatefulRoutes<S> for axum::Router<S> {
     fn leptos_routes_with_handler_stateful<H, T>(self, paths: Vec<RouteListing>, handler: H) -> Self
     where
-        H: axum::handler::Handler<T, S, B>,
+        H: axum::handler::Handler<T, S>,
         S: Clone + Send + Sync + 'static,
         T: 'static,
-        B: HttpBody + Send + 'static,
     {
         let mut router = self;
         for route in paths.iter() {

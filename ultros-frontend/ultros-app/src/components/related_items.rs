@@ -10,6 +10,32 @@ use crate::{
 
 use super::{cheapest_price::*, gil::*, small_item_display::*};
 
+/// Matches against items that start with the same prefix
+/// "Diadochos" -> "Diadochos Helmet" etc
+fn prefix_item_iterator(item: &'static Item) -> impl Iterator<Item = &'static Item> {
+    let items = &xiv_gen_db::data().items;
+    let prefix = item.name.split_once(' ').map(|(prefix, _)| prefix);
+    items.values().filter(move |f| {
+        if let Some(prefix) = prefix {
+            f.name.starts_with(prefix) && f.item_search_category.0 != 0 && f.level_item.0 == item.level_item.0
+        } else {
+            false
+        }
+    })
+}
+
+fn suffix_item_iterator(item: &'static Item) -> impl Iterator<Item = &'static Item> {
+    let items = &xiv_gen_db::data().items;
+    let suffix = item.name.rsplit_once(' ').map(|(_, suffix)| suffix);
+    items.values().filter(move |f| {
+        if let Some(suffix) = suffix {
+            f.name.ends_with(suffix) && f.item_search_category.0 != 0 && f.level_item.0 == item.level_item.0
+        } else {
+            false
+        }
+    })
+}
+
 /// This iterator will attempt to find related items using the classjobcategory && ilvl
 fn item_set_iter(item: &'static Item) -> impl Iterator<Item = &'static Item> {
     let items = &xiv_gen_db::data().items;
@@ -20,7 +46,7 @@ fn item_set_iter(item: &'static Item) -> impl Iterator<Item = &'static Item> {
                 && item.class_job_category.0 == i.class_job_category.0
                 && item.level_item.0 == i.level_item.0
                 && i.key_id != item.key_id
-                && item.item_search_category.0 != 0
+                && item.item_search_category.0 > 0
         })
         .sorted_by_key(|i| i.key_id.0)
 }
@@ -126,32 +152,39 @@ fn Recipe(recipe: &'static Recipe) -> impl IntoView {
 pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     let db = xiv_gen_db::data();
     let item = create_memo(move |_| db.items.get(&ItemId(item_id())));
-    let item_set = create_memo(move |_| {
+    let item_set = move || {
         item()
             .map(|item| {
                 item_set_iter(item)
+                    .chain(prefix_item_iterator(item))
+                    .chain(suffix_item_iterator(item))
+                    .unique_by(|i| i.key_id)
+                    .filter(|i| i.item_search_category.0 > 0)
                     .map(|item| {
                         view! {
-                            <SmallItemDisplay item/>
+                            <div class="flex flex-col gap-1 rounded p-1 border bg-size-200 transition-all duration-500 bg-pos-0 hover:bg-pos-100 border-violet-950 from-violet-950 via-neutral-950 to-yellow-300 bg-gradient-to-tr text-xl">
+                                <SmallItemDisplay item/>
+                                <div class="min-w-60">"price: "<CheapestPrice item_id=item.key_id /></div>
+                            </div>
                         }
                     })
-                    .take(30)
+                    .take(15)
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default()
-    });
+    };
     let recipes = create_memo(move |_| {
         recipe_tree_iter(ItemId(item_id()))
             .map(|recipe| view! {<Recipe recipe/>})
-            .take(10)
+            .take(30)
             .collect::<Vec<_>>()
     });
 
-    view! { <div class="content-well flex-column" class:hidden=move || item_set().is_empty()>
+    view! { <div class="content-well flex-col flex-wrap p-2" class:hidden=move || item_set().is_empty()>
             <span class="content-title">"related items"</span>
-            <div class="flex-column">{item_set}</div>
+            <div class="flex-row flex-wrap gap-1">{item_set}</div>
         </div>
-        <div class="content-well flex-column" class:hidden=move || recipes().is_empty()>
+        <div class="content-well flex-col p-2" class:hidden=move || recipes().is_empty()>
             <span class="content-title">"crafting recipes"</span>
             <div class="flex-wrap">{recipes}</div>
         </div>
