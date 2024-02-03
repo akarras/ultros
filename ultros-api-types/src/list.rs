@@ -27,4 +27,5 @@ pub struct ListItem {
     /// None if it doesn't matter whether this item is HQ, otherwise follows value.
     pub hq: Option<bool>,
     pub quantity: Option<i32>,
+    pub acquired: Option<i32>,
 }

@@ -56,6 +56,7 @@ pub fn ListView() -> impl IntoView {
                     list_id: list_id(),
                     hq: Some(data.2 && can_be_hq),
                     quantity: Some(amount),
+                    acquired: None,
                 }
             })
             .collect();

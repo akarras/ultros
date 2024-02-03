@@ -604,9 +604,10 @@ pub(crate) async fn post_item_to_list(
         item_id,
         hq,
         quantity,
+        acquired,
         ..
     } = item;
-    db.add_item_to_list(&list, user.id as i64, item_id, hq, quantity)
+    db.add_item_to_list(&list, user.id as i64, item_id, hq, quantity, acquired)
         .await?;
     Ok(Json(()))
 }

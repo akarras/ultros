@@ -151,6 +151,7 @@ impl UltrosDb {
         item_id: i32,
         hq: Option<bool>,
         quantity: Option<i32>,
+        acquired: Option<i32>,
     ) -> Result<list_item::Model> {
         if list.owner != discord_user {
             return Err(anyhow::anyhow!("Failed to add item to list"));
@@ -172,6 +173,7 @@ impl UltrosDb {
                 list_id: ActiveValue::Set(list.id),
                 hq: ActiveValue::Set(hq),
                 quantity: ActiveValue::Set(quantity),
+                acquired: ActiveValue::Set(acquired),
             }
             .insert(&self.db)
             .await?)
@@ -245,6 +247,7 @@ impl UltrosDb {
                 list_id,
                 hq,
                 quantity,
+                acquired,
                 ..
             } = item;
             list_item::ActiveModel {
@@ -253,6 +256,7 @@ impl UltrosDb {
                 list_id: ActiveValue::Set(list_id),
                 hq: ActiveValue::Set(hq),
                 quantity: ActiveValue::Set(quantity),
+                acquired: ActiveValue::Set(acquired),
             }
         }))
         .exec_without_returning(&self.db)

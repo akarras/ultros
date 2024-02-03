@@ -128,7 +128,7 @@ async fn add_item(
         .ok_or(anyhow!("List not found"))?;
     ctx.data()
         .db
-        .add_item_to_list(&list, author_id, i.0, hq, quantity)
+        .add_item_to_list(&list, author_id, i.0, hq, quantity, None)
         .await?;
     ctx.send(|s| {
         s.embed(|e| {
