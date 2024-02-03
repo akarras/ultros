@@ -25,7 +25,6 @@ impl IntoResponse for Region {
     }
 }
 
-
 struct CloudflareCountryCode(CountryCode);
 
 static CFCOUNTRY_CODE: HeaderName = HeaderName::from_static("cf-ipcountry");
