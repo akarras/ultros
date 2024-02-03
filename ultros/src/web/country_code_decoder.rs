@@ -8,7 +8,6 @@ use axum::{
 };
 use axum_extra::{headers::Header, typed_header::TypedHeaderRejection, TypedHeader};
 use isocountry::CountryCode;
-use thiserror::Error;
 
 #[derive(Debug, Copy, Clone)]
 pub(crate) enum Region {
@@ -26,11 +25,6 @@ impl IntoResponse for Region {
     }
 }
 
-#[derive(Error, Debug)]
-enum CountryCodeError {
-    #[error("Country code was not found")]
-    NotFound,
-}
 
 struct CloudflareCountryCode(CountryCode);
 
