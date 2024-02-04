@@ -13,7 +13,6 @@ use futures::StreamExt;
 use itertools::Itertools;
 use poise::serenity_prelude::Timestamp;
 use serde::{Deserialize, Serialize};
-use smallvec::SmallVec;
 use tracing::log::info;
 use ultros_api_types::{websocket::ListingEventData, ActiveListing, Retainer};
 use ultros_db::{
@@ -132,7 +131,7 @@ impl From<&ultros_api_types::SaleHistory> for SaleSummary {
 
 #[derive(Debug, Default, Clone)]
 pub(crate) struct SaleHistory {
-    pub(crate) item_map: HashMap<ItemKey, SmallVec<[SaleSummary; SALE_HISTORY_SIZE]>>,
+    pub(crate) item_map: HashMap<ItemKey, arrayvec::ArrayVec<SaleSummary, SALE_HISTORY_SIZE>>,
 }
 
 impl SaleHistory {
@@ -143,11 +142,17 @@ impl SaleHistory {
         let entries = self
             .item_map
             .entry(sale.into())
-            .or_insert_with(SmallVec::new_const);
+            .or_default();
+        let sale: SaleSummary = sale.into();
         if entries.len() == SALE_HISTORY_SIZE {
-            let _ = entries.pop();
+            let last_entry = entries.last().expect("We just checked len");
+            if last_entry.sale_date < sale.sale_date {
+                let _ = entries.pop();
+                entries.push(sale);
+            }
+        } else {
+            entries.push(sale);
         }
-        entries.push(sale.into());
         entries.sort_by_key(|sale| Reverse(sale.sale_date));
     }
 }

@@ -6530,6 +6530,7 @@ name = "ultros"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arrayvec",
  "async-trait",
  "axum",
  "axum-extra",
