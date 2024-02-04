@@ -139,10 +139,7 @@ impl SaleHistory {
     where
         &'a T: Into<SaleSummary> + Into<ItemKey>,
     {
-        let entries = self
-            .item_map
-            .entry(sale.into())
-            .or_default();
+        let entries = self.item_map.entry(sale.into()).or_default();
         let sale: SaleSummary = sale.into();
         if entries.len() == SALE_HISTORY_SIZE {
             let last_entry = entries.last().expect("We just checked len");

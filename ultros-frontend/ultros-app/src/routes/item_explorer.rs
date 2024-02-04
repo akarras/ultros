@@ -524,7 +524,7 @@ pub fn ItemExplorer() -> impl IntoView {
                     <JobsList />
                 </div>
                 <div class="flex flex-col grow">
-                    <Ad class="grow h-20" />
+                    <Ad class="grow max-h-20" />
                     <h1 class="text-2xl">"Item Explorer"</h1>
                     <Outlet />
                     <Ad class="grow h-72" />
