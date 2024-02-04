@@ -47,12 +47,12 @@ pub fn Ad(#[prop(optional)] class: Option<&'static str>) -> impl IntoView {
                         crossorigin="anonymous"
                         on:error=move |_e| unfilled.set(true) ></script>
                     // <!-- Ultros-Ad-Main -->
-                    <ins class=["adsbygoogle ", ad_class].concat()
+                    <ins class={["adsbygoogle ", ad_class].concat()}
                         style="display:block"
                         data-ad-client="ca-pub-8789160460804755"
                         data-ad-slot="1163555858"
-                        data-ad-format="auto"
                         data-full-width-responsive="true"
+                        data-adtest="on"
                         node_ref=node></ins>
                     <script>
                         (adsbygoogle = window.adsbygoogle || []).push({});

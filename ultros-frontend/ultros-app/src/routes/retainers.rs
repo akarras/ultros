@@ -377,7 +377,7 @@ pub fn Retainers() -> impl IntoView {
                     <div class="grow w-full"><Ad class="max-h-20 w-full" /></div>
                     <Outlet />
                 </div>
-                <div><Ad class="h-96 xl:h-[50svh] xl:w-32"/></div>
+                <div><Ad class="max-h-96 xl:h-[50svh] xl:w-32"/></div>
             </div>
         </div>
     }
