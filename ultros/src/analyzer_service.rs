@@ -27,7 +27,7 @@ use tokio::sync::RwLock;
 use tracing::log::error;
 use ultros_db::world_cache::{AnySelector, WorldCache};
 
-pub const SALE_HISTORY_SIZE: usize = 4;
+pub const SALE_HISTORY_SIZE: usize = 6;
 
 #[derive(Debug, Error)]
 pub enum AnalyzerError {
