@@ -372,13 +372,13 @@ pub fn Retainers() -> impl IntoView {
         <div
             class="main-content"
         >
-        <div class="container mx-auto flex flex-col items-start">
-            <Ad class="h-20" />
-            <div class="shrink">
-                <Outlet />
+            <div class="container mx-auto flex flex-col xl:flex-row items-start">
+                <div class="flex flex-col grow">
+                    <div class="grow w-full"><Ad class="h-20 w-full" /></div>
+                    <Outlet />
+                </div>
+                <div><Ad class="h-96 xl:h-[50svh] xl:w-32"/></div>
             </div>
-            <Ad class="h-96 md:h-[50vh]"/>
-        </div>
         </div>
     }
 }

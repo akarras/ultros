@@ -39,15 +39,15 @@ pub fn Ad(#[prop(optional)] class: Option<&'static str>) -> impl IntoView {
         // let _ = pathname(); // reading from the path to reload this component on page load
         // let _ = search();
         (!hide_ads().unwrap_or_default()).then(move ||view!{
-        <div class:invisible=unfilled class=["ad ", ad_class].concat()>
+        <div class:collapse=unfilled class="p-1 bg-gray-950 rounded-xl ad if-adblock-could-block-this-for-people-who-hate-ads-thatd-be-great">
             <div class="flex flex-col h-full">
-                <span class="text-md">"Ad"</span>
+                <span class="text-sm p-1 px-2 rounded-md bg-violet-950 shrink max-w-fit">"Ad"</span>
                 <div class="flex-grow">
                     <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-8789160460804755"
                         crossorigin="anonymous"
                         on:error=move |_e| unfilled.set(true) ></script>
                     // <!-- Ultros-Ad-Main -->
-                    <ins class="adsbygoogle"
+                    <ins class=["adsbygoogle ", ad_class].concat()
                         style="display:block"
                         data-ad-client="ca-pub-8789160460804755"
                         data-ad-slot="1163555858"
