@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::{collections::HashSet, str::FromStr};
 
+use crate::components::ad::Ad;
 use crate::components::query_button::QueryButton;
 use crate::components::toggle::Toggle;
 use crate::components::{cheapest_price::*, fonts::*, meta::*, small_item_display::*};
@@ -523,8 +524,10 @@ pub fn ItemExplorer() -> impl IntoView {
                     <JobsList />
                 </div>
                 <div class="flex flex-col grow">
+                    <Ad class="grow h-20" />
                     <h1 class="text-2xl">"Item Explorer"</h1>
                     <Outlet />
+                    <Ad class="grow h-72" />
                 </div>
             </div>
         </div>

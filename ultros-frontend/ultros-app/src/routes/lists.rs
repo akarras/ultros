@@ -138,14 +138,13 @@ pub fn Lists() -> impl IntoView {
             </A>
         </div>
         <div class="main-content flex-column">
-            <div class="container mx-auto flex flex-col md:flex-row items-start">
+            <Ad class="h-20"/>
+            <div class="container mx-auto flex flex-col items-start">
                 <div class="shrink">
                     <Outlet />
                 </div>
-                <div class="md:grow">
-                    <Ad class="h-96 md:h-[50vh]"/>
-                </div>
             </div>
+            <Ad class="h-96 md:h-[50vh]"/>
         </div>
     </div>
     }

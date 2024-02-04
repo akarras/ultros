@@ -275,7 +275,7 @@ pub fn ItemView() -> impl IntoView {
         </div>
         <div class="main-content flex-wrap">
             <ListingsContent item_id world />
-            <Ad class="h-96"/>
+            <Ad class="h-96 min-w-96"/>
             <RelatedItems item_id=Signal::from(item_id) />
         </div>
     }

@@ -458,7 +458,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                             <a class="btn p-1" href="?profit=100000">"100K profit"</a>
                         </div>
                     </div>
-                    <Ad class="h-32" />
+                    <Ad class="h-20" />
                 </div>
                 <div class="min-h-screen w-full">
                 <Suspense fallback=BoxSkeleton>

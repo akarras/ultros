@@ -41,7 +41,7 @@ pub fn Ad(#[prop(optional)] class: Option<&'static str>) -> impl IntoView {
         (!hide_ads().unwrap_or_default()).then(move ||view!{
         <div class:invisible=unfilled class=["ad ", ad_class].concat()>
             <div class="flex flex-col h-full">
-                <span class="text-lg">"Ad"</span>
+                <span class="text-md">"Ad"</span>
                 <div class="flex-grow">
                     <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-8789160460804755"
                         crossorigin="anonymous"
