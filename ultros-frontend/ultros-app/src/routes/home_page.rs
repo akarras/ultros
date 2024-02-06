@@ -30,7 +30,7 @@ pub fn HomePage() -> impl IntoView {
             <div class="flex flex-col md:min-w-[424px]">
                 <LiveSaleTicker />
                 <RecentlyViewed />
-                <Ad />
+                <Ad class="w-96 h-96"/>
             </div>
             <div class="flex flex-col grow">
                 <div class="text-xl">
@@ -77,7 +77,7 @@ pub fn HomePage() -> impl IntoView {
                         </FeatureCard>
                     </a>
                 </div>
-                <Ad class="h-[50svh] w-full" />
+                <Ad class="min-h-20 max-h-[70vh] w-full" />
             </div>
         </div>
     </div>}
