@@ -99,7 +99,7 @@ fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> imp
             <span class="content-title">
                 {retainer.name} " - " <WorldName id=AnySelector::World(retainer.world_id)/>
             </span>
-            <table>
+            <table class="w-full">
                 <thead>
                     <tr>
                         <th>"HQ"</th>

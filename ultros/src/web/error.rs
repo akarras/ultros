@@ -103,7 +103,7 @@ impl IntoResponse for ApiError {
         if let ApiError::DiscordTokenInvalid(mut cookies) = self {
             // remove the discord user cookie
             info!("Removed invalid Discord token");
-            cookies = cookies.remove(Cookie::named("discord_auth"));
+            cookies = cookies.remove(Cookie::from("discord_auth"));
             return (
                 cookies,
                 Json(JsonError::ApiError(

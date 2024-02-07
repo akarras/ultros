@@ -63,7 +63,7 @@ pub fn EditLists() -> impl IntoView {
                 Ok(lists) => view!{
 
                     <h3>"Current lists"</h3>
-                    <table>
+                    <table class="w-full">
                     <tr><td>"List Name"</td><td>"World"</td></tr>
                         <For each=move || lists.clone()
                             key=move |list| list.id

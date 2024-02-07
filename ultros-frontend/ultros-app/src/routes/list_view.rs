@@ -214,7 +214,7 @@ pub fn ListView() -> impl IntoView {
             Ok((list, items)) => view!{
                 <div class="content-well">
                     <span class="content-title">{list.name}</span>
-                    <table>
+                    <table class="w-full">
                         <tr>
                             <th>"HQ"</th>
                             <th>"Item"</th>

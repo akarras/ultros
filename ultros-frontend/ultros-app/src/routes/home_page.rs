@@ -77,7 +77,7 @@ pub fn HomePage() -> impl IntoView {
                         </FeatureCard>
                     </a>
                 </div>
-                <Ad class="min-h-20 max-h-[70vh] w-full" />
+                <Ad class="min-h-40 max-h-[70vh] w-full" />
             </div>
         </div>
     </div>}

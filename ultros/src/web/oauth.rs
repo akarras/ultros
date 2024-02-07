@@ -118,8 +118,7 @@ pub async fn begin_login(
     let cookies = cookies.add(
         CookieBuilder::new("pkce_challenge", pkce_challenge.as_str().to_string())
             .same_site(SameSite::Strict)
-            .secure(true)
-            .build(),
+            .secure(true),
     );
     let cookies = cookies.add(Cookie::new("pkce_verifier", pkce_verifier.secret().clone()));
 
