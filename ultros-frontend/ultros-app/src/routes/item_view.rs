@@ -105,7 +105,6 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
     );
     let _class_opacity = "opacity-0 opacity-50"; // this is just here to get tailwind to compile
     view! {
-        <div>
         <Transition fallback=move || view!{
             <div class="h-[35em] grow w-screen md:w-[780px]">
                 <BoxSkeleton />
@@ -118,47 +117,41 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
             </div>}
         }}
         </Transition>
-        </div>
-        <div>
         <Transition fallback=move || view !{
-            <div class="h-[35em] grow  w-screen md:w-[780px]">
+            <div class="h-[35em] grow w-screen md:w-[780px] xl:basis-1/4">
                 <BoxSkeleton />
             </div>
         }>
         {move || {
             let hq_listings = create_memo(move |_| listing_resource.with(|l| l.as_ref().and_then(|l| l.as_ref().ok().map(|l| l.listings.iter().cloned().filter(|(l, _)| l.hq).collect::<Vec<_>>()))).unwrap_or_default());
-            view!{<div class="content-well max-h-[35em] overflow-y-auto" class:hidden=move || hq_listings.with(|l| l.is_empty())>
+            view!{<div class="content-well max-h-[35em] overflow-y-auto xl:basis-1/4" class:hidden=move || hq_listings.with(|l| l.is_empty())>
                     <div class="content-title">"high quality listings"</div>
                     <ListingsTable listings=hq_listings />
                 </div>}
         }}
         </Transition>
-        </div>
-        <div>
         <Transition fallback=move || view !{
-            <div class="h-[35em] grow  w-screen md:w-[780px]">
+            <div class="h-[35em] grow w-screen md:w-[780px] xl:basis-1/4">
                 <BoxSkeleton />
             </div>
         }>
         {move || {
             let lq_listings = create_memo(move |_| listing_resource.with(|l| l.as_ref().and_then(|l| l.as_ref().ok().map(|l| l.listings.iter().cloned().filter(|(l, _)| !l.hq).collect::<Vec<_>>()))).unwrap_or_default());
-            view!{<div class="content-well max-h-[35em] overflow-y-auto" class:hidden=move || lq_listings.with(|l| l.is_empty())>
+            view!{<div class="content-well max-h-[35em] overflow-y-auto xl:basis-1/4" class:hidden=move || lq_listings.with(|l| l.is_empty())>
                 <div class="content-title">"low quality listings"</div>
                 <ListingsTable listings=lq_listings />
             </div>}
         }}
         </Transition>
-        </div>
-        <div>
         <Transition fallback=move || view !{
-            <div class="h-[35em] grow w-screen md:w-[780px]">
+            <div class="h-[35em] grow w-screen md:w-[780px] xl:basis-1/4">
                 <BoxSkeleton />
             </div>
         }>
         {move || {
             let sales = create_memo(move |_| listing_resource.with(|l| l.as_ref().and_then(|l| l.as_ref().map(|l| l.sales.clone()).ok())).unwrap_or_default());
             view! {
-                <div class="content-well max-h-[35em] overflow-y-auto">
+                <div class="content-well max-h-[35em] overflow-y-auto xl:basis-1/4">
                     <div class="content-title">"sale history"</div>
                     <div>
                         <SaleHistoryTable sales=Signal::from(sales) />
@@ -167,7 +160,6 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
             }
         }}
         </Transition>
-        </div>
     }
 }
 
@@ -274,8 +266,9 @@ pub fn ItemView() -> impl IntoView {
             </div>
         </div>
         <div class="main-content flex-wrap">
+            <div class="grow w-full"><Ad class="min-h-10 max-h-10 xl:max-h-20 w-full"/></div>
             <ListingsContent item_id world />
-            <Ad class="min-h-30 min-w-30 max-h-96 max-w-96"/>
+            <div class="grow w-full"><Ad class="min-h-30 max-h-96 w-full"/></div>
             <RelatedItems item_id=Signal::from(item_id) />
         </div>
     }

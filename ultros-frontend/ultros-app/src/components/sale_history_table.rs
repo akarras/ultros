@@ -14,7 +14,7 @@ pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
         }
         sales
     });
-    view! {  <table>
+    view! {  <table class="w-full">
         <thead>
             <tr>
                 <th>"hq"</th>

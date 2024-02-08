@@ -21,7 +21,7 @@ pub fn ListingsTable(
             listings.iter().take(10).cloned().collect()
         }
     });
-    view! {  <table>
+    view! {  <table class="w-full">
             <tr>
                 <th>"price"</th>
                 <th>"qty."</th>
