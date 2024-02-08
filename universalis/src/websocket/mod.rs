@@ -158,8 +158,12 @@ impl WebsocketClient {
                 let websocket = if let Some(websocket) = &mut websocket {
                     websocket
                 } else {
-                    warn!("Socket terminated, waiting 30 seconds and retrying.");
-                    tokio::time::sleep(Duration::from_secs(30)).await;
+                    let cooldown_seconds = std::env::var("UNIVERSALIS_WEBSOCKET_COOLDOWN_SECS")
+                        .ok()
+                        .and_then(|i| i.parse::<u64>().ok())
+                        .unwrap_or(2);
+                    warn!("Socket terminated, waiting {cooldown_seconds} seconds and retrying.");
+                    tokio::time::sleep(Duration::from_secs(cooldown_seconds)).await;
                     websocket = Self::start_websocket()
                         .await
                         .map_err(|e| error!("Error restarting socket? {e:?}"))
