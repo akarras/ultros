@@ -13,7 +13,7 @@ use leptos_meta::Link;
 use leptos_meta::Meta;
 use leptos_router::escape;
 use leptos_router::*;
-use ultros_api_types::world_helper::{AnyResult, OwnedResult};
+use ultros_api_types::world_helper::{AnyResult};
 use xiv_gen::ItemId;
 
 #[component]
@@ -112,39 +112,39 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
         }>
         {move || {
             let sales = create_memo(move |_| listing_resource.with(|l| l.as_ref().and_then(|l| l.as_ref().map(|l| l.sales.clone()).ok())).unwrap_or_default());
-            view!{ <div class="content-well max-h-[35em] overflow-y-auto">
+            view!{ <div class="content-well max-h-[35em] overflow-y-auto grow-0">
                 <PriceHistoryChart sales=MaybeSignal::from(sales) />
             </div>}
         }}
         </Transition>
         <Transition fallback=move || view !{
-            <div class="h-[35em] grow w-screen md:w-[780px] xl:basis-1/4">
+            <div class="h-[35em] grow w-screen md:w-[780px]">
                 <BoxSkeleton />
             </div>
         }>
         {move || {
             let hq_listings = create_memo(move |_| listing_resource.with(|l| l.as_ref().and_then(|l| l.as_ref().ok().map(|l| l.listings.iter().cloned().filter(|(l, _)| l.hq).collect::<Vec<_>>()))).unwrap_or_default());
-            view!{<div class="content-well max-h-[35em] overflow-y-auto xl:basis-1/4" class:hidden=move || hq_listings.with(|l| l.is_empty())>
+            view!{<div class="content-well max-h-[35em] overflow-y-auto grow" class:hidden=move || hq_listings.with(|l| l.is_empty())>
                     <div class="content-title">"high quality listings"</div>
                     <ListingsTable listings=hq_listings />
                 </div>}
         }}
         </Transition>
         <Transition fallback=move || view !{
-            <div class="h-[35em] grow w-screen md:w-[780px] xl:basis-1/4">
+            <div class="h-[35em] grow w-screen md:w-[780px]">
                 <BoxSkeleton />
             </div>
         }>
         {move || {
             let lq_listings = create_memo(move |_| listing_resource.with(|l| l.as_ref().and_then(|l| l.as_ref().ok().map(|l| l.listings.iter().cloned().filter(|(l, _)| !l.hq).collect::<Vec<_>>()))).unwrap_or_default());
-            view!{<div class="content-well max-h-[35em] overflow-y-auto xl:basis-1/4" class:hidden=move || lq_listings.with(|l| l.is_empty())>
+            view!{<div class="content-well max-h-[35em] overflow-y-auto grow" class:hidden=move || lq_listings.with(|l| l.is_empty())>
                 <div class="content-title">"low quality listings"</div>
                 <ListingsTable listings=lq_listings />
             </div>}
         }}
         </Transition>
         <Transition fallback=move || view !{
-            <div class="h-[35em] grow w-screen md:w-[780px] xl:basis-1/4">
+            <div class="h-[35em] grow w-screen md:w-[780px]">
                 <BoxSkeleton />
             </div>
         }>
@@ -205,12 +205,16 @@ pub fn ItemView() -> impl IntoView {
     };
     let categories = &data.item_ui_categorys;
     let search_categories = &data.item_search_categorys;
-    let region_type = move || match get_price_zone().0() {
-        Some(OwnedResult::Region(_)) => "region",
-        Some(OwnedResult::Datacenter(_)) => "datacenter",
-        Some(OwnedResult::World(_)) => "world",
+
+    let region_type = move || {
+        let world_data = use_context::<LocalWorldData>().unwrap().0.unwrap();
+        let target = world_data.lookup_world_by_name(&world());
+        match target {
+        Some(AnyResult::Region(_)) => "region",
+        Some(AnyResult::Datacenter(_)) => "datacenter",
+        Some(AnyResult::World(_)) => "world",
         None => "unknown",
-    };
+    }};
     let description = create_memo(move |_| {
         format!(
             "Current lowest prices and sale history for the item {} within the {} {}. Discover related items and view crafting recipes. {}",
@@ -232,11 +236,11 @@ pub fn ItemView() -> impl IntoView {
     };
     view! {
         <MetaDescription text=description/>
-        <MetaTitle title=move || format!("{} - Market view", item_name())/>
+        <MetaTitle title=move || format!("{} - 🌍{} - Market view - Ultros", item_name(), world())/>
         // TODO: probably shouldn't hard code the domain here
         <Meta name="twitter:card" content="summary_large_image"/>
         <MetaImage url=move || { format!("https://ultros.app/itemcard/{}/{}", world(), item_id()) }/>
-        <Meta property="og:image" content=move || { format!("https://ultros.app/static/itemicon/{}?size=Large", item_id())} />
+        <Meta property="thumbnail" content=move || { format!("https://ultros.app/static/itemicon/{}?size=Large", item_id())} />
         {move || view!{ <Link rel="canonical" href=format!("https://ultros.app/item/{}", item_id()) /> }}
         <div class="flex flex-column bg-gradient-to-r from-slate-950 -mt-96 pt-96 ">
             <div class="flex flex-row grow p-6 rounded-l ">
@@ -266,9 +270,9 @@ pub fn ItemView() -> impl IntoView {
             </div>
         </div>
         <div class="main-content flex-wrap">
-            <div class="grow w-full"><Ad class="min-h-10 max-h-10 xl:max-h-20 w-full"/></div>
+            <div class="grow w-full"><Ad class="min-h-20 max-h-40 w-full"/></div>
             <ListingsContent item_id world />
-            <div class="grow w-full"><Ad class="min-h-30 max-h-96 w-full"/></div>
+            <div class="grow w-full"><Ad class="min-h-30 max-h-90 w-full"/></div>
             <RelatedItems item_id=Signal::from(item_id) />
         </div>
     }

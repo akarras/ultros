@@ -147,7 +147,7 @@ fn Recipe(recipe: &'static Recipe) -> impl IntoView {
         <div class="flex md:flex-row flex-col"><SmallItemDisplay item=target_item/><CheapestPrice item_id=target_item.key_id /></div>
         "Ingredients:"
         {ingredients}
-        <div class="flex md:flex-row flex-col">"Price to craft: "<RecipePriceEstimate recipe /></div>
+        <div class="flex md:flex-row flex-col p-1 gap-1"><span class="underline">"Total craft cost:"</span>" "<RecipePriceEstimate recipe /></div>
     </div>})
 }
 

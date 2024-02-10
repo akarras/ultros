@@ -2547,7 +2547,7 @@ dependencies = [
  "httpdate",
  "itoa",
  "pin-project-lite",
- "socket2 0.4.10",
+ "socket2 0.5.5",
  "tokio",
  "tower-service",
  "tracing",
@@ -3112,6 +3112,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "leptos-struct-table"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "693906b6ed91978d359233466a361eb5548242101233283ca360bac16d27c568"
+dependencies = [
+ "async-trait",
+ "leptos",
+ "leptos-struct-table-macro",
+ "leptos-use 0.10.2",
+ "serde",
+ "thiserror",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
+name = "leptos-struct-table-macro"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7a7b4657689f2ee349fd96c2991957fa278be4b1ba895b2ed9a5c93c9bdb58c"
+dependencies = [
+ "darling 0.20.5",
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.48",
+]
+
+[[package]]
 name = "leptos-use"
 version = "0.9.0"
 source = "git+https://github.com/Synphonyte/leptos-use.git#89c2ea5ea5c36f1d22fe4ead361d78810810544a"
@@ -3129,6 +3158,29 @@ dependencies = [
  "paste",
  "serde",
  "serde_json",
+ "thiserror",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
+name = "leptos-use"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "885ab55e844f9dda9f1394bce011b5ff5332e0a1782c165c78d53f3138cbbd38"
+dependencies = [
+ "async-trait",
+ "cfg-if",
+ "cookie 0.18.0",
+ "default-struct-builder",
+ "futures-util",
+ "gloo-timers 0.3.0",
+ "gloo-utils 0.2.0",
+ "js-sys",
+ "lazy_static",
+ "leptos",
+ "paste",
  "thiserror",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -6609,7 +6661,8 @@ dependencies = [
  "itertools",
  "js-sys",
  "leptos",
- "leptos-use",
+ "leptos-struct-table",
+ "leptos-use 0.9.0",
  "leptos_axum",
  "leptos_icons",
  "leptos_meta",
