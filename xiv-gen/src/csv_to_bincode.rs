@@ -41,7 +41,7 @@ pub fn read_csv<T: DeserializeOwned>(path: &str) -> Vec<T> {
                     let value = &str[start_index..=end_index];
                     let start_index = byte - start_index;
                     eprintln!(
-                        "{e:?}error\nstring sample\n{value}\n{:>start_index$}",
+                        "{e:?}error\nstring sample\n{value}\n{:>start_index$} {path}",
                         "^".to_string()
                     );
                 }

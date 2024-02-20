@@ -82,7 +82,11 @@ fn apply_derives(s: &mut Struct) -> &mut Struct {
 /// Feed in a column, detect all the data. pronto muchacho.
 #[derive(Debug)]
 enum DataDetector {
-    Unresolved { int_range: Option<(i64, i64)> },
+    Unresolved {
+        int_range: Option<(i64, i64)>,
+        // the column that this detector is represented by
+        column: usize,
+    },
     Detected(DataType),
 }
 
@@ -99,36 +103,52 @@ enum DataType {
     SignedInt64,
     Float,
     Bool,
+    /// Represents a key that indexes into another sheet
+    /// In the form of int.int, such that {otherkey}.{rownumber}
+    ReferenceKey,
 }
 
-impl Display for DataType {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                DataType::String => "String",
-                DataType::UnsignedInt8 => "u8",
-                DataType::UnsignedInt16 => "u16",
-                DataType::UnsignedInt32 => "u32",
-                DataType::UnsignedInt64 => "u64",
-                DataType::SignedInt8 => "i8",
-                DataType::SignedInt16 => "i16",
-                DataType::SignedInt32 => "i32",
-                DataType::SignedInt64 => "i64",
-                DataType::Float => "f32",
-                DataType::Bool => "bool",
+impl DataType {
+    fn field_type(&self, sheet_name: &str) -> String {
+        match self {
+            DataType::String => "String".to_string(),
+            DataType::UnsignedInt8 => "u8".to_string(),
+            DataType::UnsignedInt16 => "u16".to_string(),
+            DataType::UnsignedInt32 => "u32".to_string(),
+            DataType::UnsignedInt64 => "u64".to_string(),
+            DataType::SignedInt8 => "i8".to_string(),
+            DataType::SignedInt16 => "i16".to_string(),
+            DataType::SignedInt32 => "i32".to_string(),
+            DataType::SignedInt64 => "i64".to_string(),
+            DataType::Float => "f32".to_string(),
+            DataType::Bool => "bool".to_string(),
+            DataType::ReferenceKey => {
+                // Should render the parent sheet name + "Key"
+                // GilShopItem -> GilShopId
+                let (i, _c) = sheet_name
+                    .char_indices()
+                    .rev()
+                    .find(|(_i, c)| c.is_uppercase())
+                    .unwrap();
+                let root = &sheet_name[..i];
+                format!("SubrowKey<{root}Id>")
             }
-        )
+        }
     }
 }
 
 impl DataDetector {
-    fn new() -> Self {
-        DataDetector::Unresolved { int_range: None }
+    fn new(column: usize) -> Self {
+        DataDetector::Unresolved {
+            int_range: None,
+            column,
+        }
     }
 
     fn next_record(&mut self, record: &str) {
+        if let DataDetector::Detected(_) = self {
+            return;
+        }
         if record == "TRUE" || record == "FALSE" {
             *self = DataDetector::Detected(DataType::Bool);
         }
@@ -138,7 +158,20 @@ impl DataDetector {
         }
 
         if RE.is_match(record) {
-            *self = DataDetector::Detected(DataType::Float);
+            match *self {
+                DataDetector::Unresolved { int_range, column } => {
+                    if column == 0 {
+                        *self = DataDetector::Detected(DataType::ReferenceKey);
+                        return;
+                    } else {
+                        *self = DataDetector::Detected(DataType::Float);
+                        return;
+                    }
+                }
+                DataDetector::Detected(_) => {
+                    return;
+                }
+            }
         }
         if record.chars().any(|a| !a.is_numeric()) {
             *self = DataDetector::Detected(DataType::String)
@@ -146,7 +179,7 @@ impl DataDetector {
         if record.is_empty() {
             return;
         }
-        if let DataDetector::Unresolved { int_range } = self {
+        if let DataDetector::Unresolved { int_range, .. } = self {
             let value = record.parse::<i64>().unwrap();
             if let Some((min, max)) = int_range {
                 *max = (*max).max(value);
@@ -160,7 +193,10 @@ impl DataDetector {
     fn end(self) -> DataType {
         // assume this is an int range if we haven't returned any other data types.
         match self {
-            DataDetector::Unresolved { int_range } => {
+            DataDetector::Unresolved {
+                int_range,
+                column: _,
+            } => {
                 if let Some((min, max)) = int_range {
                     // start small and expand the range.
                     [
@@ -218,8 +254,9 @@ fn create_struct(
         .map(|m| {
             m.unwrap()
                 .iter()
-                .map(|m| {
-                    let mut data = DataDetector::new();
+                .enumerate()
+                .map(|(col, m)| {
+                    let mut data = DataDetector::new(col);
                     data.next_record(m);
                     data
                 })
@@ -289,7 +326,7 @@ fn create_struct(
 
                 if line_one == "key_id" {
                     let mut key = Struct::new(&key_name);
-                    apply_derives(&mut key).derive("Hash").derive("Eq").derive("Copy").vis("pub").tuple_field(&line_two).vis("pub");
+                    apply_derives(&mut key).derive("FromStr").derive("Hash").derive("Eq").derive("Copy").vis("pub").tuple_field(&sample_data.field_type(&csv_name)).vis("pub");
                     scope.push_struct(key);
 
                     line_two = key_name.clone();
@@ -323,7 +360,7 @@ fn create_struct(
                     {
                         local_data.requested_structs.push(RequestedStructData {
                             requested_struct: local_key_name.clone(),
-                            sample_data: sample_data.to_string(),
+                            sample_data: sample_data.field_type(&csv_name),
                         });
                     }
                     (line_one, local_key_name)
@@ -522,6 +559,8 @@ fn main() {
     scope.push_struct(args.db);
     scope.push_impl(args.db_impl);
     scope.import("std::collections", "HashMap");
+    scope.import("crate::subrow_key", "SubrowKey");
+    scope.import("derive_more", "FromStr");
     write(dest_path, scope.to_string()).unwrap();
 
     let conversion_files = Path::new(&out_dir).join("serialization.rs");
