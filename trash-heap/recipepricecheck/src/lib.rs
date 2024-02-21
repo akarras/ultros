@@ -204,7 +204,7 @@ pub async fn get_ingredient_prices<'a>(
     let recipe_item = recipe.item_result.0;
     ids.push(recipe_item);
     let market_view = client
-        .marketboard_current_data(world_or_datacenter, ids.as_slice())
+        .market board_current_data(world_or_datacenter, ids.as_slice())
         .await?;
     Ok(RecipePricingRawData {
         ingredients,

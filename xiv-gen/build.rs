@@ -3,6 +3,7 @@ use codegen_rs::{Field, Function, Impl, Module, Scope, Struct};
 use heck::{ToSnakeCase, ToUpperCamelCase};
 use lazy_static::lazy_static;
 use regex::Regex;
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::env;
 use std::fmt::{Display, Formatter};
@@ -193,10 +194,10 @@ impl DataDetector {
     fn end(self) -> DataType {
         // assume this is an int range if we haven't returned any other data types.
         match self {
-            DataDetector::Unresolved {
-                int_range,
-                column: _,
-            } => {
+            DataDetector::Unresolved { int_range, column } => {
+                if column == 0 {
+                    return DataType::SignedInt32;
+                }
                 if let Some((min, max)) = int_range {
                     // start small and expand the range.
                     [
@@ -331,10 +332,34 @@ fn create_struct(
 
                     line_two = key_name.clone();
                     let db_field_name = format!("{}s", csv_name.to_snake_case());
-                    let db_field_key = format!("HashMap<{key_name}, {csv_name}>");
+                    let key_value = match sample_data {
+                        DataType::ReferenceKey => {
+                            Cow::from(format!("Vec<{csv_name}>"))
+                        },
+                        _ => {
+                            Cow::Borrowed(csv_name.as_str())
+                        }
+                    };
+                    let db_field_key = match sample_data {
+                        DataType::ReferenceKey => {
+                            let (index, _) = csv_name.char_indices().rev().find(|(_i, c)| c.is_uppercase()).unwrap();
+                            let parent_key = &csv_name[..index];
+                            format!("HashMap<{parent_key}Id, {key_value}>")
+                        },
+                        _ => {
+                            format!("HashMap<{key_name}, {key_value}>")
+                        }
+                    };
                     args.db
                         .field(&db_field_name, &db_field_key).vis("pub");
-                    args.read_data.line(format!("{db_field_name}: read_csv::<{csv_name}>(r#\"{path}\"#).into_iter().map(|m| (m.key_id, m)).collect(),"));
+                    match sample_data {
+                        DataType::ReferenceKey => {
+                            args.read_data.line(format!("{db_field_name}: read_csv::<{csv_name}>(r#\"{path}\"#).into_iter().fold(HashMap::new(), |mut map, m| {{ map.entry(m.key_id.0.0).or_default().push(m); map }})"));
+                        },
+                        _ => {
+                            args.read_data.line(format!("{db_field_name}: read_csv::<{csv_name}>(r#\"{path}\"#).into_iter().map(|m| (m.key_id, m)).collect(),"));
+                        }
+                    }
                     local_data.known_structs.insert(key_name.clone());
                 }
                 (line_one, line_two)

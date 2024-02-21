@@ -15,7 +15,7 @@ The more useful page is the [undercuts page](https://ultros.app/retainers/underc
 
 ![just undercut listings](./undercut_listings.png)
 
-The undercut by one option shows the lowest price minus one, thus is the price you need to be the cheapest on the marketboard.
+The undercut by one option shows the lowest price minus one, thus is the price you need to be the cheapest on the market board.
 
 Any listings that aren't undercut aren't available on this page.
 

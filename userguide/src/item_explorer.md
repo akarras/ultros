@@ -8,7 +8,7 @@ Note: The item explorer is only available via the website.
 To use to the item explorer, click the wrench and screwdriver next to the search box.
 ![button next to search](./images/item_explorer.png)
 
-From there you can select an item category. The first several categories will match the categories found on the ingame marketboard, and the last buttons will just show you all of the gear that is available for a class.
+From there you can select an item category. The first several categories will match the categories found on the ingame market board, and the last buttons will just show you all of the gear that is available for a class.
 ![item not found](./images/items_page.png)
 
 ## Sorting

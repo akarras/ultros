@@ -3,7 +3,7 @@ use crate::components::ad::Ad;
 use crate::components::recently_viewed::RecentItems;
 use crate::components::skeleton::BoxSkeleton;
 use crate::components::{
-    clipboard::*, item_icon::*, listings_table::*, meta::*, price_history_chart::*,
+    clipboard::*, gil::*, item_icon::*, listings_table::*, meta::*, price_history_chart::*,
     related_items::*, sale_history_table::*, stats_display::*, ui_text::*,
 };
 use crate::global_state::home_world::get_price_zone;
@@ -13,7 +13,7 @@ use leptos_meta::Link;
 use leptos_meta::Meta;
 use leptos_router::escape;
 use leptos_router::*;
-use ultros_api_types::world_helper::{AnyResult};
+use ultros_api_types::world_helper::AnyResult;
 use xiv_gen::ItemId;
 
 #[component]
@@ -210,18 +210,18 @@ pub fn ItemView() -> impl IntoView {
         let world_data = use_context::<LocalWorldData>().unwrap().0.unwrap();
         let target = world_data.lookup_world_by_name(&world());
         match target {
-        Some(AnyResult::Region(_)) => "region",
-        Some(AnyResult::Datacenter(_)) => "datacenter",
-        Some(AnyResult::World(_)) => "world",
-        None => "unknown",
-    }};
+            Some(AnyResult::Region(_)) => "region",
+            Some(AnyResult::Datacenter(_)) => "datacenter",
+            Some(AnyResult::World(_)) => "world",
+            None => "unknown",
+        }
+    };
     let description = create_memo(move |_| {
         format!(
-            "Current lowest prices and sale history for the item {} within the {} {}. Discover related items and view crafting recipes. {}",
+            "Current market board listings the item {} within the {} {}. Find the lowest prices in your region. View all crafting recipes & associated cost to craft. Explore related items",
             item_name(),
             region_type(),
             world(),
-            item_description()
         )
     });
     let item_category = move || {
@@ -234,9 +234,10 @@ pub fn ItemView() -> impl IntoView {
             .get(&ItemId(item_id()))
             .and_then(|item| search_categories.get(&item.item_search_category))
     };
+    let item = move || items.get(&ItemId(item_id()));
     view! {
         <MetaDescription text=description/>
-        <MetaTitle title=move || format!("{} - 🌍{} - Market view - Ultros", item_name(), world())/>
+        <MetaTitle title=move || format!("{} - 🌍{} - Market board - Ultros", item_name(), world())/>
         // TODO: probably shouldn't hard code the domain here
         <Meta name="twitter:card" content="summary_large_image"/>
         <MetaImage url=move || { format!("https://ultros.app/itemcard/{}/{}", world(), item_id()) }/>
@@ -260,7 +261,10 @@ pub fn ItemView() -> impl IntoView {
                             <a style="height: 45px" class="btn" href=move || format!("https://garlandtools.org/db/#item/{}", item_id())>"Garland Tools"</a>
                         </div>
                     </div>
-                    <div>"Item level: "<span style="color: #abc; width: 50px;">{move || items.get(&ItemId(item_id())).map(|item| item.level_item.0).unwrap_or_default()}</span></div>
+                    <div class="flex flex-row gap-1">
+                        <div class="flex flex-row" class:collapse=move || item().map(|i| i.price_low == 0).unwrap_or_default()>"Sells to a vendor for: "<Gil amount=MaybeSignal::derive(move || item().map(|i| i.price_low).unwrap_or_default() as i32) /></div>
+                    </div>
+                    <div>"Item level: "<span style="color: #abc; width: 50px;">{move || item().map(|item| item.level_item.0).unwrap_or_default()}</span></div>
                     <div>{move || view!{<UIText text=item_description().to_string()/>}}</div>
                     <div>{move || view!{<ItemStats item_id=ItemId(item_id()) />}}</div>
                 </div>

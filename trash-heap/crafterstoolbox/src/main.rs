@@ -60,7 +60,7 @@ fn main() {
                             } => {
                                 let item_ids = [item_id.0];
                                 let (market_view, history_view) = futures::future::join(
-                                    client.marketboard_current_data(
+                                    client.market board_current_data(
                                         &region_datacenter_or_server,
                                         &item_ids,
                                     ),

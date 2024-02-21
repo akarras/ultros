@@ -23,7 +23,7 @@ fn FeatureCard(children: ChildrenFn) -> impl IntoView {
 #[component]
 pub fn HomePage() -> impl IntoView {
     view! {
-        <MetaDescription text="Ultros is a FAST FFXIV marketboard analysis tool, keep up to date with all of your retainers and ensure you've got the best prices!" />
+        <MetaDescription text="Ultros is a fast market board analysis tool, keep up to date with all of your retainers and ensure you've got the best prices!" />
     <div class="main-content p-4">
         <Title text="Ultros - Home"/>
         <div class="container flex flex-col gap-2 lg:flex-row-reverse mx-auto items-start">
@@ -34,7 +34,7 @@ pub fn HomePage() -> impl IntoView {
             </div>
             <div class="flex flex-col grow">
                 <div class="text-xl">
-                    "Ultros is a marketboard tool for Final Fantasy 14."<br/>
+                    "Ultros is a market board tool for Final Fantasy 14."<br/>
                     "Get started by reading the "<b><a href="https://book.ultros.app">"book"</a></b>" and inviting the "
                     <a rel="external" href="/invitebot">"discord bot to your server"</a>"!"
                 </div>
@@ -43,7 +43,7 @@ pub fn HomePage() -> impl IntoView {
                         <FeatureCard>
                             <Icon width="1.75em" height="1.75em" icon=i::FaScrewdriverWrenchSolid />
                             <h3 class="text-xl p-1 text-yellow-100">"Item Finder"</h3>
-                            <span>"Explore all the items on the marketboard"</span>
+                            <span>"Explore all the items on the market board"</span>
                         </FeatureCard>
                     </a>
                     <a href="/analyzer">

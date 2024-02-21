@@ -49,6 +49,7 @@ paginate = "1.1.11"
 git-const.workspace = true
 percent-encoding = "2.3.0"
 leptos-struct-table = "0.7.0"
+async-trait = "0.1.77"
 
 [features]
 default = ["ssr"] # this is mostly so if I run cargo check, it has a flavor to work on

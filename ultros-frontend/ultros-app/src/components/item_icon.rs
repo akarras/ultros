@@ -4,7 +4,7 @@ use xiv_gen::ItemId;
 
 #[component]
 pub fn ItemIcon(#[prop(into)] item_id: MaybeSignal<i32>, icon_size: IconSize) -> impl IntoView {
-    // Currently I only have icons for marketboard items, assume that anything without an item search category won't have an icon
+    // Currently I only have icons for market board items, assume that anything without an item search category won't have an icon
     let valid_search_category = move || {
         xiv_gen_db::data()
             .items

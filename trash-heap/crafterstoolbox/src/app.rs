@@ -532,7 +532,7 @@ impl eframe::App for CraftersToolbox {
 
                 if let Some(region) = region {
                     ui.menu_button(
-                        &format!("marketboard filter: {}", universalis_query_target.as_str()),
+                        &format!("market board filter: {}", universalis_query_target.as_str()),
                         |ui| {
                             add_disabled_button(ui, universalis_query_target, &region.0);
                             if let Some(data_center) = data_center {

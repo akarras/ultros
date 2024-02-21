@@ -4,7 +4,9 @@ use icondata as i;
 use leptos::*;
 use leptos_icons::*;
 use leptos_router::use_params_map;
+use leptos_struct_table::*;
 use ultros_api_types::list::ListItem;
+use ultros_api_types::ActiveListing;
 use xiv_gen::{Item, ItemId, Recipe};
 
 use crate::api::{
@@ -23,6 +25,70 @@ enum MenuState {
     Item,
     Recipe,
     MakePlace,
+}
+
+#[derive(TableRow, Clone)]
+#[table(
+    sortable,
+    impl_vec_data_provider,
+    classes_provider = "TailwindClassesPreset"
+)]
+struct ShoppingListRow {
+    // #[table(renderer = "ItemCellRenderer")]
+    item_id: ItemKey,
+    amount: i32,
+    lowest_price: i32,
+    lowest_price_world: String,
+    lowest_price_datacenter: String,
+}
+#[derive(Copy, Clone)]
+struct ItemKey(ItemId);
+
+impl PartialOrd for ItemKey {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        let items = &xiv_gen_db::data().items;
+        let item_1 = items
+            .get(&self.0)
+            .map(|i| i.name.as_str())
+            .unwrap_or_default();
+        let item_2 = items
+            .get(&other.0)
+            .map(|i| i.name.as_str())
+            .unwrap_or_default();
+        item_1.partial_cmp(item_2)
+    }
+}
+
+impl PartialEq for ItemKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 .0 == other.0 .0
+    }
+}
+
+impl IntoView for ItemKey {
+    fn into_view(self) -> View {
+        let item = xiv_gen_db::data().items.get(&self.0);
+        item.map(|item| {
+            view! {
+                <SmallItemDisplay item />
+            }
+        })
+        .into_view()
+    }
+}
+
+#[component]
+fn ItemCellRenderer<F>(
+    class: String,
+    #[prop(into)] value: MaybeSignal<ItemId>,
+    on_change: F,
+    index: usize,
+) -> impl IntoView
+where
+    F: Fn(String) + 'static,
+{
+    let items = &xiv_gen_db::data().items;
+    view! { <td class=class>items.get(&ItemId(value())).map(|item| view!{ <SmallItemDisplay item />})</td>}
 }
 
 #[component]
@@ -211,7 +277,16 @@ pub fn ListView() -> impl IntoView {
         }}
         <Transition fallback=move || view!{<Loading />}>
         {move || list_view.get().map(move |list| match list {
-            Ok((list, items)) => view!{
+
+            Ok((list, items)) => {
+                // TODO full table?
+                // let price_view = items.iter().flat_map(|(list, listings): &(ListItem, Vec<ActiveListing>)| listings.iter().map(|listing| {
+                //     ShoppingListRow { item_id: ItemKey(ItemId(list.item_id)), amount: listing.quantity, lowest_price: listing.price_per_unit, lowest_price_world: listing.world_id.to_string(), lowest_price_datacenter: "TODO".to_string() }
+                // })).collect::<Vec<_>>();
+                view!{
+                    <table>
+                    // <TableContent rows=price_view on_change=move |_| {} />
+                </table>
                 <div class="content-well">
                     <span class="content-title">{list.name}</span>
                     <table class="w-full">
@@ -237,7 +312,7 @@ pub fn ListView() -> impl IntoView {
                                         {game_items.get(&ItemId(item.item_id)).map(|item| &item.name)}
                                         <Clipboard clipboard_text=game_items.get(&ItemId(item.item_id)).map(|item| item.name.to_string()).unwrap_or_default()/>
                                         {game_items.get(&ItemId(item.item_id)).map(|item| item.item_search_category.0 <= 1).unwrap_or_default().then(move || {
-                                            view!{<div><Tooltip tooltip_text=Oco::from("This item is not available on the marketboard")><Icon icon=i::BiTrashSolid/></Tooltip></div>}
+                                            view!{<div><Tooltip tooltip_text=Oco::from("This item is not available on the market board")><Icon icon=i::BiTrashSolid/></Tooltip></div>}
                                         })}
                                     </div>
                                 </td>
@@ -257,7 +332,7 @@ pub fn ListView() -> impl IntoView {
                                         {game_items.get(&ItemId(item.item_id)).map(|item| &item.name)}
                                         <Clipboard clipboard_text=game_items.get(&ItemId(item.item_id)).map(|item| item.name.to_string()).unwrap_or_default()/>
                                         {game_items.get(&ItemId(item.item_id)).map(|item| item.item_search_category.0 <= 1).unwrap_or_default().then(move || {
-                                            view!{<div><Tooltip tooltip_text=Oco::from("This item is not available on the marketboard")><Icon icon=i::AiExclamationOutlined/></Tooltip></div>}
+                                            view!{<div><Tooltip tooltip_text=Oco::from("This item is not available on the market board")><Icon icon=i::AiExclamationOutlined/></Tooltip></div>}
                                         })}
                                     </div>
                                 </td>
@@ -289,8 +364,9 @@ pub fn ListView() -> impl IntoView {
                             }
                         />
                     </table>
-                </div>},
-            Err(e) => view!{<div>{format!("Failed to get items\n{e}")}</div>}
+                </div>}.into_view()
+            },
+            Err(e) => view!{<div>{format!("Failed to get items\n{e}")}</div>}.into_view()
         })
         }
         </Transition>

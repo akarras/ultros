@@ -264,7 +264,7 @@ pub fn JobItems() -> impl IntoView {
 pub fn DefaultItems() -> impl IntoView {
     view! {
         <MetaTitle title="Items Explorer"/>
-        <MetaDescription text="Lookup items by their category. Similar to the marketboard categories that are visible in Final Fantasy 14. Find the cheapest minions, or find that new piece of glamour for your Summoner."/>
+        <MetaDescription text="Lookup items by their category. Similar to the market board categories that are visible in Final Fantasy 14. Find the cheapest minions, or find that new piece of glamour for your Summoner."/>
         <div class="flex flex-col">
             <div>"Choose a category from the menu to explore items."</div>
             <div>"Once you choose a category, you will be able to sort the items by price, date added, alphabetically, or by item level."</div>
@@ -502,7 +502,7 @@ pub fn ItemExplorer() -> impl IntoView {
     // class="collapse right-6 bg-neutral-700"
     view! {
         <MetaTitle title="Ultros Item Explorer"/>
-        <MetaDescription text="Find the cheapest items available on the marketboard!"/>
+        <MetaDescription text="Find the cheapest items available on the market board!"/>
         <button class="p-2 text-3xl bg-neutral-800 text-gray-300 hover:bg-neutral-600 gap-1 flex flex-row rounded" class:bg-neutral-700=menu_open class:bg-neutral-800=move || !menu_open() on:click=move |_| {
             set_open(!menu_open.get_untracked());
         }>

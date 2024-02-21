@@ -1,6 +1,6 @@
 # Ultros
 
-Ultros is a Final Fantasy XIV marketboard analysis tool that utilizes data sourced from Universalis. Blazingly fast and written in Rust.
+Ultros is a Final Fantasy XIV market board analysis tool that utilizes data sourced from Universalis. Blazingly fast and written in Rust.
 
 Uses Axum, Leptos, SeaOrm, and Serenity to create something that works most the time!
 

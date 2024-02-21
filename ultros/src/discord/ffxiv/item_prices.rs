@@ -9,7 +9,7 @@ use crate::web::item_card::generate_image;
 
 use super::{Context, Error};
 
-/// Lookup price information from the marketboard
+/// Lookup price information from the market board
 #[poise::command(slash_command, prefix_command, subcommands("current", "history"))]
 pub(crate) async fn prices(_ctx: Context<'_>) -> Result<(), Error> {
     Ok(())

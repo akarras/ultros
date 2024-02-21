@@ -174,7 +174,7 @@ async fn check_undercuts(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-/// Returns a list of your retainers & all of their marketboard listings
+/// Returns a list of your retainers & all of their market board listings
 #[poise::command(slash_command)]
 async fn check_listings(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;

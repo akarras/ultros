@@ -1,6 +1,6 @@
 # Intro
 
-Ultros is a performant marketboard tool for Final Fantasy 14.
+Ultros is a performant market board tool for Final Fantasy 14.
 
 ## Discord bot
 

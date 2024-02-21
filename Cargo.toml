@@ -37,7 +37,7 @@ sea-orm-migration = {version = "0.12", features = ["sqlx-postgres", "runtime-tok
 sea-query = "0.30.0"
 yoke = "0.7.1"
 xiv-gen = {path = "./xiv-gen", features = ["item", "item_ui_category", "item_search_category", "class_job", "recipe",
-  "class_job_category", "base_param", "item_sort_category"]}
+  "class_job_category", "base_param", "item_sort_category", "gil_shop", "gil_shop_item", "e_npc_base", "e_npc_resident"]}
 icondata = "0.3"
 leptos_icons = {version = "0.3.0" }
 cfg-if = "1.0.0"

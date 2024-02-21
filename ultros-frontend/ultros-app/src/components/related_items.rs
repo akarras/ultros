@@ -3,7 +3,7 @@ use itertools::Itertools;
 use leptos::*;
 use leptos_router::A;
 use ultros_api_types::{cheapest_listings::CheapestListingMapKey, icon_size::IconSize};
-use xiv_gen::{Item, ItemId, Recipe};
+use xiv_gen::{ENpcBase, ENpcResidentId, GilShopId, Item, ItemId, Recipe};
 
 use crate::{
     components::{item_icon::ItemIcon, skeleton::SingleLineSkeleton},
@@ -151,6 +151,92 @@ fn Recipe(recipe: &'static Recipe) -> impl IntoView {
     </div>})
 }
 
+fn npc_rows(npc: &ENpcBase) -> impl Iterator<Item = u32> {
+    // TODO- can I just parse the csv into a vec?
+    [
+        npc.e_npc_data_0.0,
+        npc.e_npc_data_1.0,
+        npc.e_npc_data_2.0,
+        npc.e_npc_data_3.0,
+        npc.e_npc_data_4.0,
+        npc.e_npc_data_5.0,
+        npc.e_npc_data_6.0,
+        npc.e_npc_data_7.0,
+        npc.e_npc_data_8.0,
+        npc.e_npc_data_9.0,
+        npc.e_npc_data_10.0,
+        // not sure if I should actually process more than this or not
+    ]
+    .into_iter()
+    .filter(|row| *row != 0)
+}
+
+fn gil_shop_to_npc(gil_shops: &Vec<GilShopId>) -> Vec<(GilShopId, &'static ENpcBase)> {
+    let data = xiv_gen_db::data();
+
+    data.e_npc_bases
+        .values()
+        .flat_map(|npc: &'static ENpcBase| {
+            npc_rows(npc)
+                .filter(move |row| gil_shops.contains(&GilShopId(*row as i32)))
+                .map(move |gil_shop| (GilShopId(gil_shop as i32), npc))
+        })
+        .collect()
+}
+
+#[component]
+fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
+    let data = xiv_gen_db::data();
+    // lookup items
+    // from miu on xiv api discord:
+    // GilShop => ENpcResident,
+    // GilShop => TopicSelect => ENpcResident,
+    // GilShop => PreHandler => TopicSelect => ENpcResident (or the other way around I don't remember),
+    // GilShop => PreHandler => ENpcResident and last but not least, lua scripts (mostly for fate shops)
+    // https://github.com/ffxiv-teamcraft/ffxiv-teamcraft/blob/staging/apps/data-extraction/src/extractors/shops.extractor.ts
+    let npcs = create_memo(move |_| {
+        let item_id = item_id();
+        let gil_shops = data
+            .gil_shop_items
+            .iter()
+            .filter(|(_shop_id, items)| items.iter().any(|shop_item| shop_item.item.0 == item_id))
+            .flat_map(|(shop_id, _)| data.gil_shops.get(shop_id))
+            .collect::<Vec<_>>();
+        let shop_ids = gil_shops.iter().map(|shop| shop.key_id).collect::<Vec<_>>();
+        gil_shop_to_npc(&shop_ids)
+    });
+    let data = move || {
+        let items = npcs().into_iter().filter_map(|(shop_id, npc)| {
+            data.e_npc_residents
+                .get(&ENpcResidentId(npc.key_id.0))
+                .map(|resident| (shop_id, resident))
+        });
+        let item = data.items.get(&ItemId(item_id()))?;
+        Some(
+            items.into_iter()
+            .filter_map(|(shop, resident)| {
+                let shop = data.gil_shops.get(&shop)?;
+                let price = item.price_mid as i32;
+                Some(view! {
+                    <a
+                    href={format!("https://garlandtools.org/db/#npc/{}", resident.key_id.0)}
+                    class="flex flex-col p-1 bg-gradient- border border-solid border-violet-950
+                    transition-all duration-500 bg-gradient-to-tl to-fuchsia-950 via-black from-violet-950 bg-size-200 bg-pos-0 hover:bg-pos-100">
+                        <div class="flex flex-row"><div class="text-md">{&resident.singular} </div><Gil amount=price /></div>
+                        <div class="text-sm italic">"("{&shop.name}")"</div>
+                    </a>
+                })
+            }).collect::<Vec<_>>())
+    };
+    let empty = move || npcs.with(|n| n.is_empty());
+    view! {
+        <div class:collapse=empty class="flex-col p-2 max-h-96 overflow-y-auto w-96 xl-w-[600px]">
+            <span class="text-2xl">"Vendor sources"</span>
+            {data}
+        </div>
+    }
+}
+
 #[component]
 pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     let db = xiv_gen_db::data();
@@ -192,10 +278,11 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
             .collect::<Vec<_>>()
     });
 
-    view! { <div class="content-well flex-col flex-auto flex-wrap p-2" class:hidden=move || item_set().is_empty()>
+    view! { <div class="flex-col flex-auto flex-wrap p-2" class:hidden=move || item_set().is_empty()>
             <span class="content-title">"related items"</span>
             <div class="flex-row flex-wrap gap-3">{item_set}</div>
         </div>
+        <VendorItems item_id />
         <div class="content-well flex-col p-2" class:hidden=move || recipes().is_empty()>
             <span class="content-title">"crafting recipes"</span>
             <div class="flex-wrap">{recipes}</div>
