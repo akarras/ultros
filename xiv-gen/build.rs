@@ -354,7 +354,7 @@ fn create_struct(
                         .field(&db_field_name, &db_field_key).vis("pub");
                     match sample_data {
                         DataType::ReferenceKey => {
-                            args.read_data.line(format!("{db_field_name}: read_csv::<{csv_name}>(r#\"{path}\"#).into_iter().fold(HashMap::new(), |mut map, m| {{ map.entry(m.key_id.0.0).or_default().push(m); map }})"));
+                            args.read_data.line(format!("{db_field_name}: read_csv::<{csv_name}>(r#\"{path}\"#).into_iter().fold(HashMap::new(), |mut map, m| {{ map.entry(m.key_id.0.0).or_default().push(m); map }}),"));
                         },
                         _ => {
                             args.read_data.line(format!("{db_field_name}: read_csv::<{csv_name}>(r#\"{path}\"#).into_iter().map(|m| (m.key_id, m)).collect(),"));
