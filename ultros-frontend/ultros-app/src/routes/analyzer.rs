@@ -2,7 +2,7 @@ use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
         ad::Ad, clipboard::*, gil::*, item_icon::*, meta::*, query_button::QueryButton,
-        skeleton::BoxSkeleton, tooltip::*, virtual_scroller::*, world_picker::*,
+        skeleton::BoxSkeleton, toggle::Toggle, tooltip::*, virtual_scroller::*, world_picker::*,
     },
     error::AppError,
     global_state::LocalWorldData,
@@ -10,11 +10,17 @@ use crate::{
 use chrono::{Duration, Utc};
 use humantime::{format_duration, parse_duration};
 use icondata as i;
-use leptos::*;
+use leptos::{oco::Oco, *};
 use leptos_icons::*;
 use leptos_router::*;
 use log::info;
-use std::{cmp::Reverse, collections::HashMap, fmt::Display, str::FromStr, sync::Arc};
+use std::{
+    cmp::Reverse,
+    collections::{hash_map::Entry, HashMap},
+    fmt::Display,
+    str::FromStr,
+    sync::Arc,
+};
 use ultros_api_types::{
     cheapest_listings::CheapestListings,
     recent_sales::{RecentSales, SaleData},
@@ -113,9 +119,29 @@ impl ProfitTable {
         sales: RecentSales,
         region_listings: CheapestListings,
         world_listings: CheapestListings,
+        cross_region: Vec<CheapestListings>,
     ) -> Self {
-        let region_cheapest = listings_to_map(region_listings);
+        let mut region_cheapest = listings_to_map(region_listings);
         let world_cheapest = listings_to_map(world_listings);
+        let cross_region = cross_region
+            .into_iter()
+            .map(|region| listings_to_map(region));
+        // merge cross regions into region cheapest
+        for cross_region in cross_region {
+            for (key, (new_price, world_id)) in cross_region {
+                match region_cheapest.entry(key) {
+                    Entry::Occupied(mut entry) => {
+                        let (current_price, _) = entry.get();
+                        if *current_price > new_price {
+                            entry.insert((new_price, world_id));
+                        }
+                    }
+                    Entry::Vacant(e) => {
+                        e.insert((new_price, world_id));
+                    }
+                }
+            }
+        }
         let hq_sales: HashMap<i32, SaleData> = sales
             .sales
             .iter()
@@ -190,10 +216,16 @@ fn AnalyzerTable(
     sales: RecentSales,
     global_cheapest_listings: CheapestListings,
     world_cheapest_listings: CheapestListings,
+    cross_region: Vec<CheapestListings>,
     worlds: Arc<WorldHelper>,
     world: Signal<String>,
 ) -> impl IntoView {
-    let profits = ProfitTable::new(sales, global_cheapest_listings, world_cheapest_listings);
+    let profits = ProfitTable::new(
+        sales,
+        global_cheapest_listings,
+        world_cheapest_listings,
+        cross_region,
+    );
 
     // get ranges of possible values for our sliders
 
@@ -418,25 +450,51 @@ pub fn AnalyzerWorldView() -> impl IntoView {
             get_cheapest_listings(&world).await
         },
     );
-    let worlds = use_context::<LocalWorldData>()
-        .expect("Worlds should always be populated here")
-        .0
-        .unwrap();
-    let worlds_value = store_value(worlds);
+
+    let region = move || {
+        let worlds = use_context::<LocalWorldData>()
+            .expect("Worlds should always be populated here")
+            .0
+            .unwrap();
+        let world = params.with(|p| p.get("world").cloned());
+        // use the world cache to lookup the region for this world
+        let world = world.ok_or(AppError::ParamMissing)?;
+        let region = worlds
+            .lookup_world_by_name(&world)
+            .map(|world| {
+                let region = worlds.get_region(world);
+                AnyResult::Region(region).get_name().to_string()
+            })
+            .ok_or(AppError::ParamMissing)?;
+        Result::<_, AppError>::Ok(region)
+    };
     let global_cheapest_listings = create_resource(
-        move || params.with(|p| p.get("world").cloned()),
-        move |world| async move {
-            let worlds = worlds_value();
-            // use the world cache to lookup the region for this world
-            let world = world.ok_or(AppError::ParamMissing)?;
-            let region = worlds
-                .lookup_world_by_name(&world)
-                .map(|world| {
-                    let region = worlds.get_region(world);
-                    AnyResult::Region(region).get_name().to_string()
-                })
-                .ok_or(AppError::ParamMissing)?;
-            get_cheapest_listings(&region).await
+        move || region(),
+        move |region| async move { get_cheapest_listings(&region?).await },
+    );
+    let (cross_region_enabled, set_cross_region_enabled) = create_query_signal::<bool>("cross");
+    let connected_regions = &["Europe", "Japan", "North-America", "Oceania"];
+    let cross_region = create_resource(
+        move || (cross_region_enabled(), region()),
+        move |(enabled, region)| {
+            async move {
+                let region = region?;
+                if enabled.unwrap_or_default() && connected_regions.contains(&region.as_str()) {
+                    // get all regions except our current region
+                    Ok(futures::future::join_all(
+                        connected_regions
+                            .into_iter()
+                            .filter(|r| **r != region.as_str())
+                            .map(|region| get_cheapest_listings(region)),
+                    )
+                    .await
+                    .into_iter()
+                    .filter_map(|l| l.ok())
+                    .collect())
+                } else {
+                    Ok(vec![])
+                }
+            }
         },
     );
     view!{
@@ -445,10 +503,11 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                 <div class="flex flex-col md:flex-row">
                     <div class="flex flex-col">
                         <span class="title">"Resale Analyzer Results for "{world}</span><br/>
-                        <MetaTitle title=move || format!("Price Analayzer - {}", world())/>
-                        <MetaDescription text=move || format!("The analyzer enables ffxiv merchants to find the best items to buy on other worlds and sell on {}. Filter for the best profits or return, make gil through market arbritrage.", world())/>
+                        <MetaTitle title=move || format!("Price Analyzer - {}", world())/>
+                        <MetaDescription text=move || format!("The analyzer enables FFXIV merchants to find the best items to buy on other worlds and sell on {}. Filter for the best profits or return, make gil through market arbitrage.", world())/>
                         <AnalyzerWorldNavigator /><br />
-                        <span>"The analyzer will show items that sell more on "{world}" than they can be purchased for."</span><br/>
+                        <Toggle checked=Signal::derive(move || cross_region_enabled().unwrap_or_default()) set_checked=SignalSetter::map(move |val: bool| set_cross_region_enabled(val.then(|| true))) checked_label=Oco::Borrowed("Cross region enabled") unchecked_label=Oco::Borrowed("Cross region disabled") />
+                        <span>"The analyzer will show items that sell more on "{world}" than they can be purchased for, enabling market arbitrage."</span><br/>
                         <span>"These estimates aren't very accurate, but are meant to be easily accessible and fast to use."</span><br/>
                         <span>"Be extra careful to make sure that the price you buy things for matches"</span><br/>
                         <span>"Sample filters"</span>
@@ -466,13 +525,17 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                     let world_cheapest = world_cheapest_listings.get();
                     let sales = sales.get();
                     let global_cheapest_listings = global_cheapest_listings.get();
-                    let worlds = worlds_value();
+                    let cross_region = cross_region.get().and_then(|r: Result<_, AppError>| r.ok()).unwrap_or_default();
+                    let worlds = use_context::<LocalWorldData>()
+                    .expect("Worlds should always be populated here")
+                    .0
+                    .unwrap();
                     let values = world_cheapest
                         .and_then(|w| w.ok())
                         .and_then(|r| sales.and_then(|s| s.ok())
                         .and_then(|s| global_cheapest_listings.and_then(|g| g.ok()).map(|g| (r, s, g))));
                     match values {
-                        Some((world_cheapest_listings, sales, global_cheapest_listings)) => {view!{<AnalyzerTable sales global_cheapest_listings world_cheapest_listings worlds world=world.into() />}.into_view()},
+                        Some((world_cheapest_listings, sales, global_cheapest_listings)) => {view!{<AnalyzerTable sales global_cheapest_listings world_cheapest_listings cross_region worlds world=world.into() />}.into_view()},
                         None => {view!{
                             <div class="h3">
                                 "Failed to load analyzer - try again in 30 seconds"
