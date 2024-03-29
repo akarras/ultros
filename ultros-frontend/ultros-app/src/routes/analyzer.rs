@@ -18,6 +18,7 @@ use std::{
     cmp::Reverse,
     collections::{hash_map::Entry, HashMap},
     fmt::Display,
+    ops::Not,
     str::FromStr,
     sync::Arc,
 };
@@ -451,7 +452,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
         },
     );
 
-    let region = move || {
+    let region = create_memo(move |_| {
         let worlds = use_context::<LocalWorldData>()
             .expect("Worlds should always be populated here")
             .0
@@ -467,16 +468,28 @@ pub fn AnalyzerWorldView() -> impl IntoView {
             })
             .ok_or(AppError::ParamMissing)?;
         Result::<_, AppError>::Ok(region)
-    };
+    });
     let global_cheapest_listings = create_resource(
         move || region(),
         move |region| async move { get_cheapest_listings(&region?).await },
     );
     let (cross_region_enabled, set_cross_region_enabled) = create_query_signal::<bool>("cross");
     let connected_regions = &["Europe", "Japan", "North-America", "Oceania"];
+    let query = use_query_map();
+    let enabled_regions = move || {
+        let map = query();
+        connected_regions
+            .into_iter()
+            .filter(|region| {
+                map.get(region)
+                    .map(|value| value == "true")
+                    .unwrap_or(true)
+            })
+            .collect::<Vec<_>>()
+    };
     let cross_region = create_resource(
-        move || (cross_region_enabled(), region()),
-        move |(enabled, region)| {
+        move || (cross_region_enabled(), region(), enabled_regions()),
+        move |(enabled, region, enabled_regions)| {
             async move {
                 let region = region?;
                 if enabled.unwrap_or_default() && connected_regions.contains(&region.as_str()) {
@@ -485,6 +498,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                         connected_regions
                             .into_iter()
                             .filter(|r| **r != region.as_str())
+                            .filter(|r| enabled_regions.contains(r))
                             .map(|region| get_cheapest_listings(region)),
                     )
                     .await
@@ -507,6 +521,22 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                         <MetaDescription text=move || format!("The analyzer enables FFXIV merchants to find the best items to buy on other worlds and sell on {}. Filter for the best profits or return, make gil through market arbitrage.", world())/>
                         <AnalyzerWorldNavigator /><br />
                         <Toggle checked=Signal::derive(move || cross_region_enabled().unwrap_or_default()) set_checked=SignalSetter::map(move |val: bool| set_cross_region_enabled(val.then(|| true))) checked_label=Oco::Borrowed("Cross region enabled") unchecked_label=Oco::Borrowed("Cross region disabled") />
+                        <div class:hidden=move || !cross_region_enabled().unwrap_or_default() class="flex flex-row">
+                            {
+                                move || region().map(|region| move || connected_regions
+                                    .into_iter()
+                                    .filter(|r| **r != region.as_str())
+                                    .map(|region| {
+                                        let (enabled, set_enabled) = create_query_signal::<bool>(region.to_string());
+                                        view! {
+                                            <Toggle checked=Signal::derive(move || enabled().unwrap_or(true))
+                                                set_checked=SignalSetter::map(move |checked: bool| { set_enabled(Some(checked)); })
+                                                checked_label=format!("{} enabled", region)
+                                                unchecked_label=format!("{} disabled", region) />
+                                        }
+                                    }).collect::<Vec<_>>()).ok()
+                            }
+                        </div>
                         <span>"The analyzer will show items that sell more on "{world}" than they can be purchased for, enabling market arbitrage."</span><br/>
                         <span>"These estimates aren't very accurate, but are meant to be easily accessible and fast to use."</span><br/>
                         <span>"Be extra careful to make sure that the price you buy things for matches"</span><br/>
