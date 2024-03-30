@@ -11,7 +11,6 @@ use icondata as i;
 use leptos::*;
 use leptos_icons::*;
 use leptos_router::*;
-use ultros_api_types::icon_size::IconSize;
 use ultros_api_types::{world_helper::AnySelector, ActiveListing, FfxivCharacter, Retainer};
 use xiv_gen::ItemId;
 

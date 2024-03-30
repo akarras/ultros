@@ -88,7 +88,7 @@ where
     F: Fn(String) + 'static,
 {
     let items = &xiv_gen_db::data().items;
-    view! { <td class=class>items.get(&ItemId(value())).map(|item| view!{ <SmallItemDisplay item />})</td>}
+    view! { <td class=class>{items.get(&value()).map(|item| view!{ <SmallItemDisplay item />})}</td>}
 }
 
 #[component]
