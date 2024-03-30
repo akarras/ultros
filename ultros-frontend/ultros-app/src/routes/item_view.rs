@@ -11,7 +11,6 @@ use crate::global_state::LocalWorldData;
 use leptos::*;
 use leptos_meta::Link;
 use leptos_meta::Meta;
-use leptos_router::escape;
 use leptos_router::*;
 use ultros_api_types::world_helper::AnyResult;
 use xiv_gen::ItemId;
@@ -160,6 +159,24 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
             }
         }}
         </Transition>
+        <Transition fallback=move || view !{
+            <div class="h-[35em] grow w-screen md:w-[780px]">
+                <BoxSkeleton />
+            </div>
+        }>
+        {move || {
+            let sales = create_memo(move |_| listing_resource.with(|l| l.as_ref().and_then(|l| l.as_ref().map(|l| l.sales.clone()).ok())).unwrap_or_default());
+            view! {
+                <div class="content-well max-h-[35em] overflow-y-auto xl:basis-1/4">
+                    <div class="content-title">"sales summary"</div>
+                    <div>
+                        <SalesInsights sales=Signal::from(sales) />
+                    </div>
+                </div>
+            }
+        }}
+        </Transition>
+        <Ad class="h-[336px] w-[280px]"/>
     }
 }
 
@@ -244,7 +261,7 @@ pub fn ItemView() -> impl IntoView {
         <Meta property="thumbnail" content=move || { format!("https://ultros.app/static/itemicon/{}?size=Large", item_id())} />
         {move || view!{ <Link rel="canonical" href=format!("https://ultros.app/item/{}", item_id()) /> }}
         <div class="flex flex-column bg-gradient-to-r from-slate-950 -mt-96 pt-96 ">
-            <div class="flex flex-row grow p-6 rounded-l ">
+            <div class="flex flex-row rounded-l items-start">
                 <div class="flex flex-column grow" style="padding: 5px">
                     <div class="flex md:flex-row flex-col flex-wrap">
                         <div class="flex flex-row text-2xl gap-1">
@@ -256,10 +273,10 @@ pub fn ItemView() -> impl IntoView {
                                     {c.name.as_str()}
                                 </a>})}</div>
                             </div></div><Clipboard clipboard_text=MaybeSignal::derive(move || item_name().to_string())/></div>
-                        <div class="md:ml-auto flex flex-row" style="align-items:start">
-                            <a style="height: 45px" class="btn" href=move || format!("https://universalis.app/market/{}", item_id())>"Universalis"</a>
-                            <a style="height: 45px" class="btn" href=move || format!("https://garlandtools.org/db/#item/{}", item_id())>"Garland Tools"</a>
-                        </div>
+                            <div class="md:ml-auto flex flex-row">
+                    <a class="btn" href=move || format!("https://universalis.app/market/{}", item_id())>"Universalis"</a>
+                    <a class="btn text-center" href=move || format!("https://garlandtools.org/db/#item/{}", item_id())>"Garlandtools"</a>
+                </div>  
                     </div>
                     <div class="flex flex-row gap-1">
                         <div class="flex flex-row" class:collapse=move || item().map(|i| i.price_low == 0).unwrap_or_default()>"Sells to a vendor for: "<Gil amount=MaybeSignal::derive(move || item().map(|i| i.price_low).unwrap_or_default() as i32) /></div>
@@ -267,6 +284,7 @@ pub fn ItemView() -> impl IntoView {
                     <div>"Item level: "<span style="color: #abc; width: 50px;">{move || item().map(|item| item.level_item.0).unwrap_or_default()}</span></div>
                     <div>{move || view!{<UIText text=item_description().to_string()/>}}</div>
                     <div>{move || view!{<ItemStats item_id=ItemId(item_id()) />}}</div>
+                    <Ad class="h-[90px] w-full"/>
                 </div>
             </div>
             <div class="content-nav">
@@ -274,9 +292,7 @@ pub fn ItemView() -> impl IntoView {
             </div>
         </div>
         <div class="main-content flex-wrap">
-            <div class="grow w-full"><Ad class="min-h-20 max-h-40 w-full"/></div>
             <ListingsContent item_id world />
-            <div class="grow w-full"><Ad class="min-h-30 max-h-90 w-full"/></div>
             <RelatedItems item_id=Signal::from(item_id) />
         </div>
     }

@@ -1,4 +1,7 @@
+use std::ops::Range;
+
 use super::{datacenter_name::*, gil::*, relative_time::*, world_name::*};
+use chrono::Utc;
 use icondata as i;
 use leptos::*;
 use leptos_icons::*;
@@ -51,5 +54,47 @@ pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
             })}
         </tbody>
     </table>
+    }
+}
+
+struct SalesWindow {
+    /// Total amount of gil sold in this window
+    total_gil: f64,
+    average_gil: f64,
+    minimum_price_sold: f64,
+    maximum_price_sold: f64,
+    average_stack_size: f64,
+    projected_sale_price: f64,
+}
+
+impl SalesWindow {
+    fn new(date_range: Range<Utc>, sales: &[SaleHistory]) -> Self {
+        
+        todo!()
+    }
+}
+
+
+/// The SalesSummaryData should provide generic market analytics
+struct SalesSummaryData {
+    
+}
+
+impl SalesSummaryData {
+    fn new(sale_history: &[SaleHistory]) -> Self {
+        sale_history.iter().map(|sale| sale.price_per_item);
+        let sold_per_day = sale_history.iter().map(|s| s.quantity);
+        todo!("New sales summary data");
+    }
+}
+
+#[component]
+pub fn SalesInsights(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
+    let sales = sales.with(|sales| {
+        SalesSummaryData::new(&sales)
+    });
+
+    view ! {
+
     }
 }

@@ -145,7 +145,7 @@ pub fn Lists() -> impl IntoView {
                     <div class="grow w-full"><Ad class="h-20 w-full" /></div>
                     <Outlet />
                 </div>
-                <div><Ad class="h-96 w-96 xl:h-[750px] xl:w-20"/></div>
+                <div><Ad class="h-96 w-96 xl:h-[600px] xl:w-40"/></div>
             </div>
         </div>
     </div>
