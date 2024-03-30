@@ -4,6 +4,7 @@ use super::{datacenter_name::*, gil::*, relative_time::*, world_name::*};
 use chrono::{Duration, NaiveDateTime, TimeDelta, Utc};
 use humantime::format_duration;
 use icondata as i;
+use itertools::Itertools;
 use leptos::*;
 use leptos_icons::*;
 use linregress::{FormulaRegressionBuilder, RegressionDataBuilder};
@@ -68,7 +69,7 @@ struct SalesWindow {
     max_unit_price: i32,
     median_unit_price: i32,
     min_unit_price: i32,
-    average_stack_size: f64,
+    median_stack_size: i32,
     guessed_next_sale_price: f64,
     p_value: f64,
     time_between_sales: Duration,
@@ -117,8 +118,9 @@ impl SalesWindow {
         let median_unit_price = unit_prices[unit_prices.len() / 2];
         let total_sale_price: i32 = unit_prices.iter().sum();
         let avg_sale_price = total_sale_price as f64 / unit_prices.len() as f64;
-        let average_stack_size =
-            sales.iter().map(|sale| sale.quantity).sum::<i32>() as f64 / sales.len() as f64;
+        let stack_sizes = sales.iter().map(|sale| sale.quantity).sorted().collect::<Vec<_>>();
+        let median_stack_size =
+            stack_sizes[stack_sizes.len() / 2];
         let duration = *date_range.start() - *date_range.end();
         let avg_duration = duration / sales.len() as i32;
         let next_sale_time = [(
@@ -141,7 +143,7 @@ impl SalesWindow {
             average_unit_price: avg_sale_price,
             max_unit_price: *unit_prices.last()?,
             min_unit_price: *unit_prices.first()?,
-            average_stack_size,
+            median_stack_size,
             guessed_next_sale_price: next,
             time_between_sales: avg_duration,
             median_unit_price,
@@ -194,7 +196,7 @@ fn WindowStats(#[prop(into)] sales: Signal<SalesWindow>) -> impl IntoView {
     let max_unit_price = create_memo(move |_| sales.with(|s| s.max_unit_price));
     let median_unit_price = create_memo(move |_| sales.with(|s| s.median_unit_price));
     let min_unit_price = create_memo(move |_| sales.with(|s| s.min_unit_price));
-    let average_stack_size = create_memo(move |_| sales.with(|s| s.average_stack_size));
+    let median_stack_size = create_memo(move |_| sales.with(|s| s.median_stack_size));
     let guessed_next_sale_price = create_memo(move |_| sales.with(|s| s.guessed_next_sale_price));
     let time_between_sales = create_memo(move |_| sales.with(|s| s.time_between_sales));
     let p_value = create_memo(move |_| sales.with(|s| s.p_value));
@@ -205,7 +207,7 @@ fn WindowStats(#[prop(into)] sales: Signal<SalesWindow>) -> impl IntoView {
             <tr><td>"Max unit price"</td><td><Gil amount=max_unit_price/></td></tr>
             <tr><td>"Median unit price"</td><td><Gil amount=median_unit_price/></td></tr>
             <tr><td>"Min unit price unit price"</td><td><Gil amount=min_unit_price/></td></tr>
-            <tr><td>"Average stack size"</td><td>{average_stack_size}</td></tr>
+            <tr><td>"Median stack size"</td><td>{median_stack_size}</td></tr>
             <tr><td>"Guessed next sale price"</td><td><GenericGil<f64> amount=guessed_next_sale_price/></td></tr>
             <tr><td>"p-value"</td><td>{p_value}</td></tr>
             <tr><td>"Average sale within period"</td><td>{move || time_between_sales().abs().to_std().map(|d| format_duration(d).to_string()).unwrap_or_default()}</td></tr>
