@@ -4,6 +4,26 @@ use thousands::Separable;
 #[component]
 pub fn Gil(#[prop(into)] amount: MaybeSignal<i32>) -> impl IntoView {
     view! {
-        <div class="flex flex-row"><div class="h-7 w-7 -m-1 aspect-square p-1"><img alt="gil" src="/static/images/gil.webp"/></div><div>{move || amount().separate_with_commas()}</div></div>
+        <div class="flex flex-row">
+            <div class="h-7 w-7 -m-1 aspect-square p-1">
+                <img alt="gil" src="/static/images/gil.webp"/>
+            </div>
+            <div>{move || amount().separate_with_commas()}</div>
+        </div>
+    }
+}
+
+#[component]
+pub fn GenericGil<T>(#[prop(into)] amount: MaybeSignal<T>) -> impl IntoView
+where
+    T: Separable + 'static + Copy,
+{
+    view! {
+        <div class="flex flex-row">
+            <div class="h-7 w-7 -m-1 aspect-square p-1">
+                <img alt="gil" src="/static/images/gil.webp"/>
+            </div>
+            <div>{move || amount().separate_with_commas()}</div>
+        </div>
     }
 }

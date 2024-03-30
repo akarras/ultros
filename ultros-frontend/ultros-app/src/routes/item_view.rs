@@ -105,19 +105,19 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
     let _class_opacity = "opacity-0 opacity-50"; // this is just here to get tailwind to compile
     view! {
         <Transition fallback=move || view!{
-            <div class="h-[35em] grow w-screen md:w-[780px]">
+            <div class="h-[35em] grow w-screen md:w-[780px] xl:basis-1/2">
                 <BoxSkeleton />
             </div>
         }>
         {move || {
             let sales = create_memo(move |_| listing_resource.with(|l| l.as_ref().and_then(|l| l.as_ref().map(|l| l.sales.clone()).ok())).unwrap_or_default());
-            view!{ <div class="content-well max-h-[35em] overflow-y-auto grow-0">
+            view!{ <div class="content-well max-h-[35em] overflow-y-auto grow-0 xl:basis-1/2">
                 <PriceHistoryChart sales=MaybeSignal::from(sales) />
             </div>}
         }}
         </Transition>
         <Transition fallback=move || view !{
-            <div class="h-[35em] grow w-screen md:w-[780px]">
+            <div class="h-[35em] grow w-screen md:w-[780px] xl:basis-1/2">
                 <BoxSkeleton />
             </div>
         }>
@@ -130,7 +130,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
         }}
         </Transition>
         <Transition fallback=move || view !{
-            <div class="h-[35em] grow w-screen md:w-[780px]">
+            <div class="h-[35em] grow w-screen md:w-[780px] xl:basis-1/2">
                 <BoxSkeleton />
             </div>
         }>
@@ -143,14 +143,14 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
         }}
         </Transition>
         <Transition fallback=move || view !{
-            <div class="h-[35em] grow w-screen md:w-[780px]">
+            <div class="h-[35em] grow w-screen md:w-[780px] xl:basis-1/2">
                 <BoxSkeleton />
             </div>
         }>
         {move || {
             let sales = create_memo(move |_| listing_resource.with(|l| l.as_ref().and_then(|l| l.as_ref().map(|l| l.sales.clone()).ok())).unwrap_or_default());
             view! {
-                <div class="content-well max-h-[35em] overflow-y-auto xl:basis-1/4">
+                <div class="content-well max-h-[35em] overflow-y-auto xl:basis-1/2">
                     <div class="content-title">"sale history"</div>
                     <div>
                         <SaleHistoryTable sales=Signal::from(sales) />
@@ -167,11 +167,8 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
         {move || {
             let sales = create_memo(move |_| listing_resource.with(|l| l.as_ref().and_then(|l| l.as_ref().map(|l| l.sales.clone()).ok())).unwrap_or_default());
             view! {
-                <div class="content-well max-h-[35em] overflow-y-auto xl:basis-1/4">
-                    <div class="content-title">"sales summary"</div>
-                    <div>
-                        <SalesInsights sales=Signal::from(sales) />
-                    </div>
+                <div class="content-well max-h-[35em] overflow-y-auto xl:basis-1/2">
+                    <SalesInsights sales=Signal::from(sales) />
                 </div>
             }
         }}
@@ -276,7 +273,7 @@ pub fn ItemView() -> impl IntoView {
                             <div class="md:ml-auto flex flex-row">
                     <a class="btn" href=move || format!("https://universalis.app/market/{}", item_id())>"Universalis"</a>
                     <a class="btn text-center" href=move || format!("https://garlandtools.org/db/#item/{}", item_id())>"Garlandtools"</a>
-                </div>  
+                </div>
                     </div>
                     <div class="flex flex-row gap-1">
                         <div class="flex flex-row" class:collapse=move || item().map(|i| i.price_low == 0).unwrap_or_default()>"Sells to a vendor for: "<Gil amount=MaybeSignal::derive(move || item().map(|i| i.price_low).unwrap_or_default() as i32) /></div>

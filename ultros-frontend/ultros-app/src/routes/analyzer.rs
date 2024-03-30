@@ -10,7 +10,7 @@ use crate::{
 use chrono::{Duration, Utc};
 use humantime::{format_duration, parse_duration};
 use icondata as i;
-use leptos::{oco::Oco, *};
+use leptos::*;
 use leptos_icons::*;
 use leptos_router::*;
 use log::info;
@@ -18,7 +18,6 @@ use std::{
     cmp::Reverse,
     collections::{hash_map::Entry, HashMap},
     fmt::Display,
-    ops::Not,
     str::FromStr,
     sync::Arc,
 };
@@ -480,11 +479,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
         let map = query();
         connected_regions
             .into_iter()
-            .filter(|region| {
-                map.get(region)
-                    .map(|value| value == "true")
-                    .unwrap_or(true)
-            })
+            .filter(|region| map.get(region).map(|value| value == "true").unwrap_or(true))
             .collect::<Vec<_>>()
     };
     let cross_region = create_resource(
@@ -512,8 +507,9 @@ pub fn AnalyzerWorldView() -> impl IntoView {
         },
     );
     view!{
-        <div class="main-content">
-            <div class="container mx-auto flex flex-col">
+        <div class="main-content flex flex-col md:flex-row-reverse md:items-start">
+            <div class="md:max-w-[180px]"><Ad class="h-24 w-full md:h-[600px] md:w-[160px]" /></div>
+            <div class="mx-auto flex flex-col grow">
                 <div class="flex flex-col md:flex-row">
                     <div class="flex flex-col">
                         <span class="title">"Resale Analyzer Results for "{world}</span><br/>
@@ -547,7 +543,6 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                             <a class="btn p-1" href="?profit=100000">"100K profit"</a>
                         </div>
                     </div>
-                    <Ad class="h-20" />
                 </div>
                 <div class="min-h-screen w-full">
                 <Suspense fallback=BoxSkeleton>

@@ -39,7 +39,7 @@ pub fn Ad(#[prop(optional)] class: Option<&'static str>) -> impl IntoView {
         // let _ = pathname(); // reading from the path to reload this component on page load
         // let _ = search();
         (!hide_ads().unwrap_or_default()).then(move ||view!{
-        <div class:hidden=unfilled class="p-1 ad">
+        <div class:hidden=unfilled class="ad">
             <div class="flex flex-col h-full">
                 <span class="text-sm p-1 px-2 rounded-md bg-violet-950 shrink max-w-fit">"Ad"</span>
                 <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-8789160460804755"
