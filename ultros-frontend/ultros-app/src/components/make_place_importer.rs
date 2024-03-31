@@ -68,6 +68,7 @@ where
                 .map(|data| ListItem {
                     item_id: data.item_id,
                     quantity: Some(data.quantity),
+                    hq: Some(false),
                     ..Default::default()
                 })
                 .collect();

@@ -253,6 +253,10 @@ pub(crate) async fn delete_list_item(list_id: i32) -> AppResult<()> {
     delete_api(&format!("/api/v1/list/item/{list_id}/delete")).await
 }
 
+pub(crate) async fn delete_list_items(list_items: Vec<i32>) -> AppResult<()> {
+    post_api(&format!("/api/v1/list/item/delete"), list_items).await
+}
+
 pub(crate) async fn update_retainer_order(retainers: Vec<OwnedRetainer>) -> AppResult<()> {
     post_api(&format!("/api/v1/retainer/reorder"), retainers).await
 }

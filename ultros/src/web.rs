@@ -645,6 +645,19 @@ pub(crate) async fn delete_list_item(
     Ok(Json(()))
 }
 
+pub(crate) async fn delete_multiple_list_items(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Json(ids): Json<Vec<i32>>,
+) -> Result<Json<()>, ApiError> {
+    try_join_all(
+        ids.into_iter()
+            .map(|id| db.remove_item_from_list(user.id as i64, id)),
+    )
+    .await?;
+    Ok(Json(()))
+}
+
 /// Does a bulk lookup of item listings. Will not preserve order.
 pub(crate) async fn bulk_item_listings(
     State(db): State<UltrosDb>,
@@ -862,6 +875,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/list/:id/add/items", post(post_items_to_list))
         .route("/api/v1/list/:id/delete", delete(delete_list))
         .route("/api/v1/list/item/:id/delete", delete(delete_list_item))
+        .route("/api/v1/list/item/delete", post(delete_multiple_list_items))
         .route("/api/v1/world_data", get(world_data))
         .route("/api/v1/current_user", get(current_user))
         .route("/api/v1/user/retainer", get(user_retainers))
