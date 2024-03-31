@@ -5,7 +5,7 @@ use thiserror::Error;
 use ultros_api_types::list::ListItem;
 use xiv_gen::ItemId;
 
-use crate::api::bulk_add_item_to_list;
+use crate::{api::bulk_add_item_to_list, components::loading::Loading};
 
 #[derive(Error, Debug)]
 pub enum ParseListError {
@@ -55,7 +55,10 @@ fn parse_list(list: &str) -> Result<Vec<MakePlaceItemData>, ParseListError> {
 }
 
 #[component]
-pub fn MakePlaceImporter(list_id: Signal<i32>) -> impl IntoView {
+pub fn MakePlaceImporter<R>(list_id: Signal<i32>, refresh: R) -> impl IntoView
+where
+    R: Fn() + 'static + Copy,
+{
     let (list, set_list) = create_signal("".to_string());
     let add_items_to_list = create_action(move |list_items: &Vec<MakePlaceItemData>| {
         let list_items = list_items.clone();
@@ -68,18 +71,32 @@ pub fn MakePlaceImporter(list_id: Signal<i32>) -> impl IntoView {
                     ..Default::default()
                 })
                 .collect();
-            bulk_add_item_to_list(list_id(), items).await
+            let result = bulk_add_item_to_list(list_id(), items).await;
+            refresh();
+            result
         }
     });
+    let parsed_items = move || match parse_list(&list()) {
+        Ok(l) => view! { <span>{l.len()}" items ready to add"</span>}.into_view(),
+        Err(e) => view! {<span>{format!("{e:?}")}</span>}.into_view(),
+    };
     view! {
         <div class="flex-column">
             <label>"Copy+Paste a list with a bunch of items in it formatted as Item1: Quantity. Make place users can paste their furniture+dye lists here."</label>
-            <textarea on:input=move |input| set_list(event_target_value(&input))></textarea>
+            <textarea class="bg-violet-950 h-96" on:input=move |input| set_list(event_target_value(&input))></textarea>
+            {parsed_items}
             <button on:click=move |_| {
                 if let Ok(list) = parse_list(&list()) {
                     add_items_to_list.dispatch(list);
                 }
             } class="btn">"Bulk add"</button>
+            {move || add_items_to_list.pending()().then(|| view!{<Loading />})}
+            <div>
+                {move || add_items_to_list.value()().map(|result| match result {
+                    Ok(_) => view!{ <span>"Added items to list!"</span>},
+                    Err(e) => view!{<span>"Error adding items to list :( "{format!("{e:?}")}</span>}
+                })}
+            </div>
         </div>
     }
 }

@@ -244,12 +244,12 @@ impl UltrosDb {
         let many = list_item::Entity::insert_many(insert_queue.into_iter().map(|item| {
             let list_item::Model {
                 item_id,
-                list_id,
                 hq,
                 quantity,
                 acquired,
                 ..
             } = item;
+            let list_id = list.id;
             list_item::ActiveModel {
                 id: Default::default(),
                 item_id: ActiveValue::Set(item_id),

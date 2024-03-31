@@ -272,7 +272,7 @@ pub fn ListView() -> impl IntoView {
                     }
                 }.into_view(),
                 MenuState::MakePlace => {
-                    view!{<MakePlaceImporter list_id=Signal::derive(move || params.with(|p| p.get("id").as_ref().map(|id| id.parse::<i32>().ok())).flatten().unwrap_or_default()) />}
+                    view!{<MakePlaceImporter list_id=Signal::derive(move || params.with(|p| p.get("id").as_ref().map(|id| id.parse::<i32>().ok())).flatten().unwrap_or_default()) refresh=move || {list_view.refetch() } />}
                 }.into_view(),
         }}
         <Transition fallback=move || view!{<Loading />}>

@@ -118,9 +118,12 @@ impl SalesWindow {
         let median_unit_price = unit_prices[unit_prices.len() / 2];
         let total_sale_price: i32 = unit_prices.iter().sum();
         let avg_sale_price = total_sale_price as f64 / unit_prices.len() as f64;
-        let stack_sizes = sales.iter().map(|sale| sale.quantity).sorted().collect::<Vec<_>>();
-        let median_stack_size =
-            stack_sizes[stack_sizes.len() / 2];
+        let stack_sizes = sales
+            .iter()
+            .map(|sale| sale.quantity)
+            .sorted()
+            .collect::<Vec<_>>();
+        let median_stack_size = stack_sizes[stack_sizes.len() / 2];
         let duration = *date_range.start() - *date_range.end();
         let avg_duration = duration / sales.len() as i32;
         let next_sale_time = [(
@@ -209,7 +212,7 @@ fn WindowStats(#[prop(into)] sales: Signal<SalesWindow>) -> impl IntoView {
             <tr><td>"Min unit price unit price"</td><td><Gil amount=min_unit_price/></td></tr>
             <tr><td>"Median stack size"</td><td>{median_stack_size}</td></tr>
             <tr><td>"Guessed next sale price"</td><td><GenericGil<f64> amount=guessed_next_sale_price/></td></tr>
-            <tr><td>"p-value"</td><td>{p_value}</td></tr>
+            <tr><td>"p-value"</td><td>{move || format!("{:.4}", p_value())}</td></tr>
             <tr><td>"Average sale within period"</td><td>{move || time_between_sales().abs().to_std().map(|d| format_duration(d).to_string()).unwrap_or_default()}</td></tr>
         </table>
     ]

@@ -9,5 +9,7 @@
     - [Managing retainers](./retainers/managing.md)
     - [Tracking retainers](./retainers/viewing.md)
     - [Configuring Discord Undercut Alerts](./retainers/alerts.md)
+- [Lists]()
+    - [Importing a Makeplace List](./lists/import_makeplace.md)
 - [Analyzer](./analyzer/analyzer.md)
 - [Data notice](./data.md)
