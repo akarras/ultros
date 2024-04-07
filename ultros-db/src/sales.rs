@@ -56,7 +56,7 @@ impl UltrosDb {
                 sale.hq == recorded.hq
                     && buyer.id == recorded.buying_character_id
                     && sale.quantity == recorded.quantity
-                    && sale.timestamp.timestamp() == recorded.sold_date.timestamp()
+                    && sale.timestamp.timestamp() == recorded.sold_date.and_utc().timestamp()
             })
         });
         if sales.is_empty() {

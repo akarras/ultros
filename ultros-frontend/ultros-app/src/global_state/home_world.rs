@@ -16,7 +16,7 @@ const DEFAULT_PRICE_ZONE: &str = "PRICE_ZONE";
 #[derive(Clone)]
 pub struct GuessedRegion(pub String);
 
-pub fn get_homeworld() -> (Signal<Option<World>>, SignalSetter<Option<World>>) {
+pub fn use_home_world() -> (Signal<Option<World>>, SignalSetter<Option<World>>) {
     let cookies = use_context::<Cookies>().unwrap();
     let (cookie, set_cookie) = cookies.get_cookie(HOMEWORLD_COOKIE_NAME);
     let world_1 = use_context::<LocalWorldData>().unwrap().0.ok();

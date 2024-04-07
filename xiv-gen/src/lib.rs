@@ -6,6 +6,7 @@ pub mod subrow_key;
 
 use bincode::{config::Config, Decode, Encode};
 use deserialize_custom::*;
+use dumb_csv::FromBool;
 use serde::{Deserialize, Serialize};
 
 include!(concat!(env!("OUT_DIR"), "/types.rs"));
@@ -16,7 +17,7 @@ pub fn bincode_config() -> impl Config {
 
 pub fn data_version() -> &'static str {
     // TODO somehow get a macro to get the HASH of ffxiv-datamining?
-    "0.1.0"
+    "0.2.0"
 }
 
 #[cfg(test)]

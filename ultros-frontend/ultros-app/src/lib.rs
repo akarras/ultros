@@ -10,17 +10,27 @@ use std::sync::Arc;
 use crate::api::get_login;
 use crate::components::recently_viewed::RecentItems;
 use crate::error::AppResult;
-use crate::global_state::cheapest_prices::CheapestPrices;
-use crate::global_state::clipboard_text::GlobalLastCopiedText;
-use crate::global_state::cookies::Cookies;
-use crate::global_state::home_world::{get_homeworld, GuessedRegion};
-use crate::global_state::LocalWorldData;
+use crate::global_state::{
+    cheapest_prices::CheapestPrices,
+    clipboard_text::GlobalLastCopiedText,
+    cookies::Cookies,
+    home_world::{use_home_world, GuessedRegion},
+};
 use crate::{
     components::{ad::Ad, profile_display::*, search_box::*, tooltip::*},
+    global_state::LocalWorldData,
     routes::{
-        analyzer::*, edit_retainers::*, home_page::*, item_explorer::*, item_view::*,
-        legal::cookie_policy::CookiePolicy, legal::privacy_policy::PrivacyPolicy, list_view::*,
-        lists::*, retainers::*, settings::*,
+        analyzer::*,
+        currency_exchange::{CurrencyExchange, CurrencySelection, ExchangeItem},
+        edit_retainers::*,
+        home_page::*,
+        item_explorer::*,
+        item_view::*,
+        legal::{cookie_policy::CookiePolicy, privacy_policy::PrivacyPolicy},
+        list_view::*,
+        lists::*,
+        retainers::*,
+        settings::*,
     },
 };
 use git_const::git_short_hash;
@@ -42,7 +52,7 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>, region: String) -> impl IntoView
     provide_context(GlobalLastCopiedText(create_rw_signal(None)));
     provide_context(RecentItems::new());
     let login = create_resource(move || {}, move |_| async move { get_login().await.ok() });
-    let (homeworld, _set_homeworld) = get_homeworld();
+    let (homeworld, _set_homeworld) = use_home_world();
     let git_hash = git_short_hash!();
     let sheet_url = ["/pkg/", git_hash, "/ultros.css"].concat();
     view! {
@@ -130,13 +140,16 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>, region: String) -> impl IntoView
                     <Route path="item/:world/:id" view=ItemView/>
                     <Route path="item/:id" view=ItemView/>
                     // <Route path="*listings" view=move || view! { <h1>"Listings"</h1>}/>
-
                     <Route path="analyzer" view=Analyzer/>
                     <Route path="analyzer/:world" view=AnalyzerWorldView />
                     <Route path="settings" view=Settings/>
                     <Route path="profile" view=Profile/>
                     <Route path="privacy" view=PrivacyPolicy/>
                     <Route path="cookie-policy" view=CookiePolicy/>
+                    <Route path="currency-exchange" view=CurrencyExchange>
+                        <Route path=":id" view=ExchangeItem />
+                        <Route path="" view=CurrencySelection />
+                    </Route>
                 </Routes>
             </Router>
         </div>

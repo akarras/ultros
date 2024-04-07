@@ -6,7 +6,6 @@ use regex::Regex;
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::env;
-use std::fmt::{Display, Formatter};
 use std::fs::write;
 
 use std::path::{Path, PathBuf};
@@ -160,7 +159,7 @@ impl DataDetector {
 
         if RE.is_match(record) {
             match *self {
-                DataDetector::Unresolved { int_range, column } => {
+                DataDetector::Unresolved { column, .. } => {
                     if column == 0 {
                         *self = DataDetector::Detected(DataType::ReferenceKey);
                         return;
@@ -279,6 +278,8 @@ fn create_struct(
     let mut s = Struct::new(csv_name);
     let i = Impl::new(csv_name);
     apply_derives(&mut s).vis("pub");
+    let mut parse_this_function = None;
+    let mut pk = None;
     let mut unknown_counter = 0;
     let fields: Vec<(String, String)> = line_two
         .iter()
@@ -352,12 +353,13 @@ fn create_struct(
                     };
                     args.db
                         .field(&db_field_name, &db_field_key).vis("pub");
+                    pk = Some(db_field_name.to_string());
                     match sample_data {
                         DataType::ReferenceKey => {
-                            args.read_data.line(format!("{db_field_name}: read_csv::<{csv_name}>(r#\"{path}\"#).into_iter().fold(HashMap::new(), |mut map, m| {{ map.entry(m.key_id.0.0).or_default().push(m); map }}),"));
+                            parse_this_function = Some(format!("{db_field_name}: read_csv::<{csv_name}>(r#\"{path}\"#).into_iter().fold(HashMap::new(), |mut map, m| {{ map.entry(m.key_id.0.0).or_default().push(m); map }}),"));
                         },
                         _ => {
-                            args.read_data.line(format!("{db_field_name}: read_csv::<{csv_name}>(r#\"{path}\"#).into_iter().map(|m| (m.key_id, m)).collect(),"));
+                            parse_this_function = Some(format!("{db_field_name}: read_csv::<{csv_name}>(r#\"{path}\"#).into_iter().map(|m| (m.key_id, m)).collect(),"));
                         }
                     }
                     local_data.known_structs.insert(key_name.clone());
@@ -393,27 +395,104 @@ fn create_struct(
             }
         })
         .collect();
-    for (field_name, field_value) in &fields {
-        //let mut function = Function::new(&format!("get_{}", field_name.replace('#', "")));
-        //function
-        //    .vis("pub")
-        //    .arg_ref_self()
-        //    .line(format!("self.{field_name}.clone()"))
-        //    .ret(field_value);
-        //i.push_fn(function);
-        let mut field = Field::new(field_name, field_value).vis("pub").to_owned();
-        if field_value == "i64" {
-            field.annotation(vec![
-                "#[serde(deserialize_with = \"deserialize_i64_from_u8_array\")]",
-            ]);
+    if fields.len() > 100 {
+        // handle hugeee fields?
+        #[derive(Debug)]
+        enum KeyType {
+            Normal,
+            /// Where usize = max i
+            Single(usize),
         }
-        if field_value == "bool" {
-            field.annotation(vec![
-                "#[serde(deserialize_with = \"deserialize_bool_from_anything_custom\")]",
-            ]);
+
+        let mut root_names = Vec::new();
+        for (key, value) in &fields {
+            lazy_static! {
+                // regex: check is number
+                static ref DOUBLE: Regex = Regex::new(r#"([A-z_])+([0-9]+)_([0-9]+)"#).unwrap();
+                static ref SINGLE: Regex = Regex::new(r#"([A-z_])+([0-9]+)"#).unwrap();
+            }
+            if let Some(captures) = DOUBLE.captures(&key) {
+                let key_1 = captures.get(2).unwrap();
+                let key_2 = captures.get(3).unwrap();
+                // let root = captures.get(0).unwrap();
+                let root = &key[..key_1.start() - 1];
+                let root = format!("{}_{}", root, key_2.as_str().parse::<usize>().unwrap());
+                let key = KeyType::Single(key_1.as_str().parse().unwrap());
+                if let Some((_, (k, _), _)) = root_names.iter_mut().find(|(key, _, _)| key == &root)
+                {
+                    *k = key;
+                } else {
+                    root_names.push((root, (key, value), 0));
+                }
+            } else if let Some(captures) = SINGLE.captures(&key) {
+                let key_1 = captures.get(2).unwrap();
+                let root = &key[..key_1.start() - 1];
+                if root == "unknown" {
+                    let (_, _, skip) = root_names.last_mut().unwrap();
+                    *skip += 1;
+                    continue;
+                }
+                let key = KeyType::Single(key_1.as_str().parse().unwrap());
+                if let Some((_, (k, _), _)) = root_names.iter_mut().find(|(key, _, _)| key == root)
+                {
+                    *k = key;
+                } else {
+                    root_names.push((root.to_string(), (key, value), 0));
+                }
+            } else {
+                root_names.push((key.as_str().to_string(), (KeyType::Normal, value), 0));
+            }
         }
-        s.push_field(field);
+        for (name, (multi, datatype), skip) in root_names.iter() {
+            match multi {
+                KeyType::Normal => {
+                    let mut field = Field::new(&name, datatype.as_str());
+                    field.vis("pub");
+                    s.push_field(field);
+                }
+                KeyType::Single(count) => {
+                    let mut field = Field::new(&name, format!("Vec<{datatype}>"));
+                    let count = *count + 1;
+                    let skip = *skip;
+                    field
+                        .annotation(vec![&format!(
+                            "#[dumb_csv(count = {count}, skip = {skip})]"
+                        )])
+                        .vis("pub");
+                    s.push_field(field);
+                }
+            }
+        }
+        s.derive("DumbCsvDeserialize");
+        let pk = pk.unwrap();
+        parse_this_function = Some(format!("{pk}: read_dumb_csv::<{csv_name}>(r#\"{path}\"#).into_iter().map(|m| (m.key_id, m)).collect(),"))
+        // panic!("{root_names:?}");
+    } else {
+        for (field_name, field_value) in fields.iter() {
+            //let mut function = Function::new(&format!("get_{}", field_name.replace('#', "")));
+            //function
+            //    .vis("pub")
+            //    .arg_ref_self()
+            //    .line(format!("self.{field_name}.clone()"))
+            //    .ret(field_value);
+            //i.push_fn(function);
+            let mut field = Field::new(field_name, field_value).vis("pub").to_owned();
+            if field_value == "i64" {
+                field.annotation(vec![
+                    "#[serde(deserialize_with = \"deserialize_i64_from_u8_array\")]",
+                ]);
+            }
+            if field_value == "bool" {
+                field.annotation(vec![
+                    "#[serde(deserialize_with = \"deserialize_bool_from_anything_custom\")]",
+                ]);
+            }
+            s.push_field(field);
+        }
     }
+    let function = parse_this_function.unwrap();
+    args.read_data.line(function);
+
     scope.push_struct(s);
     scope.push_impl(i);
 }
@@ -503,6 +582,7 @@ fn read_dir<T: Container>(path: PathBuf, mut scope: T, args: &mut Args) -> T {
         let mut s = Struct::new(&requested_struct);
         apply_derives(&mut s)
             .vis("pub")
+            .derive("FromStr")
             .tuple_field(sample_data)
             .vis("pub");
         scope.push_struct(s);
@@ -586,9 +666,10 @@ fn main() {
     scope.import("std::collections", "HashMap");
     scope.import("crate::subrow_key", "SubrowKey");
     scope.import("derive_more", "FromStr");
+    scope.import("dumb_csv", "DumbCsvDeserialize");
     write(dest_path, scope.to_string()).unwrap();
 
-    let conversion_files = Path::new(&out_dir).join("serialization.rs");
+    let conversion_files = Path::new(&out_dir).join("deserialization.rs");
 
     args.read_data.line("}").ret("Data").vis("pub");
 

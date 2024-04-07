@@ -11,10 +11,7 @@ use chrono::Local;
 use itertools::Itertools;
 use plotters::{
     prelude::*,
-    style::{
-        full_palette::{ORANGE, PURPLE, PURPLE_A400, TEAL},
-        RGBColor,
-    },
+    style::full_palette::{ORANGE, PURPLE, PURPLE_A400, TEAL},
 };
 #[cfg(feature = "image")]
 use ultros_api_types::icon_size::IconSize;

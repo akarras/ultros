@@ -1,0 +1,8 @@
+[package]
+name = "dumb_csv"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+csv = "1"
+dumb_csv_macros = {path = "../proc-macros/dumb-csv-macros"}

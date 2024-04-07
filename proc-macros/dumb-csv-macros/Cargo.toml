@@ -1,0 +1,14 @@
+[package]
+name = "dumb_csv_macros"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+darling = "0.20.3"
+quote = "1.0.33"
+syn = "2.0.39"
+proc-macro2 = "1"
+# dumbcsv = {path = "../../dumbcsv"}

@@ -7,7 +7,7 @@ use crate::components::{ad::*, loading::*, toggle::Toggle, world_name::*, world_
 use crate::error::AppResult;
 use crate::global_state::cookies::Cookies;
 use crate::global_state::home_world::{
-    get_homeworld, get_price_zone, result_to_selector_read, selector_to_setter_signal,
+    get_price_zone, result_to_selector_read, selector_to_setter_signal, use_home_world,
 };
 use leptos::*;
 use leptos_icons::Icon;
@@ -69,7 +69,7 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
 
 #[component]
 fn HomeWorldPicker() -> impl IntoView {
-    let (homeworld, set_homeworld) = get_homeworld();
+    let (homeworld, set_homeworld) = use_home_world();
     let (price_region, set_price_region) = get_price_zone();
     let price_region = result_to_selector_read(price_region);
     let set_price_region = selector_to_setter_signal(set_price_region);

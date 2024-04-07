@@ -9,7 +9,11 @@ members = [
     "xiv-gen-db",
     "ultros-frontend/ultros-client",
     "ultros-frontend/ultros-app",
-    "ultros-frontend/ultros-xiv-icons"]
+    "ultros-frontend/ultros-xiv-icons",
+    "proc-macros/dumb-csv-macros",
+    "proc-macros/field-iterator-macros",
+    "dumb-csv",
+    "field-iterator"]
 resolver = "2"
 
 [workspace.dependencies]
@@ -30,14 +34,14 @@ leptos_meta = { version = "0.6.4", default-features = false, features = ["nightl
 leptos-use = { git = "https://github.com/Synphonyte/leptos-use.git", features = ["serde"] }
 chrono = "0.4.23"
 itertools = "0.12.0"
-image = "0.24.6"
+image = "0.25.1"
 plotters = "0.3"
 sea-orm = {version = "0.12", features = ["sqlx-postgres", "runtime-tokio-rustls"]}
 sea-orm-migration = {version = "0.12", features = ["sqlx-postgres", "runtime-tokio-rustls"]}
 sea-query = "0.30.0"
 yoke = "0.7.1"
 xiv-gen = {path = "./xiv-gen", features = ["item", "item_ui_category", "item_search_category", "class_job", "recipe",
-  "class_job_category", "base_param", "item_sort_category", "gil_shop", "gil_shop_item", "e_npc_base", "e_npc_resident"]}
+  "class_job_category", "base_param", "item_sort_category", "gil_shop", "gil_shop_item", "e_npc_base", "e_npc_resident", "special_shop"]}
 icondata = "0.3"
 leptos_icons = {version = "0.3.0" }
 cfg-if = "1.0.0"
@@ -56,6 +60,7 @@ codegen-units = 1
 
 [profile.dev]
 opt-level = 1
+
 
 [profile.sane]
 inherits = "release"

@@ -4,7 +4,24 @@ use crate::*;
 use csv::ErrorKind;
 use serde::de::DeserializeOwned;
 
-include!(concat!(env!("OUT_DIR"), "/serialization.rs"));
+include!(concat!(env!("OUT_DIR"), "/deserialization.rs"));
+
+pub fn read_dumb_csv<T: DumbCsvDeserialize>(path: &str) -> Vec<T> {
+    let mut csv = csv::ReaderBuilder::new()
+        .has_headers(false)
+        .from_path(path)
+        .expect("Failed to open csv");
+    let _headers: Vec<String> = csv
+        .records()
+        .nth(1)
+        .unwrap()
+        .unwrap()
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let _ = csv.records().take(2).collect::<Vec<_>>();
+    dumb_csv::deserialize(csv).unwrap()
+}
 
 pub fn read_csv<T: DeserializeOwned>(path: &str) -> Vec<T> {
     let mut csv = csv::ReaderBuilder::new()

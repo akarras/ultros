@@ -13,7 +13,7 @@ once_cell = "1.17"
 
 [build-dependencies]
 ultros-api-types = {path = "../../ultros-api-types"}
-image = {workspace = true, features = ["webp-encoder", "png"]}
+image = {workspace = true, features = ["webp", "png"]}
 tokio = {version = "^1", features = ["rt-multi-thread", "macros", "fs"]}
 indicatif = {version = "*"}
 futures = "0.3.26"

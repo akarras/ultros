@@ -5,9 +5,7 @@ use icondata as i;
 use leptos::*;
 use leptos_icons::*;
 use leptos_router::use_params_map;
-use leptos_struct_table::*;
 use ultros_api_types::list::ListItem;
-use ultros_api_types::ActiveListing;
 use xiv_gen::{Item, ItemId, Recipe};
 
 use crate::api::{
@@ -26,70 +24,6 @@ enum MenuState {
     Item,
     Recipe,
     MakePlace,
-}
-
-#[derive(TableRow, Clone)]
-#[table(
-    sortable,
-    impl_vec_data_provider,
-    classes_provider = "TailwindClassesPreset"
-)]
-struct ShoppingListRow {
-    // #[table(renderer = "ItemCellRenderer")]
-    item_id: ItemKey,
-    amount: i32,
-    lowest_price: i32,
-    lowest_price_world: String,
-    lowest_price_datacenter: String,
-}
-#[derive(Copy, Clone)]
-struct ItemKey(ItemId);
-
-impl PartialOrd for ItemKey {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        let items = &xiv_gen_db::data().items;
-        let item_1 = items
-            .get(&self.0)
-            .map(|i| i.name.as_str())
-            .unwrap_or_default();
-        let item_2 = items
-            .get(&other.0)
-            .map(|i| i.name.as_str())
-            .unwrap_or_default();
-        item_1.partial_cmp(item_2)
-    }
-}
-
-impl PartialEq for ItemKey {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 .0 == other.0 .0
-    }
-}
-
-impl IntoView for ItemKey {
-    fn into_view(self) -> View {
-        let item = xiv_gen_db::data().items.get(&self.0);
-        item.map(|item| {
-            view! {
-                <SmallItemDisplay item />
-            }
-        })
-        .into_view()
-    }
-}
-
-#[component]
-fn ItemCellRenderer<F>(
-    class: String,
-    #[prop(into)] value: MaybeSignal<ItemId>,
-    on_change: F,
-    index: usize,
-) -> impl IntoView
-where
-    F: Fn(String) + 'static,
-{
-    let items = &xiv_gen_db::data().items;
-    view! { <td class=class>{items.get(&value()).map(|item| view!{ <SmallItemDisplay item />})}</td>}
 }
 
 #[component]
@@ -286,6 +220,7 @@ pub fn ListView() -> impl IntoView {
         {move || list_view.get().map(move |list| match list {
 
             Ok((list, items)) => {
+                let items = store_value(items);
                 // TODO full table?
                 // let price_view = items.iter().flat_map(|(list, listings): &(ListItem, Vec<ActiveListing>)| listings.iter().map(|listing| {
                 //     ShoppingListRow { item_id: ItemKey(ItemId(list.item_id)), amount: listing.quantity, lowest_price: listing.price_per_unit, lowest_price_world: listing.world_id.to_string(), lowest_price_datacenter: "TODO".to_string() }
@@ -298,11 +233,18 @@ pub fn ListView() -> impl IntoView {
                     <div class="sticky top-0 flex-row justify-between"><span class="content-title">{list.name}</span>
                         <div class="flex flex-row">
                             <button class="btn" class:bg-violet-950=edit_list_mode on:click=move |_| edit_list_mode.update(|u| { *u = !*u; })>"bulk edit"</button>
-                            <button class="btn" class:hidden=move || !edit_list_mode() on:click=move |_| {
-                            let items = selected_items.with_untracked(|s| s.iter().copied().collect::<Vec<_>>());
-                            selected_items.update(|i| i.clear());
-                            delete_items.dispatch(items);
-                        }>"DELETE"</button>
+                            <div class:hidden=move || !edit_list_mode()>
+                                <button class="btn" on:click=move |_| {
+                                            let items = selected_items.with_untracked(|s| s.iter().copied().collect::<Vec<_>>());
+                                            selected_items.update(|i| i.clear());
+                                            delete_items.dispatch(items);
+                                    }>"DELETE"</button></div>
+                                <button class="btn" on:click=move |_| { selected_items.update(|i| {
+                                    for (item, _) in items.get_value() {
+                                        i.insert(item.id);
+                                    }
+                                })} >"SELECT ALL"</button>
+                                <button class="btn" on:click=move |_| { selected_items.update(|i| i.clear()); } >"DESLECT ALL"</button>
                         </div>
                     </div>
                     <table class="w-full">
@@ -314,7 +256,7 @@ pub fn ListView() -> impl IntoView {
                             <th>"Price"</th>
                             <th class:hidden=edit_list_mode>"Options"</th>
                         </tr>
-                        <For each=move || items.clone() key=|(item, _)| item.id children=move |(item, listings)| {
+                        <For each=move || items() key=|(item, _)| item.id children=move |(item, listings)| {
                             let (edit, set_edit) = create_signal(false);
                             let item = create_rw_signal(item);
                             let temp_item = create_rw_signal(item());

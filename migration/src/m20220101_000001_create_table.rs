@@ -1,18 +1,7 @@
-use sea_orm_migration::{prelude::*, sea_orm::StatementBuilder, sea_query::ColumnDef};
+use sea_orm_migration::prelude::*;
 
 #[derive(DeriveMigrationName)]
 pub struct Migration;
-
-struct TimeScaleInstall;
-
-impl StatementBuilder for TimeScaleInstall {
-    fn build(&self, db_backend: &sea_orm::DbBackend) -> sea_orm::Statement {
-        sea_orm::Statement::from_string(
-            *db_backend,
-            "CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;".to_string(),
-        )
-    }
-}
 
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
@@ -666,14 +655,6 @@ impl MigrationTrait for Migration {
             .await?;
 
         Ok(())
-    }
-}
-
-struct CreateHypertable;
-
-impl Iden for CreateHypertable {
-    fn unquoted(&self, s: &mut dyn Write) {
-        write!(s, "create_hypertable").unwrap();
     }
 }
 

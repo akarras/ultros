@@ -8,7 +8,7 @@ use std::collections::VecDeque;
 use xiv_gen::ItemId;
 
 use crate::components::skeleton::BoxSkeleton;
-use crate::global_state::home_world::get_homeworld;
+use crate::global_state::home_world::use_home_world;
 #[cfg(not(feature = "ssr"))]
 use crate::ws::live_data::live_sales;
 
@@ -35,7 +35,7 @@ fn Item(item_id: i32) -> impl IntoView {
 pub fn LiveSaleTicker() -> impl IntoView {
     let (done_loading, set_done_loading) = create_signal(false);
     let sales = create_rw_signal::<VecDeque<SaleView>>(VecDeque::new());
-    let (homeworld, _) = get_homeworld();
+    let (homeworld, _) = use_home_world();
     create_effect(move |_| {
         #[cfg(not(feature = "ssr"))]
         let hw_1 = homeworld();

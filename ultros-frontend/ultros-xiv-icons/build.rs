@@ -1,7 +1,7 @@
 #![feature(async_closure)]
 use flate2::{write::GzEncoder, Compression};
 use futures::{stream, StreamExt};
-use image::{imageops::FilterType, io::Reader as ImageReader, ImageOutputFormat};
+use image::{imageops::FilterType, io::Reader as ImageReader, ImageFormat};
 use std::{
     env,
     ffi::OsStr,
@@ -70,9 +70,7 @@ async fn resize_image(entry: DirEntry, out_dir: &PathBuf) -> Option<()> {
 
         let file = vec![];
         let mut cursor = Cursor::new(file);
-        resized
-            .write_to(&mut cursor, ImageOutputFormat::WebP)
-            .unwrap();
+        resized.write_to(&mut cursor, ImageFormat::WebP).unwrap();
         let path = format!("{file_name}_{icon_size}.webp");
         let path = out_dir.join(path);
         tokio::fs::write(path, cursor.into_inner())

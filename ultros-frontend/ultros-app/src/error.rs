@@ -23,6 +23,8 @@ pub enum AppError {
     ParamMissing,
     #[error("{0}")]
     ApiError(#[from] ApiError),
+    #[error("Homeworld not set")]
+    NoHomeWorld,
 }
 
 /// This error type implements From's for the non serializable error types and shoves them into a string
