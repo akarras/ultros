@@ -1,5 +1,6 @@
 use crate::api::get_listings;
 use crate::components::ad::Ad;
+use crate::components::add_to_list::AddToList;
 use crate::components::recently_viewed::RecentItems;
 use crate::components::skeleton::BoxSkeleton;
 use crate::components::{
@@ -271,6 +272,7 @@ pub fn ItemView() -> impl IntoView {
                                 </a>})}</div>
                             </div></div><Clipboard clipboard_text=MaybeSignal::derive(move || item_name().to_string())/></div>
                             <div class="md:ml-auto flex flex-row">
+                    <AddToList item_id />
                     <a class="btn" href=move || format!("https://universalis.app/market/{}", item_id())>"Universalis"</a>
                     <a class="btn text-center" href=move || format!("https://garlandtools.org/db/#item/{}", item_id())>"Garlandtools"</a>
                 </div>

@@ -4,7 +4,7 @@ use std::{collections::HashSet, str::FromStr};
 use crate::components::ad::Ad;
 use crate::components::query_button::QueryButton;
 use crate::components::toggle::Toggle;
-use crate::components::{cheapest_price::*, fonts::*, meta::*, small_item_display::*};
+use crate::components::{cheapest_price::*, fonts::*, meta::*, small_item_display::*, add_to_list::*};
 use crate::CheapestPrices;
 use icondata as i;
 use itertools::Itertools;
@@ -475,7 +475,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
         each=items
         key=|(id, item)| (id.0, &item.name)
         children=|(id, item)| view!{<div class="grid xl:grid-cols-4 grid-flow-row gap-1">
-            <div class="xl:col-span-2"><SmallItemDisplay item=item /></div>
+            <div class="xl:col-span-2 flex flex-row"><SmallItemDisplay item=item /><AddToList item_id=id.0 /></div>
             <CheapestPrice item_id=*id show_hq=false />
             {item.can_be_hq.then(|| view!{<CheapestPrice item_id=*id show_hq=true />})}
         </div> }/>

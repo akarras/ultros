@@ -3,6 +3,7 @@ use std::collections::HashMap;
 
 use crate::api::get_cheapest_listings;
 use crate::api::get_recent_sales_for_world;
+use crate::components::add_to_list::AddToList;
 use crate::components::item_icon::ItemIcon;
 use crate::components::loading::Loading;
 use crate::components::meta::MetaDescription;
@@ -11,6 +12,7 @@ use crate::components::query_button::QueryButton;
 use crate::error::AppError;
 use crate::global_state::home_world::use_home_world;
 use crate::A;
+use crate::Ad;
 use field_iterator::field_iter;
 use field_iterator::FieldLabels;
 use field_iterator::SortableVec;
@@ -259,6 +261,7 @@ pub fn ExchangeItem() -> impl IntoView {
                                     <td>{p.number_received}</td>
                                     <td>{p.total_profit}</td>
                                     <td>{p.hours_between_sales}</td>
+                                    <td><AddToList item_id=p.receive_item.map(|i| i.item.key_id.0).unwrap_or_default() /></td>
                                 </tr>
                             }).collect::<Vec<_>>();
                             view! {
@@ -273,6 +276,7 @@ pub fn ExchangeItem() -> impl IntoView {
                                                     {l.replace("_", " ")}
                                                 </QueryButton>
                                             </th>}).collect::<Vec<_>>()}
+                                            <th>"Add to list"</th>
                                     </thead>
                                     <tbody>
                                         {rows}
@@ -351,7 +355,7 @@ pub fn CurrencySelection() -> impl IntoView {
         .collect::<Vec<_>>();
     let items = &data.items;
     view! {
-        <div class="w-96">
+        <div class="container mx-auto gap-1 flex flex-col">
         {
             currencies
                 .into_iter()
@@ -365,9 +369,9 @@ pub fn CurrencySelection() -> impl IntoView {
                         .map(|ui| ui.name.as_str())
                         .unwrap_or_default();
                     Some(view! {
-                    <A href={item.key_id.0.to_string()} class="flex flex-col p-1 border border-violet-950 rounded-xl">
-                        <div class="text-xl font-bold">{item.name.to_string()}</div>
-                        <div class="italic">{category_name}</div>
+                    <A href={item.key_id.0.to_string()} class="flex flex-col p-1 border border-fuchsia-950 rounded-xl">
+                        <div class="text-xl font-bold text-white hover:text-gray-50">{item.name.to_string()}</div>
+                        <div class="italic text-white hover:text-gray-50">{category_name}</div>
                     </A>})
                 })
                 .collect::<Vec<_>>()
@@ -380,6 +384,7 @@ pub fn CurrencySelection() -> impl IntoView {
 pub fn CurrencyExchange() -> impl IntoView {
     view! {
         <A href="/currency-exchange"><h3 class="text-2xl font-bold text-white">"Currency Exchange"</h3></A>
+        <Ad class="w-full h-[100px]"/>
         <div class="main-content">
             <Outlet />
 

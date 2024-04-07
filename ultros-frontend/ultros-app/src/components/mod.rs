@@ -1,4 +1,5 @@
 pub mod ad;
+pub mod add_to_list;
 pub mod cheapest_price;
 pub mod clipboard;
 pub mod datacenter_name;
@@ -10,6 +11,7 @@ pub mod live_sale_ticker;
 pub mod loading;
 pub mod make_place_importer;
 pub mod meta;
+pub mod modal;
 pub mod price_history_chart;
 pub mod price_viewer;
 pub mod profile_display;

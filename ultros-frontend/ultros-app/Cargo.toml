@@ -51,6 +51,7 @@ percent-encoding = "2.3.0"
 async-trait = "0.1.77"
 linregress = "0.5.3"
 field-iterator = {path = "../../field-iterator"}
+leptos_animation = "0.5.0"
 
 [features]
 default = ["ssr"] # this is mostly so if I run cargo check, it has a flavor to work on

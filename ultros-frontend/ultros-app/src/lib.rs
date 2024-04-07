@@ -36,6 +36,7 @@ use crate::{
 use git_const::git_short_hash;
 use icondata as i;
 use leptos::*;
+use leptos_animation::AnimationContext;
 use leptos_icons::*;
 use leptos_meta::*;
 use leptos_router::*;
@@ -51,6 +52,7 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>, region: String) -> impl IntoView
     provide_context(CheapestPrices::new());
     provide_context(GlobalLastCopiedText(create_rw_signal(None)));
     provide_context(RecentItems::new());
+    AnimationContext::provide();
     let login = create_resource(move || {}, move |_| async move { get_login().await.ok() });
     let (homeworld, _set_homeworld) = use_home_world();
     let git_hash = git_short_hash!();
