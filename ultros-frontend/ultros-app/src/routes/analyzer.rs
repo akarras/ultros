@@ -1,8 +1,9 @@
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
-        ad::Ad, clipboard::*, gil::*, item_icon::*, meta::*, query_button::QueryButton,
-        skeleton::BoxSkeleton, toggle::Toggle, tooltip::*, virtual_scroller::*, world_picker::*,
+        ad::Ad, add_to_list::AddToList, clipboard::*, gil::*, item_icon::*, meta::*,
+        query_button::QueryButton, skeleton::BoxSkeleton, toggle::Toggle, tooltip::*,
+        virtual_scroller::*, world_picker::*,
     },
     error::AppError,
     global_state::LocalWorldData,
@@ -412,6 +413,7 @@ fn AnalyzerTable(
                                 <ItemIcon item_id icon_size=IconSize::Small/>
                                 {item}
                             </a>
+                            <AddToList item_id />
                             <Clipboard clipboard_text=item.to_string()/>
                         </div>
                         <div role="cell" style="width: 100px;"><Gil amount=data.profit /></div>

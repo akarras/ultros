@@ -1,8 +1,8 @@
 use std::rc::Rc;
 
 use leptos::*;
-use leptos_use::use_window_scroll;
 use leptos_animation::*;
+use leptos_use::use_window_scroll;
 
 #[component]
 pub fn Modal(

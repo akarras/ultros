@@ -8,20 +8,27 @@ use crate::components::item_icon::ItemIcon;
 use crate::components::loading::Loading;
 use crate::components::meta::MetaDescription;
 use crate::components::meta::MetaTitle;
+use crate::components::modal::Modal;
+use crate::components::number_input::ParseableInputBox;
 use crate::components::query_button::QueryButton;
 use crate::error::AppError;
 use crate::global_state::home_world::use_home_world;
-use crate::A;
 use crate::Ad;
+use crate::A;
+use chrono::NaiveDateTime;
+use chrono::Utc;
 use field_iterator::field_iter;
 use field_iterator::FieldLabels;
 use field_iterator::SortableVec;
 use itertools::Itertools;
 use leptos::*;
+use leptos_icons::Icon;
 use leptos_router::create_query_signal;
 use leptos_router::use_params_map;
+use leptos_router::use_query_map;
 use leptos_router::Outlet;
 
+use leptos_router::ParamsMap;
 use ultros_api_types::cheapest_listings::CheapestListingItem;
 use ultros_api_types::icon_size::IconSize;
 use ultros_api_types::recent_sales::SaleData;
@@ -121,8 +128,53 @@ fn shop_items(special_shop: &SpecialShop) -> impl Iterator<Item = ShopItems> + '
 }
 
 #[component]
+fn FilterModal(filter_name: &'static str) -> impl IntoView {
+    let (is_open, set_open) = create_signal(false);
+    view! {
+        <div on:click=move |_| set_open(true)>
+            <div><Icon icon=icondata::AiFilterFilled /></div>
+            {move || is_open().then(|| {
+                let (min, set_min) = create_query_signal::<i32>(format!("{filter_name}_min"));
+                let (max, set_max) = create_query_signal::<i32>(format!("{filter_name}_max"));
+                view ! {
+                    <Modal set_visible=set_open>
+                        <h3 class="text-2xl font-bold">"Edit filter"</h3>
+                        {filter_name.replace("_", " ")}
+                        <div class="flex flex-row justify-between">
+                            <span>"Max"</span>
+                            <ParseableInputBox input=Signal::derive(move || { max().unwrap_or(i32::MAX) }) set_value=SignalSetter::map(move |value| set_max(Some(value))) />
+                        </div>
+                        <div class="flex flex-row justify-between">
+                            <span>"Min"</span>
+                            <ParseableInputBox input=Signal::derive(move || { min().unwrap_or(i32::MIN) }) set_value=SignalSetter::map(move |value| set_min(Some(value))) />
+                        </div>
+                    </Modal>
+                }
+            })}
+        </div>
+    }
+}
+
+fn is_in_range(value: i32, field_label: &str, query_map: &ParamsMap) -> bool {
+    let max = query_map
+        .get(&format!("{field_label}_max"))
+        .and_then(|p| p.parse::<i32>().ok());
+    let min = query_map
+        .get(&format!("{field_label}_min"))
+        .and_then(|p| p.parse::<i32>().ok());
+
+    match (min, max) {
+        (None, None) => true,
+        (None, Some(max)) => value < max,
+        (Some(min), None) => value > min,
+        (Some(min), Some(max)) => (min..max).contains(&value),
+    }
+}
+
+#[component]
 pub fn ExchangeItem() -> impl IntoView {
     let params = use_params_map();
+    let query = use_query_map();
     let (home_world, _) = use_home_world();
     let (currency_quantity, set_currency_quantity) = create_query_signal::<i32>("currency_amount");
     let sales = create_resource(home_world, move |world| async move {
@@ -187,6 +239,7 @@ pub fn ExchangeItem() -> impl IntoView {
             .map(|cheapest| ((cheapest.hq, cheapest.item_id), cheapest))
             .collect();
         let shops_with_item = shop_data();
+        let now = Utc::now().naive_utc();
         let rows = shops_with_item
             .iter()
             .filter_map(|(item, shop)| {
@@ -204,13 +257,10 @@ pub fn ExchangeItem() -> impl IntoView {
                 let number_received = recv.amount as i32 * (input_amount / cost.amount as i32);
                 let sales_len = sales.len();
                 let hours_between_sales = sales
-                    .first()
-                    .and_then(|first| {
-                        sales.last().map(|last| {
-                            let time_between =
-                                (first.sale_date - last.sale_date) / sales_len as i32;
-                            time_between.num_hours() as i16
-                        })
+                    .last()
+                    .map(|last| {
+                        let time_between = (now - last.sale_date) / sales_len as i32;
+                        time_between.num_hours() as i16
                     })
                     .unwrap_or(i16::MAX);
                 Some(CurrencyTrade {
@@ -231,10 +281,10 @@ pub fn ExchangeItem() -> impl IntoView {
     let item_name = move || item().map(|i| i.name.as_str()).unwrap_or_default();
     view! {
         <div>
-            <MetaTitle title={move || format!("{} - Market Exchange", item_name())} />
+            <MetaTitle title={move || format!("Currency Exchange - {}", item_name())} />
             <MetaDescription text=move || format!("All possible items that can be exchanged for {} with how much you can potentially earn", item_name()) />
             <div class="flex flex-col">
-                <div>{move || item().map(|i| &i.name)}" - Market Exchange"</div>
+                <div>{move || item().map(|i| &i.name)}" - Currency Exchange"</div>
                 <div class="flex flex-row gap-1">
                     "Amount in:"
                     <input prop:value=currency_quantity on:input=move |e| {
@@ -246,40 +296,67 @@ pub fn ExchangeItem() -> impl IntoView {
                 </div>
             </div>
             <div class="flex flex-col">
-                <Suspense fallback=Loading>
+                {move || {
+                    if home_world().is_none() {
+                        view! {
+                            <div>
+                                "Home world is not set, go to the "<A href="/settings">"settings"</A>" page and set your home world to see prices on this page"
+                            </div>
+                        }.into_view()
+                    } else {
+                        view! {
+                            <Suspense fallback=Loading>
                     {move || {
                         let sort_label = sorted_by();
-                        with_prices().map(|mut p: Vec<CurrencyTrade>| {
-                            CurrencyTrade::sort_vec_by_label(&mut p, sort_label.as_deref().unwrap_or("total_profit"), None);
+                        with_prices().map(|p: Vec<CurrencyTrade>| {
+                            let sorted_and_filtered_rows = move || {
+                                let query = query();
+                                let mut p = p.clone().into_iter().filter(|currency| {
+                                    let query = &query;
+                                    is_in_range(currency.price_per_item as i32, "price_per_item", query)
+                                    && is_in_range(currency.number_received as i32, "number_received", query)
+                                    && is_in_range(currency.total_profit as i32, "total_profit", query)
+                                    && is_in_range(currency.hours_between_sales as i32, "hours_between_sales", query)
+
+                                }).collect::<Vec<_>>();
+                                CurrencyTrade::sort_vec_by_label(&mut p, sort_label.as_deref().unwrap_or("total_profit"), None);
+                                p.into_iter().map(|p| view!{
+                                    <tr>
+                                        <td>{p.shop_name}</td>
+                                        <td>{p.cost_item}</td>
+                                        <td>{p.receive_item}</td>
+                                        <td>{p.price_per_item}</td>
+                                        <td>{p.number_received}</td>
+                                        <td>{p.total_profit}</td>
+                                        <td>{p.hours_between_sales}</td>
+                                        <td><AddToList item_id=p.receive_item.map(|i| i.item.key_id.0).unwrap_or_default() /></td>
+                                    </tr>
+                                }).collect::<Vec<_>>()
+
+                             };
                             let labels = CurrencyTrade::field_labels();
-                            let rows = p.into_iter().map(|p| view!{
-                                <tr>
-                                    <td>{p.shop_name}</td>
-                                    <td>{p.cost_item}</td>
-                                    <td>{p.receive_item}</td>
-                                    <td>{p.price_per_item}</td>
-                                    <td>{p.number_received}</td>
-                                    <td>{p.total_profit}</td>
-                                    <td>{p.hours_between_sales}</td>
-                                    <td><AddToList item_id=p.receive_item.map(|i| i.item.key_id.0).unwrap_or_default() /></td>
-                                </tr>
-                            }).collect::<Vec<_>>();
+
+
                             view! {
                                 <table>
                                     <thead>
                                     {labels
                                         .into_iter()
-                                        .map(|l| view!{
+                                        .enumerate()
+                                        .map(|(i, l)| view!{
                                             <th class="uppercase">
-                                                <QueryButton query_name="sorted-by" value={l.to_string()} class="font-bold"
-                                                active_classes="font-bold underline" default={"total_profit" == *l}>
-                                                    {l.replace("_", " ")}
-                                                </QueryButton>
+                                                <div class="flex flex-row gap-1">
+                                                    <QueryButton query_name="sorted-by" value={l.to_string()} class="font-bold"
+                                                    active_classes="font-bold underline" default={"total_profit" == *l}>
+                                                        {l.replace("_", " ")}
+                                                    </QueryButton>
+                                                    {(i > 2).then(|| view!{ <FilterModal filter_name=l /> })}
+                                                </div>
                                             </th>}).collect::<Vec<_>>()}
                                             <th>"Add to list"</th>
                                     </thead>
                                     <tbody>
-                                        {rows}
+                                        {sorted_and_filtered_rows}
                                     </tbody>
                                 </table>
                             }
@@ -293,6 +370,10 @@ pub fn ExchangeItem() -> impl IntoView {
                         })
                     }}
                 </Suspense>
+                        }
+                    }
+                }}
+
             </div>
         </div>
     }
@@ -307,7 +388,7 @@ fn item_cost_iter(shop: &SpecialShop) -> impl Iterator<Item = ItemId> + '_ {}
 //     sortable,
 //     classes_provider = "TailwindClassesPreset"
 // )]
-#[derive(SortableVec, FieldLabels)]
+#[derive(SortableVec, FieldLabels, Clone)]
 pub struct CurrencyTrade {
     shop_name: String,
     cost_item: Option<ItemAmount>,

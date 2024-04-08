@@ -52,8 +52,9 @@ async-trait = "0.1.77"
 linregress = "0.5.3"
 field-iterator = {path = "../../field-iterator"}
 leptos_animation = "0.5.0"
+leptos_hotkeys = "0.2.0-alpha.1"
 
 [features]
 default = ["ssr"] # this is mostly so if I run cargo check, it has a flavor to work on
 hydrate = ["leptos/hydrate", "leptos_meta/hydrate", "leptos_router/hydrate", "gloo", "gloo-net", "web-sys", "wasm-bindgen", "time/wasm-bindgen", "js-sys"]
-ssr = ["leptos/ssr", "leptos_meta/ssr", "leptos_router/ssr", "reqwest", "leptos_axum", "web-sys", "ultros-db", "xiv-gen-db/embed", "leptos-use/ssr", "axum"]
+ssr = ["leptos/ssr", "leptos_meta/ssr", "leptos_router/ssr", "reqwest", "leptos_axum", "web-sys", "ultros-db", "xiv-gen-db/embed", "leptos-use/ssr", "axum", "leptos_hotkeys/ssr"]

@@ -4,7 +4,9 @@ use std::{collections::HashSet, str::FromStr};
 use crate::components::ad::Ad;
 use crate::components::query_button::QueryButton;
 use crate::components::toggle::Toggle;
-use crate::components::{cheapest_price::*, fonts::*, meta::*, small_item_display::*, add_to_list::*};
+use crate::components::{
+    add_to_list::*, cheapest_price::*, fonts::*, meta::*, small_item_display::*,
+};
 use crate::CheapestPrices;
 use icondata as i;
 use itertools::Itertools;

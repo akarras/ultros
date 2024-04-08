@@ -3373,6 +3373,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "leptos_hotkeys"
+version = "0.2.0-alpha.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "835d3ee2f75ba43272a98eaed1bbcc970d3a4d37d0c20c40d4f798aca548d568"
+dependencies = [
+ "leptos",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
 name = "leptos_icons"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7026,6 +7037,7 @@ dependencies = [
  "leptos-use",
  "leptos_animation",
  "leptos_axum",
+ "leptos_hotkeys",
  "leptos_icons",
  "leptos_meta",
  "leptos_router",

@@ -12,6 +12,7 @@ pub mod loading;
 pub mod make_place_importer;
 pub mod meta;
 pub mod modal;
+pub mod number_input;
 pub mod price_history_chart;
 pub mod price_viewer;
 pub mod profile_display;

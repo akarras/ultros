@@ -59,7 +59,7 @@ fn AddToListModal(
             <div class="flex flex-row">
                 <Toggle checked=hq set_checked=set_hq checked_label="HQ" unchecked_label="Normal quality" />
             </div>
-            <div class="rounded p-1 border border-fuchsia-950">
+            <div class="rounded p-1 items-between">
                 <Suspense fallback=Loading>
                     {move || {
                         let Ok(lists) = lists.get()? else {
@@ -73,8 +73,8 @@ fn AddToListModal(
 
 
                             view! {
-                                <div class="flex flex-row w-96 text-xl">
-                                    <div class="w-64">{list.name}</div>
+                                <div class="flex flex-row text-xl justify-between">
+                                    <div>{list.name}</div>
                                     <div class="flex flex-row hover:bg-violet-950 bg-fuchsia-950 border border-fuchsia-900 rounded hover:bg-fucshia-950 cursor-pointer p-1"
                                         on:click=move |_| {
                                             set_running(true);

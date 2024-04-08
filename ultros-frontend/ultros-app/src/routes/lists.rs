@@ -40,10 +40,14 @@ pub fn EditLists() -> impl IntoView {
 
         view!{
             <div class="content-well">
-                <label for="list-name">"List name:"</label>
-                <input class="w-52" id="list-name" prop:value=new_list on:input=move |input| set_new_list(event_target_value(&input)) />
-                <label>"World/Datacenter/Region:"</label>
-                <WorldPicker current_world=wdr_filter.into() set_current_world=set_wdr_filter.into() />
+                <div class="flex flex-row gap-1">
+                    <label for="list-name">"List name:"</label>
+                    <input class="w-52" id="list-name" prop:value=new_list on:input=move |input| set_new_list(event_target_value(&input)) />
+                </div>
+                <div class="flex flex-row">
+                    <label>"World/Datacenter/Region:"</label>
+                    <WorldPicker current_world=wdr_filter.into() set_current_world=set_wdr_filter.into() />
+                </div>
                 <button prop:disabled=move || wdr_filter().is_none() class="btn" on:click=move |_| {
                 if let Some(wdr_filter) = wdr_filter() {
                     let list = CreateList {name: new_list(), wdr_filter};
