@@ -28,9 +28,9 @@ leptos = { version = "0.6.4", default-features = false, features = [
   "serde",
   "nightly"
 ] }
-leptos_axum = { version = "0.6.4" }
-leptos_router = { version = "0.6.4", default-features = false, features = ["nightly"] }
-leptos_meta = { version = "0.6.4", default-features = false, features = ["nightly"] }
+leptos_axum = { version = "0.6.11" }
+leptos_router = { version = "0.6.11", default-features = false, features = ["nightly"] }
+leptos_meta = { version = "0.6.11", default-features = false, features = ["nightly"] }
 leptos-use = { git = "https://github.com/Synphonyte/leptos-use.git", features = ["serde"] }
 chrono = "0.4.23"
 itertools = "0.12.0"
