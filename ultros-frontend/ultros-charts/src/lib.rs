@@ -85,27 +85,27 @@ pub struct ChartOptions {
     pub draw_icon: bool,
 }
 
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-#[target_feature(enable = "avx2")]
-unsafe fn draw_chart_avx512<'a, T>(backend: Rc<RefCell<T>>,
-    world_helper: &WorldHelper,
-    sales: &[SaleHistory],
-    chart_options: ChartOptions,) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'a>> 
-    where
-    T: 'a + DrawingBackend,{
-        draw_impl(backend, world_helper, sales, chart_options)
-}
+// #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+// #[target_feature(enable = "sse2")]
+// unsafe fn draw_chart_sse2<'a, T>(backend: Rc<RefCell<T>>,
+//     world_helper: &WorldHelper,
+//     sales: &[SaleHistory],
+//     chart_options: ChartOptions,) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'a>> 
+//     where
+//     T: 'a + DrawingBackend,{
+//         draw_impl(backend, world_helper, sales, chart_options)
+// }
 
-#[cfg(any(target_arch = "aarch64"))]
-#[target_feature(enable = "asimd")]
-unsafe fn draw_chart_asimd<'a, T>(backend: Rc<RefCell<T>>,
-    world_helper: &WorldHelper,
-    sales: &[SaleHistory],
-    chart_options: ChartOptions,) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'a>> 
-    where
-    T: 'a + DrawingBackend,{
-        draw_impl(backend, world_helper, sales, chart_options)
-}
+// #[cfg(any(target_arch = "aarch64"))]
+// #[target_feature(enable = "neon")]
+// unsafe fn draw_chart_neon<'a, T>(backend: Rc<RefCell<T>>,
+//     world_helper: &WorldHelper,
+//     sales: &[SaleHistory],
+//     chart_options: ChartOptions,) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'a>> 
+//     where
+//     T: 'a + DrawingBackend,{
+//         draw_impl(backend, world_helper, sales, chart_options)
+// }
 
 
 
@@ -117,18 +117,18 @@ pub fn draw_sale_history_scatter_plot<'a, T>(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'a>> 
 where
     T: 'a + DrawingBackend,{
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    {
-        if is_x86_feature_detected!("avx2") {
-            return unsafe { draw_chart_avx512(backend, world_helper, sales, chart_options) };
-        }
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        if is_aarch64_feature_detected!("asimd") {
-            return unsafe { draw_chart_asimd(backend, world_helper, sales, chart_options) };
-        }
-    }
+    // #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    // {
+    //     if is_x86_feature_detected!("sse2") {
+    //         return unsafe { draw_chart_avx512(backend, world_helper, sales, chart_options) };
+    //     }
+    // }
+    // #[cfg(target_arch = "aarch64")]
+    // {
+    //     if is_aarch64_feature_detected!("asimd") {
+    //         return unsafe { draw_chart_asimd(backend, world_helper, sales, chart_options) };
+    //     }
+    // }
     draw_impl(backend, world_helper, sales, chart_options)
 }
 
