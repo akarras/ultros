@@ -9,23 +9,26 @@ use xiv_gen::ItemId;
 use crate::api::add_item_to_list;
 use crate::api::get_lists;
 use crate::components::toggle::Toggle;
+use crate::components::tooltip::Tooltip;
 use crate::components::{item_icon::ItemIcon, loading::Loading, modal::Modal};
 
 #[component]
 pub fn AddToList(#[prop(into)] item_id: MaybeSignal<i32>) -> impl IntoView {
     let (modal_visible, set_modal_visible) = create_signal(false);
     view! {
-        <button class="btn" on:click=move |_| {
-            set_modal_visible(!modal_visible());
-        }>
-            <Icon  icon=RiPlayListAddMediaLine />
-            <div class="sr-only">"Add To List"</div>
-            {move || {
-                modal_visible().then(|| {
-                    view!{ <AddToListModal item_id set_visible=set_modal_visible />}
-                })
-            }}
-        </button>
+        <Tooltip tooltip_text=Oco::Borrowed("Add to list")>
+            <button class="cursor-pointer text-white hover:text-violet-300" on:click=move |_| {
+                set_modal_visible(!modal_visible());
+            }>
+                <Icon  icon=RiPlayListAddMediaLine />
+                <div class="sr-only">"Add To List"</div>
+                {move || {
+                    modal_visible().then(|| {
+                        view!{ <AddToListModal item_id set_visible=set_modal_visible />}
+                    })
+                }}
+            </button>
+        </Tooltip>
     }
 }
 

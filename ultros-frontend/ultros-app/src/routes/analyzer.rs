@@ -509,8 +509,8 @@ pub fn AnalyzerWorldView() -> impl IntoView {
         },
     );
     view!{
+        <Ad class="h-24 w-full" />
         <div class="main-content flex flex-col md:flex-row-reverse md:items-start">
-            <div class="md:max-w-[180px]"><Ad class="h-24 w-full md:h-[600px] md:w-[160px]" /></div>
             <div class="mx-auto flex flex-col grow">
                 <div class="flex flex-col md:flex-row">
                     <div class="flex flex-col">
@@ -604,7 +604,10 @@ pub fn AnalyzerWorldNavigator() -> impl IntoView {
             );
         }
     });
-    view! {<label>"Analyzer World: "</label><WorldOnlyPicker current_world=current_world.into() set_current_world=set_current_world.into() />}
+    view! {
+        <label>"Analyzer World: "</label>
+        <WorldOnlyPicker current_world=current_world.into() set_current_world=set_current_world.into() />
+    }
 }
 
 #[component]

@@ -4,6 +4,8 @@ mod discord;
 pub(crate) mod event;
 mod item_update_service;
 pub mod leptos;
+#[cfg(feature = "profiling")]
+pub mod profiling;
 pub(crate) mod utils;
 mod web;
 mod web_metrics;
@@ -14,6 +16,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::item_update_service::UpdateService;
+#[cfg(feature = "profiling")]
+use crate::profiling::start_profiling_server;
 use crate::web::WebState;
 use analyzer_service::AnalyzerService;
 use anyhow::Result;
@@ -31,6 +35,18 @@ use universalis::websocket::SocketRx;
 use universalis::{DataCentersView, UniversalisClient, WebsocketClient, WorldId, WorldsView};
 use web::character_verifier_service::CharacterVerifierService;
 use web::oauth::{AuthUserCache, DiscordAuthConfig, OAuthScope};
+
+#[cfg(all(not(target_env = "msvc"), feature = "malloc"))]
+use tikv_jemallocator::Jemalloc;
+
+#[cfg(all(not(target_env = "msvc"), feature = "malloc"))]
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
+
+#[cfg(feature = "profiling")]
+#[allow(non_upper_case_globals)]
+#[export_name = "malloc_conf"]
+pub static malloc_conf: &[u8] = b"prof:true,prof_active:true,lg_prof_sample:19\0";
 
 async fn run_socket_listener(
     db: UltrosDb,
@@ -146,6 +162,8 @@ async fn init_db(
 async fn main() -> Result<()> {
     // Create the db before we proceed
     tracing_subscriber::fmt::init();
+    #[cfg(feature = "profiling")]
+    tokio::spawn(async move { start_profiling_server().await });
     info!("Ultros starting!");
     info!("Connecting DB");
     let db = UltrosDb::connect().await?;

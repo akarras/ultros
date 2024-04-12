@@ -24,7 +24,7 @@ tracing = "0.1.36"
 tracing-subscriber = "0.3"
 futures = "0.3.24"
 anyhow = "1.0.72"
-leptos = { version = "0.6.4", default-features = false, features = [
+leptos = { version = "0.6.11", default-features = false, features = [
   "serde",
   "nightly"
 ] }
@@ -49,8 +49,11 @@ git-const = "1.1.0"
 gloo-net = {version = "0.5.0", features = ["http", "websocket"]}
 
 [patch.crates-io]
-#leptos = { git = "https://github.com/leptos-rs/leptos.git" }
-#leptos_reactive = { git = "https://github.com/leptos-rs/leptos.git" }
+#leptos = { path = "../leptos/leptos" }
+# leptos_reactive = { git = "https://github.com/leptos-rs/leptos.git" }
+#leptos_reactive = {path = "../leptos/leptos_reactive"}
+#leptos_axum = {path = "../leptos/integrations/axum"}
+#leptos_router = {path = "../leptos/router"}
 pathfinder_simd = { git = "https://github.com/servo/pathfinder.git" } # needed on ARM Mac until pathfinder_simd has new release
 
 [profile.release]

@@ -55,3 +55,8 @@ isocountry = "0.3.2"
 git-const.workspace = true
 http-body-util = "0.1.0"
 arrayvec = "0.7.4"
+tikv-jemallocator = {version = "0.5.4", features = ["profiling", "unprefixed_malloc_on_supported_platforms"], optional = true}
+jemalloc_pprof = {version = "0.1.0", optional = true}
+
+[features]
+profiling = ["dep:tikv-jemallocator", "dep:jemalloc_pprof"]

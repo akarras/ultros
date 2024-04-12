@@ -11,11 +11,12 @@ use crate::components::meta::MetaTitle;
 use crate::components::modal::Modal;
 use crate::components::number_input::ParseableInputBox;
 use crate::components::query_button::QueryButton;
+use crate::components::select::Select;
 use crate::error::AppError;
 use crate::global_state::home_world::use_home_world;
+use crate::Tooltip;
 use crate::Ad;
 use crate::A;
-use chrono::NaiveDateTime;
 use chrono::Utc;
 use field_iterator::field_iter;
 use field_iterator::FieldLabels;
@@ -24,8 +25,10 @@ use itertools::Itertools;
 use leptos::*;
 use leptos_icons::Icon;
 use leptos_router::create_query_signal;
+use leptos_router::use_navigate;
 use leptos_router::use_params_map;
 use leptos_router::use_query_map;
+use leptos_router::NavigateOptions;
 use leptos_router::Outlet;
 
 use leptos_router::ParamsMap;
@@ -66,7 +69,7 @@ impl IntoView for ItemAmount {
     fn into_view(self) -> View {
         view !{
             <A class="flex flex-row" href=format!("/item/{}", self.item.key_id.0)>
-                <ItemIcon item_id=self.item.key_id.0 icon_size=IconSize::Small /><span>{self.item.name.as_str()}</span>"x"{self.amount}
+                <ItemIcon item_id=self.item.key_id.0 icon_size=IconSize::Small /><span>{self.item.name.as_str()}</span>"x"{self.amount}<AddToList item_id=self.item.key_id.0 />
             </A>
         }.into_view()
     }
@@ -132,7 +135,7 @@ fn FilterModal(filter_name: &'static str) -> impl IntoView {
     let (is_open, set_open) = create_signal(false);
     view! {
         <div on:click=move |_| set_open(true)>
-            <div><Icon icon=icondata::AiFilterFilled /></div>
+            <div class="cursor-pointer text-white hover:text-violet-200"><Icon icon=icondata::AiFilterFilled /></div>
             {move || is_open().then(|| {
                 let (min, set_min) = create_query_signal::<i32>(format!("{filter_name}_min"));
                 let (max, set_max) = create_query_signal::<i32>(format!("{filter_name}_max"));
@@ -142,11 +145,11 @@ fn FilterModal(filter_name: &'static str) -> impl IntoView {
                         {filter_name.replace("_", " ")}
                         <div class="flex flex-row justify-between">
                             <span>"Max"</span>
-                            <ParseableInputBox input=Signal::derive(move || { max().unwrap_or(i32::MAX) }) set_value=SignalSetter::map(move |value| set_max(Some(value))) />
+                            <ParseableInputBox input=Signal::derive(move || { max() }) set_value=SignalSetter::map(move |value| set_max(value)) />
                         </div>
                         <div class="flex flex-row justify-between">
                             <span>"Min"</span>
-                            <ParseableInputBox input=Signal::derive(move || { min().unwrap_or(i32::MIN) }) set_value=SignalSetter::map(move |value| set_min(Some(value))) />
+                            <ParseableInputBox input=Signal::derive(move || { min() }) set_value=SignalSetter::map(move |value| set_min(value)) />
                         </div>
                     </Modal>
                 }
@@ -244,8 +247,11 @@ pub fn ExchangeItem() -> impl IntoView {
             .iter()
             .filter_map(|(item, shop)| {
                 // going to just assume first item matters?
-                let recv = item.recv[0];
                 let cost = item.cost[0];
+                let recv = item
+                    .recv
+                    .iter()
+                    .find(|i| i.item.item_search_category.0 >= 0)?;
                 let item_key = (false, recv.item.key_id.0);
                 let sales = &sales.get(&item_key)?.sales;
                 let sale = sales.first()?.price_per_unit;
@@ -266,7 +272,7 @@ pub fn ExchangeItem() -> impl IntoView {
                 Some(CurrencyTrade {
                     shop_name: shop.name.to_string(),
                     cost_item: Some(cost),
-                    receive_item: Some(recv),
+                    receive_item: Some(*recv),
                     price_per_item: guessed_price_per_item,
                     number_received,
                     total_profit: guessed_price_per_item as i64 * number_received as i64,
@@ -282,7 +288,7 @@ pub fn ExchangeItem() -> impl IntoView {
     view! {
         <div>
             <MetaTitle title={move || format!("Currency Exchange - {}", item_name())} />
-            <MetaDescription text=move || format!("All possible items that can be exchanged for {} with how much you can potentially earn", item_name()) />
+            <MetaDescription text=move || format!("All items that can be exchanged for {} with how much you stand to earn", item_name()) />
             <div class="flex flex-col">
                 <div>{move || item().map(|i| &i.name)}" - Currency Exchange"</div>
                 <div class="flex flex-row gap-1">
@@ -329,7 +335,6 @@ pub fn ExchangeItem() -> impl IntoView {
                                         <td>{p.number_received}</td>
                                         <td>{p.total_profit}</td>
                                         <td>{p.hours_between_sales}</td>
-                                        <td><AddToList item_id=p.receive_item.map(|i| i.item.key_id.0).unwrap_or_default() /></td>
                                     </tr>
                                 }).collect::<Vec<_>>()
 
@@ -350,10 +355,13 @@ pub fn ExchangeItem() -> impl IntoView {
                                                     active_classes="font-bold underline" default={"total_profit" == *l}>
                                                         {l.replace("_", " ")}
                                                     </QueryButton>
-                                                    {(i > 2).then(|| view!{ <FilterModal filter_name=l /> })}
+                                                    {(i > 2).then(|| view! { 
+                                                        <Tooltip tooltip_text=Oco::Owned(format!("Filter {}", l.replace("_", " ")))>
+                                                            <FilterModal filter_name=l />
+                                                        </Tooltip>
+                                                })}
                                                 </div>
                                             </th>}).collect::<Vec<_>>()}
-                                            <th>"Add to list"</th>
                                     </thead>
                                     <tbody>
                                         {sorted_and_filtered_rows}
@@ -403,6 +411,7 @@ pub struct CurrencyTrade {
 pub fn CurrencySelection() -> impl IntoView {
     let data = xiv_gen_db::data();
     let ui_categories = &data.item_ui_categorys;
+    let disallowed_items = &["Gil", "MGP"];
     let allowed_item_ui_categories = ["Currency", "Miscellany", "Other"]
         .into_iter()
         .map(|category| {
@@ -435,28 +444,62 @@ pub fn CurrencySelection() -> impl IntoView {
         .unique_by(|i| i.0)
         .collect::<Vec<_>>();
     let items = &data.items;
+    let currencies = currencies
+        .into_iter()
+        .sorted_by_key(|item| item.0)
+        .filter_map(|c| {
+            let item = items.get(&c)?;
+            if disallowed_items.contains(&item.name.as_str()) {
+                return None;
+            }
+            let ui_category = item.item_ui_category;
+            let category = ui_categories.get(&ui_category)?;
+            Some((item.key_id.0, item.name.as_str(), category.name.as_str()))
+        })
+        .collect::<Vec<_>>();
+
+    let signal = create_rw_signal(None);
+
+    create_effect(move |_| {
+        let nav = use_navigate();
+        if let Some((id, _, _)) = signal() {
+            nav(
+                &format!("/currency-exchange/{}", id),
+                NavigateOptions::default(),
+            );
+        }
+    });
+    let body_currencies = currencies.clone();
+
     view! {
         <div class="container mx-auto gap-1 flex flex-col">
+        <span>"Discover lucrative opportunities in Final Fantasy 14 with our Currency Exchange tool.
+            Easily locate items purchasable with in-game currencies, such as Allied Seals or Wolf Marks, that can be resold for significant profits on the marketboard.
+            Whether you're a seasoned trader or just starting out, maximize your earnings by identifying high-value items and optimizing your currency investments."</span>
+        <MetaTitle title="Currency Exchange - Ultros"/>
+        <MetaDescription text="Find valuable items bought with in-game currency, sell for gil. Maximize earnings effortlessly. "/>
+        <div class="flex flex-row">"Search: "<Select items=Signal::derive(move || currencies.clone()) as_label=move |(_item, item_name, _category)| item_name.to_string() choice=signal.into() set_choice=signal.into() children=move |(_id, _item, category), view| {
+            view !{
+                <div>
+                    {view}<br/>
+                    {category}
+                </div>
+            }
+        }  /></div>
+        <div class="flex flex-col">
         {
-            currencies
+            body_currencies
                 .into_iter()
-                .sorted_by_key(|item| item.0)
-                .filter_map(|c| {
-                    let item = items.get(&c)?;
-                    let ui_category = item.item_ui_category;
-                    let category = ui_categories.get(&ui_category);
-                    let category_name = category
-                        .as_ref()
-                        .map(|ui| ui.name.as_str())
-                        .unwrap_or_default();
-                    Some(view! {
-                    <A href={item.key_id.0.to_string()} class="flex flex-col p-1 border border-fuchsia-950 rounded-xl">
-                        <div class="text-xl font-bold text-white hover:text-gray-50">{item.name.to_string()}</div>
-                        <div class="italic text-white hover:text-gray-50">{category_name}</div>
-                    </A>})
+                .map(|(item_id, item_name, category_name)| {
+                    view! {
+                        <A href={item_id.to_string()} class="flex flex-row group p-1 rounded-xl items-center gap-1">
+                            <div class="text-xl font-bold text-white group-hover:text-violet-300 border-b-4 border-fuchsia-950 group-hover:border-fuchsia-800">{item_name}</div>
+                            <div class="italic text-white group-hover:text-violet-400">{category_name}</div>
+                        </A>}
                 })
                 .collect::<Vec<_>>()
         }
+        </div>
         </div>
     }
 }

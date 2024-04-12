@@ -37,6 +37,7 @@ use git_const::git_short_hash;
 use icondata as i;
 use leptos::*;
 use leptos_animation::AnimationContext;
+use leptos_hotkeys::{provide_hotkeys_context, scopes};
 use leptos_icons::*;
 use leptos_meta::*;
 use leptos_router::*;
@@ -53,13 +54,16 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>, region: String) -> impl IntoView
     provide_context(GlobalLastCopiedText(create_rw_signal(None)));
     provide_context(RecentItems::new());
     AnimationContext::provide();
+    let root_node_ref = create_node_ref::<html::Div>();
+    provide_hotkeys_context(root_node_ref, false, scopes!());
     let login = create_resource(move || {}, move |_| async move { get_login().await.ok() });
     let (homeworld, _set_homeworld) = use_home_world();
     let git_hash = git_short_hash!();
     let sheet_url = ["/pkg/", git_hash, "/ultros.css"].concat();
     view! {
-        <Stylesheet id="leptos" href=sheet_url/>
+        // <Stylesheet id="leptos" href=sheet_url />
         <Stylesheet id="xiv-icons" href="/static/classjob-icons/src/xivicon.css"/>
+        <Link id="leptos" rel="stylesheet" href=sheet_url />
         <Title text="Ultros" />
         // <Meta name="twitter:card" content="summary_large_image"/>
         <Meta name="viewport" content="initial-scale=1.0,width=device-width"/>
@@ -71,7 +75,7 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>, region: String) -> impl IntoView
         <div class="gradient-outer">
             <div class="gradient"></div>
         </div>
-        <div>
+        <div _ref=root_node_ref>
             <Router>
                 <nav class="header">
                     <A href="/" exact=true>

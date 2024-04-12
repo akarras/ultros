@@ -19,7 +19,7 @@ pub fn Select<T, EF, N, L>(
     children: EF,
 ) -> impl IntoView
 where
-    T: Clone + Eq + 'static,
+    T: Clone + PartialEq + 'static,
     EF: Fn(T, View) -> N + 'static + Copy,
     N: IntoView + 'static,
     L: Fn(&T) -> String + 'static + Copy,

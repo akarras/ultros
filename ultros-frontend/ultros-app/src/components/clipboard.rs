@@ -21,7 +21,7 @@ pub fn Clipboard(#[prop(into)] clipboard_text: MaybeSignal<String>) -> impl Into
             i::BsClipboard2CheckFill
         }
     });
-    view! {<div class="clipboard" on:click=move |_| {
+    view! {<div class="clipboard cursor-pointer" on:click=move |_| {
         #[cfg(all(web_sys_unstable_apis, feature = "hydrate"))]
         {
             if let Some(window) = web_sys::window()
