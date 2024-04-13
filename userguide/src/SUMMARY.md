@@ -12,4 +12,5 @@
 - [Lists]()
     - [Importing a Makeplace List](./lists/import_makeplace.md)
 - [Analyzer](./analyzer/analyzer.md)
+- [Hotkeys](./hotkeys.md)
 - [Data notice](./data.md)

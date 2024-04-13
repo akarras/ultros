@@ -1,6 +1,6 @@
 #[cfg(feature = "image")]
 use image::EncodableLayout;
-use std::arch::is_aarch64_feature_detected;
+// use std::arch::is_aarch64_feature_detected;
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -90,7 +90,7 @@ pub struct ChartOptions {
 // unsafe fn draw_chart_sse2<'a, T>(backend: Rc<RefCell<T>>,
 //     world_helper: &WorldHelper,
 //     sales: &[SaleHistory],
-//     chart_options: ChartOptions,) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'a>> 
+//     chart_options: ChartOptions,) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'a>>
 //     where
 //     T: 'a + DrawingBackend,{
 //         draw_impl(backend, world_helper, sales, chart_options)
@@ -101,22 +101,21 @@ pub struct ChartOptions {
 // unsafe fn draw_chart_neon<'a, T>(backend: Rc<RefCell<T>>,
 //     world_helper: &WorldHelper,
 //     sales: &[SaleHistory],
-//     chart_options: ChartOptions,) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'a>> 
+//     chart_options: ChartOptions,) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'a>>
 //     where
 //     T: 'a + DrawingBackend,{
 //         draw_impl(backend, world_helper, sales, chart_options)
 // }
-
-
 
 pub fn draw_sale_history_scatter_plot<'a, T>(
     backend: Rc<RefCell<T>>,
     world_helper: &WorldHelper,
     sales: &[SaleHistory],
     chart_options: ChartOptions,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'a>> 
+) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'a>>
 where
-    T: 'a + DrawingBackend,{
+    T: 'a + DrawingBackend,
+{
     // #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     // {
     //     if is_x86_feature_detected!("sse2") {

@@ -1,8 +1,10 @@
 use std::rc::Rc;
 
+use icondata as i;
 use leptos::*;
 use leptos_animation::*;
 use leptos_hotkeys::use_hotkeys;
+use leptos_icons::*;
 use leptos_use::use_window_scroll;
 
 #[component]
@@ -12,7 +14,7 @@ pub fn Modal(
 ) -> impl IntoView {
     let (_x, y) = use_window_scroll();
     let y = create_animated_signal(move || y.get().into(), tween_default);
-    use_hotkeys!(("esc") => move |_| {
+    use_hotkeys!(("escape") => move |_| {
         set_visible(false);
     });
     view! {
@@ -21,7 +23,10 @@ pub fn Modal(
                 <div class="flex flex-col mx-auto from-black to-violet-950 bg-gradient-to-br p-10 left-0 right-0 sm:w-[500px] w-screen z-50 rounded-xl shadow-md" style=move || format!("margin-top: {}px", y() + 50.0) on:click=move |e| {
                     e.stop_propagation();
                 }>
-                    <div class="self-end ml-auto cursor-pointer hover:text-neutral-200" on:click=move |_| set_visible(false) on:focusout=move |_| set_visible(false)>"CLOSE"</div>
+                    <div class="self-end ml-auto cursor-pointer hover:text-neutral-200" on:click=move |_| set_visible(false) on:focusout=move |_| set_visible(false)>
+                        <Icon icon=i::CgClose />
+                        <div class="sr-only">"close modal"</div>
+                    </div>
                     {children()}
                 </div>
             </div>

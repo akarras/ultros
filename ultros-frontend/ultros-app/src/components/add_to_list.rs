@@ -1,4 +1,4 @@
-use icondata::IoAddOutline;
+use icondata as i;
 use icondata::RiPlayListAddMediaLine;
 use leptos::*;
 use leptos_icons::*;
@@ -78,7 +78,7 @@ fn AddToListModal(
                             view! {
                                 <div class="flex flex-row text-xl justify-between">
                                     <div>{list.name}</div>
-                                    <div class="flex flex-row hover:bg-violet-950 bg-fuchsia-950 border border-fuchsia-900 rounded hover:bg-fucshia-950 cursor-pointer p-1"
+                                    <div class="flex flex-row hover:bg-fuchsia-700 bg-fuchsia-950 border border-fuchsia-900 rounded hover:bg-fucshia-950 cursor-pointer p-1 transition-all duration-150 ease-in-out"
                                         on:click=move |_| {
                                             set_running(true);
                                             spawn_local(async move {
@@ -97,7 +97,7 @@ fn AddToListModal(
                                                 }.into_view()
                                             } else {
                                                 view!{
-                                                    <Icon class="text-white" icon=IoAddOutline width="1.2em" height="1.2em" />
+                                                    <Icon class="text-white" icon=i::BiPlusRegular width="1.2em" height="1.2em" />
                                                     <div class="mx-1">"Add"</div>
                                                 }.into_view()
                                             }

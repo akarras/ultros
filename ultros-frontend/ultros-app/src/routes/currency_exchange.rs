@@ -14,8 +14,8 @@ use crate::components::query_button::QueryButton;
 use crate::components::select::Select;
 use crate::error::AppError;
 use crate::global_state::home_world::use_home_world;
-use crate::Tooltip;
 use crate::Ad;
+use crate::Tooltip;
 use crate::A;
 use chrono::Utc;
 use field_iterator::field_iter;
@@ -68,9 +68,13 @@ impl Ord for ItemAmount {
 impl IntoView for ItemAmount {
     fn into_view(self) -> View {
         view !{
-            <A class="flex flex-row" href=format!("/item/{}", self.item.key_id.0)>
-                <ItemIcon item_id=self.item.key_id.0 icon_size=IconSize::Small /><span>{self.item.name.as_str()}</span>"x"{self.amount}<AddToList item_id=self.item.key_id.0 />
-            </A>
+            <div class="flex flex-row gap-1">
+                <A class="flex flex-row gap-1" href=format!("/item/{}", self.item.key_id.0)>
+                    <ItemIcon item_id=self.item.key_id.0 icon_size=IconSize::Small /><span>{self.item.name.as_str()}</span>
+                </A>
+                <div>"x" {self.amount}</div>
+                <AddToList item_id=self.item.key_id.0 />
+            </div>
         }.into_view()
     }
 }
@@ -355,7 +359,7 @@ pub fn ExchangeItem() -> impl IntoView {
                                                     active_classes="font-bold underline" default={"total_profit" == *l}>
                                                         {l.replace("_", " ")}
                                                     </QueryButton>
-                                                    {(i > 2).then(|| view! { 
+                                                    {(i > 2).then(|| view! {
                                                         <Tooltip tooltip_text=Oco::Owned(format!("Filter {}", l.replace("_", " ")))>
                                                             <FilterModal filter_name=l />
                                                         </Tooltip>
@@ -478,11 +482,15 @@ pub fn CurrencySelection() -> impl IntoView {
             Whether you're a seasoned trader or just starting out, maximize your earnings by identifying high-value items and optimizing your currency investments."</span>
         <MetaTitle title="Currency Exchange - Ultros"/>
         <MetaDescription text="Find valuable items bought with in-game currency, sell for gil. Maximize earnings effortlessly. "/>
-        <div class="flex flex-row">"Search: "<Select items=Signal::derive(move || currencies.clone()) as_label=move |(_item, item_name, _category)| item_name.to_string() choice=signal.into() set_choice=signal.into() children=move |(_id, _item, category), view| {
+        <div class="flex flex-row">"Search: "<Select items=Signal::derive(move || currencies.clone())
+            as_label=move |(_item, item_name, _category)| item_name.to_string()
+            choice=signal.into()
+            set_choice=signal.into()
+            children=move |(_id, _item, category), view| {
             view !{
-                <div>
-                    {view}<br/>
-                    {category}
+                <div class="items-start flex flex-col">
+                    {view}
+                    <div class="italic">{category}</div>
                 </div>
             }
         }  /></div>
@@ -493,8 +501,8 @@ pub fn CurrencySelection() -> impl IntoView {
                 .map(|(item_id, item_name, category_name)| {
                     view! {
                         <A href={item_id.to_string()} class="flex flex-row group p-1 rounded-xl items-center gap-1">
-                            <div class="text-xl font-bold text-white group-hover:text-violet-300 border-b-4 border-fuchsia-950 group-hover:border-fuchsia-800">{item_name}</div>
-                            <div class="italic text-white group-hover:text-violet-400">{category_name}</div>
+                            <div class="text-xl font-bold text-white group-hover:text-violet-300 border-b-4 border-fuchsia-950 group-hover:border-fuchsia-800 transition-all ease-in-out duration-150">{item_name}</div>
+                            <div class="italic text-white group-hover:text-violet-400 transition-all ease-in-out duration-500">{category_name}</div>
                         </A>}
                 })
                 .collect::<Vec<_>>()
@@ -507,7 +515,7 @@ pub fn CurrencySelection() -> impl IntoView {
 #[component]
 pub fn CurrencyExchange() -> impl IntoView {
     view! {
-        <A href="/currency-exchange"><h3 class="text-2xl font-bold text-white">"Currency Exchange"</h3></A>
+        <A href="/currency-exchange"><h3 class="text-2xl font-bold text-white hover:text-violet-400 transition-all ease-in-out duration-500">"Currency Exchange"</h3></A>
         <Ad class="w-full h-[100px]"/>
         <div class="main-content">
             <Outlet />

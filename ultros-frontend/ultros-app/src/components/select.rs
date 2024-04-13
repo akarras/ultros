@@ -118,12 +118,12 @@ where
                             }
                         }
                     }>
-                        <div class="hover:bg-purple-700 hover:border-solid hover:border-violet-600 rounded-sm p-2" class:bg-purple-500=move || {
+                        <div class="hover:bg-purple-700 hover:border-solid hover:border-violet-600 rounded-sm p-2 transition-all ease-in-out duration-500" class:bg-purple-500=move || {
                             choice.with(|choice| choice.as_ref().and_then(|choice| items.with(|i| i.get(data.0).map(|item| item == choice)))).unwrap_or_default()
                         }>{items.with(|i| i.get(data.0).cloned()).map(|c| children(c, {move || {
                             if let Some(m) = fuzzy_search(&current_input(), &data.1){
                                 let target = data.1.clone();
-                                view!{ <div class="flex flex-row"><MatchFormatter m=m target=target /></div> }
+                                view!{ <div class="flex flex-row gap-1"><MatchFormatter m=m target=target /></div> }
                             } else {
                                 view!{ <div class="flex flex-row">{&data.1}</div>}
                             }
