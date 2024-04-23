@@ -12,6 +12,7 @@ use crate::components::modal::Modal;
 use crate::components::number_input::ParseableInputBox;
 use crate::components::query_button::QueryButton;
 use crate::components::select::Select;
+use crate::components::clipboard::Clipboard;
 use crate::error::AppError;
 use crate::global_state::home_world::use_home_world;
 use crate::Ad;
@@ -74,6 +75,7 @@ impl IntoView for ItemAmount {
                 </A>
                 <div>"x" {self.amount}</div>
                 <AddToList item_id=self.item.key_id.0 />
+                <Clipboard clipboard_text=self.item.name.as_str() />
             </div>
         }.into_view()
     }
