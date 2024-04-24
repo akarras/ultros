@@ -37,6 +37,7 @@ impl UltrosDb {
     ) -> Result<Vec<(SaleHistory, UnknownCharacter)>> {
         let instant = Instant::now();
         use sale_history::*;
+        self.set_last_updated(world_id, item_id).await?;
         // check if the sales have already been logged
         if sales.is_empty() {
             return Ok(vec![]);

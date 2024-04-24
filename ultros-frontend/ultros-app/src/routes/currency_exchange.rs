@@ -1,5 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::hash::Hash;
+use std::hash::Hasher;
 
 use crate::api::get_cheapest_listings;
 use crate::api::get_recent_sales_for_world;
@@ -43,6 +45,13 @@ use xiv_gen::{ItemId, SpecialShop};
 struct ItemAmount {
     item: &'static Item,
     amount: u32,
+}
+
+impl Hash for ItemAmount {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.item.key_id.hash(state);
+        self.amount.hash(state);
+    }
 }
 
 impl PartialOrd for ItemAmount {
@@ -275,16 +284,43 @@ pub fn ExchangeItem() -> impl IntoView {
                         time_between.num_hours() as i16
                     })
                     .unwrap_or(i16::MAX);
-                Some(CurrencyTrade {
-                    shop_name: shop.name.to_string(),
-                    cost_item: Some(cost),
-                    receive_item: Some(*recv),
-                    price_per_item: guessed_price_per_item,
-                    number_received,
-                    total_profit: guessed_price_per_item as i64 * number_received as i64,
-                    hours_between_sales,
-                })
+                Some((
+                    (
+                        cost,
+                        *recv,
+                        guessed_price_per_item,
+                        number_received,
+                        guessed_price_per_item as i64 * number_received as i64,
+                        hours_between_sales,
+                    ),
+                    shop.name.to_string(),
+                ))
             })
+            .into_group_map()
+            .into_iter()
+            .map(
+                |(
+                    (
+                        cost,
+                        recv,
+                        guessed_price_per_item,
+                        number_received,
+                        total_profit,
+                        hours_between_sales,
+                    ),
+                    shop_names,
+                )| {
+                    CurrencyTrade {
+                        shop_names: ShopNames { shops: shop_names.into_iter().unique().collect() },
+                        cost_item: Some(cost),
+                        receive_item: Some(recv),
+                        price_per_item: guessed_price_per_item,
+                        number_received,
+                        total_profit,
+                        hours_between_sales,
+                    }
+                },
+            )
             .collect::<Vec<_>>();
         Some(rows)
     };
@@ -334,7 +370,7 @@ pub fn ExchangeItem() -> impl IntoView {
                                 CurrencyTrade::sort_vec_by_label(&mut p, sort_label.as_deref().unwrap_or("total_profit"), None);
                                 p.into_iter().map(|p| view!{
                                     <tr>
-                                        <td>{p.shop_name}</td>
+                                        <td>{p.shop_names}</td>
                                         <td>{p.cost_item}</td>
                                         <td>{p.receive_item}</td>
                                         <td>{p.price_per_item}</td>
@@ -404,13 +440,29 @@ fn item_cost_iter(shop: &SpecialShop) -> impl Iterator<Item = ItemId> + '_ {}
 // )]
 #[derive(SortableVec, FieldLabels, Clone)]
 pub struct CurrencyTrade {
-    shop_name: String,
+    shop_names: ShopNames,
     cost_item: Option<ItemAmount>,
     receive_item: Option<ItemAmount>,
     price_per_item: i32,
     number_received: i32,
     total_profit: i64,
     hours_between_sales: i16,
+}
+
+#[derive(PartialEq, Eq, Clone, PartialOrd, Ord)]
+struct ShopNames {
+    shops: Vec<String>,
+}
+
+impl IntoView for ShopNames {
+    fn into_view(self) -> View {
+        view! {
+            <div class="flex flex-col">
+                {self.shops.into_iter().map(|shop| view!{ <div>{shop}</div>}).collect::<Vec<_>>()}
+            </div>
+        }
+        .into_view()
+    }
 }
 
 #[component]

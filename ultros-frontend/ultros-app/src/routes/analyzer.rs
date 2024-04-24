@@ -305,7 +305,7 @@ fn AnalyzerTable(
         sorted_data.into_iter().enumerate().collect()
     });
     const DATACENTER_WIDTH: &str = "width: 130px";
-    const WORLD_WIDTH: &str = "width: 180px";
+    const WORLD_WIDTH: &str = "width: 260px";
     view! {
 
        <div class="flex flex-col md:flex-row gap-2">
