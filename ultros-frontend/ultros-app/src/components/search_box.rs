@@ -8,7 +8,6 @@ use leptos::{html::Input, *};
 use leptos_hotkeys::use_hotkeys;
 use leptos_icons::*;
 use leptos_router::{use_navigate, NavigateOptions};
-use log::info;
 use std::cmp::Reverse;
 use sublime_fuzzy::{FuzzySearch, Match, Scoring};
 use web_sys::KeyboardEvent;

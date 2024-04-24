@@ -265,7 +265,10 @@ pub fn ItemView() -> impl IntoView {
                         <div class="flex flex-row text-2xl gap-1">
                             <ItemIcon item_id icon_size=IconSize::Large />
                             <div class="flex flex-col">
-                                <div>{item_name}</div>
+                                <h1>
+                                    {item_name}
+                                    <div class="sr-only">" ffxiv marketboard prices for "{world}</div>
+                                </h1>
                                 <div style="font-size: 16px">
                                 <div>{move || item_category().and_then(|c| item_search_category().map(|s| (c, s))).map(|(c, s)| view!{<a class="text-fuchsia-300 a:text-fuchsia-600" href=["/items/category/", &s.name.replace("/", "%2F")].concat()>
                                     {c.name.as_str()}

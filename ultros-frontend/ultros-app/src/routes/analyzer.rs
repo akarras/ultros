@@ -394,11 +394,13 @@ fn AnalyzerTable(
                         })
                         .unwrap_or_default()
                         .to_string();
+                    let datacenter = Signal::derive(move || datacenter.clone());
                     let world = world
                         .as_ref()
                         .map(|r| r.get_name())
                         .unwrap_or_default()
                         .to_string();
+                    let world = Signal::derive(move || world.clone());
                     let world_event = world.clone();
                     let datacenter_event = datacenter.clone();
                     let item_id = data.sale_summary.item_id;
@@ -409,7 +411,7 @@ fn AnalyzerTable(
                     view! {<div class="grid-row" role="row-group" class:even=move || (i % 2) == 0 class:odd=move || (i % 2) == 1>
                         <div role="cell" style="width: 25px;">{data.sale_summary.hq.then_some("✅")}</div>
                         <div role="cell" class="flex flex-row w-[450px]">
-                            <a class="flex flex-row" href=format!("/item/{world}/{item_id}")>
+                            <a class="flex flex-row" href=format!("/item/{}/{item_id}", world())>
                                 <ItemIcon item_id icon_size=IconSize::Small/>
                                 {item}
                             </a>
@@ -418,8 +420,17 @@ fn AnalyzerTable(
                         </div>
                         <div role="cell" style="width: 100px;"><Gil amount=data.profit /></div>
                         <div role="cell" style="width: 100px;">{data.return_on_investment}"%"</div>
-                        <div role="cell" style=WORLD_WIDTH><Gil amount=data.cheapest_price/>" on "<QueryButton query_name="world" value=world_event class="!text-fuchsia-300" active_classes="!text-neutral-300 hover:text-neutral-200" remove_queries=&["datacenter"]>{&world}</QueryButton></div>
-                        <div role="cell" style=DATACENTER_WIDTH><QueryButton query_name="datacenter" value=datacenter_event class="!text-fuchsia-300" active_classes="!text-neutral-300 hover:text-neutral-200" remove_queries=&["world"]>{&datacenter}</QueryButton></div>
+                        <div role="cell" style=WORLD_WIDTH><Gil amount=data.cheapest_price/>" on "
+                                <Tooltip tooltip_text={MaybeSignal::Dynamic(Signal::derive(move || format!("Only show {}", world()).into()))}>
+                                    <QueryButton query_name="world" value=world_event.clone() class="!text-fuchsia-300" active_classes="!text-neutral-300 hover:text-neutral-200" remove_queries=&["datacenter"]>{world}</QueryButton>
+                                </Tooltip>
+                            </div>
+                        <div role="cell" style=DATACENTER_WIDTH>
+                            <Tooltip tooltip_text={MaybeSignal::Dynamic(Signal::derive(move || format!("Only show {}", datacenter()).into()))}>
+                            <QueryButton query_name="datacenter" value=datacenter_event.clone() class="!text-fuchsia-300"
+                                active_classes="!text-neutral-300 hover:text-neutral-200" remove_queries=&["world"]>{datacenter}</QueryButton>
+                            </Tooltip>
+                        </div>
                         <div role="cell" style="width: 300px;">{data.sale_summary
                                 .avg_sale_duration
                                 .and_then(|sale_duration| {
