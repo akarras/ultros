@@ -76,7 +76,6 @@ pub fn Tooltip(
                     let x = (-left_pad + right_pad).clamp(-1.0, 1.0);
                     let y = (-top_pad + bottom_pad).clamp(-1.0, 1.0);
                     let distance = 25.0;
-                    log::info!("{half_width} {x} {screen_left}");
                     format!("top: {}px; left: {}px;",
                         ((y * distance) + (y * half_height) + top) + (tooltip_height() / 2.0),
                         (x * distance) + (x * half_width) + left - (tooltip_width() / 2.0))
