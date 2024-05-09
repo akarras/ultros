@@ -60,3 +60,5 @@ jemalloc_pprof = {version = "0.1.0", optional = true}
 
 [features]
 profiling = ["dep:tikv-jemallocator", "dep:jemalloc_pprof"]
+jemalloc = ["dep:tikv-jemallocator"]
+default = ["jemalloc"]
