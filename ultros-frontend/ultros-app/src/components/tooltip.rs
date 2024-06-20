@@ -45,7 +45,8 @@ pub fn Tooltip(
 
     let tooltip = {
         move || {
-            is_hover.get().then(move || {
+            (tooltip_text.with(|t| !t.is_empty()) &&
+            is_hover.get()).then(move || {
                 let (screen_width, screen_height) = use_window_size();
                 let (scroll_x, scroll_y) = use_window_scroll();
                 let node_ref = create_node_ref::<Div>();
