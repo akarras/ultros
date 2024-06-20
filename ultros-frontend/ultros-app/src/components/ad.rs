@@ -38,26 +38,34 @@ pub fn Ad(#[prop(optional)] class: Option<&'static str>) -> impl IntoView {
     move || {
         // let _ = pathname(); // reading from the path to reload this component on page load
         // let _ = search();
-        (!hide_ads().unwrap_or_default()).then(move ||view!{
-        <div class:hidden=unfilled class="ad">
-            <div class="flex flex-col h-full">
-                <span class="text-sm p-1 px-2 rounded-md bg-violet-950 shrink max-w-fit">"Ad"</span>
-                <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-8789160460804755"
-                    crossorigin="anonymous"
-                    on:error=move |_e| unfilled.set(true) ></script>
-                // <!-- Ultros-Ad-Main -->
-                <ins class={["adsbygoogle ", ad_class].concat()}
-                    style="display:block"
-                    data-ad-client="ca-pub-8789160460804755"
-                    data-ad-slot="1163555858"
-                    // data-adtest="on"
-                    node_ref=node></ins>
-                <script>
-                    (adsbygoogle = window.adsbygoogle || []).push({});
-                </script>
-                <span class="text-neutral-500 italic text-sm">"ads support the site. you may disable or enable them under "<A href="/settings">"Settings"</A></span>
+        (!hide_ads().unwrap_or_default()).then(move ||view! {
+            <div class:hidden=unfilled class="ad">
+                <div class="flex flex-col h-full">
+                    <span class="text-sm p-1 px-2 rounded-md bg-violet-950 shrink max-w-fit">
+                        "Ad"
+                    </span>
+                    <script
+                        async
+                        src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-8789160460804755"
+                        crossorigin="anonymous"
+                        on:error=move |_e| unfilled.set(true)
+                    ></script>
+                    // <!-- Ultros-Ad-Main -->
+                    <ins
+                        class=["adsbygoogle ", ad_class].concat()
+                        style="display:block"
+                        data-ad-client="ca-pub-8789160460804755"
+                        data-ad-slot="1163555858"
+                        // data-adtest="on"
+                        node_ref=node
+                    ></ins>
+                    <script>(adsbygoogle = window.adsbygoogle || []).push({});</script>
+                    <span class="text-neutral-500 italic text-sm">
+                        "ads support the site. you may disable or enable them under "
+                        <A href="/settings">"Settings"</A>
+                    </span>
+                </div>
             </div>
-        </div>
-    })
+        })
     }
 }

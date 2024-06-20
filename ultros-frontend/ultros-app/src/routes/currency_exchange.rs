@@ -77,14 +77,15 @@ impl Ord for ItemAmount {
 
 impl IntoView for ItemAmount {
     fn into_view(self) -> View {
-        view !{
+        view! {
             <div class="flex flex-row gap-1">
                 <A class="flex flex-row gap-1" href=format!("/item/{}", self.item.key_id.0)>
-                    <ItemIcon item_id=self.item.key_id.0 icon_size=IconSize::Small /><span>{self.item.name.as_str()}</span>
+                    <ItemIcon item_id=self.item.key_id.0 icon_size=IconSize::Small/>
+                    <span>{self.item.name.as_str()}</span>
                 </A>
                 <div>"x" {self.amount}</div>
-                <AddToList item_id=self.item.key_id.0 />
-                <Clipboard clipboard_text=self.item.name.as_str() />
+                <AddToList item_id=self.item.key_id.0/>
+                <Clipboard clipboard_text=self.item.name.as_str()/>
             </div>
         }.into_view()
     }
@@ -150,25 +151,41 @@ fn FilterModal(filter_name: &'static str) -> impl IntoView {
     let (is_open, set_open) = create_signal(false);
     view! {
         <div on:click=move |_| set_open(true)>
-            <div class="cursor-pointer text-white hover:text-violet-200"><Icon icon=icondata::AiFilterFilled /></div>
-            {move || is_open().then(|| {
-                let (min, set_min) = create_query_signal::<i32>(format!("{filter_name}_min"));
-                let (max, set_max) = create_query_signal::<i32>(format!("{filter_name}_max"));
-                view ! {
-                    <Modal set_visible=set_open>
-                        <h3 class="text-2xl font-bold">"Edit filter"</h3>
-                        {filter_name.replace("_", " ")}
-                        <div class="flex flex-row justify-between">
-                            <span>"Max"</span>
-                            <ParseableInputBox input=Signal::derive(move || { max() }) set_value=SignalSetter::map(move |value| set_max(value)) />
-                        </div>
-                        <div class="flex flex-row justify-between">
-                            <span>"Min"</span>
-                            <ParseableInputBox input=Signal::derive(move || { min() }) set_value=SignalSetter::map(move |value| set_min(value)) />
-                        </div>
-                    </Modal>
-                }
-            })}
+            <div class="cursor-pointer text-white hover:text-violet-200">
+                <Icon icon=icondata::AiFilterFilled/>
+            </div>
+            {move || {
+                is_open()
+                    .then(|| {
+                        let (min, set_min) = create_query_signal::<
+                            i32,
+                        >(format!("{filter_name}_min"));
+                        let (max, set_max) = create_query_signal::<
+                            i32,
+                        >(format!("{filter_name}_max"));
+                        view! {
+                            <Modal set_visible=set_open>
+                                <h3 class="text-2xl font-bold">"Edit filter"</h3>
+                                {filter_name.replace("_", " ")}
+                                <div class="flex flex-row justify-between">
+                                    <span>"Max"</span>
+                                    <ParseableInputBox
+                                        input=Signal::derive(move || { max() })
+                                        set_value=SignalSetter::map(move |value| set_max(value))
+                                    />
+                                </div>
+                                <div class="flex flex-row justify-between">
+                                    <span>"Min"</span>
+                                    <ParseableInputBox
+                                        input=Signal::derive(move || { min() })
+                                        set_value=SignalSetter::map(move |value| set_min(value))
+                                    />
+                                </div>
+                            </Modal>
+                        }
+                    })
+            }}
+
         </div>
     }
 }
@@ -329,18 +346,26 @@ pub fn ExchangeItem() -> impl IntoView {
     let item_name = move || item().map(|i| i.name.as_str()).unwrap_or_default();
     view! {
         <div>
-            <MetaTitle title={move || format!("Currency Exchange - {}", item_name())} />
-            <MetaDescription text=move || format!("All items that can be exchanged for {} with how much you stand to earn", item_name()) />
+            <MetaTitle title=move || format!("Currency Exchange - {}", item_name())/>
+            <MetaDescription text=move || {
+                format!(
+                    "All items that can be exchanged for {} with how much you stand to earn",
+                    item_name(),
+                )
+            }/>
             <div class="flex flex-col">
-                <div>{move || item().map(|i| &i.name)}" - Currency Exchange"</div>
+                <div>{move || item().map(|i| &i.name)} " - Currency Exchange"</div>
                 <div class="flex flex-row gap-1">
                     "Amount in:"
-                    <input prop:value=currency_quantity on:input=move |e| {
-                        let event = event_target_value(&e);
-                        if let Ok(p) = event.parse() {
-                            set_currency_quantity.set(Some(p));
+                    <input
+                        prop:value=currency_quantity
+                        on:input=move |e| {
+                            let event = event_target_value(&e);
+                            if let Ok(p) = event.parse() {
+                                set_currency_quantity.set(Some(p));
+                            }
                         }
-                    } />
+                    />
                 </div>
             </div>
             <div class="flex flex-col">
@@ -348,78 +373,124 @@ pub fn ExchangeItem() -> impl IntoView {
                     if home_world().is_none() {
                         view! {
                             <div>
-                                "Home world is not set, go to the "<A href="/settings">"settings"</A>" page and set your home world to see prices on this page"
+                                "Home world is not set, go to the "
+                                <A href="/settings">"settings"</A>
+                                " page and set your home world to see prices on this page"
                             </div>
-                        }.into_view()
+                        }
+                            .into_view()
                     } else {
                         view! {
                             <Suspense fallback=Loading>
-                    {move || {
-                        let sort_label = sorted_by();
-                        with_prices().map(|p: Vec<CurrencyTrade>| {
-                            let sorted_and_filtered_rows = move || {
-                                let query = query();
-                                let mut p = p.clone().into_iter().filter(|currency| {
-                                    let query = &query;
-                                    is_in_range(currency.price_per_item as i32, "price_per_item", query)
-                                    && is_in_range(currency.number_received as i32, "number_received", query)
-                                    && is_in_range(currency.total_profit as i32, "total_profit", query)
-                                    && is_in_range(currency.hours_between_sales as i32, "hours_between_sales", query)
+                                {move || {
+                                    let sort_label = sorted_by();
+                                    with_prices()
+                                        .map(|p: Vec<CurrencyTrade>| {
+                                            let sorted_and_filtered_rows = move || {
+                                                let query = query();
+                                                let mut p = p
+                                                    .clone()
+                                                    .into_iter()
+                                                    .filter(|currency| {
+                                                        let query = &query;
+                                                        is_in_range(
+                                                            currency.price_per_item as i32,
+                                                            "price_per_item",
+                                                            query,
+                                                        )
+                                                            && is_in_range(
+                                                                currency.number_received as i32,
+                                                                "number_received",
+                                                                query,
+                                                            )
+                                                            && is_in_range(
+                                                                currency.total_profit as i32,
+                                                                "total_profit",
+                                                                query,
+                                                            )
+                                                            && is_in_range(
+                                                                currency.hours_between_sales as i32,
+                                                                "hours_between_sales",
+                                                                query,
+                                                            )
+                                                    })
+                                                    .collect::<Vec<_>>();
+                                                CurrencyTrade::sort_vec_by_label(
+                                                    &mut p,
+                                                    sort_label.as_deref().unwrap_or("total_profit"),
+                                                    None,
+                                                );
+                                                p.into_iter()
+                                                    .map(|p| {
+                                                        view! {
+                                                            <tr>
+                                                                <td>{p.shop_names}</td>
+                                                                <td>{p.cost_item}</td>
+                                                                <td>{p.receive_item}</td>
+                                                                <td>{p.price_per_item}</td>
+                                                                <td>{p.number_received}</td>
+                                                                <td>{p.total_profit}</td>
+                                                                <td>{p.hours_between_sales}</td>
+                                                            </tr>
+                                                        }
+                                                    })
+                                                    .collect::<Vec<_>>()
+                                            };
+                                            let labels = CurrencyTrade::field_labels();
+                                            view! {
+                                                <table>
+                                                    <thead>
+                                                        {labels
+                                                            .into_iter()
+                                                            .enumerate()
+                                                            .map(|(i, l)| {
+                                                                view! {
+                                                                    <th class="uppercase">
+                                                                        <div class="flex flex-row gap-1">
+                                                                            <QueryButton
+                                                                                query_name="sorted-by"
+                                                                                value=l.to_string()
+                                                                                class="font-bold"
+                                                                                active_classes="font-bold underline"
+                                                                                default="total_profit" == *l
+                                                                            >
+                                                                                {l.replace("_", " ")}
+                                                                            </QueryButton>
+                                                                            {(i > 2)
+                                                                                .then(|| {
+                                                                                    view! {
+                                                                                        <Tooltip tooltip_text=Oco::Owned(
+                                                                                            format!("Filter {}", l.replace("_", " ")),
+                                                                                        )>
+                                                                                            <FilterModal filter_name=l/>
+                                                                                        </Tooltip>
+                                                                                    }
+                                                                                })}
 
-                                }).collect::<Vec<_>>();
-                                CurrencyTrade::sort_vec_by_label(&mut p, sort_label.as_deref().unwrap_or("total_profit"), None);
-                                p.into_iter().map(|p| view!{
-                                    <tr>
-                                        <td>{p.shop_names}</td>
-                                        <td>{p.cost_item}</td>
-                                        <td>{p.receive_item}</td>
-                                        <td>{p.price_per_item}</td>
-                                        <td>{p.number_received}</td>
-                                        <td>{p.total_profit}</td>
-                                        <td>{p.hours_between_sales}</td>
-                                    </tr>
-                                }).collect::<Vec<_>>()
+                                                                        </div>
+                                                                    </th>
+                                                                }
+                                                            })
+                                                            .collect::<Vec<_>>()}
+                                                    </thead>
+                                                    <tbody>{sorted_and_filtered_rows}</tbody>
+                                                </table>
+                                            }
+                                        })
+                                }}
+                                {move || {
+                                    sales
+                                        .with(|sales| {
+                                            if let Some(Err(_e)) = sales {
+                                                view! { "Error loading, try again in 30 seconds!" }
+                                                    .into_view()
+                                            } else {
+                                                ().into_view()
+                                            }
+                                        })
+                                }}
 
-                             };
-                            let labels = CurrencyTrade::field_labels();
-
-
-                            view! {
-                                <table>
-                                    <thead>
-                                    {labels
-                                        .into_iter()
-                                        .enumerate()
-                                        .map(|(i, l)| view!{
-                                            <th class="uppercase">
-                                                <div class="flex flex-row gap-1">
-                                                    <QueryButton query_name="sorted-by" value={l.to_string()} class="font-bold"
-                                                    active_classes="font-bold underline" default={"total_profit" == *l}>
-                                                        {l.replace("_", " ")}
-                                                    </QueryButton>
-                                                    {(i > 2).then(|| view! {
-                                                        <Tooltip tooltip_text=Oco::Owned(format!("Filter {}", l.replace("_", " ")))>
-                                                            <FilterModal filter_name=l />
-                                                        </Tooltip>
-                                                })}
-                                                </div>
-                                            </th>}).collect::<Vec<_>>()}
-                                    </thead>
-                                    <tbody>
-                                        {sorted_and_filtered_rows}
-                                    </tbody>
-                                </table>
-                            }
-                        })
-                    }}
-                    {move || {
-                        sales.with(|sales| if let Some(Err(_e)) = sales {
-                            view!{ "Error loading, try again in 30 seconds!"}.into_view()
-                        } else {
-                            ().into_view()
-                        })
-                    }}
-                </Suspense>
+                            </Suspense>
                         }
                     }
                 }}
@@ -458,7 +529,7 @@ impl IntoView for ShopNames {
     fn into_view(self) -> View {
         view! {
             <div class="flex flex-col">
-                {self.shops.into_iter().map(|shop| view!{ <div>{shop}</div>}).collect::<Vec<_>>()}
+                {self.shops.into_iter().map(|shop| view! { <div>{shop}</div> }).collect::<Vec<_>>()}
             </div>
         }
         .into_view()
@@ -531,37 +602,51 @@ pub fn CurrencySelection() -> impl IntoView {
 
     view! {
         <div class="container mx-auto gap-1 flex flex-col">
-        <span>"Discover lucrative opportunities in Final Fantasy 14 with our Currency Exchange tool.
-            Easily locate items purchasable with in-game currencies, such as Allied Seals or Wolf Marks, that can be resold for significant profits on the marketboard.
-            Whether you're a seasoned trader or just starting out, maximize your earnings by identifying high-value items and optimizing your currency investments."</span>
-        <MetaTitle title="Currency Exchange - Ultros"/>
-        <MetaDescription text="Find valuable items bought with in-game currency, sell for gil. Maximize earnings effortlessly. "/>
-        <div class="flex flex-row">"Search: "<Select items=Signal::derive(move || currencies.clone())
-            as_label=move |(_item, item_name, _category)| item_name.to_string()
-            choice=signal.into()
-            set_choice=signal.into()
-            children=move |(_id, _item, category), view| {
-            view !{
-                <div class="items-start flex flex-col">
-                    {view}
-                    <div class="italic">{category}</div>
-                </div>
-            }
-        }  /></div>
-        <div class="flex flex-col">
-        {
-            body_currencies
-                .into_iter()
-                .map(|(item_id, item_name, category_name)| {
-                    view! {
-                        <A href={item_id.to_string()} class="flex flex-row group p-1 rounded-xl items-center gap-1">
-                            <div class="text-xl font-bold text-white group-hover:text-violet-300 border-b-4 border-fuchsia-950 group-hover:border-fuchsia-800 transition-all ease-in-out duration-150">{item_name}</div>
-                            <div class="italic text-white group-hover:text-violet-400 transition-all ease-in-out duration-500">{category_name}</div>
-                        </A>}
-                })
-                .collect::<Vec<_>>()
-        }
-        </div>
+            <span>
+                "Discover lucrative opportunities in Final Fantasy 14 with our Currency Exchange tool.
+                Easily locate items purchasable with in-game currencies, such as Allied Seals or Wolf Marks, that can be resold for significant profits on the marketboard.
+                Whether you're a seasoned trader or just starting out, maximize your earnings by identifying high-value items and optimizing your currency investments."
+            </span>
+            <MetaTitle title="Currency Exchange - Ultros"/>
+            <MetaDescription text="Find valuable items bought with in-game currency, sell for gil. Maximize earnings effortlessly. "/>
+            <div class="flex flex-row">
+                "Search: "
+                <Select
+                    items=Signal::derive(move || currencies.clone())
+                    as_label=move |(_item, item_name, _category)| item_name.to_string()
+                    choice=signal.into()
+                    set_choice=signal.into()
+                    children=move |(_id, _item, category), view| {
+                        view! {
+                            <div class="items-start flex flex-col">
+                                {view} <div class="italic">{category}</div>
+                            </div>
+                        }
+                    }
+                />
+            </div>
+            <div class="flex flex-col">
+
+                {body_currencies
+                    .into_iter()
+                    .map(|(item_id, item_name, category_name)| {
+                        view! {
+                            <A
+                                href=item_id.to_string()
+                                class="flex flex-row group p-1 rounded-xl items-center gap-1"
+                            >
+                                <div class="text-xl font-bold text-white group-hover:text-violet-300 border-b-4 border-fuchsia-950 group-hover:border-fuchsia-800 transition-all ease-in-out duration-150">
+                                    {item_name}
+                                </div>
+                                <div class="italic text-white group-hover:text-violet-400 transition-all ease-in-out duration-500">
+                                    {category_name}
+                                </div>
+                            </A>
+                        }
+                    })
+                    .collect::<Vec<_>>()}
+
+            </div>
         </div>
     }
 }
@@ -569,11 +654,14 @@ pub fn CurrencySelection() -> impl IntoView {
 #[component]
 pub fn CurrencyExchange() -> impl IntoView {
     view! {
-        <A href="/currency-exchange"><h3 class="text-2xl font-bold text-white hover:text-violet-400 transition-all ease-in-out duration-500">"Currency Exchange"</h3></A>
         <Ad class="w-full h-[100px]"/>
         <div class="main-content">
-            <Outlet />
-
+            <A href="/currency-exchange">
+                <h3 class="text-2xl font-bold text-white hover:text-violet-400 transition-all ease-in-out duration-500">
+                    "Currency Exchange"
+                </h3>
+            </A>
+            <Outlet/>
         </div>
     }
 }

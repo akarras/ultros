@@ -19,5 +19,5 @@ pub fn RelativeToNow(timestamp: NaiveDateTime) -> impl IntoView {
             .map(|duration| Formatter::new().convert(duration))
             .unwrap_or("now".to_string())
     });
-    view! {<span>{time_display}</span>}
+    view! { <span>{time_display}</span> }
 }

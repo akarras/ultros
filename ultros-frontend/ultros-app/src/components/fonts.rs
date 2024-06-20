@@ -14,7 +14,7 @@ pub fn ItemSearchCategoryIcon(id: ItemSearchCategoryId) -> impl IntoView {
         let class_job = category.class_job;
         if let Some(class_job) = class_jobs.get(&class_job) {
             // view! {<i class=format!("icon xiv-ItemCategory_{}", class_job.abbreviation)></i>}
-            view! {<ClassJobIcon id=class_job.key_id/>}.into_view()
+            view! { <ClassJobIcon id=class_job.key_id/> }.into_view()
         } else {
             let value: Cow<'static, str> = match id.0 {
                 // singular armory items
@@ -68,7 +68,7 @@ pub fn ItemSearchCategoryIcon(id: ItemSearchCategoryId) -> impl IntoView {
                 .into(),
             };
 
-            view! {<i class=Some(value)></i>}.into_view()
+            view! { <i class=Some(value)></i> }.into_view()
         }
     })
 }
@@ -88,5 +88,5 @@ impl StrExt for str {
 
 #[component]
 pub fn ClassJobIcon(id: ClassJobId) -> impl IntoView {
-    view! {<i class=format!("icon xiv-class_job_{:03}", id.0)></i>}
+    view! { <i class=format!("icon xiv-class_job_{:03}", id.0)></i> }
 }

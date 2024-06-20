@@ -21,43 +21,76 @@ pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
         }
         sales
     });
-    view! {  <table class="w-full">
-        <thead>
-            <tr>
-                <th>"hq"</th>
-                <th>"price"</th>
-                <th>"qty."</th>
-                <th>"total"</th>
-                <th>"purchaser"</th>
-                <th>"world"</th>
-                <th>"datacenter"</th>
-                <th>"time sold"</th>
-            </tr>
-        </thead>
-        <tbody>
-            <For each=sale_history
-                key=move |sale| sale.sold_date.and_utc().timestamp()
-                children=move |sale| {
-                    let total = sale.price_per_item * sale.quantity;
-                    view! {
-                        <tr>
-                            <td>{sale.hq.then(||{view!{<Icon icon=i::BsCheck />}.into_view()})}</td>
-                            <td><Gil amount=sale.price_per_item/></td>
-                            <td>{sale.quantity}</td>
-                            <td><Gil amount=total /></td>
-                            <td>{sale.buyer_name}</td>
-                            <td><WorldName id=AnySelector::World(sale.world_id)/></td>
-                            <td><DatacenterName world_id=sale.world_id/></td>
-                            <td><RelativeToNow timestamp=sale.sold_date/></td>
-                        </tr>
+    view! {
+        <table class="w-full">
+            <thead>
+                <tr>
+                    <th>"hq"</th>
+                    <th>"price"</th>
+                    <th>"qty."</th>
+                    <th>"total"</th>
+                    <th>"purchaser"</th>
+                    <th>"world"</th>
+                    <th>"datacenter"</th>
+                    <th>"time sold"</th>
+                </tr>
+            </thead>
+            <tbody>
+                <For
+                    each=sale_history
+                    key=move |sale| sale.sold_date.and_utc().timestamp()
+                    children=move |sale| {
+                        let total = sale.price_per_item * sale.quantity;
+                        view! {
+                            <tr>
+                                <td>
+                                    {sale
+                                        .hq
+                                        .then(|| { view! { <Icon icon=i::BsCheck/> }.into_view() })}
+                                </td>
+                                <td>
+                                    <Gil amount=sale.price_per_item/>
+                                </td>
+                                <td>{sale.quantity}</td>
+                                <td>
+                                    <Gil amount=total/>
+                                </td>
+                                <td>{sale.buyer_name}</td>
+                                <td>
+                                    <WorldName id=AnySelector::World(sale.world_id)/>
+                                </td>
+                                <td>
+                                    <DatacenterName world_id=sale.world_id/>
+                                </td>
+                                <td>
+                                    <RelativeToNow timestamp=sale.sold_date/>
+                                </td>
+                            </tr>
+                        }
                     }
-                }
-            />
-            {move || (!show_more() && sales.with(|sales| sales.len() > 10)).then(|| {
-                view!{<tr><td colspan="8"><button class="btn" style="width: 100%;" on:click=move |_| set_show_more(true)>"Show more"</button></td></tr>}
-            })}
-        </tbody>
-    </table>
+                />
+
+                {move || {
+                    (!show_more() && sales.with(|sales| sales.len() > 10))
+                        .then(|| {
+                            view! {
+                                <tr>
+                                    <td colspan="8">
+                                        <button
+                                            class="btn"
+                                            style="width: 100%;"
+                                            on:click=move |_| set_show_more(true)
+                                        >
+                                            "Show more"
+                                        </button>
+                                    </td>
+                                </tr>
+                            }
+                        })
+                }}
+
+            </tbody>
+        </table>
     }
 }
 
@@ -226,15 +259,14 @@ pub fn SalesInsights(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
     view! {
         <h3 class="text-2xl text-white">"Sales Insights"</h3>
         <div class="flex flex-row items-start">
-        <div class:hidden=move || sales.with(|s| s.past_day.is_none())>
-            <h4>"Day stats"</h4>
-            <WindowStats sales=day_sales />
+            <div class:hidden=move || sales.with(|s| s.past_day.is_none())>
+                <h4>"Day stats"</h4>
+                <WindowStats sales=day_sales/>
+            </div>
+            <div class:hidden=move || sales.with(|s| s.month.is_none())>
+                <h4>"Month stats"</h4>
+                <WindowStats sales=month_sales/>
+            </div>
         </div>
-        <div class:hidden=move || sales.with(|s| s.month.is_none())>
-            <h4>"Month stats"</h4>
-            <WindowStats sales=month_sales />
-        </div>
-        </div>
-
     }
 }

@@ -110,22 +110,60 @@ fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
     let cheapest_prices = use_context::<CheapestPrices>().unwrap();
 
     view! {
-        <Suspense fallback=move || view!{<SingleLineSkeleton />}>
-            {move || cheapest_prices.read_listings.with(|prices| {
-                prices.as_ref().and_then(|prices| prices.as_ref().ok()).map(|prices| {
-                    let hq_amount : i32 = IngredientsIter::new(recipe)
-                    .flat_map(|(ingredient, amount)| items.get(&ingredient).map(|item| (item, amount)))
-                    .flat_map(|(item, quantity)| {
-                        prices.1.map.get(&CheapestListingMapKey { item_id: item.key_id.0, hq: item.can_be_hq}).map(|data| data.price * quantity as i32)
-                    }).sum();
-                    let amount : i32 = IngredientsIter::new(recipe)
-                    .flat_map(|(ingredient, amount)| items.get(&ingredient).map(|item| (item, amount)))
-                    .flat_map(|(item, quantity)| {
-                        prices.1.map.get(&CheapestListingMapKey { item_id: item.key_id.0, hq: item.can_be_hq}).map(|data| data.price * quantity as i32)
-                    }).sum();
-                    view!{<span class="flex flex-row gap-1">"HQ: " <Gil amount=hq_amount/> " LQ:" <Gil amount /></span>}
-                })
-            })}
+        <Suspense fallback=move || {
+            view! { <SingleLineSkeleton/> }
+        }>
+            {move || {
+                cheapest_prices
+                    .read_listings
+                    .with(|prices| {
+                        prices
+                            .as_ref()
+                            .and_then(|prices| prices.as_ref().ok())
+                            .map(|prices| {
+                                let hq_amount: i32 = IngredientsIter::new(recipe)
+                                    .flat_map(|(ingredient, amount)| {
+                                        items.get(&ingredient).map(|item| (item, amount))
+                                    })
+                                    .flat_map(|(item, quantity)| {
+                                        prices
+                                            .1
+                                            .map
+                                            .get(
+                                                &CheapestListingMapKey {
+                                                    item_id: item.key_id.0,
+                                                    hq: item.can_be_hq,
+                                                },
+                                            )
+                                            .map(|data| data.price * quantity as i32)
+                                    })
+                                    .sum();
+                                let amount: i32 = IngredientsIter::new(recipe)
+                                    .flat_map(|(ingredient, amount)| {
+                                        items.get(&ingredient).map(|item| (item, amount))
+                                    })
+                                    .flat_map(|(item, quantity)| {
+                                        prices
+                                            .1
+                                            .map
+                                            .get(
+                                                &CheapestListingMapKey {
+                                                    item_id: item.key_id.0,
+                                                    hq: item.can_be_hq,
+                                                },
+                                            )
+                                            .map(|data| data.price * quantity as i32)
+                                    })
+                                    .sum();
+                                view! {
+                                    <span class="flex flex-row gap-1">
+                                        "HQ: " <Gil amount=hq_amount/> " LQ:" <Gil amount/>
+                                    </span>
+                                }
+                            })
+                    })
+            }}
+
         </Suspense>
     }
 }
@@ -137,18 +175,28 @@ fn Recipe(recipe: &'static Recipe) -> impl IntoView {
         .flat_map(|(ingredient, amount)| items.get(&ingredient).map(|item| (item, amount)))
         .map(|(ingredient, amount)| view! {
             <div class="flex md:flex-row flex-col">
-                <div class="flex flex-row"><span style="color:#dab;">{amount.to_string()}</span>"x"<SmallItemDisplay item=ingredient/></div>
-                <CheapestPrice item_id=ingredient.key_id />
-            </div>})
+                <div class="flex flex-row">
+                    <span style="color:#dab;">{amount.to_string()}</span>
+                    "x"
+                    <SmallItemDisplay item=ingredient/>
+                </div>
+                <CheapestPrice item_id=ingredient.key_id/>
+            </div>
+        })
         .collect::<Vec<_>>();
     let target_item = items.get(&recipe.item_result)?;
-    Some(view! {<div class="content-well">
-        "Crafting Recipe:"
-        <div class="flex md:flex-row flex-col"><SmallItemDisplay item=target_item/><CheapestPrice item_id=target_item.key_id /></div>
-        "Ingredients:"
-        {ingredients}
-        <div class="flex md:flex-row flex-col p-1 gap-1"><span class="underline">"Total craft cost:"</span>" "<RecipePriceEstimate recipe /></div>
-    </div>})
+    Some(view! {
+        <div class="content-well">
+            "Crafting Recipe:" <div class="flex md:flex-row flex-col">
+                <SmallItemDisplay item=target_item/>
+                <CheapestPrice item_id=target_item.key_id/>
+            </div> "Ingredients:" {ingredients} <div class="flex md:flex-row flex-col p-1 gap-1">
+                <span class="underline">"Total craft cost:"</span>
+                " "
+                <RecipePriceEstimate recipe/>
+            </div>
+        </div>
+    })
 }
 
 fn npc_rows(npc: &ENpcBase) -> impl Iterator<Item = u32> {
@@ -219,11 +267,15 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                 let price = item.price_mid as i32;
                 Some(view! {
                     <a
-                    href={format!("https://garlandtools.org/db/#npc/{}", resident.key_id.0)}
-                    class="flex flex-col p-1 bg-gradient- border border-solid border-violet-950
-                    transition-all duration-500 bg-gradient-to-tl to-fuchsia-950 via-black from-violet-950 bg-size-200 bg-pos-0 hover:bg-pos-100">
-                        <div class="flex flex-row"><div class="text-md">{&resident.singular} </div><Gil amount=price /></div>
-                        <div class="text-sm italic">"("{&shop.name}")"</div>
+                        href=format!("https://garlandtools.org/db/#npc/{}", resident.key_id.0)
+                        class="flex flex-col p-1 bg-gradient- border border-solid border-violet-950
+                        transition-all duration-500 bg-gradient-to-tl to-fuchsia-950 via-black from-violet-950 bg-size-200 bg-pos-0 hover:bg-pos-100"
+                    >
+                        <div class="flex flex-row">
+                            <div class="text-md">{&resident.singular}</div>
+                            <Gil amount=price/>
+                        </div>
+                        <div class="text-sm italic">"(" {&shop.name} ")"</div>
                     </a>
                 })
             }).collect::<Vec<_>>())
@@ -254,15 +306,30 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                     .filter(|i| i.key_id.0 != item.key_id.0)
                     .map(|item| {
                         view! {
-                            <A class="flex flex-col gap-1 rounded border border-violet-950
-                            transition-all duration-500 bg-gradient-to-br to-fuchsia-950 via-black from-violet-950 bg-size-200 bg-pos-0
-                            hover:bg-pos-100 p-2" exact=true href=format!("/item/{}/{}", price_zone().as_ref().map(|z| z.get_name()).unwrap_or("North-America"), item.key_id.0)>
+                            <A
+                                class="flex flex-col gap-1 rounded border border-violet-950
+                                transition-all duration-500 bg-gradient-to-br to-fuchsia-950 via-black from-violet-950 bg-size-200 bg-pos-0
+                                hover:bg-pos-100 p-2"
+                                exact=true
+                                href=format!(
+                                    "/item/{}/{}",
+                                    price_zone()
+                                        .as_ref()
+                                        .map(|z| z.get_name())
+                                        .unwrap_or("North-America"),
+                                    item.key_id.0,
+                                )
+                            >
                                 <div class="flex flex-row">
-                                    <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
+                                    <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium/>
                                     <span style="width: 300px;">{&item.name}</span>
-                                    <span style="color: #abc; width: 50px;">{item.level_item.0}</span>
+                                    <span style="color: #abc; width: 50px;">
+                                        {item.level_item.0}
+                                    </span>
                                 </div>
-                                <div class="min-w-60 h-5"><CheapestPrice item_id=item.key_id /></div>
+                                <div class="min-w-60 h-5">
+                                    <CheapestPrice item_id=item.key_id/>
+                                </div>
                             </A>
                         }
                     })
@@ -273,16 +340,17 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     };
     let recipes = create_memo(move |_| {
         recipe_tree_iter(ItemId(item_id()))
-            .map(|recipe| view! {<Recipe recipe/>})
+            .map(|recipe| view! { <Recipe recipe/> })
             .take(30)
             .collect::<Vec<_>>()
     });
 
-    view! { <div class="flex-col flex-auto flex-wrap p-2" class:hidden=move || item_set().is_empty()>
+    view! {
+        <div class="flex-col flex-auto flex-wrap p-2" class:hidden=move || item_set().is_empty()>
             <span class="content-title">"related items"</span>
             <div class="flex-row flex-wrap gap-3">{item_set}</div>
         </div>
-        <VendorItems item_id />
+        <VendorItems item_id/>
         <div class="content-well flex-col p-2" class:hidden=move || recipes().is_empty()>
             <span class="content-title">"crafting recipes"</span>
             <div class="flex-wrap">{recipes}</div>

@@ -111,7 +111,11 @@ impl<'a> TextSpan<'a> {
         .flatten()
         .collect::<Vec<String>>();
         let text = text.to_string();
-        Some(view! {<span style=styles.join(";")><RawText text=&text /></span>}.into_view())
+        Some(view! {
+            <span style=styles.join(";")>
+                <RawText text=&text/>
+            </span>
+        }.into_view())
     }
 }
 
@@ -130,7 +134,7 @@ fn into_parts(text: &str) -> Vec<View> {
     let mut text_parts = vec![];
     if let Some((begin, span, end)) = TextSpan::new(&text) {
         if !begin.is_empty() {
-            text_parts.push(view! {<RawText text=begin/>}.into_view());
+            text_parts.push(view! { <RawText text=begin/> }.into_view());
         }
         if let Some(view) = span.to_view() {
             text_parts.push(view);
@@ -165,7 +169,7 @@ fn into_parts(text: &str) -> Vec<View> {
             }
         }
     } else {
-        text_parts.push(view! {<RawText text=&text/>}.into_view());
+        text_parts.push(view! { <RawText text=&text/> }.into_view());
     }
     text_parts
 }
@@ -175,7 +179,7 @@ fn into_parts(text: &str) -> Vec<View> {
 #[component]
 pub fn UIText(text: String) -> impl IntoView {
     let text_parts = into_parts(&text);
-    view! {<div class="ui-text">{text_parts}</div>}
+    view! { <div class="ui-text">{text_parts}</div> }
 }
 
 #[cfg(test)]

@@ -82,7 +82,10 @@ pub fn Tooltip(
                 };
                 view! {
                     <Portal>
-                        <div class="fixed bg-violet-950 rounded-xl p-2 z-50 min-w-20 max-w-96" style=desired_position>
+                        <div
+                            class="fixed bg-violet-950 rounded-xl p-2 z-50 min-w-20 max-w-96"
+                            style=desired_position
+                        >
                             {move || tooltip_text().to_string()}
                         </div>
                     </Portal>
@@ -91,8 +94,16 @@ pub fn Tooltip(
         }
     };
     view! {
-
-        <div class="tooltip" on:mouseover=move |_| { is_hover.set(true); } on:mouseout=move |_| { is_hover.set(false); } node_ref=target>
+        <div
+            class="tooltip"
+            on:mouseover=move |_| {
+                is_hover.set(true);
+            }
+            on:mouseout=move |_| {
+                is_hover.set(false);
+            }
+            node_ref=target
+        >
             {children()}
             {tooltip}
         </div>

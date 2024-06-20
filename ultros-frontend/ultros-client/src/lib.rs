@@ -180,7 +180,7 @@ pub fn hydrate() {
             let region = region.clone();
             let worlds = Ok(worlds);
             provide_meta_context();
-            view! { <App worlds region /> }
+            view! { <App worlds region/> }
         });
     });
 }

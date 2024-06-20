@@ -19,12 +19,23 @@ pub fn Modal(
     });
     view! {
         <Portal>
-            <div class="absolute top-0 bottom-0 left-0 right-0 bg-neutral-950 bg-opacity-25 z-40" on:click=move |_| set_visible(false)>
-                <div class="flex flex-col mx-auto from-black to-violet-950 bg-gradient-to-br p-10 left-0 right-0 sm:w-[500px] w-screen z-50 rounded-xl shadow-md" style=move || format!("margin-top: {}px", y() + 50.0) on:click=move |e| {
-                    e.stop_propagation();
-                }>
-                    <div class="self-end ml-auto cursor-pointer hover:text-neutral-200" on:click=move |_| set_visible(false) on:focusout=move |_| set_visible(false)>
-                        <Icon icon=i::CgClose />
+            <div
+                class="absolute top-0 bottom-0 left-0 right-0 bg-neutral-950 bg-opacity-25 z-40"
+                on:click=move |_| set_visible(false)
+            >
+                <div
+                    class="flex flex-col mx-auto from-black to-violet-950 bg-gradient-to-br p-10 left-0 right-0 sm:w-[500px] w-screen z-50 rounded-xl shadow-md"
+                    style=move || format!("margin-top: {}px", y() + 50.0)
+                    on:click=move |e| {
+                        e.stop_propagation();
+                    }
+                >
+                    <div
+                        class="self-end ml-auto cursor-pointer hover:text-neutral-200"
+                        on:click=move |_| set_visible(false)
+                        on:focusout=move |_| set_visible(false)
+                    >
+                        <Icon icon=i::CgClose/>
                         <div class="sr-only">"close modal"</div>
                     </div>
                     {children()}

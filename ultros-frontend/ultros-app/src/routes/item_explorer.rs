@@ -46,14 +46,18 @@ fn CategoryView(category: u8) -> impl IntoView {
     categories.sort_by_key(|(order, _, _)| *order);
     view! {
         <div class="flex flex-col text-xl">
-        {categories.into_iter()
-            .map(|(_, name, id)| view! {
-                <SideMenuButton href=["/items/category/", &name.replace("/", "%2F")].concat()>
-                    <ItemSearchCategoryIcon id=*id />
-                    {name}
-                </SideMenuButton>
-            })
-            .collect::<Vec<_>>()}
+            {categories
+                .into_iter()
+                .map(|(_, name, id)| {
+                    view! {
+                        <SideMenuButton href=["/items/category/", &name.replace("/", "%2F")]
+                            .concat()>
+                            <ItemSearchCategoryIcon id=*id/>
+                            {name}
+                        </SideMenuButton>
+                    }
+                })
+                .collect::<Vec<_>>()}
         </div>
     }
 }
@@ -162,17 +166,23 @@ fn JobsList() -> impl IntoView {
     let jobs = &xiv_gen_db::data().class_jobs;
     let mut jobs: Vec<_> = jobs.iter().collect();
     jobs.sort_by_key(|(_, job)| job.ui_priority);
-    view! {<div class="flex flex-col text-xl">
-        {jobs.into_iter()
-            .filter(|(_id, job)| job.class_job_parent.0 != 0)
-            .map(|(_id, job)| view!{
-                <SideMenuButton href=["/items/jobset/", &job.abbreviation].concat()>
-                    <ClassJobIcon id=job.key_id />
-                    // {&job.abbreviation}
-                    {job.name_english.as_str()}
-                </SideMenuButton>
-            }).collect::<Vec<_>>()}
-    </div>}
+    view! {
+        <div class="flex flex-col text-xl">
+            {jobs
+                .into_iter()
+                .filter(|(_id, job)| job.class_job_parent.0 != 0)
+                .map(|(_id, job)| {
+                    view! {
+                        <SideMenuButton href=["/items/jobset/", &job.abbreviation].concat()>
+                            <ClassJobIcon id=job.key_id/>
+                            // {&job.abbreviation}
+                            {job.name_english.as_str()}
+                        </SideMenuButton>
+                    }
+                })
+                .collect::<Vec<_>>()}
+        </div>
+    }
 }
 
 #[component]
@@ -207,10 +217,13 @@ pub fn CategoryItems() -> impl IntoView {
             .to_string()
     });
     view! {
-    <MetaTitle title=move || format!("{} - Item Explorer", category_view_name())/>
-    <MetaDescription text=move || ["List of items for the item category ", &category_view_name()].concat()/>
-    <h3 class="text-xl">{category_view_name}</h3>
-    <ItemList items />}
+        <MetaTitle title=move || format!("{} - Item Explorer", category_view_name())/>
+        <MetaDescription text=move || {
+            ["List of items for the item category ", &category_view_name()].concat()
+        }/>
+        <h3 class="text-xl">{category_view_name}</h3>
+        <ItemList items/>
+    }
 }
 
 #[component]
@@ -256,10 +269,16 @@ pub fn JobItems() -> impl IntoView {
         <MetaTitle title=move || format!("{} - Item Explorer", job_set())/>
         <MetaDescription text=move || ["All items equippable by ", &job_set()].concat()/>
         <h3 class="text-xl">{job_set}</h3>
-    <div class="flex-row">
-        <Toggle checked=market_only set_checked=set_market_only checked_label="Filtering Unmarketable Items" unchecked_label="Showing all items" />
-    </div>
-    <ItemList items />}
+        <div class="flex-row">
+            <Toggle
+                checked=market_only
+                set_checked=set_market_only
+                checked_label="Filtering Unmarketable Items"
+                unchecked_label="Showing all items"
+            />
+        </div>
+        <ItemList items/>
+    }
 }
 
 #[component]
@@ -269,7 +288,9 @@ pub fn DefaultItems() -> impl IntoView {
         <MetaDescription text="Lookup items by their category. Similar to the market board categories that are visible in Final Fantasy 14. Find the cheapest minions, or find that new piece of glamour for your Summoner."/>
         <div class="flex flex-col">
             <div>"Choose a category from the menu to explore items."</div>
-            <div>"Once you choose a category, you will be able to sort the items by price, date added, alphabetically, or by item level."</div>
+            <div>
+                "Once you choose a category, you will be able to sort the items by price, date added, alphabetically, or by item level."
+            </div>
             <div>""</div>
         </div>
     }
@@ -436,62 +457,130 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
         })
     };
     view! {
-    <div class="flex flex-row justify-between">
-        <div class="flex flex-row">
-            <QueryButton query_name="sort" value="key" class="p-1 !text-violet-200 hover:text-violet-600" active_classes="p-1 !text-violet-500">
-                <div class="flex flex-row">
-                    <Icon icon=i::BiCalendarAltRegular/>
-                     "ADDED"
-                </div>
-            </QueryButton>
-            <QueryButton query_name="sort" value="price" class="p-1 !text-violet-200 hover:text-violet-600" active_classes="p-1 !text-violet-500">
-                <div class="flex flex-row"><Icon icon=i::ImPriceTag/>"PRICE"</div>
-            </QueryButton>
-            <QueryButton query_name="sort" value="name" class="p-1 !text-violet-200 hover:text-violet-600" active_classes="p-1 !text-violet-500">
-                "NAME"
-            </QueryButton>
-            <QueryButton query_name="sort" value="ilvl" class="p-1 !text-violet-200 hover:text-violet-600" active_classes="p-1 !text-violet-500" default=true>
-                "ILVL"
-            </QueryButton>
-        </div>
-        <div class="flex flex-row">
-            <QueryButton query_name="dir" value="asc" class="p-1 !text-violet-200 hover:text-violet-600" active_classes="p-1 !text-violet-500">
-                <div class="flex flex-row"><Icon icon=i::BiSortUpRegular/>"ASC"</div>
-            </QueryButton>
-            <QueryButton query_name="dir" value="desc" class="p-1 !text-violet-200 hover:text-violet-600" active_classes="p-1 !text-violet-500" default=true>
-                <div class="flex flex-row"><Icon icon=i::BiSortDownRegular/>"DESC"</div>
-            </QueryButton>
-        </div>
-
-    </div>
-    <div class="flex flex-row flex-wrap">
-        {move || pages().into_iter().map(|page| {
-            view!{
-                <QueryButton query_name="page" value=(page.offset + 1).to_string() class="p-1 !text-violet-200 hover:text-violet-600" active_classes="p-1 !text-violet-500" default=page.offset == 0>
-                    {page.offset + 1}
+        <div class="flex flex-row justify-between">
+            <div class="flex flex-row">
+                <QueryButton
+                    query_name="sort"
+                    value="key"
+                    class="p-1 !text-violet-200 hover:text-violet-600"
+                    active_classes="p-1 !text-violet-500"
+                >
+                    <div class="flex flex-row">
+                        <Icon icon=i::BiCalendarAltRegular/>
+                        "ADDED"
+                    </div>
                 </QueryButton>
+                <QueryButton
+                    query_name="sort"
+                    value="price"
+                    class="p-1 !text-violet-200 hover:text-violet-600"
+                    active_classes="p-1 !text-violet-500"
+                >
+                    <div class="flex flex-row">
+                        <Icon icon=i::ImPriceTag/>
+                        "PRICE"
+                    </div>
+                </QueryButton>
+                <QueryButton
+                    query_name="sort"
+                    value="name"
+                    class="p-1 !text-violet-200 hover:text-violet-600"
+                    active_classes="p-1 !text-violet-500"
+                >
+                    "NAME"
+                </QueryButton>
+                <QueryButton
+                    query_name="sort"
+                    value="ilvl"
+                    class="p-1 !text-violet-200 hover:text-violet-600"
+                    active_classes="p-1 !text-violet-500"
+                    default=true
+                >
+                    "ILVL"
+                </QueryButton>
+            </div>
+            <div class="flex flex-row">
+                <QueryButton
+                    query_name="dir"
+                    value="asc"
+                    class="p-1 !text-violet-200 hover:text-violet-600"
+                    active_classes="p-1 !text-violet-500"
+                >
+                    <div class="flex flex-row">
+                        <Icon icon=i::BiSortUpRegular/>
+                        "ASC"
+                    </div>
+                </QueryButton>
+                <QueryButton
+                    query_name="dir"
+                    value="desc"
+                    class="p-1 !text-violet-200 hover:text-violet-600"
+                    active_classes="p-1 !text-violet-500"
+                    default=true
+                >
+                    <div class="flex flex-row">
+                        <Icon icon=i::BiSortDownRegular/>
+                        "DESC"
+                    </div>
+                </QueryButton>
+            </div>
+
+        </div>
+        <div class="flex flex-row flex-wrap">
+            {move || {
+                pages()
+                    .into_iter()
+                    .map(|page| {
+                        view! {
+                            <QueryButton
+                                query_name="page"
+                                value=(page.offset + 1).to_string()
+                                class="p-1 !text-violet-200 hover:text-violet-600"
+                                active_classes="p-1 !text-violet-500"
+                                default=page.offset == 0
+                            >
+                                {page.offset + 1}
+                            </QueryButton>
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            }}
+        </div>
+        <For
+            each=items
+            key=|(id, item)| (id.0, &item.name)
+            children=|(id, item)| {
+                view! {
+                    <div class="grid xl:grid-cols-4 grid-flow-row gap-1">
+                        <div class="xl:col-span-2 flex flex-row">
+                            <SmallItemDisplay item=item/>
+                            <AddToList item_id=id.0/>
+                        </div>
+                        <CheapestPrice item_id=*id show_hq=false/>
+                        {item
+                            .can_be_hq
+                            .then(|| view! { <CheapestPrice item_id=*id show_hq=true/> })}
+                    </div>
+                }
             }
-        }).collect::<Vec<_>>()}
-    </div>
-    <For
-        each=items
-        key=|(id, item)| (id.0, &item.name)
-        children=|(id, item)| view!{<div class="grid xl:grid-cols-4 grid-flow-row gap-1">
-            <div class="xl:col-span-2 flex flex-row"><SmallItemDisplay item=item /><AddToList item_id=id.0 /></div>
-            <CheapestPrice item_id=*id show_hq=false />
-            {item.can_be_hq.then(|| view!{<CheapestPrice item_id=*id show_hq=true />})}
-        </div> }/>
-    <QueryButton query_name="page" value=move || (page().unwrap_or(1) + 1).to_string() class=move || {
-        let pages = pages();
-        let page = page();
-        if pages.page_count() > page.unwrap_or(1).try_into().unwrap_or(1) {
-            "p-1 !text-violet-200 hover:text-violet-600"
-        } else {
-            "hidden"
-        }
-        } active_classes="p-1 !text-violet-500">
-        "Next page: "{page().unwrap_or(1) + 1}
-    </QueryButton>
+        />
+        <QueryButton
+            query_name="page"
+            value=move || (page().unwrap_or(1) + 1).to_string()
+            class=move || {
+                let pages = pages();
+                let page = page();
+                if pages.page_count() > page.unwrap_or(1).try_into().unwrap_or(1) {
+                    "p-1 !text-violet-200 hover:text-violet-600"
+                } else {
+                    "hidden"
+                }
+            }
+            active_classes="p-1 !text-violet-500"
+        >
+            "Next page: "
+            {page().unwrap_or(1) + 1}
+        </QueryButton>
     }
 }
 

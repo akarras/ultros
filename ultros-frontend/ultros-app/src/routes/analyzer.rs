@@ -307,141 +307,288 @@ fn AnalyzerTable(
     const DATACENTER_WIDTH: &str = "width: 130px";
     const WORLD_WIDTH: &str = "width: 260px";
     view! {
-
-       <div class="flex flex-col md:flex-row gap-2">
-            <span>"filter:"</span><br/>
-           <div class="flex-column">
-                <label for>"minimum profit:"<br/>
-               {move || minimum_profit().map(|profit| {
-                    view!{<Gil amount=profit /> }
-               }.into_view()).unwrap_or("---".into_view())}
-               </label><br/>
-               <input class="p-1 w-40" id="minimum_profit" min=0 max=100000 type="number" prop:value=minimum_profit
-                    on:input=move |input| { let value = event_target_value(&input);
+        <div class="flex flex-col md:flex-row gap-2">
+            <span>"filter:"</span>
+            <br/>
+            <div class="flex-column">
+                <label for>
+                    "minimum profit:" <br/>
+                    {move || {
+                        minimum_profit()
+                            .map(|profit| {
+                                {
+                                    view! { <Gil amount=profit/> }
+                                }
+                                    .into_view()
+                            })
+                            .unwrap_or("---".into_view())
+                    }}
+                </label>
+                <br/>
+                <input
+                    class="p-1 w-40"
+                    id="minimum_profit"
+                    min=0
+                    max=100000
+                    type="number"
+                    prop:value=minimum_profit
+                    on:input=move |input| {
+                        let value = event_target_value(&input);
                         if let Ok(profit) = value.parse::<i32>() {
                             set_minimum_profit(Some(profit))
                         } else if value.is_empty() {
                             info!("clearing profit");
                             set_minimum_profit(None);
-                        } }/>
-           </div>
-           <div class="flex-column">
-                <label for="minimum_roi">"minimum ROI:"<br/>{move || minimum_roi().map(|roi| format!("{roi}%")).unwrap_or("---".to_string())}</label><br/>
-               <input class="p-1 w-40"  min=0 max=100000 type="number" prop:value=minimum_roi
-                on:input=move |input| {
-                    let value = event_target_value(&input);
-                    if let Ok(roi) = value.parse::<i32>() {
-                        set_minimum_roi(Some(roi));
-                    } else if value.is_empty() {
-                        info!("clearing roi");
-                        set_minimum_roi(None);
-                    }} />
-
-           </div>
-           <div class="flex-column">
-               <label for="predicted_time">"minimum time (use time notation, ex. 1w 30m):"<br/>{predicted_time_string}</label><br/>
-               <input class="p-1 w-40" id="predicted_time" prop:value=move || max_predicted_time().unwrap_or_default() on:input=move |input| {
-                    let value = event_target_value(&input);
-                    set_max_predicted_time(Some(value))
-                } />
-           </div>
-       </div>
-       <div class="flex flex-col-reverse md:flex-row">
-        <div class="grid-table" role="table">
-            <div class="grid-header" role="rowgroup">
-                <div role="columnheader" class="w-[25px]">"HQ"</div>
-                <div role="columnheader first" class="w-[450px]">"Item"</div>
-                <div role="columnheader" style="width:100px;">
-                    <Tooltip tooltip_text=Oco::from("Sort by profit")>
-                        <QueryButton class="!text-fuchsia-300 hover:text-fuchsia-200" active_classes="!text-neutral-300 hover:text-neutral-200" query_name="sort" value="profit">
-                            <div class="flex-row flex-space">
-                                "Profit" {move || (sort_mode() == Some(SortMode::Profit)).then(|| { view!{<Icon icon=i::BiSortDownRegular /> }})}
-                            </div>
-                        </QueryButton>
-                    </Tooltip>
-                </div>
-                <div role="columnheader" style="width:100px;">
-                    <Tooltip tooltip_text=Oco::from("Sort by R.O.I")>
-                        <QueryButton class="!text-fuchsia-300 hover:text-fuchsia-200" active_classes="!text-neutral-300 hover:text-neutral-200" query_name="sort" value="roi" default=true>
-                            <div class="flex-row flex-space">
-                                "R.O.I." {move || (sort_mode() == Some(SortMode::Roi)).then(|| { view!{<Icon icon=i::BiSortDownRegular /> }})}
-                            </div>
-                        </QueryButton>
-                    </Tooltip>
-                </div>
-                <div role="columnheader" style=WORLD_WIDTH>
-                    "World" <QueryButton query_name="world" value="" class="!text-fuchsia-300 hover:text-fuchsia-200" active_classes="hidden"><Tooltip tooltip_text=Oco::from("Clear this world filter")>{move || ["[", &world_filter().unwrap_or_default(), "]"].concat()}</Tooltip></QueryButton>
-                </div>
-                <div role="columnheader" style=DATACENTER_WIDTH>
-                    "Datacenter" <QueryButton query_name="datacenter" value="" class="!text-fuchsia-300 hover:text-fuchsia-200" active_classes="hidden"><Tooltip tooltip_text=Oco::from("Clear this datacenter filter")>{move || ["[", &datacenter_filter().unwrap_or_default(), "]"].concat()}</Tooltip></QueryButton>
-                </div>
-                <div role="columnheader" style="width: 300px;">"Next sale"</div>
+                        }
+                    }
+                />
             </div>
-            <VirtualScroller
-                viewport_height=1000.0
-                row_height=32.3333
-                each=sorted_data.into()
-                key=move |(i, data)| {
-                    (*i, data.sale_summary.item_id, data.cheapest_world_id, data.sale_summary.hq)
-                }
-                view=move |(i, data)| {
-                    let world = worlds.lookup_selector(AnySelector::World(data.cheapest_world_id));
-                    let datacenter = world
-                        .as_ref()
-                        .and_then(|world| {
-                            let datacenters = worlds.get_datacenters(world);
-                            datacenters.first().map(|dc| dc.name.as_str())
-                        })
-                        .unwrap_or_default()
-                        .to_string();
-                    let datacenter = Signal::derive(move || datacenter.clone());
-                    let world = world
-                        .as_ref()
-                        .map(|r| r.get_name())
-                        .unwrap_or_default()
-                        .to_string();
-                    let world = Signal::derive(move || world.clone());
-                    let world_event = world.clone();
-                    let datacenter_event = datacenter.clone();
-                    let item_id = data.sale_summary.item_id;
-                    let item = items
-                        .get(&ItemId(item_id))
-                        .map(|item| item.name.as_str())
-                        .unwrap_or_default();
-                    view! {<div class="grid-row" role="row-group" class:even=move || (i % 2) == 0 class:odd=move || (i % 2) == 1>
-                        <div role="cell" style="width: 25px;">{data.sale_summary.hq.then_some("✅")}</div>
-                        <div role="cell" class="flex flex-row w-[450px]">
-                            <a class="flex flex-row" href=format!("/item/{}/{item_id}", world())>
-                                <ItemIcon item_id icon_size=IconSize::Small/>
-                                {item}
-                            </a>
-                            <AddToList item_id />
-                            <Clipboard clipboard_text=item.to_string()/>
-                        </div>
-                        <div role="cell" style="width: 100px;"><Gil amount=data.profit /></div>
-                        <div role="cell" style="width: 100px;">{data.return_on_investment}"%"</div>
-                        <div role="cell" style=WORLD_WIDTH><Gil amount=data.cheapest_price/>" on "
-                                <Tooltip tooltip_text={MaybeSignal::Dynamic(Signal::derive(move || format!("Only show {}", world()).into()))}>
-                                    <QueryButton query_name="world" value=world_event.clone() class="!text-fuchsia-300" active_classes="!text-neutral-300 hover:text-neutral-200" remove_queries=&["datacenter"]>{world}</QueryButton>
-                                </Tooltip>
-                            </div>
-                        <div role="cell" style=DATACENTER_WIDTH>
-                            <Tooltip tooltip_text={MaybeSignal::Dynamic(Signal::derive(move || format!("Only show {}", datacenter()).into()))}>
-                            <QueryButton query_name="datacenter" value=datacenter_event.clone() class="!text-fuchsia-300"
-                                active_classes="!text-neutral-300 hover:text-neutral-200" remove_queries=&["world"]>{datacenter}</QueryButton>
-                            </Tooltip>
-                        </div>
-                        <div role="cell" style="width: 300px;">{data.sale_summary
-                                .avg_sale_duration
-                                .and_then(|sale_duration| {
-                                    let duration = sale_duration.to_std().ok()?;
-                                    Some(format_duration(duration).to_string())
-                                })
-                        }</div>
-                        </div>}
-                }/>
+            <div class="flex-column">
+                <label for="minimum_roi">
+                    "minimum ROI:" <br/>
+                    {move || {
+                        minimum_roi().map(|roi| format!("{roi}%")).unwrap_or("---".to_string())
+                    }}
+                </label>
+                <br/>
+                <input
+                    class="p-1 w-40"
+                    min=0
+                    max=100000
+                    type="number"
+                    prop:value=minimum_roi
+                    on:input=move |input| {
+                        let value = event_target_value(&input);
+                        if let Ok(roi) = value.parse::<i32>() {
+                            set_minimum_roi(Some(roi));
+                        } else if value.is_empty() {
+                            info!("clearing roi");
+                            set_minimum_roi(None);
+                        }
+                    }
+                />
+
+            </div>
+            <div class="flex-column">
+                <label for="predicted_time">
+                    "minimum time (use time notation, ex. 1w 30m):" <br/> {predicted_time_string}
+                </label>
+                <br/>
+                <input
+                    class="p-1 w-40"
+                    id="predicted_time"
+                    prop:value=move || max_predicted_time().unwrap_or_default()
+                    on:input=move |input| {
+                        let value = event_target_value(&input);
+                        set_max_predicted_time(Some(value))
+                    }
+                />
+            </div>
         </div>
-       </div>
+        <div class="flex flex-col-reverse md:flex-row">
+            <div class="grid-table" role="table">
+                <div class="grid-header" role="rowgroup">
+                    <div role="columnheader" class="w-[25px]">
+                        "HQ"
+                    </div>
+                    <div role="columnheader first" class="w-[450px]">
+                        "Item"
+                    </div>
+                    <div role="columnheader" style="width:100px;">
+                        <Tooltip tooltip_text=Oco::from("Sort by profit")>
+                            <QueryButton
+                                class="!text-fuchsia-300 hover:text-fuchsia-200"
+                                active_classes="!text-neutral-300 hover:text-neutral-200"
+                                query_name="sort"
+                                value="profit"
+                            >
+                                <div class="flex-row flex-space">
+                                    "Profit"
+                                    {move || {
+                                        (sort_mode() == Some(SortMode::Profit))
+                                            .then(|| {
+                                                view! { <Icon icon=i::BiSortDownRegular/> }
+                                            })
+                                    }}
+                                </div>
+                            </QueryButton>
+                        </Tooltip>
+                    </div>
+                    <div role="columnheader" style="width:100px;">
+                        <Tooltip tooltip_text=Oco::from("Sort by R.O.I")>
+                            <QueryButton
+                                class="!text-fuchsia-300 hover:text-fuchsia-200"
+                                active_classes="!text-neutral-300 hover:text-neutral-200"
+                                query_name="sort"
+                                value="roi"
+                                default=true
+                            >
+                                <div class="flex-row flex-space">
+                                    "R.O.I."
+                                    {move || {
+                                        (sort_mode() == Some(SortMode::Roi))
+                                            .then(|| {
+                                                view! { <Icon icon=i::BiSortDownRegular/> }
+                                            })
+                                    }}
+                                </div>
+                            </QueryButton>
+                        </Tooltip>
+                    </div>
+                    <div role="columnheader" style=WORLD_WIDTH>
+                        "World"
+                        <QueryButton
+                            query_name="world"
+                            value=""
+                            class="!text-fuchsia-300 hover:text-fuchsia-200"
+                            active_classes="hidden"
+                        >
+                            <Tooltip tooltip_text=Oco::from(
+                                "Clear this world filter",
+                            )>
+                                {move || ["[", &world_filter().unwrap_or_default(), "]"].concat()}
+                            </Tooltip>
+                        </QueryButton>
+                    </div>
+                    <div role="columnheader" style=DATACENTER_WIDTH>
+                        "Datacenter"
+                        <QueryButton
+                            query_name="datacenter"
+                            value=""
+                            class="!text-fuchsia-300 hover:text-fuchsia-200"
+                            active_classes="hidden"
+                        >
+                            <Tooltip tooltip_text=Oco::from(
+                                "Clear this datacenter filter",
+                            )>
+                                {move || {
+                                    ["[", &datacenter_filter().unwrap_or_default(), "]"].concat()
+                                }}
+                            </Tooltip>
+                        </QueryButton>
+                    </div>
+                    <div role="columnheader" style="width: 300px;">
+                        "Next sale"
+                    </div>
+                </div>
+                <VirtualScroller
+                    viewport_height=1000.0
+                    row_height=32.3333
+                    each=sorted_data.into()
+                    key=move |(i, data)| {
+                        (
+                            *i,
+                            data.sale_summary.item_id,
+                            data.cheapest_world_id,
+                            data.sale_summary.hq,
+                        )
+                    }
+
+                    view=move |(i, data)| {
+                        let world = worlds
+                            .lookup_selector(AnySelector::World(data.cheapest_world_id));
+                        let datacenter = world
+                            .as_ref()
+                            .and_then(|world| {
+                                let datacenters = worlds.get_datacenters(world);
+                                datacenters.first().map(|dc| dc.name.as_str())
+                            })
+                            .unwrap_or_default()
+                            .to_string();
+                        let datacenter = Signal::derive(move || datacenter.clone());
+                        let world = world
+                            .as_ref()
+                            .map(|r| r.get_name())
+                            .unwrap_or_default()
+                            .to_string();
+                        let world = Signal::derive(move || world.clone());
+                        let world_event = world.clone();
+                        let datacenter_event = datacenter.clone();
+                        let item_id = data.sale_summary.item_id;
+                        let item = items
+                            .get(&ItemId(item_id))
+                            .map(|item| item.name.as_str())
+                            .unwrap_or_default();
+                        view! {
+                            <div
+                                class="grid-row"
+                                role="row-group"
+                                class:even=move || (i % 2) == 0
+                                class:odd=move || (i % 2) == 1
+                            >
+                                <div role="cell" style="width: 25px;">
+                                    {data.sale_summary.hq.then_some("✅")}
+                                </div>
+                                <div role="cell" class="flex flex-row w-[450px]">
+                                    <a
+                                        class="flex flex-row"
+                                        href=format!("/item/{}/{item_id}", world())
+                                    >
+                                        <ItemIcon item_id icon_size=IconSize::Small/>
+                                        {item}
+                                    </a>
+                                    <AddToList item_id/>
+                                    <Clipboard clipboard_text=item.to_string()/>
+                                </div>
+                                <div role="cell" style="width: 100px;">
+                                    <Gil amount=data.profit/>
+                                </div>
+                                <div role="cell" style="width: 100px;">
+                                    {data.return_on_investment}
+                                    "%"
+                                </div>
+                                <div role="cell" style=WORLD_WIDTH>
+                                    <Gil amount=data.cheapest_price/>
+                                    " on "
+                                    <Tooltip tooltip_text=MaybeSignal::Dynamic(
+                                        Signal::derive(move || {
+                                            format!("Only show {}", world()).into()
+                                        }),
+                                    )>
+                                        <QueryButton
+                                            query_name="world"
+                                            value=world_event.clone()
+                                            class="!text-fuchsia-300"
+                                            active_classes="!text-neutral-300 hover:text-neutral-200"
+                                            remove_queries=&["datacenter"]
+                                        >
+                                            {world}
+                                        </QueryButton>
+                                    </Tooltip>
+                                </div>
+                                <div role="cell" style=DATACENTER_WIDTH>
+                                    <Tooltip tooltip_text=MaybeSignal::Dynamic(
+                                        Signal::derive(move || {
+                                            format!("Only show {}", datacenter()).into()
+                                        }),
+                                    )>
+                                        <QueryButton
+                                            query_name="datacenter"
+                                            value=datacenter_event.clone()
+                                            class="!text-fuchsia-300"
+                                            active_classes="!text-neutral-300 hover:text-neutral-200"
+                                            remove_queries=&["world"]
+                                        >
+                                            {datacenter}
+                                        </QueryButton>
+                                    </Tooltip>
+                                </div>
+                                <div role="cell" style="width: 300px;">
+                                    {data
+                                        .sale_summary
+                                        .avg_sale_duration
+                                        .and_then(|sale_duration| {
+                                            let duration = sale_duration.to_std().ok()?;
+                                            Some(format_duration(duration).to_string())
+                                        })}
+
+                                </div>
+                            </div>
+                        }
+                    }
+                />
+            </div>
+        </div>
     }
 }
 
@@ -519,72 +666,147 @@ pub fn AnalyzerWorldView() -> impl IntoView {
             }
         },
     );
-    view!{
-        <Ad class="h-24 w-full" />
+    view! {
+        <Ad class="h-24 w-full"/>
         <div class="main-content flex flex-col md:flex-row-reverse md:items-start">
             <div class="mx-auto flex flex-col grow">
                 <div class="flex flex-col md:flex-row">
                     <div class="flex flex-col">
-                        <span class="title">"Resale Analyzer Results for "{world}</span><br/>
+                        <span class="title">"Resale Analyzer Results for " {world}</span>
+                        <br/>
                         <MetaTitle title=move || format!("Price Analyzer - {}", world())/>
-                        <MetaDescription text=move || format!("The analyzer enables FFXIV merchants to find the best items to buy on other worlds and sell on {}. Filter for the best profits or return, make gil through market arbitrage.", world())/>
-                        <AnalyzerWorldNavigator /><br />
-                        <Toggle checked=Signal::derive(move || cross_region_enabled().unwrap_or_default()) set_checked=SignalSetter::map(move |val: bool| set_cross_region_enabled(val.then(|| true))) checked_label=Oco::Borrowed("Cross region enabled") unchecked_label=Oco::Borrowed("Cross region disabled") />
-                        <div class:hidden=move || !cross_region_enabled().unwrap_or_default() class="flex flex-row">
-                            {
-                                move || region().map(|region| move || connected_regions
-                                    .into_iter()
-                                    .filter(|r| **r != region.as_str())
-                                    .map(|region| {
-                                        let (enabled, set_enabled) = create_query_signal::<bool>(region.to_string());
-                                        view! {
-                                            <Toggle checked=Signal::derive(move || enabled().unwrap_or(true))
-                                                set_checked=SignalSetter::map(move |checked: bool| { set_enabled(Some(checked)); })
-                                                checked_label=format!("{} enabled", region)
-                                                unchecked_label=format!("{} disabled", region) />
-                                        }
-                                    }).collect::<Vec<_>>()).ok()
-                            }
+                        <MetaDescription text=move || {
+                            format!(
+                                "The analyzer enables FFXIV merchants to find the best items to buy on other worlds and sell on {}. Filter for the best profits or return, make gil through market arbitrage.",
+                                world(),
+                            )
+                        }/>
+                        <AnalyzerWorldNavigator/>
+                        <br/>
+                        <Toggle
+                            checked=Signal::derive(move || {
+                                cross_region_enabled().unwrap_or_default()
+                            })
+                            set_checked=SignalSetter::map(move |val: bool| set_cross_region_enabled(
+                                val.then(|| true),
+                            ))
+                            checked_label=Oco::Borrowed("Cross region enabled")
+                            unchecked_label=Oco::Borrowed("Cross region disabled")
+                        />
+                        <div
+                            class:hidden=move || !cross_region_enabled().unwrap_or_default()
+                            class="flex flex-row"
+                        >
+
+                            {move || {
+                                region()
+                                    .map(|region| move || {
+                                        connected_regions
+                                            .into_iter()
+                                            .filter(|r| **r != region.as_str())
+                                            .map(|region| {
+                                                let (enabled, set_enabled) = create_query_signal::<
+                                                    bool,
+                                                >(region.to_string());
+                                                view! {
+                                                    <Toggle
+                                                        checked=Signal::derive(move || enabled().unwrap_or(true))
+                                                        set_checked=SignalSetter::map(move |checked: bool| {
+                                                            set_enabled(Some(checked));
+                                                        })
+                                                        checked_label=format!("{} enabled", region)
+                                                        unchecked_label=format!("{} disabled", region)
+                                                    />
+                                                }
+                                            })
+                                            .collect::<Vec<_>>()
+                                    })
+                                    .ok()
+                            }}
+
                         </div>
-                        <span>"The analyzer will show items that sell more on "{world}" than they can be purchased for, enabling market arbitrage."</span><br/>
-                        <span>"These estimates aren't very accurate, but are meant to be easily accessible and fast to use."</span><br/>
-                        <span>"Be extra careful to make sure that the price you buy things for matches"</span><br/>
+                        <span>
+                            "The analyzer will show items that sell more on " {world}
+                            " than they can be purchased for, enabling market arbitrage."
+                        </span>
+                        <br/>
+                        <span>
+                            "These estimates aren't very accurate, but are meant to be easily accessible and fast to use."
+                        </span>
+                        <br/>
+                        <span>
+                            "Be extra careful to make sure that the price you buy things for matches"
+                        </span>
+                        <br/>
                         <span>"Sample filters"</span>
                         <div class="flex flex-col md:flex-row flex-wrap">
-                            <a class="btn p-1" href="?next-sale=7d&roi=300&profit=0&sort=profit&">"300% return - 7 days"</a>
-                            <a class="btn p-1" href="?next-sale=1M&roi=500&profit=200000&">"500% return - 200K min profit - 1 month"</a>
-                            <a class="btn p-1" href="?profit=100000">"100K profit"</a>
+                            <a class="btn p-1" href="?next-sale=7d&roi=300&profit=0&sort=profit&">
+                                "300% return - 7 days"
+                            </a>
+                            <a class="btn p-1" href="?next-sale=1M&roi=500&profit=200000&">
+                                "500% return - 200K min profit - 1 month"
+                            </a>
+                            <a class="btn p-1" href="?profit=100000">
+                                "100K profit"
+                            </a>
                         </div>
                     </div>
                 </div>
                 <div class="min-h-screen w-full">
-                <Suspense fallback=BoxSkeleton>
-                {move || {
-                    let world_cheapest = world_cheapest_listings.get();
-                    let sales = sales.get();
-                    let global_cheapest_listings = global_cheapest_listings.get();
-                    let cross_region = cross_region.get().and_then(|r: Result<_, AppError>| r.ok()).unwrap_or_default();
-                    let worlds = use_context::<LocalWorldData>()
-                    .expect("Worlds should always be populated here")
-                    .0
-                    .unwrap();
-                    let values = world_cheapest
-                        .and_then(|w| w.ok())
-                        .and_then(|r| sales.and_then(|s| s.ok())
-                        .and_then(|s| global_cheapest_listings.and_then(|g| g.ok()).map(|g| (r, s, g))));
-                    match values {
-                        Some((world_cheapest_listings, sales, global_cheapest_listings)) => {view!{<AnalyzerTable sales global_cheapest_listings world_cheapest_listings cross_region worlds world=world.into() />}.into_view()},
-                        None => {view!{
-                            <div class="h3">
-                                "Failed to load analyzer - try again in 30 seconds"
-                            </div>
-                        }.into_view()}
-                    }
-                }}
-                </Suspense>
+                    <Suspense fallback=BoxSkeleton>
+                        {move || {
+                            let world_cheapest = world_cheapest_listings.get();
+                            let sales = sales.get();
+                            let global_cheapest_listings = global_cheapest_listings.get();
+                            let cross_region = cross_region
+                                .get()
+                                .and_then(|r: Result<_, AppError>| r.ok())
+                                .unwrap_or_default();
+                            let worlds = use_context::<LocalWorldData>()
+                                .expect("Worlds should always be populated here")
+                                .0
+                                .unwrap();
+                            let values = world_cheapest
+                                .and_then(|w| w.ok())
+                                .and_then(|r| {
+                                    sales
+                                        .and_then(|s| s.ok())
+                                        .and_then(|s| {
+                                            global_cheapest_listings
+                                                .and_then(|g| g.ok())
+                                                .map(|g| (r, s, g))
+                                        })
+                                });
+                            match values {
+                                Some((world_cheapest_listings, sales, global_cheapest_listings)) => {
+                                    view! {
+                                        <AnalyzerTable
+                                            sales
+                                            global_cheapest_listings
+                                            world_cheapest_listings
+                                            cross_region
+                                            worlds
+                                            world=world.into()
+                                        />
+                                    }
+                                        .into_view()
+                                }
+                                None => {
+                                    view! {
+                                        <div class="h3">
+                                            "Failed to load analyzer - try again in 30 seconds"
+                                        </div>
+                                    }
+                                        .into_view()
+                                }
+                            }
+                        }}
+
+                    </Suspense>
                 </div>
+            </div>
         </div>
-    </div>}.into_view()
+    }.into_view()
 }
 
 #[component]
@@ -617,7 +839,10 @@ pub fn AnalyzerWorldNavigator() -> impl IntoView {
     });
     view! {
         <label>"Analyzer World: "</label>
-        <WorldOnlyPicker current_world=current_world.into() set_current_world=set_current_world.into() />
+        <WorldOnlyPicker
+            current_world=current_world.into()
+            set_current_world=set_current_world.into()
+        />
     }
 }
 
@@ -630,10 +855,15 @@ pub fn Analyzer() -> impl IntoView {
             <div class="mx-auto container">
                 <span class="content-title">"Analyzer"</span>
                 <div class="flex-column">
-                    <span>"The analyzer helps find items on the Final Fantasy 14 marketboard that are cheaper on other worlds that sell for more on your world, enabling you to earn gil through market arbitrage."</span><br/>
-                    <span>"Adjust parameters to try and find items that sell well"</span><br/>
-                    "Choose a world to get started:"<br/>
-                    <AnalyzerWorldNavigator />
+                    <span>
+                        "The analyzer helps find items on the Final Fantasy 14 marketboard that are cheaper on other worlds that sell for more on your world, enabling you to earn gil through market arbitrage."
+                    </span>
+                    <br/>
+                    <span>"Adjust parameters to try and find items that sell well"</span>
+                    <br/>
+                    "Choose a world to get started:"
+                    <br/>
+                    <AnalyzerWorldNavigator/>
                 </div>
             </div>
         </div>

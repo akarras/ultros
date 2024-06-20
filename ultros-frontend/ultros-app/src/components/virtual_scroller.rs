@@ -43,43 +43,52 @@ where
     };
     view! {
         <div
-        on:scroll= move |scroll| {
-            let div = event_target::<HtmlDivElement>(&scroll);
-            set_scroll_offset(div.scroll_top());
-        }
-      style=format!(r#"
+            on:scroll=move |scroll| {
+                let div = event_target::<HtmlDivElement>(&scroll);
+                set_scroll_offset(div.scroll_top());
+            }
+
+            style=format!(
+                r#"
         height: {}px;
         overflow-y: auto;
         overflow-x: visible;
         width: fit-content;
-      "#, viewport_height.ceil() as u32)
-    >
-      <div
-
-        style=move || {
-            format!(r#"
+      "#,
+                viewport_height.ceil() as u32,
+            )
+        >
+            <div 
+            style=move || {
+                format!(
+                    r#"
           height: {}px;
           overflow-y: hidden;
           overflow-x: visible;
           will-change: transform;
           position: relative;
           width: fit-content;
-        "#, (each.with(|children| children.len() + render_ahead as usize) as f64 * row_height).ceil() as u32)}
-      >
-        <div // offset for visible nodes
-          style=move || format!("
+        "#,
+                    (each.with(|children| children.len() + render_ahead as usize) as f64
+                        * row_height)
+                        .ceil() as u32,
+                )
+            }>
+                // offset for visible nodes
+                <div style=move || {
+                    format!(
+                        "
             transform: translateY({}px);
-          ", (child_start() as f64 * row_height) as u32)
-        >
-        // {move || virtual_children().into_iter().map(|child| view(child)).collect::<Vec<_>>()}
-        // For component currently has issues. Possibly
-        // https://github.com/leptos-rs/leptos/issues/533
-        <For each=virtual_children
-         key=key
-         children=view
-        />
+          ",
+                        (child_start() as f64 * row_height) as u32,
+                    )
+                }>
+                    // {move || virtual_children().into_iter().map(|child| view(child)).collect::<Vec<_>>()}
+                    // For component currently has issues. Possibly
+                    // https://github.com/leptos-rs/leptos/issues/533
+                    <For each=virtual_children key=key children=view/>
+                </div>
+            </div>
         </div>
-      </div>
-    </div>
     }
 }

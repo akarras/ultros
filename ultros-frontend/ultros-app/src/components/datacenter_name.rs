@@ -18,11 +18,11 @@ pub(crate) fn DatacenterName(world_id: i32) -> impl IntoView {
                     _ => unreachable!("World cannot return non world"),
                 };
 
-                view! { <WorldName id=AnySelector::Datacenter(world.datacenter_id)/>}.into_view()
+                view! { <WorldName id=AnySelector::Datacenter(world.datacenter_id)/> }.into_view()
             } else {
-                view! { ""}.into_view()
+                view! { "" }.into_view()
             }
         }
-        _ => view! { ""}.into_view(),
+        _ => view! { "" }.into_view(),
     }
 }

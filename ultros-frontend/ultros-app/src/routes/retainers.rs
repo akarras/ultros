@@ -57,25 +57,24 @@ fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> imp
             let new_best_price = undercut_data.cheapest - 1;
             view! {
                 <tr>
-                    <td>
-                        {listing
-                            .hq
-                            .then_some("HQ")}
-                    </td>
+                    <td>{listing.hq.then_some("HQ")}</td>
                     <td class="flex flex-row">
                         {if let Some(item) = item {
                             view! {
-                                <A class="flex flex-row" href=format!("/item/{world_name}/{}", listing.item_id)>
+                                <A
+                                    class="flex flex-row"
+                                    href=format!("/item/{world_name}/{}", listing.item_id)
+                                >
                                     <ItemIcon icon_size=IconSize::Small item_id=listing.item_id/>
                                     {&item.name}
                                 </A>
-                                <Clipboard clipboard_text=item.name.as_str() />
+                                <Clipboard clipboard_text=item.name.as_str()/>
                             }
                                 .into_view()
                         } else {
-                            view! { "Item not found" }
-                                .into_view()
+                            view! { "Item not found" }.into_view()
                         }}
+
                     </td>
                     <td>
                         <Gil amount=listing.price_per_unit/>
@@ -87,7 +86,7 @@ fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> imp
                     <td>
                         <div class="flex flex-row">
                             <Gil amount=new_best_price/>
-                            <Clipboard clipboard_text=new_best_price.to_string() />
+                            <Clipboard clipboard_text=new_best_price.to_string()/>
                         </div>
                     </td>
                 </tr>
@@ -133,25 +132,24 @@ fn RetainerTable(retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoV
             let total = listing.quantity * listing.price_per_unit;
             view! {
                 <tr>
-                    <td>
-                        {listing
-                            .hq
-                            .then_some("HQ")}
-                    </td>
+                    <td>{listing.hq.then_some("HQ")}</td>
                     <td class="flex flex-row">
                         {if let Some(item) = item {
                             view! {
-                                <A class="flex flex-row" href=format!("/item/{}/{}", world_name, listing.item_id)>
+                                <A
+                                    class="flex flex-row"
+                                    href=format!("/item/{}/{}", world_name, listing.item_id)
+                                >
                                     <ItemIcon icon_size=IconSize::Small item_id=listing.item_id/>
                                     {&item.name}
                                 </A>
-                                <Clipboard clipboard_text=item.name.as_str() />
+                                <Clipboard clipboard_text=item.name.as_str()/>
                             }
                                 .into_view()
                         } else {
-                            view! { "Item not found" }
-                                .into_view()
+                            view! { "Item not found" }.into_view()
                         }}
+
                     </td>
                     <td>
                         <Gil amount=listing.price_per_unit/>
@@ -197,11 +195,11 @@ pub(crate) fn CharacterRetainerList(
     view! {
         <div>
             {if let Some(character) = character {
-                view! { <span>{character.first_name} {character.last_name}</span> }
-                    .into_view()
+                view! { <span>{character.first_name} {character.last_name}</span> }.into_view()
             } else {
                 listings.into_view()
             }}
+
         </div>
     }
 }
@@ -218,11 +216,11 @@ pub(crate) fn CharacterRetainerUndercutList(
     view! {
         <div>
             {if let Some(character) = character {
-                view! { <span>{character.first_name} {character.last_name}</span> }
-                    .into_view()
+                view! { <span>{character.first_name} {character.last_name}</span> }.into_view()
             } else {
                 listings.into_view()
             }}
+
         </div>
     }
 }
@@ -253,19 +251,23 @@ pub fn RetainerUndercuts() -> impl IntoView {
                                 let retainers: Vec<_> = retainers
                                     .into_iter()
                                     .map(|(character, retainers)| {
-                                        view! { <CharacterRetainerUndercutList character retainers/> }
+                                        view! {
+                                            <CharacterRetainerUndercutList character retainers/>
+                                        }
                                     })
                                     .collect();
-                                view! { <div>{retainers}</div> }
-                                    .into_view()
+                                view! { <div>{retainers}</div> }.into_view()
                             }
                             Err(e) => {
-                                view! { <div>{"Unable to get retainers"} <br/> {e.to_string()}</div> }
+                                view! {
+                                    <div>{"Unable to get retainers"} <br/> {e.to_string()}</div>
+                                }
                                     .into_view()
                             }
                         }
                     })
             }}
+
         </Suspense>
     }
 }
@@ -295,21 +297,54 @@ pub fn SingleRetainerListings() -> impl IntoView {
     );
 
     view! {
-        <span>"To claim this retainer, please login and visit "<A href="/retainers/edit">"the edit tab"</A></span>
-        <Suspense fallback=move || view!{ <div class="h-[300px] w-[600px]"><BoxSkeleton/></div>}>
+        <span>
+            "To claim this retainer, please login and visit "
+            <A href="/retainers/edit">"the edit tab"</A>
+        </span>
+        <Suspense fallback=move || {
+            view! {
+                <div class="h-[300px] w-[600px]">
+                    <BoxSkeleton/>
+                </div>
+            }
+        }>
             {move || {
-                retainer_listings.get().map(|r| r.and_then(|r| r.ok().map(|r| {
-                    let worlds = use_context::<LocalWorldData>().expect("Local world data must be verified").0.unwrap();
-                    let world = worlds.lookup_selector(AnySelector::World(r.retainer.world_id));
-                    let world_name = world.as_ref().map(|w| w.get_name()).unwrap_or_default();
-                    view! {
-                    <MetaTitle title=format!("{} - 🌍{}",
-                    &r.retainer.name,
-                    world_name)></MetaTitle>
-                    <MetaDescription text=format!("All of the listings for the retainer {} on the world {}", &r.retainer.name, world_name)/>
-                    <RetainerTable retainer=r.retainer listings=r.listings />
-            }})))
+                retainer_listings
+                    .get()
+                    .map(|r| {
+                        r
+                            .and_then(|r| {
+                                r
+                                    .ok()
+                                    .map(|r| {
+                                        let worlds = use_context::<LocalWorldData>()
+                                            .expect("Local world data must be verified")
+                                            .0
+                                            .unwrap();
+                                        let world = worlds
+                                            .lookup_selector(AnySelector::World(r.retainer.world_id));
+                                        let world_name = world
+                                            .as_ref()
+                                            .map(|w| w.get_name())
+                                            .unwrap_or_default();
+                                        view! {
+                                            <MetaTitle title=format!(
+                                                "{} - 🌍{}",
+                                                &r.retainer.name,
+                                                world_name,
+                                            )/>
+                                            <MetaDescription text=format!(
+                                                "All of the listings for the retainer {} on the world {}",
+                                                &r.retainer.name,
+                                                world_name,
+                                            )/>
+                                            <RetainerTable retainer=r.retainer listings=r.listings/>
+                                        }
+                                    })
+                            })
+                    })
             }}
+
         </Suspense>
     }
 }
@@ -347,17 +382,21 @@ pub fn RetainerListings() -> impl IntoView {
                                         .then(|| {
                                             view! { <span>"Add a retainer to get started!"</span> }
                                         })}
+
                                     <div>{retainers}</div>
                                 }
                                     .into_view()
                             }
                             Err(e) => {
-                                view! { <div>{"Unable to get retainers"} <br/> {e.to_string()}</div> }
+                                view! {
+                                    <div>{"Unable to get retainers"} <br/> {e.to_string()}</div>
+                                }
                                     .into_view()
                             }
                         }
                     })
             }}
+
         </Suspense>
     }
 }
@@ -375,19 +414,21 @@ pub fn Retainers() -> impl IntoView {
                 "All Listings"
             </A>
             <A exact=true class="btn-secondary flex flex-row" href="/retainers/undercuts">
-                <Icon width="1.75em" height="1.75em" icon=i::AiExclamationOutlined />
+                <Icon width="1.75em" height="1.75em" icon=i::AiExclamationOutlined/>
                 "Undercuts"
             </A>
         </div>
-        <div
-            class="main-content"
-        >
+        <div class="main-content">
             <div class="container mx-auto flex flex-col xl:flex-row items-start">
                 <div class="flex flex-col grow">
-                    <div class="grow w-full"><Ad class="h-[90px] w-full xl:w-[728px]" /></div>
-                    <Outlet />
+                    <div class="grow w-full">
+                        <Ad class="h-[90px] w-full xl:w-[728px]"/>
+                    </div>
+                    <Outlet/>
                 </div>
-                <div><Ad class="h-96 w-96 xl:h-[750px] xl:w-40"/></div>
+                <div>
+                    <Ad class="h-96 w-96 xl:h-[750px] xl:w-40"/>
+                </div>
             </div>
         </div>
     }

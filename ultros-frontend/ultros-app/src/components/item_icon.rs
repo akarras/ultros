@@ -23,13 +23,20 @@ pub fn ItemIcon(#[prop(into)] item_id: MaybeSignal<i32>, icon_size: IconSize) ->
         )
     };
     view! {
-        <img prop:alt=item_name class=icon_size.get_class()
-            src=move || { if !failed_item() && valid_search_category() {
-                format!("/static/itemicon/{}?size={}", item_id(), icon_size)
-            } else {
-                "/static/itemicon/fallback".to_string()
-            } } loading="lazy" on:error=move |_| {
-            set_failed(item_id.get_untracked());
-        } />
+        <img
+            prop:alt=item_name
+            class=icon_size.get_class()
+            src=move || {
+                if !failed_item() && valid_search_category() {
+                    format!("/static/itemicon/{}?size={}", item_id(), icon_size)
+                } else {
+                    "/static/itemicon/fallback".to_string()
+                }
+            }
+            loading="lazy"
+            on:error=move |_| {
+                set_failed(item_id.get_untracked());
+            }
+        />
     }
 }

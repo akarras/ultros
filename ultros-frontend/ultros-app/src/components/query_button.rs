@@ -31,12 +31,19 @@ pub fn QueryButton(
             query_val.unwrap_or_default() == &value || (default == true && query_val.is_none())
         })
     };
-    view! { <a class=move || if is_active() { active_classes.get() } else { class.get() }.to_string() href=move || {
-        let mut query = query();
-        for remove in remove_queries {
-            query.remove(remove);
-        }
-        let _ = query.insert(query_name.get().to_string(), value.get().to_string());
-        format!("{}{}", pathname(), query.to_query_string())
-    }>{children}</a> }
+    view! {
+        <a
+            class=move || if is_active() { active_classes.get() } else { class.get() }.to_string()
+            href=move || {
+                let mut query = query();
+                for remove in remove_queries {
+                    query.remove(remove);
+                }
+                let _ = query.insert(query_name.get().to_string(), value.get().to_string());
+                format!("{}{}", pathname(), query.to_query_string())
+            }
+        >
+            {children}
+        </a>
+    }
 }

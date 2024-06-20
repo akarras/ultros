@@ -84,7 +84,17 @@ fn ParamView(data: ParamData) -> impl IntoView {
     view! {
         <div>
             <Tooltip tooltip_text=Oco::from(data.base_param.description.as_str())>
-            <span class="w-48">{&data.base_param.name}</span>"  "{data.normal_value} {data.special_value.map(|special| view!{" hq: " {data.normal_value + special}})}
+                <span class="w-48">{&data.base_param.name}</span>
+                "  "
+                {data.normal_value}
+                {data
+                    .special_value
+                    .map(|special| {
+                        view! {
+                            " hq: "
+                            {data.normal_value + special}
+                        }
+                    })}
             </Tooltip>
         </div>
     }
@@ -96,7 +106,7 @@ pub(crate) fn ItemStats(item_id: ItemId) -> impl IntoView {
     params
         .map(|p| {
             p.into_iter()
-                .map(|p| view! {<ParamView data=p />})
+                .map(|p| view! { <ParamView data=p/> })
                 .collect::<Vec<_>>()
         })
         .into_view()

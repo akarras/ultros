@@ -78,25 +78,44 @@ where
         }
     });
     let parsed_items = move || match parse_list(&list()) {
-        Ok(l) => view! { <span>{l.len()}" items ready to add"</span>}.into_view(),
-        Err(e) => view! {<span>{format!("{e:?}")}</span>}.into_view(),
+        Ok(l) => view! { <span>{l.len()} " items ready to add"</span> }.into_view(),
+        Err(e) => view! { <span>{format!("{e:?}")}</span> }.into_view(),
     };
     view! {
         <div class="flex-column">
-            <label>"Copy+Paste a list with a bunch of items in it formatted as Item1: Quantity. Make place users can paste their furniture+dye lists here."</label>
-            <textarea class="bg-violet-950 h-96" on:input=move |input| set_list(event_target_value(&input))></textarea>
+            <label>
+                "Copy+Paste a list with a bunch of items in it formatted as Item1: Quantity. Make place users can paste their furniture+dye lists here."
+            </label>
+            <textarea
+                class="bg-violet-950 h-96"
+                on:input=move |input| set_list(event_target_value(&input))
+            ></textarea>
             {parsed_items}
-            <button on:click=move |_| {
-                if let Ok(list) = parse_list(&list()) {
-                    add_items_to_list.dispatch(list);
+            <button
+                on:click=move |_| {
+                    if let Ok(list) = parse_list(&list()) {
+                        add_items_to_list.dispatch(list);
+                    }
                 }
-            } class="btn">"Bulk add"</button>
-            {move || add_items_to_list.pending()().then(|| view!{<Loading />})}
+                class="btn"
+            >
+                "Bulk add"
+            </button>
+            {move || add_items_to_list.pending()().then(|| view! { <Loading/> })}
             <div>
-                {move || add_items_to_list.value()().map(|result| match result {
-                    Ok(_) => view!{ <span>"Added items to list!"</span>},
-                    Err(e) => view!{<span>"Error adding items to list :( "{format!("{e:?}")}</span>}
-                })}
+                {move || {
+                    add_items_to_list
+                        .value()()
+                        .map(|result| match result {
+                            Ok(_) => view! { <span>"Added items to list!"</span> },
+                            Err(e) => {
+                                view! {
+                                    <span>"Error adding items to list :( " {format!("{e:?}")}</span>
+                                }
+                            }
+                        })
+                }}
+
             </div>
         </div>
     }

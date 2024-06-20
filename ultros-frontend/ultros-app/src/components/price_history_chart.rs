@@ -40,12 +40,21 @@ pub fn PriceHistoryChart(sales: MaybeSignal<Vec<SaleHistory>>) -> impl IntoView 
     });
     view! {
         <div class="min-w-[750px] min-h-[440px]" class:hidden=move || !hidden()>
-            <BoxSkeleton />
+            <BoxSkeleton/>
         </div>
         <div class="flex flex-col max-h-[480px] mx-auto" class:hidden=hidden>
-            <canvas width="750" height="440" style="width: 750px; height: 440px" _ref=canvas/>
-            <Toggle checked=filter_outliers set_checked=set_filter_outliers
-                checked_label="Filtering outliers" unchecked_label="No filter" />
+            <canvas
+                width="750"
+                height="440"
+                style="width: 750px; height: 440px"
+                _ref=canvas
+            ></canvas>
+            <Toggle
+                checked=filter_outliers
+                set_checked=set_filter_outliers
+                checked_label="Filtering outliers"
+                unchecked_label="No filter"
+            />
         </div>
     }
 }

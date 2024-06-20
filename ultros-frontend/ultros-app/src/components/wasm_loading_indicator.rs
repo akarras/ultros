@@ -13,7 +13,7 @@ pub fn WasmLoadingIndicator() -> impl IntoView {
     {
         move || {
             loading().then(|| {
-                view! {<Loading/>}
+                view! { <Loading/> }
             })
         }
     }

@@ -21,20 +21,23 @@ pub fn WorldOnlyPicker(
                     .collect::<Vec<_>>()
             });
             view! {
-                <Select items=data.into()
-                as_label=move |w| w.name.clone()
-                choice=current_world
-                set_choice=set_current_world
-                children=move |_w, label| {
-                    view!{
-                        <div>{label}</div>
+                <Select
+                    items=data.into()
+                    as_label=move |w| w.name.clone()
+                    choice=current_world
+                    set_choice=set_current_world
+                    children=move |_w, label| {
+                        view! { <div>{label}</div> }
                     }
-                }
-                 />
+                />
             }
         }
-        Err(e) => view! {<div><span>"No worlds"</span>
-        <span>{e.to_string()}</span></div>}
+        Err(e) => view! {
+            <div>
+                <span>"No worlds"</span>
+                <span>{e.to_string()}</span>
+            </div>
+        }
         .into_view(),
     }
 }
@@ -70,19 +73,26 @@ pub fn WorldPicker(
                 set_current_world(option.map(|(_, s)| s));
             };
             let set_choice = set_choice.into_signal_setter();
-            view! { <Select items=data.into()
-                choice=choice
-                set_choice=set_choice
-                as_label=move |(d, _)| d.clone()
-                children=move |(_, s), view| view!{
-                    <div class="flex flex-row gap-4"><div>{view}</div><div>{match s{
-                    AnySelector::World(_) => "world",
-                    AnySelector::Region(_) => "region",
-                    AnySelector::Datacenter(_) => "datacenter",
-                }}</div>
-                </div>
-                }
-
+            view! {
+                <Select
+                    items=data.into()
+                    choice=choice
+                    set_choice=set_choice
+                    as_label=move |(d, _)| d.clone()
+                    children=move |(_, s), view| {
+                        view! {
+                            <div class="flex flex-row gap-4">
+                                <div>{view}</div>
+                                <div>
+                                    {match s {
+                                        AnySelector::World(_) => "world",
+                                        AnySelector::Region(_) => "region",
+                                        AnySelector::Datacenter(_) => "datacenter",
+                                    }}
+                                </div>
+                            </div>
+                        }
+                    }
                 />
             }
             .into_view()
@@ -93,8 +103,12 @@ pub fn WorldPicker(
             //         .map(|d| d.worlds.into_iter().map(|w| AnyResult::World(w)))
             // })
         }
-        Err(e) => view! {<div><span>"No worlds"</span>
-        <span>{e.to_string()}</span></div>}
+        Err(e) => view! {
+            <div>
+                <span>"No worlds"</span>
+                <span>{e.to_string()}</span>
+            </div>
+        }
         .into_view(),
     }
 }

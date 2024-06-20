@@ -21,30 +21,32 @@ pub fn Clipboard(#[prop(into)] clipboard_text: MaybeSignal<String>) -> impl Into
             i::BsClipboard2CheckFill
         }
     });
-    view! {<div class="clipboard cursor-pointer" on:click=move |_| {
-        #[cfg(all(web_sys_unstable_apis, feature = "hydrate"))]
-        {
-            if let Some(window) = web_sys::window()
-            {
-                let navigator = window.navigator();
-                if let Some(clipboard) = navigator.clipboard() {
-                    let text = clipboard_text.get_untracked();
-                    let _ = clipboard.write_text(&text);
-                    last_copied_text.0.set(Some(text));
+    view! {
+        <div
+            class="clipboard cursor-pointer"
+            on:click=move |_| {
+                #[cfg(all(web_sys_unstable_apis, feature = "hydrate"))]
+                {
+                    if let Some(window) = web_sys::window() {
+                        let navigator = window.navigator();
+                        if let Some(clipboard) = navigator.clipboard() {
+                            let text = clipboard_text.get_untracked();
+                            let _ = clipboard.write_text(&text);
+                            last_copied_text.0.set(Some(text));
+                        }
+                    }
                 }
             }
-        }
-    }>
-    <Tooltip tooltip_text=MaybeSignal::derive(move || {
-        if !copied() {
-            Oco::Owned(format!("Copy '{}' to clipboard", clipboard_text()))
-        }
-        else {
-            Oco::from("Text copied!")
-        }
-    }) >
-        <Icon icon/>
-    </Tooltip>
-    </div>
+        >
+            <Tooltip tooltip_text=MaybeSignal::derive(move || {
+                if !copied() {
+                    Oco::Owned(format!("Copy '{}' to clipboard", clipboard_text()))
+                } else {
+                    Oco::from("Text copied!")
+                }
+            })>
+                <Icon icon/>
+            </Tooltip>
+        </div>
     }
 }

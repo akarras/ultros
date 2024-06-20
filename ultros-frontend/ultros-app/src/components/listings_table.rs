@@ -21,7 +21,8 @@ pub fn ListingsTable(
             listings.iter().take(10).cloned().collect()
         }
     });
-    view! {  <table class="w-full">
+    view! {
+        <table class="w-full">
             <tr>
                 <th>"price"</th>
                 <th>"qty."</th>
@@ -31,28 +32,55 @@ pub fn ListingsTable(
                 <th>"datacenter"</th>
                 <th>"first seen"</th>
             </tr>
-        <tbody>
-            {move || view!{<For each=listings
-            key=move |(listing, _retainer)| listing.id
-            children=move |(listing, retainer)| {
-                let total = listing.price_per_unit * listing.quantity;
-                view! { <tr>
-                    <td><Gil amount=listing.price_per_unit/></td>
-                    <td>{listing.quantity}</td>
-                    <td><Gil amount=total /></td>
-                    <td><A href=format!("/retainers/listings/{}", retainer.id)>{retainer.name}</A></td>
-                    <td><WorldName id=AnySelector::World(listing.world_id) /></td>
-                    <td><DatacenterName world_id=listing.world_id/> </td>
-                    <td><RelativeToNow timestamp=listing.timestamp/></td>
-                    </tr> }
-            }
-            />}}
-            <tr on:click=show_click class:hidden=move || {listing_count() < 10 || show_more() }>
-                <td colspan=7>
-                    <button on:click=show_click style="width: 100%;" class="btn">"Show More"</button>
-                </td>
-            </tr>
-        </tbody>
-    </table>
+            <tbody>
+                {move || {
+                    view! {
+                        <For
+                            each=listings
+                            key=move |(listing, _retainer)| listing.id
+                            children=move |(listing, retainer)| {
+                                let total = listing.price_per_unit * listing.quantity;
+                                view! {
+                                    <tr>
+                                        <td>
+                                            <Gil amount=listing.price_per_unit/>
+                                        </td>
+                                        <td>{listing.quantity}</td>
+                                        <td>
+                                            <Gil amount=total/>
+                                        </td>
+                                        <td>
+                                            <A href=format!(
+                                                "/retainers/listings/{}",
+                                                retainer.id,
+                                            )>{retainer.name}</A>
+                                        </td>
+                                        <td>
+                                            <WorldName id=AnySelector::World(listing.world_id)/>
+                                        </td>
+                                        <td>
+                                            <DatacenterName world_id=listing.world_id/>
+                                        </td>
+                                        <td>
+                                            <RelativeToNow timestamp=listing.timestamp/>
+                                        </td>
+                                    </tr>
+                                }
+                            }
+                        />
+                    }
+                }}
+                <tr
+                    on:click=show_click
+                    class:hidden=move || { listing_count() < 10 || show_more() }
+                >
+                    <td colspan=7>
+                        <button on:click=show_click style="width: 100%;" class="btn">
+                            "Show More"
+                        </button>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
     }
 }
