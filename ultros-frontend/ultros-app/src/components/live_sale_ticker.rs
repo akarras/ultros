@@ -103,6 +103,7 @@ pub fn LiveSaleTicker() -> impl IntoView {
                         }
                     }
                 >
+
                     <For each=sales key=|sale| sale.sold_date let:sale>
                         <A href=move || {
                             format!(

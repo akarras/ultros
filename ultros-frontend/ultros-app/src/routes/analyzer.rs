@@ -323,6 +323,7 @@ fn AnalyzerTable(
                             })
                             .unwrap_or("---".into_view())
                     }}
+
                 </label>
                 <br/>
                 <input
@@ -342,6 +343,7 @@ fn AnalyzerTable(
                         }
                     }
                 />
+
             </div>
             <div class="flex-column">
                 <label for="minimum_roi">
@@ -349,6 +351,7 @@ fn AnalyzerTable(
                     {move || {
                         minimum_roi().map(|roi| format!("{roi}%")).unwrap_or("---".to_string())
                     }}
+
                 </label>
                 <br/>
                 <input
@@ -383,6 +386,7 @@ fn AnalyzerTable(
                         set_max_predicted_time(Some(value))
                     }
                 />
+
             </div>
         </div>
         <div class="flex flex-col-reverse md:flex-row">
@@ -410,6 +414,7 @@ fn AnalyzerTable(
                                                 view! { <Icon icon=i::BiSortDownRegular/> }
                                             })
                                     }}
+
                                 </div>
                             </QueryButton>
                         </Tooltip>
@@ -431,6 +436,7 @@ fn AnalyzerTable(
                                                 view! { <Icon icon=i::BiSortDownRegular/> }
                                             })
                                     }}
+
                                 </div>
                             </QueryButton>
                         </Tooltip>
@@ -464,6 +470,7 @@ fn AnalyzerTable(
                                 {move || {
                                     ["[", &datacenter_filter().unwrap_or_default(), "]"].concat()
                                 }}
+
                             </Tooltip>
                         </QueryButton>
                     </div>
@@ -587,6 +594,7 @@ fn AnalyzerTable(
                         }
                     }
                 />
+
             </div>
         </div>
     }
@@ -687,9 +695,11 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                             checked=Signal::derive(move || {
                                 cross_region_enabled().unwrap_or_default()
                             })
+
                             set_checked=SignalSetter::map(move |val: bool| set_cross_region_enabled(
                                 val.then(|| true),
                             ))
+
                             checked_label=Oco::Borrowed("Cross region enabled")
                             unchecked_label=Oco::Borrowed("Cross region disabled")
                         />
@@ -714,6 +724,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                                         set_checked=SignalSetter::map(move |checked: bool| {
                                                             set_enabled(Some(checked));
                                                         })
+
                                                         checked_label=format!("{} enabled", region)
                                                         unchecked_label=format!("{} disabled", region)
                                                     />

@@ -38,6 +38,7 @@ pub fn Clipboard(#[prop(into)] clipboard_text: MaybeSignal<String>) -> impl Into
                 }
             }
         >
+
             <Tooltip tooltip_text=MaybeSignal::derive(move || {
                 if !copied() {
                     Oco::Owned(format!("Copy '{}' to clipboard", clipboard_text()))

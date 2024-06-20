@@ -58,8 +58,8 @@ where
                 viewport_height.ceil() as u32,
             )
         >
-            <div 
-            style=move || {
+
+            <div style=move || {
                 format!(
                     r#"
           height: {}px;

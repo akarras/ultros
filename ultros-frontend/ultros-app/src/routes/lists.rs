@@ -74,6 +74,7 @@ pub fn EditLists() -> impl IntoView {
                                     }
                                 }
                             >
+
                                 <Icon icon=i::BiSaveSolid/>
                             </button>
                         </div>
@@ -157,6 +158,7 @@ pub fn EditLists() -> impl IntoView {
                                                                                             edit_list.dispatch(list);
                                                                                         }
                                                                                     >
+
                                                                                         <Icon icon=i::BiSaveSolid/>
                                                                                     </button>
                                                                                 </Tooltip>

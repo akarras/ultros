@@ -39,6 +39,7 @@ pub fn SmallItemDisplay(item: &'static Item) -> impl IntoView {
                                     item.key_id.0,
                                 )
                             >
+
                                 <ItemDetails item/>
                             </A>
                         }

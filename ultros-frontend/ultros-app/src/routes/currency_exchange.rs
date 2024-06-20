@@ -366,6 +366,7 @@ pub fn ExchangeItem() -> impl IntoView {
                             }
                         }
                     />
+
                 </div>
             </div>
             <div class="flex flex-col">
@@ -624,6 +625,7 @@ pub fn CurrencySelection() -> impl IntoView {
                         }
                     }
                 />
+
             </div>
             <div class="flex flex-col">
 

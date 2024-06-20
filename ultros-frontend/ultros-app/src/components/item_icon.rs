@@ -33,6 +33,7 @@ pub fn ItemIcon(#[prop(into)] item_id: MaybeSignal<i32>, icon_size: IconSize) ->
                     "/static/itemicon/fallback".to_string()
                 }
             }
+
             loading="lazy"
             on:error=move |_| {
                 set_failed(item_id.get_untracked());

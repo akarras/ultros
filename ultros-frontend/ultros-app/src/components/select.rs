@@ -82,7 +82,8 @@ where
     };
     view! {
         <div class="relative">
-            <input node_ref=input
+            <input
+                node_ref=input
                 class:cursor=move || !has_focus()
                 class="p-2 rounded-md bg-violet-950
                 border-solid border border-violet-600 w-96 
@@ -90,44 +91,81 @@ where
                 focus:bg-violet-700 active:border-violet-400"
                 on:focus=move |_| set_focused(true)
                 on:focusout=move |_| set_focused(false)
-                on:input=move |e| { set_current_input(event_target_value(&e)); }
-                on:keydown=keydown
-                prop:value=current_input />
-            <div class="absolute top-2 left-2 select-none cursor" class:invisible=move || has_focus() || !current_input().is_empty() on:click=move |_| {
-                if let Some(input) = input() {
-                    let _ = input.focus();
+                on:input=move |e| {
+                    set_current_input(event_target_value(&e));
                 }
-            }>
-                {move || choice().map(|c| {
-                    children(c.clone(), as_label(&c).into_view())
-                })}
+                on:keydown=keydown
+                prop:value=current_input
+            />
+            <div
+                class="absolute top-2 left-2 select-none cursor"
+                class:invisible=move || has_focus() || !current_input().is_empty()
+                on:click=move |_| {
+                    if let Some(input) = input() {
+                        let _ = input.focus();
+                    }
+                }
+            >
+                {move || choice().map(|c| { children(c.clone(), as_label(&c).into_view()) })}
+
             </div>
-            <div node_ref=dropdown class:invisible=move || !has_focus() && !hovered()
-                class="focus-within:visible absolute w-96 h-96 overflow-y-auto top-10 bg-purple-950 z-20">
-                <For each=final_result
-                    key=move |(l, _)| *l
-                    let:data
-                >
-                    <button class="flex flex-col w-full" on:click=move |_| {
-                        if let Some(item) = items.with(|i| i.get(data.0).cloned()) {
-                            set_choice(Some(item));
-                            set_focused(false);
-                            set_current_input("".to_string());
-                            if let Some(element) = document().active_element().and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok()) {
-                                element.blur().unwrap();
+            <div
+                node_ref=dropdown
+                class:invisible=move || !has_focus() && !hovered()
+                class="focus-within:visible absolute w-96 h-96 overflow-y-auto top-10 bg-purple-950 z-20"
+            >
+                <For each=final_result key=move |(l, _)| *l let:data>
+                    <button
+                        class="flex flex-col w-full"
+                        on:click=move |_| {
+                            if let Some(item) = items.with(|i| i.get(data.0).cloned()) {
+                                set_choice(Some(item));
+                                set_focused(false);
+                                set_current_input("".to_string());
+                                if let Some(element) = document()
+                                    .active_element()
+                                    .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
+                                {
+                                    element.blur().unwrap();
+                                }
                             }
                         }
-                    }>
-                        <div class="hover:bg-purple-700 hover:border-solid hover:border-violet-600 rounded-sm p-2 transition-all ease-in-out duration-500" class:bg-purple-500=move || {
-                            choice.with(|choice| choice.as_ref().and_then(|choice| items.with(|i| i.get(data.0).map(|item| item == choice)))).unwrap_or_default()
-                        }>{items.with(|i| i.get(data.0).cloned()).map(|c| children(c, {move || {
-                            if let Some(m) = fuzzy_search(&current_input(), &data.1){
-                                let target = data.1.clone();
-                                view!{ <div class="flex flex-row gap-1"><MatchFormatter m=m target=target /></div> }
-                            } else {
-                                view!{ <div class="flex flex-row">{&data.1}</div>}
+                    >
+                        <div
+                            class="hover:bg-purple-700 hover:border-solid hover:border-violet-600 rounded-sm p-2 transition-all ease-in-out duration-500"
+                            class:bg-purple-500=move || {
+                                choice
+                                    .with(|choice| {
+                                        choice
+                                            .as_ref()
+                                            .and_then(|choice| {
+                                                items.with(|i| i.get(data.0).map(|item| item == choice))
+                                            })
+                                    })
+                                    .unwrap_or_default()
                             }
-                        }}.into_view()))}</div>
+                        >
+                            {items
+                                .with(|i| i.get(data.0).cloned())
+                                .map(|c| children(
+                                    c,
+                                    {
+                                        move || {
+                                            if let Some(m) = fuzzy_search(&current_input(), &data.1) {
+                                                let target = data.1.clone();
+                                                view! {
+                                                    <div class="flex flex-row gap-1">
+                                                        <MatchFormatter m=m target=target/>
+                                                    </div>
+                                                }
+                                            } else {
+                                                view! { <div class="flex flex-row">{&data.1}</div> }
+                                            }
+                                        }
+                                    }
+                                        .into_view(),
+                                ))}
+                        </div>
                     </button>
                 </For>
             </div>

@@ -13,8 +13,8 @@ use crate::components::{
 fn FeatureCard(children: ChildrenFn) -> impl IntoView {
     view! {
         <div class="p-2 flex flex-col text-center border rounded-xl hover:border-yellow-100 border-violet-950 items-center
-         transition-all duration-500 bg-gradient-to-br to-yellow-300 via-black from-violet-950 bg-size-200 bg-pos-0
-         hover:bg-pos-100 w-48 h-36">{children}</div>
+        transition-all duration-500 bg-gradient-to-br to-yellow-300 via-black from-violet-950 bg-size-200 bg-pos-0
+        hover:bg-pos-100 w-48 h-36">{children}</div>
     }
 }
 

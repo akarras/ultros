@@ -34,6 +34,7 @@ where
                                     log::warn!("no item dragging?");
                                 }
                             }
+
                             on:dragend=move |_| set_dragging(None)
                             on:dragstart=move |_| set_dragging(Some(id))
                             on:dragover=move |e| e.prevent_default()
@@ -44,6 +45,7 @@ where
                                 dragging().map(|drag| drag == id).unwrap_or_default()
                             }
                         >
+
                             // if this is the drag object, leave the view the same, otherwise swap it out.
                             {item_view(child)}
                         </div>

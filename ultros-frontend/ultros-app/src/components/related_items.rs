@@ -320,6 +320,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                                     item.key_id.0,
                                 )
                             >
+
                                 <div class="flex flex-row">
                                     <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium/>
                                     <span style="width: 300px;">{&item.name}</span>

@@ -86,6 +86,7 @@ pub fn EditRetainers() -> impl IntoView {
                                                 character.as_ref().map(|c| c.id).unwrap_or_default(),
                                                 retainers.iter().map(|(o, _r)| o.id).collect::<Vec<_>>(),
                                             )
+
                                             children=move |(character, retainers)| {
                                                 let retainers = create_rw_signal(retainers);
                                                 create_effect(move |_| {
@@ -153,6 +154,7 @@ pub fn EditRetainers() -> impl IntoView {
                                                                 }
                                                             }
                                                         />
+
                                                     </div>
                                                 }
                                             }
@@ -162,6 +164,9 @@ pub fn EditRetainers() -> impl IntoView {
                                 }
                                 Err(e) => {
                                     view! {
+                                        // I have no idea how I would have found that the #[server] macro takes params as a struct
+                                        // without the compiler just spelling it out for me
+
                                         // I have no idea how I would have found that the #[server] macro takes params as a struct
                                         // without the compiler just spelling it out for me
 
@@ -212,6 +217,7 @@ pub fn EditRetainers() -> impl IntoView {
                                                                         true => "Claimed",
                                                                         false => "Claim",
                                                                     }}
+
                                                                 </button>
                                                             </div>
                                                         }

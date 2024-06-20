@@ -23,6 +23,7 @@ pub fn AddToList(#[prop(into)] item_id: MaybeSignal<i32>) -> impl IntoView {
                     set_modal_visible(!modal_visible());
                 }
             >
+
                 <Icon icon=RiPlayListAddMediaLine/>
                 <div class="sr-only">"Add To List"</div>
                 {move || {
@@ -69,6 +70,7 @@ fn AddToListModal(
                             set_quantity(quantity);
                         }
                     />
+
                 </div>
                 <div class="flex flex-row">
                     <Toggle
@@ -117,6 +119,7 @@ fn AddToListModal(
                                                         });
                                                     }
                                                 >
+
                                                     {move || {
                                                         if saved() {
                                                             view! { <div class="mx-1">"Saved"</div> }.into_view()

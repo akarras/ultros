@@ -99,9 +99,11 @@ pub fn Tooltip(
             on:mouseover=move |_| {
                 is_hover.set(true);
             }
+
             on:mouseout=move |_| {
                 is_hover.set(false);
             }
+
             node_ref=target
         >
             {children()}

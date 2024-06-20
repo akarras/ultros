@@ -30,6 +30,7 @@ pub fn Modal(
                         e.stop_propagation();
                     }
                 >
+
                     <div
                         class="self-end ml-auto cursor-pointer hover:text-neutral-200"
                         on:click=move |_| set_visible(false)

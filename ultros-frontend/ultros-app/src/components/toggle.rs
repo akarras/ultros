@@ -19,6 +19,7 @@ pub fn Toggle(
                     set_checked(!checked);
                 }
             />
+
             <div class="w-11 h-6 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-800 rounded-full peer bg-gray-700
             peer-checked:after:translate-x-full peer-checked:after:border-white after:content-['']
             after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border
@@ -27,6 +28,7 @@ pub fn Toggle(
                 {move || {
                     if checked() { checked_label.to_string() } else { unchecked_label.to_string() }
                 }}
+
             </span>
         </label>
     }

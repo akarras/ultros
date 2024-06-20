@@ -97,6 +97,7 @@ where
                         add_items_to_list.dispatch(list);
                     }
                 }
+
                 class="btn"
             >
                 "Bulk add"

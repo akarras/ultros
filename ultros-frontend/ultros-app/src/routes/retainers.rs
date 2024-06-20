@@ -312,36 +312,34 @@ pub fn SingleRetainerListings() -> impl IntoView {
                 retainer_listings
                     .get()
                     .map(|r| {
-                        r
-                            .and_then(|r| {
-                                r
-                                    .ok()
-                                    .map(|r| {
-                                        let worlds = use_context::<LocalWorldData>()
-                                            .expect("Local world data must be verified")
-                                            .0
-                                            .unwrap();
-                                        let world = worlds
-                                            .lookup_selector(AnySelector::World(r.retainer.world_id));
-                                        let world_name = world
-                                            .as_ref()
-                                            .map(|w| w.get_name())
-                                            .unwrap_or_default();
-                                        view! {
-                                            <MetaTitle title=format!(
-                                                "{} - 🌍{}",
-                                                &r.retainer.name,
-                                                world_name,
-                                            )/>
-                                            <MetaDescription text=format!(
-                                                "All of the listings for the retainer {} on the world {}",
-                                                &r.retainer.name,
-                                                world_name,
-                                            )/>
-                                            <RetainerTable retainer=r.retainer listings=r.listings/>
-                                        }
-                                    })
-                            })
+                        r.and_then(|r| {
+                            r.ok()
+                                .map(|r| {
+                                    let worlds = use_context::<LocalWorldData>()
+                                        .expect("Local world data must be verified")
+                                        .0
+                                        .unwrap();
+                                    let world = worlds
+                                        .lookup_selector(AnySelector::World(r.retainer.world_id));
+                                    let world_name = world
+                                        .as_ref()
+                                        .map(|w| w.get_name())
+                                        .unwrap_or_default();
+                                    view! {
+                                        <MetaTitle title=format!(
+                                            "{} - 🌍{}",
+                                            &r.retainer.name,
+                                            world_name,
+                                        )/>
+                                        <MetaDescription text=format!(
+                                            "All of the listings for the retainer {} on the world {}",
+                                            &r.retainer.name,
+                                            world_name,
+                                        )/>
+                                        <RetainerTable retainer=r.retainer listings=r.listings/>
+                                    }
+                                })
+                        })
                     })
             }}
 

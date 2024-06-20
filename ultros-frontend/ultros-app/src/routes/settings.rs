@@ -60,6 +60,7 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
                                         event_target_value(&input),
                                     )
                                 />
+
                                 <button
                                     class="btn"
                                     on:click=move |_| search_action.dispatch(character_search())
@@ -97,6 +98,7 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
                                                                         claim_character.dispatch(character.id);
                                                                     }
                                                                 >
+
                                                                     "Claim"
                                                                 </button>
                                                             </div>
@@ -207,12 +209,14 @@ pub fn DeleteUser() -> impl IntoView {
                             "bg-neutral-300 p-2 rounded-md"
                         }
                     }
+
                     on:click=move |_| {
                         if confirmed.get_untracked() {
                             spawn_local(async move { if let Ok(()) = delete_user().await {} });
                         }
                     }
                 >
+
                     "Delete my account"
                 </button>
             </div>
@@ -277,6 +281,7 @@ pub fn Profile() -> impl IntoView {
                                                                         check_verification.dispatch(verification.id)
                                                                     }
                                                                 >
+
                                                                     "Verify"
                                                                 </button>
                                                             </div>

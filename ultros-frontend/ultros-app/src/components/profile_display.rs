@@ -10,8 +10,7 @@ pub fn ProfileDisplay() -> impl IntoView {
     view! {
         <Suspense fallback=Loading>
             {move || {
-                user
-                    .get()
+                user.get()
                     .map(|user| match user {
                         Some(auth) => {
                             view! {

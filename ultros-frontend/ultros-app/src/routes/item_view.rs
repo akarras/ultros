@@ -172,15 +172,12 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
                 let hq_listings = create_memo(move |_| {
                     listing_resource
                         .with(|l| {
-                            l
-                                .as_ref()
+                            l.as_ref()
                                 .and_then(|l| {
-                                    l
-                                        .as_ref()
+                                    l.as_ref()
                                         .ok()
                                         .map(|l| {
-                                            l
-                                                .listings
+                                            l.listings
                                                 .iter()
                                                 .cloned()
                                                 .filter(|(l, _)| l.hq)
@@ -213,15 +210,12 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
                 let lq_listings = create_memo(move |_| {
                     listing_resource
                         .with(|l| {
-                            l
-                                .as_ref()
+                            l.as_ref()
                                 .and_then(|l| {
-                                    l
-                                        .as_ref()
+                                    l.as_ref()
                                         .ok()
                                         .map(|l| {
-                                            l
-                                                .listings
+                                            l.listings
                                                 .iter()
                                                 .cloned()
                                                 .filter(|(l, _)| !l.hq)
@@ -380,9 +374,11 @@ pub fn ItemView() -> impl IntoView {
                 format!("https://ultros.app/static/itemicon/{}?size=Large", item_id())
             }
         />
+
         {move || {
             view! { <Link rel="canonical" href=format!("https://ultros.app/item/{}", item_id())/> }
         }}
+
         <div class="flex flex-column bg-gradient-to-r from-slate-950 -mt-96 pt-96 ">
             <div class="flex flex-row rounded-l items-start">
                 <div class="flex flex-column grow" style="padding: 5px">
@@ -413,6 +409,7 @@ pub fn ItemView() -> impl IntoView {
                                                     }
                                                 })
                                         }}
+
                                     </div>
                                 </div>
                             </div>
@@ -434,6 +431,7 @@ pub fn ItemView() -> impl IntoView {
                                     format!("https://garlandtools.org/db/#item/{}", item_id())
                                 }
                             >
+
                                 "Garlandtools"
                             </a>
                         </div>
@@ -445,6 +443,7 @@ pub fn ItemView() -> impl IntoView {
                                 item().map(|i| i.price_low == 0).unwrap_or_default()
                             }
                         >
+
                             "Sells to a vendor for: "
                             <Gil amount=MaybeSignal::derive(move || {
                                 item().map(|i| i.price_low).unwrap_or_default() as i32

@@ -16,7 +16,7 @@ pub fn MatchFormatter(m: Match, target: String) -> impl IntoView {
     for c in m.continuous_matches() {
         // Piece between last match and this match
         pieces.push(
-            view! { {target.chars().skip(last_end).take(c.start() - last_end).collect::<String>()} }
+            target.chars().skip(last_end).take(c.start() - last_end).collect::<String>()
             .into_view(),
         );
 
@@ -69,6 +69,7 @@ pub fn ItemSearchResult(
                         format!("/item/{price_zone}/{item_id}")
                     }
                 >
+
                     // this needs to be updated to be able to point to any region
                     <div class="search-result">
                         <ItemIcon item_id icon_size=IconSize::Small/>
@@ -120,7 +121,6 @@ pub fn ItemSearchResult(
         } else {
             view! {
                 // this needs to be updated to be able to point to any region
-
                 <a class="search-result">"Invalid result"</a>
             }
         }}

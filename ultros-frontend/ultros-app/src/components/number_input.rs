@@ -21,6 +21,7 @@ where
                     "border rounded border-violet-950"
                 }
             }
+
             prop:value=move || input().map(|value| value.into()).unwrap_or(JsValue::NULL)
             on:input=move |e| {
                 let value = event_target_value(&e);

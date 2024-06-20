@@ -124,6 +124,7 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>, region: String) -> impl IntoView
                                     }
                                 })
                         }}
+
                     </Suspense>
                     <div>
                         <SearchBox/>

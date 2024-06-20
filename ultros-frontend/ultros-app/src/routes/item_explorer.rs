@@ -545,6 +545,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                     })
                     .collect::<Vec<_>>()
             }}
+
         </div>
         <For
             each=items
@@ -564,6 +565,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                 }
             }
         />
+
         <QueryButton
             query_name="page"
             value=move || (page().unwrap_or(1) + 1).to_string()
@@ -576,6 +578,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                     "hidden"
                 }
             }
+
             active_classes="p-1 !text-violet-500"
         >
             "Next page: "
@@ -594,31 +597,41 @@ pub fn ItemExplorer() -> impl IntoView {
     view! {
         <MetaTitle title="Ultros Item Explorer"/>
         <MetaDescription text="Find the cheapest items available on the market board!"/>
-        <button class="p-2 text-3xl bg-neutral-800 text-gray-300 hover:bg-neutral-600 gap-1 flex flex-row rounded" class:bg-neutral-700=menu_open class:bg-neutral-800=move || !menu_open() on:click=move |_| {
-            set_open(!menu_open.get_untracked());
-        }>
-            <Icon icon=i::BiMenuRegular />
+        <button
+            class="p-2 text-3xl bg-neutral-800 text-gray-300 hover:bg-neutral-600 gap-1 flex flex-row rounded"
+            class:bg-neutral-700=menu_open
+            class:bg-neutral-800=move || !menu_open()
+            on:click=move |_| {
+                set_open(!menu_open.get_untracked());
+            }
+        >
+            <Icon icon=i::BiMenuRegular/>
             <span>"Categories"</span>
         </button>
         <div class="main-content relative">
             <div class="mx-auto container flex flex-col md:flex-row items-start">
-                <div class="bg-neutral-950 flex flex-col max-w-sm shrink h-[70vh] overflow-y-scroll absolute top-0 bottom-0 left-0 right-6 transition-all z-50" class:right-6=menu_open class:right-full=move || !menu_open() class:collapse=move || !menu_open()>
+                <div
+                    class="bg-neutral-950 flex flex-col max-w-sm shrink h-[70vh] overflow-y-scroll absolute top-0 bottom-0 left-0 right-6 transition-all z-50"
+                    class:right-6=menu_open
+                    class:right-full=move || !menu_open()
+                    class:collapse=move || !menu_open()
+                >
                     <h2 class="text-6xl p-2">"Weapons"</h2>
-                    <CategoryView category=1 />
+                    <CategoryView category=1/>
                     <h2 class="text-6xl p-2">"Armor"</h2>
-                    <CategoryView category=2 />
+                    <CategoryView category=2/>
                     <h2 class="text-6xl p-2">"Items"</h2>
-                    <CategoryView category=3 />
+                    <CategoryView category=3/>
                     <h2 class="text-6xl p-2">"Housing"</h2>
-                    <CategoryView category=4 />
+                    <CategoryView category=4/>
                     <h2 class="text-6xl p-2">"Job Set"</h2>
-                    <JobsList />
+                    <JobsList/>
                 </div>
                 <div class="flex flex-col grow">
-                    <Ad class="h-24 w-full" />
+                    <Ad class="h-24 w-full"/>
                     <h1 class="text-2xl">"Item Explorer"</h1>
-                    <Outlet />
-                    <Ad class="grow max-h-72" />
+                    <Outlet/>
+                    <Ad class="grow max-h-72"/>
                 </div>
             </div>
         </div>
