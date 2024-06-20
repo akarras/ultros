@@ -121,6 +121,8 @@ pub fn ItemSearchResult(
         } else {
             view! {
                 // this needs to be updated to be able to point to any region
+
+                // this needs to be updated to be able to point to any region
                 <a class="search-result">"Invalid result"</a>
             }
         }}

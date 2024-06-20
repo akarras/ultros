@@ -39,7 +39,7 @@ fn WorldButton<'a>(world: AnyResult<'a>, item_id: i32) -> impl IntoView {
                 .concat()
             href=format!("/item/{}/{item_id}", escape(&world_name))
         >
-            {move || is_home_world.get().then(|| view! { <Icon icon=icondata::AiHomeFilled/> })}
+            {move || is_home_world.get().then(|| view! { <Icon icon=icondata::AiHomeFilled/><div class="w-1"></div> })}
 
             {world_name}
         </A>
@@ -52,7 +52,9 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
     let world_data = use_context::<LocalWorldData>().unwrap().0.unwrap();
     let (home_world, _) = use_home_world();
     let home_world_button = Signal::derive(move || home_world.get().map(|world| view! { <WorldButton world=AnyResult::World(&world) item_id=item_id()/> }));
-    move || {
+    view!{
+        <div class="content-nav">
+        {move || {
         let world = world_name();
         let world_name = escape(&world);
         if let Some(world) = world_data.lookup_world_by_name(&world_name) {
@@ -129,6 +131,8 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                 .collect();
             views.into_view()
         }
+    }}
+    </div>
     }
 }
 
@@ -142,7 +146,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
     view! {
         <Transition fallback=move || {
             view! {
-                <div class="h-[35em] grow w-screen md:w-[780px] xl:basis-1/2">
+                <div class="h-[35em] grow w-screen md:w-[780px]">
                     <BoxSkeleton/>
                 </div>
             }
@@ -154,7 +158,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
                         .unwrap_or_default()
                 });
                 view! {
-                    <div class="content-well max-h-[35em] overflow-y-auto grow-0 xl:basis-1/2">
+                    <div class="content-well max-h-[35em] overflow-y-auto grow">
                         <PriceHistoryChart sales=MaybeSignal::from(sales)/>
                     </div>
                 }
@@ -163,7 +167,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
         </Transition>
         <Transition fallback=move || {
             view! {
-                <div class="h-[35em] grow w-screen md:w-[780px] xl:basis-1/2">
+                <div class="h-[35em] grow w-screen md:w-[780px]">
                     <BoxSkeleton/>
                 </div>
             }
@@ -192,7 +196,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
                         class="content-well max-h-[35em] overflow-y-auto grow"
                         class:hidden=move || hq_listings.with(|l| l.is_empty())
                     >
-                        <div class="content-title">"high quality listings"</div>
+                        <div class="content-title text-center">"high quality listings"</div>
                         <ListingsTable listings=hq_listings/>
                     </div>
                 }
@@ -201,7 +205,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
         </Transition>
         <Transition fallback=move || {
             view! {
-                <div class="h-[35em] grow w-screen md:w-[780px] xl:basis-1/2">
+                <div class="h-[35em] grow w-screen md:w-[780px]">
                     <BoxSkeleton/>
                 </div>
             }
@@ -230,7 +234,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
                         class="content-well max-h-[35em] overflow-y-auto grow"
                         class:hidden=move || lq_listings.with(|l| l.is_empty())
                     >
-                        <div class="content-title">"low quality listings"</div>
+                        <div class="content-title text-center">"low quality listings"</div>
                         <ListingsTable listings=lq_listings/>
                     </div>
                 }
@@ -252,7 +256,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
                 });
                 view! {
                     <div class="content-well max-h-[35em] overflow-y-auto xl:basis-1/2">
-                        <div class="content-title">"sale history"</div>
+                        <div class="content-title text-center">"sale history"</div>
                         <div>
                             <SaleHistoryTable sales=Signal::from(sales)/>
                         </div>
@@ -380,7 +384,7 @@ pub fn ItemView() -> impl IntoView {
         }}
 
         <div class="flex flex-column bg-gradient-to-r from-slate-950 -mt-96 pt-96 ">
-            <div class="flex flex-row rounded-l items-start">
+            <div class="flex flex-row rounded-l items-start p-2">
                 <div class="flex flex-column grow" style="padding: 5px">
                     <div class="flex md:flex-row flex-col flex-wrap">
                         <div class="flex flex-row text-2xl gap-1">
@@ -461,9 +465,7 @@ pub fn ItemView() -> impl IntoView {
                     <Ad class="h-[90px] w-full"/>
                 </div>
             </div>
-            <div class="content-nav">
-                <WorldMenu world_name=world item_id/>
-            </div>
+            <WorldMenu world_name=world item_id/>
         </div>
         <div class="main-content flex-wrap">
             <ListingsContent item_id world/>

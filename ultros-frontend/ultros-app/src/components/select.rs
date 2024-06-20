@@ -94,6 +94,7 @@ where
                 on:input=move |e| {
                     set_current_input(event_target_value(&e));
                 }
+
                 on:keydown=keydown
                 prop:value=current_input
             />
@@ -106,6 +107,7 @@ where
                     }
                 }
             >
+
                 {move || choice().map(|c| { children(c.clone(), as_label(&c).into_view()) })}
 
             </div>
@@ -131,6 +133,7 @@ where
                             }
                         }
                     >
+
                         <div
                             class="hover:bg-purple-700 hover:border-solid hover:border-violet-600 rounded-sm p-2 transition-all ease-in-out duration-500"
                             class:bg-purple-500=move || {
@@ -145,6 +148,7 @@ where
                                     .unwrap_or_default()
                             }
                         >
+
                             {items
                                 .with(|i| i.get(data.0).cloned())
                                 .map(|c| children(
@@ -165,6 +169,7 @@ where
                                     }
                                         .into_view(),
                                 ))}
+
                         </div>
                     </button>
                 </For>

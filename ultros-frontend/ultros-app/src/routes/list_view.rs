@@ -377,6 +377,7 @@ pub fn ListView() -> impl IntoView {
                                                         })
                                                 }
                                             >
+
                                                 "bulk edit"
                                             </button>
                                             <div class:hidden=move || !edit_list_mode()>
@@ -389,6 +390,7 @@ pub fn ListView() -> impl IntoView {
                                                         delete_items.dispatch(items);
                                                     }
                                                 >
+
                                                     "DELETE"
                                                 </button>
                                             </div>
@@ -403,6 +405,7 @@ pub fn ListView() -> impl IntoView {
                                                         })
                                                 }
                                             >
+
                                                 "SELECT ALL"
                                             </button>
                                             <button
@@ -411,6 +414,7 @@ pub fn ListView() -> impl IntoView {
                                                     selected_items.update(|i| i.clear());
                                                 }
                                             >
+
                                                 "DESLECT ALL"
                                             </button>
                                         </div>
@@ -452,6 +456,7 @@ pub fn ListView() -> impl IntoView {
                                                                                     })
                                                                             }
                                                                         />
+
                                                                     </td>
                                                                     <td>{item.hq.and_then(|hq| hq.then_some("✅"))}</td>
                                                                     <td>
@@ -479,6 +484,7 @@ pub fn ListView() -> impl IntoView {
                                                                                         </div>
                                                                                     }
                                                                                 })}
+
                                                                         </div>
                                                                     </td>
                                                                     <td>{item.quantity}</td>
@@ -492,6 +498,7 @@ pub fn ListView() -> impl IntoView {
                                                                                 />
                                                                             }
                                                                         }}
+
                                                                     </td>
                                                                 }
                                                             } else {
@@ -505,6 +512,7 @@ pub fn ListView() -> impl IntoView {
                                                                                 temp_item.update(|w| w.hq = Some(!w.hq.unwrap_or_default()))
                                                                             }
                                                                         />
+
                                                                     </td>
                                                                     <td>
                                                                         <div class="flex-row">
@@ -531,6 +539,7 @@ pub fn ListView() -> impl IntoView {
                                                                                         </div>
                                                                                     }
                                                                                 })}
+
                                                                         </div>
                                                                     </td>
                                                                     <td>
@@ -545,6 +554,7 @@ pub fn ListView() -> impl IntoView {
                                                                                 }
                                                                             }
                                                                         />
+
                                                                     </td>
                                                                     <td>
                                                                         {move || {
@@ -556,6 +566,7 @@ pub fn ListView() -> impl IntoView {
                                                                                 />
                                                                             }
                                                                         }}
+
                                                                     </td>
                                                                 }
                                                             }
@@ -575,6 +586,7 @@ pub fn ListView() -> impl IntoView {
                                                                     set_edit(!edit())
                                                                 }
                                                             >
+
                                                                 <Icon icon=MaybeSignal::derive(move || {
                                                                     if edit() { i::BsCheck } else { i::BsPencilFill }
                                                                 })/>
@@ -584,6 +596,7 @@ pub fn ListView() -> impl IntoView {
                                                 }
                                             }
                                         />
+
                                     </table>
                                 </div>
                             }

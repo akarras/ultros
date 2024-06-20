@@ -605,6 +605,7 @@ pub fn ItemExplorer() -> impl IntoView {
                 set_open(!menu_open.get_untracked());
             }
         >
+
             <Icon icon=i::BiMenuRegular/>
             <span>"Categories"</span>
         </button>

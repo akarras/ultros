@@ -170,6 +170,9 @@ pub fn EditRetainers() -> impl IntoView {
                                         // I have no idea how I would have found that the #[server] macro takes params as a struct
                                         // without the compiler just spelling it out for me
 
+                                        // I have no idea how I would have found that the #[server] macro takes params as a struct
+                                        // without the compiler just spelling it out for me
+
                                         <div>"Retainers" <br/> {e.to_string()}</div>
                                     }
                                         .into_view()
