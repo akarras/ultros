@@ -356,7 +356,7 @@ pub(crate) async fn world_data(State(world_cache): State<Arc<WorldCache>>) -> im
     let mut response = Json(world_data).into_response();
     response
         .headers_mut()
-        .typed_insert(CacheControl::new().with_max_age(Duration::from_secs(60 * 60 * 24 * 7)));
+        .typed_insert(CacheControl::new().with_max_age(Duration::from_secs(60 * 60 * 24 * 1)));
     response
 }
 
