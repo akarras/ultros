@@ -399,7 +399,7 @@ pub fn ItemView() -> impl IntoView {
                                 <h1>
                                     {item_name}
                                     <div class="sr-only">
-                                        " ffxiv marketboard prices for " {world}
+                                        " marketboard prices for " {world}
                                     </div>
                                 </h1>
                                 <div style="font-size: 16px">
@@ -468,6 +468,11 @@ pub fn ItemView() -> impl IntoView {
                     </div>
                     <div>{move || view! { <UIText text=item_description().to_string()/> }}</div>
                     <div>{move || view! { <ItemStats item_id=ItemId(item_id())/> }}</div>
+                    <div>{move || item().map(|item| match item.dye_count {
+                        0 => String::new(),
+                        1 => "dyeable".to_string(),
+                        n => format!("{n} dye slots")
+                    })}</div>
                     <Ad class="h-[90px] w-full"/>
                 </div>
             </div>
