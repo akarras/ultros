@@ -1,6 +1,9 @@
-use leptos::{ev::resize, html::Div, *};
-use leptos_use::{use_element_bounding, use_element_size, use_event_listener_with_options, use_window, use_window_scroll, UseElementBoundingReturn, UseElementSizeReturn, UseEventListenerOptions};
 use cfg_if::cfg_if;
+use leptos::{ev::resize, html::Div, *};
+use leptos_use::{
+    use_element_bounding, use_element_size, use_event_listener_with_options, use_window,
+    use_window_scroll, UseElementBoundingReturn, UseElementSizeReturn, UseEventListenerOptions,
+};
 
 fn use_window_size() -> (Signal<f64>, Signal<f64>) {
     cfg_if! { if #[cfg(feature = "ssr")] {
@@ -17,8 +20,20 @@ fn use_window_size() -> (Signal<f64>, Signal<f64>) {
         use_window(),
         resize,
         move |_| {
-            set_x.set(window().inner_width().unwrap_or_default().as_f64().unwrap_or_default());
-            set_y.set(window().inner_height().unwrap_or_default().as_f64().unwrap_or_default());
+            set_x.set(
+                window()
+                    .inner_width()
+                    .unwrap_or_default()
+                    .as_f64()
+                    .unwrap_or_default(),
+            );
+            set_y.set(
+                window()
+                    .inner_height()
+                    .unwrap_or_default()
+                    .as_f64()
+                    .unwrap_or_default(),
+            );
         },
         UseEventListenerOptions::default()
             .capture(false)
@@ -39,7 +54,15 @@ pub fn Tooltip(
         MaybeSignal::Dynamic(d) => d,
     };
     let target = create_node_ref::<Div>();
-    let UseElementBoundingReturn { bottom, top, left, right, width, height, .. } = use_element_bounding(target);
+    let UseElementBoundingReturn {
+        bottom,
+        top,
+        left,
+        right,
+        width,
+        height,
+        ..
+    } = use_element_bounding(target);
 
     use_window_scroll();
 

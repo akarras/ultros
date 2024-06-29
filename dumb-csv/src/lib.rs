@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 pub use dumb_csv_macros::DumbCsvDeserialize;
 
 pub trait FromBool {
@@ -6,15 +8,34 @@ pub trait FromBool {
 
 impl FromBool for &str {
     fn from_bool(&self) -> bool {
-        match *self {
-            "TRUE" => true,
-            "FALSE" => false,
-            "1" => true,
-            "0" => false,
-            "True" => true,
-            "False" => false,
-            p => panic!("Unknown value {p}"),
-        }
+        bool_from_str(self).unwrap_or_default()
+    }
+}
+
+pub fn bool_from_str(val: &str) -> Option<bool> {
+    Some(match val {
+        "TRUE" => true,
+        "FALSE" => false,
+        "1" => true,
+        "0" => false,
+        "True" => true,
+        "False" => false,
+        _ => return None,
+    })
+}
+
+pub trait ParseOrDefault {
+    fn parse_or_default<T>(str_val: &str) -> T
+    where
+        T: Default + FromStr;
+}
+
+impl ParseOrDefault for &str {
+    fn parse_or_default<T>(str_val: &str) -> T
+    where
+        T: Default + FromStr,
+    {
+        str_val.parse().unwrap_or_default()
     }
 }
 

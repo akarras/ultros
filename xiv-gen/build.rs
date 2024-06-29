@@ -328,7 +328,7 @@ fn create_struct(
 
                 if line_one == "key_id" {
                     let mut key = Struct::new(&key_name);
-                    apply_derives(&mut key).derive("FromStr").derive("Hash").derive("Eq").derive("Copy").vis("pub").tuple_field(&sample_data.field_type(&csv_name)).vis("pub");
+                    apply_derives(&mut key).derive("FromStr").derive("Default").derive("Hash").derive("Eq").derive("Copy").vis("pub").tuple_field(&sample_data.field_type(&csv_name)).vis("pub");
                     scope.push_struct(key);
 
                     line_two = key_name.clone();
@@ -487,6 +487,9 @@ fn create_struct(
                     "#[serde(deserialize_with = \"deserialize_bool_from_anything_custom\")]",
                 ]);
             }
+            if field_value.ends_with("Id") {
+                field.annotation(vec![r#"#[serde(deserialize_with = "ok_or_default")]"#]);
+            }
             s.push_field(field);
         }
     }
@@ -583,6 +586,7 @@ fn read_dir<T: Container>(path: PathBuf, mut scope: T, args: &mut Args) -> T {
         apply_derives(&mut s)
             .vis("pub")
             .derive("FromStr")
+            .derive("Default")
             .tuple_field(sample_data)
             .vis("pub");
         scope.push_struct(s);

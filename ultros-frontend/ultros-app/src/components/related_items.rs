@@ -78,8 +78,8 @@ impl<'a> Iterator for IngredientsIter<'a> {
                 5 => (self.0.item_ingredient_5, self.0.amount_ingredient_5),
                 6 => (self.0.item_ingredient_6, self.0.amount_ingredient_6),
                 7 => (self.0.item_ingredient_7, self.0.amount_ingredient_7),
-                8 => (self.0.item_ingredient_8, self.0.amount_ingredient_8),
-                9 => (self.0.item_ingredient_9, self.0.amount_ingredient_9),
+                // 8 => (self.0.item_ingredient_8, self.0.amount_ingredient_8),
+                // 9 => (self.0.item_ingredient_9, self.0.amount_ingredient_9),
                 _ => return None,
             };
             self.1 += 1;
@@ -199,24 +199,9 @@ fn Recipe(recipe: &'static Recipe) -> impl IntoView {
     })
 }
 
-fn npc_rows(npc: &ENpcBase) -> impl Iterator<Item = u32> {
+fn npc_rows(npc: &ENpcBase) -> impl Iterator<Item = u32> + '_ {
     // TODO- can I just parse the csv into a vec?
-    [
-        npc.e_npc_data_0.0,
-        npc.e_npc_data_1.0,
-        npc.e_npc_data_2.0,
-        npc.e_npc_data_3.0,
-        npc.e_npc_data_4.0,
-        npc.e_npc_data_5.0,
-        npc.e_npc_data_6.0,
-        npc.e_npc_data_7.0,
-        npc.e_npc_data_8.0,
-        npc.e_npc_data_9.0,
-        npc.e_npc_data_10.0,
-        // not sure if I should actually process more than this or not
-    ]
-    .into_iter()
-    .filter(|row| *row != 0)
+    npc.e_npc_data.iter().map(|row| row.0)
 }
 
 fn gil_shop_to_npc(gil_shops: &Vec<GilShopId>) -> Vec<(GilShopId, &'static ENpcBase)> {

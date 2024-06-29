@@ -8,6 +8,15 @@ use std::fmt::Debug;
 #[derive(Serialize, Hash, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Decode, Encode)]
 pub struct SubrowKey<T>(pub T, pub i32);
 
+impl<T> Default for SubrowKey<T>
+where
+    T: Default,
+{
+    fn default() -> Self {
+        Self(T::default(), 0)
+    }
+}
+
 impl<T> FromStr for SubrowKey<T>
 where
     T: FromStr,

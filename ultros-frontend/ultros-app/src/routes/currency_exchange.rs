@@ -328,7 +328,9 @@ pub fn ExchangeItem() -> impl IntoView {
                     shop_names,
                 )| {
                     CurrencyTrade {
-                        shop_names: ShopNames { shops: shop_names.into_iter().unique().collect() },
+                        shop_names: ShopNames {
+                            shops: shop_names.into_iter().unique().collect(),
+                        },
                         cost_item: Some(cost),
                         receive_item: Some(recv),
                         price_per_item: guessed_price_per_item,

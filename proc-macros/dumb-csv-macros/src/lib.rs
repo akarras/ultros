@@ -1,7 +1,9 @@
+use std::str::FromStr;
+
 use darling::{ast, FromDeriveInput, FromField};
 use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
-use syn::{parse_macro_input, DeriveInput};
+use syn::{parse::Parse, parse_macro_input, token::Type, DeriveInput};
 
 #[proc_macro_derive(DumbCsvDeserialize, attributes(dumb_csv))]
 pub fn dumb_deserialize(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -68,9 +70,19 @@ impl ToTokens for DumbCsvDeserializeReceiver {
                 let parse_body = match dummy {
                     DummyType::String => quote! {},
                     DummyType::Bool => quote! { .from_bool() },
-                    DummyType::Other(v) => {
-                        let error = format!("Unable to parse {field_name}: {v}");
-                        quote! { .parse().expect(#error) }
+                    DummyType::Other(val) => {
+                        let ty= TokenStream::from_str(val).unwrap();
+                        // let ty = Type::from(val);
+                        if val.starts_with("i") || val.starts_with("u") || val.ends_with("Id") {
+                            quote!{
+                                .parse::<#ty>().unwrap_or_default()
+                            }
+                        } else {
+                            let error = format!("DUMBCSV OTHER {val}: Error parsing value {}", field_name);
+                            quote!{
+                                .parse::<#ty>().expect(#error)
+                            }
+                        }
                     }
                 };
                 let mut parser = if let Some(count) = field.count {
@@ -82,16 +94,27 @@ impl ToTokens for DumbCsvDeserializeReceiver {
                         }).collect()
                     }
                 } else {
-                    if dummy == DummyType::String {
+                    match dummy { DummyType::String => {
                         let error = format!("Error reading value {}", field_name);
                         quote! {
                             list.next().expect(#error).to_string()
                         }
-                    } else {
-                        let error = format!("Error parsing value {}", field_name);
-                        quote! {
-                            list.next().expect("There to be a value").parse::<#ty>().expect(#error)
-                        }
+                        }, DummyType::Bool => {
+                            quote! {
+                                list.next().expect("There to be a value").from_bool()
+                            }
+                        }, DummyType::Other(val) => {
+                            if val.starts_with("i") || val.starts_with("u") || val.ends_with("Id") {
+                                quote!{
+                                    list.next().expect("There to be a value").parse::<#ty>().unwrap_or_default()
+                                }
+                            } else {
+                                let error = format!("DUMBCSV OTHER {val}: Error parsing value {}", field_name);
+                                quote!{
+                                    list.next().expect("There to be a value").parse::<#ty>().expect(#error)
+                                }
+                            }
+                        },
                     }
                 };
                 if let Some(skip) = field.skip {
