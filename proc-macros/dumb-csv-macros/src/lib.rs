@@ -3,7 +3,7 @@ use std::str::FromStr;
 use darling::{ast, FromDeriveInput, FromField};
 use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
-use syn::{parse::Parse, parse_macro_input, token::Type, DeriveInput};
+use syn::{parse_macro_input, DeriveInput};
 
 #[proc_macro_derive(DumbCsvDeserialize, attributes(dumb_csv))]
 pub fn dumb_deserialize(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
