@@ -173,15 +173,17 @@ fn Recipe(recipe: &'static Recipe) -> impl IntoView {
     let items = &xiv_gen_db::data().items;
     let ingredients = IngredientsIter::new(recipe)
         .flat_map(|(ingredient, amount)| items.get(&ingredient).map(|item| (item, amount)))
-        .map(|(ingredient, amount)| view! {
-            <div class="flex md:flex-row flex-col">
-                <div class="flex flex-row">
-                    <span style="color:#dab;">{amount.to_string()}</span>
-                    "x"
-                    <SmallItemDisplay item=ingredient/>
+        .map(|(ingredient, amount)| {
+            view! {
+                <div class="flex md:flex-row flex-col">
+                    <div class="flex flex-row">
+                        <span style="color:#dab;">{amount.to_string()}</span>
+                        "x"
+                        <SmallItemDisplay item=ingredient/>
+                    </div>
+                    <CheapestPrice item_id=ingredient.key_id/>
                 </div>
-                <CheapestPrice item_id=ingredient.key_id/>
-            </div>
+            }
         })
         .collect::<Vec<_>>();
     let target_item = items.get(&recipe.item_result)?;

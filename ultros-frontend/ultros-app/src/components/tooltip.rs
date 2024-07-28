@@ -68,12 +68,14 @@ pub fn Tooltip(
 
     let tooltip = {
         move || {
-            (tooltip_text.with(|t| !t.is_empty()) &&
-            is_hover.get()).then(move || {
+            (tooltip_text.with(|t| !t.is_empty()) && is_hover.get()).then(move || {
                 let (screen_width, screen_height) = use_window_size();
                 let (scroll_x, scroll_y) = use_window_scroll();
                 let node_ref = create_node_ref::<Div>();
-                let UseElementSizeReturn { width: tooltip_width, height: tooltip_height } = use_element_size(node_ref);
+                let UseElementSizeReturn {
+                    width: tooltip_width,
+                    height: tooltip_height,
+                } = use_element_size(node_ref);
                 let desired_position = move || {
                     log::info!("screen_x: {} screen_y: {}", screen_width(), screen_height());
                     log::info!("scroll_x: {} scroll_y: {}", scroll_x(), scroll_y());
@@ -100,9 +102,11 @@ pub fn Tooltip(
                     let x = (-left_pad + right_pad).clamp(-1.0, 1.0);
                     let y = (-top_pad + bottom_pad).clamp(-1.0, 1.0);
                     let distance = 25.0;
-                    format!("top: {}px; left: {}px;",
+                    format!(
+                        "top: {}px; left: {}px;",
                         ((y * distance) + (y * half_height) + top) + (tooltip_height() / 2.0),
-                        (x * distance) + (x * half_width) + left - (tooltip_width() / 2.0))
+                        (x * distance) + (x * half_width) + left - (tooltip_width() / 2.0)
+                    )
                 };
                 view! {
                     <Portal>

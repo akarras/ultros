@@ -16,8 +16,12 @@ pub fn MatchFormatter(m: Match, target: String) -> impl IntoView {
     for c in m.continuous_matches() {
         // Piece between last match and this match
         pieces.push(
-            target.chars().skip(last_end).take(c.start() - last_end).collect::<String>()
-            .into_view(),
+            target
+                .chars()
+                .skip(last_end)
+                .take(c.start() - last_end)
+                .collect::<String>()
+                .into_view(),
         );
 
         // This match

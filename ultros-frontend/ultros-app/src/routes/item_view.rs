@@ -10,19 +10,21 @@ use crate::components::{
 use crate::global_state::home_world::{get_price_zone, use_home_world};
 use crate::global_state::LocalWorldData;
 use leptos::*;
+use leptos_icons::Icon;
 use leptos_meta::Link;
 use leptos_meta::Meta;
 use leptos_router::*;
 use ultros_api_types::world_helper::AnyResult;
 use xiv_gen::ItemId;
-use leptos_icons::Icon;
 
 #[component]
 fn WorldButton<'a>(world: AnyResult<'a>, item_id: i32) -> impl IntoView {
     let (home_world, _) = use_home_world();
     let world_name = world.get_name().to_string();
     let is_home_world = Signal::derive(move || {
-        home_world.with(|w| w.as_ref().map(|w| &w.name == &world_name)).unwrap_or_default()
+        home_world
+            .with(|w| w.as_ref().map(|w| &w.name == &world_name))
+            .unwrap_or_default()
     });
     let world_name = world.get_name().to_owned();
     let bg_color = match world {
@@ -51,8 +53,12 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
     // for some reason the context version doesn't work
     let world_data = use_context::<LocalWorldData>().unwrap().0.unwrap();
     let (home_world, _) = use_home_world();
-    let home_world_button = Signal::derive(move || home_world.get().map(|world| view! { <WorldButton world=AnyResult::World(&world) item_id=item_id()/> }));
-    view!{
+    let home_world_button = Signal::derive(move || {
+        home_world
+            .get()
+            .map(|world| view! { <WorldButton world=AnyResult::World(&world) item_id=item_id()/> })
+    });
+    view! {
         <div class="content-nav">
         {move || {
         let world = world_name();

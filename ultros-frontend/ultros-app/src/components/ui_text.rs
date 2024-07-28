@@ -111,11 +111,14 @@ impl<'a> TextSpan<'a> {
         .flatten()
         .collect::<Vec<String>>();
         let text = text.to_string();
-        Some(view! {
-            <span style=styles.join(";")>
-                <RawText text=&text/>
-            </span>
-        }.into_view())
+        Some(
+            view! {
+                <span style=styles.join(";")>
+                    <RawText text=&text/>
+                </span>
+            }
+            .into_view(),
+        )
     }
 }
 

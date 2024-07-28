@@ -87,7 +87,8 @@ impl IntoView for ItemAmount {
                 <AddToList item_id=self.item.key_id.0/>
                 <Clipboard clipboard_text=self.item.name.as_str()/>
             </div>
-        }.into_view()
+        }
+        .into_view()
     }
 }
 
