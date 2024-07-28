@@ -36,10 +36,10 @@ use universalis::{DataCentersView, UniversalisClient, WebsocketClient, WorldId, 
 use web::character_verifier_service::CharacterVerifierService;
 use web::oauth::{AuthUserCache, DiscordAuthConfig, OAuthScope};
 
-#[cfg(all(not(target_env = "msvc"), feature = "malloc"))]
+#[cfg(all(not(target_env = "msvc"), feature = "jemalloc"))]
 use tikv_jemallocator::Jemalloc;
 
-#[cfg(all(not(target_env = "msvc"), feature = "malloc"))]
+#[cfg(all(not(target_env = "msvc"), feature = "jemalloc"))]
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
 
@@ -168,7 +168,7 @@ async fn main() -> Result<()> {
     info!("Connecting DB");
     let db = UltrosDb::connect().await?;
     info!("Fetching datacenters/worlds from universalis");
-    let universalis_client = UniversalisClient::new();
+    let universalis_client = UniversalisClient::new("ultros");
     let init = db.clone();
     let (senders, receivers) = create_event_busses();
     let listings_sender = senders.listings.clone();
@@ -218,7 +218,7 @@ async fn main() -> Result<()> {
     let update_service = UpdateService {
         db: db.clone(),
         world_cache: world_cache.clone(),
-        universalis: UniversalisClient::new(),
+        universalis: UniversalisClient::new("ultros"),
         listings: senders.listings.clone(),
         sales: senders.history.clone(),
     };

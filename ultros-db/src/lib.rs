@@ -100,8 +100,8 @@ impl UltrosDb {
             },
             RetainerCityData {
                 id: 14,
-                name: "Tuliyollal"
-            }
+                name: "Tuliyollal",
+            },
         ];
         // check if the database matches our coded data
         let db_cities = retainer_city::Entity::find().all(&self.db).await?;

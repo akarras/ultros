@@ -315,17 +315,15 @@ pub enum WorldOrDatacenter<'a> {
     Datacenter(&'a str),
 }
 
-impl Default for UniversalisClient {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl UniversalisClient {
     const UNIVERSALIS_BASE_URL: &'static str = "https://universalis.app/api/v2";
 
-    pub fn new() -> Self {
-        let client = Client::new();
+    pub fn new(user_agent: impl ToString) -> Self {
+        let client = Client::builder()
+            .user_agent(user_agent.to_string())
+            .build()
+            .unwrap();
+
         UniversalisClient { client }
     }
 
@@ -420,7 +418,7 @@ mod test {
 
     #[tokio::test]
     async fn test_get_worlds() {
-        let client = UniversalisClient::new();
+        let client = UniversalisClient::new("ultros");
         client.get_worlds().await.unwrap();
         client.get_data_centers().await.unwrap();
     }
@@ -439,7 +437,7 @@ mod test {
 
     #[tokio::test]
     async fn test_marketboard() {
-        let client = UniversalisClient::new();
+        let client = UniversalisClient::new("ultros");
         let items = client
             .marketboard_current_data("Aether", &[24144])
             .await
@@ -463,7 +461,7 @@ mod test {
 
     #[tokio::test]
     async fn test_history() {
-        let client = UniversalisClient::new();
+        let client = UniversalisClient::new("ultros");
 
         // let data : HistorySingleView = serde_json::from_str(&test_data).unwrap();
         client.get_item_history("Aether", &[15858]).await.unwrap();
@@ -472,7 +470,7 @@ mod test {
 
     #[tokio::test]
     async fn test_local_world_history() {
-        let client = UniversalisClient::new();
+        let client = UniversalisClient::new("ultros");
         client
             .get_item_history("Sargatanas", &[36693])
             .await
@@ -485,7 +483,7 @@ mod test {
 
     #[tokio::test]
     async fn test_recently_updated() {
-        let client = UniversalisClient::new();
+        let client = UniversalisClient::new("ultros");
         let entries = client
             .recently_updated_items(crate::WorldOrDatacenter::World("Sargatanas"), 200)
             .await

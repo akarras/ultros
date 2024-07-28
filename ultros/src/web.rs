@@ -127,7 +127,7 @@ async fn refresh_world_item_listings(
         .ok_or_else(|| anyhow::Error::msg("Unable to get worlds"))?;
     let world_clone = world.clone();
     let future = tokio::spawn(async move {
-        let client = UniversalisClient::new();
+        let client = UniversalisClient::new("ultros");
         let current_data = client
             .marketboard_current_data(&world_clone, &[item_id])
             .await?;
