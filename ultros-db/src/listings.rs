@@ -225,7 +225,7 @@ impl UltrosDb {
             .map(|listing| {
                 (
                     listing.retainer_name.to_string(),
-                    listing.retainer_id.clone(),
+                    listing.retainer_id.clone().unwrap_or_default(),
                     listing.retainer_city as i32,
                 )
             })

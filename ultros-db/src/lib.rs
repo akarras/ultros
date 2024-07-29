@@ -313,7 +313,7 @@ impl UltrosDb {
         } else {
             let retainer = self
                 .store_retainer(
-                    &listing.retainer_id,
+                    listing.retainer_id.as_deref().unwrap_or_default(),
                     &listing.retainer_name,
                     world_id,
                     listing.retainer_city as i32,
