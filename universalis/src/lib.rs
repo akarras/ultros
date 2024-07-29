@@ -111,10 +111,10 @@ pub struct ListingView {
     pub retainer_city: u32,
     /// UUID
     #[serde(rename = "retainerID")]
-    pub retainer_id: String,
+    pub retainer_id: Option<String>,
     pub retainer_name: String,
     #[serde(rename = "sellerID")]
-    pub seller_id: String,
+    pub seller_id: Option<String>,
     pub total: u32,
     pub tax: i32,
 }

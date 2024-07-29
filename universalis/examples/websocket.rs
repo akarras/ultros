@@ -17,7 +17,7 @@ struct Args {
 async fn main() {
     // subscribe to several items
     pretty_env_logger::init();
-    let universalis_client = UniversalisClient::new();
+    let universalis_client = UniversalisClient::new("ultros-universalis-examples");
     let worlds = universalis_client.get_worlds().await.unwrap();
     let args = Args::parse();
     let world = args
