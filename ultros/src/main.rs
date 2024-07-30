@@ -192,6 +192,14 @@ async fn main() -> Result<()> {
 
     let analyzer_service =
         AnalyzerService::start_analyzer(db.clone(), receivers.clone(), world_cache.clone()).await;
+    let update_service = Arc::new(UpdateService {
+        db: db.clone(),
+        world_cache: world_cache.clone(),
+        universalis: UniversalisClient::new("ultros"),
+        listings: senders.listings.clone(),
+        sales: senders.history.clone(),
+    });
+    UpdateService::start_service(update_service.clone());
     // begin listening to universalis events
     tokio::spawn(start_discord(
         db.clone(),
@@ -200,6 +208,7 @@ async fn main() -> Result<()> {
         analyzer_service.clone(),
         world_cache.clone(),
         world_helper.clone(),
+        update_service,
     ));
     // create the oauth config
     let hostname = env::var("HOSTNAME").expect(
@@ -215,14 +224,6 @@ async fn main() -> Result<()> {
         db: db.clone(),
         world_cache: world_cache.clone(),
     };
-    let update_service = UpdateService {
-        db: db.clone(),
-        world_cache: world_cache.clone(),
-        universalis: UniversalisClient::new("ultros"),
-        listings: senders.listings.clone(),
-        sales: senders.history.clone(),
-    };
-    update_service.start_service();
 
     let web_state = WebState {
         analyzer_service,

@@ -10,6 +10,7 @@ use crate::{
     alerts::alert_manager::AlertManager,
     analyzer_service::AnalyzerService,
     event::{EventReceivers, EventSenders},
+    item_update_service::UpdateService,
 };
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -23,6 +24,7 @@ pub(crate) struct Data {
     analyzer_service: AnalyzerService,
     world_cache: Arc<WorldCache>,
     world_helper: Arc<WorldHelper>,
+    update_service: Arc<UpdateService>,
 }
 
 #[poise::command(slash_command, prefix_command)]
@@ -74,6 +76,7 @@ pub(crate) async fn start_discord(
     analyzer_service: AnalyzerService,
     world_cache: Arc<WorldCache>,
     world_helper: Arc<WorldHelper>,
+    update_service: Arc<UpdateService>,
 ) {
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
@@ -109,6 +112,7 @@ pub(crate) async fn start_discord(
                     analyzer_service,
                     world_cache,
                     world_helper,
+                    update_service,
                 })
             })
         });

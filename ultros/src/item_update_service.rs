@@ -40,16 +40,16 @@ impl PartialEq<WorldItemRecencyView> for CmpListing {
 }
 
 impl UpdateService {
-    pub(crate) fn start_service(self) {
+    pub(crate) fn start_service(service: Arc<Self>) {
         tokio::spawn(async move {
             loop {
                 // check all worlds
                 info!("Checking all worlds");
                 // Create this 5 minute duration check now so that our refresh interval includes the time we spent checking
                 let next_interval = Instant::now() + tokio::time::Duration::from_secs(60 * 5);
-                for world in self.world_cache.get_all_worlds() {
+                for world in service.world_cache.get_all_worlds() {
                     info!("{world:?}");
-                    let world = self.do_full_world_update(world).await;
+                    let world = service.check_for_missed_items_on_world(world).await;
                     if let Err(w) = world {
                         info!("{w:?}");
                     }
@@ -58,12 +58,76 @@ impl UpdateService {
             }
         });
     }
+
+    /// Sweeps over every single marketable item in the game, ignoring the recency cache. Only should be used if data is known to be lost.
+    pub(crate) async fn do_full_world_sweep(&self) -> Result<(), anyhow::Error> {
+        let all_marketable_items: Box<[i32]> = xiv_gen_db::data()
+            .items
+            .values()
+            .filter(|i| i.item_search_category.0 != 0)
+            .map(|i| i.key_id.0)
+            .collect();
+        for world in self.world_cache.get_all_worlds() {
+            tracing::info!("scanning items");
+            self.check_items(world, &all_marketable_items).await?;
+        }
+        Ok(())
+    }
+
     #[instrument(level = "trace", skip(self))]
-    async fn do_full_world_update(&self, world: &world::Model) -> Result<(), anyhow::Error> {
-        let world_name = &world.name;
-        let world_id = WorldId(world.id);
-        let updates = self.get_missing_updates(world_name).await?;
+    async fn check_for_missed_items_on_world(
+        &self,
+        world: &world::Model,
+    ) -> Result<(), anyhow::Error> {
+        let updates = self.get_missing_updates(&world.name).await?;
         let item_ids: Box<[i32]> = updates.into_iter().map(|i| i.item_id).collect();
+        self.check_items(world, &item_ids).await?;
+        Ok(())
+    }
+
+    async fn get_missing_updates(
+        &self,
+        world_name: &str,
+    ) -> Result<Vec<WorldItemRecencyView>, anyhow::Error> {
+        let world = self
+            .world_cache
+            .lookup_value_by_name(world_name)?
+            .as_world()?;
+        let mut recently_updated = self
+            .universalis
+            .recently_updated_items(universalis::WorldOrDatacenter::World(world_name), 200)
+            .await?;
+        let mut our_recently_updated = self
+            .db
+            .get_recently_updated_listings_for_world(
+                world.id,
+                recently_updated.items.len() as u64 * 2,
+            )
+            .await?
+            .into_iter()
+            .map(CmpListing)
+            .collect::<Vec<_>>();
+        our_recently_updated.sort_by_key(|i| i.0.item_id);
+        recently_updated.items.sort_by_key(|i| i.item_id);
+        let diff = PartialDiffIterator::new(
+            our_recently_updated.into_iter(),
+            recently_updated.items.into_iter(),
+        )
+        .flat_map(|i| i.right())
+        .collect();
+        Ok(diff)
+    }
+
+    async fn check_items(
+        &self,
+        world::Model {
+            id,
+            name: world_name,
+            ..
+        }: &world::Model,
+        item_ids: &[i32],
+    ) -> Result<(), anyhow::Error> {
+        let world_id = WorldId(*id);
         for item_ids in item_ids.chunks(100) {
             let market_data = self
                 .universalis
@@ -106,38 +170,5 @@ impl UpdateService {
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
         Ok(())
-    }
-
-    async fn get_missing_updates(
-        &self,
-        world_name: &str,
-    ) -> Result<Vec<WorldItemRecencyView>, anyhow::Error> {
-        let world = self
-            .world_cache
-            .lookup_value_by_name(world_name)?
-            .as_world()?;
-        let mut recently_updated = self
-            .universalis
-            .recently_updated_items(universalis::WorldOrDatacenter::World(world_name), 200)
-            .await?;
-        let mut our_recently_updated = self
-            .db
-            .get_recently_updated_listings_for_world(
-                world.id,
-                recently_updated.items.len() as u64 * 2,
-            )
-            .await?
-            .into_iter()
-            .map(CmpListing)
-            .collect::<Vec<_>>();
-        our_recently_updated.sort_by_key(|i| i.0.item_id);
-        recently_updated.items.sort_by_key(|i| i.item_id);
-        let diff = PartialDiffIterator::new(
-            our_recently_updated.into_iter(),
-            recently_updated.items.into_iter(),
-        )
-        .flat_map(|i| i.right())
-        .collect();
-        Ok(diff)
     }
 }
