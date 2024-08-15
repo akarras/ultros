@@ -17,7 +17,7 @@ pub fn bincode_config() -> impl Config {
 
 pub fn data_version() -> &'static str {
     // TODO somehow get a macro to get the HASH of ffxiv-datamining?
-    "7.0.0"
+    env!("GIT_HASH")
 }
 
 fn ok_or_default<'de, T, D>(deserializer: D) -> Result<T, D::Error>

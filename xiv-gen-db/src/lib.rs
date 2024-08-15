@@ -35,7 +35,20 @@ pub fn decompress_data(bytes: &[u8]) -> anyhow::Result<xiv_gen::Data> {
     decompressor
         .decompress_vec(bytes, &mut data, FlushDecompress::Sync)
         .unwrap();
-
     let (data, _) = bincode::decode_from_slice(&data, xiv_gen::bincode_config())?;
     Ok(data)
+}
+
+#[cfg(all(test, feature = "embed"))]
+mod test {
+    use crate::{data, XIV_DATA};
+
+    #[test]
+    fn test_embed() {
+        data()
+            .items
+            .iter()
+            .find(|(_, i)| i.name == "Grade 2 Gemdraught of Mind")
+            .unwrap();
+    }
 }

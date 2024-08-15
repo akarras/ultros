@@ -9,6 +9,7 @@ use std::env;
 use std::fs::write;
 
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 #[derive(Debug)]
 struct Args {
@@ -682,4 +683,11 @@ fn main() {
     write(conversion_files, ser_scope.to_string()).unwrap();
 
     println!("cargo:rerun-if-changed=build.rs");
+    // note: add error checking yourself.
+    let output = Command::new("git")
+        .args(&["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    let git_hash = String::from_utf8(output.stdout).unwrap();
+    println!("cargo:rustc-env=GIT_HASH={}", git_hash);
 }
