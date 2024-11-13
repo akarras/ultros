@@ -56,14 +56,14 @@ fn item_set_iter(item: &'static Item) -> impl Iterator<Item = &'static Item> {
 
 /// Creates an iterator over the ingredients in a recipe
 #[derive(Copy, Clone, Debug)]
-pub(crate) struct IngredientsIter<'a>(&'a Recipe, i32);
+pub(crate) struct IngredientsIter<'a>(&'a Recipe, u8);
 impl<'a> IngredientsIter<'a> {
     pub(crate) fn new(recipe: &'a Recipe) -> Self {
         Self(recipe, 0)
     }
 }
 impl<'a> Iterator for IngredientsIter<'a> {
-    type Item = (ItemId, i32);
+    type Item = (ItemId, u8);
 
     fn next(&mut self) -> Option<Self::Item> {
         // I don't remember entirely if the ingredients all are in order.
