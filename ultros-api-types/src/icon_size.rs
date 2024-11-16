@@ -25,6 +25,14 @@ impl IconSize {
             IconSize::Large => 60,
         }
     }
+
+    pub fn get_size_px(&self) -> &'static str {
+        match self {
+            IconSize::Small => "25px",
+            IconSize::Medium => "40px",
+            IconSize::Large => "60px",
+        }
+    }
 }
 
 impl Display for IconSize {

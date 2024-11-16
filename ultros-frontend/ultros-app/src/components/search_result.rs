@@ -10,7 +10,6 @@ use xiv_gen::ItemId;
 #[component]
 pub fn MatchFormatter(m: Match, target: String) -> impl IntoView {
     let mut pieces = Vec::new();
-
     let mut last_end = 0;
 
     for c in m.continuous_matches() {
@@ -26,8 +25,12 @@ pub fn MatchFormatter(m: Match, target: String) -> impl IntoView {
 
         // This match
         pieces.push(
-            view! { <b>{target.chars().skip(c.start()).take(c.len()).collect::<String>()}</b> }
-                .into_view(),
+            view! {
+                <span class="font-medium text-amber-200">
+                    {target.chars().skip(c.start()).take(c.len()).collect::<String>()}
+                </span>
+            }
+            .into_view(),
         );
 
         last_end = c.start() + c.len();
@@ -52,13 +55,13 @@ pub fn ItemSearchResult(
     item_id: i32,
     search: ReadSignal<String>,
     set_search: WriteSignal<String>,
-    // matches: Match,
 ) -> impl IntoView {
     let data = xiv_gen_db::data();
     let categories = &data.item_ui_categorys;
     let items = &data.items;
     let item = items.get(&ItemId(item_id));
     let (price_zone, _) = get_price_zone();
+
     view! {
         {if let Some(item) = item {
             view! {
@@ -73,13 +76,15 @@ pub fn ItemSearchResult(
                         format!("/item/{price_zone}/{item_id}")
                     }
                 >
+                    <div class="flex items-center px-3 py-2 hover:bg-violet-800/30
+                               transition-colors duration-200 group gap-3">
+                        <div class="flex-shrink-0">
+                            <ItemIcon item_id icon_size=IconSize::Small/>
+                        </div>
 
-                    // this needs to be updated to be able to point to any region
-                    <div class="search-result">
-                        <ItemIcon item_id icon_size=IconSize::Small/>
-                        <div class="search-result-details">
-                            <div class="flex-row flex-space" style="height: 20px; overflow: clip">
-                                <span class="item-name">
+                        <div class="flex flex-col min-w-0 flex-1">
+                            <div class="flex items-center gap-2">
+                                <span class="text-gray-200 truncate">
                                     {move || {
                                         let item_name = items
                                             .get(&ItemId(item_id))
@@ -93,17 +98,11 @@ pub fn ItemSearchResult(
                                             item_name.into_view()
                                         }
                                     }}
-
                                 </span>
-                                <div
-                                    class="flex-row"
-                                    style="align-items: start; flex-wrap: nowrap; justify-content:end;"
-                                >
-                                    <CheapestPrice item_id=item.key_id/>
-                                </div>
                             </div>
-                            <div class="flex-row flex-space" style="height: 20px; overflow: clip">
-                                <span class="item-type">
+
+                            <div class="flex items-center justify-between text-sm">
+                                <span class="text-gray-400 truncate">
                                     {categories
                                         .get(&item.item_ui_category)
                                         .map(|i| i.name.as_str())
@@ -113,21 +112,26 @@ pub fn ItemSearchResult(
                                 {(item.level_item.0 != 0)
                                     .then(|| {
                                         view! {
-                                            <span class="item-ilvl">"ILVL " {item.level_item.0}</span>
+                                            <span class="text-gray-500">
+                                                "iLvl " {item.level_item.0}
+                                            </span>
                                         }
                                     })}
-
                             </div>
+                        </div>
+
+                        <div class="flex-shrink-0 pl-4 text-right min-w-[100px]
+                                  text-amber-200 font-medium">
+                            <CheapestPrice item_id=item.key_id/>
                         </div>
                     </div>
                 </a>
             }
         } else {
             view! {
-                // this needs to be updated to be able to point to any region
-
-                // this needs to be updated to be able to point to any region
-                <a class="search-result">"Invalid result"</a>
+                <a class="block px-3 py-2 text-gray-400 text-center hover:bg-violet-800/30 transition-colors">
+                    "Invalid result"
+                </a>
             }
         }}
     }

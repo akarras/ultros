@@ -17,6 +17,8 @@ pub fn Select<T, EF, N, L>(
     choice: Signal<Option<T>>,
     set_choice: SignalSetter<Option<T>>,
     children: EF,
+    #[prop(optional)] class: Option<&'static str>,
+    #[prop(optional)] dropdown_class: Option<&'static str>,
 ) -> impl IntoView
 where
     T: Clone + PartialEq + 'static,
@@ -80,26 +82,35 @@ where
             }
         }
     };
+
+    let default_input_class = "p-2 rounded-lg bg-violet-950 \
+                             border border-violet-800/30 w-full \
+                             hover:bg-violet-900 hover:border-violet-700/50 \
+                             focus:bg-violet-900/90 focus:border-violet-600/50 \
+                             transition-colors duration-200 outline-none";
+
+    let default_dropdown_class = "absolute w-full max-h-96 overflow-y-auto top-12 \
+                                bg-gradient-to-br from-violet-950/95 to-violet-900/95 \
+                                border border-violet-800/30 rounded-lg \
+                                shadow-lg shadow-violet-950/50 \
+                                backdrop-blur-md z-[100]";
+
     view! {
-        <div class="relative">
+        <div class="relative z-[100]"> // Increased z-index on the wrapper
             <input
                 node_ref=input
+                class=move || format!("{} {}", default_input_class, class.unwrap_or(""))
                 class:cursor=move || !has_focus()
-                class="p-2 rounded-md bg-violet-950
-                border-solid border border-violet-600 w-96 
-                hover:bg-violet-800 hover:border-violet-950 
-                focus:bg-violet-700 active:border-violet-400"
                 on:focus=move |_| set_focused(true)
                 on:focusout=move |_| set_focused(false)
                 on:input=move |e| {
                     set_current_input(event_target_value(&e));
                 }
-
                 on:keydown=keydown
                 prop:value=current_input
             />
             <div
-                class="absolute top-2 left-2 select-none cursor"
+                class="absolute top-2 left-2 select-none cursor flex items-center" // Added flex and items-center
                 class:invisible=move || has_focus() || !current_input().is_empty()
                 on:click=move |_| {
                     if let Some(input) = input() {
@@ -107,18 +118,16 @@ where
                     }
                 }
             >
-
                 {move || choice().map(|c| { children(c.clone(), as_label(&c).into_view()) })}
-
             </div>
             <div
                 node_ref=dropdown
-                class:invisible=move || !has_focus() && !hovered()
-                class="focus-within:visible absolute w-96 h-96 overflow-y-auto top-10 bg-purple-950 z-20"
+                class=move || format!("{} {}", default_dropdown_class, dropdown_class.unwrap_or(""))
+                class:hidden=move || !has_focus() && !hovered()
             >
                 <For each=final_result key=move |(l, _)| *l let:data>
                     <button
-                        class="flex flex-col w-full"
+                        class="w-full text-left"
                         on:click=move |_| {
                             if let Some(item) = items.with(|i| i.get(data.0).cloned()) {
                                 set_choice(Some(item));
@@ -133,11 +142,9 @@ where
                             }
                         }
                     >
-
                         <div
-                            class="hover:bg-purple-700 hover:border-solid hover:border-violet-600 rounded-sm p-2 transition-all ease-in-out duration-500"
-                            class:bg-purple-500=move || {
-                                choice
+                            class=move || {
+                                let is_selected = choice
                                     .with(|choice| {
                                         choice
                                             .as_ref()
@@ -145,10 +152,15 @@ where
                                                 items.with(|i| i.get(data.0).map(|item| item == choice))
                                             })
                                     })
-                                    .unwrap_or_default()
+                                    .unwrap_or_default();
+
+                                if is_selected {
+                                    "flex items-center bg-violet-800/50 rounded-lg p-2 transition-colors duration-200"
+                                } else {
+                                    "flex items-center hover:bg-violet-800/30 rounded-lg p-2 transition-colors duration-200"
+                                }
                             }
                         >
-
                             {items
                                 .with(|i| i.get(data.0).cloned())
                                 .map(|c| children(
@@ -158,18 +170,17 @@ where
                                             if let Some(m) = fuzzy_search(&current_input(), &data.1) {
                                                 let target = data.1.clone();
                                                 view! {
-                                                    <div class="flex flex-row gap-1">
-                                                        <MatchFormatter m=m target=target/>
-                                                    </div>
-                                                }
+                                                    <MatchFormatter m=m target=target/>
+                                                }.into_view()
                                             } else {
-                                                view! { <div class="flex flex-row">{&data.1}</div> }
+                                                view! {
+                                                    <div>{&data.1}</div>
+                                                }.into_view()
                                             }
                                         }
                                     }
                                         .into_view(),
                                 ))}
-
                         </div>
                     </button>
                 </For>

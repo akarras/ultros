@@ -35,6 +35,7 @@ use leptos_router::NavigateOptions;
 use leptos_router::Outlet;
 
 use leptos_router::ParamsMap;
+use log::info;
 use ultros_api_types::cheapest_listings::CheapestListingItem;
 use ultros_api_types::icon_size::IconSize;
 use ultros_api_types::recent_sales::SaleData;
@@ -348,7 +349,7 @@ pub fn ExchangeItem() -> impl IntoView {
     let (sorted_by, _set_sorted_by) = create_query_signal::<String>("sorted-by");
     let item_name = move || item().map(|i| i.name.as_str()).unwrap_or_default();
     view! {
-        <div>
+        <div class="container mx-auto p-4">
             <MetaTitle title=move || format!("Currency Exchange - {}", item_name())/>
             <MetaDescription text=move || {
                 format!(
@@ -356,11 +357,14 @@ pub fn ExchangeItem() -> impl IntoView {
                     item_name(),
                 )
             }/>
-            <div class="flex flex-col">
-                <div>{move || item().map(|i| &i.name)} " - Currency Exchange"</div>
-                <div class="flex flex-row gap-1">
-                    "Amount in:"
+            <div class="bg-gray-800 rounded-lg p-6 shadow-lg mb-6">
+                <h2 class="text-2xl font-bold mb-4 text-violet-300">
+                    {move || item().map(|i| &i.name)} " - Currency Exchange"
+                </h2>
+                <div class="flex items-center gap-4 mb-6">
+                    <label class="text-gray-300">Amount to exchange:</label>
                     <input
+                        class="bg-gray-700 text-white px-3 py-2 rounded-md border border-gray-600 focus:border-violet-500 focus:outline-none"
                         prop:value=currency_quantity
                         on:input=move |e| {
                             let event = event_target_value(&e);
@@ -369,136 +373,114 @@ pub fn ExchangeItem() -> impl IntoView {
                             }
                         }
                     />
-
                 </div>
             </div>
-            <div class="flex flex-col">
+            <div class="overflow-x-auto">
                 {move || {
                     if home_world().is_none() {
                         view! {
-                            <div>
+                            <div class="bg-red-900/50 p-4 rounded-lg text-white">
                                 "Home world is not set, go to the "
-                                <A href="/settings">"settings"</A>
+                                <A href="/settings" class="text-violet-300 hover:text-violet-400 underline">
+                                    "settings"
+                                </A>
                                 " page and set your home world to see prices on this page"
                             </div>
-                        }
-                            .into_view()
+                        }.into_view()
                     } else {
                         view! {
                             <Suspense fallback=Loading>
                                 {move || {
                                     let sort_label = sorted_by();
-                                    with_prices()
-                                        .map(|p: Vec<CurrencyTrade>| {
-                                            let sorted_and_filtered_rows = move || {
-                                                let query = query();
-                                                let mut p = p
-                                                    .clone()
-                                                    .into_iter()
-                                                    .filter(|currency| {
-                                                        let query = &query;
-                                                        is_in_range(
-                                                            currency.price_per_item as i32,
-                                                            "price_per_item",
-                                                            query,
-                                                        )
-                                                            && is_in_range(
-                                                                currency.number_received as i32,
-                                                                "number_received",
-                                                                query,
-                                                            )
-                                                            && is_in_range(
-                                                                currency.total_profit as i32,
-                                                                "total_profit",
-                                                                query,
-                                                            )
-                                                            && is_in_range(
-                                                                currency.hours_between_sales as i32,
-                                                                "hours_between_sales",
-                                                                query,
-                                                            )
-                                                    })
-                                                    .collect::<Vec<_>>();
-                                                CurrencyTrade::sort_vec_by_label(
-                                                    &mut p,
-                                                    sort_label.as_deref().unwrap_or("total_profit"),
-                                                    None,
-                                                );
-                                                p.into_iter()
-                                                    .map(|p| {
-                                                        view! {
-                                                            <tr>
-                                                                <td>{p.shop_names}</td>
-                                                                <td>{p.cost_item}</td>
-                                                                <td>{p.receive_item}</td>
-                                                                <td>{p.price_per_item}</td>
-                                                                <td>{p.number_received}</td>
-                                                                <td>{p.total_profit}</td>
-                                                                <td>{p.hours_between_sales}</td>
-                                                            </tr>
-                                                        }
-                                                    })
-                                                    .collect::<Vec<_>>()
-                                            };
-                                            let labels = CurrencyTrade::field_labels();
-                                            view! {
-                                                <table>
-                                                    <thead>
-                                                        {labels
-                                                            .into_iter()
-                                                            .enumerate()
-                                                            .map(|(i, l)| {
-                                                                view! {
-                                                                    <th class="uppercase">
-                                                                        <div class="flex flex-row gap-1">
-                                                                            <QueryButton
-                                                                                query_name="sorted-by"
-                                                                                value=l.to_string()
-                                                                                class="font-bold"
-                                                                                active_classes="font-bold underline"
-                                                                                default="total_profit" == *l
-                                                                            >
-                                                                                {l.replace("_", " ")}
-                                                                            </QueryButton>
-                                                                            {(i > 2)
-                                                                                .then(|| {
-                                                                                    view! {
-                                                                                        <Tooltip tooltip_text=Oco::Owned(
-                                                                                            format!("Filter {}", l.replace("_", " ")),
-                                                                                        )>
-                                                                                            <FilterModal filter_name=l/>
-                                                                                        </Tooltip>
-                                                                                    }
-                                                                                })}
-
-                                                                        </div>
-                                                                    </th>
-                                                                }
-                                                            })
-                                                            .collect::<Vec<_>>()}
-                                                    </thead>
-                                                    <tbody>{sorted_and_filtered_rows}</tbody>
-                                                </table>
-                                            }
-                                        })
+                                    with_prices().map(|p: Vec<CurrencyTrade>| {
+                                        let trades = p.len();
+                                        let sorted_and_filtered_rows = move || {
+                                            let query = query();
+                                            let mut p = p.clone().into_iter()
+                                                .filter(|currency| {
+                                                    let query = &query;
+                                                    is_in_range(currency.price_per_item as i32, "price_per_item", query)
+                                                        && is_in_range(currency.number_received as i32, "number_received", query)
+                                                        && is_in_range(currency.total_profit as i32, "total_profit", query)
+                                                        && is_in_range(currency.hours_between_sales as i32, "hours_between_sales", query)
+                                                })
+                                                .collect::<Vec<_>>();
+                                            CurrencyTrade::sort_vec_by_label(&mut p, sort_label.as_deref().unwrap_or("total_profit"), None);
+                                            p.into_iter()
+                                                .map(|p| {
+                                                    view! {
+                                                        <tr class="bg-gray-800 hover:bg-gray-700/50 transition-colors">
+                                                            <td class="px-6 py-4">{p.shop_names}</td>
+                                                            <td class="px-6 py-4">{p.cost_item}</td>
+                                                            <td class="px-6 py-4">{p.receive_item}</td>
+                                                            <td class="px-6 py-4">{p.price_per_item}</td>
+                                                            <td class="px-6 py-4">{p.number_received}</td>
+                                                            <td class="px-6 py-4">{p.total_profit}</td>
+                                                            <td class="px-6 py-4">{p.hours_between_sales}</td>
+                                                        </tr>
+                                                    }
+                                                })
+                                                .collect::<Vec<_>>()
+                                        };
+                                        let count = sorted_and_filtered_rows().len();
+                                        let s = sales.get();
+                                        let sales = s.as_ref().map(|sales| sales.as_ref().map(|sales| sales.sales.len()));
+                                        info!("{sales:?} items: {count} p: {trades}");
+                                        let labels = CurrencyTrade::field_labels();
+                                        view! {
+                                            <table class="w-full text-sm text-left text-gray-300">
+                                                <thead class="text-xs uppercase bg-gray-700 text-gray-300">
+                                                    <tr>
+                                                        {labels.into_iter().enumerate().map(|(i, l)| {
+                                                            view! {
+                                                                <th class="px-6 py-3">
+                                                                    <div class="flex flex-row items-center gap-2">
+                                                                        <QueryButton
+                                                                            query_name="sorted-by"
+                                                                            value=l.to_string()
+                                                                            class="hover:text-violet-300 transition-colors"
+                                                                            active_classes="text-violet-400 underline"
+                                                                            default="total_profit" == *l
+                                                                        >
+                                                                            {l.replace("_", " ")}
+                                                                        </QueryButton>
+                                                                        {(i > 2).then(|| {
+                                                                            view! {
+                                                                                <Tooltip tooltip_text=Oco::Owned(format!("Filter {}", l.replace("_", " ")))>
+                                                                                    <FilterModal filter_name=l/>
+                                                                                </Tooltip>
+                                                                            }
+                                                                        })}
+                                                                    </div>
+                                                                </th>
+                                                            }
+                                                        }).collect::<Vec<_>>()}
+                                                    </tr>
+                                                </thead>
+                                                <tbody class="divide-y divide-gray-700">
+                                                    {sorted_and_filtered_rows}
+                                                </tbody>
+                                            </table>
+                                        }
+                                    })
                                 }}
                                 {move || {
-                                    sales
-                                        .with(|sales| {
-                                            if let Some(Err(_e)) = sales {
-                                                view! { "Error loading, try again in 30 seconds!" }
-                                                    .into_view()
-                                            } else {
-                                                ().into_view()
-                                            }
-                                        })
+                                    sales.with(|sales| {
+                                        if let Some(Err(e)) = sales {
+                                            view! {
+                                                <div class="bg-red-900/50 p-4 rounded-lg text-white mt-4">
+                                                    "Error loading, try again in 30 seconds!"<br/>{e.to_string()}
+                                                </div>
+                                            }.into_view()
+                                        } else {
+                                            ().into_view()
+                                        }
+                                    })
                                 }}
-
                             </Suspense>
                         }
                     }
                 }}
-
             </div>
         </div>
     }
@@ -591,67 +573,102 @@ pub fn CurrencySelection() -> impl IntoView {
         })
         .collect::<Vec<_>>();
 
-    let signal = create_rw_signal(None);
-
-    create_effect(move |_| {
-        let nav = use_navigate();
-        if let Some((id, _, _)) = signal() {
-            nav(
-                &format!("/currency-exchange/{}", id),
-                NavigateOptions::default(),
-            );
-        }
-    });
     let body_currencies = currencies.clone();
+    let (search_text, set_search_text) = create_signal(String::new());
+    let filtered_currencies = create_memo(move |_| {
+        let search = search_text().to_lowercase();
+        body_currencies
+            .iter()
+            .filter(|(_, name, category)| {
+                name.to_lowercase().contains(&search) || category.to_lowercase().contains(&search)
+            })
+            .cloned()
+            .collect::<Vec<_>>()
+    });
 
     view! {
-        <div class="container mx-auto gap-1 flex flex-col">
-            <span>
-                "Discover lucrative opportunities in Final Fantasy 14 with our Currency Exchange tool.
-                Easily locate items purchasable with in-game currencies, such as Allied Seals or Wolf Marks, that can be resold for significant profits on the marketboard.
-                Whether you're a seasoned trader or just starting out, maximize your earnings by identifying high-value items and optimizing your currency investments."
-            </span>
+        <div class="container mx-auto space-y-6">
+            // Description Card
+            <div class="p-6 rounded-xl bg-gradient-to-br from-violet-950/20 to-violet-900/20
+                        border border-white/10 backdrop-blur-sm">
+                <p class="text-gray-300 leading-relaxed">
+                    "Discover lucrative opportunities in Final Fantasy 14 with our Currency Exchange tool.
+                        Easily locate items purchasable with in-game currencies, such as Allied Seals or Wolf Marks, that can be resold for significant profits on the marketboard.
+                        Whether you're a seasoned trader or just starting out, maximize your earnings by identifying high-value items and optimizing your currency investments."
+                </p>
+            </div>
+
             <MetaTitle title="Currency Exchange - Ultros"/>
             <MetaDescription text="Find valuable items bought with in-game currency, sell for gil. Maximize earnings effortlessly. "/>
-            <div class="flex flex-row">
-                "Search: "
-                <Select
-                    items=Signal::derive(move || currencies.clone())
-                    as_label=move |(_item, item_name, _category)| item_name.to_string()
-                    choice=signal.into()
-                    set_choice=signal.into()
-                    children=move |(_id, _item, category), view| {
-                        view! {
-                            <div class="items-start flex flex-col">
-                                {view} <div class="italic">{category}</div>
-                            </div>
-                        }
-                    }
-                />
 
+            // Search Section
+            <div class="p-6 rounded-xl bg-gradient-to-br from-violet-950/20 to-violet-900/20
+                        border border-white/10 backdrop-blur-sm">
+                <div class="flex items-center gap-4">
+                    <div class="relative flex-1 max-w-xl">
+                        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <Icon
+                                icon=icondata::BiSearchAlt2Regular
+                                class="w-5 h-5 text-gray-400"
+                            />
+                        </div>
+                        <input
+                            type="text"
+                            placeholder="Search currencies..."
+                            class="w-full pl-10 pr-4 py-2 rounded-lg
+                                       bg-violet-950/40 border border-white/10
+                                       text-gray-200 placeholder-gray-400
+                                       focus:outline-none focus:border-violet-400/30
+                                       transition-all duration-200"
+                            on:input=move |ev| set_search_text(event_target_value(&ev))
+                        />
+                    </div>
+                </div>
             </div>
-            <div class="flex flex-col">
 
-                {body_currencies
-                    .into_iter()
+            // Currency List
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {move || filtered_currencies().into_iter()
                     .map(|(item_id, item_name, category_name)| {
                         view! {
                             <A
                                 href=item_id.to_string()
-                                class="flex flex-row group p-1 rounded-xl items-center gap-1"
+                                class="p-4 rounded-lg
+                                           bg-gradient-to-br from-violet-950/20 to-violet-900/20
+                                           border border-white/10 backdrop-blur-sm
+                                           hover:from-violet-900/30 hover:to-violet-800/30
+                                           hover:border-violet-400/20
+                                           transition-all duration-200 group"
                             >
-                                <div class="text-xl font-bold text-white group-hover:text-violet-300 border-b-4 border-fuchsia-950 group-hover:border-fuchsia-800 transition-all ease-in-out duration-150">
-                                    {item_name}
-                                </div>
-                                <div class="italic text-white group-hover:text-violet-400 transition-all ease-in-out duration-500">
-                                    {category_name}
+                                <div class="flex flex-col gap-2">
+                                    <span class="text-lg font-medium text-gray-200
+                                                group-hover:text-amber-200 transition-colors">
+                                        {item_name}
+                                    </span>
+                                    <span class="text-sm text-gray-400 italic
+                                                group-hover:text-violet-300 transition-colors">
+                                        {category_name}
+                                    </span>
                                 </div>
                             </A>
                         }
                     })
-                    .collect::<Vec<_>>()}
-
+                    .collect::<Vec<_>>()
+                }
             </div>
+
+            // Empty State
+            {move || {
+                if filtered_currencies().is_empty() {
+                    view! {
+                        <div class="text-center p-8 text-gray-400">
+                            "No currencies found matching your search."
+                        </div>
+                    }
+                } else {
+                    view! { <div/> }
+                }
+            }}
         </div>
     }
 }

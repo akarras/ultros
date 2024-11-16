@@ -13,6 +13,7 @@ use humantime::{format_duration, parse_duration};
 use icondata as i;
 use leptos::*;
 use leptos_icons::*;
+use leptos_meta::Title;
 use leptos_router::*;
 use log::info;
 use std::{
@@ -58,18 +59,38 @@ struct ProfitData {
     sale_summary: SaleSummary,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum SortMode {
+    Roi,
+    Profit,
+}
+
 #[derive(Clone, Debug)]
 struct ProfitTable(Vec<ProfitData>);
 
-/// Computes a summary of the sales data.
-/// For non hq sale data, we also want to compare against HQ sale data
+fn listings_to_map(listings: CheapestListings) -> HashMap<ProfitKey, (i32, i32)> {
+    listings
+        .cheapest_listings
+        .into_iter()
+        .map(|listing| {
+            (
+                ProfitKey {
+                    item_id: listing.item_id,
+                    hq: listing.hq,
+                },
+                (listing.cheapest_price, listing.world_id),
+            )
+        })
+        .collect()
+}
+
 fn compute_summary(sale: SaleData, hq_data: Option<&SaleData>) -> SaleSummary {
     let now = Utc::now().naive_utc();
     let SaleData { item_id, hq, sales } = sale;
     let min_price = hq_data
         .map(|sales| sales.sales.iter())
         .into_iter()
-        .flatten() // Turn Option<Iter=Sales> into just Iter=Sales.
+        .flatten()
         .chain(sales.iter())
         .map(|price| price.price_per_unit)
         .min()
@@ -99,34 +120,41 @@ fn compute_summary(sale: SaleData, hq_data: Option<&SaleData>) -> SaleSummary {
     }
 }
 
-fn listings_to_map(listings: CheapestListings) -> HashMap<ProfitKey, (i32, i32)> {
-    listings
-        .cheapest_listings
-        .into_iter()
-        .map(|listing| {
-            (
-                ProfitKey {
-                    item_id: listing.item_id,
-                    hq: listing.hq,
-                },
-                (listing.cheapest_price, listing.world_id),
-            )
-        })
-        .collect()
+// Add FromStr and ToString implementations for SortMode
+impl FromStr for SortMode {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "roi" => Ok(SortMode::Roi),
+            "profit" => Ok(SortMode::Profit),
+            _ => Err(()),
+        }
+    }
+}
+
+impl ToString for SortMode {
+    fn to_string(&self) -> String {
+        match self {
+            SortMode::Roi => "roi".to_string(),
+            SortMode::Profit => "profit".to_string(),
+        }
+    }
 }
 
 impl ProfitTable {
     fn new(
         sales: RecentSales,
-        region_listings: CheapestListings,
-        world_listings: CheapestListings,
+        global_cheapest_listings: CheapestListings,
+        world_cheapest_listings: CheapestListings,
         cross_region: Vec<CheapestListings>,
     ) -> Self {
-        let mut region_cheapest = listings_to_map(region_listings);
-        let world_cheapest = listings_to_map(world_listings);
+        let mut region_cheapest = listings_to_map(global_cheapest_listings);
+        let world_cheapest = listings_to_map(world_cheapest_listings);
         let cross_region = cross_region
             .into_iter()
             .map(|region| listings_to_map(region));
+
         // merge cross regions into region cheapest
         for cross_region in cross_region {
             for (key, (new_price, world_id)) in cross_region {
@@ -143,12 +171,14 @@ impl ProfitTable {
                 }
             }
         }
+
         let hq_sales: HashMap<i32, SaleData> = sales
             .sales
             .iter()
             .filter(|sales| sales.hq)
             .map(|sale| (sale.item_id, sale.clone()))
             .collect();
+
         let table = sales
             .sales
             .into_iter()
@@ -159,13 +189,15 @@ impl ProfitTable {
                 let (cheapest_price, cheapest_world_id) = *region_cheapest.get(&key)?;
                 let summary =
                     compute_summary(sale, (!hq).then(|| hq_sales.get(&item_id)).flatten());
-                // Use the world's price as
+
+                // Use the world's price as estimated sale price
                 let estimated_sale_price =
                     if let Some((world_cheapest, _)) = world_cheapest.get(&key) {
                         summary.min_price.min(*world_cheapest)
                     } else {
                         summary.min_price
                     };
+
                 Some(ProfitData {
                     profit: estimated_sale_price - cheapest_price,
                     return_on_investment: ((estimated_sale_price - cheapest_price) as f32
@@ -177,38 +209,42 @@ impl ProfitTable {
                 })
             })
             .collect();
+
         ProfitTable(table)
     }
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Copy, Clone)]
-enum SortMode {
-    Roi,
-    Profit,
-}
-
-impl FromStr for SortMode {
-    type Err = ();
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "roi" => Ok(SortMode::Roi),
-            "profit" => Ok(SortMode::Profit),
-            _ => Err(()),
-        }
+#[component]
+fn FilterCard(
+    title: &'static str,
+    description: &'static str,
+    children: ChildrenFn,
+) -> impl IntoView {
+    view! {
+        <div class="p-6 flex flex-col rounded-2xl
+            backdrop-blur-sm backdrop-brightness-110
+            border border-white/10
+            bg-gradient-to-br from-violet-900/20 via-black/10 to-amber-500/10
+            w-full">
+            <h3 class="font-bold text-xl text-amber-200 mb-2">{title}</h3>
+            <p class="text-gray-300 mb-4">{description}</p>
+            {children}
+        </div>
     }
 }
 
-impl Display for SortMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                SortMode::Roi => "roi",
-                SortMode::Profit => "profit",
-            }
-        )
+#[component]
+fn PresetFilterButton(href: &'static str, label: &'static str) -> impl IntoView {
+    view! {
+        <a
+            href={href}
+            class="px-4 py-2 rounded-lg bg-violet-900/30 hover:bg-violet-800/40
+                   border border-white/10 hover:border-yellow-200/30
+                   transition-all duration-300 text-amber-200 hover:text-amber-100
+                   hover:transform hover:scale-[1.02] hover:shadow-lg hover:shadow-violet-500/10"
+        >
+            {label}
+        </a>
     }
 }
 
@@ -228,8 +264,6 @@ fn AnalyzerTable(
         cross_region,
     );
 
-    // get ranges of possible values for our sliders
-
     let items = &xiv_gen_db::data().items;
     let (sort_mode, _set_sort_mode) = create_query_signal::<SortMode>("sort");
     let (minimum_profit, set_minimum_profit) = create_query_signal::<i32>("profit");
@@ -237,7 +271,8 @@ fn AnalyzerTable(
     let (max_predicted_time, set_max_predicted_time) = create_query_signal::<String>("next-sale");
     let (world_filter, _set_world_filter) = create_query_signal::<String>("world");
     let (datacenter_filter, _set_datacenter_filter) = create_query_signal::<String>("datacenter");
-    let world_clone = worlds.clone(); // cloned to pass into closure
+
+    let world_clone = worlds.clone();
     let world_filter_list = create_memo(move |_| {
         let world = world_filter().or_else(datacenter_filter)?;
         let filter = world_clone
@@ -247,12 +282,14 @@ fn AnalyzerTable(
             .collect::<Vec<_>>();
         Some(filter)
     });
+
     let world_clone = worlds.clone();
     let lookup_world = create_memo(move |_| {
         Some(AnySelector::from(
             &world_clone.lookup_world_by_name(&world())?,
         ))
     });
+
     let predicted_time =
         create_memo(move |_| max_predicted_time().and_then(|d| parse_duration(&d).ok()));
     let predicted_time_string = create_memo(move |_| {
@@ -260,6 +297,7 @@ fn AnalyzerTable(
             .map(|duration| format_duration(duration).to_string())
             .unwrap_or("---".to_string())
     });
+
     let sorted_data = create_memo(move |_| {
         let mut sorted_data = profits
             .0
@@ -291,310 +329,234 @@ fn AnalyzerTable(
                     .unwrap_or(true)
             })
             .filter(move |data| {
-                // don't show listings from our own world
                 data.cheapest_world_id
                     != lookup_world()
                         .and_then(|w| w.as_world_id())
                         .unwrap_or_default()
             })
             .collect::<Vec<_>>();
+
         match sort_mode().unwrap_or(SortMode::Roi) {
             SortMode::Roi => sorted_data.sort_by_key(|data| Reverse(data.return_on_investment)),
             SortMode::Profit => sorted_data.sort_by_key(|data| Reverse(data.profit)),
         }
         sorted_data.into_iter().enumerate().collect()
     });
-    const DATACENTER_WIDTH: &str = "width: 130px";
-    const WORLD_WIDTH: &str = "width: 260px";
+
     view! {
-        <div class="flex flex-col md:flex-row gap-2">
-            <span>"filter:"</span>
-            <br/>
-            <div class="flex-column">
-                <label for>
-                    "minimum profit:" <br/>
-                    {move || {
-                        minimum_profit()
-                            .map(|profit| {
-                                {
-                                    view! { <Gil amount=profit/> }
+        <div class="flex flex-col gap-6">
+            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                <FilterCard
+                    title="Minimum Profit"
+                    description="Set the minimum profit margin you want to see"
+                >
+                    <div class="flex flex-col gap-2">
+                        <div class="text-amber-200">
+                            {move || minimum_profit().map(|profit| view! { <Gil amount=profit/> }).unwrap_or("---".into_view())}
+                        </div>
+                        <input
+                            class="p-2 rounded-lg bg-violet-950/50 border border-white/10 w-full
+                                   focus:outline-none focus:border-yellow-200/30 transition-colors"
+                            min=0
+                            max=100000
+                            type="number"
+                            prop:value=minimum_profit
+                            on:input=move |input| {
+                                let value = event_target_value(&input);
+                                if let Ok(profit) = value.parse::<i32>() {
+                                    set_minimum_profit(Some(profit))
+                                } else if value.is_empty() {
+                                    set_minimum_profit(None);
                                 }
-                                    .into_view()
-                            })
-                            .unwrap_or("---".into_view())
-                    }}
-
-                </label>
-                <br/>
-                <input
-                    class="p-1 w-40"
-                    id="minimum_profit"
-                    min=0
-                    max=100000
-                    type="number"
-                    prop:value=minimum_profit
-                    on:input=move |input| {
-                        let value = event_target_value(&input);
-                        if let Ok(profit) = value.parse::<i32>() {
-                            set_minimum_profit(Some(profit))
-                        } else if value.is_empty() {
-                            info!("clearing profit");
-                            set_minimum_profit(None);
-                        }
-                    }
-                />
-
-            </div>
-            <div class="flex-column">
-                <label for="minimum_roi">
-                    "minimum ROI:" <br/>
-                    {move || {
-                        minimum_roi().map(|roi| format!("{roi}%")).unwrap_or("---".to_string())
-                    }}
-
-                </label>
-                <br/>
-                <input
-                    class="p-1 w-40"
-                    min=0
-                    max=100000
-                    type="number"
-                    prop:value=minimum_roi
-                    on:input=move |input| {
-                        let value = event_target_value(&input);
-                        if let Ok(roi) = value.parse::<i32>() {
-                            set_minimum_roi(Some(roi));
-                        } else if value.is_empty() {
-                            info!("clearing roi");
-                            set_minimum_roi(None);
-                        }
-                    }
-                />
-
-            </div>
-            <div class="flex-column">
-                <label for="predicted_time">
-                    "minimum time (use time notation, ex. 1w 30m):" <br/> {predicted_time_string}
-                </label>
-                <br/>
-                <input
-                    class="p-1 w-40"
-                    id="predicted_time"
-                    prop:value=move || max_predicted_time().unwrap_or_default()
-                    on:input=move |input| {
-                        let value = event_target_value(&input);
-                        set_max_predicted_time(Some(value))
-                    }
-                />
-
-            </div>
-        </div>
-        <div class="flex flex-col-reverse md:flex-row">
-            <div class="grid-table" role="table">
-                <div class="grid-header" role="rowgroup">
-                    <div role="columnheader" class="w-[25px]">
-                        "HQ"
+                            }
+                        />
                     </div>
-                    <div role="columnheader first" class="w-[450px]">
-                        "Item"
+                </FilterCard>
+
+                <FilterCard
+                    title="Minimum ROI"
+                    description="Set the minimum return on investment percentage"
+                >
+                    <div class="flex flex-col gap-2">
+                        <div class="text-amber-200">
+                            {move || minimum_roi().map(|roi| format!("{roi}%")).unwrap_or("---".to_string())}
+                        </div>
+                        <input
+                            class="p-2 rounded-lg bg-violet-950/50 border border-white/10 w-full
+                                   focus:outline-none focus:border-yellow-200/30 transition-colors"
+                            min=0
+                            max=100000
+                            type="number"
+                            prop:value=minimum_roi
+                            on:input=move |input| {
+                                let value = event_target_value(&input);
+                                if let Ok(roi) = value.parse::<i32>() {
+                                    set_minimum_roi(Some(roi));
+                                } else if value.is_empty() {
+                                    set_minimum_roi(None);
+                                }
+                            }
+                        />
                     </div>
-                    <div role="columnheader" style="width:100px;">
-                        <Tooltip tooltip_text=Oco::from("Sort by profit")>
+                </FilterCard>
+
+                <FilterCard
+                    title="Sale Time Prediction"
+                    description="Filter by predicted time to next sale (e.g., 1w 30m)"
+                >
+                    <div class="flex flex-col gap-2">
+                        <div class="text-amber-200">{predicted_time_string}</div>
+                        <input
+                            class="p-2 rounded-lg bg-violet-950/50 border border-white/10 w-full
+                                   focus:outline-none focus:border-yellow-200/30 transition-colors"
+                            prop:value=move || max_predicted_time().unwrap_or_default()
+                            on:input=move |input| {
+                                let value = event_target_value(&input);
+                                set_max_predicted_time(Some(value))
+                            }
+                        />
+                    </div>
+                </FilterCard>
+            </div>
+
+            // Results table
+            // Results table
+            <div class="rounded-2xl overflow-hidden border border-white/10 backdrop-blur-sm backdrop-brightness-110">
+                <div class="grid-table" role="table">
+                    <div class="grid-header bg-violet-900/30" role="rowgroup">
+                        <div role="columnheader" class="w-[25px] p-4">"HQ"</div>
+                        <div role="columnheader" class="w-[450px] p-4">"Item"</div>
+                        <div role="columnheader" class="w-[120px] p-4">
                             <QueryButton
-                                class="!text-fuchsia-300 hover:text-fuchsia-200"
+                                class="!text-amber-300 hover:text-amber-200"
                                 active_classes="!text-neutral-300 hover:text-neutral-200"
                                 query_name="sort"
                                 value="profit"
                             >
-                                <div class="flex-row flex-space">
+                                <div class="flex items-center gap-2">
                                     "Profit"
-                                    {move || {
-                                        (sort_mode() == Some(SortMode::Profit))
-                                            .then(|| {
-                                                view! { <Icon icon=i::BiSortDownRegular/> }
-                                            })
-                                    }}
-
+                                    {move || (sort_mode() == Some(SortMode::Profit))
+                                        .then(|| view! { <Icon icon=i::BiSortDownRegular/> })}
                                 </div>
                             </QueryButton>
-                        </Tooltip>
-                    </div>
-                    <div role="columnheader" style="width:100px;">
-                        <Tooltip tooltip_text=Oco::from("Sort by R.O.I")>
+                        </div>
+                        <div role="columnheader" class="w-[100px] p-4">
                             <QueryButton
-                                class="!text-fuchsia-300 hover:text-fuchsia-200"
+                                class="!text-amber-300 hover:text-amber-200"
                                 active_classes="!text-neutral-300 hover:text-neutral-200"
                                 query_name="sort"
                                 value="roi"
                                 default=true
                             >
-                                <div class="flex-row flex-space">
-                                    "R.O.I."
-                                    {move || {
-                                        (sort_mode() == Some(SortMode::Roi))
-                                            .then(|| {
-                                                view! { <Icon icon=i::BiSortDownRegular/> }
-                                            })
-                                    }}
-
+                                <div class="flex items-center gap-2">
+                                    "ROI"
+                                    {move || (sort_mode() == Some(SortMode::Roi))
+                                        .then(|| view! { <Icon icon=i::BiSortDownRegular/> })}
                                 </div>
                             </QueryButton>
-                        </Tooltip>
+                        </div>
+                        <div role="columnheader" class="w-[200px] p-4">"Buy Price"</div>
+                        <div role="columnheader" class="w-[200px] p-4">"World"</div>
+                        <div role="columnheader" class="w-[150px] p-4">"Datacenter"</div>
+                        <div role="columnheader" class="w-[150px] p-4">"Avg Sale Time"</div>
                     </div>
-                    <div role="columnheader" style=WORLD_WIDTH>
-                        "World"
-                        <QueryButton
-                            query_name="world"
-                            value=""
-                            class="!text-fuchsia-300 hover:text-fuchsia-200"
-                            active_classes="hidden"
-                        >
-                            <Tooltip tooltip_text=Oco::from(
-                                "Clear this world filter",
-                            )>
-                                {move || ["[", &world_filter().unwrap_or_default(), "]"].concat()}
-                            </Tooltip>
-                        </QueryButton>
-                    </div>
-                    <div role="columnheader" style=DATACENTER_WIDTH>
-                        "Datacenter"
-                        <QueryButton
-                            query_name="datacenter"
-                            value=""
-                            class="!text-fuchsia-300 hover:text-fuchsia-200"
-                            active_classes="hidden"
-                        >
-                            <Tooltip tooltip_text=Oco::from(
-                                "Clear this datacenter filter",
-                            )>
-                                {move || {
-                                    ["[", &datacenter_filter().unwrap_or_default(), "]"].concat()
-                                }}
 
-                            </Tooltip>
-                        </QueryButton>
-                    </div>
-                    <div role="columnheader" style="width: 300px;">
-                        "Next sale"
-                    </div>
-                </div>
-                <VirtualScroller
-                    viewport_height=1000.0
-                    row_height=32.3333
-                    each=sorted_data.into()
-                    key=move |(i, data)| {
-                        (
-                            *i,
-                            data.sale_summary.item_id,
-                            data.cheapest_world_id,
-                            data.sale_summary.hq,
-                        )
-                    }
+                    <VirtualScroller
+                        viewport_height=1000.0
+                        row_height=80.0
+                        each=sorted_data.into()
+                        key=move |(i, data)| (*i, data.sale_summary.item_id, data.cheapest_world_id, data.sale_summary.hq)
+                        view=move |(i, data)| {
+                            let world = worlds.lookup_selector(AnySelector::World(data.cheapest_world_id));
+                            let datacenter = world.as_ref()
+                                .and_then(|world| {
+                                    let datacenters = worlds.get_datacenters(world);
+                                    datacenters.first().map(|dc| dc.name.as_str())
+                                })
+                                .unwrap_or_default()
+                                .to_string();
+                            let datacenter = Signal::derive(move || datacenter.clone());
+                            let world = world.as_ref()
+                                .map(|r| r.get_name())
+                                .unwrap_or_default()
+                                .to_string();
+                            let world = Signal::derive(move || world.clone());
+                            let item_id = data.sale_summary.item_id;
+                            let item = items.get(&ItemId(item_id))
+                                .map(|item| item.name.as_str())
+                                .unwrap_or_default();
 
-                    view=move |(i, data)| {
-                        let world = worlds
-                            .lookup_selector(AnySelector::World(data.cheapest_world_id));
-                        let datacenter = world
-                            .as_ref()
-                            .and_then(|world| {
-                                let datacenters = worlds.get_datacenters(world);
-                                datacenters.first().map(|dc| dc.name.as_str())
-                            })
-                            .unwrap_or_default()
-                            .to_string();
-                        let datacenter = Signal::derive(move || datacenter.clone());
-                        let world = world
-                            .as_ref()
-                            .map(|r| r.get_name())
-                            .unwrap_or_default()
-                            .to_string();
-                        let world = Signal::derive(move || world.clone());
-                        let world_event = world.clone();
-                        let datacenter_event = datacenter.clone();
-                        let item_id = data.sale_summary.item_id;
-                        let item = items
-                            .get(&ItemId(item_id))
-                            .map(|item| item.name.as_str())
-                            .unwrap_or_default();
-                        view! {
-                            <div
-                                class="grid-row"
-                                role="row-group"
-                                class:even=move || (i % 2) == 0
-                                class:odd=move || (i % 2) == 1
-                            >
-                                <div role="cell" style="width: 25px;">
-                                    {data.sale_summary.hq.then_some("✅")}
-                                </div>
-                                <div role="cell" class="flex flex-row w-[450px]">
-                                    <a
-                                        class="flex flex-row"
-                                        href=format!("/item/{}/{item_id}", world())
-                                    >
-                                        <ItemIcon item_id icon_size=IconSize::Small/>
-                                        {item}
-                                    </a>
-                                    <AddToList item_id/>
-                                    <Clipboard clipboard_text=item.to_string()/>
-                                </div>
-                                <div role="cell" style="width: 100px;">
-                                    <Gil amount=data.profit/>
-                                </div>
-                                <div role="cell" style="width: 100px;">
-                                    {data.return_on_investment}
-                                    "%"
-                                </div>
-                                <div role="cell" style=WORLD_WIDTH>
-                                    <Gil amount=data.cheapest_price/>
-                                    " on "
-                                    <Tooltip tooltip_text=MaybeSignal::Dynamic(
-                                        Signal::derive(move || {
-                                            format!("Only show {}", world()).into()
-                                        }),
-                                    )>
-                                        <QueryButton
-                                            query_name="world"
-                                            value=world_event.clone()
-                                            class="!text-fuchsia-300"
-                                            active_classes="!text-neutral-300 hover:text-neutral-200"
-                                            remove_queries=&["datacenter"]
+                            view! {
+                                <div
+                                    class="grid-row hover:bg-violet-900/20 transition-colors"
+                                    role="row-group"
+                                    class:even=move || (i % 2) == 0
+                                    class:odd=move || (i % 2) == 1
+                                >
+                                    <div role="cell" class="p-4 w-[25px]">
+                                        {data.sale_summary.hq.then_some("✅")}
+                                    </div>
+                                    <div role="cell" class="p-4 flex flex-row w-[450px] items-center gap-2">
+                                        <a
+                                            class="flex flex-row items-center gap-2 hover:text-amber-200 transition-colors"
+                                            href=format!("/item/{}/{item_id}", world())
                                         >
-                                            {world}
-                                        </QueryButton>
-                                    </Tooltip>
+                                            <ItemIcon item_id icon_size=IconSize::Small/>
+                                            {item}
+                                        </a>
+                                        <AddToList item_id/>
+                                        <Clipboard clipboard_text=item.to_string()/>
+                                    </div>
+                                    <div role="cell" class="p-4 w-[120px] text-right">
+                                        <Gil amount=data.profit/>
+                                    </div>
+                                    <div role="cell" class="p-4 w-[100px] text-right">
+                                        {data.return_on_investment}"%"
+                                    </div>
+                                    <div role="cell" class="p-4 w-[200px] text-right">
+                                        <Gil amount=data.cheapest_price/>
+                                    </div>
+                                    <div role="cell" class="p-4 w-[200px]">
+                                        <Tooltip tooltip_text=MaybeSignal::Dynamic(
+                                            Signal::derive(move || format!("Only show {}", world()).into())
+                                        )>
+                                            <QueryButton
+                                                query_name="world"
+                                                value=world.clone()
+                                                class="!text-amber-300 hover:text-amber-200"
+                                                active_classes="!text-neutral-300 hover:text-neutral-200"
+                                                remove_queries=&["datacenter"]
+                                            >
+                                                {world}
+                                            </QueryButton>
+                                        </Tooltip>
+                                    </div>
+                                    <div role="cell" class="p-4 w-[150px]">
+                                        <Tooltip tooltip_text=MaybeSignal::Dynamic(
+                                            Signal::derive(move || format!("Only show {}", datacenter()).into())
+                                        )>
+                                            <QueryButton
+                                                query_name="datacenter"
+                                                value=datacenter.clone()
+                                                class="!text-amber-300 hover:text-amber-200"
+                                                active_classes="!text-neutral-300 hover:text-neutral-200"
+                                                remove_queries=&["world"]
+                                            >
+                                                {datacenter}
+                                            </QueryButton>
+                                        </Tooltip>
+                                    </div>
+                                    <div role="cell" class="p-4 w-[150px]">
+                                        {data.sale_summary.avg_sale_duration
+                                            .and_then(|duration| duration.to_std().ok())
+                                            .map(|duration| format_duration(duration).to_string())
+                                            .unwrap_or_else(|| "---".to_string())}
+                                    </div>
                                 </div>
-                                <div role="cell" style=DATACENTER_WIDTH>
-                                    <Tooltip tooltip_text=MaybeSignal::Dynamic(
-                                        Signal::derive(move || {
-                                            format!("Only show {}", datacenter()).into()
-                                        }),
-                                    )>
-                                        <QueryButton
-                                            query_name="datacenter"
-                                            value=datacenter_event.clone()
-                                            class="!text-fuchsia-300"
-                                            active_classes="!text-neutral-300 hover:text-neutral-200"
-                                            remove_queries=&["world"]
-                                        >
-                                            {datacenter}
-                                        </QueryButton>
-                                    </Tooltip>
-                                </div>
-                                <div role="cell" style="width: 300px;">
-                                    {data
-                                        .sale_summary
-                                        .avg_sale_duration
-                                        .and_then(|sale_duration| {
-                                            let duration = sale_duration.to_std().ok()?;
-                                            Some(format_duration(duration).to_string())
-                                        })}
-
-                                </div>
-                            </div>
+                            }
                         }
-                    }
-                />
-
+                    />
+                </div>
             </div>
         </div>
     }
@@ -625,7 +587,6 @@ pub fn AnalyzerWorldView() -> impl IntoView {
             .0
             .unwrap();
         let world = params.with(|p| p.get("world").cloned());
-        // use the world cache to lookup the region for this world
         let world = world.ok_or(AppError::ParamMissing)?;
         let region = worlds
             .lookup_world_by_name(&world)
@@ -636,13 +597,16 @@ pub fn AnalyzerWorldView() -> impl IntoView {
             .ok_or(AppError::ParamMissing)?;
         Result::<_, AppError>::Ok(region)
     });
+
     let global_cheapest_listings = create_resource(
         move || region(),
         move |region| async move { get_cheapest_listings(&region?).await },
     );
+
     let (cross_region_enabled, set_cross_region_enabled) = create_query_signal::<bool>("cross");
     let connected_regions = &["Europe", "Japan", "North-America", "Oceania"];
     let query = use_query_map();
+
     let enabled_regions = move || {
         let map = query();
         connected_regions
@@ -650,193 +614,169 @@ pub fn AnalyzerWorldView() -> impl IntoView {
             .filter(|region| map.get(region).map(|value| value == "true").unwrap_or(true))
             .collect::<Vec<_>>()
     };
+
     let cross_region = create_resource(
         move || (cross_region_enabled(), region(), enabled_regions()),
-        move |(enabled, region, enabled_regions)| {
-            async move {
-                let region = region?;
-                if enabled.unwrap_or_default() && connected_regions.contains(&region.as_str()) {
-                    // get all regions except our current region
-                    Ok(futures::future::join_all(
-                        connected_regions
-                            .into_iter()
-                            .filter(|r| **r != region.as_str())
-                            .filter(|r| enabled_regions.contains(r))
-                            .map(|region| get_cheapest_listings(region)),
-                    )
-                    .await
-                    .into_iter()
-                    .filter_map(|l| l.ok())
-                    .collect())
-                } else {
-                    Ok(vec![])
-                }
+        move |(enabled, region, enabled_regions)| async move {
+            let region = region?;
+            if enabled.unwrap_or_default() && connected_regions.contains(&region.as_str()) {
+                Ok(futures::future::join_all(
+                    connected_regions
+                        .into_iter()
+                        .filter(|r| **r != region.as_str())
+                        .filter(|r| enabled_regions.contains(r))
+                        .map(|region| get_cheapest_listings(region)),
+                )
+                .await
+                .into_iter()
+                .filter_map(|l| l.ok())
+                .collect())
+            } else {
+                Ok(vec![])
             }
         },
     );
+
     view! {
-        <Ad class="h-24 w-full"/>
-        <div class="main-content flex flex-col md:flex-row-reverse md:items-start">
-            <div class="mx-auto flex flex-col grow">
-                <div class="flex flex-col md:flex-row">
-                    <div class="flex flex-col">
-                        <span class="title">"Resale Analyzer Results for " {world}</span>
-                        <br/>
-                        <MetaTitle title=move || format!("Price Analyzer - {}", world())/>
-                        <MetaDescription text=move || {
-                            format!(
-                                "The analyzer enables FFXIV merchants to find the best items to buy on other worlds and sell on {}. Filter for the best profits or return, make gil through market arbitrage.",
-                                world(),
-                            )
-                        }/>
-                        <AnalyzerWorldNavigator/>
-                        <br/>
-                        <Toggle
-                            checked=Signal::derive(move || {
-                                cross_region_enabled().unwrap_or_default()
-                            })
+        <div class="main-content p-6">
+            <Title text=move || format!("Analyzer - {}", world())/>
+            <div class="container mx-auto max-w-7xl">
+                <div class="flex flex-col gap-8">
+                    // Header Section
+                    <div class="bg-gradient-to-br from-violet-900/30 to-amber-500/20
+                               rounded-2xl p-8 border border-white/10 backdrop-blur-sm">
+                        <h1 class="text-3xl font-bold text-amber-200 mb-4">
+                            "Market Analysis for " {world}
+                        </h1>
+                        <div class="flex flex-col gap-4">
+                            <MetaTitle title=move || format!("Price Analyzer - {}", world())/>
+                            <MetaDescription text=move || {
+                                format!(
+                                    "The analyzer enables FFXIV merchants to find the best items to buy on other worlds and sell on {}. Filter for the best profits or return, make gil through market arbitrage.",
+                                    world(),
+                                )
+                            }/>
 
-                            set_checked=SignalSetter::map(move |val: bool| set_cross_region_enabled(
-                                val.then(|| true),
-                            ))
+                            // World Navigator
+                            <div class="flex flex-col md:flex-row gap-4 items-center">
+                                <AnalyzerWorldNavigator/>
+                                <div class="flex flex-col gap-2">
+                                    <Toggle
+                                        checked=Signal::derive(move || cross_region_enabled().unwrap_or_default())
+                                        set_checked=SignalSetter::map(move |val: bool|
+                                            set_cross_region_enabled(val.then(|| true)))
+                                        checked_label=Oco::Borrowed("Cross region enabled")
+                                        unchecked_label=Oco::Borrowed("Cross region disabled")
+                                    />
 
-                            checked_label=Oco::Borrowed("Cross region enabled")
-                            unchecked_label=Oco::Borrowed("Cross region disabled")
-                        />
-                        <div
-                            class:hidden=move || !cross_region_enabled().unwrap_or_default()
-                            class="flex flex-row"
-                        >
+                                    <div class="flex flex-wrap gap-2"
+                                        class:hidden=move || !cross_region_enabled().unwrap_or_default()>
+                                        {move || region().map(|region| move || {
+                                            connected_regions
+                                                .into_iter()
+                                                .filter(|r| **r != region.as_str())
+                                                .map(|region| {
+                                                    let (enabled, set_enabled) =
+                                                        create_query_signal::<bool>(region.to_string());
+                                                    view! {
+                                                        <Toggle
+                                                            checked=Signal::derive(move || enabled().unwrap_or(true))
+                                                            set_checked=SignalSetter::map(move |checked: bool| {
+                                                                set_enabled(Some(checked));
+                                                            })
+                                                            checked_label=format!("{} enabled", region)
+                                                            unchecked_label=format!("{} disabled", region)
+                                                        />
+                                                    }
+                                                })
+                                                .collect::<Vec<_>>()
+                                        }).ok()}
+                                    </div>
+                                </div>
+                            </div>
 
-                            {move || {
-                                region()
-                                    .map(|region| move || {
-                                        connected_regions
-                                            .into_iter()
-                                            .filter(|r| **r != region.as_str())
-                                            .map(|region| {
-                                                let (enabled, set_enabled) = create_query_signal::<
-                                                    bool,
-                                                >(region.to_string());
-                                                view! {
-                                                    <Toggle
-                                                        checked=Signal::derive(move || enabled().unwrap_or(true))
-                                                        set_checked=SignalSetter::map(move |checked: bool| {
-                                                            set_enabled(Some(checked));
-                                                        })
-
-                                                        checked_label=format!("{} enabled", region)
-                                                        unchecked_label=format!("{} disabled", region)
-                                                    />
-                                                }
-                                            })
-                                            .collect::<Vec<_>>()
-                                    })
-                                    .ok()
-                            }}
-
-                        </div>
-                        <span>
-                            "The analyzer will show items that sell more on " {world}
-                            " than they can be purchased for, enabling market arbitrage."
-                        </span>
-                        <br/>
-                        <span>
-                            "These estimates aren't very accurate, but are meant to be easily accessible and fast to use."
-                        </span>
-                        <br/>
-                        <span>
-                            "Be extra careful to make sure that the price you buy things for matches"
-                        </span>
-                        <br/>
-                        <span>"Sample filters"</span>
-                        <div class="flex flex-col md:flex-row flex-wrap">
-                            <a class="btn p-1" href="?next-sale=7d&roi=300&profit=0&sort=profit&">
-                                "300% return - 7 days"
-                            </a>
-                            <a class="btn p-1" href="?next-sale=1M&roi=500&profit=200000&">
-                                "500% return - 200K min profit - 1 month"
-                            </a>
-                            <a class="btn p-1" href="?profit=100000">
-                                "100K profit"
-                            </a>
+                            // Preset Filters
+                            <div class="flex flex-wrap gap-4">
+                                <PresetFilterButton
+                                    href="?next-sale=7d&roi=300&profit=0&sort=profit&"
+                                    label="300% return - 7 days"
+                                />
+                                <PresetFilterButton
+                                    href="?next-sale=1M&roi=500&profit=200000&"
+                                    label="500% return - 200K min profit - 1 month"
+                                />
+                                <PresetFilterButton
+                                    href="?profit=100000"
+                                    label="100K profit"
+                                />
+                            </div>
                         </div>
                     </div>
-                </div>
-                <div class="min-h-screen w-full">
-                    <Suspense fallback=BoxSkeleton>
-                        {move || {
-                            let world_cheapest = world_cheapest_listings.get();
-                            let sales = sales.get();
-                            let global_cheapest_listings = global_cheapest_listings.get();
-                            let cross_region = cross_region
-                                .get()
-                                .and_then(|r: Result<_, AppError>| r.ok())
-                                .unwrap_or_default();
-                            let worlds = use_context::<LocalWorldData>()
-                                .expect("Worlds should always be populated here")
-                                .0
-                                .unwrap();
-                            let values = world_cheapest
-                                .and_then(|w| w.ok())
-                                .and_then(|r| {
-                                    sales
-                                        .and_then(|s| s.ok())
-                                        .and_then(|s| {
-                                            global_cheapest_listings
-                                                .and_then(|g| g.ok())
-                                                .map(|g| (r, s, g))
-                                        })
-                                });
-                            match values {
-                                Some((world_cheapest_listings, sales, global_cheapest_listings)) => {
-                                    view! {
-                                        <AnalyzerTable
-                                            sales
-                                            global_cheapest_listings
-                                            world_cheapest_listings
-                                            cross_region
-                                            worlds
-                                            world=world.into()
-                                        />
-                                    }
-                                        .into_view()
-                                }
-                                None => {
-                                    view! {
-                                        <div class="h3">
+
+                    // Main Content
+                    <div class="min-h-screen">
+                        <Suspense fallback=BoxSkeleton>
+                            {move || {
+                                let world_cheapest = world_cheapest_listings.get();
+                                let sales = sales.get();
+                                let global_cheapest_listings = global_cheapest_listings.get();
+                                let cross_region = cross_region
+                                    .get()
+                                    .and_then(|r: Result<_, AppError>| r.ok())
+                                    .unwrap_or_default();
+                                let worlds = use_context::<LocalWorldData>()
+                                    .expect("Worlds should always be populated here")
+                                    .0
+                                    .unwrap();
+
+                                match (world_cheapest, sales, global_cheapest_listings) {
+                                    (Some(Ok(w)), Some(Ok(s)), Some(Ok(g))) => {
+                                        view! {
+                                            <AnalyzerTable
+                                                sales=s
+                                                global_cheapest_listings=g
+                                                world_cheapest_listings=w
+                                                cross_region
+                                                worlds
+                                                world=world.into()
+                                            />
+                                        }.into_view()
+                                    },
+                                    _ => view! {
+                                        <div class="text-xl text-amber-200 text-center p-8
+                                                    bg-violet-900/20 rounded-2xl border border-white/10">
                                             "Failed to load analyzer - try again in 30 seconds"
                                         </div>
-                                    }
-                                        .into_view()
+                                    }.into_view()
                                 }
-                            }
-                        }}
-
-                    </Suspense>
+                            }}
+                        </Suspense>
+                    </div>
                 </div>
             </div>
         </div>
-    }.into_view()
+    }
 }
 
 #[component]
-pub fn AnalyzerWorldNavigator() -> impl IntoView {
+fn AnalyzerWorldNavigator() -> impl IntoView {
     let nav = use_navigate();
     let params = use_params_map();
     let worlds = use_context::<LocalWorldData>()
         .expect("Should always have local world data")
         .0
         .unwrap();
+
     let initial_world = params.with_untracked(|p| {
         let world = p.get("world").map(|s| s.as_str()).unwrap_or_default();
         worlds
             .lookup_world_by_name(world)
             .and_then(|w| w.as_world().cloned())
     });
-    info!("{initial_world:?}");
+
     let (current_world, set_current_world) = create_signal(initial_world);
     let query = use_query_map();
+
     create_effect(move |_| {
         if let Some(world) = current_world() {
             let world = world.name;
@@ -848,12 +788,17 @@ pub fn AnalyzerWorldNavigator() -> impl IntoView {
             );
         }
     });
+
     view! {
-        <label>"Analyzer World: "</label>
-        <WorldOnlyPicker
-            current_world=current_world.into()
-            set_current_world=set_current_world.into()
-        />
+        <div class="flex flex-col md:flex-row items-center gap-2">
+            <label class="text-amber-200 font-medium">"Select World:"</label>
+            <div class="w-full md:w-auto">
+                <WorldOnlyPicker
+                    current_world=current_world.into()
+                    set_current_world=set_current_world.into()
+                />
+            </div>
+        </div>
     }
 }
 
@@ -862,19 +807,97 @@ pub fn Analyzer() -> impl IntoView {
     view! {
         <MetaTitle title="Analyzer - Ultros"/>
         <MetaDescription text="Find items on the Final Fantasy 14 marketboard that are great for resale. Used to earn gil quickly."/>
-        <div class="main-content">
-            <div class="mx-auto container">
-                <span class="content-title">"Analyzer"</span>
-                <div class="flex-column">
-                    <span>
-                        "The analyzer helps find items on the Final Fantasy 14 marketboard that are cheaper on other worlds that sell for more on your world, enabling you to earn gil through market arbitrage."
-                    </span>
-                    <br/>
-                    <span>"Adjust parameters to try and find items that sell well"</span>
-                    <br/>
-                    "Choose a world to get started:"
-                    <br/>
-                    <AnalyzerWorldNavigator/>
+
+        <div class="main-content p-6">
+            <div class="container mx-auto max-w-7xl">
+                <div class="flex flex-col gap-8">
+                    // Hero Section
+                    <div class="bg-gradient-to-br from-violet-900/30 to-amber-500/20
+                               rounded-2xl p-8 border border-white/10 backdrop-blur-sm">
+                        <h1 class="text-3xl font-bold text-amber-200 mb-4">
+                            "Market Board Analyzer"
+                        </h1>
+                        <p class="text-xl text-gray-300 leading-relaxed mb-6">
+                            "The analyzer helps find items on the Final Fantasy 14 marketboard that are
+                             cheaper on other worlds that sell for more on your world, enabling you to
+                             earn gil through market arbitrage."
+                        </p>
+                        <p class="text-lg text-gray-400 mb-8">
+                            "Adjust parameters to find items that sell well and maximize your profits."
+                        </p>
+
+                        // World Selection
+                        <div class="bg-black/20 rounded-xl p-6 border border-white/5">
+                            <h2 class="text-xl font-medium text-amber-200 mb-4">
+                                "Choose a world to get started:"
+                            </h2>
+                            <AnalyzerWorldNavigator/>
+                        </div>
+                    </div>
+
+                    // Features Grid
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        <div class="p-6 rounded-2xl bg-violet-900/20 border border-white/10
+                                  backdrop-blur-sm">
+                            <Icon
+                                class="text-amber-300 mb-4"
+                                width="2.5em"
+                                height="2.5em"
+                                icon=i::FaMoneyBillTrendUpSolid
+                            />
+                            <h3 class="text-xl font-bold text-amber-200 mb-2">
+                                "Profit Tracking"
+                            </h3>
+                            <p class="text-gray-300">
+                                "Monitor profit margins and ROI across different worlds"
+                            </p>
+                        </div>
+
+                        <div class="p-6 rounded-2xl bg-violet-900/20 border border-white/10
+                                  backdrop-blur-sm">
+                            <Icon
+                                class="text-amber-300 mb-4"
+                                width="2.5em"
+                                height="2.5em"
+                                icon=i::FaChartLineSolid
+                            />
+                            <h3 class="text-xl font-bold text-amber-200 mb-2">
+                                "Market Analysis"
+                            </h3>
+                            <p class="text-gray-300">
+                                "Track market trends and identify profitable opportunities"
+                            </p>
+                        </div>
+
+                        <div class="p-6 rounded-2xl bg-violet-900/20 border border-white/10
+                                  backdrop-blur-sm">
+                            <Icon
+                                class="text-amber-300 mb-4"
+                                width="2.5em"
+                                height="2.5em"
+                                icon=i::FaFilterSolid
+                            />
+                            <h3 class="text-xl font-bold text-amber-200 mb-2">
+                                "Custom Filters"
+                            </h3>
+                            <p class="text-gray-300">
+                                "Set custom parameters to find your perfect trades"
+                            </p>
+                        </div>
+                    </div>
+
+                    // Tips Section
+                    <div class="bg-violet-900/20 rounded-2xl p-6 border border-white/10">
+                        <h2 class="text-xl font-bold text-amber-200 mb-4">
+                            "Trading Tips"
+                        </h2>
+                        <ul class="list-disc list-inside text-gray-300 space-y-2">
+                            <li>"Use the ROI filter to find items with the best return on investment"</li>
+                            <li>"Check the sale frequency to ensure items will sell in a reasonable time"</li>
+                            <li>"Consider transportation costs when calculating profits"</li>
+                            <li>"Start with smaller investments until you understand the market"</li>
+                        </ul>
+                    </div>
                 </div>
             </div>
         </div>

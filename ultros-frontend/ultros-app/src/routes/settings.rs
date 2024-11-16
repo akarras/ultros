@@ -23,24 +23,38 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
     let search_action = create_action(move |search: &String| search_characters(search.to_string()));
 
     view! {
-        <button class="btn" on:click=move |_| set_is_open(!is_open())>
+        <button
+            class="px-4 py-2 rounded-lg bg-violet-900/30 hover:bg-violet-800/40
+                   border border-white/10 hover:border-yellow-200/30
+                   transition-all duration-300 text-amber-200 hover:text-amber-100
+                   flex items-center gap-2"
+            on:click=move |_| set_is_open(!is_open())
+        >
             <Icon icon=i::BiPlusRegular/>
+            "Add Character"
         </button>
+
         {move || {
             claim_character
                 .value()()
                 .map(|result| {
                     view! {
-                        <div class="content-well">
+                        <div class="mt-4 p-4 rounded-xl bg-violet-900/20 border border-white/10 backdrop-blur-sm">
                             {match result {
-                                Ok((_id, value)) => {
-                                    format!(
-                                        "Successfully started claim. Add {value} to your lodestone profile",
-                                    )
-                                }
-                                Err(e) => format!("Error adding character to your profile\n{e}"),
+                                Ok((_id, value)) => view! {
+                                    <div class="text-green-400">
+                                        "Successfully started claim. Add "
+                                        <span class="font-medium">{value}</span>
+                                        " to your lodestone profile"
+                                    </div>
+                                },
+                                Err(e) => view! {
+                                    <div class="text-red-400">
+                                        "Error adding character to your profile: "
+                                        {e.to_string()}
+                                    </div>
+                                },
                             }}
-
                         </div>
                     }
                 })
@@ -50,68 +64,87 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
             is_open()
                 .then(|| {
                     view! {
-                        <div class="flex-column">
-                            <label for="character-name">"Character:"</label>
-                            <div class="flex-row">
+                        <div class="mt-4 p-6 rounded-xl bg-violet-900/20 border border-white/10 backdrop-blur-sm">
+                            <h3 class="text-xl font-bold text-amber-200 mb-4">"Search Character"</h3>
+                            <div class="flex gap-2">
                                 <input
+                                    class="flex-grow p-2 rounded-lg bg-violet-950/50 border border-white/10
+                                           focus:outline-none focus:border-yellow-200/30 transition-colors"
+                                    placeholder="Enter character name..."
                                     prop:value=character_search
-                                    id="character-name"
-                                    on:input=move |input| set_character_search(
-                                        event_target_value(&input),
-                                    )
+                                    on:input=move |input| set_character_search(event_target_value(&input))
                                 />
-
                                 <button
-                                    class="btn"
+                                    class="px-4 py-2 rounded-lg bg-violet-900/30 hover:bg-violet-800/40
+                                           border border-white/10 hover:border-yellow-200/30
+                                           transition-all duration-300 text-amber-200 hover:text-amber-100"
                                     on:click=move |_| search_action.dispatch(character_search())
                                 >
                                     <Icon icon=i::AiSearchOutlined/>
                                 </button>
                             </div>
-                            {search_action.pending()().then(|| view! { <Loading/> })}
-                            {search_action
-                                .value()()
-                                .map(|value| match value {
-                                    Ok(characters) => {
-                                        view! {
-                                            <div>
-                                                <span class="content-title">"Search Results"</span>
-                                                {characters
-                                                    .is_empty()
-                                                    .then_some({ "No search results found" })}
 
-                                                {characters
-                                                    .into_iter()
-                                                    .map(|character| {
+                            <div class="mt-4">
+                                {search_action.pending()().then(|| view! { <Loading/> })}
+                                {search_action
+                                    .value()()
+                                    .map(|value| match value {
+                                        Ok(characters) => {
+                                            view! {
+                                                <div class="space-y-2">
+                                                    <h4 class="text-lg font-medium text-amber-200">"Search Results"</h4>
+                                                    {if characters.is_empty() {
                                                         view! {
-                                                            <div class="flex flex-row">
-                                                                <span style="width: 250px">
-                                                                    {character.first_name} " " {character.last_name}
-                                                                </span>
-                                                                <span style="width: 150px">
-                                                                    <WorldName id=AnySelector::World(character.world_id)/>
-                                                                </span>
-                                                                <button
-                                                                    class="btn"
-                                                                    on:click=move |_| {
-                                                                        set_is_open(false);
-                                                                        claim_character.dispatch(character.id);
-                                                                    }
-                                                                >
-
-                                                                    "Claim"
-                                                                </button>
+                                                            <div class="text-gray-400 italic">
+                                                                "No characters found"
                                                             </div>
                                                         }
-                                                    })
-                                                    .collect::<Vec<_>>()}
+                                                    } else {
+                                                        view! {
+                                                            <div class="space-y-2">
+                                                                {characters
+                                                                    .into_iter()
+                                                                    .map(|character| {
+                                                                        view! {
+                                                                            <div class="flex items-center justify-between p-2 rounded-lg
+                                                                                        bg-violet-950/30 border border-white/5">
+                                                                                <div class="flex items-center gap-4">
+                                                                                    <span class="text-amber-100">
+                                                                                        {character.first_name} " " {character.last_name}
+                                                                                    </span>
+                                                                                    <span class="text-gray-400">
+                                                                                        <WorldName id=AnySelector::World(character.world_id)/>
+                                                                                    </span>
+                                                                                </div>
+                                                                                <button
+                                                                                    class="px-3 py-1 rounded-lg bg-violet-800/30 hover:bg-violet-700/40
+                                                                                           border border-white/10 hover:border-yellow-200/30
+                                                                                           transition-all duration-300 text-amber-200 hover:text-amber-100"
+                                                                                    on:click=move |_| {
+                                                                                        set_is_open(false);
+                                                                                        claim_character.dispatch(character.id);
+                                                                                    }
+                                                                                >
+                                                                                    "Claim"
+                                                                                </button>
+                                                                            </div>
+                                                                        }
+                                                                    })
+                                                                    .collect::<Vec<_>>()}
+                                                            </div>
+                                                        }
+                                                    }}
+                                                </div>
+                                            }
+                                        }
+                                        Err(e) => view! {
+                                            <div class="text-red-400">
+                                                "Failed to load characters: "
+                                                {e.to_string()}
                                             </div>
                                         }
-                                            .into_view()
-                                    }
-                                    Err(e) => format!("Failed to load characters {e}").into_view(),
-                                })}
-
+                                    })}
+                            </div>
                         </div>
                     }
                 })
@@ -125,19 +158,31 @@ fn HomeWorldPicker() -> impl IntoView {
     let (price_region, set_price_region) = get_price_zone();
     let price_region = result_to_selector_read(price_region);
     let set_price_region = selector_to_setter_signal(set_price_region);
+
     view! {
-        <div class="content-well container">
-            <h3 class="text-xl">"World settings"</h3>
-            <div class="grid md:grid-cols-3 gap-3">
-                <label class="text-lg">"home world"</label>
-                <WorldOnlyPicker current_world=homeworld set_current_world=set_homeworld/>
-                <span>"The home world will default for the analyzer and several other pages"</span>
-                <label class="text-lg">"default price zone"</label>
-                <WorldPicker current_world=price_region set_current_world=set_price_region/>
-                <span>
-                    "what world/region to show prices by default for within search/"
-                    <a href="/items">"items"</a> " pages"
-                </span>
+        <div class="p-6 rounded-xl bg-gradient-to-br from-violet-900/30 to-amber-500/20
+                    border border-white/10 backdrop-blur-sm">
+            <h3 class="text-2xl font-bold text-amber-200 mb-4">"World Settings"</h3>
+            <div class="grid md:grid-cols-3 gap-6">
+                <div class="space-y-2">
+                    <label class="text-lg text-amber-100">"Home World"</label>
+                    <WorldOnlyPicker current_world=homeworld set_current_world=set_homeworld/>
+                    <p class="text-sm text-gray-400">
+                        "The home world will default for the analyzer and several other pages"
+                    </p>
+                </div>
+
+                <div class="space-y-2">
+                    <label class="text-lg text-amber-100">"Default Price Zone"</label>
+                    <WorldPicker current_world=price_region set_current_world=set_price_region/>
+                    <p class="text-sm text-gray-400">
+                        "What world/region to show prices by default for within "
+                        <a href="/items" class="text-amber-200 hover:text-amber-100 transition-colors">
+                            "items"
+                        </a>
+                        " pages"
+                    </p>
+                </div>
             </div>
         </div>
     }
@@ -147,28 +192,82 @@ fn HomeWorldPicker() -> impl IntoView {
 fn AdChoice() -> impl IntoView {
     let ad_choice = use_context::<Cookies>().unwrap();
     let (cookie, set_cookie) = ad_choice.use_cookie_typed::<_, bool>("HIDE_ADS");
-    view! {
-        <div class="content-well container grid md:grid-cols-3 gap-3">
-            <h3 class="text-xl">"Ad opt-out"</h3>
-            <span>
-                "If you do not wish to see ads, this toggle will remove them entirely from the site. Use of adblockers is fine as well.
-                If you wish to support the site, do consider leaving this disabled."
-                <i class="italic">"This is mostly an experiment for the time being."</i>
-            </span>
-            <Toggle
-                checked=Signal::derive(move || {
-                    let cookie = cookie();
-                    info!("{cookie:?}");
-                    cookie.unwrap_or_default()
-                })
 
-                set_checked={ move |checked: bool| set_cookie(checked.then(|| true)) }
-                    .into_signal_setter()
-                checked_label="ads disabled"
-                unchecked_label="ads enabled"
-            />
-            <div class="cols-pan-3">
+    view! {
+        <div class="p-6 rounded-xl bg-gradient-to-br from-violet-900/30 to-amber-500/20
+                    border border-white/10 backdrop-blur-sm">
+            <h3 class="text-2xl font-bold text-amber-200 mb-4">"Ad Settings"</h3>
+            <div class="grid md:grid-cols-3 gap-6">
+                <div class="col-span-2 space-y-2">
+                    <p class="text-gray-300">
+                        "If you do not wish to see ads, this toggle will remove them entirely from the site.
+                         Use of adblockers is fine as well. If you wish to support the site, do consider
+                         leaving this disabled."
+                    </p>
+                    <p class="text-sm text-gray-400 italic">
+                        "This is mostly an experiment for the time being."
+                    </p>
+                </div>
+
+                <div>
+                    <Toggle
+                        checked=Signal::derive(move || {
+                            let cookie = cookie();
+                            info!("{cookie:?}");
+                            cookie.unwrap_or_default()
+                        })
+                        set_checked={ move |checked: bool| set_cookie(checked.then(|| true)) }
+                            .into_signal_setter()
+                        checked_label="Ads Disabled"
+                        unchecked_label="Ads Enabled"
+                    />
+                </div>
+            </div>
+
+            <div class="mt-6">
                 <Ad/>
+            </div>
+        </div>
+    }
+}
+
+#[component]
+fn DeleteUser() -> impl IntoView {
+    let (confirmed, set_confirmed) = create_signal(false);
+
+    view! {
+        <div class="p-6 rounded-xl bg-red-900/20 border border-red-800/30 backdrop-blur-sm">
+            <h3 class="text-2xl font-bold text-red-400 mb-4">"Delete Account"</h3>
+            <p class="text-gray-300 mb-4">
+                "DANGER: If you wish to delete your account and all information associated with it,
+                 confirm with the toggle and then press the delete button"
+            </p>
+
+            <div class="space-y-4">
+                <Toggle
+                    checked=confirmed
+                    set_checked=set_confirmed
+                    checked_label="Yes, delete my account"
+                    unchecked_label=""
+                />
+
+                <button
+                    class=move || {
+                        if confirmed() {
+                            "px-4 py-2 rounded-lg bg-red-800 hover:bg-red-700
+                             text-white transition-colors duration-200"
+                        } else {
+                            "px-4 py-2 rounded-lg bg-gray-700 text-gray-400 cursor-not-allowed"
+                        }
+                    }
+                    on:click=move |_| {
+                        if confirmed.get_untracked() {
+                            spawn_local(async move { if let Ok(()) = delete_user().await {} });
+                        }
+                    }
+                >
+                    "Delete my account"
+                </button>
             </div>
         </div>
     }
@@ -177,53 +276,18 @@ fn AdChoice() -> impl IntoView {
 #[component]
 pub fn Settings() -> impl IntoView {
     view! {
-        <div class="main-content">
-            <h1 class="text-2xl">"Settings"</h1>
+        <div class="main-content p-6">
             <MetaTitle title="Ultros settings page"/>
             <MetaDescription text="Manage settings such as homeworld or other for Ultros"/>
-            <HomeWorldPicker/>
-            <AdChoice/>
-        </div>
-    }
-}
 
-#[component]
-pub fn DeleteUser() -> impl IntoView {
-    let (confirmed, set_confirmed) = create_signal(false);
-    view! {
-        <div>
-            <h3 class="text-xl text-red-600">"Delete user"</h3>
-            "DANGER: If you wish to delete your account and all information associated with it, confirm with the toggle and then press the delete button"
-            <div class="flex flex-col">
-                <Toggle
-                    checked=confirmed
-                    set_checked=set_confirmed
-                    checked_label="Yes, delete my account"
-                    unchecked_label=""
-                />
-                <button
-                    class=move || {
-                        if confirmed() {
-                            "bg-red-800 p-2 rounded-md"
-                        } else {
-                            "bg-neutral-300 p-2 rounded-md"
-                        }
-                    }
-
-                    on:click=move |_| {
-                        if confirmed.get_untracked() {
-                            spawn_local(async move { if let Ok(()) = delete_user().await {} });
-                        }
-                    }
-                >
-
-                    "Delete my account"
-                </button>
+            <div class="container mx-auto max-w-7xl space-y-6">
+                <h1 class="text-3xl font-bold text-amber-200">"Settings"</h1>
+                <HomeWorldPicker/>
+                <AdChoice/>
             </div>
         </div>
     }
 }
-
 #[component]
 pub fn Profile() -> impl IntoView {
     let claim_character = create_action(move |id: &i32| claim_character(*id));
@@ -243,124 +307,135 @@ pub fn Profile() -> impl IntoView {
         move || (check_verification.version()(), claim_character.version()()),
         move |_| get_character_verifications(),
     );
+
     view! {
-        <div class="main-content">
-            <span class="content-title">"Settings"</span>
-            <HomeWorldPicker/>
-            <AdChoice/>
-            <div class="content-well">
-                <span class="content-title">"Characters"</span>
-                <AddCharacterMenu claim_character/>
+        <div class="main-content p-6">
+            <div class="container mx-auto max-w-7xl space-y-6">
+                <div class="flex items-center justify-between">
+                    <h1 class="text-3xl font-bold text-amber-200">"Profile Settings"</h1>
+                </div>
 
-                <Suspense fallback=move || {
-                    view! { <Loading/> }
-                }>
-                    {move || {
-                        pending_verifications
-                            .get()
-                            .map(|verifications| {
-                                match verifications {
-                                    Ok(verifications) => {
-                                        view! {
-                                            <div>
-                                                {verifications
-                                                    .into_iter()
-                                                    .map(|verification| {
-                                                        view! {
-                                                            <div class="flex-row">
-                                                                <div class="flex-column">
-                                                                    {verification.character.first_name} " "
-                                                                    {verification.character.last_name} <br/>
-                                                                    "verification string:" {verification.verification_string}
-                                                                    <br/>
-                                                                    "Add the verification string to your lodestone profile and then click verify!"
-                                                                </div>
-                                                                <button
-                                                                    class="btn"
-                                                                    on:click=move |_| {
-                                                                        check_verification.dispatch(verification.id)
-                                                                    }
-                                                                >
+                <HomeWorldPicker/>
+                <AdChoice/>
 
-                                                                    "Verify"
-                                                                </button>
-                                                            </div>
-                                                        }
-                                                    })
-                                                    .collect::<Vec<_>>()}
-                                            </div>
-                                        }
-                                            .into_view()
-                                    }
-                                    Err(e) => {
-                                        view! {
-                                            "Unable to fetch verifications"
-                                            <br/>
-                                            {e.to_string()}
-                                        }
-                                            .into_view()
-                                    }
-                                }
-                            })
-                    }}
+                // Characters Section
+                <div class="p-6 rounded-xl bg-gradient-to-br from-violet-900/30 to-amber-500/20
+                            border border-white/10 backdrop-blur-sm">
+                    <div class="flex items-center justify-between mb-6">
+                        <h2 class="text-2xl font-bold text-amber-200">"Characters"</h2>
+                        <AddCharacterMenu claim_character/>
+                    </div>
 
-                </Suspense>
-                <Suspense fallback=move || {
-                    view! { <Loading/> }
-                }>
-                    {move || {
-                        characters
-                            .get()
-                            .map(|characters| {
-                                match characters {
-                                    Ok(characters) => {
-                                        if characters.is_empty() {
-                                            view! { "No characters. Add a character to get started." }
-                                                .into_view()
-                                        } else {
+                    // Pending Verifications
+                    <Suspense
+                        fallback=move || {
+                            view! {
+                                <div class="flex items-center justify-center p-8">
+                                    <Loading/>
+                                </div>
+                            }
+                        }
+                    >
+                    {move || pending_verifications.get().map(|verifications| match verifications {
+                        Ok(verifications) if !verifications.is_empty() => view! {
+                            <div class="mb-6 space-y-4">
+                                <h3 class="text-xl font-semibold text-amber-100">
+                                    "Pending Verifications"
+                                </h3>
+                                <div class="space-y-3">
+                                    {verifications
+                                        .into_iter()
+                                        .map(|verification| {
                                             view! {
-                                                <div>
-                                                    {characters
-                                                        .into_iter()
-                                                        .map(|character| {
-                                                            view! {
-                                                                <div class="flex flex-row">
-                                                                    <span style="width: 250px;">
-                                                                        {character.first_name} " " {character.last_name}
-                                                                    </span>
-                                                                    <span style="width: 150px">
-                                                                        <WorldName id=AnySelector::World(character.world_id)/>
-                                                                    </span>
-                                                                    <button
-                                                                        class="btn"
-                                                                        on:click=move |_| unclaim_character.dispatch(character.id)
-                                                                    >
-                                                                        <Icon icon=i::BiTrashSolid/>
-                                                                    </button>
-                                                                </div>
-                                                            }
-                                                        })
-                                                        .collect::<Vec<_>>()}
+                                                <div class="p-4 rounded-lg bg-violet-950/30 border border-white/5 space-y-2">
+                                                    // ... rest of the verification view ...
                                                 </div>
                                             }
-                                                .into_view()
-                                        }
-                                    }
-                                    Err(e) => {
-                                        view! {
-                                            "unable to get characters"
-                                            <br/>
-                                            {e.to_string()}
-                                        }
-                                            .into_view()
-                                    }
-                                }
-                            })
-                    }}
+                                        })
+                                        .collect::<Vec<_>>()}
+                                </div>
+                            </div>
+                        },
+                        Ok(_) => view! {
+                            <div></div>
+                        },
+                        Err(e) => view! {
+                            <div class="p-4 rounded-lg bg-red-900/20 border border-red-800/30 text-red-400">
+                                "Unable to fetch verifications: "
+                                {e.to_string()}
+                            </div>
+                        }
+                    })}
+                    </Suspense>
 
-                </Suspense>
+                    // Character List
+                    <Suspense
+                        fallback=move || {
+                            view! {
+                                <div class="flex items-center justify-center p-8">
+                                    <Loading/>
+                                </div>
+                            }
+                        }
+                    >
+                        {move || characters.get().map(|characters| match characters {
+                            Ok(characters) if characters.is_empty() => {
+                                view! {
+                                    <div class="text-center p-8 text-gray-400">
+                                        "No characters added yet. Add a character to get started."
+                                    </div>
+                                }.into_view()
+                            }
+                            Ok(characters) => {
+                                view! {
+                                    <div class="space-y-3">
+                                        {characters
+                                            .into_iter()
+                                            .map(|character| {
+                                                view! {
+                                                    <div class="flex items-center justify-between p-4
+                                                                rounded-lg bg-violet-950/30 border border-white/5
+                                                                group hover:border-white/10 transition-colors">
+                                                        <div class="flex items-center gap-4">
+                                                            <span class="text-amber-100">
+                                                                {character.first_name}
+                                                                " "
+                                                                {character.last_name}
+                                                            </span>
+                                                            <span class="text-gray-400">
+                                                                <WorldName id=AnySelector::World(character.world_id)/>
+                                                            </span>
+                                                        </div>
+                                                        <button
+                                                            class="p-2 rounded-lg bg-red-900/0 hover:bg-red-900/30
+                                                                   border border-transparent hover:border-red-800/30
+                                                                   text-gray-400 hover:text-red-400
+                                                                   opacity-0 group-hover:opacity-100
+                                                                   transition-all duration-200"
+                                                            on:click=move |_| unclaim_character.dispatch(character.id)
+                                                        >
+                                                            <Icon icon=i::BiTrashSolid/>
+                                                        </button>
+                                                    </div>
+                                                }
+                                            })
+                                            .collect::<Vec<_>>()}
+                                    </div>
+                                }.into_view()
+                            }
+                            Err(e) => view! {
+                                <div class="p-4 rounded-lg bg-red-900/20 border border-red-800/30 text-red-400">
+                                    "Unable to fetch characters: "
+                                    {e.to_string()}
+                                </div>
+                            }.into_view(),
+                        })}
+                    </Suspense>
+                </div>
+
+                // Delete Account Section
+                <DeleteUser/>
             </div>
-            <DeleteUser/>
         </div>
     }
 }

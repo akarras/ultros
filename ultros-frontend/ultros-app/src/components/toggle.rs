@@ -8,10 +8,9 @@ pub fn Toggle(
     #[prop(into)] unchecked_label: Oco<'static, str>,
 ) -> impl IntoView {
     view! {
-        <label class="relative inline-flex items-top cursor-pointer">
+        <label class="relative inline-flex items-center gap-3 cursor-pointer group">
             <input
                 type="checkbox"
-                value=""
                 class="sr-only peer"
                 prop:checked=checked
                 on:change=move |_| {
@@ -20,15 +19,44 @@ pub fn Toggle(
                 }
             />
 
-            <div class="w-11 h-6 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-800 rounded-full peer bg-gray-700
-            peer-checked:after:translate-x-full peer-checked:after:border-white after:content-['']
-            after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border
-            after:rounded-full after:h-5 after:w-5 after:transition-all border-gray-600 peer-checked:bg-blue-600"></div>
-            <span class="ml-3 text-sm font-medium text-gray-300">
-                {move || {
-                    if checked() { checked_label.to_string() } else { unchecked_label.to_string() }
-                }}
+            <div class="w-12 h-6 rounded-full relative
+                      transition-all duration-300 ease-in-out
+                      bg-violet-950/60 border border-white/10
+                      hover:border-violet-400/30
+                      peer-checked:bg-violet-900/60
+                      peer-checked:border-violet-400/20
+                      peer-focus:ring-2 peer-focus:ring-violet-500/30
+                      backdrop-blur-sm">
 
+                <div class="absolute top-0.5 left-0.5
+                           w-5 h-5 rounded-full
+                           transition-all duration-300 ease-in-out transform bg-gradient-to-br
+                           group-hover:from-amber-100 group-hover:to-amber-200
+                           shadow-md"
+                           class=("translate-x-0", move || !checked())
+                           class=("from-gray-200", move || !checked())
+                           class=("to-gray-300", move || !checked())
+                           class=("translate-x-6", move || checked())
+                           class=("to-amber-300", move || checked())
+                           class=("from-amber-200", move || checked())
+
+                               >
+
+                    <div class="absolute inset-[15%] rounded-full
+                              bg-gradient-to-br from-white/80 to-transparent">
+                    </div>
+                </div>
+            </div>
+
+            <span class="text-sm font-medium text-gray-300 transition-colors duration-300
+                        group-hover:text-amber-200">
+                {move || {
+                    if checked() {
+                        checked_label.to_string()
+                    } else {
+                        unchecked_label.to_string()
+                    }
+                }}
             </span>
         </label>
     }

@@ -22,13 +22,13 @@ pub struct CheapestListingMapKey {
     pub hq: bool,
 }
 
-#[derive(Deserialize, Serialize, Clone, Copy)]
+#[derive(Deserialize, Serialize, Clone, Copy, PartialEq, PartialOrd)]
 pub struct CheapestListingData {
     pub price: i32,
     pub world_id: i32,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
 pub struct CheapestListingsMap {
     pub map: HashMap<CheapestListingMapKey, CheapestListingData>,
 }

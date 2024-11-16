@@ -21,28 +21,41 @@ pub fn WorldOnlyPicker(
                     .collect::<Vec<_>>()
             });
             view! {
-                <Select
-                    items=data.into()
-                    as_label=move |w| w.name.clone()
-                    choice=current_world
-                    set_choice=set_current_world
-                    children=move |_w, label| {
-                        view! { <div>{label}</div> }
-                    }
-                />
+                <div class="relative z-[150]"> // Higher z-index than regular dropdowns
+                    <Select
+                        items=data.into()
+                        as_label=move |w| w.name.clone()
+                        choice=current_world
+                        set_choice=set_current_world
+                        children=move |_w, label| {
+                            view! {
+                                <div class="flex items-center px-4 py-2 hover:bg-violet-800/30 rounded-lg transition-colors">
+                                    {label}
+                                </div>
+                            }
+                        }
+                        class="bg-gradient-to-br from-violet-950/95 to-violet-900/95
+                               border border-violet-800/30 rounded-lg shadow-lg shadow-violet-950/50
+                               backdrop-blur-md text-gray-200"
+                        dropdown_class="mt-2 border border-violet-800/30 rounded-lg
+                                     bg-gradient-to-br from-violet-950/95 to-violet-900/95
+                                     backdrop-blur-md shadow-lg shadow-violet-950/50
+                                     max-h-[300px] overflow-y-auto"
+                    />
+                </div>
             }
         }
         Err(e) => view! {
-            <div>
-                <span>"No worlds"</span>
-                <span>{e.to_string()}</span>
+            <div class="relative z-[150]">
+                <div class="text-red-400 p-2 rounded-lg bg-red-950/50 border border-red-800/30">
+                    <span>"No worlds: "</span>
+                    <span>{e.to_string()}</span>
+                </div>
             </div>
         }
-        .into_view(),
-    }
+    }.into_view()
 }
 
-/// Changes a world, but does not allow a null option.
 #[component]
 pub fn WorldPicker(
     current_world: Signal<Option<AnySelector>>,
@@ -74,40 +87,45 @@ pub fn WorldPicker(
             };
             let set_choice = set_choice.into_signal_setter();
             view! {
-                <Select
-                    items=data.into()
-                    choice=choice
-                    set_choice=set_choice
-                    as_label=move |(d, _)| d.clone()
-                    children=move |(_, s), view| {
-                        view! {
-                            <div class="flex flex-row gap-4">
-                                <div>{view}</div>
-                                <div>
-                                    {match s {
-                                        AnySelector::World(_) => "world",
-                                        AnySelector::Region(_) => "region",
-                                        AnySelector::Datacenter(_) => "datacenter",
-                                    }}
-
+                <div class="relative z-[150]"> // Higher z-index here too
+                    <Select
+                        items=data.into()
+                        choice=choice
+                        set_choice=set_choice
+                        as_label=move |(d, _)| d.clone()
+                        children=move |(_, s), view| {
+                            view! {
+                                <div class="flex items-center justify-between px-4 py-2
+                                            hover:bg-violet-800/30 rounded-lg transition-colors">
+                                    <div>{view}</div>
+                                    <div class="text-sm text-gray-400">
+                                        {match s {
+                                            AnySelector::World(_) => "world",
+                                            AnySelector::Region(_) => "region",
+                                            AnySelector::Datacenter(_) => "datacenter",
+                                        }}
+                                    </div>
                                 </div>
-                            </div>
+                            }
                         }
-                    }
-                />
+                        class="bg-gradient-to-br from-violet-950/95 to-violet-900/95
+                               border border-violet-800/30 rounded-lg shadow-lg shadow-violet-950/50
+                               backdrop-blur-md text-gray-200"
+                        dropdown_class="mt-2 border border-violet-800/30 rounded-lg
+                                     bg-gradient-to-br from-violet-950/95 to-violet-900/95
+                                     backdrop-blur-md shadow-lg shadow-violet-950/50
+                                     max-h-[300px] overflow-y-auto"
+                    />
+                </div>
             }
             .into_view()
-
-            // data.regions.into_iter().map(|r| {
-            //     r.datacenters
-            //         .into_iter()
-            //         .map(|d| d.worlds.into_iter().map(|w| AnyResult::World(w)))
-            // })
         }
         Err(e) => view! {
-            <div>
-                <span>"No worlds"</span>
-                <span>{e.to_string()}</span>
+            <div class="relative z-[150]">
+                <div class="text-red-400 p-2 rounded-lg bg-red-950/50 border border-red-800/30">
+                    <span>"No worlds: "</span>
+                    <span>{e.to_string()}</span>
+                </div>
             </div>
         }
         .into_view(),

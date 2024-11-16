@@ -76,43 +76,43 @@ pub fn Tooltip(
                     width: tooltip_width,
                     height: tooltip_height,
                 } = use_element_size(node_ref);
-                let desired_position = move || {
-                    log::info!("screen_x: {} screen_y: {}", screen_width(), screen_height());
-                    log::info!("scroll_x: {} scroll_y: {}", scroll_x(), scroll_y());
-                    let bottom = bottom();
-                    let top = top();
-                    let left = left();
-                    let right = right();
-                    let scroll_y = scroll_y();
-                    let scroll_x = scroll_x();
-                    let screen_width = screen_width();
-                    let screen_height = screen_height();
-                    let screen_top = scroll_y;
-                    let screen_bottom = scroll_y + screen_height;
-                    let screen_right = scroll_x + screen_width;
-                    let screen_left = scroll_x;
-                    let top_pad = top - screen_top;
-                    let bottom_pad = screen_bottom - bottom;
-                    let left_pad = left - screen_left;
-                    let right_pad = screen_right - right;
-                    let width = width();
-                    let height = height();
-                    let half_height = height / 2.0;
-                    let half_width = width / 2.0;
-                    let x = (-left_pad + right_pad).clamp(-1.0, 1.0);
-                    let y = (-top_pad + bottom_pad).clamp(-1.0, 1.0);
-                    let distance = 25.0;
-                    format!(
-                        "top: {}px; left: {}px;",
-                        ((y * distance) + (y * half_height) + top) + (tooltip_height() / 2.0),
-                        (x * distance) + (x * half_width) + left - (tooltip_width() / 2.0)
-                    )
+
+                let calculate_position = move || {
+                    let element_center_x = left() + (width() / 2.0);
+                    let viewport_right = scroll_x() + screen_width();
+                    let _viewport_bottom = scroll_y() + screen_height();
+
+                    // Default to showing above the element
+                    let mut pos_y = top() - tooltip_height() - 8.0; // 8px offset
+                    let mut pos_x = element_center_x - (tooltip_width() / 2.0);
+
+                    // If tooltip would go above viewport, show below instead
+                    if pos_y < scroll_y() {
+                        pos_y = bottom() + 8.0;
+                    }
+
+                    // Prevent tooltip from going off-screen horizontally
+                    pos_x = pos_x.clamp(
+                        scroll_x() + 8.0,                       // Left boundary
+                        viewport_right - tooltip_width() - 8.0, // Right boundary
+                    );
+
+                    format!("top: {}px; left: {}px;", pos_y, pos_x)
                 };
+
                 view! {
-                    <Portal>
+                    <Portal mount=document().body().unwrap()>
                         <div
-                            class="fixed bg-violet-950 rounded-xl p-2 z-50 min-w-20 max-w-96"
-                            style=desired_position
+                            node_ref=node_ref
+                            class="fixed z-50 px-4 py-2 text-sm
+                                  bg-gradient-to-br from-violet-950/95 to-violet-900/95
+                                  border border-violet-800/50
+                                  rounded-lg shadow-lg shadow-violet-950/50
+                                  backdrop-blur-md
+                                  text-gray-200
+                                  transition-opacity duration-150
+                                  animate-fade-in"
+                            style=calculate_position
                         >
                             {move || tooltip_text().to_string()}
                         </div>
@@ -121,17 +121,12 @@ pub fn Tooltip(
             })
         }
     };
+
     view! {
         <div
-            class="tooltip"
-            on:mouseover=move |_| {
-                is_hover.set(true);
-            }
-
-            on:mouseout=move |_| {
-                is_hover.set(false);
-            }
-
+            class="inline-block"
+            on:mouseenter=move |_| is_hover.set(true)
+            on:mouseleave=move |_| is_hover.set(false)
             node_ref=target
         >
             {children()}

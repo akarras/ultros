@@ -99,35 +99,48 @@ pub fn SearchBox() -> impl IntoView {
         }
     };
     view! {
-        <div class="absolute top-0 left-0 right-0 sm:relative" style="height: 36px;">
-            <input
-                ref=text_input
-                on:keydown=keydown
-                on:input=on_input
-                on:focusin=focus_in
-                on:focusout=focus_out
-                class="search-box w-screen m-0 sm:w-[424px]"
-                type="text"
-                prop:value=search
-                class:active=active
-            />
-            <div class="absolute right-3 top-3 z-10">
-                <Icon icon=i::AiSearchOutlined/>
-            </div>
-            <div id="search-results" class="search-results w-screen sm:w-[424px] z-50 mx-0">
-                // WHY DOES THIS BREAK HYDRATION?
-                // <WasmLoadingIndicator />
-                <VirtualScroller
-                    each=Signal::derive(item_search)
-                    key=move |(id, _item)| id.0
-                    view=move |(id, _): (&xiv_gen::ItemId, &xiv_gen::Item)| {
-                        let item_id = id.0;
-                        view! { <ItemSearchResult item_id set_search search/> }
-                    }
-
-                    viewport_height=500.0
-                    row_height=42.0
+        <div class="relative w-full sm:w-[424px]">
+            <div class="relative">
+                <input
+                    ref=text_input
+                    on:keydown=keydown
+                    on:input=on_input
+                    on:focusin=focus_in
+                    on:focusout=focus_out
+                    placeholder="Search items... (⌘K)"
+                    class="w-full px-4 py-2 pl-10 rounded-lg
+                               bg-violet-950/50 border border-white/10
+                               focus:border-violet-400/30 focus:outline-none
+                               text-gray-200 placeholder-gray-500
+                               transition-all duration-200"
+                    class:ring-violet-400=active
+                    type="text"
+                    prop:value=search
                 />
+                <div class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
+                    <Icon icon=i::AiSearchOutlined/>
+                </div>
+            </div>
+
+            // Search Results
+            <div class="absolute w-full mt-2 z-50"
+                 class:hidden=move || !active() || search().is_empty()>
+                <div class="max-h-[500px] overflow-y-auto overflow-x-hidden
+                               rounded-lg border border-white/10
+                               bg-gradient-to-br from-violet-950/95 to-violet-900/95
+                               backdrop-blur-md shadow-lg shadow-black/50
+                               scrollbar-thin scrollbar-thumb-violet-600/50 scrollbar-track-transparent">
+                    <VirtualScroller
+                        each=Signal::derive(item_search)
+                        key=move |(id, _item)| id.0
+                        view=move |(id, _): (&xiv_gen::ItemId, &xiv_gen::Item)| {
+                            let item_id = id.0;
+                            view! { <ItemSearchResult item_id set_search search/> }
+                        }
+                        viewport_height=500.0
+                        row_height=42.0
+                    />
+                </div>
             </div>
         </div>
     }

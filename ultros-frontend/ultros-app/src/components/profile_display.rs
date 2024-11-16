@@ -30,7 +30,9 @@ pub fn ProfileDisplay() -> impl IntoView {
                         }
                         _ => {
                             view! {
-                                <a rel="external" class="btn" href="/login">
+                                <a rel="external" class="px-4 py-2 rounded-lg bg-violet-600/20 hover:bg-violet-600/30
+                                                        border border-violet-400/10 hover:border-violet-400/20
+                                                        transition-all duration-300 text-gray-200 hover:text-amber-200 flex flex-row" href="/login">
                                     <Icon height="2rem" width="2em" icon=i::BsDiscord/>
                                     "Login"
                                 </a>

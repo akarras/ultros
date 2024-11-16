@@ -2,7 +2,9 @@ use super::gil::*;
 use super::item_icon::*;
 use super::relative_time::RelativeToNow;
 use chrono::NaiveDateTime;
+use icondata as i;
 use leptos::*;
+use leptos_icons::Icon;
 use leptos_router::*;
 use std::collections::VecDeque;
 use xiv_gen::ItemId;
@@ -24,9 +26,8 @@ pub(crate) struct SaleView {
 fn Item(item_id: i32) -> impl IntoView {
     let item = xiv_gen_db::data().items.get(&ItemId(item_id))?;
     Some(view! {
-        <div class="flex flex-row">
-
-            <div class="flex flex-row">{&item.name}</div>
+        <div class="flex items-center">
+            <span class="text-gray-200">{&item.name}</span>
         </div>
     })
 }
@@ -36,11 +37,13 @@ pub fn LiveSaleTicker() -> impl IntoView {
     let (done_loading, set_done_loading) = create_signal(false);
     let sales = create_rw_signal::<VecDeque<SaleView>>(VecDeque::new());
     let (homeworld, _) = use_home_world();
+    let retrigger = create_rw_signal(false);
     create_effect(move |_| {
         #[cfg(not(feature = "ssr"))]
         let hw_1 = homeworld();
         #[cfg(not(feature = "ssr"))]
         let hw_2 = homeworld();
+        let _ = retrigger.get();
         spawn_local(async move {
             #[cfg(not(feature = "ssr"))]
             if let Some(sale) =
@@ -78,56 +81,94 @@ pub fn LiveSaleTicker() -> impl IntoView {
             }
             set_done_loading(true);
         });
+        let retrigger = retrigger.set_untracked(false);
     });
 
     view! {
-        <div class="flex flex-col" class:hidden=move || homeworld.with(|w| w.is_some())>
-            <h3 class="text-xl">"No homeworld set"</h3>
-            <div>
-                "No homeworld is set currently. Go to " <A href="/settings">"Settings"</A>
-                " to set your homeworld."
+        <div class="p-6 rounded-xl bg-gradient-to-br from-violet-950/20 to-violet-900/20
+                    border border-white/10 backdrop-blur-sm">
+            // No homeworld set warning
+            <div class="space-y-4" class:hidden=move || homeworld.with(|w| w.is_some())>
+                <h3 class="text-xl font-bold text-amber-200">"No Homeworld Set"</h3>
+                <div class="text-gray-300">
+                    "No homeworld is currently set. Go to "
+                    <A href="/settings" class="text-amber-200 hover:text-amber-100 transition-colors">
+                        "Settings"
+                    </A>
+                    " to set your homeworld."
+                </div>
             </div>
-        </div>
-        <div class="flex flex-col" class:hidden=move || homeworld.with(|w| w.is_none())>
-            <h3 class="text-xl">
-                "recent sales on " {move || homeworld().map(|world| world.name).unwrap_or_default()}
-            </h3>
-            <div class="gap-1">
-                <Show
-                    when=done_loading
-                    fallback=move || {
-                        view! {
-                            <div class="h-[416px]">
-                                <BoxSkeleton/>
-                            </div>
-                        }
-                    }
-                >
 
-                    <For each=sales key=|sale| sale.sold_date let:sale>
-                        <A href=move || {
-                            format!(
-                                "/item/{}/{}",
-                                homeworld().map(|world| world.name).unwrap_or_default(),
-                                sale.item_id,
-                            )
-                        }>
-                            <div class="flex flex-row gap-1 p-1 whitespace-nowrap text-white bg-neutral-950 hover:bg-neutral-800 transition-colors">
-                                <ItemIcon item_id=sale.item_id icon_size=IconSize::Medium/>
-                                <div class="flex flex-col">
-                                    <div class="flex flex-row gap-5">
-                                        <Item item_id=sale.item_id/>
-                                        {sale.hq.then(|| "HQ")}
-                                    </div>
-                                    <div class="flex flex-row gap-5 text-sm">
-                                        <Gil amount=sale.price/>
-                                        <RelativeToNow timestamp=sale.sold_date/>
+            // Sales ticker content
+            <div class="space-y-4" class:hidden=move || homeworld.with(|w| w.is_none())>
+                <div class="flex items-center justify-between">
+                    <h3 class="text-xl font-bold text-amber-200">
+                        "Recent Sales on "
+                        <span class="text-gray-200">
+                            {move || homeworld().map(|world| world.name).unwrap_or_default()}
+                        </span>
+                    </h3>
+                    <button
+                        class="text-sm text-gray-400 hover:text-amber-200 transition-colors
+                               flex items-center gap-2"
+                        on:click=move |_| {
+                            sales.update(|s| s.clear());
+                            set_done_loading(false);
+                            retrigger.set(true);
+                        }
+                    >
+                        <Icon icon=i::BiRefreshRegular/>
+                        "Refresh"
+                    </button>
+                </div>
+
+                <div class="space-y-2 max-h-[400px] overflow-y-auto overflow-x-hidden
+                          scrollbar-thin scrollbar-thumb-violet-600/50 scrollbar-track-transparent">
+                    <Show
+                        when=done_loading
+                        fallback=move || {
+                            view! {
+                                <div class="h-[400px] animate-pulse">
+                                    <BoxSkeleton/>
+                                </div>
+                            }
+                        }
+                    >
+                        <For each=sales key=|sale| sale.sold_date let:sale>
+                            <A href=move || {
+                                format!(
+                                    "/item/{}/{}",
+                                    homeworld().map(|world| world.name).unwrap_or_default(),
+                                    sale.item_id,
+                                )
+                            }>
+                            <div class="flex items-center gap-4 p-3 rounded-lg
+                                       bg-violet-950/30 border border-white/5
+                                       hover:bg-violet-900/30 hover:border-white/10
+                                       transition-all duration-200 group">
+                                <div class="flex items-center gap-4 w-full transform transition-transform duration-200 group-hover:translate-x-1">
+                                    <ItemIcon item_id=sale.item_id icon_size=IconSize::Medium/>
+
+                                    <div class="flex flex-col min-w-0 flex-1">
+                                        <div class="flex items-center gap-2">
+                                            <Item item_id=sale.item_id/>
+                                            {sale.hq.then(|| view! {
+                                                <span class="px-1.5 py-0.5 rounded text-xs bg-amber-500/20 text-amber-200">
+                                                    "HQ"
+                                                </span>
+                                            })}
+                                        </div>
+                                        <div class="flex items-center gap-4 text-sm text-gray-400">
+                                            <Gil amount=sale.price/>
+                                            <RelativeToNow timestamp=sale.sold_date/>
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
-                        </A>
-                    </For>
-                </Show>
+                                </div>
+                            </A>
+                        </For>
+                    </Show>
+                </div>
             </div>
         </div>
     }

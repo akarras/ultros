@@ -22,8 +22,27 @@ use xiv_gen::{ClassJobCategory, Item, ItemId};
 fn SideMenuButton(href: String, children: Box<dyn Fn() -> Fragment>) -> impl IntoView {
     view! {
         <APersistQuery href remove_values=&["page", "menu-open"]>
-            <div class="p-2 hover:bg-gray-700 border border-solid border-gray-600 transition-all flex flex-row gap-2">
-                {children()}
+            <div class="flex items-center gap-3 px-4 py-3 rounded-lg
+                        transition-all duration-200
+                        border border-transparent
+                        hover:border-white/10
+                        hover:bg-gradient-to-r hover:from-violet-800/20 hover:to-violet-700/10
+                        active:from-violet-700/30 active:to-violet-600/20
+                        text-gray-300 hover:text-amber-200
+                        relative group">
+                // Glossy highlight
+                <div class="absolute inset-0 rounded-lg opacity-0 group-hover:opacity-100
+                           transition-opacity duration-200
+                           bg-gradient-to-b from-white/5 to-transparent
+                           pointer-events-none"/>
+
+                // Icon container with subtle glow
+                <div class="relative">
+                    <div class="absolute inset-0 rounded-full bg-violet-500/10 blur-sm
+                               scale-150 opacity-0 group-hover:opacity-100
+                               transition-opacity duration-200"/>
+                    {children()}
+                </div>
             </div>
         </APersistQuery>
     }
@@ -457,182 +476,296 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
         })
     };
     view! {
-        <div class="flex flex-row justify-between">
-            <div class="flex flex-row">
-                <QueryButton
-                    query_name="sort"
-                    value="key"
-                    class="p-1 !text-violet-200 hover:text-violet-600"
-                    active_classes="p-1 !text-violet-500"
-                >
-                    <div class="flex flex-row">
-                        <Icon icon=i::BiCalendarAltRegular/>
-                        "ADDED"
-                    </div>
-                </QueryButton>
-                <QueryButton
-                    query_name="sort"
-                    value="price"
-                    class="p-1 !text-violet-200 hover:text-violet-600"
-                    active_classes="p-1 !text-violet-500"
-                >
-                    <div class="flex flex-row">
-                        <Icon icon=i::ImPriceTag/>
-                        "PRICE"
-                    </div>
-                </QueryButton>
-                <QueryButton
-                    query_name="sort"
-                    value="name"
-                    class="p-1 !text-violet-200 hover:text-violet-600"
-                    active_classes="p-1 !text-violet-500"
-                >
-                    "NAME"
-                </QueryButton>
-                <QueryButton
-                    query_name="sort"
-                    value="ilvl"
-                    class="p-1 !text-violet-200 hover:text-violet-600"
-                    active_classes="p-1 !text-violet-500"
-                    default=true
-                >
-                    "ILVL"
-                </QueryButton>
-            </div>
-            <div class="flex flex-row">
-                <QueryButton
-                    query_name="dir"
-                    value="asc"
-                    class="p-1 !text-violet-200 hover:text-violet-600"
-                    active_classes="p-1 !text-violet-500"
-                >
-                    <div class="flex flex-row">
-                        <Icon icon=i::BiSortUpRegular/>
-                        "ASC"
-                    </div>
-                </QueryButton>
-                <QueryButton
-                    query_name="dir"
-                    value="desc"
-                    class="p-1 !text-violet-200 hover:text-violet-600"
-                    active_classes="p-1 !text-violet-500"
-                    default=true
-                >
-                    <div class="flex flex-row">
-                        <Icon icon=i::BiSortDownRegular/>
-                        "DESC"
-                    </div>
-                </QueryButton>
-            </div>
-
-        </div>
-        <div class="flex flex-row flex-wrap">
-            {move || {
-                pages()
-                    .into_iter()
-                    .map(|page| {
-                        view! {
-                            <QueryButton
-                                query_name="page"
-                                value=(page.offset + 1).to_string()
-                                class="p-1 !text-violet-200 hover:text-violet-600"
-                                active_classes="p-1 !text-violet-500"
-                                default=page.offset == 0
-                            >
-                                {page.offset + 1}
-                            </QueryButton>
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            }}
-
-        </div>
-        <For
-            each=items
-            key=|(id, item)| (id.0, &item.name)
-            children=|(id, item)| {
-                view! {
-                    <div class="grid xl:grid-cols-4 grid-flow-row gap-1">
-                        <div class="xl:col-span-2 flex flex-row">
-                            <SmallItemDisplay item=item/>
-                            <AddToList item_id=id.0/>
+        <div class="flex flex-col gap-4">
+            // Sort and Direction Controls
+            <div class="flex flex-col sm:flex-row justify-between gap-2">
+                <div class="flex flex-row flex-wrap gap-1">
+                    <QueryButton
+                        query_name="sort"
+                        value="key"
+                        class="p-1 !text-violet-200 hover:text-violet-600"
+                        active_classes="p-1 !text-violet-500"
+                    >
+                        <div class="flex flex-row items-center gap-1">
+                            <Icon icon=i::BiCalendarAltRegular/>
+                            <span class="hidden sm:inline">"ADDED"</span>
                         </div>
-                        <CheapestPrice item_id=*id show_hq=false/>
-                        {item
-                            .can_be_hq
-                            .then(|| view! { <CheapestPrice item_id=*id show_hq=true/> })}
-                    </div>
-                }
-            }
-        />
+                    </QueryButton>
+                    <QueryButton
+                        query_name="sort"
+                        value="price"
+                        class="p-1 !text-violet-200 hover:text-violet-600"
+                        active_classes="p-1 !text-violet-500"
+                    >
+                        <div class="flex flex-row items-center gap-1">
+                            <Icon icon=i::ImPriceTag/>
+                            <span class="hidden sm:inline">"PRICE"</span>
+                        </div>
+                    </QueryButton>
+                    <QueryButton
+                        query_name="sort"
+                        value="name"
+                        class="p-1 !text-violet-200 hover:text-violet-600"
+                        active_classes="p-1 !text-violet-500"
+                    >
+                        "NAME"
+                    </QueryButton>
+                    <QueryButton
+                        query_name="sort"
+                        value="ilvl"
+                        class="p-1 !text-violet-200 hover:text-violet-600"
+                        active_classes="p-1 !text-violet-500"
+                        default=true
+                    >
+                        "ILVL"
+                    </QueryButton>
+                </div>
+                <div class="flex flex-row gap-1">
+                    <QueryButton
+                        query_name="dir"
+                        value="asc"
+                        class="p-1 !text-violet-200 hover:text-violet-600"
+                        active_classes="p-1 !text-violet-500"
+                    >
+                        <div class="flex flex-row items-center gap-1">
+                            <Icon icon=i::BiSortUpRegular/>
+                            <span class="hidden sm:inline">"ASC"</span>
+                        </div>
+                    </QueryButton>
+                    <QueryButton
+                        query_name="dir"
+                        value="desc"
+                        class="p-1 !text-violet-200 hover:text-violet-600"
+                        active_classes="p-1 !text-violet-500"
+                        default=true
+                    >
+                        <div class="flex flex-row items-center gap-1">
+                            <Icon icon=i::BiSortDownRegular/>
+                            <span class="hidden sm:inline">"DESC"</span>
+                        </div>
+                    </QueryButton>
+                </div>
+            </div>
 
-        <QueryButton
-            query_name="page"
-            value=move || (page().unwrap_or(1) + 1).to_string()
-            class=move || {
-                let pages = pages();
-                let page = page();
-                if pages.page_count() > page.unwrap_or(1).try_into().unwrap_or(1) {
-                    "p-1 !text-violet-200 hover:text-violet-600"
-                } else {
-                    "hidden"
-                }
-            }
+            // Pagination
+            <div class="flex flex-row flex-wrap gap-1">
+                {move || {
+                    pages()
+                        .into_iter()
+                        .map(|page| {
+                            view! {
+                                <QueryButton
+                                    query_name="page"
+                                    value=(page.offset + 1).to_string()
+                                    class="p-1 min-w-[2rem] text-center !text-violet-200 hover:text-violet-600"
+                                    active_classes="p-1 !text-violet-500"
+                                    default=page.offset == 0
+                                >
+                                    {page.offset + 1}
+                                </QueryButton>
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                }}
+            </div>
 
-            active_classes="p-1 !text-violet-500"
-        >
-            "Next page: "
-            {page().unwrap_or(1) + 1}
-        </QueryButton>
+            // Item List
+            <div class="flex flex-col gap-2">
+            <For
+                each=items
+                key=|(id, item)| (id.0, &item.name)
+                children=|(id, item)| {
+                    view! {
+                        <div class="flex flex-col md:grid md:grid-cols-12 gap-2 p-3 rounded-lg
+                                  border border-white/10 backdrop-blur-sm
+                                  bg-gradient-to-br from-violet-950/20 to-violet-900/20
+                                  hover:from-violet-900/30 hover:to-violet-800/30
+                                  transition-all duration-200">
+                            // Item Info Section
+                            <div class="flex flex-row items-center justify-between md:col-span-5 gap-2 min-w-0"> // Added min-w-0
+                                <div class="flex-1 min-w-0"> // Added container with min-w-0
+                                    <SmallItemDisplay item=item/>
+                                </div>
+                                <div class="flex-shrink-0"> // Prevent shrinking of add button
+                                    <AddToList item_id=id.0/>
+                                </div>
+                            </div>
+
+                            // Normal Quality Price
+                            <div class="md:col-span-3 flex flex-row md:justify-center items-center gap-2">
+                                <span class="text-gray-400 md:hidden">"NQ: "</span>
+                                <CheapestPrice item_id=*id show_hq=false/>
+                            </div>
+
+                            // High Quality Price (if available)
+                            {move || {
+                                if item.can_be_hq {
+                                    view! {
+                                        <div class="md:col-span-4 flex flex-row md:justify-center items-center gap-2">
+                                            <span class="text-gray-400 md:hidden">"HQ: "</span>
+                                            <CheapestPrice item_id=*id show_hq=true/>
+                                        </div>
+                                    }
+                                } else {
+                                    // Take up the space on desktop but don't show anything
+                                    view! { <div class="md:col-span-4"></div> }
+                                }
+                            }}
+                        </div>
+                    }
+                }
+            />
+            </div>
+
+            // Next Page Button
+            <QueryButton
+                query_name="page"
+                value=move || (page().unwrap_or(1) + 1).to_string()
+                class=move || {
+                    let pages = pages();
+                    let page = page();
+                    if pages.page_count() > page.unwrap_or(1).try_into().unwrap_or(1) {
+                        "px-4 py-2 rounded-lg text-center
+                             bg-violet-900/40 border border-violet-400/20
+                             hover:bg-violet-800/40 hover:border-violet-400/30
+                             text-amber-200 transition-all duration-200"
+                    } else {
+                        "hidden"
+                    }
+                }
+                active_classes="p-1 !text-violet-500"
+            >
+                <div class="flex items-center justify-center gap-2">
+                    <span>"Next Page:"</span>
+                    <span class="font-bold">{page().unwrap_or(1) + 1}</span>
+                    <Icon icon=i::BiChevronRightRegular/>
+                </div>
+            </QueryButton>
+        </div>
     }
 }
 
 #[component]
+fn CategorySection(
+    title: &'static str,
+    #[prop(optional)] category: Option<u8>,
+    #[prop(optional)] children: Option<Children>,
+) -> impl IntoView {
+    view! {
+        <div class="p-4 space-y-4">
+            <h2 class="text-xl font-bold text-amber-200">{title}</h2>
+            {category.map(|cat| view! { <CategoryView category=cat/> })}
+            {children.map(|c| c())}
+        </div>
+    }
+}
+
+#[component]
+#[component]
 pub fn ItemExplorer() -> impl IntoView {
     let (menu_open, set_open) = create_query_signal("menu-open");
-    let menu_open = create_memo(move |_| menu_open().unwrap_or_default());
-    let set_open = SignalSetter::map(move |collapse: bool| set_open(collapse.then_some(true)));
-    // class="invisible right-full"
-    // class="collapse right-6 bg-neutral-700"
-    view! {
-        <MetaTitle title="Ultros Item Explorer"/>
-        <MetaDescription text="Find the cheapest items available on the market board!"/>
-        <button
-            class="p-2 text-3xl bg-neutral-800 text-gray-300 hover:bg-neutral-600 gap-1 flex flex-row rounded"
-            class:bg-neutral-700=menu_open
-            class:bg-neutral-800=move || !menu_open()
-            on:click=move |_| {
-                set_open(!menu_open.get_untracked());
-            }
-        >
+    let menu_open = create_memo(move |_| menu_open().unwrap_or(false));
 
-            <Icon icon=i::BiMenuRegular/>
-            <span>"Categories"</span>
-        </button>
-        <div class="main-content relative">
-            <div class="mx-auto container flex flex-col md:flex-row items-start">
-                <div
-                    class="bg-neutral-950 flex flex-col max-w-sm shrink h-[70vh] overflow-y-scroll absolute top-0 bottom-0 left-0 right-6 transition-all z-50"
-                    class:right-6=menu_open
-                    class:right-full=move || !menu_open()
-                    class:collapse=move || !menu_open()
+    view! {
+        <div class="main-content p-6">
+            <div class="container mx-auto max-w-7xl">
+                // Toggle Button
+                <button
+                    class="group px-4 py-2 rounded-lg flex items-center gap-2
+                           transition-all duration-200 relative
+                           border backdrop-blur-sm"
+                    class=("bg-violet-900/40 border-violet-400/20 text-amber-200", move || menu_open())
+                    class=("bg-violet-950/20 border-white/10 text-gray-200 hover:text-amber-200", move || !menu_open())
+                    on:click=move |_| set_open.set(Some(!menu_open()))
                 >
-                    <h2 class="text-6xl p-2">"Weapons"</h2>
-                    <CategoryView category=1/>
-                    <h2 class="text-6xl p-2">"Armor"</h2>
-                    <CategoryView category=2/>
-                    <h2 class="text-6xl p-2">"Items"</h2>
-                    <CategoryView category=3/>
-                    <h2 class="text-6xl p-2">"Housing"</h2>
-                    <CategoryView category=4/>
-                    <h2 class="text-6xl p-2">"Job Set"</h2>
-                    <JobsList/>
-                </div>
-                <div class="flex flex-col grow">
-                    <Ad class="h-24 w-full"/>
-                    <h1 class="text-2xl">"Item Explorer"</h1>
-                    <Outlet/>
-                    <Ad class="grow max-h-72"/>
+                    <div class="relative w-6 h-6">
+                        <div class="absolute inset-0 transition-all duration-300"
+                             class=("opacity-0 rotate-90 scale-0", move || !menu_open())>
+                            <Icon icon=i::BiXRegular/>
+                        </div>
+                        <div class="absolute inset-0 transition-all duration-300"
+                             class=("opacity-100 rotate-0 scale-100", move || menu_open())>
+                            <Icon icon=i::BiMenuRegular/>
+                        </div>
+                    </div>
+                    <span class="font-medium">
+                        {move || if menu_open() { "Close Categories" } else { "Browse Categories" }}
+                    </span>
+                </button>
+
+                <div class="relative mt-4">
+                    // Mobile Overlay
+                    {move || {
+                        if menu_open() {
+                            view! {
+                                <div
+                                    class="fixed inset-0 bg-black/50 backdrop-blur-sm z-40 md:hidden"
+                                    on:click=move |_| set_open.set(Some(false))
+                                />
+                            }
+                        } else {
+                            view! { <div/> }
+                        }
+                    }}
+
+                    // Sidebar
+                    <div
+                        class="fixed md:absolute top-0 bottom-0 left-0 z-50
+                               w-[85vw] md:w-80 transition-all duration-300 ease-in-out
+                               rounded-xl border border-white/10
+                               bg-gradient-to-br from-violet-950/90 to-violet-900/80
+                               backdrop-filter backdrop-blur-xl
+                               min-h-screen"
+                        class=("translate-x-0", move || menu_open())
+                        class=("-translate-x-[105%]", move || !menu_open())
+                        class=("opacity-0", move || !menu_open())
+                        class=("opacity-100", move || menu_open())
+                    >
+                        // Glossy overlay effect
+                        <div class="absolute inset-0 rounded-xl bg-gradient-to-br from-white/5 to-transparent pointer-events-none"/>
+
+                        // Content container with fade edges
+                        <div class="relative h-full">
+                            // Top fade
+                            <div class="absolute top-0 left-0 right-0 h-4 bg-gradient-to-b
+                                        from-violet-950/50 to-transparent z-10 pointer-events-none"/>
+
+                            // Main scrollable content
+                            <div class="h-full overflow-y-auto overflow-x-hidden
+                                       scrollbar-thin scrollbar-thumb-white/20 hover:scrollbar-thumb-violet-400/30
+                                       scrollbar-track-transparent">
+                                <div class="space-y-1 p-2">
+                                    <CategorySection title="Weapons" category=1/>
+                                    <CategorySection title="Armor" category=2/>
+                                    <CategorySection title="Items" category=3/>
+                                    <CategorySection title="Housing" category=4/>
+                                    <CategorySection title="Job Sets">
+                                        <JobsList/>
+                                    </CategorySection>
+                                </div>
+                            </div>
+
+                            // Bottom fade
+                            <div class="absolute bottom-0 left-0 right-0 h-4 bg-gradient-to-t
+                                        from-violet-950/50 to-transparent z-10 pointer-events-none"/>
+                        </div>
+                    </div>
+
+                    // Main Content Area
+                    <div
+                        class="transition-all duration-300"
+                        class=("md:ml-[21rem]", move || menu_open())
+                    >
+                        <div class="space-y-6">
+                            <Ad class="w-full h-24 rounded-xl overflow-hidden"/>
+                            <div class="p-6 rounded-xl bg-gradient-to-br from-violet-950/20 to-violet-900/20
+                                      border border-white/10 backdrop-blur-sm">
+                                <h1 class="text-2xl font-bold text-amber-200 mb-4">"Item Explorer"</h1>
+                                <Outlet/>
+                            </div>
+                            <Ad class="w-full max-h-72 rounded-xl overflow-hidden"/>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
