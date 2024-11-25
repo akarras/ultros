@@ -14,10 +14,11 @@ use ultros_api_types::world_helper::AnyResult;
 use xiv_gen::ItemId;
 
 #[component]
-fn WorldButton<'a>(world: AnyResult<'a>, item_id: i32) -> impl IntoView {
+fn WorldButton<'a>(current_world: Memo<String>, world: AnyResult<'a>, item_id: i32) -> impl IntoView {
     let (home_world, _) = use_home_world();
     let world_name = world.get_name().to_string();
     let world_2 = world_name.clone();
+    let world_3 = world_name.clone();
     let is_home_world = Signal::derive({
         move || {
             home_world
@@ -30,13 +31,19 @@ fn WorldButton<'a>(world: AnyResult<'a>, item_id: i32) -> impl IntoView {
         AnyResult::Datacenter(_) => "bg-violet-900/80 hover:bg-violet-800/80",
         AnyResult::World(_) => "bg-violet-800/80 hover:bg-violet-700/80",
     };
+    let is_selected = move || current_world.with(|w| w == world_3.as_str());
     view! {
         <A
-            class=[
+            class=move || [
                 "rounded-md text-sm px-4 py-2 text-white/90 mx-1 flex items-center gap-2 transition-all duration-200",
                 bg_color,
                 "hover:scale-105 hover:shadow-lg shadow-purple-900/20",
-            ].concat()
+                if is_selected() {
+                    "font-bold"
+                } else {
+                    ""
+                }
+            ].join(" ")
             href=format!("/item/{}/{item_id}", escape(&world_name))
         >
             {move || is_home_world.get().then(|| view! { <Icon icon=icondata::AiHomeFilled class="text-purple-300"/><div class="w-1"></div> })}
@@ -47,12 +54,13 @@ fn WorldButton<'a>(world: AnyResult<'a>, item_id: i32) -> impl IntoView {
 
 #[component]
 fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
+    let current_world = world_name;
     let world_data = use_context::<LocalWorldData>().unwrap().0.unwrap();
     let (home_world, _) = use_home_world();
     let home_world_button = Signal::derive(move || {
         home_world
             .get()
-            .map(|world| view! { <WorldButton world=AnyResult::World(&world) item_id=item_id()/> })
+            .map(|world| view! { <WorldButton current_world world=AnyResult::World(&world) item_id=item_id()/> })
     });
 
     view! {
@@ -75,7 +83,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                                                 .iter()
                                                 .flat_map(|dc| dc.worlds.iter().map(AnyResult::World)),
                                         )
-                                        .map(move |world| view! { <WorldButton world item_id=item_id()/> })
+                                        .map(move |world| view! { <WorldButton current_world world item_id=item_id()/> })
                                         .collect();
                                     views.into_view()
                                 }
@@ -83,19 +91,19 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                                     let region = world_data.get_region(AnyResult::Datacenter(dc));
                                     let views: Vec<_> = [AnyResult::Region(region)]
                                         .into_iter()
-                                        .map(|w| view! { <WorldButton world=w item_id=item_id()/> }.into_view())
+                                        .map(|w| view! { <WorldButton current_world world=w item_id=item_id()/> }.into_view())
                                         .chain([view! { <div class="w-2"></div> }.into_view()])
                                         .chain(
                                             region
                                                 .datacenters
                                                 .iter()
-                                                .map(|dc| view! { <WorldButton world=AnyResult::Datacenter(dc) item_id=item_id()/> }),
+                                                .map(|dc| view! { <WorldButton current_world world=AnyResult::Datacenter(dc) item_id=item_id()/> }),
                                         )
                                         .chain([view! { <div class="w-2"></div> }.into_view()])
                                         .chain(
                                             dc.worlds
                                                 .iter()
-                                                .map(|w| view! { <WorldButton world=AnyResult::World(w) item_id=item_id()/> }),
+                                                .map(|w| view! { <WorldButton current_world world=AnyResult::World(w) item_id=item_id()/> }),
                                         )
                                         .collect();
                                     let should_show_homeworld = !dc
@@ -110,7 +118,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                                 }
                                 AnyResult::Region(region) => {
                                     let regions = world_data.get_inner_data().regions.iter().map(|r| {
-                                        view! { <WorldButton world=AnyResult::Region(r) item_id=item_id()/> }
+                                        view! { <WorldButton current_world world=AnyResult::Region(r) item_id=item_id()/> }
                                     });
                                     let datacenters = world_data.get_datacenters(&AnyResult::Region(region));
                                     let views: Vec<_> = regions
@@ -118,7 +126,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                                         .chain(
                                             datacenters
                                                 .iter()
-                                                .map(|dc| view! { <WorldButton world=AnyResult::Datacenter(dc) item_id=item_id()/> }),
+                                                .map(|dc| view! { <WorldButton current_world world=AnyResult::Datacenter(dc) item_id=item_id()/> }),
                                         )
                                         .collect();
                                     view! {
@@ -130,13 +138,13 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                             }
                         } else {
                             let regions = world_data.get_inner_data().regions.iter().map(|r| {
-                                view! { <WorldButton world=AnyResult::Region(r) item_id=item_id()/> }
+                                view! { <WorldButton current_world world=AnyResult::Region(r) item_id=item_id()/> }
                             });
                             let region = world_data.lookup_world_by_name("North-America").unwrap();
                             let datacenters = world_data.get_datacenters(&region);
                             let views: Vec<_> = regions
                                 .chain(datacenters.iter().map(|dc| {
-                                    view! { <WorldButton world=AnyResult::Datacenter(dc) item_id=item_id()/> }
+                                    view! { <WorldButton current_world world=AnyResult::Datacenter(dc) item_id=item_id()/> }
                                 }))
                                 .collect();
                             views.into_view()
@@ -157,7 +165,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
 
     view! {
         <div class="container mx-auto px-4 py-8">
-            <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+            <div class="grid grid-cols-1 gap-6">
                 <Transition
                     fallback=move || {
                         view! {
@@ -271,7 +279,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
                         view! {
                             <div class="space-y-6">
                                 <div class="bg-black/40 rounded-xl p-6 backdrop-blur-sm border border-purple-800/20">
-                                    <h2 class="text-xl font-bold mb-6 text-purple-200">
+                                    <h2 class="text-xl font-bold text-center mb-4 text-purple-200">
                                         "Sale History"
                                     </h2>
                                     <SaleHistoryTable sales=sales.into()/>

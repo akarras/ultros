@@ -2,3 +2,28 @@
 @tailwind components;
 @tailwind utilities;
 @tailwind variants;
+
+
+.btn-secondary {
+    @apply p-2 m-1 flex flex-row text-center rounded-2xl
+    backdrop-blur-sm backdrop-brightness-110
+    border border-white/10 hover:border-yellow-200/30
+    transition-all duration-300 ease-in-out
+    bg-gradient-to-br from-violet-900/20 via-black/10 to-amber-500/10
+    hover:from-violet-800/30 hover:to-amber-400/20 text-amber-200 items-center
+    hover:transform hover:scale-[1.02] hover:shadow-lg hover:shadow-violet-500/10 justify-center gap-3;
+    
+}
+
+.btn-secondary > * {
+    @apply text-xl font-extrabold bg-gradient-to-r from-violet-200 to-amber-200 active:to-violet-200
+    bg-clip-text text-transparent rounded-xl
+    backdrop-blur-sm text-amber-200 active:text-violet-200;
+}
+
+[aria-current="page"].btn-secondary {
+    @apply from-violet-400/20 to-amber-400/60 text-white;
+    * {
+        @apply text-white;
+    }
+}

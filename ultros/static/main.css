@@ -1,3 +1,8 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+
 :root {
     /* Colors */
     --primary-color: #3b2b9e;
@@ -171,26 +176,18 @@ html {
     padding: 10px;
 }
 .btn {
-    padding: var(--spacing-sm) var(--spacing-md);
-    border: 2px solid var(--primary-color);
-    border-radius: 5px;
-    font-size: 1.2em;
-    font-family: var(--font-primary);
-    min-width: 100px;
-    background-color: var(--surface-color);
-    color: var(--text-color);
-    cursor: pointer;
-    transition: all var(--transition-quick) ease;
+    padding: 0.5rem 1rem; /* py-2 px-4 */
+    border-radius: 0.5rem; /* rounded-lg */
+    background-color: rgba(139, 92, 246, 0.2); /* bg-violet-600/20 */
+    border: 1px solid rgba(190, 134, 255, 0.1); /* border border-violet-400/10 */
+    color: rgb(229, 231, 235); /* text-gray-200 */
+    transition: all 300ms; /* transition-all duration-300 */
+}
 
-    &:hover {
-        background-color: #0f0a28;
-        border-color: #281f66;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-    }
-
-    &:active {
-        transform: translateY(1px);
-    }
+.btn:hover {
+    background-color: rgba(139, 92, 246, 0.3); /* hover:bg-violet-600/30 */
+    border-color: rgba(190, 134, 255, 0.2); /* hover:border-violet-400/20 */
+    color: rgb(253, 224, 71); /* hover:text-amber-200 */
 }
 
 .main-content .btn {
@@ -400,31 +397,6 @@ nav > * > a:hover {
     margin-left: 25px;
     display: flex;
     flex-wrap: wrap;
-}
-
-.btn-secondary {
-    background-color: #48394f;
-    color: #fff;
-    border-top-left-radius: 11px;
-    border-top-right-radius: 11px;
-    padding-right: 10px;
-    padding-left: 10px;
-    text-decoration: none;
-    border: 1px solid #000;
-    text-align: center;
-}
-
-.btn-secondary > * {
-    padding: 5px;
-}
-
-.btn-secondary:hover {
-    background-color: #312537;
-    transition: background-color 0.5s;
-}
-
-.btn-secondary.active {
-    background-color: #171518;
 }
 
 .main-content {

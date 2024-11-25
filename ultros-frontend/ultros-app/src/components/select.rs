@@ -96,7 +96,7 @@ where
                                 backdrop-blur-md z-[100]";
 
     view! {
-        <div class="relative z-[100]"> // Increased z-index on the wrapper
+        <div class="relative">
             <input
                 node_ref=input
                 class=move || format!("{} {}", default_input_class, class.unwrap_or(""))
@@ -110,7 +110,7 @@ where
                 prop:value=current_input
             />
             <div
-                class="absolute top-2 left-2 select-none cursor flex items-center" // Added flex and items-center
+                class="absolute top-1 left-1 select-none cursor flex items-center"
                 class:invisible=move || has_focus() || !current_input().is_empty()
                 on:click=move |_| {
                     if let Some(input) = input() {

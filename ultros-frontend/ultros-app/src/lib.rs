@@ -83,7 +83,7 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>, region: String) -> impl IntoView
             <Router>
                 // Navigation
                 <nav class="sticky top-0 z-50 backdrop-blur-sm border-b border-white/5 bg-black/40">
-                    <div class="mx-auto max-w-7xl px-2 sm:px-4 lg:px-6 py-2 flex flex-col xl:flex-row">
+                    <div class="mx-auto max-w-7xl px-2 sm:px-4 lg:px-6 py-2 flex flex-col md:flex-row items-center">
                         // Left section
                         <div class="flex items-center space-x-2">
                             <A href="/" exact=true

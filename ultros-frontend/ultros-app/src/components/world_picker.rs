@@ -21,7 +21,7 @@ pub fn WorldOnlyPicker(
                     .collect::<Vec<_>>()
             });
             view! {
-                <div class="relative z-[150]"> // Higher z-index than regular dropdowns
+                <div class="relative">
                     <Select
                         items=data.into()
                         as_label=move |w| w.name.clone()
@@ -34,19 +34,12 @@ pub fn WorldOnlyPicker(
                                 </div>
                             }
                         }
-                        class="bg-gradient-to-br from-violet-950/95 to-violet-900/95
-                               border border-violet-800/30 rounded-lg shadow-lg shadow-violet-950/50
-                               backdrop-blur-md text-gray-200"
-                        dropdown_class="mt-2 border border-violet-800/30 rounded-lg
-                                     bg-gradient-to-br from-violet-950/95 to-violet-900/95
-                                     backdrop-blur-md shadow-lg shadow-violet-950/50
-                                     max-h-[300px] overflow-y-auto"
                     />
                 </div>
             }
         }
         Err(e) => view! {
-            <div class="relative z-[150]">
+            <div class="relative">
                 <div class="text-red-400 p-2 rounded-lg bg-red-950/50 border border-red-800/30">
                     <span>"No worlds: "</span>
                     <span>{e.to_string()}</span>
@@ -87,7 +80,7 @@ pub fn WorldPicker(
             };
             let set_choice = set_choice.into_signal_setter();
             view! {
-                <div class="relative z-[150]"> // Higher z-index here too
+                <div class="relative">
                     <Select
                         items=data.into()
                         choice=choice
@@ -108,13 +101,6 @@ pub fn WorldPicker(
                                 </div>
                             }
                         }
-                        class="bg-gradient-to-br from-violet-950/95 to-violet-900/95
-                               border border-violet-800/30 rounded-lg shadow-lg shadow-violet-950/50
-                               backdrop-blur-md text-gray-200"
-                        dropdown_class="mt-2 border border-violet-800/30 rounded-lg
-                                     bg-gradient-to-br from-violet-950/95 to-violet-900/95
-                                     backdrop-blur-md shadow-lg shadow-violet-950/50
-                                     max-h-[300px] overflow-y-auto"
                     />
                 </div>
             }

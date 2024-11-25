@@ -660,31 +660,43 @@ fn CategorySection(
     }
 }
 
+
 #[component]
 #[component]
 pub fn ItemExplorer() -> impl IntoView {
     let (menu_open, set_open) = create_query_signal("menu-open");
     let menu_open = create_memo(move |_| menu_open().unwrap_or(false));
-
+    const BASE_CLASSES: &str = "group px-4 py-2 rounded-lg flex items-center gap-2
+                           transition-all duration-200 relative
+                           border backdrop-blur-sm ";
+    const OPEN_CLASSES: &str = "bg-violet-900/40 border-violet-400/20 text-amber-200";
+    const CLOSED_CLASSES: &str = "bg-violet-950/20 border-white/10 text-gray-200 hover:text-amber-200";
+    let button_classes = move || {
+        if menu_open() {
+            [BASE_CLASSES, OPEN_CLASSES].concat()
+        } else {
+            [BASE_CLASSES, CLOSED_CLASSES].concat()
+        }
+    };
+    let menu_closed = Signal::derive(move || !menu_open());
     view! {
         <div class="main-content p-6">
             <div class="container mx-auto max-w-7xl">
                 // Toggle Button
                 <button
-                    class="group px-4 py-2 rounded-lg flex items-center gap-2
-                           transition-all duration-200 relative
-                           border backdrop-blur-sm"
-                    class=("bg-violet-900/40 border-violet-400/20 text-amber-200", move || menu_open())
-                    class=("bg-violet-950/20 border-white/10 text-gray-200 hover:text-amber-200", move || !menu_open())
-                    on:click=move |_| set_open.set(Some(!menu_open()))
+                    class=button_classes
                 >
                     <div class="relative w-6 h-6">
                         <div class="absolute inset-0 transition-all duration-300"
-                             class=("opacity-0 rotate-90 scale-0", move || !menu_open())>
+                             class=("opacity-0", menu_closed)
+                             class=("rotate-90", menu_closed)
+                             class=("scale-0", menu_closed)>
                             <Icon icon=i::BiXRegular/>
                         </div>
                         <div class="absolute inset-0 transition-all duration-300"
-                             class=("opacity-100 rotate-0 scale-100", move || menu_open())>
+                             class=("opacity-100", menu_open)
+                             class=("rotate-0", menu_open)
+                             class=("scale-100", menu_open)>
                             <Icon icon=i::BiMenuRegular/>
                         </div>
                     </div>
