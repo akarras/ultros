@@ -85,6 +85,7 @@ impl<'a> Iterator for IngredientsIter<'a> {
             self.1 += 1;
             // check if this is a valid id
             if id.0 .0 != 0 {
+                let id = (id.0, id.1 as i32);
                 return Some(id);
             }
         }
