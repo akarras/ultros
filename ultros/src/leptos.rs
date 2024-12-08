@@ -18,7 +18,7 @@ use axum::{
 use git_const::git_short_hash;
 #[cfg(not(debug_assertions))]
 use hyper::header;
-use leptos::*;
+use leptos::prelude::*;
 use leptos_axum::generate_route_list;
 use leptos_router::RouteListing;
 #[cfg(not(debug_assertions))]

@@ -1,4 +1,4 @@
-use leptos::*;
+use leptos::prelude::*;
 use std::hash::Hash;
 use web_sys::HtmlDivElement;
 
@@ -17,21 +17,20 @@ pub fn VirtualScroller<T, D, V, KF, K>(
     row_height: f64,
 ) -> impl IntoView
 where
-    D: Fn(T) -> V + 'static,
+    D: Fn(T) -> V + 'static + Clone + Send,
     V: IntoView + 'static,
-    KF: Fn(&T) -> K + 'static,
+    KF: Fn(&T) -> K + 'static + Clone + Send,
     K: Eq + Hash + 'static,
-    T: 'static + Clone,
+    T: 'static + Clone + Send + Sync,
 {
     let render_ahead = 10;
-    let (scroll_offset, set_scroll_offset) = create_signal(0);
+    let (scroll_offset, set_scroll_offset) = signal(0);
     // use memo here so our signals only retrigger if the value actually changed.
-    let child_start = create_memo(move |_| {
+    let child_start = Memo::new(move |_| {
         ((scroll_offset() as f64 / row_height) as u32).saturating_sub(render_ahead / 2)
     });
     let children_shown = (viewport_height / row_height).ceil() as u32 + render_ahead;
     // let _ = key; // temporary getting rid of unused variable warning without renaming the key.
-    create_effect(move |_| {});
     let virtual_children = move || {
         each.with(|children| {
             let array_size = children.len();

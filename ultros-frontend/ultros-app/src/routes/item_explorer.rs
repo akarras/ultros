@@ -8,18 +8,28 @@ use crate::components::{
     add_to_list::*, cheapest_price::*, fonts::*, meta::*, small_item_display::*,
 };
 use crate::CheapestPrices;
+use components::Outlet;
+use hooks::{create_query_signal, query_signal, use_location, use_params_map};
 use icondata as i;
 use itertools::Itertools;
-use leptos::*;
+use leptos::either::Either;
+use leptos::prelude::*;
+use leptos::reactive::wrappers::write::SignalSetter;
+use leptos::text_prop::TextProp;
 use leptos_icons::*;
 use leptos_router::*;
+use location::Url;
 use log::info;
 use paginate::Pages;
 use percent_encoding::percent_decode_str;
 use xiv_gen::{ClassJobCategory, Item, ItemId};
 
 #[component]
-fn SideMenuButton(href: String, children: Box<dyn Fn() -> Fragment>) -> impl IntoView {
+fn SideMenuButton<T>(href: String, children: TypedChildrenFn<T>) -> impl IntoView
+where
+    T: RenderHtml + 'static,
+{
+    let children = children.into_inner();
     view! {
         <APersistQuery href remove_values=&["page", "menu-open"]>
             <div class="flex items-center gap-3 px-4 py-3 rounded-lg
@@ -69,10 +79,9 @@ fn CategoryView(category: u8) -> impl IntoView {
                 .into_iter()
                 .map(|(_, name, id)| {
                     view! {
-                        <SideMenuButton href=["/items/category/", &name.replace("/", "%2F")]
-                            .concat()>
+                        <SideMenuButton href=["/items/category/", &name.replace("/", "%2F")].concat()>
                             <ItemSearchCategoryIcon id=*id/>
-                            {name}
+                            {name.as_str()}
                         </SideMenuButton>
                     }
                 })
@@ -208,9 +217,9 @@ fn JobsList() -> impl IntoView {
 pub fn CategoryItems() -> impl IntoView {
     let params = use_params_map();
     let data = xiv_gen_db::data();
-    let items = create_memo(move |_| {
+    let items = Memo::new(move |_| {
         let cat = params()
-            .get("category")
+            .get_str("category")
             .and_then(|cat| percent_encoding::percent_decode_str(cat).decode_utf8().ok())
             .and_then(|cat| {
                 data.item_search_categorys
@@ -227,7 +236,7 @@ pub fn CategoryItems() -> impl IntoView {
             });
         cat.unwrap_or_default()
     });
-    let category_view_name = create_memo(move |_| {
+    let category_view_name = Memo::new(move |_| {
         params()
             .get("category")
             .as_ref()
@@ -249,11 +258,11 @@ pub fn CategoryItems() -> impl IntoView {
 pub fn JobItems() -> impl IntoView {
     let params = use_params_map();
     let data = xiv_gen_db::data();
-    let (non_market, set_non_market) = create_query_signal::<bool>("show-non-market");
-    let market_only = create_memo(move |_| !non_market().unwrap_or_default());
+    let (non_market, set_non_market) = query_signal::<bool>("show-non-market");
+    let market_only = Memo::new(move |_| !non_market().unwrap_or_default());
     let set_market_only =
         SignalSetter::map(move |market: bool| set_non_market((!market).then_some(true)));
-    let items = create_memo(move |_| {
+    let items = Memo::new(move |_| {
         let job_set = match params().get("jobset") {
             Some(p) => p.clone(),
             None => return vec![],
@@ -276,7 +285,7 @@ pub fn JobItems() -> impl IntoView {
             .collect();
         job_items
     });
-    let job_set = create_memo(move |_| {
+    let job_set = Memo::new(move |_| {
         params()
             .get("jobset")
             .as_ref()
@@ -379,16 +388,19 @@ impl ToString for SortDirection {
 
 /// A URL that copies the existing query string but replaces the path
 #[component]
-pub fn APersistQuery(
+pub fn APersistQuery<T>(
     #[prop(into)] href: TextProp,
-    children: Box<dyn Fn() -> Fragment>,
+    children: TypedChildren<T>,
     #[prop(optional)] remove_values: &'static [&'static str],
-) -> impl IntoView {
+) -> impl IntoView
+where
+    T: IntoView,
+{
     let location = use_location();
     let query = location.query;
     let path = location.pathname;
     let href_2 = href.clone();
-    let query = create_memo(move |_| {
+    let query = Memo::new(move |_| {
         let mut query = query();
         for value in remove_values {
             query.remove(value);
@@ -396,29 +408,29 @@ pub fn APersistQuery(
         query
     });
     let url = move || format!("{}{}", href_2.get(), query().to_query_string());
-    let is_active = create_memo(move |_| {
+    let is_active = Memo::new(move |_| {
         let link_path = href.get();
 
         path.with(|path| {
             info!("{link_path} {path}");
-            &escape(&link_path) == path
+            &Url::escape(&link_path) == path
         })
     });
     view! {
         <a aria-current=move || is_active.get().then(|| "page") href=url>
-            {children}
+            {children.into_inner()().into_view()}
         </a>
     }
 }
 
 #[component]
 fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView {
-    let (page, _set_page) = create_query_signal::<i32>("page");
-    let (direction, _set_direction) = create_query_signal::<SortDirection>("dir");
-    let (sort, _set_sort) = create_query_signal::<ItemSortOption>("sort");
+    let (page, _set_page) = query_signal::<i32>("page");
+    let (direction, _set_direction) = query_signal::<SortDirection>("dir");
+    let (sort, _set_sort) = query_signal::<ItemSortOption>("sort");
 
     let cheapest_prices = use_context::<CheapestPrices>().unwrap();
-    let items = create_memo(move |_| {
+    let items = Memo::new(move |_| {
         let direction = direction().unwrap_or(SortDirection::Desc);
         let item_property = sort().unwrap_or(ItemSortOption::ItemLevel);
         let price_map = cheapest_prices.read_listings.get().and_then(|r| r.ok());
@@ -427,7 +439,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
             .filter(|(id, _)| {
                 if ItemSortOption::Price == item_property {
                     // filter items without a price if we're sorting by price
-                    if let Some((_, map)) = &price_map {
+                    if let Some(map) = &price_map {
                         map.find_matching_listings(id.0).lowest_gil().is_some()
                     } else {
                         true
@@ -446,7 +458,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                     ItemSortOption::Name => item_a.name.cmp(&item_b.name),
                     // TODO lookup price data for this case
                     ItemSortOption::Price => {
-                        if let Some((_, price_map)) = &price_map {
+                        if let Some(price_map) = &price_map {
                             let price_a = price_map
                                 .find_matching_listings(item_a.key_id.0)
                                 .lowest_gil();
@@ -463,7 +475,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
             })
             .collect::<Vec<_>>()
     });
-    let items_len = create_memo(move |_| items.with(|i| i.len()));
+    let items_len = Memo::new(move |_| items.with(|i| i.len()));
     let pages = move || Pages::new(items_len(), 50);
     let items = move || {
         // now take a subslice of the items
@@ -481,7 +493,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
             <div class="flex flex-col sm:flex-row justify-between gap-2">
                 <div class="flex flex-row flex-wrap gap-1">
                     <QueryButton
-                        query_name="sort"
+                        key="sort"
                         value="key"
                         class="p-1 !text-violet-200 hover:text-violet-600"
                         active_classes="p-1 !text-violet-500"
@@ -492,7 +504,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                         </div>
                     </QueryButton>
                     <QueryButton
-                        query_name="sort"
+                        key="sort"
                         value="price"
                         class="p-1 !text-violet-200 hover:text-violet-600"
                         active_classes="p-1 !text-violet-500"
@@ -503,7 +515,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                         </div>
                     </QueryButton>
                     <QueryButton
-                        query_name="sort"
+                        key="sort"
                         value="name"
                         class="p-1 !text-violet-200 hover:text-violet-600"
                         active_classes="p-1 !text-violet-500"
@@ -511,7 +523,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                         "NAME"
                     </QueryButton>
                     <QueryButton
-                        query_name="sort"
+                        key="sort"
                         value="ilvl"
                         class="p-1 !text-violet-200 hover:text-violet-600"
                         active_classes="p-1 !text-violet-500"
@@ -522,7 +534,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                 </div>
                 <div class="flex flex-row gap-1">
                     <QueryButton
-                        query_name="dir"
+                        key="dir"
                         value="asc"
                         class="p-1 !text-violet-200 hover:text-violet-600"
                         active_classes="p-1 !text-violet-500"
@@ -533,7 +545,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                         </div>
                     </QueryButton>
                     <QueryButton
-                        query_name="dir"
+                        key="dir"
                         value="desc"
                         class="p-1 !text-violet-200 hover:text-violet-600"
                         active_classes="p-1 !text-violet-500"
@@ -555,7 +567,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                         .map(|page| {
                             view! {
                                 <QueryButton
-                                    query_name="page"
+                                    key="page"
                                     value=(page.offset + 1).to_string()
                                     class="p-1 min-w-[2rem] text-center !text-violet-200 hover:text-violet-600"
                                     active_classes="p-1 !text-violet-500"
@@ -600,15 +612,15 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                             // High Quality Price (if available)
                             {move || {
                                 if item.can_be_hq {
-                                    view! {
+                                    Either::Left(view! {
                                         <div class="md:col-span-4 flex flex-row md:justify-center items-center gap-2">
                                             <span class="text-gray-400 md:hidden">"HQ: "</span>
                                             <CheapestPrice item_id=*id show_hq=true/>
                                         </div>
-                                    }
+                                    })
                                 } else {
                                     // Take up the space on desktop but don't show anything
-                                    view! { <div class="md:col-span-4"></div> }
+                                    Either::Right(view! { <div class="md:col-span-4"></div> })
                                 }
                             }}
                         </div>
@@ -619,9 +631,9 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
 
             // Next Page Button
             <QueryButton
-                query_name="page"
-                value=move || (page().unwrap_or(1) + 1).to_string()
-                class=move || {
+                key="page"
+                value=Signal::derive(move || (page().unwrap_or(1) + 1).to_string())
+                class=Signal::derive(move || {
                     let pages = pages();
                     let page = page();
                     if pages.page_count() > page.unwrap_or(1).try_into().unwrap_or(1) {
@@ -632,7 +644,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                     } else {
                         "hidden"
                     }
-                }
+                })
                 active_classes="p-1 !text-violet-500"
             >
                 <div class="flex items-center justify-center gap-2">
@@ -660,17 +672,16 @@ fn CategorySection(
     }
 }
 
-
-#[component]
 #[component]
 pub fn ItemExplorer() -> impl IntoView {
-    let (menu_open, set_open) = create_query_signal("menu-open");
-    let menu_open = create_memo(move |_| menu_open().unwrap_or(false));
+    let (menu_open, set_open) = query_signal("menu-open");
+    let menu_open = Memo::new(move |_| menu_open().unwrap_or(false));
     const BASE_CLASSES: &str = "group px-4 py-2 rounded-lg flex items-center gap-2
                            transition-all duration-200 relative
                            border backdrop-blur-sm ";
     const OPEN_CLASSES: &str = "bg-violet-900/40 border-violet-400/20 text-amber-200";
-    const CLOSED_CLASSES: &str = "bg-violet-950/20 border-white/10 text-gray-200 hover:text-amber-200";
+    const CLOSED_CLASSES: &str =
+        "bg-violet-950/20 border-white/10 text-gray-200 hover:text-amber-200";
     let button_classes = move || {
         if menu_open() {
             [BASE_CLASSES, OPEN_CLASSES].concat()
@@ -688,15 +699,11 @@ pub fn ItemExplorer() -> impl IntoView {
                 >
                     <div class="relative w-6 h-6">
                         <div class="absolute inset-0 transition-all duration-300"
-                             class=("opacity-0", menu_closed)
-                             class=("rotate-90", menu_closed)
-                             class=("scale-0", menu_closed)>
+                            class=(["opacity-0", "rotate-90", "scale-0"], menu_closed)>
                             <Icon icon=i::BiXRegular/>
                         </div>
                         <div class="absolute inset-0 transition-all duration-300"
-                             class=("opacity-100", menu_open)
-                             class=("rotate-0", menu_open)
-                             class=("scale-100", menu_open)>
+                             class=(["opacity-100", "rotate-0", "scale-100"], menu_open)>
                             <Icon icon=i::BiMenuRegular/>
                         </div>
                     </div>
@@ -709,14 +716,14 @@ pub fn ItemExplorer() -> impl IntoView {
                     // Mobile Overlay
                     {move || {
                         if menu_open() {
-                            view! {
+                            Either::Left(view! {
                                 <div
                                     class="fixed inset-0 bg-black/50 backdrop-blur-sm z-40 md:hidden"
                                     on:click=move |_| set_open.set(Some(false))
                                 />
-                            }
+                            })
                         } else {
-                            view! { <div/> }
+                            Either::Right(view! { <div/> })
                         }
                     }}
 

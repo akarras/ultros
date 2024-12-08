@@ -11,12 +11,12 @@ pub enum ApiError {
     NotAuthenticated,
 }
 
-#[derive(Deserialize, Serialize)]
-pub enum JsonError {
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub enum JsonErrorWrapper {
     ApiError(ApiError),
 }
 
-impl<E> From<E> for JsonError
+impl<E> From<E> for JsonErrorWrapper
 where
     E: Error,
 {

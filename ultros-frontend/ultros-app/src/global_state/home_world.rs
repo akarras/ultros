@@ -1,5 +1,8 @@
 use cookie::{time::Duration, Cookie, SameSite};
-use leptos::*;
+use leptos::{
+    prelude::*,
+    reactive::wrappers::write::{IntoSignalSetter, SignalSetter},
+};
 use ultros_api_types::{
     world::World,
     world_helper::{AnySelector, OwnedResult},
@@ -21,7 +24,7 @@ pub fn use_home_world() -> (Signal<Option<World>>, SignalSetter<Option<World>>) 
     let (cookie, set_cookie) = cookies.get_cookie(HOMEWORLD_COOKIE_NAME);
     let world_1 = use_context::<LocalWorldData>().unwrap().0.ok();
     let world_2 = world_1.clone();
-    let world = create_memo(move |_| {
+    let world = Memo::new(move |_| {
         world_1.as_ref().and_then(|w| {
             cookie().and_then(|cookie| {
                 w.lookup_world_by_name(cookie.value())
@@ -49,7 +52,7 @@ pub fn use_home_world() -> (Signal<Option<World>>, SignalSetter<Option<World>>) 
 pub fn result_to_selector_read(
     selector: Signal<Option<OwnedResult>>,
 ) -> Signal<Option<AnySelector>> {
-    let signal = create_memo(move |_| selector().map(|w| w.into()));
+    let signal = Memo::new(move |_| selector().map(|w| w.into()));
     signal.into()
 }
 
@@ -74,7 +77,7 @@ pub fn get_price_zone() -> (
     let cookies = use_context::<Cookies>().unwrap();
     let (cookie, set_cookie) = cookies.get_cookie(DEFAULT_PRICE_ZONE);
 
-    let world = create_memo(move |_| {
+    let world = Memo::new(move |_| {
         let worlds = use_context::<LocalWorldData>().unwrap().0.ok();
         worlds.and_then(|w| {
             cookie()

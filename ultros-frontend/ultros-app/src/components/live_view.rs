@@ -1,4 +1,4 @@
-use leptos::*;
+use leptos::prelude::*;
 
 pub(crate) trait LiveView {
     

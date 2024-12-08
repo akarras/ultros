@@ -2,7 +2,6 @@
 @tailwind components;
 @tailwind utilities;
 
-
 :root {
     /* Colors */
     --primary-color: #3b2b9e;
@@ -452,19 +451,19 @@ nav > * > a:hover {
     border-collapse: separate;
     border-spacing: 0;
     width: 100%;
+}
 
-    th {
-        position: sticky;
-        top: 0;
-        background: var(--background-color);
-        z-index: 10;
-        padding: var(--spacing-md);
-    }
+.main-content th {
+    position: sticky;
+    top: 0;
+    background: var(--background-color);
+    z-index: 10;
+    padding: var(--spacing-md);
+}
 
-    td {
-        padding: var(--spacing-md);
-        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-    }
+.main-content td {
+    padding: var(--spacing-md);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .width-limited-text {

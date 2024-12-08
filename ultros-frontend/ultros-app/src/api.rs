@@ -1,15 +1,15 @@
 use futures::future::join_all;
 use itertools::Itertools;
-use leptos::*;
+use leptos::prelude::*;
 use log::error;
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::instrument;
 use ultros_api_types::{
     cheapest_listings::CheapestListings,
     list::{CreateList, List, ListItem},
     recent_sales::RecentSales,
-    result::JsonError,
+    result::JsonErrorWrapper,
     retainer::{Retainer, RetainerListings},
     user::{OwnedRetainer, UserData, UserRetainerListings, UserRetainers},
     world::WorldData,
@@ -265,23 +265,25 @@ pub(crate) async fn update_retainer_order(retainers: Vec<OwnedRetainer>) -> AppR
 #[instrument]
 fn deserialize<T>(json: &str) -> AppResult<T>
 where
-    T: Serializable,
+    T: DeserializeOwned,
 {
-    let data = T::de(json);
+    let data = serde_json::from_str(json);
     match data {
         Ok(d) => return Ok(d),
         // try to deserialize as SystemError, if that fails then return this error
         Err(e) => {
-            if let Ok(d) = JsonError::de(json) {
+            if let Ok(d) = serde_json::from_str::<JsonErrorWrapper>(json) {
                 match d {
-                    JsonError::ApiError(api) => {
+                    JsonErrorWrapper::ApiError(api) => {
                         return Err(api.into());
                     }
                 }
-            } else if let Ok(d) = SystemError::de(json) {
-                return Err(d.into());
+            } else if let Ok(d) = serde_json::from_str::<JsonErrorWrapper>(json) {
+                return Err(match d {
+                    JsonErrorWrapper::ApiError(api) => AppError::ApiError(api),
+                });
             } else {
-                return Err(e.into());
+                return Err(AppError::Json(e.to_string()));
             }
         }
     }
@@ -320,7 +322,7 @@ where
 #[instrument(skip())]
 pub(crate) async fn delete_api<T>(path: &str) -> AppResult<T>
 where
-    T: Serializable,
+    T: DeserializeOwned,
 {
     use axum::http::request::Parts;
     // use the original headers of the scope
@@ -397,7 +399,7 @@ where
 #[instrument(skip())]
 pub(crate) async fn fetch_api<T>(path: &str) -> AppResult<T>
 where
-    T: Serializable,
+    T: serde::de::DeserializeOwned,
 {
     // use the original headers of the scope
     // add the hostname when using the ssr path.
@@ -445,7 +447,7 @@ where
 pub(crate) async fn post_api<Y, T>(path: &str, json: Y) -> AppResult<T>
 where
     Y: serde::Serialize,
-    T: Serializable,
+    T: serde::de::DeserializeOwned,
 {
     let abort_controller = web_sys::AbortController::new().ok();
     let abort_signal = abort_controller.as_ref().map(|a| a.signal());
@@ -476,8 +478,8 @@ where
 #[instrument(skip(_json))]
 pub(crate) async fn post_api<Y, T>(_path: &str, _json: Y) -> AppResult<T>
 where
-    Y: Serializable,
-    T: Serializable,
+    Y: Serialize,
+    T: Serialize,
 {
     // This really only will be called by clients- I think.
     unreachable!("post_api should only be called on clients? I think...")

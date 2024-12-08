@@ -8,5 +8,6 @@ publish = false
 name = "migration"
 path = "src/lib.rs"
 
-[dependencies.sea-orm-migration]
-workspace = true
+[dependencies]
+sea-orm-migration.workspace = true
+tokio = { version = "1", features = ["full"] }

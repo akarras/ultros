@@ -1,6 +1,8 @@
 use std::str::FromStr;
 
-use leptos::*;
+use leptos::{
+    prelude::*, reactive::wrappers::write::SignalSetter, tachys::html::property::IntoProperty,
+};
 use web_sys::wasm_bindgen::JsValue;
 
 #[component]
@@ -9,9 +11,9 @@ pub fn ParseableInputBox<T>(
     #[prop(into)] set_value: SignalSetter<Option<T>>,
 ) -> impl IntoView
 where
-    T: FromStr + IntoProperty + Clone + Into<JsValue> + 'static,
+    T: FromStr + IntoProperty + Clone + Into<JsValue> + Send + Sync + 'static,
 {
-    let failed_to_parse = create_rw_signal(false);
+    let failed_to_parse = RwSignal::new(false);
     view! {
         <input
             class=move || {

@@ -4,10 +4,10 @@ use crate::{
 };
 use gloo_timers::future::TimeoutFuture;
 use icondata as i;
-use leptos::{html::Input, *};
-use leptos_hotkeys::use_hotkeys;
+use leptos::{html::Input, prelude::*, task::spawn_local};
+// use leptos_hotkeys::use_hotkeys;
 use leptos_icons::*;
-use leptos_router::{use_navigate, NavigateOptions};
+use leptos_router::{hooks::use_navigate, NavigateOptions};
 use std::cmp::Reverse;
 use sublime_fuzzy::{FuzzySearch, Match, Scoring};
 use web_sys::KeyboardEvent;
@@ -23,22 +23,22 @@ pub(crate) fn fuzzy_search(query: &str, target: &str) -> Option<Match> {
 /// SearchBox primarily searches through item names- there might be better ways to filter the views down the line.
 #[component]
 pub fn SearchBox() -> impl IntoView {
-    let text_input = create_node_ref::<Input>();
-    let (search, set_search) = create_signal(String::new());
+    let text_input = NodeRef::<Input>::new();
+    let (search, set_search) = signal(String::new());
     let navigate = use_navigate();
-    let (active, set_active) = create_signal(false);
-    use_hotkeys!(("meta+k,ctrl+k") => move |_| {
-        set_active(true);
-        if let Some(input) = text_input() {
-            let _ = input.focus();
-        }
-    });
-    leptos_hotkeys::use_hotkeys_ref_scoped(
-        text_input,
-        "escape".to_string(),
-        Callback::new(move |_| {}),
-        vec!["*".to_string()],
-    );
+    let (active, set_active) = signal(false);
+    // use_hotkeys!(("meta+k,ctrl+k") => move |_| {
+    //     set_active(true);
+    //     if let Some(input) = text_input() {
+    //         let _ = input.focus();
+    //     }
+    // });
+    // leptos_hotkeys::use_hotkeys_ref_scoped(
+    //     text_input,
+    //     "escape".to_string(),
+    //     Callback::new(move |_| {}),
+    //     vec!["*".to_string()],
+    // );
     let on_input = move |ev| {
         set_search(event_target_value(&ev));
     };
@@ -72,7 +72,7 @@ pub fn SearchBox() -> impl IntoView {
         let key = e.key();
         if key == "Escape" {
             if search.get_untracked().is_empty() {
-                if let Some(input) = text_input() {
+                if let Some(input) = text_input.get() {
                     let _ = input.blur();
                 }
                 set_active(false);
@@ -94,7 +94,7 @@ pub fn SearchBox() -> impl IntoView {
                     NavigateOptions::default(),
                 );
                 set_search("".to_string());
-                text_input().unwrap().blur().unwrap();
+                text_input.get().unwrap().blur().unwrap();
             }
         }
     };
@@ -102,7 +102,7 @@ pub fn SearchBox() -> impl IntoView {
         <div class="relative w-full sm:w-[424px]">
             <div class="relative">
                 <input
-                    ref=text_input
+                    node_ref=text_input
                     on:keydown=keydown
                     on:input=on_input
                     on:focusin=focus_in

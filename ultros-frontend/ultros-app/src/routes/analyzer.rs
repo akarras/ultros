@@ -9,9 +9,10 @@ use crate::{
     global_state::LocalWorldData,
 };
 use chrono::{Duration, Utc};
+use hooks::{query_signal, use_navigate, use_params_map, use_query_map};
 use humantime::{format_duration, parse_duration};
 use icondata as i;
-use leptos::*;
+use leptos::{either::Either, prelude::*, reactive::wrappers::write::SignalSetter};
 use leptos_icons::*;
 use leptos_meta::Title;
 use leptos_router::*;
@@ -215,11 +216,14 @@ impl ProfitTable {
 }
 
 #[component]
-fn FilterCard(
-    title: &'static str,
-    description: &'static str,
-    children: ChildrenFn,
-) -> impl IntoView {
+fn FilterCard<T>(
+    #[prop(into)] title: Oco<'static, str>,
+    #[prop(into)] description: Oco<'static, str>,
+    children: TypedChildren<T>,
+) -> impl IntoView
+where
+    T: IntoView,
+{
     view! {
         <div class="p-6 flex flex-col rounded-2xl
             backdrop-blur-sm backdrop-brightness-110
@@ -228,7 +232,7 @@ fn FilterCard(
             w-full">
             <h3 class="font-bold text-xl text-amber-200 mb-2">{title}</h3>
             <p class="text-gray-300 mb-4">{description}</p>
-            {children}
+            {children.into_inner()().into_view()}
         </div>
     }
 }
@@ -265,15 +269,15 @@ fn AnalyzerTable(
     );
 
     let items = &xiv_gen_db::data().items;
-    let (sort_mode, _set_sort_mode) = create_query_signal::<SortMode>("sort");
-    let (minimum_profit, set_minimum_profit) = create_query_signal::<i32>("profit");
-    let (minimum_roi, set_minimum_roi) = create_query_signal("roi");
-    let (max_predicted_time, set_max_predicted_time) = create_query_signal::<String>("next-sale");
-    let (world_filter, _set_world_filter) = create_query_signal::<String>("world");
-    let (datacenter_filter, _set_datacenter_filter) = create_query_signal::<String>("datacenter");
+    let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
+    let (minimum_profit, set_minimum_profit) = query_signal::<i32>("profit");
+    let (minimum_roi, set_minimum_roi) = query_signal("roi");
+    let (max_predicted_time, set_max_predicted_time) = query_signal::<String>("next-sale");
+    let (world_filter, _set_world_filter) = query_signal::<String>("world");
+    let (datacenter_filter, _set_datacenter_filter) = query_signal::<String>("datacenter");
 
     let world_clone = worlds.clone();
-    let world_filter_list = create_memo(move |_| {
+    let world_filter_list = Memo::new(move |_| {
         let world = world_filter().or_else(datacenter_filter)?;
         let filter = world_clone
             .lookup_world_by_name(&world)?
@@ -284,21 +288,21 @@ fn AnalyzerTable(
     });
 
     let world_clone = worlds.clone();
-    let lookup_world = create_memo(move |_| {
+    let lookup_world = Memo::new(move |_| {
         Some(AnySelector::from(
             &world_clone.lookup_world_by_name(&world())?,
         ))
     });
 
     let predicted_time =
-        create_memo(move |_| max_predicted_time().and_then(|d| parse_duration(&d).ok()));
-    let predicted_time_string = create_memo(move |_| {
+        Memo::new(move |_| max_predicted_time().and_then(|d| parse_duration(d.as_str()).ok()));
+    let predicted_time_string = Memo::new(move |_| {
         predicted_time()
             .map(|duration| format_duration(duration).to_string())
             .unwrap_or("---".to_string())
     });
 
-    let sorted_data = create_memo(move |_| {
+    let sorted_data = Memo::new(move |_| {
         let mut sorted_data = profits
             .0
             .iter()
@@ -352,7 +356,7 @@ fn AnalyzerTable(
                 >
                     <div class="flex flex-col gap-2">
                         <div class="text-amber-200">
-                            {move || minimum_profit().map(|profit| view! { <Gil amount=profit/> }).unwrap_or("---".into_view())}
+                            {move || minimum_profit().map(|profit| Either::Left(view! { <Gil amount=profit/> })).unwrap_or(Either::Right("---"))}
                         </div>
                         <input
                             class="p-2 rounded-lg bg-violet-950/50 border border-white/10 w-full
@@ -420,7 +424,6 @@ fn AnalyzerTable(
             </div>
 
             // Results table
-            // Results table
             <div class="rounded-2xl overflow-hidden border border-white/10 backdrop-blur-sm backdrop-brightness-110">
                 <div class="grid-table" role="table">
                     <div class="grid-header bg-violet-900/30" role="rowgroup">
@@ -430,7 +433,7 @@ fn AnalyzerTable(
                             <QueryButton
                                 class="!text-amber-300 hover:text-amber-200"
                                 active_classes="!text-neutral-300 hover:text-neutral-200"
-                                query_name="sort"
+                                key="sort"
                                 value="profit"
                             >
                                 <div class="flex items-center gap-2">
@@ -444,7 +447,7 @@ fn AnalyzerTable(
                             <QueryButton
                                 class="!text-amber-300 hover:text-amber-200"
                                 active_classes="!text-neutral-300 hover:text-neutral-200"
-                                query_name="sort"
+                                key="sort"
                                 value="roi"
                                 default=true
                             >
@@ -517,11 +520,9 @@ fn AnalyzerTable(
                                         <Gil amount=data.cheapest_price/>
                                     </div>
                                     <div role="cell" class="p-4 w-[200px]">
-                                        <Tooltip tooltip_text=MaybeSignal::Dynamic(
-                                            Signal::derive(move || format!("Only show {}", world()).into())
-                                        )>
+                                        <Tooltip tooltip_text=Signal::derive(move || format!("Only show {}", world()))>
                                             <QueryButton
-                                                query_name="world"
+                                                key="world"
                                                 value=world.clone()
                                                 class="!text-amber-300 hover:text-amber-200"
                                                 active_classes="!text-neutral-300 hover:text-neutral-200"
@@ -532,11 +533,9 @@ fn AnalyzerTable(
                                         </Tooltip>
                                     </div>
                                     <div role="cell" class="p-4 w-[150px]">
-                                        <Tooltip tooltip_text=MaybeSignal::Dynamic(
-                                            Signal::derive(move || format!("Only show {}", datacenter()).into())
-                                        )>
+                                        <Tooltip tooltip_text=Signal::derive(move || format!("Only show {}", datacenter()))>
                                             <QueryButton
-                                                query_name="datacenter"
+                                                key="datacenter"
                                                 value=datacenter.clone()
                                                 class="!text-amber-300 hover:text-amber-200"
                                                 active_classes="!text-neutral-300 hover:text-neutral-200"
@@ -565,28 +564,28 @@ fn AnalyzerTable(
 #[component]
 pub fn AnalyzerWorldView() -> impl IntoView {
     let params = use_params_map();
-    let world = create_memo(move |_| params.with(|p| p.get("world").cloned()).unwrap_or_default());
-    let sales = create_resource(
-        move || params.with(|p| p.get("world").cloned()),
+    let world = Memo::new(move |_| params.with(|p| p.get("world").clone()).unwrap_or_default());
+    let sales = Resource::new(
+        move || params.with(|p| p.get("world").clone()),
         move |world| async move {
             get_recent_sales_for_world(&world.ok_or(AppError::ParamMissing)?).await
         },
     );
 
-    let world_cheapest_listings = create_resource(
-        move || params.with(|p| p.get("world").cloned()),
+    let world_cheapest_listings = Resource::new(
+        move || params.with(|p| p.get("world").clone()),
         move |world| async move {
             let world = world.ok_or(AppError::ParamMissing)?;
             get_cheapest_listings(&world).await
         },
     );
 
-    let region = create_memo(move |_| {
+    let region = Memo::new(move |_| {
         let worlds = use_context::<LocalWorldData>()
             .expect("Worlds should always be populated here")
             .0
             .unwrap();
-        let world = params.with(|p| p.get("world").cloned());
+        let world = params.with(|p| p.get("world").clone());
         let world = world.ok_or(AppError::ParamMissing)?;
         let region = worlds
             .lookup_world_by_name(&world)
@@ -598,12 +597,12 @@ pub fn AnalyzerWorldView() -> impl IntoView {
         Result::<_, AppError>::Ok(region)
     });
 
-    let global_cheapest_listings = create_resource(
+    let global_cheapest_listings = Resource::new(
         move || region(),
-        move |region| async move { get_cheapest_listings(&region?).await },
+        move |region| async move { get_cheapest_listings(region?.as_str()).await },
     );
 
-    let (cross_region_enabled, set_cross_region_enabled) = create_query_signal::<bool>("cross");
+    let (cross_region_enabled, set_cross_region_enabled) = query_signal::<bool>("cross");
     let connected_regions = &["Europe", "Japan", "North-America", "Oceania"];
     let query = use_query_map();
 
@@ -615,7 +614,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
             .collect::<Vec<_>>()
     };
 
-    let cross_region = create_resource(
+    let cross_region = Resource::new(
         move || (cross_region_enabled(), region(), enabled_regions()),
         move |(enabled, region, enabled_regions)| async move {
             let region = region?;
@@ -677,7 +676,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                                 .filter(|r| **r != region.as_str())
                                                 .map(|region| {
                                                     let (enabled, set_enabled) =
-                                                        create_query_signal::<bool>(region.to_string());
+                                                        query_signal::<bool>(region.to_string());
                                                     view! {
                                                         <Toggle
                                                             checked=Signal::derive(move || enabled().unwrap_or(true))
@@ -731,7 +730,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
 
                                 match (world_cheapest, sales, global_cheapest_listings) {
                                     (Some(Ok(w)), Some(Ok(s)), Some(Ok(g))) => {
-                                        view! {
+                                        Either::Left(view! {
                                             <AnalyzerTable
                                                 sales=s
                                                 global_cheapest_listings=g
@@ -740,14 +739,14 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                                 worlds
                                                 world=world.into()
                                             />
-                                        }.into_view()
+                                        })
                                     },
-                                    _ => view! {
+                                    _ => Either::Right(view! {
                                         <div class="text-xl text-amber-200 text-center p-8
                                                     bg-violet-900/20 rounded-2xl border border-white/10">
                                             "Failed to load analyzer - try again in 30 seconds"
                                         </div>
-                                    }.into_view()
+                                    })
                                 }
                             }}
                         </Suspense>
@@ -768,20 +767,20 @@ fn AnalyzerWorldNavigator() -> impl IntoView {
         .unwrap();
 
     let initial_world = params.with_untracked(|p| {
-        let world = p.get("world").map(|s| s.as_str()).unwrap_or_default();
+        let world = p.get_str("world").unwrap_or_default();
         worlds
             .lookup_world_by_name(world)
             .and_then(|w| w.as_world().cloned())
     });
 
-    let (current_world, set_current_world) = create_signal(initial_world);
+    let (current_world, set_current_world) = signal(initial_world);
     let query = use_query_map();
 
-    create_effect(move |_| {
+    Effect::new(move |_| {
         if let Some(world) = current_world() {
             let world = world.name;
             let query_map = query.get_untracked();
-            let query = serde_qs::to_string(&query_map).unwrap();
+            let query = query_map.to_query_string();
             nav(
                 &format!("/analyzer/{world}?{query}"),
                 NavigateOptions::default(),
@@ -840,7 +839,7 @@ pub fn Analyzer() -> impl IntoView {
                         <div class="p-6 rounded-2xl bg-violet-900/20 border border-white/10
                                   backdrop-blur-sm">
                             <Icon
-                                class="text-amber-300 mb-4"
+                                attr:class="text-amber-300 mb-4"
                                 width="2.5em"
                                 height="2.5em"
                                 icon=i::FaMoneyBillTrendUpSolid
@@ -856,7 +855,7 @@ pub fn Analyzer() -> impl IntoView {
                         <div class="p-6 rounded-2xl bg-violet-900/20 border border-white/10
                                   backdrop-blur-sm">
                             <Icon
-                                class="text-amber-300 mb-4"
+                                attr:class="text-amber-300 mb-4"
                                 width="2.5em"
                                 height="2.5em"
                                 icon=i::FaChartLineSolid
@@ -872,7 +871,7 @@ pub fn Analyzer() -> impl IntoView {
                         <div class="p-6 rounded-2xl bg-violet-900/20 border border-white/10
                                   backdrop-blur-sm">
                             <Icon
-                                class="text-amber-300 mb-4"
+                                attr:class="text-amber-300 mb-4"
                                 width="2.5em"
                                 height="2.5em"
                                 icon=i::FaFilterSolid

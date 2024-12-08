@@ -1,4 +1,5 @@
-use leptos::*;
+use leptos::either::Either;
+use leptos::prelude::*;
 use ultros_api_types::user::OwnedRetainer;
 use ultros_api_types::world_helper::AnySelector;
 use ultros_api_types::Retainer;
@@ -13,18 +14,18 @@ pub fn EditRetainers() -> impl IntoView {
     // This page should let the user drag and drop retainers to reorder them
     // It should also support a search panel for retainers to the right that will allow the user to search for retainers
 
-    let (retainer_search, set_retainer_search) = create_signal(String::new());
+    let (retainer_search, set_retainer_search) = signal(String::new());
 
-    let search_results = create_resource(retainer_search, move |search| async move {
+    let search_results = Resource::new(retainer_search, move |search| async move {
         search_retainers(search).await
     });
 
-    let claim = create_action(move |retainer_id| claim_retainer(*retainer_id));
+    let claim = Action::new(move |retainer_id| claim_retainer(*retainer_id));
 
-    let remove_retainer = create_action(move |owned_id| unclaim_retainer(*owned_id));
+    let remove_retainer = Action::new(move |owned_id| unclaim_retainer(*owned_id));
     let update_retainers =
-        create_action(move |owners: &Vec<OwnedRetainer>| update_retainer_order(owners.clone()));
-    let retainers = create_resource(
+        Action::new(move |owners: &Vec<OwnedRetainer>| update_retainer_order(owners.clone()));
+    let retainers = Resource::new(
         move || {
             (
                 claim.version().get(),
@@ -68,7 +69,7 @@ pub fn EditRetainers() -> impl IntoView {
                         .map(|retainers| {
                             match retainers {
                                 Ok(retainers) => {
-                                    view! {
+                                    Either::Left(view! {
                                         {move || {
                                             update_retainers
                                                 .value()()
@@ -88,8 +89,8 @@ pub fn EditRetainers() -> impl IntoView {
                                             )
 
                                             children=move |(character, retainers)| {
-                                                let retainers = create_rw_signal(retainers);
-                                                create_effect(move |_| {
+                                                let retainers = RwSignal::new(retainers);
+                                                Effect::new(move |_| {
                                                     let retainers = retainers();
                                                     let mut changed = false;
                                                     let retainers = retainers
@@ -120,11 +121,11 @@ pub fn EditRetainers() -> impl IntoView {
                                                     // without the compiler just spelling it out for me
 
                                                     {if let Some(character) = character {
-                                                        view! {
+                                                        Either::Left(view! {
                                                             <div>{character.first_name} " " {character.last_name}</div>
-                                                        }
+                                                        })
                                                     } else {
-                                                        view! { <div>"No character"</div> }
+                                                        Either::Right(view! { <div>"No character"</div> })
                                                     }}
 
                                                     <div class="flex-column">
@@ -146,8 +147,7 @@ pub fn EditRetainers() -> impl IntoView {
                                                                         </div>
                                                                         <button
                                                                             class="btn"
-                                                                            on:click=move |_| remove_retainer.dispatch(owned_id)
-                                                                        >
+                                                                            on:click=move |_| { let _ = remove_retainer.dispatch(owned_id); }>
                                                                             "Unclaim"
                                                                         </button>
                                                                     </div>
@@ -159,11 +159,10 @@ pub fn EditRetainers() -> impl IntoView {
                                                 }
                                             }
                                         />
-                                    }
-                                        .into_view()
+                                    })
                                 }
                                 Err(e) => {
-                                    view! {
+                                    Either::Right(view! {
                                         // I have no idea how I would have found that the #[server] macro takes params as a struct
                                         // without the compiler just spelling it out for me
 
@@ -174,8 +173,7 @@ pub fn EditRetainers() -> impl IntoView {
                                         // without the compiler just spelling it out for me
 
                                         <div>"Retainers" <br/> {e.to_string()}</div>
-                                    }
-                                        .into_view()
+                                    })
                                 }
                             }
                         })
@@ -199,7 +197,7 @@ pub fn EditRetainers() -> impl IntoView {
                             .map(|retainers| {
                                 match retainers {
                                     Ok(retainers) => {
-                                        view! {
+                                        Either::Left(view! {
                                             <div class="content-well flex-column">
                                                 <For
                                                     each=move || retainers.clone()
@@ -214,7 +212,7 @@ pub fn EditRetainers() -> impl IntoView {
                                                                 </div>
                                                                 <button
                                                                     class="btn"
-                                                                    on:click=move |_| claim.dispatch(retainer.id)
+                                                                    on:click=move |_| { let _ = claim.dispatch(retainer.id); }
                                                                 >
                                                                     {move || match is_retainer_owned(retainer.id) {
                                                                         true => "Claimed",
@@ -228,12 +226,10 @@ pub fn EditRetainers() -> impl IntoView {
                                                 />
 
                                             </div>
-                                        }
-                                            .into_view()
+                                        })
                                     }
                                     Err(e) => {
-                                        view! { <div>{format!("No retainers found\n{e}")}</div> }
-                                            .into_view()
+                                        Either::Right(view! { <div>{format!("No retainers found\n{e}")}</div> })
                                     }
                                 }
                             })

@@ -1,7 +1,8 @@
 use icondata as i;
-use leptos::*;
+use leptos::either::Either;
+use leptos::prelude::*;
 use leptos_icons::*;
-use leptos_router::*;
+use leptos_router::components::{Outlet, A};
 
 use crate::api::{create_list, delete_list, edit_list, get_lists};
 use crate::components::ad::Ad;
@@ -11,10 +12,10 @@ use ultros_api_types::list::{CreateList, List};
 
 #[component]
 pub fn EditLists() -> impl IntoView {
-    let delete_list = create_action(move |id: &i32| delete_list(*id));
-    let edit_list = create_action(move |list: &List| edit_list(list.clone()));
-    let create_list = create_action(move |list: &CreateList| create_list(list.clone()));
-    let lists = create_resource(
+    let delete_list = Action::new(move |id: &i32| delete_list(*id));
+    let edit_list = Action::new(move |list: &List| edit_list(list.clone()));
+    let create_list = Action::new(move |list: &CreateList| create_list(list.clone()));
+    let lists = Resource::new(
         move || {
             (
                 delete_list.version().get(),
@@ -24,11 +25,11 @@ pub fn EditLists() -> impl IntoView {
         },
         move |_| get_lists(),
     );
-    let (creating, set_creating) = create_signal(false);
+    let (creating, set_creating) = signal(false);
     view! {
         <div class="flex-row">
             <span class="content-title">"Edit Lists"</span>
-            <Tooltip tooltip_text=MaybeSignal::Static("Create list".into())>
+            <Tooltip tooltip_text="Create list">
                 <button class="btn" on:click=move |_| set_creating(!creating())>
                     <Icon icon=i::BiPlusRegular/>
                 </button>
@@ -37,10 +38,10 @@ pub fn EditLists() -> impl IntoView {
         {move || {
             creating()
                 .then(|| {
-                    let (new_list, set_new_list) = create_signal("".to_string());
+                    let (new_list, set_new_list) = signal("".to_string());
                     let (global, _) = get_price_zone();
                     let selector = global().map(|global| global.into());
-                    let (wdr_filter, set_wdr_filter) = create_signal(selector);
+                    let (wdr_filter, set_wdr_filter) = signal(selector);
                     view! {
                         <div class="content-well">
                             <div class="flex flex-row gap-1">
@@ -91,7 +92,7 @@ pub fn EditLists() -> impl IntoView {
                             .map(|lists| {
                                 match lists {
                                     Ok(lists) => {
-                                        view! {
+                                        Either::Left(view! {
                                             <h3>"Current lists"</h3>
                                             <table class="w-full">
                                                 <tr>
@@ -102,17 +103,17 @@ pub fn EditLists() -> impl IntoView {
                                                     each=move || lists.clone()
                                                     key=move |list| list.id
                                                     children=move |list| {
-                                                        let (is_edit, set_is_edit) = create_signal(false);
-                                                        let (list, _set_list) = create_signal(list);
-                                                        let (name, set_name) = create_signal(list().name);
-                                                        let (current_world, set_current_world) = create_signal(
+                                                        let (is_edit, set_is_edit) = signal(false);
+                                                        let (list, _set_list) = signal(list);
+                                                        let (name, set_name) = signal(list().name);
+                                                        let (current_world, set_current_world) = signal(
                                                             Some(list().wdr_filter),
                                                         );
                                                         view! {
                                                             <tr>
                                                                 {move || {
                                                                     if is_edit() {
-                                                                        view! {
+                                                                        Either::Left(view! {
                                                                             <td>
                                                                                 <input
                                                                                     class="w-52"
@@ -126,27 +127,23 @@ pub fn EditLists() -> impl IntoView {
                                                                                     set_current_world=set_current_world.into()
                                                                                 />
                                                                             </td>
-                                                                        }
-                                                                            .into_view()
+                                                                        })
                                                                     } else {
-                                                                        view! {
+                                                                        Either::Right(view! {
                                                                             <td>
                                                                                 <a href=format!("/list/{}", list().id)>{list().name}</a>
                                                                             </td>
                                                                             <td>
                                                                                 <WorldName id=list().wdr_filter/>
                                                                             </td>
-                                                                        }
-                                                                            .into_view()
+                                                                        })
                                                                     }
                                                                 }}
                                                                 <td>
                                                                     {move || {
                                                                         if is_edit() {
-                                                                            view! {
-                                                                                <Tooltip tooltip_text=Oco::from(
-                                                                                    "Save changes to this list",
-                                                                                )>
+                                                                            Either::Left(view! {
+                                                                                <Tooltip tooltip_text="Save changes to this list">
                                                                                     <button
                                                                                         class="btn"
                                                                                         on:click=move |_| {
@@ -162,25 +159,23 @@ pub fn EditLists() -> impl IntoView {
                                                                                         <Icon icon=i::BiSaveSolid/>
                                                                                     </button>
                                                                                 </Tooltip>
-                                                                                <Tooltip tooltip_text=Oco::from("Delete this list")>
+                                                                                <Tooltip tooltip_text="Delete this list">
                                                                                     <button
                                                                                         class="btn"
-                                                                                        on:click=move |_| delete_list.dispatch(list().id)
+                                                                                        on:click=move |_| { let _ = delete_list.dispatch(list().id); }
                                                                                     >
                                                                                         <Icon icon=i::BiTrashSolid/>
                                                                                     </button>
                                                                                 </Tooltip>
-                                                                            }
-                                                                                .into_view()
+                                                                            })
                                                                         } else {
-                                                                            view! {
-                                                                                <Tooltip tooltip_text=Oco::from("Edit this list")>
+                                                                            Either::Right(view! {
+                                                                                <Tooltip tooltip_text="Edit this list">
                                                                                     <button class="btn" on:click=move |_| set_is_edit(true)>
                                                                                         <Icon icon=i::BsPencilFill/>
                                                                                     </button>
                                                                                 </Tooltip>
-                                                                            }
-                                                                                .into_view()
+                                                                            })
                                                                         }
                                                                     }}
 
@@ -191,14 +186,12 @@ pub fn EditLists() -> impl IntoView {
                                                 />
 
                                             </table>
-                                        }
-                                            .into_view()
+                                        })
                                     }
                                     Err(e) => {
-                                        view! {
+                                        Either::Right(view! {
                                             <div>{format!("Error getting listings\n{e}")}</div>
-                                        }
-                                            .into_view()
+                                        })
                                     }
                                 }
                             })
@@ -215,7 +208,8 @@ pub fn Lists() -> impl IntoView {
     view! {
         <div class="mx-auto">
             <div class="content-nav">
-                <A class="btn-secondary flex flex-row" href="/list">
+                <A attr:class="btn-secondary flex flex-row"
+                    href="/list">
                     <Icon height="2em" width="2em" icon=i::AiOrderedListOutlined/>
                     "Lists"
                 </A>
@@ -226,7 +220,7 @@ pub fn Lists() -> impl IntoView {
                         <div class="grow w-full">
                             <Ad class="h-20 w-full"/>
                         </div>
-                        <Outlet/>
+                        <Outlet />
                     </div>
                     <div>
                         <Ad class="h-96 w-96 xl:h-[600px] xl:w-40"/>

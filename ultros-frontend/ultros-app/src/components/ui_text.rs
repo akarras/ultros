@@ -1,5 +1,5 @@
 use colorsys::{ColorTransform, Rgb};
-use leptos::{html::br, *};
+use leptos::{either::Either, html::br, prelude::*};
 
 #[derive(Debug, Clone, Default)]
 struct TextSpan<'a> {
@@ -88,7 +88,7 @@ impl<'a> TextSpan<'a> {
         clone
     }
 
-    fn to_view(&self) -> Option<View> {
+    fn to_view(&self) -> Option<impl IntoView> {
         let Self { text, .. } = self;
         if text.is_empty() {
             return None;
@@ -111,36 +111,35 @@ impl<'a> TextSpan<'a> {
         .flatten()
         .collect::<Vec<String>>();
         let text = text.to_string();
-        Some(
-            view! {
-                <span style=styles.join(";")>
-                    <RawText text=&text/>
-                </span>
-            }
-            .into_view(),
-        )
+        let span = view! {
+            <div style=styles.join(";")>
+                <RawText text />
+            </div>
+        };
+        Some(span)
     }
 }
 
 #[component]
-fn RawText<'a>(text: &'a str) -> impl IntoView {
+fn RawText<'a>(#[prop(into)] text: Oco<'a, str>) -> impl IntoView {
     let mut text_parts = vec![];
     for line in text.lines() {
-        text_parts.push(line.to_owned().into_view());
-        text_parts.push(br().into_view());
+        text_parts.push(Either::Left(line.to_owned().into_view()));
+        text_parts.push(Either::Right(br()));
     }
     let _ = text_parts.pop();
     text_parts
 }
 
-fn into_parts(text: &str) -> Vec<View> {
+#[component]
+fn TextParts(text: String) -> impl IntoView {
     let mut text_parts = vec![];
-    if let Some((begin, span, end)) = TextSpan::new(&text) {
+    if let Some((begin, span, end)) = TextSpan::new(text.as_str()) {
         if !begin.is_empty() {
-            text_parts.push(view! { <RawText text=begin/> }.into_view());
+            text_parts.push(Either::Left(view! { <RawText text=begin.to_owned() /> }));
         }
         if let Some(view) = span.to_view() {
-            text_parts.push(view);
+            text_parts.push(Either::Right(view));
         }
         // now continue calling next_span until we reach the end of the rainbow
         let mut rest = end;
@@ -151,18 +150,18 @@ fn into_parts(text: &str) -> Vec<View> {
                 Ok((o, span, end)) => {
                     if let Some(o) = o {
                         if let Some(view) = o.to_view() {
-                            text_parts.push(view);
+                            text_parts.push(Either::Right(view));
                         }
                     }
                     if let Some(o) = span.to_view() {
-                        text_parts.push(o);
+                        text_parts.push(Either::Right(o));
                     }
                     rest = end;
                     next_span = span;
                 }
                 Err(view) => {
                     if let Some(view) = view.to_view() {
-                        text_parts.push(view);
+                        text_parts.push(Either::Right(view));
                     }
                     break;
                 }
@@ -172,7 +171,7 @@ fn into_parts(text: &str) -> Vec<View> {
             }
         }
     } else {
-        text_parts.push(view! { <RawText text=&text/> }.into_view());
+        text_parts.push(Either::Left(view! { <RawText text /> }));
     }
     text_parts
 }
@@ -181,8 +180,7 @@ fn into_parts(text: &str) -> Vec<View> {
 /// For example: "This is unstyled <UIGlow>32113</UIGlow>blah blah<Emphasis>Hello world</Emphasis><UIGlow>01</UIGlow>" -> "This is unstyled <span style="color: #32113"><i>blah blah</i></span>"
 #[component]
 pub fn UIText(text: String) -> impl IntoView {
-    let text_parts = into_parts(&text);
-    view! { <div class="ui-text">{text_parts}</div> }
+    view! { <div class="ui-text"><TextParts text=text /></div> }
 }
 
 #[cfg(test)]

@@ -1,21 +1,18 @@
-use leptos::*;
+use leptos::prelude::*;
 
 #[component]
 pub fn ReorderableList<T, V, N>(items: RwSignal<Vec<T>>, item_view: V) -> impl IntoView
 where
-    T: 'static + Clone,
-    V: Fn(T) -> N + 'static + Copy,
-    N: IntoView,
+    T: 'static + Clone + Send + Sync,
+    V: Fn(T) -> N + 'static + Copy + Send + Sync,
+    N: IntoView + 'static,
 {
-    let (dragging, set_dragging) = create_signal(None);
-
-    {
-        move || {
-            items()
-                .into_iter()
-                .enumerate()
-                .map(|(id, child)| {
-                    let (hovered, set_hovered) = create_signal(false);
+    let (dragging, set_dragging) = signal(None);
+    view! {
+        <For each=move || items().into_iter().enumerate()
+            key=move |(id, _)| *id
+                children=move |(id, child)| {
+                    let (hovered, set_hovered) = signal(false);
                     view! {
                         <div
                             draggable="true"
@@ -50,8 +47,8 @@ where
                             {item_view(child)}
                         </div>
                     }
-                })
-                .collect::<Vec<_>>()
-        }
+                }>
+
+        </For>
     }
 }

@@ -1,18 +1,18 @@
 use std::ops::Deref;
 
 use crate::Cookies;
-use leptos::{html::Ins, *};
-use leptos_router::*;
+use leptos::{html::Ins, prelude::*};
+use leptos_router::components::A;
 use leptos_use::{use_mutation_observer_with_options, UseMutationObserverOptions};
 use log::info;
 
 #[component]
 pub fn Ad(#[prop(optional)] class: Option<&'static str>) -> impl IntoView {
     let ad_class = class.unwrap_or("h-64");
-    let node = create_node_ref::<Ins>();
+    let node = NodeRef::<Ins>::new();
     let cookies = use_context::<Cookies>().unwrap();
     let (hide_ads, _) = cookies.use_cookie_typed::<_, bool>("HIDE_ADS");
-    let unfilled = create_rw_signal(false);
+    let unfilled = RwSignal::new(false);
     let _mutation_observer = use_mutation_observer_with_options(
         node,
         move |mutations, _| {
@@ -35,10 +35,12 @@ pub fn Ad(#[prop(optional)] class: Option<&'static str>) -> impl IntoView {
     // let location = use_location();
     // let pathname = location.pathname;
     // let search = location.search;
-    move || {
-        // let _ = pathname(); // reading from the path to reload this component on page load
-        // let _ = search();
-        (!hide_ads().unwrap_or_default()).then(move ||view! {
+
+    // let _ = pathname(); // reading from the path to reload this component on page load
+    // let _ = search();
+    let ads_visible = Signal::derive(move || !hide_ads.get().unwrap_or_default());
+    view! {
+        <Show when=ads_visible>
             <div class:hidden=unfilled class="ad">
                 <div class="flex flex-col h-full">
                     <span class="text-sm p-1 px-2 rounded-md bg-violet-950 shrink max-w-fit">
@@ -52,7 +54,7 @@ pub fn Ad(#[prop(optional)] class: Option<&'static str>) -> impl IntoView {
                     ></script>
                     // <!-- Ultros-Ad-Main -->
                     <ins
-                        class=["adsbygoogle ", ad_class].concat()
+                        class={["adsbygoogle ", ad_class].concat()}
                         style="display:block"
                         data-ad-client="ca-pub-8789160460804755"
                         data-ad-slot="1163555858"
@@ -66,6 +68,6 @@ pub fn Ad(#[prop(optional)] class: Option<&'static str>) -> impl IntoView {
                     </span>
                 </div>
             </div>
-        })
+        </Show>
     }
 }

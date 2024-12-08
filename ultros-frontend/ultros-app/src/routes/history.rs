@@ -1,9 +1,10 @@
 use crate::components::item_icon::ItemIcon;
 use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::components::recently_viewed::RecentItems;
-use crate::components::{search_result::ItemSearchResult, skeleton::BoxSkeleton};
-use leptos::*;
-use leptos_router::A;
+use crate::components::skeleton::BoxSkeleton;
+use leptos::either::Either;
+use leptos::prelude::*;
+use leptos_router::components::A;
 use ultros_api_types::icon_size::IconSize;
 use xiv_gen::ItemId;
 
@@ -11,7 +12,7 @@ use xiv_gen::ItemId;
 pub fn History() -> impl IntoView {
     let item_data = use_context::<RecentItems>().unwrap();
     let items = item_data.reader();
-    let (empty_search, set_empty_search) = create_signal("".to_string());
+    let (empty_search, set_empty_search) = signal("".to_string());
 
     view! {
         <div class="main-content p-6">
@@ -45,7 +46,7 @@ pub fn History() -> impl IntoView {
                         {move || {
                             let current_items = items();
                             if current_items.is_empty() {
-                                view! {
+                                Either::Left(view! {
                                     <div class="text-center py-12">
                                         <p class="text-lg text-gray-400">
                                             "No items in your viewing history yet."
@@ -54,9 +55,9 @@ pub fn History() -> impl IntoView {
                                             "Items you view will appear here."
                                         </p>
                                     </div>
-                                }.into_view()
+                                })
                             } else {
-                                view! {
+                                Either::Right(view! {
                                     <div class="space-y-2">
                                         {current_items
                                             .iter()
@@ -83,9 +84,9 @@ pub fn History() -> impl IntoView {
                                                     </A>
                                                 }
                                             })
-                                            .collect::<Vec<_>>()}
+                                            .collect_view()}
                                     </div>
-                                }.into_view()
+                                })
                             }
                         }}
                     </Suspense>

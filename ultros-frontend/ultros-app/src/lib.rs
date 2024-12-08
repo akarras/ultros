@@ -36,12 +36,15 @@ use crate::{
 };
 use git_const::git_short_hash;
 use icondata as i;
-use leptos::*;
-use leptos_animation::AnimationContext;
+use leptos::html::Div;
+use leptos::prelude::*;
 use leptos_hotkeys::{provide_hotkeys_context, scopes};
+// use leptos_animation::AnimationContext;
+// use leptos_hotkeys::{provide_hotkeys_context, scopes};
 use leptos_icons::*;
 use leptos_meta::*;
-use leptos_router::*;
+use leptos_router::components::{ParentRoute, Route, Router, Routes, A};
+use leptos_router::path;
 use ultros_api_types::world_helper::WorldHelper;
 
 #[component]
@@ -52,12 +55,12 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>, region: String) -> impl IntoView
     provide_context(cookies);
     provide_context(LocalWorldData(worlds));
     provide_context(CheapestPrices::new());
-    provide_context(GlobalLastCopiedText(create_rw_signal(None)));
+    provide_context(GlobalLastCopiedText(RwSignal::new(None)));
     provide_context(RecentItems::new());
-    AnimationContext::provide();
-    let root_node_ref = create_node_ref::<html::Div>();
+    // AnimationContext::provide();
+    let root_node_ref = NodeRef::<Div>::new();
     provide_hotkeys_context(root_node_ref, false, scopes!());
-    let login = create_resource(move || {}, move |_| async move { get_login().await.ok() });
+    let login = Resource::new(move || {}, move |_| async move { get_login().await.ok() });
     let (homeworld, _set_homeworld) = use_home_world();
     let git_hash = git_short_hash!();
     let sheet_url = ["/pkg/", git_hash, "/ultros.css"].concat();
@@ -71,7 +74,8 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>, region: String) -> impl IntoView
         <Meta property="og:type" content="website"/>
         <Meta property="og:locale" content="en-US"/>
         <Meta property="og:site_name" content="Ultros"/>
-        <Html class="m-0 p-0" lang="en-US"/>
+        // TODO: put these props in the app skeleton
+        // <Html class="m-0 p-0" lang="en-US"/>
 
         // Background gradient
         <div class="fixed inset-0 -z-10 bg-black">
@@ -79,7 +83,7 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>, region: String) -> impl IntoView
             <div class="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(139,92,246,0.05),transparent_50%)]"/>
         </div>
 
-        <div _ref=root_node_ref class="min-h-screen flex flex-col m-0">
+        <div node_ref=root_node_ref class="min-h-screen flex flex-col m-0">
             <Router>
                 // Navigation
                 <nav class="sticky top-0 z-50 backdrop-blur-sm border-b border-white/5 bg-black/40">
@@ -87,7 +91,7 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>, region: String) -> impl IntoView
                         // Left section
                         <div class="flex items-center space-x-2">
                             <A href="/" exact=true
-                                class="flex items-center gap-2 px-3 py-2 rounded-lg
+                                attr:class="flex items-center gap-2 px-3 py-2 rounded-lg
                                         hover:bg-white/5 transition-colors
                                         text-gray-200 hover:text-amber-200">
                                 <Icon icon=i::BiHomeSolid height="1.75em" width="1.75em"/>
@@ -99,7 +103,7 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>, region: String) -> impl IntoView
                                     <A href=homeworld()
                                         .map(|w| format!("/analyzer/{}", w.name))
                                         .unwrap_or("/analyzer".to_string())
-                                       class="flex items-center gap-2 px-3 py-2 rounded-lg
+                                       attr:class="flex items-center gap-2 px-3 py-2 rounded-lg
                                                hover:bg-white/5 transition-colors
                                                text-gray-200 hover:text-amber-200">
                                         <Icon
@@ -120,7 +124,7 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>, region: String) -> impl IntoView
                                         .map(|_| {
                                             view! {
                                                 <A href="/list"
-                                                   class="flex items-center gap-2 px-3 py-2 rounded-lg
+                                                   attr:class="flex items-center gap-2 px-3 py-2 rounded-lg
                                                            hover:bg-white/5 transition-colors
                                                            text-gray-200 hover:text-amber-200">
                                                     <Icon
@@ -131,7 +135,7 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>, region: String) -> impl IntoView
                                                     <span class="hidden sm:inline">"Lists"</span>
                                                 </A>
                                                 <A href="/retainers/listings"
-                                                   class="flex items-center gap-2 px-3 py-2 rounded-lg
+                                                   attr:class="flex items-center gap-2 px-3 py-2 rounded-lg
                                                            hover:bg-white/5 transition-colors
                                                            text-gray-200 hover:text-amber-200">
                                                     <Icon width="1.75em" height="1.75em" icon=i::BiGroupSolid/>
@@ -151,10 +155,10 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>, region: String) -> impl IntoView
                         // Right section
                         <div class="flex items-center gap-4">
                             <A href="/items?menu-open=true"
-                               class="flex items-center gap-2 px-3 py-2 rounded-lg
+                               attr:class="flex items-center gap-2 px-3 py-2 rounded-lg
                                         hover:bg-white/5 transition-colors
                                         text-gray-200 hover:text-amber-200">
-                                <Tooltip tooltip_text=Oco::from("Item Explorer")>
+                                <Tooltip tooltip_text="Item Explorer">
                                     <Icon width="1.75em" height="1.75em" icon=i::FaScrewdriverWrenchSolid/>
                                 </Tooltip>
                                 <span class="sr-only">"Item Explorer"</span>
@@ -175,41 +179,44 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>, region: String) -> impl IntoView
                 // https://github.com/leptos-rs/leptos/issues/1754
                 <main class="flex-1">
                     <div class="mx-auto max-w-7xl px-2 sm:px-4 lg:px-6 py-4 sm:py-6">
-                        <Routes>
-                            <Route path="" view=HomePage/>
-                            <Route path="retainers" view=Retainers>
-                                <Route path="edit" view=EditRetainers/>
-                                <Route path="undercuts" view=RetainerUndercuts/>
-                                <Route path="listings" view=RetainerListings/>
+                        <Routes fallback=move || {
+                            view!{
+                                <div>"Page not found"</div>
+                            }
+                        }>
+                            <Route path=path!("") view=HomePage/>
+                            <ParentRoute path=path!("retainers") view=Retainers>
+                                <Route path=path!("edit") view=EditRetainers/>
+                                <Route path=path!("undercuts") view=RetainerUndercuts/>
+                                <Route path=path!("listings") view=RetainerListings/>
                                 <Route
-                                    path="listings/:id"
+                                    path=path!("listings/:id")
                                     view=SingleRetainerListings
-                                    ssr=SsrMode::PartiallyBlocked
                                 />
-                                <Route path="" view=RetainersBasePath/>
-                            </Route>
-                            <Route path="list" view=Lists>
-                                <Route path=":id" view=ListView/>
-                                <Route path="" view=EditLists/>
-                            </Route>
-                            <Route path="items" view=ItemExplorer>
-                                <Route path="jobset/:jobset" view=JobItems/>
-                                <Route path="category/:category" view=CategoryItems/>
-                                <Route path="" view=move || view! { "Choose a category to search!" }/>
-                            </Route>
-                            <Route path="item/:world/:id" view=ItemView/>
-                            <Route path="item/:id" view=ItemView/>
-                            <Route path="analyzer" view=Analyzer/>
-                            <Route path="analyzer/:world" view=AnalyzerWorldView/>
-                            <Route path="settings" view=Settings/>
-                            <Route path="profile" view=Profile/>
-                            <Route path="privacy" view=PrivacyPolicy/>
-                            <Route path="cookie-policy" view=CookiePolicy/>
-                            <Route path="history" view=History/>
-                            <Route path="currency-exchange" view=CurrencyExchange>
-                                <Route path=":id" view=ExchangeItem/>
-                                <Route path="" view=CurrencySelection/>
-                            </Route>
+                                <Route path=path!("") view=RetainersBasePath/>
+                            </ParentRoute>
+                            <ParentRoute path=path!("list") view=Lists>
+                                <Route path=path!(":id") view=ListView/>
+                                <Route path=path!("") view=EditLists/>
+                            </ParentRoute>
+                            <ParentRoute path=path!("items") view=ItemExplorer>
+                                <Route path=path!("jobset/:jobset") view=JobItems/>
+                                <Route path=path!("category/:category") view=CategoryItems/>
+                                <Route path=path!("") view=move || view! { "Choose a category to search!" }/>
+                            </ParentRoute>
+                            <Route path=path!("item/:world/:id") view=ItemView/>
+                            <Route path=path!("item/:id") view=ItemView/>
+                            <Route path=path!("analyzer") view=Analyzer/>
+                            <Route path=path!("analyzer/:world") view=AnalyzerWorldView/>
+                            <Route path=path!("settings") view=Settings/>
+                            <Route path=path!("profile") view=Profile/>
+                            <Route path=path!("privacy") view=PrivacyPolicy/>
+                            <Route path=path!("cookie-policy") view=CookiePolicy/>
+                            <Route path=path!("history") view=History/>
+                            <ParentRoute path=path!("currency-exchange") view=CurrencyExchange>
+                                <Route path=path!(":id") view=ExchangeItem/>
+                                <Route path=path!("") view=CurrencySelection/>
+                            </ParentRoute>
                         </Routes>
                     </div>
                 </main>

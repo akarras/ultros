@@ -2,7 +2,7 @@ use crate::{
     components::{cheapest_price::*, item_icon::*},
     global_state::home_world::get_price_zone,
 };
-use leptos::*;
+use leptos::{either::Either, prelude::*};
 use sublime_fuzzy::{best_match, Match};
 use xiv_gen::ItemId;
 
@@ -14,37 +14,29 @@ pub fn MatchFormatter(m: Match, target: String) -> impl IntoView {
 
     for c in m.continuous_matches() {
         // Piece between last match and this match
-        pieces.push(
+        pieces.push(Either::Left(
             target
                 .chars()
                 .skip(last_end)
                 .take(c.start() - last_end)
-                .collect::<String>()
-                .into_view(),
-        );
+                .collect::<String>(),
+        ));
 
         // This match
-        pieces.push(
-            view! {
-                <span class="font-medium text-amber-200">
-                    {target.chars().skip(c.start()).take(c.len()).collect::<String>()}
-                </span>
-            }
-            .into_view(),
-        );
+        pieces.push(Either::Right(view! {
+            <span class="font-medium text-amber-200">
+                {target.chars().skip(c.start()).take(c.len()).collect::<String>()}
+            </span>
+        }));
 
         last_end = c.start() + c.len();
     }
 
     // Leftover chars
     if last_end != target.len() {
-        pieces.push(
-            target
-                .chars()
-                .skip(last_end)
-                .collect::<String>()
-                .into_view(),
-        );
+        pieces.push(Either::Left(
+            target.chars().skip(last_end).collect::<String>(),
+        ));
     }
 
     pieces
@@ -62,77 +54,75 @@ pub fn ItemSearchResult(
     let item = items.get(&ItemId(item_id));
     let (price_zone, _) = get_price_zone();
 
-    view! {
-        {if let Some(item) = item {
-            view! {
-                <a
-                    on:click=move |_| set_search("".to_string())
-                    href=move || {
-                        let zone = price_zone();
-                        let price_zone = zone
-                            .as_ref()
-                            .map(|z| z.get_name())
-                            .unwrap_or("North-America");
-                        format!("/item/{price_zone}/{item_id}")
-                    }
-                >
-                    <div class="flex items-center px-3 py-2 hover:bg-violet-800/30
-                               transition-colors duration-200 group gap-3">
-                        <div class="flex-shrink-0">
-                            <ItemIcon item_id icon_size=IconSize::Small/>
+    if let Some(item) = item {
+        let left_view = view! {
+            <a
+                on:click=move |_| set_search("".to_string())
+                href=move || {
+                    let zone = price_zone();
+                    let price_zone = zone
+                        .as_ref()
+                        .map(|z| z.get_name())
+                        .unwrap_or("North-America");
+                    format!("/item/{price_zone}/{item_id}")
+                }
+            >
+                <div class="flex items-center px-3 py-2 hover:bg-violet-800/30
+                           transition-colors duration-200 group gap-3">
+                    <div class="flex-shrink-0">
+                        <ItemIcon item_id icon_size=IconSize::Small/>
+                    </div>
+
+                    <div class="flex flex-col min-w-0 flex-1">
+                        <div class="flex items-center gap-2">
+                            <span class="text-gray-200 truncate">
+                                {move || {
+                                    let item_name = items
+                                        .get(&ItemId(item_id))
+                                        .as_ref()
+                                        .map(|item| item.name.as_str())
+                                        .unwrap_or_default();
+                                    if let Some(m) = best_match(&search(), item_name) {
+                                        Either::Left(view! { <MatchFormatter m target=item_name.to_string()/> })
+                                    } else {
+                                        Either::Right(item_name)
+                                    }
+                                }}
+                            </span>
                         </div>
 
-                        <div class="flex flex-col min-w-0 flex-1">
-                            <div class="flex items-center gap-2">
-                                <span class="text-gray-200 truncate">
-                                    {move || {
-                                        let item_name = items
-                                            .get(&ItemId(item_id))
-                                            .as_ref()
-                                            .map(|item| item.name.as_str())
-                                            .unwrap_or_default();
-                                        if let Some(m) = best_match(&search(), item_name) {
-                                            view! { <MatchFormatter m target=item_name.to_string()/> }
-                                                .into_view()
-                                        } else {
-                                            item_name.into_view()
-                                        }
-                                    }}
-                                </span>
-                            </div>
+                        <div class="flex items-center justify-between text-sm">
+                            <span class="text-gray-400 truncate">
+                                {categories
+                                    .get(&item.item_ui_category)
+                                    .map(|i| i.name.as_str())
+                                    .unwrap_or_default()}
+                            </span>
 
-                            <div class="flex items-center justify-between text-sm">
-                                <span class="text-gray-400 truncate">
-                                    {categories
-                                        .get(&item.item_ui_category)
-                                        .map(|i| i.name.as_str())
-                                        .unwrap_or_default()}
-                                </span>
-
-                                {(item.level_item.0 != 0)
-                                    .then(|| {
-                                        view! {
-                                            <span class="text-gray-500">
-                                                "iLvl " {item.level_item.0}
-                                            </span>
-                                        }
-                                    })}
-                            </div>
-                        </div>
-
-                        <div class="flex-shrink-0 pl-4 text-right min-w-[100px]
-                                  text-amber-200 font-medium">
-                            <CheapestPrice item_id=item.key_id/>
+                            {(item.level_item.0 != 0)
+                                .then(|| {
+                                    view! {
+                                        <span class="text-gray-500">
+                                            "iLvl " {item.level_item.0}
+                                        </span>
+                                    }
+                                })}
                         </div>
                     </div>
-                </a>
-            }
-        } else {
-            view! {
-                <a class="block px-3 py-2 text-gray-400 text-center hover:bg-violet-800/30 transition-colors">
-                    "Invalid result"
-                </a>
-            }
-        }}
+
+                    <div class="flex-shrink-0 pl-4 text-right min-w-[100px]
+                              text-amber-200 font-medium">
+                        <CheapestPrice item_id=item.key_id/>
+                    </div>
+                </div>
+            </a>
+        };
+        Either::Left(left_view)
+    } else {
+        Either::Right(view! {
+            <a class="block px-3 py-2 text-gray-400 text-center hover:bg-violet-800/30 transition-colors">
+                "Invalid result"
+            </a>
+        })
     }
 }

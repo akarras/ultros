@@ -2,9 +2,10 @@ use std::cmp::Reverse;
 use std::collections::HashSet;
 
 use icondata as i;
-use leptos::*;
+use leptos::either::{Either, EitherOf3};
+use leptos::prelude::*;
 use leptos_icons::*;
-use leptos_router::use_params_map;
+use leptos_router::hooks::use_params_map;
 use ultros_api_types::list::ListItem;
 use xiv_gen::{Item, ItemId, Recipe};
 
@@ -33,17 +34,17 @@ pub fn ListView() -> impl IntoView {
     let recipes = &data.recipes;
 
     let params = use_params_map();
-    let list_id = create_memo(move |_| {
+    let list_id = Memo::new(move |_| {
         params
             .with(|p| p.get("id").as_ref().and_then(|id| id.parse::<i32>().ok()))
             .unwrap_or_default()
     });
-    let add_item = create_action(move |list_item: &ListItem| {
+    let add_item = Action::new(move |list_item: &ListItem| {
         let item = list_item.clone();
         add_item_to_list(item.list_id, item)
     });
-    let delete_item = create_action(move |list_item: &i32| delete_list_item(*list_item));
-    let recipe_add = create_action(move |data: &(&Recipe, i32, bool, bool)| {
+    let delete_item = Action::new(move |list_item: &i32| delete_list_item(*list_item));
+    let recipe_add = Action::new(move |data: &(&Recipe, i32, bool, bool)| {
         let ingredients = IngredientsIter::new(data.0);
         let craft_count = data.1;
         let items: Vec<_> = ingredients
@@ -64,9 +65,9 @@ pub fn ListView() -> impl IntoView {
 
         bulk_add_item_to_list(list_id(), items)
     });
-    let edit_item = create_action(move |item: &ListItem| edit_list_item(item.clone()));
-    let delete_items = create_action(move |items: &Vec<i32>| delete_list_items(items.clone()));
-    let list_view = create_resource(
+    let edit_item = Action::new(move |item: &ListItem| edit_list_item(item.clone()));
+    let delete_items = Action::new(move |items: &Vec<i32>| delete_list_items(items.clone()));
+    let list_view = Resource::new(
         move || {
             (
                 list_id(),
@@ -82,13 +83,13 @@ pub fn ListView() -> impl IntoView {
         move |(id, _)| get_list_items_with_listings(id),
     );
 
-    let (menu, set_menu) = create_signal(MenuState::None);
-    let edit_list_mode = create_rw_signal(false);
-    let selected_items = create_rw_signal(HashSet::new());
+    let (menu, set_menu) = signal(MenuState::None);
+    let edit_list_mode = RwSignal::new(false);
+    let selected_items = RwSignal::new(HashSet::new());
 
     view! {
         <div class="flex-row">
-            <Tooltip tooltip_text=Oco::from("Add an item to the list")>
+            <Tooltip tooltip_text="Add an item to the list">
                 <button
                     class="btn"
                     class:active=move || menu() == MenuState::Item
@@ -106,7 +107,7 @@ pub fn ListView() -> impl IntoView {
                     <span>"Add Item"</span>
                 </button>
             </Tooltip>
-            <Tooltip tooltip_text=Oco::from("Add a recipe's ingredients to the list")>
+            <Tooltip tooltip_text="Add a recipe's ingredients to the list">
                 <button
                     class="btn"
                     class:active=move || menu() == MenuState::Recipe
@@ -121,7 +122,7 @@ pub fn ListView() -> impl IntoView {
                     "Add Recipe"
                 </button>
             </Tooltip>
-            <Tooltip tooltip_text=Oco::from("Import an item")>
+            <Tooltip tooltip_text="Import an item">
                 <button
                     class="btn"
                     class:active=move || menu() == MenuState::MakePlace
@@ -140,8 +141,8 @@ pub fn ListView() -> impl IntoView {
         </div>
         {move || match menu() {
             MenuState::Item => {
-                {
-                    let (search, set_search) = create_signal("".to_string());
+                Some(EitherOf3::A({
+                    let (search, set_search) = signal("".to_string());
                     let items = &xiv_gen_db::data().items;
                     let item_search = move || {
                         search
@@ -182,7 +183,7 @@ pub fn ListView() -> impl IntoView {
                                     item_search()
                                         .into_iter()
                                         .map(move |(id, item, _)| {
-                                            let (quantity, set_quantity) = create_signal(1);
+                                            let (quantity, set_quantity) = signal(1);
                                             let read_input_quantity = move |input| {
                                                 if let Ok(quantity) = event_target_value(&input).parse() {
                                                     set_quantity(quantity)
@@ -191,7 +192,7 @@ pub fn ListView() -> impl IntoView {
                                             view! {
                                                 <div class="flex-row">
                                                     <ItemIcon item_id=id.0 icon_size=IconSize::Medium/>
-                                                    <span style="width: 400px">{&item.name}</span>
+                                                    <span style="width: 400px">{item.name.as_str()}</span>
                                                     <label for="amount">"quantity:"</label>
                                                     <input on:input=read_input_quantity prop:value=quantity/>
                                                     <button
@@ -222,13 +223,12 @@ pub fn ListView() -> impl IntoView {
                             </div>
                         </div>
                     }
-                }
-                    .into_view()
+                }))
             }
-            MenuState::None => ().into_view(),
-            MenuState::Recipe => {
+            MenuState::None => None,
+            MenuState::Recipe => Some(EitherOf3::B(
                 {
-                    let (recipe, set_recipe) = create_signal("".to_string());
+                    let (recipe, set_recipe) = signal("".to_string());
                     let recipe_data: Vec<(&Item, &Recipe)> = recipes
                         .iter()
                         .flat_map(|(_, r)| { game_items.get(&r.item_result).map(|i| (i, r)) })
@@ -273,7 +273,7 @@ pub fn ListView() -> impl IntoView {
                         {move || {
                             result()
                                 .map(|v| match v {
-                                    Ok(()) => view! { "Success" }.into_view(),
+                                    Ok(()) => format!("Success").into_view(),
                                     Err(e) => format!("{e:?}").into_view(),
                                 })
                         }}
@@ -283,9 +283,9 @@ pub fn ListView() -> impl IntoView {
                                 item_search()
                                     .into_iter()
                                     .map(|(_id, ri, item, _ma)| {
-                                        let (quantity, set_quantity) = create_signal(1);
-                                        let hq = create_rw_signal(false);
-                                        let crystals = create_rw_signal(false);
+                                        let (quantity, set_quantity) = signal(1);
+                                        let hq = RwSignal::new(false);
+                                        let crystals = RwSignal::new(false);
                                         view! {
                                             <div class="flex-row">
                                                 <SmallItemDisplay item=item/>
@@ -331,9 +331,8 @@ pub fn ListView() -> impl IntoView {
                         </div>
                     }
                 }
-                    .into_view()
-            }
-            MenuState::MakePlace => {
+            )),
+            MenuState::MakePlace => Some(EitherOf3::C(
                 {
                     view! {
                         <MakePlaceImporter
@@ -348,8 +347,7 @@ pub fn ListView() -> impl IntoView {
                         />
                     }
                 }
-                    .into_view()
-            }
+            ))
         }}
 
         <Transition fallback=move || {
@@ -360,8 +358,8 @@ pub fn ListView() -> impl IntoView {
                     .get()
                     .map(move |list| match list {
                         Ok((list, items)) => {
-                            let items = store_value(items);
-                            view! {
+                            let items = StoredValue::new(items);
+                            Either::Left(view! {
                                 <table></table>
                                 <div class="content-well">
                                     <div class="sticky top-0 flex-row justify-between">
@@ -429,19 +427,19 @@ pub fn ListView() -> impl IntoView {
                                             <th class:hidden=edit_list_mode>"Options"</th>
                                         </tr>
                                         <For
-                                            each=move || items()
+                                            each=move || items.get_value()
                                             key=|(item, _)| item.id
                                             children=move |(item, listings)| {
-                                                let (edit, set_edit) = create_signal(false);
-                                                let item = create_rw_signal(item);
-                                                let temp_item = create_rw_signal(item());
-                                                let listings = create_rw_signal(listings);
+                                                let (edit, set_edit) = signal(false);
+                                                let item = RwSignal::new(item);
+                                                let temp_item = RwSignal::new(item());
+                                                let listings = RwSignal::new(listings);
                                                 view! {
-                                                    <tr valign="top">
+                                                    <tr>
                                                         {move || {
                                                             if !edit() || edit_list_mode() {
                                                                 let item = item();
-                                                                view! {
+                                                                Either::Left(view! {
                                                                     <td class:hidden=move || !edit_list_mode()>
                                                                         <input
                                                                             type="checkbox"
@@ -464,7 +462,7 @@ pub fn ListView() -> impl IntoView {
                                                                             <ItemIcon item_id=item.item_id icon_size=IconSize::Small/>
                                                                             {game_items
                                                                                 .get(&ItemId(item.item_id))
-                                                                                .map(|item| &item.name)}
+                                                                                .map(|item| item.name.as_str())}
                                                                             <Clipboard clipboard_text=game_items
                                                                                 .get(&ItemId(item.item_id))
                                                                                 .map(|item| item.name.to_string())
@@ -476,9 +474,7 @@ pub fn ListView() -> impl IntoView {
                                                                                 .then(move || {
                                                                                     view! {
                                                                                         <div>
-                                                                                            <Tooltip tooltip_text=Oco::from(
-                                                                                                "This item is not available on the market board",
-                                                                                            )>
+                                                                                            <Tooltip tooltip_text="This item is not available on the market board">
                                                                                                 <Icon icon=i::BiTrashSolid/>
                                                                                             </Tooltip>
                                                                                         </div>
@@ -500,10 +496,10 @@ pub fn ListView() -> impl IntoView {
                                                                         }}
 
                                                                     </td>
-                                                                }
+                                                                })
                                                             } else {
                                                                 let item = item();
-                                                                view! {
+                                                                Either::Right(view! {
                                                                     <td>
                                                                         <input
                                                                             type="checkbox"
@@ -519,7 +515,7 @@ pub fn ListView() -> impl IntoView {
                                                                             <ItemIcon item_id=item.item_id icon_size=IconSize::Small/>
                                                                             {game_items
                                                                                 .get(&ItemId(item.item_id))
-                                                                                .map(|item| &item.name)}
+                                                                                .map(|item| item.name.as_str())}
                                                                             <Clipboard clipboard_text=game_items
                                                                                 .get(&ItemId(item.item_id))
                                                                                 .map(|item| item.name.to_string())
@@ -531,9 +527,7 @@ pub fn ListView() -> impl IntoView {
                                                                                 .then(move || {
                                                                                     view! {
                                                                                         <div>
-                                                                                            <Tooltip tooltip_text=Oco::from(
-                                                                                                "This item is not available on the market board",
-                                                                                            )>
+                                                                                            <Tooltip tooltip_text="This item is not available on the market board">
                                                                                                 <Icon icon=i::AiExclamationOutlined/>
                                                                                             </Tooltip>
                                                                                         </div>
@@ -568,12 +562,12 @@ pub fn ListView() -> impl IntoView {
                                                                         }}
 
                                                                     </td>
-                                                                }
+                                                                })
                                                             }
                                                         }} <td class:hidden=edit_list_mode>
                                                             <button
                                                                 class="btn"
-                                                                on:click=move |_| { delete_item.dispatch(item().id) }
+                                                                on:click=move |_| { let _ = delete_item.dispatch(item().id); }
                                                             >
                                                                 <Icon icon=i::BiTrashSolid/>
                                                             </button>
@@ -581,15 +575,14 @@ pub fn ListView() -> impl IntoView {
                                                                 class="btn"
                                                                 on:click=move |_| {
                                                                     if temp_item() != item() {
-                                                                        edit_item.dispatch(temp_item())
+                                                                        let _ = edit_item.dispatch(temp_item());
                                                                     }
                                                                     set_edit(!edit())
                                                                 }
                                                             >
-
-                                                                <Icon icon=MaybeSignal::derive(move || {
+                                                                <Icon icon=Signal::derive(move || {
                                                                     if edit() { i::BsCheck } else { i::BsPencilFill }
-                                                                })/>
+                                                                        }) />
                                                             </button>
                                                         </td>
                                                     </tr>
@@ -599,11 +592,10 @@ pub fn ListView() -> impl IntoView {
 
                                     </table>
                                 </div>
-                            }
-                                .into_view()
+                            })
                         }
                         Err(e) => {
-                            view! {
+                            Either::Right(view! {
                                 // TODO full table?
                                 // let price_view = items.iter().flat_map(|(list, listings): &(ListItem, Vec<ActiveListing>)| listings.iter().map(|listing| {
                                 // ShoppingListRow { item_id: ItemKey(ItemId(list.item_id)), amount: listing.quantity, lowest_price: listing.price_per_unit, lowest_price_world: listing.world_id.to_string(), lowest_price_datacenter: "TODO".to_string() }
@@ -611,8 +603,7 @@ pub fn ListView() -> impl IntoView {
                                 // <TableContent rows=price_view on_change=move |_| {} />
 
                                 <div>{format!("Failed to get items\n{e}")}</div>
-                            }
-                                .into_view()
+                            })
                         }
                     })
             }}

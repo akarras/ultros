@@ -1,5 +1,5 @@
 use cfg_if::cfg_if;
-use leptos::{ev::resize, html::Div, *};
+use leptos::{ev::resize, html::Div, portal::Portal, prelude::*};
 use leptos_use::{
     use_element_bounding, use_element_size, use_event_listener_with_options, use_window,
     use_window_scroll, UseElementBoundingReturn, UseElementSizeReturn, UseEventListenerOptions,
@@ -13,8 +13,8 @@ fn use_window_size() -> (Signal<f64>, Signal<f64>) {
         let initial_x = window().inner_width().unwrap_or_default().as_f64().unwrap_or_default();
         let initial_y = window().inner_height().unwrap_or_default().as_f64().unwrap_or_default();
     }}
-    let (x, set_x) = create_signal(initial_x);
-    let (y, set_y) = create_signal(initial_y);
+    let (x, set_x) = signal(initial_x);
+    let (y, set_y) = signal(initial_y);
 
     let _ = use_event_listener_with_options(
         use_window(),
@@ -44,16 +44,15 @@ fn use_window_size() -> (Signal<f64>, Signal<f64>) {
 }
 
 #[component]
-pub fn Tooltip(
-    #[prop(into)] tooltip_text: MaybeSignal<Oco<'static, str>>,
-    children: Box<dyn Fn() -> Fragment>,
-) -> impl IntoView {
-    let is_hover = create_rw_signal(false);
-    let tooltip_text = match tooltip_text {
-        MaybeSignal::Static(s) => Signal::derive(move || s.clone()),
-        MaybeSignal::Dynamic(d) => d,
-    };
-    let target = create_node_ref::<Div>();
+pub fn Tooltip<T>(
+    #[prop(into)] tooltip_text: Signal<String>,
+    children: TypedChildrenFn<T>,
+) -> impl IntoView
+where
+    T: Sized + Render + RenderHtml + Send,
+{
+    let is_hover = RwSignal::new(false);
+    let target = NodeRef::<Div>::new();
     let UseElementBoundingReturn {
         bottom,
         top,
@@ -65,13 +64,13 @@ pub fn Tooltip(
     } = use_element_bounding(target);
 
     use_window_scroll();
-
+    let children = children.into_inner();
     let tooltip = {
         move || {
             (tooltip_text.with(|t| !t.is_empty()) && is_hover.get()).then(move || {
                 let (screen_width, screen_height) = use_window_size();
                 let (scroll_x, scroll_y) = use_window_scroll();
-                let node_ref = create_node_ref::<Div>();
+                let node_ref = NodeRef::<Div>::new();
                 let UseElementSizeReturn {
                     width: tooltip_width,
                     height: tooltip_height,

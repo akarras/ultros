@@ -9,7 +9,10 @@ use crate::global_state::cookies::Cookies;
 use crate::global_state::home_world::{
     get_price_zone, result_to_selector_read, selector_to_setter_signal, use_home_world,
 };
-use leptos::*;
+use leptos::either::{Either, EitherOf3};
+use leptos::prelude::*;
+use leptos::reactive::wrappers::write::IntoSignalSetter;
+use leptos::task::spawn_local;
 use leptos_icons::Icon;
 
 use icondata as i;
@@ -18,9 +21,9 @@ use ultros_api_types::world_helper::AnySelector;
 
 #[component]
 fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> impl IntoView {
-    let (is_open, set_is_open) = create_signal(false);
-    let (character_search, set_character_search) = create_signal("".to_string());
-    let search_action = create_action(move |search: &String| search_characters(search.to_string()));
+    let (is_open, set_is_open) = signal(false);
+    let (character_search, set_character_search) = signal("".to_string());
+    let search_action = Action::new(move |search: &String| search_characters(search.to_string()));
 
     view! {
         <button
@@ -41,19 +44,19 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
                     view! {
                         <div class="mt-4 p-4 rounded-xl bg-violet-900/20 border border-white/10 backdrop-blur-sm">
                             {match result {
-                                Ok((_id, value)) => view! {
+                                Ok((_id, value)) => Either::Left(view! {
                                     <div class="text-green-400">
                                         "Successfully started claim. Add "
                                         <span class="font-medium">{value}</span>
                                         " to your lodestone profile"
                                     </div>
-                                },
-                                Err(e) => view! {
+                                }),
+                                Err(e) => Either::Right(view! {
                                     <div class="text-red-400">
                                         "Error adding character to your profile: "
                                         {e.to_string()}
                                     </div>
-                                },
+                                }),
                             }}
                         </div>
                     }
@@ -78,7 +81,7 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
                                     class="px-4 py-2 rounded-lg bg-violet-900/30 hover:bg-violet-800/40
                                            border border-white/10 hover:border-yellow-200/30
                                            transition-all duration-300 text-amber-200 hover:text-amber-100"
-                                    on:click=move |_| search_action.dispatch(character_search())
+                                    on:click=move |_| {let _ = search_action.dispatch(character_search());}
                                 >
                                     <Icon icon=i::AiSearchOutlined/>
                                 </button>
@@ -90,17 +93,17 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
                                     .value()()
                                     .map(|value| match value {
                                         Ok(characters) => {
-                                            view! {
+                                            Either::Left(view! {
                                                 <div class="space-y-2">
                                                     <h4 class="text-lg font-medium text-amber-200">"Search Results"</h4>
                                                     {if characters.is_empty() {
-                                                        view! {
+                                                        Either::Left(view! {
                                                             <div class="text-gray-400 italic">
                                                                 "No characters found"
                                                             </div>
-                                                        }
+                                                        })
                                                     } else {
-                                                        view! {
+                                                        Either::Right(view! {
                                                             <div class="space-y-2">
                                                                 {characters
                                                                     .into_iter()
@@ -132,17 +135,17 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
                                                                     })
                                                                     .collect::<Vec<_>>()}
                                                             </div>
-                                                        }
+                                                        })
                                                     }}
                                                 </div>
-                                            }
+                                            })
                                         }
-                                        Err(e) => view! {
+                                        Err(e) => Either::Right(view! {
                                             <div class="text-red-400">
                                                 "Failed to load characters: "
                                                 {e.to_string()}
                                             </div>
-                                        }
+                                        })
                                     })}
                             </div>
                         </div>
@@ -216,8 +219,7 @@ fn AdChoice() -> impl IntoView {
                             info!("{cookie:?}");
                             cookie.unwrap_or_default()
                         })
-                        set_checked={ move |checked: bool| set_cookie(checked.then(|| true)) }
-                            .into_signal_setter()
+                        set_checked={ (move |checked: bool| set_cookie(checked.then(|| true))).into_signal_setter() }
                         checked_label="Ads Disabled"
                         unchecked_label="Ads Enabled"
                     />
@@ -233,7 +235,7 @@ fn AdChoice() -> impl IntoView {
 
 #[component]
 fn DeleteUser() -> impl IntoView {
-    let (confirmed, set_confirmed) = create_signal(false);
+    let (confirmed, set_confirmed) = signal(false);
 
     view! {
         <div class="p-6 rounded-xl bg-red-900/20 border border-red-800/30 backdrop-blur-sm">
@@ -290,11 +292,11 @@ pub fn Settings() -> impl IntoView {
 }
 #[component]
 pub fn Profile() -> impl IntoView {
-    let claim_character = create_action(move |id: &i32| claim_character(*id));
-    let unclaim_character = create_action(move |id: &i32| unclaim_character(*id));
-    let check_verification = create_action(move |id: &i32| check_character_verification(*id));
+    let claim_character = Action::new(move |id: &i32| claim_character(*id));
+    let unclaim_character = Action::new(move |id: &i32| unclaim_character(*id));
+    let check_verification = Action::new(move |id: &i32| check_character_verification(*id));
 
-    let characters = create_resource(
+    let characters = Resource::new(
         move || {
             (
                 unclaim_character.version()(),
@@ -303,7 +305,7 @@ pub fn Profile() -> impl IntoView {
         },
         move |_| get_characters(),
     );
-    let pending_verifications = create_resource(
+    let pending_verifications = Resource::new(
         move || (check_verification.version()(), claim_character.version()()),
         move |_| get_character_verifications(),
     );
@@ -337,7 +339,7 @@ pub fn Profile() -> impl IntoView {
                         }
                     >
                     {move || pending_verifications.get().map(|verifications| match verifications {
-                        Ok(verifications) if !verifications.is_empty() => view! {
+                        Ok(verifications) if !verifications.is_empty() => EitherOf3::A(view! {
                             <div class="mb-6 space-y-4">
                                 <h3 class="text-xl font-semibold text-amber-100">
                                     "Pending Verifications"
@@ -355,16 +357,16 @@ pub fn Profile() -> impl IntoView {
                                         .collect::<Vec<_>>()}
                                 </div>
                             </div>
-                        },
-                        Ok(_) => view! {
+                        }),
+                        Ok(_) => EitherOf3::B(view! {
                             <div></div>
-                        },
-                        Err(e) => view! {
+                        }),
+                        Err(e) => EitherOf3::C(view! {
                             <div class="p-4 rounded-lg bg-red-900/20 border border-red-800/30 text-red-400">
                                 "Unable to fetch verifications: "
                                 {e.to_string()}
                             </div>
-                        }
+                        })
                     })}
                     </Suspense>
 
@@ -380,14 +382,14 @@ pub fn Profile() -> impl IntoView {
                     >
                         {move || characters.get().map(|characters| match characters {
                             Ok(characters) if characters.is_empty() => {
-                                view! {
+                                EitherOf3::A(view! {
                                     <div class="text-center p-8 text-gray-400">
                                         "No characters added yet. Add a character to get started."
                                     </div>
-                                }.into_view()
+                                })
                             }
                             Ok(characters) => {
-                                view! {
+                                EitherOf3::B(view! {
                                     <div class="space-y-3">
                                         {characters
                                             .into_iter()
@@ -412,7 +414,7 @@ pub fn Profile() -> impl IntoView {
                                                                    text-gray-400 hover:text-red-400
                                                                    opacity-0 group-hover:opacity-100
                                                                    transition-all duration-200"
-                                                            on:click=move |_| unclaim_character.dispatch(character.id)
+                                                            on:click=move |_| { let _ = unclaim_character.dispatch(character.id); }
                                                         >
                                                             <Icon icon=i::BiTrashSolid/>
                                                         </button>
@@ -421,14 +423,14 @@ pub fn Profile() -> impl IntoView {
                                             })
                                             .collect::<Vec<_>>()}
                                     </div>
-                                }.into_view()
+                                })
                             }
-                            Err(e) => view! {
+                            Err(e) => EitherOf3::C(view! {
                                 <div class="p-4 rounded-lg bg-red-900/20 border border-red-800/30 text-red-400">
                                     "Unable to fetch characters: "
                                     {e.to_string()}
                                 </div>
-                            }.into_view(),
+                            }),
                         })}
                     </Suspense>
                 </div>

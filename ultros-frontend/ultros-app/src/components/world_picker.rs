@@ -1,4 +1,8 @@
-use leptos::*;
+use leptos::{
+    either::Either,
+    prelude::*,
+    reactive::wrappers::write::{IntoSignalSetter, SignalSetter},
+};
 
 use crate::{components::select::Select, global_state::LocalWorldData};
 use ultros_api_types::{world::World, world_helper::AnySelector};
@@ -13,14 +17,14 @@ pub fn WorldOnlyPicker(
         .0;
     match local_worlds {
         Ok(worlds) => {
-            let data = create_memo(move |_| {
+            let data = Memo::new(move |_| {
                 worlds
                     .iter()
                     .filter_map(|w| w.as_world())
                     .cloned()
                     .collect::<Vec<_>>()
             });
-            view! {
+            let left = view! {
                 <div class="relative">
                     <Select
                         items=data.into()
@@ -36,17 +40,18 @@ pub fn WorldOnlyPicker(
                         }
                     />
                 </div>
-            }
+            };
+            Either::Left(left)
         }
-        Err(e) => view! {
+        Err(e) => Either::Right(view! {
             <div class="relative">
                 <div class="text-red-400 p-2 rounded-lg bg-red-950/50 border border-red-800/30">
                     <span>"No worlds: "</span>
                     <span>{e.to_string()}</span>
                 </div>
             </div>
-        }
-    }.into_view()
+        }),
+    }
 }
 
 #[component]
@@ -61,13 +66,13 @@ pub fn WorldPicker(
     match local_worlds {
         Ok(worlds) => {
             let worlds_1 = worlds.clone();
-            let data = create_memo(move |_| {
+            let data = Memo::new(move |_| {
                 worlds
                     .iter()
                     .map(|l| (l.get_name().to_string(), AnySelector::from(&l)))
                     .collect::<Vec<_>>()
             });
-            let choice = create_memo(move |_| {
+            let choice = Memo::new(move |_| {
                 current_world().and_then(|world| {
                     worlds_1
                         .lookup_selector(world)
@@ -79,7 +84,7 @@ pub fn WorldPicker(
                 set_current_world(option.map(|(_, s)| s));
             };
             let set_choice = set_choice.into_signal_setter();
-            view! {
+            Either::Left(view! {
                 <div class="relative">
                     <Select
                         items=data.into()
@@ -103,17 +108,15 @@ pub fn WorldPicker(
                         }
                     />
                 </div>
-            }
-            .into_view()
+            })
         }
-        Err(e) => view! {
+        Err(e) => Either::Right(view! {
             <div class="relative z-[150]">
                 <div class="text-red-400 p-2 rounded-lg bg-red-950/50 border border-red-800/30">
                     <span>"No worlds: "</span>
                     <span>{e.to_string()}</span>
                 </div>
             </div>
-        }
-        .into_view(),
+        }),
     }
 }

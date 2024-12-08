@@ -1,7 +1,7 @@
 use itertools::Itertools;
 /// Related items links items that are related to the current set
-use leptos::*;
-use leptos_router::A;
+use leptos::prelude::*;
+use leptos_router::components::A;
 use ultros_api_types::{cheapest_listings::CheapestListingMapKey, icon_size::IconSize};
 use xiv_gen::{ENpcBase, ENpcResidentId, GilShopId, Item, ItemId, Recipe};
 
@@ -118,50 +118,47 @@ fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
                 cheapest_prices
                     .read_listings
                     .with(|prices| {
-                        prices
-                            .as_ref()
-                            .and_then(|prices| prices.as_ref().ok())
-                            .map(|prices| {
-                                let hq_amount: i32 = IngredientsIter::new(recipe)
-                                    .flat_map(|(ingredient, amount)| {
-                                        items.get(&ingredient).map(|item| (item, amount))
-                                    })
-                                    .flat_map(|(item, quantity)| {
-                                        prices
-                                            .1
-                                            .map
-                                            .get(
-                                                &CheapestListingMapKey {
-                                                    item_id: item.key_id.0,
-                                                    hq: item.can_be_hq,
-                                                },
-                                            )
-                                            .map(|data| data.price * quantity as i32)
-                                    })
-                                    .sum();
-                                let amount: i32 = IngredientsIter::new(recipe)
-                                    .flat_map(|(ingredient, amount)| {
-                                        items.get(&ingredient).map(|item| (item, amount))
-                                    })
-                                    .flat_map(|(item, quantity)| {
-                                        prices
-                                            .1
-                                            .map
-                                            .get(
-                                                &CheapestListingMapKey {
-                                                    item_id: item.key_id.0,
-                                                    hq: item.can_be_hq,
-                                                },
-                                            )
-                                            .map(|data| data.price * quantity as i32)
-                                    })
-                                    .sum();
-                                view! {
-                                    <span class="flex flex-row gap-1">
-                                        "HQ: " <Gil amount=hq_amount/> " LQ:" <Gil amount/>
-                                    </span>
-                                }
+                        let prices = prices
+                            .as_ref()?;
+                        let prices = prices.as_ref().ok()?;
+                        let hq_amount: i32 = IngredientsIter::new(recipe)
+                            .flat_map(|(ingredient, amount)| {
+                                items.get(&ingredient).map(|item| (item, amount))
                             })
+                            .flat_map(|(item, quantity)| {
+                                prices
+                                    .map
+                                    .get(
+                                        &CheapestListingMapKey {
+                                            item_id: item.key_id.0,
+                                            hq: item.can_be_hq,
+                                        },
+                                    )
+                                    .map(|data| data.price * quantity as i32)
+                            })
+                            .sum();
+                        let amount: i32 = IngredientsIter::new(recipe)
+                            .flat_map(|(ingredient, amount)| {
+                                items.get(&ingredient).map(|item| (item, amount))
+                            })
+                            .flat_map(|(item, quantity)| {
+                                prices
+                                    .map
+                                    .get(
+                                        &CheapestListingMapKey {
+                                            item_id: item.key_id.0,
+                                            hq: item.can_be_hq,
+                                        },
+                                    )
+                                    .map(|data| data.price * quantity as i32)
+                            })
+                            .sum();
+                        let result_view = view! {
+                            <span class="flex flex-row gap-1">
+                                "HQ: " <Gil amount=hq_amount/> " LQ:" <Gil amount/>
+                            </span>
+                        };
+                        Some(result_view)
                     })
             }}
 
@@ -230,7 +227,7 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     // GilShop => PreHandler => TopicSelect => ENpcResident (or the other way around I don't remember),
     // GilShop => PreHandler => ENpcResident and last but not least, lua scripts (mostly for fate shops)
     // https://github.com/ffxiv-teamcraft/ffxiv-teamcraft/blob/staging/apps/data-extraction/src/extractors/shops.extractor.ts
-    let npcs = create_memo(move |_| {
+    let npcs = Memo::new(move |_| {
         let item_id = item_id();
         let gil_shops = data
             .gil_shop_items
@@ -260,13 +257,13 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                         transition-all duration-500 bg-gradient-to-tl to-fuchsia-950 via-black from-violet-950 bg-size-200 bg-pos-0 hover:bg-pos-100"
                     >
                         <div class="flex flex-row">
-                            <div class="text-md">{&resident.singular}</div>
+                            <div class="text-md">{resident.singular.as_str()}</div>
                             <Gil amount=price/>
                         </div>
-                        <div class="text-sm italic">"(" {&shop.name} ")"</div>
+                        <div class="text-sm italic">"(" {shop.name.as_str()} ")"</div>
                     </a>
                 })
-            }).collect::<Vec<_>>())
+            }).collect_view())
     };
     let empty = move || npcs.with(|n| n.is_empty());
     view! {
@@ -280,7 +277,7 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
 #[component]
 pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     let db = xiv_gen_db::data();
-    let item = create_memo(move |_| db.items.get(&ItemId(item_id())));
+    let item = Memo::new(move |_| db.items.get(&ItemId(item_id())));
     let (price_zone, _) = get_price_zone();
     let item_set = move || {
         item()
@@ -295,11 +292,11 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                     .map(|item| {
                         view! {
                             <A
-                                class="flex flex-col gap-1 rounded border border-violet-950
-                                transition-all duration-500 bg-gradient-to-br to-fuchsia-950 via-black from-violet-950 bg-size-200 bg-pos-0
-                                hover:bg-pos-100 p-2"
+                                attr:class="flex flex-col gap-1 rounded border border-violet-950
+                                // transition-all duration-500 bg-gradient-to-br to-fuchsia-950 via-black from-violet-950 bg-size-200 bg-pos-0
+                                // hover:bg-pos-100 p-2"
                                 exact=true
-                                href=format!(
+                                href=move || format!(
                                     "/item/{}/{}",
                                     price_zone()
                                         .as_ref()
@@ -311,7 +308,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
 
                                 <div class="flex flex-row">
                                     <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium/>
-                                    <span style="width: 300px;">{&item.name}</span>
+                                    <span style="width: 300px;">{item.name.as_str()}</span>
                                     <span style="color: #abc; width: 50px;">
                                         {item.level_item.0}
                                     </span>
@@ -323,13 +320,12 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                         }
                     })
                     .take(15)
-                    .collect::<Vec<_>>()
+                    .collect_view()
             })
             .unwrap_or_default()
     };
-    let recipes = create_memo(move |_| {
-        recipe_tree_iter(ItemId(item_id()))
-            .map(|recipe| view! { <Recipe recipe/> })
+    let recipes = Signal::derive(move || {
+        recipe_tree_iter(ItemId(item_id.get()))
             .take(30)
             .collect::<Vec<_>>()
     });
@@ -340,9 +336,16 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
             <div class="flex-row flex-wrap gap-3">{item_set}</div>
         </div>
         <VendorItems item_id/>
-        <div class="content-well flex-col p-2" class:hidden=move || recipes().is_empty()>
+        <div class="content-well flex-col p-2" class:hidden=move || recipes.with(|recipes| recipes.is_empty())>
             <span class="content-title">"crafting recipes"</span>
-            <div class="flex-wrap">{recipes}</div>
+            <div class="flex-wrap">
+                <For each=recipes
+                    key=|recipe| recipe.key_id
+                    children=move |recipe: &'static Recipe| {
+                        view!{ <Recipe recipe/> }
+                    }
+                />
+            </div>
         </div>
     }
 }

@@ -1,10 +1,10 @@
 use super::loading::*;
-use leptos::*;
+use leptos::prelude::*;
 
 #[component]
 pub fn WasmLoadingIndicator() -> impl IntoView {
     // this is set to true on server or on client
-    let (loading, set_loading) = create_signal(true);
+    let (loading, set_loading) = signal(true);
     // create_effect only runs on the client, so we immediately
     // set `loading` to false if we're on the client
     create_effect(move |_| {

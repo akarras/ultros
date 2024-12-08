@@ -1,9 +1,8 @@
-use std::{error, fmt::Display, rc::Rc};
+use std::{error, fmt::Display, rc::Rc, sync::Arc};
 
-use leptos::SerializationError;
 use serde::{de::Visitor, Deserialize, Serialize};
 use thiserror::Error;
-use ultros_api_types::result::ApiError;
+use ultros_api_types::result::{ApiError, JsonErrorWrapper};
 
 #[derive(Debug, Error, Clone, Deserialize, Serialize, PartialEq)]
 pub enum AppError {
@@ -33,11 +32,10 @@ pub enum AppError {
 pub enum SystemError {
     Message(String),
     #[cfg(feature = "ssr")]
-    ReqwestError(Rc<reqwest::Error>),
+    ReqwestError(Arc<reqwest::Error>),
     #[cfg(not(feature = "ssr"))]
     GlooError(Rc<gloo_net::Error>),
-    SerializationError(SerializationError),
-    Anyhow(Rc<anyhow::Error>),
+    Anyhow(Arc<anyhow::Error>),
 }
 
 impl PartialEq for SystemError {
@@ -51,7 +49,7 @@ impl PartialEq for SystemError {
 
 impl From<anyhow::Error> for SystemError {
     fn from(value: anyhow::Error) -> Self {
-        Self::Anyhow(Rc::new(value))
+        Self::Anyhow(Arc::new(value))
     }
 }
 
@@ -64,7 +62,7 @@ impl From<anyhow::Error> for AppError {
 #[cfg(feature = "ssr")]
 impl From<reqwest::Error> for SystemError {
     fn from(value: reqwest::Error) -> Self {
-        Self::ReqwestError(Rc::new(value))
+        Self::ReqwestError(Arc::new(value))
     }
 }
 
@@ -89,18 +87,6 @@ impl From<gloo_net::Error> for AppError {
     }
 }
 
-impl From<SerializationError> for SystemError {
-    fn from(value: SerializationError) -> Self {
-        Self::SerializationError(value)
-    }
-}
-
-impl From<SerializationError> for AppError {
-    fn from(value: SerializationError) -> Self {
-        Self::SystemError(value.into())
-    }
-}
-
 impl Display for SystemError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -109,7 +95,6 @@ impl Display for SystemError {
             SystemError::ReqwestError(reqwest) => write!(f, "{}", reqwest),
             #[cfg(not(feature = "ssr"))]
             SystemError::GlooError(g) => write!(f, "{}", g),
-            SystemError::SerializationError(serialization) => write!(f, "{}", serialization),
             SystemError::Anyhow(anyhow) => write!(f, "{}", anyhow),
         }
     }
@@ -123,7 +108,6 @@ impl error::Error for SystemError {
             SystemError::ReqwestError(reqwest) => Some(reqwest.as_ref()),
             #[cfg(not(feature = "ssr"))]
             SystemError::GlooError(gloo) => Some(gloo.as_ref()),
-            SystemError::SerializationError(serialize) => Some(serialize),
             SystemError::Anyhow(anyhow) => Some(anyhow.root_cause()),
         }
     }

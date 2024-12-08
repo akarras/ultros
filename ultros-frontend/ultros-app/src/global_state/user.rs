@@ -1,4 +1,4 @@
-// use leptos::*;
+// use leptos::prelude::*;
 // use ultros_api_types::user::UserData;
 
 // #[derive(Debug, Clone)]

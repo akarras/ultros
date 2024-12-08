@@ -1,34 +1,35 @@
 use std::rc::Rc;
 
 use icondata as i;
-use leptos::*;
-use leptos_animation::*;
-use leptos_hotkeys::use_hotkeys;
+use leptos::{portal::Portal, prelude::*, reactive::wrappers::write::SignalSetter};
+// use leptos_animation::*;
+// use leptos_hotkeys::use_hotkeys;
 use leptos_icons::*;
 use leptos_use::use_window_scroll;
 
 #[component]
-pub fn Modal(
-    children: Rc<dyn Fn() -> Fragment>,
+pub fn Modal<T>(
+    children: TypedChildrenFn<T>,
     #[prop(into)] set_visible: SignalSetter<bool>,
-) -> impl IntoView {
+) -> impl IntoView
+where
+    T: Render + RenderHtml + Send + 'static,
+{
     let (_x, y) = use_window_scroll();
-    let y = create_animated_signal(move || y.get().into(), tween_default);
+    // let y = create_animated_signal(move || y.get().into(), tween_default);
 
-    use_hotkeys!(("escape") => move |_| {
-        set_visible(false);
-    });
-
+    // use_hotkeys!(("escape") => move |_| {
+    //     set_visible(false);
+    // });
+    let children = children.into_inner();
     view! {
         <Portal>
-            // Backdrop
             <div
                 class="fixed inset-0 bg-black/60 backdrop-blur-sm z-40
                        transition-opacity duration-300 ease-in-out
                        animate-fade-in"
                 on:click=move |_| set_visible(false)
             >
-                // Modal Container
                 <div
                     class="flex flex-col mx-auto max-w-2xl w-[95%] sm:w-[500px]
                            bg-gradient-to-br from-violet-950/95 via-violet-900/90 to-violet-950/95
@@ -42,7 +43,6 @@ pub fn Modal(
                         e.stop_propagation();
                     }
                 >
-                    // Close Button
                     <div class="flex justify-end mb-2">
                         <button
                             class="p-2 rounded-lg hover:bg-violet-800/30
@@ -57,9 +57,8 @@ pub fn Modal(
                         </button>
                     </div>
 
-                    // Content
                     <div class="relative">
-                        {children()}
+                        {children().into_view()}
                     </div>
                 </div>
             </div>

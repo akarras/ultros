@@ -5,7 +5,7 @@ use chrono::{Duration, NaiveDateTime, TimeDelta, Utc};
 use humantime::format_duration;
 use icondata as i;
 use itertools::Itertools;
-use leptos::*;
+use leptos::prelude::*;
 use leptos_icons::*;
 use linregress::{FormulaRegressionBuilder, RegressionDataBuilder};
 use log::{error, info};
@@ -13,8 +13,8 @@ use ultros_api_types::{world_helper::AnySelector, SaleHistory};
 
 #[component]
 pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
-    let (show_more, set_show_more) = create_signal(false);
-    let sale_history = create_memo(move |_| {
+    let (show_more, set_show_more) = signal(false);
+    let sale_history = Memo::new(move |_| {
         let mut sales = sales();
         if !show_more() {
             sales.truncate(10);
@@ -227,15 +227,15 @@ impl SalesSummaryData {
 
 #[component]
 fn WindowStats(#[prop(into)] sales: Signal<SalesWindow>) -> impl IntoView {
-    let total_gil = create_memo(move |_| sales.with(|s| s.total_gil));
-    let average_unit_price = create_memo(move |_| sales.with(|s| s.average_unit_price));
-    let max_unit_price = create_memo(move |_| sales.with(|s| s.max_unit_price));
-    let median_unit_price = create_memo(move |_| sales.with(|s| s.median_unit_price));
-    let min_unit_price = create_memo(move |_| sales.with(|s| s.min_unit_price));
-    let median_stack_size = create_memo(move |_| sales.with(|s| s.median_stack_size));
-    let guessed_next_sale_price = create_memo(move |_| sales.with(|s| s.guessed_next_sale_price));
-    let time_between_sales = create_memo(move |_| sales.with(|s| s.time_between_sales));
-    let p_value = create_memo(move |_| sales.with(|s| s.p_value));
+    let total_gil = Memo::new(move |_| sales.with(|s| s.total_gil));
+    let average_unit_price = Memo::new(move |_| sales.with(|s| s.average_unit_price));
+    let max_unit_price = Memo::new(move |_| sales.with(|s| s.max_unit_price));
+    let median_unit_price = Memo::new(move |_| sales.with(|s| s.median_unit_price));
+    let min_unit_price = Memo::new(move |_| sales.with(|s| s.min_unit_price));
+    let median_stack_size = Memo::new(move |_| sales.with(|s| s.median_stack_size));
+    let guessed_next_sale_price = Memo::new(move |_| sales.with(|s| s.guessed_next_sale_price));
+    let time_between_sales = Memo::new(move |_| sales.with(|s| s.time_between_sales));
+    let p_value = Memo::new(move |_| sales.with(|s| s.p_value));
     view! {
         <table>
             <tr>
@@ -300,9 +300,9 @@ fn WindowStats(#[prop(into)] sales: Signal<SalesWindow>) -> impl IntoView {
 
 #[component]
 pub fn SalesInsights(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
-    let sales = create_memo(move |_| sales.with(|sales| SalesSummaryData::new(&sales)));
-    let day_sales = create_memo(move |_| sales.with(|s| s.past_day.clone()).unwrap_or_default());
-    let month_sales = create_memo(move |_| sales.with(|s| s.month.clone()).unwrap_or_default());
+    let sales = Memo::new(move |_| sales.with(|sales| SalesSummaryData::new(&sales)));
+    let day_sales = Memo::new(move |_| sales.with(|s| s.past_day.clone()).unwrap_or_default());
+    let month_sales = Memo::new(move |_| sales.with(|s| s.month.clone()).unwrap_or_default());
     view! {
         <h3 class="text-2xl text-white">"Sales Insights"</h3>
         <div class="flex flex-row items-start">

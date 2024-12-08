@@ -1,6 +1,6 @@
 use std::num::ParseIntError;
 
-use leptos::*;
+use leptos::{either::Either, prelude::*};
 use thiserror::Error;
 use ultros_api_types::list::ListItem;
 use xiv_gen::ItemId;
@@ -57,10 +57,10 @@ fn parse_list(list: &str) -> Result<Vec<MakePlaceItemData>, ParseListError> {
 #[component]
 pub fn MakePlaceImporter<R>(list_id: Signal<i32>, refresh: R) -> impl IntoView
 where
-    R: Fn() + 'static + Copy,
+    R: Fn() + 'static + Copy + Send + Sync,
 {
-    let (list, set_list) = create_signal("".to_string());
-    let add_items_to_list = create_action(move |list_items: &Vec<MakePlaceItemData>| {
+    let (list, set_list) = signal("".to_string());
+    let add_items_to_list = Action::new(move |list_items: &Vec<MakePlaceItemData>| {
         let list_items = list_items.clone();
         async move {
             let items = list_items
@@ -78,8 +78,8 @@ where
         }
     });
     let parsed_items = move || match parse_list(&list()) {
-        Ok(l) => view! { <span>{l.len()} " items ready to add"</span> }.into_view(),
-        Err(e) => view! { <span>{format!("{e:?}")}</span> }.into_view(),
+        Ok(l) => Either::Left(view! { <span>{l.len()} " items ready to add"</span> }),
+        Err(e) => Either::Right(view! { <span>{format!("{e:?}")}</span> }),
     };
     view! {
         <div class="flex-column">
@@ -108,11 +108,11 @@ where
                     add_items_to_list
                         .value()()
                         .map(|result| match result {
-                            Ok(_) => view! { <span>"Added items to list!"</span> },
+                            Ok(_) => Either::Left(view! { <span>"Added items to list!"</span> }),
                             Err(e) => {
-                                view! {
+                                Either::Right(view! {
                                     <span>"Error adding items to list :( " {format!("{e:?}")}</span>
-                                }
+                                })
                             }
                         })
                 }}
@@ -139,7 +139,7 @@ mod test {
         }))
     }
 
-    const TEST_DATA: &'static str = r#"     Furniture     
+    const TEST_DATA: &'static str = r#"     Furniture
     =====================
     Eastern Indoor Pond: 2
     Out on a Limb Machine: 1
@@ -257,8 +257,8 @@ mod test {
     Trick Bookshelf Partition: 2
     Paper Partition: 1
     Gaol Partition Door: 1
-    
-            Dyes        
+
+            Dyes
     =====================
     Blood Red: 5
     Dalamud Red: 14
@@ -268,7 +268,7 @@ mod test {
     Russet Brown: 20
     Rust Red: 72
     Wine Red: 76
-    
+
     Furniture (With Dye)
     =====================
     Alpine Cabinet (Rust Red): 1

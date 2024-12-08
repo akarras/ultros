@@ -19,22 +19,21 @@ use crate::error::AppError;
 use crate::global_state::home_world::use_home_world;
 use crate::Ad;
 use crate::Tooltip;
-use crate::A;
+use chrono::TimeDelta;
 use chrono::Utc;
 use field_iterator::field_iter;
 use field_iterator::FieldLabels;
 use field_iterator::SortableVec;
 use itertools::Itertools;
-use leptos::*;
+use leptos::either::Either;
+use leptos::prelude::*;
+use leptos::reactive::wrappers::write::SignalSetter;
 use leptos_icons::Icon;
-use leptos_router::create_query_signal;
-use leptos_router::use_navigate;
-use leptos_router::use_params_map;
-use leptos_router::use_query_map;
-use leptos_router::NavigateOptions;
-use leptos_router::Outlet;
+use leptos_router::components::Outlet;
+use leptos_router::components::A;
+use leptos_router::hooks::*;
 
-use leptos_router::ParamsMap;
+use leptos_router::params::ParamsMap;
 use log::info;
 use ultros_api_types::cheapest_listings::CheapestListingItem;
 use ultros_api_types::icon_size::IconSize;
@@ -76,21 +75,22 @@ impl Ord for ItemAmount {
     }
 }
 
-impl IntoView for ItemAmount {
-    fn into_view(self) -> View {
+#[component]
+fn ItemAmount(item_amount: Option<ItemAmount>) -> impl IntoView {
+    item_amount.map(|item_amount| {
         view! {
             <div class="flex flex-row gap-1">
-                <A class="flex flex-row gap-1" href=format!("/item/{}", self.item.key_id.0)>
-                    <ItemIcon item_id=self.item.key_id.0 icon_size=IconSize::Small/>
-                    <span>{self.item.name.as_str()}</span>
+                <A attr:class="flex flex-row gap-1"
+                    href=format!("/item/{}", item_amount.item.key_id.0)>
+                    <ItemIcon item_id=item_amount.item.key_id.0 icon_size=IconSize::Small/>
+                    <span>{item_amount.item.name.as_str()}</span>
                 </A>
-                <div>"x" {self.amount}</div>
-                <AddToList item_id=self.item.key_id.0/>
-                <Clipboard clipboard_text=self.item.name.as_str()/>
+                <div>"x" {item_amount.amount}</div>
+                <AddToList item_id=item_amount.item.key_id.0/>
+                <Clipboard clipboard_text=item_amount.item.name.as_str()/>
             </div>
         }
-        .into_view()
-    }
+    })
 }
 
 struct ShopItems {
@@ -150,7 +150,7 @@ fn shop_items(special_shop: &SpecialShop) -> impl Iterator<Item = ShopItems> + '
 
 #[component]
 fn FilterModal(filter_name: &'static str) -> impl IntoView {
-    let (is_open, set_open) = create_signal(false);
+    let (is_open, set_open) = signal(false);
     view! {
         <div on:click=move |_| set_open(true)>
             <div class="cursor-pointer text-white hover:text-violet-200">
@@ -159,10 +159,10 @@ fn FilterModal(filter_name: &'static str) -> impl IntoView {
             {move || {
                 is_open()
                     .then(|| {
-                        let (min, set_min) = create_query_signal::<
+                        let (min, set_min) = query_signal::<
                             i32,
                         >(format!("{filter_name}_min"));
-                        let (max, set_max) = create_query_signal::<
+                        let (max, set_max) = query_signal::<
                             i32,
                         >(format!("{filter_name}_max"));
                         view! {
@@ -214,12 +214,12 @@ pub fn ExchangeItem() -> impl IntoView {
     let query = use_query_map();
     let (home_world, _) = use_home_world();
     let (currency_quantity, set_currency_quantity) = create_query_signal::<i32>("currency_amount");
-    let sales = create_resource(home_world, move |world| async move {
+    let sales = Resource::new(home_world, move |world| async move {
         let world = world.ok_or(AppError::NoHomeWorld)?;
         get_recent_sales_for_world(&world.name).await
     });
 
-    let world_cheapest_listings = create_resource(home_world, move |world| async move {
+    let world_cheapest_listings = Resource::new(home_world, move |world| async move {
         let world = world.ok_or(AppError::NoHomeWorld)?;
         get_cheapest_listings(&world.name).await
     });
@@ -234,7 +234,7 @@ pub fn ExchangeItem() -> impl IntoView {
         )
     };
     let item = move || data.items.get(&item_id());
-    let currency_quantity = create_memo(move |_| {
+    let currency_quantity = Memo::new(move |_| {
         if let Some(quantity) = currency_quantity() {
             return quantity;
         }
@@ -263,13 +263,15 @@ pub fn ExchangeItem() -> impl IntoView {
     };
     let with_prices = move || {
         let current_quantity = currency_quantity.get();
-        let sales: HashMap<(bool, i32), SaleData> = sales()?
+        let sales: HashMap<(bool, i32), SaleData> = sales
+            .get()?
             .ok()?
             .sales
             .into_iter()
             .map(|sale| ((sale.hq, sale.item_id), sale))
             .collect();
-        let world_listings: HashMap<(bool, i32), CheapestListingItem> = world_cheapest_listings()?
+        let world_listings: HashMap<(bool, i32), CheapestListingItem> = world_cheapest_listings
+            .get()?
             .ok()?
             .cheapest_listings
             .into_iter()
@@ -299,7 +301,7 @@ pub fn ExchangeItem() -> impl IntoView {
                 let hours_between_sales = sales
                     .last()
                     .map(|last| {
-                        let time_between = (now - last.sale_date) / sales_len as i32;
+                        let time_between: TimeDelta = (now - last.sale_date) / sales_len as i32;
                         time_between.num_hours() as i16
                     })
                     .unwrap_or(i16::MAX);
@@ -346,7 +348,7 @@ pub fn ExchangeItem() -> impl IntoView {
         Some(rows)
     };
 
-    let (sorted_by, _set_sorted_by) = create_query_signal::<String>("sorted-by");
+    let (sorted_by, _set_sorted_by) = query_signal::<String>("sorted-by");
     let item_name = move || item().map(|i| i.name.as_str()).unwrap_or_default();
     view! {
         <div class="container mx-auto p-4">
@@ -359,7 +361,7 @@ pub fn ExchangeItem() -> impl IntoView {
             }/>
             <div class="bg-gray-800 rounded-lg p-6 shadow-lg mb-6">
                 <h2 class="text-2xl font-bold mb-4 text-violet-300">
-                    {move || item().map(|i| &i.name)} " - Currency Exchange"
+                    {move || item().map(|i| i.name.as_str())} " - Currency Exchange"
                 </h2>
                 <div class="flex items-center gap-4 mb-6">
                     <label class="text-gray-300">Amount to exchange:</label>
@@ -378,17 +380,19 @@ pub fn ExchangeItem() -> impl IntoView {
             <div class="overflow-x-auto">
                 {move || {
                     if home_world().is_none() {
-                        view! {
+                        let left = view! {
                             <div class="bg-red-900/50 p-4 rounded-lg text-white">
                                 "Home world is not set, go to the "
-                                <A href="/settings" class="text-violet-300 hover:text-violet-400 underline">
+                                <A href="/settings" attr:class="text-violet-300 hover:text-violet-400 underline"
+                                >
                                     "settings"
                                 </A>
                                 " page and set your home world to see prices on this page"
                             </div>
-                        }.into_view()
+                        };
+                        Either::Left(left)
                     } else {
-                        view! {
+                        let right = view! {
                             <Suspense fallback=Loading>
                                 {move || {
                                     let sort_label = sorted_by();
@@ -410,17 +414,16 @@ pub fn ExchangeItem() -> impl IntoView {
                                                 .map(|p| {
                                                     view! {
                                                         <tr class="bg-gray-800 hover:bg-gray-700/50 transition-colors">
-                                                            <td class="px-6 py-4">{p.shop_names}</td>
-                                                            <td class="px-6 py-4">{p.cost_item}</td>
-                                                            <td class="px-6 py-4">{p.receive_item}</td>
+                                                            <td class="px-6 py-4"><ShopNames shop_names=p.shop_names /></td>
+                                                            <td class="px-6 py-4"><ItemAmount item_amount=p.cost_item /></td>
+                                                            <td class="px-6 py-4"><ItemAmount item_amount=p.receive_item /></td>
                                                             <td class="px-6 py-4">{p.price_per_item}</td>
                                                             <td class="px-6 py-4">{p.number_received}</td>
                                                             <td class="px-6 py-4">{p.total_profit}</td>
                                                             <td class="px-6 py-4">{p.hours_between_sales}</td>
                                                         </tr>
                                                     }
-                                                })
-                                                .collect::<Vec<_>>()
+                                                }).collect_view()
                                         };
                                         let count = sorted_and_filtered_rows().len();
                                         let s = sales.get();
@@ -436,8 +439,8 @@ pub fn ExchangeItem() -> impl IntoView {
                                                                 <th class="px-6 py-3">
                                                                     <div class="flex flex-row items-center gap-2">
                                                                         <QueryButton
-                                                                            query_name="sorted-by"
-                                                                            value=l.to_string()
+                                                                            key="sorted-by"
+                                                                            value=*l
                                                                             class="hover:text-violet-300 transition-colors"
                                                                             active_classes="text-violet-400 underline"
                                                                             default="total_profit" == *l
@@ -446,7 +449,7 @@ pub fn ExchangeItem() -> impl IntoView {
                                                                         </QueryButton>
                                                                         {(i > 2).then(|| {
                                                                             view! {
-                                                                                <Tooltip tooltip_text=Oco::Owned(format!("Filter {}", l.replace("_", " ")))>
+                                                                                <Tooltip tooltip_text=format!("Filter {}", l.replace("_", " "))>
                                                                                     <FilterModal filter_name=l/>
                                                                                 </Tooltip>
                                                                             }
@@ -454,7 +457,7 @@ pub fn ExchangeItem() -> impl IntoView {
                                                                     </div>
                                                                 </th>
                                                             }
-                                                        }).collect::<Vec<_>>()}
+                                                        }).collect_view()}
                                                     </tr>
                                                 </thead>
                                                 <tbody class="divide-y divide-gray-700">
@@ -467,18 +470,19 @@ pub fn ExchangeItem() -> impl IntoView {
                                 {move || {
                                     sales.with(|sales| {
                                         if let Some(Err(e)) = sales {
-                                            view! {
+                                            Either::Left(view! {
                                                 <div class="bg-red-900/50 p-4 rounded-lg text-white mt-4">
                                                     "Error loading, try again in 30 seconds!"<br/>{e.to_string()}
                                                 </div>
-                                            }.into_view()
+                                            })
                                         } else {
-                                            ().into_view()
+                                            Either::Right(())
                                         }
                                     })
                                 }}
                             </Suspense>
-                        }
+                        };
+                        Either::Right(right)
                     }
                 }}
             </div>
@@ -511,14 +515,12 @@ struct ShopNames {
     shops: Vec<String>,
 }
 
-impl IntoView for ShopNames {
-    fn into_view(self) -> View {
-        view! {
-            <div class="flex flex-col">
-                {self.shops.into_iter().map(|shop| view! { <div>{shop}</div> }).collect::<Vec<_>>()}
-            </div>
-        }
-        .into_view()
+#[component]
+fn ShopNames(shop_names: ShopNames) -> impl IntoView {
+    view! {
+        <div class="flex flex-col">
+            {shop_names.shops.into_iter().map(|shop| view! { <div>{shop}</div> }).collect::<Vec<_>>()}
+        </div>
     }
 }
 
@@ -574,8 +576,8 @@ pub fn CurrencySelection() -> impl IntoView {
         .collect::<Vec<_>>();
 
     let body_currencies = currencies.clone();
-    let (search_text, set_search_text) = create_signal(String::new());
-    let filtered_currencies = create_memo(move |_| {
+    let (search_text, set_search_text) = signal(String::new());
+    let filtered_currencies = Memo::new(move |_| {
         let search = search_text().to_lowercase();
         body_currencies
             .iter()
@@ -609,7 +611,7 @@ pub fn CurrencySelection() -> impl IntoView {
                         <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                             <Icon
                                 icon=icondata::BiSearchAlt2Regular
-                                class="w-5 h-5 text-gray-400"
+                                attr:class="w-5 h-5 text-gray-400"
                             />
                         </div>
                         <input
@@ -633,7 +635,7 @@ pub fn CurrencySelection() -> impl IntoView {
                         view! {
                             <A
                                 href=item_id.to_string()
-                                class="p-4 rounded-lg
+                                attr:class="p-4 rounded-lg
                                            bg-gradient-to-br from-violet-950/20 to-violet-900/20
                                            border border-white/10 backdrop-blur-sm
                                            hover:from-violet-900/30 hover:to-violet-800/30
@@ -660,13 +662,13 @@ pub fn CurrencySelection() -> impl IntoView {
             // Empty State
             {move || {
                 if filtered_currencies().is_empty() {
-                    view! {
+                    Either::Left(view! {
                         <div class="text-center p-8 text-gray-400">
                             "No currencies found matching your search."
                         </div>
-                    }
+                    })
                 } else {
-                    view! { <div/> }
+                    Either::Right(view! { <div></div> })
                 }
             }}
         </div>

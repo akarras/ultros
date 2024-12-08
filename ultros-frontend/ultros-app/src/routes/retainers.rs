@@ -7,8 +7,11 @@ use crate::components::gil::*;
 use crate::components::skeleton::BoxSkeleton;
 use crate::components::{item_icon::*, loading::*, meta::*, world_name::*};
 use crate::global_state::LocalWorldData;
+use components::{Outlet, A};
+use hooks::use_params_map;
 use icondata as i;
-use leptos::*;
+use leptos::either::Either;
+use leptos::prelude::*;
 use leptos_icons::*;
 use leptos_router::*;
 use ultros_api_types::{world_helper::AnySelector, ActiveListing, FfxivCharacter, Retainer};
@@ -60,19 +63,18 @@ fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> imp
                     <td>{listing.hq.then_some("HQ")}</td>
                     <td class="flex flex-row">
                         {if let Some(item) = item {
-                            view! {
+                            Either::Left(view! {
                                 <A
-                                    class="flex flex-row"
+                                    attr:class="flex flex-row"
                                     href=format!("/item/{world_name}/{}", listing.item_id)
                                 >
                                     <ItemIcon icon_size=IconSize::Small item_id=listing.item_id/>
-                                    {&item.name}
+                                    {item.name.as_str()}
                                 </A>
                                 <Clipboard clipboard_text=item.name.as_str()/>
-                            }
-                                .into_view()
+                            })
                         } else {
-                            view! { "Item not found" }.into_view()
+                            Either::Right(view! { "Item not found" })
                         }}
 
                     </td>
@@ -135,19 +137,18 @@ fn RetainerTable(retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoV
                     <td>{listing.hq.then_some("HQ")}</td>
                     <td class="flex flex-row">
                         {if let Some(item) = item {
-                            view! {
+                            Either::Left(view! {
                                 <A
-                                    class="flex flex-row"
+                                    attr:class="flex flex-row"
                                     href=format!("/item/{}/{}", world_name, listing.item_id)
                                 >
                                     <ItemIcon icon_size=IconSize::Small item_id=listing.item_id/>
-                                    {&item.name}
+                                    {item.name.as_str()}
                                 </A>
                                 <Clipboard clipboard_text=item.name.as_str()/>
-                            }
-                                .into_view()
+                            })
                         } else {
-                            view! { "Item not found" }.into_view()
+                            Either::Right(view! { "Item not found" })
                         }}
 
                     </td>
@@ -195,9 +196,9 @@ pub(crate) fn CharacterRetainerList(
     view! {
         <div>
             {if let Some(character) = character {
-                view! { <span>{character.first_name} {character.last_name}</span> }.into_view()
+                Either::Left(view! { <span>{character.first_name} {character.last_name}</span> })
             } else {
-                listings.into_view()
+                Either::Right(listings)
             }}
 
         </div>
@@ -216,9 +217,9 @@ pub(crate) fn CharacterRetainerUndercutList(
     view! {
         <div>
             {if let Some(character) = character {
-                view! { <span>{character.first_name} {character.last_name}</span> }.into_view()
+                Either::Left(view! { <span>{character.first_name} {character.last_name}</span> }.into_view())
             } else {
-                listings.into_view()
+                Either::Right(listings)
             }}
 
         </div>
@@ -227,7 +228,7 @@ pub(crate) fn CharacterRetainerUndercutList(
 
 #[component]
 pub fn RetainerUndercuts() -> impl IntoView {
-    let retainers = create_resource(|| "undercuts", move |_| get_retainer_undercuts());
+    let retainers = Resource::new(|| "undercuts", move |_| get_retainer_undercuts());
     view! {
         <MetaTitle title="Retainer Undercuts"/>
         <span class="content-title">"Retainer Undercuts"</span>
@@ -256,13 +257,12 @@ pub fn RetainerUndercuts() -> impl IntoView {
                                         }
                                     })
                                     .collect();
-                                view! { <div>{retainers}</div> }.into_view()
+                                Either::Left(view! { <div>{retainers}</div> })
                             }
                             Err(e) => {
-                                view! {
+                                Either::Right(view! {
                                     <div>{"Unable to get retainers"} <br/> {e.to_string()}</div>
-                                }
-                                    .into_view()
+                                })
                             }
                         }
                     })
@@ -285,7 +285,7 @@ pub fn RetainersBasePath() -> impl IntoView {
 #[component]
 pub fn SingleRetainerListings() -> impl IntoView {
     let params = use_params_map();
-    let retainer_listings = create_blocking_resource(
+    let retainer_listings = Resource::new(
         move || params().get("id").and_then(|id| id.parse::<i32>().ok()),
         move |id| async move {
             if let Some(id) = id {
@@ -349,7 +349,7 @@ pub fn SingleRetainerListings() -> impl IntoView {
 
 #[component]
 pub fn RetainerListings() -> impl IntoView {
-    let retainers = create_resource(|| "undercuts", move |_| get_user_retainer_listings());
+    let retainers = Resource::new(|| "undercuts", move |_| get_user_retainer_listings());
     view! {
         <span class="content-title">"All Listings"</span>
         <MetaTitle title="All Listings"/>
@@ -374,7 +374,7 @@ pub fn RetainerListings() -> impl IntoView {
                                         view! { <CharacterRetainerList character retainers/> }
                                     })
                                     .collect();
-                                view! {
+                                Either::Left(view! {
                                     {retainers
                                         .is_empty()
                                         .then(|| {
@@ -382,14 +382,12 @@ pub fn RetainerListings() -> impl IntoView {
                                         })}
 
                                     <div>{retainers}</div>
-                                }
-                                    .into_view()
+                                })
                             }
                             Err(e) => {
-                                view! {
+                                Either::Right(view! {
                                     <div>{"Unable to get retainers"} <br/> {e.to_string()}</div>
-                                }
-                                    .into_view()
+                                })
                             }
                         }
                     })
@@ -404,14 +402,14 @@ pub fn Retainers() -> impl IntoView {
     // let retainers = create_resource(|| "retainers", move |_| get_retainer_listings(cx));
     view! {
         <div class="content-nav">
-            <A exact=true class="btn-secondary flex flex-row" href="/retainers/edit">
+            <A exact=true attr:class="btn-secondary flex flex-row" href="/retainers/edit">
                 <Icon width="1.75em" height="1.75em" icon=i::BsPencilFill/>
                 "Edit"
             </A>
-            <A exact=true class="btn-secondary" href="/retainers/listings">
+            <A exact=true attr:class="btn-secondary" href="/retainers/listings">
                 "All Listings"
             </A>
-            <A exact=true class="btn-secondary flex flex-row" href="/retainers/undercuts">
+            <A exact=true attr:class="btn-secondary flex flex-row" href="/retainers/undercuts">
                 <Icon width="1.75em" height="1.75em" icon=i::AiExclamationOutlined/>
                 "Undercuts"
             </A>

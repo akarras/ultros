@@ -13,40 +13,63 @@ members = [
     "proc-macros/dumb-csv-macros",
     "proc-macros/field-iterator-macros",
     "dumb-csv",
-    "field-iterator"]
+    "field-iterator",
+]
 resolver = "2"
 
 [workspace.dependencies]
-axum = {version = "0.7.4", features = ["ws", "json"]}
-axum-extra = {version = "0.9.2", features = ["cookie", "cookie-private", "typed-header"]}
-tokio = {version = "1", features = ["full"]}
+axum = { version = "0.7.4", features = ["ws", "json"] }
+axum-extra = { version = "0.9.2", features = [
+    "cookie",
+    "cookie-private",
+    "typed-header",
+] }
+tokio = { version = "1", features = ["full"] }
 tracing = "0.1.36"
 tracing-subscriber = "0.3"
 futures = "0.3.24"
 anyhow = "1.0.72"
-leptos = { version = "0.6.11", default-features = false, features = [
-  "serde",
-  "nightly"
+leptos = { version = "0.7.0", default-features = false, features = ["nightly"] }
+leptos_axum = { version = "0.7.0" }
+leptos_router = { version = "0.7.0", default-features = false, features = [
+    "nightly",
 ] }
-leptos_axum = { version = "0.6.11" }
-leptos_router = { version = "0.6.11", default-features = false, features = ["nightly"] }
-leptos_meta = { version = "0.6.11", default-features = false, features = ["nightly"] }
-leptos-use = { git = "https://github.com/Synphonyte/leptos-use.git", features = ["serde"] }
+leptos_meta = { version = "0.7.0", default-features = false, features = [] }
+leptos-use = { version = "0.14.0-rc5", features = [] }
 chrono = "0.4.23"
 itertools = "0.12.0"
 image = "0.25.1"
 plotters = "0.3"
-sea-orm = {version = "0.12", features = ["sqlx-postgres", "runtime-tokio-rustls"]}
-sea-orm-migration = {version = "0.12", features = ["sqlx-postgres", "runtime-tokio-rustls"]}
+sea-orm = { version = "0.12", features = [
+    "sqlx-postgres",
+    "runtime-tokio-rustls",
+] }
+sea-orm-migration = { version = "0.12", features = [
+    "sqlx-postgres",
+    "runtime-tokio-rustls",
+] }
 sea-query = "0.30.0"
 yoke = "0.7.1"
-xiv-gen = {path = "./xiv-gen", features = ["item", "item_ui_category", "item_search_category", "class_job", "recipe",
-  "class_job_category", "base_param", "item_sort_category", "gil_shop", "gil_shop_item", "e_npc_base", "e_npc_resident", "special_shop"]}
+xiv-gen = { path = "./xiv-gen", features = [
+    "item",
+    "item_ui_category",
+    "item_search_category",
+    "class_job",
+    "recipe",
+    "class_job_category",
+    "base_param",
+    "item_sort_category",
+    "gil_shop",
+    "gil_shop_item",
+    "e_npc_base",
+    "e_npc_resident",
+    "special_shop",
+] }
 icondata = "0.3"
-leptos_icons = {version = "0.3.0" }
+leptos_icons = { git = "https://github.com/ozpv/leptos-icons.git", branch = "leptos-0.7.0" }
 cfg-if = "1.0.0"
 git-const = "1.1.0"
-gloo-net = {version = "0.5.0", features = ["http", "websocket"]}
+gloo-net = { version = "0.5.0", features = ["http", "websocket"] }
 
 [patch.crates-io]
 #leptos = { path = "../leptos/leptos" }
@@ -62,7 +85,8 @@ opt-level = 3
 codegen-units = 1
 
 [profile.dev]
-opt-level = 1
+# opt-level = 1
+codegen-units = 256
 
 
 [profile.sane]

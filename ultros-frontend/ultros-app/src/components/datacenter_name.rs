@@ -1,4 +1,4 @@
-use leptos::*;
+use leptos::{either::Either, prelude::*};
 use ultros_api_types::world_helper::AnySelector;
 
 use crate::global_state::LocalWorldData;
@@ -18,11 +18,11 @@ pub(crate) fn DatacenterName(world_id: i32) -> impl IntoView {
                     _ => unreachable!("World cannot return non world"),
                 };
 
-                view! { <WorldName id=AnySelector::Datacenter(world.datacenter_id)/> }.into_view()
+                Either::Left(view! { <WorldName id=AnySelector::Datacenter(world.datacenter_id)/> })
             } else {
-                view! { "" }.into_view()
+                Either::Right(view! { "" })
             }
         }
-        _ => view! { "" }.into_view(),
+        _ => Either::Right(view! { "" }),
     }
 }

@@ -1,7 +1,8 @@
 use std::collections::VecDeque;
 
-use leptos::*;
-use leptos_router::A;
+use codee::string::JsonSerdeCodec;
+use leptos::prelude::*;
+use leptos_router::components::A;
 use leptos_use::storage::use_local_storage;
 use ultros_api_types::icon_size::IconSize;
 use xiv_gen::ItemId;
@@ -18,10 +19,8 @@ pub struct RecentItems {
 
 impl RecentItems {
     pub fn new() -> Self {
-        use leptos_use::utils::JsonCodec;
-
         let (read_signal, write_signal, _delete_fn) =
-            use_local_storage::<VecDeque<i32>, JsonCodec>("recently_viewed");
+            use_local_storage::<VecDeque<i32>, JsonSerdeCodec>("recently_viewed");
         Self {
             read_signal,
             write_signal,
@@ -53,7 +52,7 @@ impl RecentItems {
 pub fn RecentlyViewed() -> impl IntoView {
     let item_data = use_context::<RecentItems>().unwrap();
     let items = item_data.reader();
-    let local_items = create_local_resource(move || items(), move |items| async move { items });
+    let local_items = LocalResource::new(move || async move { items() });
     view! {
         <div class="p-6 rounded-xl bg-gradient-to-br from-violet-950/20 to-violet-900/20
                     border border-white/10 backdrop-blur-sm">
@@ -85,7 +84,7 @@ pub fn RecentlyViewed() -> impl IntoView {
                     <div class="space-y-2 max-h-[400px] overflow-y-auto overflow-x-hidden
                               scrollbar-thin scrollbar-thumb-violet-600/50 scrollbar-track-transparent">
                         {move || {
-                            let items = local_items();
+                            let items = local_items.get();
                             Some(
                                 items?
                                     .iter()

@@ -1,9 +1,9 @@
-use leptos::*;
+use leptos::prelude::*;
 pub use ultros_api_types::icon_size::IconSize;
 use xiv_gen::ItemId;
 
 #[component]
-pub fn ItemIcon(#[prop(into)] item_id: MaybeSignal<i32>, icon_size: IconSize) -> impl IntoView {
+pub fn ItemIcon(#[prop(into)] item_id: Signal<i32>, icon_size: IconSize) -> impl IntoView {
     let valid_search_category = move || {
         xiv_gen_db::data()
             .items
@@ -11,7 +11,7 @@ pub fn ItemIcon(#[prop(into)] item_id: MaybeSignal<i32>, icon_size: IconSize) ->
             .map(|item| item.item_search_category.0 > 0)
             .unwrap_or_default()
     };
-    let (failed, set_failed) = create_signal(0);
+    let (failed, set_failed) = signal(0);
     let failed_item = move || failed() == item_id();
     let data = xiv_gen_db::data();
     let item_name = move || {

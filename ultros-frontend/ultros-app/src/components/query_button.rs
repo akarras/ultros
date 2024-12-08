@@ -1,50 +1,57 @@
-use leptos::*;
-use leptos_router::*;
+use leptos::prelude::*;
+use leptos_router::hooks::use_location;
+use leptos_router::location::Location;
 
 /// A button that sets the query property to the given value
 #[component]
-pub fn QueryButton(
-    #[prop(into)] query_name: TextProp,
+pub fn QueryButton<T>(
+    /// query key that we filter against.
+    #[prop(into)]
+    key: Oco<'static, str>,
+    /// query value that is set when we check this box
+    #[prop(into)]
+    value: Signal<String>,
     /// default state classes
     #[prop(into)]
-    class: TextProp,
+    class: Signal<String>,
     /// classes that will replace the main classes when this is active
     #[prop(into)]
-    active_classes: TextProp,
-    #[prop(into)] value: TextProp,
+    active_classes: Oco<'static, str>,
     #[prop(optional)] default: bool,
     /// List of other query names that should be removed when preparing this query
     #[prop(optional)]
     remove_queries: &'static [&'static str],
-    children: Box<dyn Fn() -> Fragment>,
-) -> impl IntoView {
+    children: TypedChildren<T>,
+) -> impl IntoView
+where
+    T: IntoView,
+{
     let Location {
         pathname, query, ..
     } = use_location();
-    let query_1 = query_name.clone();
+    let key_1 = key.clone();
     let value_1 = value.clone();
-    let is_active = move || {
-        let query_name = query_1.get();
-        let value = value_1.get();
+    let is_active = Signal::derive(move || {
         query.with(|q| {
-            let query_val = q.get(&query_name).as_ref().map(|s| s.as_str());
-            query_val.unwrap_or_default() == &value || (default == true && query_val.is_none())
+            let name = key_1.as_str();
+            let query_val = q.get_str(name);
+            value_1.with(|val| val.as_str() == query_val.unwrap_or_default())
+                || (default == true && query_val.is_none())
         })
-    };
+    });
     view! {
         <a
-            class=move || if is_active() { active_classes.get() } else { class.get() }.to_string()
+            class=move || if is_active() { active_classes.to_string() } else { class.get() }
             href=move || {
                 let mut query = query();
                 for remove in remove_queries {
                     query.remove(remove);
                 }
-                let _ = query.insert(query_name.get().to_string(), value.get().to_string());
+                let _ = query.insert(key.to_string(), key.to_string());
                 format!("{}{}", pathname(), query.to_query_string())
             }
         >
-
-            {children}
+            {children.into_inner()().into_view()}
         </a>
     }
 }

@@ -1,4 +1,4 @@
-use leptos::*;
+use leptos::{prelude::*, reactive::wrappers::write::SignalSetter};
 
 #[component]
 pub fn Toggle(
@@ -33,15 +33,9 @@ pub fn Toggle(
                            transition-all duration-300 ease-in-out transform bg-gradient-to-br
                            group-hover:from-amber-100 group-hover:to-amber-200
                            shadow-md"
-                           class=("translate-x-0", move || !checked())
-                           class=("from-gray-200", move || !checked())
-                           class=("to-gray-300", move || !checked())
-                           class=("translate-x-6", move || checked())
-                           class=("to-amber-300", move || checked())
-                           class=("from-amber-200", move || checked())
-
-                               >
-
+                           class=(["translate-x-0", "from-gray-200", "to-gray-300"], move || !checked())
+                           class=(["translate-x-6", "to-amber-300", "from-amber-200"], move || checked())
+                >
                     <div class="absolute inset-[15%] rounded-full
                               bg-gradient-to-br from-white/80 to-transparent">
                     </div>

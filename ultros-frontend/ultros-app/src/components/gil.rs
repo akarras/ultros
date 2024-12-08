@@ -1,8 +1,8 @@
-use leptos::*;
+use leptos::prelude::*;
 use thousands::Separable;
 
 #[component]
-pub fn Gil(#[prop(into)] amount: MaybeSignal<i32>) -> impl IntoView {
+pub fn Gil(#[prop(into)] amount: Signal<i32>) -> impl IntoView {
     view! {
         <div class="flex flex-row">
             <div class="h-7 w-7 -m-1 aspect-square p-1">
@@ -14,9 +14,9 @@ pub fn Gil(#[prop(into)] amount: MaybeSignal<i32>) -> impl IntoView {
 }
 
 #[component]
-pub fn GenericGil<T>(#[prop(into)] amount: MaybeSignal<T>) -> impl IntoView
+pub fn GenericGil<T>(#[prop(into)] amount: Signal<T>) -> impl IntoView
 where
-    T: Separable + 'static + Copy,
+    T: Separable + 'static + Copy + Send + Sync,
 {
     view! {
         <div class="flex flex-row">

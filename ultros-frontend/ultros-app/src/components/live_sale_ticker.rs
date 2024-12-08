@@ -3,9 +3,10 @@ use super::item_icon::*;
 use super::relative_time::RelativeToNow;
 use chrono::NaiveDateTime;
 use icondata as i;
-use leptos::*;
+use leptos::prelude::*;
+use leptos::task::spawn_local;
 use leptos_icons::Icon;
-use leptos_router::*;
+use leptos_router::components::A;
 use std::collections::VecDeque;
 use xiv_gen::ItemId;
 
@@ -27,23 +28,25 @@ fn Item(item_id: i32) -> impl IntoView {
     let item = xiv_gen_db::data().items.get(&ItemId(item_id))?;
     Some(view! {
         <div class="flex items-center">
-            <span class="text-gray-200">{&item.name}</span>
+            <span class="text-gray-200">{item.name.as_str()}</span>
         </div>
     })
 }
 
 #[component]
 pub fn LiveSaleTicker() -> impl IntoView {
-    let (done_loading, set_done_loading) = create_signal(false);
-    let sales = create_rw_signal::<VecDeque<SaleView>>(VecDeque::new());
+    let (done_loading, set_done_loading) = signal(false);
+    let sales = RwSignal::<VecDeque<SaleView>>::new(VecDeque::new());
     let (homeworld, _) = use_home_world();
-    let retrigger = create_rw_signal(false);
-    create_effect(move |_| {
+    let retrigger = RwSignal::new(false);
+    Effect::new(move |_| {
         #[cfg(not(feature = "ssr"))]
         let hw_1 = homeworld();
         #[cfg(not(feature = "ssr"))]
         let hw_2 = homeworld();
-        let _ = retrigger.get();
+        if !retrigger.get() {
+            return;
+        }
         spawn_local(async move {
             #[cfg(not(feature = "ssr"))]
             if let Some(sale) =
@@ -81,7 +84,7 @@ pub fn LiveSaleTicker() -> impl IntoView {
             }
             set_done_loading(true);
         });
-        let retrigger = retrigger.set_untracked(false);
+        let retrigger = retrigger.set(false);
     });
 
     view! {
@@ -92,7 +95,7 @@ pub fn LiveSaleTicker() -> impl IntoView {
                 <h3 class="text-xl font-bold text-amber-200">"No Homeworld Set"</h3>
                 <div class="text-gray-300">
                     "No homeworld is currently set. Go to "
-                    <A href="/settings" class="text-amber-200 hover:text-amber-100 transition-colors">
+                    <A href="/settings" attr:class="text-amber-200 hover:text-amber-100 transition-colors">
                         "Settings"
                     </A>
                     " to set your homeworld."

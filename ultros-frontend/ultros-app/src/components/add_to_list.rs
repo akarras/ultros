@@ -1,6 +1,11 @@
 use icondata as i;
 use icondata::RiPlayListAddMediaLine;
-use leptos::*;
+use leptos::component;
+use leptos::either::Either;
+use leptos::either::EitherOf3;
+use leptos::prelude::*;
+use leptos::reactive::wrappers::write::SignalSetter;
+use leptos::task::spawn_local;
 use leptos_icons::*;
 use ultros_api_types::icon_size::IconSize;
 use ultros_api_types::list::ListItem;
@@ -13,10 +18,10 @@ use crate::components::tooltip::Tooltip;
 use crate::components::{item_icon::ItemIcon, loading::Loading, modal::Modal};
 
 #[component]
-pub fn AddToList(#[prop(into)] item_id: MaybeSignal<i32>) -> impl IntoView {
-    let (modal_visible, set_modal_visible) = create_signal(false);
+pub fn AddToList(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
+    let (modal_visible, set_modal_visible) = signal(false);
     view! {
-        <Tooltip tooltip_text=Oco::Borrowed("Add to list")>
+        <Tooltip tooltip_text="Add to list">
             <button
                 class="cursor-pointer text-white hover:text-violet-300"
                 on:click=move |_| {
@@ -26,12 +31,9 @@ pub fn AddToList(#[prop(into)] item_id: MaybeSignal<i32>) -> impl IntoView {
 
                 <Icon icon=RiPlayListAddMediaLine/>
                 <div class="sr-only">"Add To List"</div>
-                {move || {
-                    modal_visible()
-                        .then(|| {
-                            view! { <AddToListModal item_id set_visible=set_modal_visible/> }
-                        })
-                }}
+                <Show when=modal_visible>
+                    <AddToListModal item_id set_visible=set_modal_visible/>
+                </Show>
 
             </button>
         </Tooltip>
@@ -40,14 +42,14 @@ pub fn AddToList(#[prop(into)] item_id: MaybeSignal<i32>) -> impl IntoView {
 
 #[component]
 fn AddToListModal(
-    item_id: MaybeSignal<i32>,
+    item_id: Signal<i32>,
     #[prop(into)] set_visible: SignalSetter<bool>,
 ) -> impl IntoView {
     let items = &xiv_gen_db::data().items;
     let item = move || items.get(&ItemId(item_id()));
-    let lists = create_local_resource(move || {}, move |_| get_lists());
-    let (hq, set_hq) = create_signal(false);
-    let (quantity, set_quantity) = create_signal(1);
+    let lists = Resource::new(move || {}, move |_| get_lists());
+    let (hq, set_hq) = signal(false);
+    let (quantity, set_quantity) = signal(1);
 
     view! {
         <Modal set_visible>
@@ -85,16 +87,15 @@ fn AddToListModal(
                         {move || {
                             let Ok(lists) = lists.get()? else {
                                 return Some(
-                                    view! { <div>"Unable to get lists- are you logged in?"</div> }
-                                        .into_view(),
+                                    Either::Right(view! { <div>"Unable to get lists- are you logged in?"</div> }),
                                 );
                             };
-                            Some(
+                            Some(Either::Left(
                                 lists
                                     .into_iter()
                                     .map(|list| {
-                                        let (saved, set_saved) = create_signal(false);
-                                        let (running, set_running) = create_signal(false);
+                                        let (saved, set_saved) = signal(false);
+                                        let (running, set_running) = signal(false);
                                         view! {
                                             <div class="flex flex-row text-xl justify-between">
                                                 <div>{list.name}</div>
@@ -119,33 +120,30 @@ fn AddToListModal(
                                                         });
                                                     }
                                                 >
-
                                                     {move || {
                                                         if saved() {
-                                                            view! { <div class="mx-1">"Saved"</div> }.into_view()
+                                                            EitherOf3::A(view! { <div class="mx-1">"Saved"</div> })
                                                         } else if running() {
-                                                            view! { <div class="mx-1">"Saving"</div> }.into_view()
+                                                            EitherOf3::B(view! { <div class="mx-1">"Saving"</div> })
                                                         } else {
-                                                            view! {
+                                                            EitherOf3::C(view! {
                                                                 <Icon
-                                                                    class="text-white"
+                                                                    attr:class="text-white"
                                                                     icon=i::BiPlusRegular
                                                                     width="1.2em"
                                                                     height="1.2em"
                                                                 />
                                                                 <div class="mx-1">"Add"</div>
-                                                            }
-                                                                .into_view()
+                                                            })
                                                         }
                                                     }}
-
                                                 </div>
                                             </div>
                                         }
                                     })
                                     .collect::<Vec<_>>()
                                     .into_view(),
-                            )
+                            ))
                         }}
 
                     </Suspense>

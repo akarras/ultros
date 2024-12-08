@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+
 use crate::api::get_listings;
 use crate::components::{
     ad::Ad, add_to_list::AddToList, clipboard::*, gil::*, item_icon::*, listings_table::*, meta::*,
@@ -6,15 +8,22 @@ use crate::components::{
 };
 use crate::global_state::home_world::{get_price_zone, use_home_world};
 use crate::global_state::LocalWorldData;
-use leptos::*;
+use leptos::either::{Either, EitherOf3};
+use leptos::prelude::*;
 use leptos_icons::Icon;
 use leptos_meta::{Link, Meta};
-use leptos_router::*;
-use ultros_api_types::world_helper::AnyResult;
+use leptos_router::components::A;
+use leptos_router::hooks::use_params_map;
+use leptos_router::location::Url;
+use ultros_api_types::world_helper::{AnyResult, OwnedResult};
 use xiv_gen::ItemId;
 
 #[component]
-fn WorldButton<'a>(current_world: Memo<String>, world: AnyResult<'a>, item_id: i32) -> impl IntoView {
+fn WorldButton(
+    current_world: Memo<String>,
+    #[prop(into)] world: OwnedResult,
+    item_id: i32,
+) -> impl IntoView {
     let (home_world, _) = use_home_world();
     let world_name = world.get_name().to_string();
     let world_2 = world_name.clone();
@@ -27,14 +36,14 @@ fn WorldButton<'a>(current_world: Memo<String>, world: AnyResult<'a>, item_id: i
         }
     });
     let bg_color = match world {
-        AnyResult::Region(_) => "bg-violet-950/80 hover:bg-violet-800/80",
-        AnyResult::Datacenter(_) => "bg-violet-900/80 hover:bg-violet-800/80",
-        AnyResult::World(_) => "bg-violet-800/80 hover:bg-violet-700/80",
+        OwnedResult::Region(_) => "bg-violet-950/80 hover:bg-violet-800/80",
+        OwnedResult::Datacenter(_) => "bg-violet-900/80 hover:bg-violet-800/80",
+        OwnedResult::World(_) => "bg-violet-800/80 hover:bg-violet-700/80",
     };
     let is_selected = move || current_world.with(|w| w == world_3.as_str());
     view! {
         <A
-            class=move || [
+            attr:class=move || [
                 "rounded-md text-sm px-4 py-2 text-white/90 mx-1 flex items-center gap-2 transition-all duration-200",
                 bg_color,
                 "hover:scale-105 hover:shadow-lg shadow-purple-900/20",
@@ -44,12 +53,20 @@ fn WorldButton<'a>(current_world: Memo<String>, world: AnyResult<'a>, item_id: i
                     ""
                 }
             ].join(" ")
-            href=format!("/item/{}/{item_id}", escape(&world_name))
+            href=format!("/item/{}/{item_id}", Url::escape(&world_name))
         >
-            {move || is_home_world.get().then(|| view! { <Icon icon=icondata::AiHomeFilled class="text-purple-300"/><div class="w-1"></div> })}
+            {move || is_home_world.get().then(|| view! { <Icon icon=icondata::AiHomeFilled attr:class="text-purple-300"/><div class="w-1"></div> })}
             {world_name}
         </A>
     }
+}
+
+#[component]
+fn HomeWorldButton(current_world: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
+    let (home_world, _) = use_home_world();
+    home_world.get().map(move |world| {
+        view! { <WorldButton current_world world=AnyResult::World(&world) item_id=item_id() /> }
+    })
 }
 
 #[component]
@@ -57,11 +74,6 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
     let current_world = world_name;
     let world_data = use_context::<LocalWorldData>().unwrap().0.unwrap();
     let (home_world, _) = use_home_world();
-    let home_world_button = Signal::derive(move || {
-        home_world
-            .get()
-            .map(|world| view! { <WorldButton current_world world=AnyResult::World(&world) item_id=item_id()/> })
-    });
 
     view! {
         <div class="sticky top-0 z-10 bg-gradient-to-r from-slate-950 to-purple-950/90 backdrop-blur-sm border-b border-purple-800/30">
@@ -69,13 +81,13 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                 <div class="flex flex-wrap gap-2 py-3">
                     {move || {
                         let world = world_name();
-                        let world_name = escape(&world);
+                        let world_name = Url::escape(&world);
                         if let Some(world) = world_data.lookup_world_by_name(&world_name) {
-                            match world {
+                            Either::Left(match world {
                                 AnyResult::World(world) => {
                                     let region = world_data.get_region(AnyResult::World(world));
                                     let datacenters = world_data.get_datacenters(&AnyResult::World(world));
-                                    let views: Vec<_> = [AnyResult::Region(region)]
+                                    let views = [AnyResult::Region(region)]
                                         .into_iter()
                                         .chain(datacenters.iter().map(|dc| AnyResult::Datacenter(dc)))
                                         .chain(
@@ -83,71 +95,71 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                                                 .iter()
                                                 .flat_map(|dc| dc.worlds.iter().map(AnyResult::World)),
                                         )
-                                        .map(move |world| view! { <WorldButton current_world world item_id=item_id()/> })
-                                        .collect();
-                                    views.into_view()
+                                        .map(move |world| view! { <WorldButton current_world world item_id=item_id() /> })
+                                        .collect_view();
+                                    EitherOf3::A(views)
                                 }
                                 AnyResult::Datacenter(dc) => {
                                     let region = world_data.get_region(AnyResult::Datacenter(dc));
-                                    let views: Vec<_> = [AnyResult::Region(region)]
+                                    let views = [AnyResult::Region(region)]
                                         .into_iter()
-                                        .map(|w| view! { <WorldButton current_world world=w item_id=item_id()/> }.into_view())
-                                        .chain([view! { <div class="w-2"></div> }.into_view()])
+                                        .map(|w| Either::Left(view! { <WorldButton current_world world=w item_id=item_id() /> }))
+                                        .chain([Either::Right(view! { <div class="w-2"></div> })])
                                         .chain(
                                             region
                                                 .datacenters
                                                 .iter()
-                                                .map(|dc| view! { <WorldButton current_world world=AnyResult::Datacenter(dc) item_id=item_id()/> }),
+                                                .map(|dc| Either::Left(view! { <WorldButton current_world world=AnyResult::Datacenter(dc) item_id=item_id() /> })),
                                         )
-                                        .chain([view! { <div class="w-2"></div> }.into_view()])
+                                        .chain([Either::Right(view! { <div class="w-2"></div> })])
                                         .chain(
                                             dc.worlds
                                                 .iter()
-                                                .map(|w| view! { <WorldButton current_world world=AnyResult::World(w) item_id=item_id()/> }),
+                                                .map(|w| Either::Left(view! { <WorldButton current_world world=AnyResult::World(w) item_id=item_id() /> })),
                                         )
-                                        .collect();
+                                        .collect_view();
                                     let should_show_homeworld = !dc
                                         .worlds
                                         .iter()
                                         .any(|w| home_world.with(|world| world.as_ref().map(|world| world.name == w.name).unwrap_or_default()));
-                                    view! {
+                                    EitherOf3::B(view! {
                                         {views}
                                         <div class="w-2"></div>
-                                        {should_show_homeworld.then(|| home_world_button)}
-                                    }.into_view()
+                                        {should_show_homeworld.then(|| view! { <HomeWorldButton current_world item_id /> })}
+                                    })
                                 }
                                 AnyResult::Region(region) => {
                                     let regions = world_data.get_inner_data().regions.iter().map(|r| {
-                                        view! { <WorldButton current_world world=AnyResult::Region(r) item_id=item_id()/> }
+                                        Either::Left(view! { <WorldButton current_world world=AnyResult::Region(r) item_id=item_id() /> })
                                     });
                                     let datacenters = world_data.get_datacenters(&AnyResult::Region(region));
-                                    let views: Vec<_> = regions
-                                        .chain([view! { <div class="w-2"></div> }.into_view()])
+                                    let views = regions
+                                        .chain([Either::Right(view! { <div class="w-2"></div> })])
                                         .chain(
                                             datacenters
                                                 .iter()
-                                                .map(|dc| view! { <WorldButton current_world world=AnyResult::Datacenter(dc) item_id=item_id()/> }),
+                                                .map(|dc| Either::Left(view! { <WorldButton current_world world=AnyResult::Datacenter(dc) item_id=item_id() /> })),
                                         )
-                                        .collect();
-                                    view! {
+                                        .collect_view();
+                                    EitherOf3::C(view! {
                                         {views}
                                         <div class="w-2"></div>
-                                        {home_world_button}
-                                    }.into_view()
+                                        <HomeWorldButton current_world item_id />
+                                    })
                                 }
-                            }
+                            })
                         } else {
                             let regions = world_data.get_inner_data().regions.iter().map(|r| {
-                                view! { <WorldButton current_world world=AnyResult::Region(r) item_id=item_id()/> }
+                                view! { <WorldButton current_world world=AnyResult::Region(r) item_id=item_id() /> }
                             });
                             let region = world_data.lookup_world_by_name("North-America").unwrap();
                             let datacenters = world_data.get_datacenters(&region);
-                            let views: Vec<_> = regions
+                            let views = regions
                                 .chain(datacenters.iter().map(|dc| {
-                                    view! { <WorldButton current_world world=AnyResult::Datacenter(dc) item_id=item_id()/> }
+                                    view! { <WorldButton current_world world=AnyResult::Datacenter(dc) item_id=item_id() /> }
                                 }))
-                                .collect();
-                            views.into_view()
+                                .collect_view();
+                            Either::Right(views)
                         }
                     }}
                 </div>
@@ -158,9 +170,9 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
 
 #[component]
 fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
-    let listing_resource = create_resource(
+    let listing_resource = Resource::new(
         move || (item_id(), world()),
-        |(item_id, world)| async move { get_listings(item_id, &world).await },
+        |(item_id, world)| async move { get_listings(item_id, world.as_str()).await },
     );
 
     view! {
@@ -178,14 +190,14 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
                     }
                 >
                     {move || {
-                        let sales = create_memo(move |_| {
+                        let sales = Memo::new(move |_| {
                             listing_resource
                                 .with(|l| l.as_ref().and_then(|l| l.as_ref().map(|l| l.sales.clone()).ok()))
                                 .unwrap_or_default()
                         });
                         view! {
                             <div class="bg-black/40 rounded-xl p-6 backdrop-blur-sm border border-purple-800/20">
-                                <PriceHistoryChart sales=MaybeSignal::from(sales)/>
+                                <PriceHistoryChart sales=sales/>
                             </div>
                         }
                     }}
@@ -196,7 +208,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
                         fallback=move || view! { <BoxSkeleton/> }
                     >
                         {move || {
-                            let hq_listings = create_memo(move |_| {
+                            let hq_listings = Memo::new(move |_| {
                                 listing_resource
                                     .with(|l| {
                                         l.as_ref()
@@ -232,7 +244,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
                         fallback=move || view! { <BoxSkeleton/> }
                     >
                         {move || {
-                            let lq_listings = create_memo(move |_| {
+                            let lq_listings = Memo::new(move |_| {
                                 listing_resource
                                     .with(|l| {
                                         l.as_ref()
@@ -270,7 +282,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
                     fallback=move || view! { <BoxSkeleton/> }
                 >
                     {move || {
-                        let sales = create_memo(move |_| {
+                        let sales = Memo::new(move |_| {
                             listing_resource
                                 .with(|l| l.as_ref().and_then(|l| l.as_ref().map(|l| l.sales.clone()).ok()))
                                 .unwrap_or_default()
@@ -304,7 +316,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
 #[component]
 pub fn ItemView() -> impl IntoView {
     let params = use_params_map();
-    let item_id = create_memo(move |_| {
+    let item_id = Memo::new(move |_| {
         params()
             .get("id")
             .and_then(|id| id.parse::<i32>().ok())
@@ -322,9 +334,9 @@ pub fn ItemView() -> impl IntoView {
     let search_categories = &data.item_search_categorys;
     let (price_zone, _) = get_price_zone();
 
-    let world = create_memo(move |_| {
+    let world = Memo::new(move |_| {
         params.with(|p| {
-            p.get("world").cloned().unwrap_or_else(move || {
+            p.get("world").clone().unwrap_or_else(move || {
                 price_zone
                     .get()
                     .map(|zone| zone.get_name().to_string())
@@ -361,7 +373,7 @@ pub fn ItemView() -> impl IntoView {
             .and_then(|item| search_categories.get(&item.item_search_category))
     };
 
-    let description = create_memo(move |_| {
+    let description = Memo::new(move |_| {
         format!(
             "Current market board listings for {} within {}. Find the lowest prices in your region.",
             item_name(),
@@ -378,8 +390,7 @@ pub fn ItemView() -> impl IntoView {
             property="thumbnail"
             content=move || format!("https://ultros.app/static/itemicon/{}?size=Large", item_id())
         />
-        {move || view! {<Link rel="canonical" href=format!("https://ultros.app/item/{}", item_id())/> }}
-
+        <Link rel="canonical" prop:href=move || format!("https://ultros.app/item/{}", item_id())/>
         <div class="min-h-screen bg-gradient-to-br from-slate-950 to-purple-950/30">
             <div class="container mx-auto px-4 py-6">
                 <div class="flex flex-col md:flex-row items-start gap-4 p-4 backdrop-blur-sm bg-black/20 rounded-lg">

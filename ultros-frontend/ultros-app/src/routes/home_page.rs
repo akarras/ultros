@@ -1,5 +1,5 @@
 use icondata as i;
-use leptos::*;
+use leptos::prelude::*;
 use leptos_icons::*;
 use leptos_meta::*;
 
@@ -19,7 +19,7 @@ fn FeatureCard(children: ChildrenFn) -> impl IntoView {
         hover:from-violet-800/30 hover:to-amber-400/20
         hover:transform hover:scale-[1.02] hover:shadow-lg hover:shadow-violet-500/10
         w-full aspect-[4/3] justify-center gap-3">
-            {children}
+            {children().into_view()}
         </div>
     }
 }
@@ -57,42 +57,42 @@ pub fn HomePage() -> impl IntoView {
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                         <a href="/items?menu-open=true">
                             <FeatureCard>
-                                <Icon class="text-amber-300" width="3.5em" height="3.5em" icon=i::FaScrewdriverWrenchSolid/>
+                                <Icon attr:class="text-amber-300" width="3.5em" height="3.5em" icon=i::FaScrewdriverWrenchSolid/>
                                 <h3 class="font-bold text-xl text-amber-200">"Item Explorer"</h3>
                                 <span class="text-gray-300">"Explore all the items on the market board"</span>
                             </FeatureCard>
                         </a>
                         <a href="/analyzer">
                             <FeatureCard>
-                                <Icon class="text-amber-300" width="3.5em" height="3.5em" icon=i::FaMoneyBillTrendUpSolid/>
+                                <Icon attr:class="text-amber-300" width="3.5em" height="3.5em" icon=i::FaMoneyBillTrendUpSolid/>
                                 <h3 class="font-bold text-xl text-amber-200">"Analyzer"</h3>
                                 <span class="text-gray-300">"Earn gil by buying low, selling high"</span>
                             </FeatureCard>
                         </a>
                         <a href="/retainers">
                             <FeatureCard>
-                                <Icon class="text-amber-300" width="3.5em" height="3.5em" icon=i::BiGroupSolid/>
+                                <Icon attr:class="text-amber-300" width="3.5em" height="3.5em" icon=i::BiGroupSolid/>
                                 <h3 class="font-bold text-xl text-amber-200">"Retainers"</h3>
                                 <span class="text-gray-300">"Track your retainers online"</span>
                             </FeatureCard>
                         </a>
                         <a href="/list">
                             <FeatureCard>
-                                <Icon class="text-amber-300" width="3.5em" height="3.5em" icon=i::AiOrderedListOutlined/>
+                                <Icon attr:class="text-amber-300" width="3.5em" height="3.5em" icon=i::AiOrderedListOutlined/>
                                 <h3 class="font-bold text-xl text-amber-200">"Lists"</h3>
                                 <span class="text-gray-300">"Create lists & buy the cheapest items"</span>
                             </FeatureCard>
                         </a>
                         <a rel="external" href="/invitebot">
                             <FeatureCard>
-                                <Icon class="text-amber-300" width="3.5em" height="3.5em" icon=i::BsDiscord/>
+                                <Icon attr:class="text-amber-300" width="3.5em" height="3.5em" icon=i::BsDiscord/>
                                 <h3 class="font-bold text-xl text-amber-200">"Discord Bot"</h3>
                                 <span class="text-gray-300">"Get alerts when your retainer is undercut"</span>
                             </FeatureCard>
                         </a>
                         <a href="/currency-exchange">
                             <FeatureCard>
-                                <Icon class="text-amber-300" width="3.5em" height="3.5em" icon=i::RiExchangeFinanceLine/>
+                                <Icon attr:class="text-amber-300" width="3.5em" height="3.5em" icon=i::RiExchangeFinanceLine/>
                                 <h3 class="font-bold text-xl text-amber-200">"Currency Exchange"</h3>
                                 <span class="text-gray-300">"Spend tomestones, get gil"</span>
                             </FeatureCard>

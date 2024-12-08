@@ -1,6 +1,4 @@
-use std::borrow::Cow;
-
-use leptos::*;
+use leptos::{either::Either, prelude::*};
 use xiv_gen::{ClassJobId, ItemSearchCategoryId};
 
 #[component]
@@ -14,9 +12,9 @@ pub fn ItemSearchCategoryIcon(id: ItemSearchCategoryId) -> impl IntoView {
         let class_job = category.class_job;
         if let Some(class_job) = class_jobs.get(&class_job) {
             // view! {<i class=format!("icon xiv-ItemCategory_{}", class_job.abbreviation)></i>}
-            view! { <ClassJobIcon id=class_job.key_id/> }.into_view()
+            Either::Left(view! { <ClassJobIcon id=class_job.key_id/> })
         } else {
-            let value: Cow<'static, str> = match id.0 {
+            let value: Oco<'static, str> = match id.0 {
                 // singular armory items
                 30..=38 | 40..=41 => {
                     format!("icon xiv-Armoury_{}", category.name.replace(' ', "_")).into()
@@ -68,7 +66,7 @@ pub fn ItemSearchCategoryIcon(id: ItemSearchCategoryId) -> impl IntoView {
                 .into(),
             };
 
-            view! { <i class=Some(value)></i> }.into_view()
+            Either::Right(view! { <i class=value></i> })
         }
     })
 }

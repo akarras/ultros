@@ -1,4 +1,4 @@
-use leptos::*;
+use leptos::prelude::*;
 
 use super::{datacenter_name::*, gil::*, world_name::*};
 use ultros_api_types::{world_helper::AnySelector, ActiveListing};

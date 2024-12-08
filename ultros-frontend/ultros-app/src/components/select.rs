@@ -1,6 +1,10 @@
+use std::marker::PhantomData;
+
 use leptos::{
+    either::Either,
     html::{Div, Input},
-    *,
+    prelude::*,
+    reactive::wrappers::write::SignalSetter,
 };
 use leptos_use::use_element_hover;
 use web_sys::wasm_bindgen::JsCast;
@@ -11,7 +15,7 @@ use crate::components::search_result::MatchFormatter;
 use super::search_box::fuzzy_search;
 
 #[component]
-pub fn Select<T, EF, N, L>(
+pub fn Select<T, EF, L, ViewOut>(
     items: Signal<Vec<T>>,
     as_label: L,
     choice: Signal<Option<T>>,
@@ -19,19 +23,21 @@ pub fn Select<T, EF, N, L>(
     children: EF,
     #[prop(optional)] class: Option<&'static str>,
     #[prop(optional)] dropdown_class: Option<&'static str>,
+    // _view_out: PhantomData<ViewOut>,
 ) -> impl IntoView
 where
-    T: Clone + PartialEq + 'static,
-    EF: Fn(T, View) -> N + 'static + Copy,
-    N: IntoView + 'static,
-    L: Fn(&T) -> String + 'static + Copy,
+    T: Clone + PartialEq + 'static + Send + Sync,
+    EF: Fn(T, AnyView) -> View<ViewOut> + 'static + Copy + Send + Sync,
+    // N: 'static,
+    ViewOut: RenderHtml + 'static,
+    L: Fn(&T) -> String + 'static + Copy + Send + Sync,
 {
-    let (current_input, set_current_input) = create_signal("".to_string());
-    let (has_focus, set_focused) = create_signal(false);
-    let dropdown = create_node_ref::<Div>();
-    let input = create_node_ref::<Input>();
+    let (current_input, set_current_input) = signal("".to_string());
+    let (has_focus, set_focused) = signal(false);
+    let dropdown = NodeRef::<Div>::new();
+    let input = NodeRef::<Input>::new();
     let hovered = use_element_hover(dropdown);
-    let labels = create_memo(move |_| {
+    let labels = Memo::new(move |_| {
         items.with(|i| {
             i.iter()
                 .map(|i| as_label(i))
@@ -39,7 +45,7 @@ where
                 .collect::<Vec<_>>()
         })
     });
-    let search_results = create_memo(move |_| {
+    let search_results = Memo::new(move |_| {
         current_input.with(|input| {
             let mut results = labels.with(|s| {
                 s.iter()
@@ -55,7 +61,7 @@ where
                 .collect::<Vec<_>>()
         })
     });
-    let final_result = create_memo(move |_| {
+    let final_result = Memo::new(move |_| {
         let search_results = search_results();
         if search_results.is_empty() {
             labels()
@@ -75,7 +81,7 @@ where
                     {
                         element.blur().unwrap();
                     }
-                    let input = input().unwrap();
+                    let input = input.get().unwrap();
                     input.focus().unwrap();
                     input.blur().unwrap();
                 }
@@ -95,6 +101,12 @@ where
                                 shadow-lg shadow-violet-950/50 \
                                 backdrop-blur-md z-[100]";
 
+    let current_choice_view = move || {
+        choice()
+            .map(|c| children(c.clone(), as_label(&c).into_any()))
+            .into_any()
+    };
+
     view! {
         <div class="relative">
             <input
@@ -113,12 +125,12 @@ where
                 class="absolute top-1 left-1 select-none cursor flex items-center"
                 class:invisible=move || has_focus() || !current_input().is_empty()
                 on:click=move |_| {
-                    if let Some(input) = input() {
+                    if let Some(input) = input.get() {
                         let _ = input.focus();
                     }
                 }
             >
-                {move || choice().map(|c| { children(c.clone(), as_label(&c).into_view()) })}
+                {current_choice_view()}
             </div>
             <div
                 node_ref=dropdown
@@ -169,17 +181,17 @@ where
                                         move || {
                                             if let Some(m) = fuzzy_search(&current_input(), &data.1) {
                                                 let target = data.1.clone();
-                                                view! {
+                                                Either::Left(view! {
                                                     <MatchFormatter m=m target=target/>
-                                                }.into_view()
+                                                })
                                             } else {
-                                                view! {
-                                                    <div>{&data.1}</div>
-                                                }.into_view()
+                                                Either::Right(view! {
+                                                    <div>{data.1.to_string()}</div>
+                                                })
                                             }
                                         }
                                     }
-                                        .into_view(),
+                                        .into_any(),
                                 ))}
                         </div>
                     </button>

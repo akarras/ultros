@@ -1,9 +1,10 @@
 use cookie::SameSite;
 use cookie::{Cookie, CookieJar};
+use leptos::reactive::wrappers::write::{IntoSignalSetter, SignalSetter};
 use std::{borrow::Cow, str::FromStr};
 use time::{Duration, OffsetDateTime};
 
-use leptos::*;
+use leptos::prelude::*;
 use log::error;
 
 /// returns the current OffsetDateTime
@@ -27,8 +28,8 @@ pub struct Cookies {
 
 impl Cookies {
     pub fn new() -> Self {
-        let cookies = create_rw_signal(get_cookies().unwrap_or_default());
-        create_effect(move |_| {
+        let cookies = RwSignal::new(get_cookies().unwrap_or_default());
+        Effect::new(move |_| {
             let cookie_jar = cookies();
             set_cookies(cookie_jar);
         });
@@ -44,7 +45,7 @@ impl Cookies {
         SignalSetter<Option<Cookie<'static>>>,
     )
     where
-        C: Copy + Clone + AsRef<str> + 'static,
+        C: Copy + Clone + AsRef<str> + Send + Sync + 'static,
     {
         // let cookie = &cookie_name;
         create_slice_non_copy(
@@ -67,13 +68,13 @@ impl Cookies {
         cookie_name: C,
     ) -> (Memo<Option<T>>, SignalSetter<Option<T>>)
     where
-        C: Copy + Clone + AsRef<str> + 'static,
+        C: Copy + Clone + AsRef<str> + Send + Sync + 'static,
         Cow<'static, str>: From<C>,
-        T: FromStr + ToString + PartialEq,
+        T: FromStr + ToString + PartialEq + Send + Sync,
         <T as FromStr>::Err: std::fmt::Display,
     {
         let (cookie, set_cookie) = self.get_cookie(cookie_name);
-        let typed_cookie = create_memo(move |_| {
+        let typed_cookie = Memo::new(move |_| {
             let cookie = cookie();
             cookie.and_then(|c| {
                 T::from_str(c.value())
@@ -104,13 +105,14 @@ impl Cookies {
 
 pub(crate) fn create_slice_non_copy<T, O>(
     signal: RwSignal<T>,
-    getter: impl Fn(&T) -> O + Clone + 'static,
-    setter: impl Fn(&mut T, O) + Clone + 'static,
+    getter: impl Fn(&T) -> O + Clone + Send + Sync + 'static,
+    setter: impl Fn(&mut T, O) + Clone + Send + Sync + 'static,
 ) -> (Signal<O>, SignalSetter<O>)
 where
-    O: PartialEq,
+    O: PartialEq + Send + Sync,
+    T: Send + Sync + 'static,
 {
-    let getter = create_memo(move |_| signal.with(getter.clone()));
+    let getter = Memo::new(move |_| signal.with(getter.clone()));
     let setter = move |value| signal.update(|x| setter(x, value));
     (getter.into(), setter.into_signal_setter())
 }

@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use futures::{future::join, Future};
 use gloo_net::http::Request;
-use leptos::*;
+use leptos::prelude::*;
 use leptos_meta::provide_meta_context;
 use log::error;
 use rexie::{ObjectStore, Rexie, Store, Transaction, TransactionMode};

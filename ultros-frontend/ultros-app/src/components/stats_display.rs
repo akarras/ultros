@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use super::tooltip::*;
-use leptos::*;
+use leptos::prelude::*;
 use xiv_gen::{BaseParam, Item, ItemId};
 
 struct ParamData {
@@ -83,8 +83,8 @@ fn get_param_data_for_item(item: ItemId) -> Option<Vec<ParamData>> {
 fn ParamView(data: ParamData) -> impl IntoView {
     view! {
         <div>
-            <Tooltip tooltip_text=Oco::from(data.base_param.description.as_str())>
-                <span class="w-48">{&data.base_param.name}</span>
+            <Tooltip tooltip_text=data.base_param.description.as_str()>
+                <span class="w-48">{data.base_param.name.as_str()}</span>
                 "  "
                 {data.normal_value}
                 {data

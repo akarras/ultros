@@ -1,18 +1,18 @@
 use super::gil::*;
 use super::relative_time::*;
 use crate::components::{datacenter_name::*, world_name::*};
-use leptos::*;
-use leptos_router::A;
+use leptos::prelude::*;
+use leptos_router::components::A;
 use ultros_api_types::{retainer::Retainer, world_helper::AnySelector, ActiveListing};
 
 #[component]
 pub fn ListingsTable(
     #[prop(into)] listings: Signal<Vec<(ActiveListing, Retainer)>>,
 ) -> impl IntoView {
-    let (show_more, set_show_more) = create_signal(false);
+    let (show_more, set_show_more) = signal(false);
     let listing_count = move || listings.with(|l| l.len());
     let show_click = move |_| set_show_more(true);
-    let listings = create_memo(move |_| {
+    let listings = Memo::new(move |_| {
         let mut listings = listings();
         listings.sort_by_key(|(listing, _)| listing.price_per_unit);
         if show_more() {
