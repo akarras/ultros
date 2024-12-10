@@ -23,6 +23,7 @@ use futures::stream::TryStreamExt;
 use futures::{stream, StreamExt};
 use hyper::header;
 use itertools::Itertools;
+use leptos::config::LeptosOptions;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
@@ -201,6 +202,7 @@ pub(crate) struct WebState {
     pub(crate) world_helper: Arc<WorldHelper>,
     pub(crate) analyzer_service: AnalyzerService,
     pub(crate) character_verification: CharacterVerifierService,
+    pub(crate) leptos_options: LeptosOptions,
 }
 
 impl FromRef<WebState> for UltrosDb {
@@ -260,6 +262,12 @@ impl FromRef<WebState> for EventSenders {
 impl FromRef<WebState> for CharacterVerifierService {
     fn from_ref(input: &WebState) -> Self {
         input.character_verification.clone()
+    }
+}
+
+impl FromRef<WebState> for LeptosOptions {
+    fn from_ref(input: &WebState) -> Self {
+        input.leptos_options.clone()
     }
 }
 

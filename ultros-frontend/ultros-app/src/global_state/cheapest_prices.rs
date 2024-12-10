@@ -1,7 +1,4 @@
-use std::sync::Arc;
-
 use leptos::prelude::*;
-use send_wrapper::SendWrapper;
 use ultros_api_types::cheapest_listings::CheapestListingsMap;
 
 use crate::api::get_cheapest_listings;

@@ -1,7 +1,7 @@
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
-        ad::Ad, add_to_list::AddToList, clipboard::*, gil::*, item_icon::*, meta::*,
+        add_to_list::AddToList, clipboard::*, gil::*, item_icon::*, meta::*,
         query_button::QueryButton, skeleton::BoxSkeleton, toggle::Toggle, tooltip::*,
         virtual_scroller::*, world_picker::*,
     },
@@ -16,11 +16,9 @@ use leptos::{either::Either, prelude::*, reactive::wrappers::write::SignalSetter
 use leptos_icons::*;
 use leptos_meta::Title;
 use leptos_router::*;
-use log::info;
 use std::{
     cmp::Reverse,
     collections::{hash_map::Entry, HashMap},
-    fmt::Display,
     str::FromStr,
     sync::Arc,
 };

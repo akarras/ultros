@@ -17,7 +17,7 @@ use sitemap_rs::{sitemap_index_error::SitemapIndexError, url_set_error::UrlSetEr
 use thiserror::Error;
 use tokio::{sync::broadcast::error::SendError, time::error::Elapsed};
 use tracing::{info, log::error};
-use ultros_api_types::result::JsonError;
+use ultros_api_types::result::JsonErrorWrapper;
 use ultros_db::{
     common_type_conversions::ApiConversionError, world_cache::WorldCacheError, SeaDbErr,
 };
@@ -106,7 +106,7 @@ impl IntoResponse for ApiError {
             cookies = cookies.remove(Cookie::from("discord_auth"));
             return (
                 cookies,
-                Json(JsonError::ApiError(
+                Json(JsonErrorWrapper::ApiError(
                     ultros_api_types::result::ApiError::NotAuthenticated,
                 )),
             )
@@ -115,14 +115,14 @@ impl IntoResponse for ApiError {
         if let ApiError::NoAuthCookie = self {
             return (
                 self.as_status_code(),
-                Json(JsonError::ApiError(
+                Json(JsonErrorWrapper::ApiError(
                     ultros_api_types::result::ApiError::NotAuthenticated,
                 )),
             )
                 .into_response();
         }
         error!("error {}", self);
-        (self.as_status_code(), Json(JsonError::from(self))).into_response()
+        (self.as_status_code(), Json(JsonErrorWrapper::from(self))).into_response()
     }
 }
 

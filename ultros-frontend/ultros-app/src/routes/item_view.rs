@@ -1,8 +1,6 @@
-use std::marker::PhantomData;
-
 use crate::api::get_listings;
 use crate::components::{
-    ad::Ad, add_to_list::AddToList, clipboard::*, gil::*, item_icon::*, listings_table::*, meta::*,
+    ad::Ad, add_to_list::AddToList, clipboard::*, item_icon::*, listings_table::*, meta::*,
     price_history_chart::*, recently_viewed::RecentItems, related_items::*, sale_history_table::*,
     skeleton::BoxSkeleton, stats_display::*, ui_text::*,
 };
@@ -324,7 +322,7 @@ pub fn ItemView() -> impl IntoView {
     });
 
     let recently_viewed = use_context::<RecentItems>().unwrap();
-    create_effect(move |_| {
+    Effect::new(move |_| {
         recently_viewed.add_item(item_id());
     });
 
@@ -399,7 +397,7 @@ pub fn ItemView() -> impl IntoView {
                         <div class="flex flex-col">
                             <h1 class="text-3xl font-bold text-white/90 flex items-center gap-2">
                                 {item_name}
-                                <Clipboard clipboard_text=MaybeSignal::derive(move || item_name().to_string())/>
+                                <Clipboard clipboard_text=Signal::derive(move || item_name().to_string())/>
                             </h1>
                             <div class="text-purple-200/80 text-lg">
                                 {move || {

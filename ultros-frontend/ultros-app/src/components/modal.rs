@@ -1,5 +1,3 @@
-use std::rc::Rc;
-
 use icondata as i;
 use leptos::{portal::Portal, prelude::*, reactive::wrappers::write::SignalSetter};
 // use leptos_animation::*;

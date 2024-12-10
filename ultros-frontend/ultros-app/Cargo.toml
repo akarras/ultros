@@ -15,7 +15,7 @@ leptos-use = { workspace = true }
 xiv-gen-db = { path = "../../xiv-gen-db" }
 xiv-gen.workspace = true
 sublime_fuzzy = "0.7"
-reqwest = { version = "0.11.0", optional = true, default-features = false, features = [
+reqwest = { version = "0.12.9", default-features = false, features = [
     "json",
     "rustls-tls",
     "brotli",
@@ -70,6 +70,7 @@ field-iterator = { path = "../../field-iterator" }
 leptos_hotkeys = { git = "https://github.com/phillipbaird/leptos-hotkeys.git", branch = "leptos_0.7" }
 codee = "0.2"
 send_wrapper = "0.2"
+flume = { version = "0.11", features = ["async"] }
 
 [features]
 default = [
@@ -88,7 +89,6 @@ ssr = [
     "leptos/ssr",
     "leptos_meta/ssr",
     "leptos_router/ssr",
-    "reqwest",
     "leptos_axum",
     "web-sys",
     "ultros-db",

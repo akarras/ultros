@@ -1,3 +1,4 @@
+#![feature(async_closure)]
 pub(crate) mod api;
 pub(crate) mod components;
 pub(crate) mod error;

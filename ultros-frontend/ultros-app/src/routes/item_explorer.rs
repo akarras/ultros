@@ -9,7 +9,7 @@ use crate::components::{
 };
 use crate::CheapestPrices;
 use components::Outlet;
-use hooks::{create_query_signal, query_signal, use_location, use_params_map};
+use hooks::{query_signal, use_location, use_params_map};
 use icondata as i;
 use itertools::Itertools;
 use leptos::either::Either;

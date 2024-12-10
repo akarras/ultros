@@ -12,8 +12,6 @@ use xiv_gen::ItemId;
 pub fn History() -> impl IntoView {
     let item_data = use_context::<RecentItems>().unwrap();
     let items = item_data.reader();
-    let (empty_search, set_empty_search) = signal("".to_string());
-
     view! {
         <div class="main-content p-6">
             <MetaTitle title="History - Ultros"/>

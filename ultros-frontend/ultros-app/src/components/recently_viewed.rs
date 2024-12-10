@@ -7,9 +7,7 @@ use leptos_use::storage::use_local_storage;
 use ultros_api_types::icon_size::IconSize;
 use xiv_gen::ItemId;
 
-use crate::components::{
-    item_icon::ItemIcon, search_result::ItemSearchResult, skeleton::BoxSkeleton,
-};
+use crate::components::{item_icon::ItemIcon, skeleton::BoxSkeleton};
 
 #[derive(Clone, Copy)]
 pub struct RecentItems {

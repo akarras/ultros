@@ -16,7 +16,7 @@ use ultros_api_types::{
     ActiveListing, CurrentlyShownItem, FfxivCharacter, FfxivCharacterVerification,
 };
 
-use crate::error::{AppError, AppResult, SystemError};
+use crate::error::{AppError, AppResult};
 
 pub(crate) async fn get_listings(item_id: i32, world: &str) -> AppResult<CurrentlyShownItem> {
     if item_id == 0 {
@@ -293,28 +293,32 @@ where
 #[instrument(skip())]
 pub(crate) async fn delete_api<T>(path: &str) -> AppResult<T>
 where
-    T: Serializable,
+    T: DeserializeOwned,
 {
-    let abort_controller = web_sys::AbortController::new().ok();
-    let abort_signal = abort_controller.as_ref().map(|a| a.signal());
-    let json: String = gloo_net::http::Request::delete(path)
-        .abort_signal(abort_signal.as_ref())
-        .send()
-        .await
-        .map_err(|e| {
-            error!("{}", e);
-            e
-        })?
-        .text()
-        .await?;
-
-    // abort in-flight requests if the Scope is disposed
-    // i.e., if we've navigated away from this page
-    on_cleanup(move || {
-        if let Some(abort_controller) = abort_controller {
-            abort_controller.abort()
-        }
+    use leptos::task::spawn_local;
+    let (tx, rx) = flume::unbounded();
+    let path = path.to_string();
+    spawn_local(async move {
+        let inner_impl = async move || -> AppResult<String> {
+            let json: String = reqwest::Client::new()
+                .delete(path)
+                .send()
+                .await
+                .map_err(|e| {
+                    error!("{}", e);
+                    e
+                })?
+                .text()
+                .await?;
+            Ok(json)
+        };
+        let result = inner_impl().await;
+        tx.send(result).unwrap();
     });
+    let json = rx
+        .into_recv_async()
+        .await
+        .expect("The channel to just work")?;
     deserialize(&json)
 }
 
@@ -370,28 +374,30 @@ where
 #[instrument(skip())]
 pub(crate) async fn fetch_api<T>(path: &str) -> AppResult<T>
 where
-    T: Serializable,
+    T: DeserializeOwned,
 {
-    let abort_controller = web_sys::AbortController::new().ok();
-    let abort_signal = abort_controller.as_ref().map(|a| a.signal());
-    let json: String = gloo_net::http::Request::get(path)
-        .abort_signal(abort_signal.as_ref())
-        .send()
-        .await
-        .map_err(|e| {
-            error!("{}", e);
-            e
-        })?
-        .text()
-        .await?;
-
-    // abort in-flight requests if the Scope is disposed
-    // i.e., if we've navigated away from this page
-    on_cleanup(move || {
-        if let Some(abort_controller) = abort_controller {
-            abort_controller.abort()
-        }
+    use leptos::task::spawn_local;
+    let (tx, rx) = flume::unbounded();
+    let path = path.to_string();
+    spawn_local(async move {
+        let inner_impl = async move || -> AppResult<String> {
+            let json: String = reqwest::get(path)
+                .await
+                .map_err(|e| {
+                    error!("{}", e);
+                    e
+                })?
+                .text()
+                .await?;
+            Ok(json)
+        };
+        let result = inner_impl().await;
+        tx.send(result).unwrap();
     });
+    let json = rx
+        .into_recv_async()
+        .await
+        .expect("The channel to just work")?;
     deserialize(&json)
 }
 
@@ -446,31 +452,37 @@ where
 #[instrument(skip(json))]
 pub(crate) async fn post_api<Y, T>(path: &str, json: Y) -> AppResult<T>
 where
-    Y: serde::Serialize,
+    Y: serde::Serialize + 'static,
     T: serde::de::DeserializeOwned,
 {
-    let abort_controller = web_sys::AbortController::new().ok();
-    let abort_signal = abort_controller.as_ref().map(|a| a.signal());
+    use leptos::task::spawn_local;
 
-    let json: String = gloo_net::http::Request::post(path)
-        .abort_signal(abort_signal.as_ref())
-        .json(&json)?
-        .send()
-        .await
-        .map_err(|e| {
-            error!("{e}");
-            e
-        })?
-        .text()
-        .await?;
+    let path = path.to_string();
 
-    // abort in-flight requests if the Scope is disposed
-    // i.e., if we've navigated away from this page
-    on_cleanup(move || {
-        if let Some(abort_controller) = abort_controller {
-            abort_controller.abort()
-        }
+    let (tx, rx) = flume::unbounded::<AppResult<String>>();
+    let path = path.to_string();
+    spawn_local(async move {
+        let inner_impl = async move || -> AppResult<String> {
+            let json: String = reqwest::Client::new()
+                .post(path)
+                .json(&json)
+                .send()
+                .await
+                .map_err(|e| {
+                    error!("{e}");
+                    e
+                })?
+                .text()
+                .await?;
+            Ok(json)
+        };
+        let result = inner_impl().await;
+        tx.send(result).unwrap();
     });
+    let json = rx
+        .into_recv_async()
+        .await
+        .expect("The channel to just work")?;
     deserialize(&json)
 }
 

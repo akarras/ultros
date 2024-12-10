@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 use leptos::{
     either::Either,
     html::{Div, Input},

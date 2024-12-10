@@ -19,6 +19,7 @@ use crate::item_update_service::UpdateService;
 #[cfg(feature = "profiling")]
 use crate::profiling::start_profiling_server;
 use crate::web::WebState;
+use ::leptos::config::{get_configuration, LeptosOptions};
 use analyzer_service::AnalyzerService;
 use anyhow::Result;
 use axum_extra::extract::cookie::Key;
@@ -224,7 +225,9 @@ async fn main() -> Result<()> {
         db: db.clone(),
         world_cache: world_cache.clone(),
     };
-
+    let conf = get_configuration(Some("Cargo.toml")).unwrap();
+    let leptos_options = conf.leptos_options;
+    // let addr = leptos_options.site_addr;
     let web_state = WebState {
         analyzer_service,
         db,
@@ -246,6 +249,7 @@ async fn main() -> Result<()> {
         event_senders: senders,
         world_cache,
         world_helper,
+        leptos_options,
     };
     web::start_web(web_state).await;
     Ok(())

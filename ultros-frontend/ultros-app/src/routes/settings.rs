@@ -347,7 +347,7 @@ pub fn Profile() -> impl IntoView {
                                 <div class="space-y-3">
                                     {verifications
                                         .into_iter()
-                                        .map(|verification| {
+                                        .map(|_verification| {
                                             view! {
                                                 <div class="p-4 rounded-lg bg-violet-950/30 border border-white/5 space-y-2">
                                                     // ... rest of the verification view ...

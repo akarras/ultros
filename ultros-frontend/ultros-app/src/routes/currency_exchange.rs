@@ -14,7 +14,6 @@ use crate::components::meta::MetaTitle;
 use crate::components::modal::Modal;
 use crate::components::number_input::ParseableInputBox;
 use crate::components::query_button::QueryButton;
-use crate::components::select::Select;
 use crate::error::AppError;
 use crate::global_state::home_world::use_home_world;
 use crate::Ad;
@@ -213,7 +212,7 @@ pub fn ExchangeItem() -> impl IntoView {
     let params = use_params_map();
     let query = use_query_map();
     let (home_world, _) = use_home_world();
-    let (currency_quantity, set_currency_quantity) = create_query_signal::<i32>("currency_amount");
+    let (currency_quantity, set_currency_quantity) = query_signal::<i32>("currency_amount");
     let sales = Resource::new(home_world, move |world| async move {
         let world = world.ok_or(AppError::NoHomeWorld)?;
         get_recent_sales_for_world(&world.name).await

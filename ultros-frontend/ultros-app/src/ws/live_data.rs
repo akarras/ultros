@@ -5,7 +5,7 @@ use crate::error::AppError;
 use futures::{SinkExt, StreamExt};
 use gloo_net::websocket::{futures::WebSocket, Message};
 use itertools::Itertools;
-use leptos::{RwSignal, SignalUpdate};
+use leptos::prelude::{RwSignal, Update};
 use log::error;
 use ultros_api_types::{
     websocket::{ClientMessage, EventType, FilterPredicate, ServerClient, SocketMessageType},

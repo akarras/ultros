@@ -1,8 +1,8 @@
-use std::{error, fmt::Display, rc::Rc, sync::Arc};
+use std::{error, fmt::Display, sync::Arc};
 
 use serde::{de::Visitor, Deserialize, Serialize};
 use thiserror::Error;
-use ultros_api_types::result::{ApiError, JsonErrorWrapper};
+use ultros_api_types::result::ApiError;
 
 #[derive(Debug, Error, Clone, Deserialize, Serialize, PartialEq)]
 pub enum AppError {
@@ -31,10 +31,7 @@ pub enum AppError {
 #[derive(Clone, Debug)]
 pub enum SystemError {
     Message(String),
-    #[cfg(feature = "ssr")]
     ReqwestError(Arc<reqwest::Error>),
-    #[cfg(not(feature = "ssr"))]
-    GlooError(Rc<gloo_net::Error>),
     Anyhow(Arc<anyhow::Error>),
 }
 
@@ -59,30 +56,14 @@ impl From<anyhow::Error> for AppError {
     }
 }
 
-#[cfg(feature = "ssr")]
 impl From<reqwest::Error> for SystemError {
     fn from(value: reqwest::Error) -> Self {
         Self::ReqwestError(Arc::new(value))
     }
 }
 
-#[cfg(feature = "ssr")]
 impl From<reqwest::Error> for AppError {
     fn from(value: reqwest::Error) -> Self {
-        Self::SystemError(value.into())
-    }
-}
-
-#[cfg(not(feature = "ssr"))]
-impl From<gloo_net::Error> for SystemError {
-    fn from(value: gloo_net::Error) -> Self {
-        Self::GlooError(Rc::new(value))
-    }
-}
-
-#[cfg(not(feature = "ssr"))]
-impl From<gloo_net::Error> for AppError {
-    fn from(value: gloo_net::Error) -> Self {
         Self::SystemError(value.into())
     }
 }
@@ -91,10 +72,7 @@ impl Display for SystemError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SystemError::Message(message) => write!(f, "{}", message),
-            #[cfg(feature = "ssr")]
             SystemError::ReqwestError(reqwest) => write!(f, "{}", reqwest),
-            #[cfg(not(feature = "ssr"))]
-            SystemError::GlooError(g) => write!(f, "{}", g),
             SystemError::Anyhow(anyhow) => write!(f, "{}", anyhow),
         }
     }
@@ -104,10 +82,7 @@ impl error::Error for SystemError {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match self {
             SystemError::Message(_) => None,
-            #[cfg(feature = "ssr")]
             SystemError::ReqwestError(reqwest) => Some(reqwest.as_ref()),
-            #[cfg(not(feature = "ssr"))]
-            SystemError::GlooError(gloo) => Some(gloo.as_ref()),
             SystemError::Anyhow(anyhow) => Some(anyhow.root_cause()),
         }
     }
