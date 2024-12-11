@@ -1,5 +1,3 @@
-use std::future::IntoFuture;
-
 use leptos::prelude::*;
 use xiv_gen::ItemId;
 
