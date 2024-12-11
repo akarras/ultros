@@ -1,4 +1,5 @@
 #![feature(async_closure)]
+#![recursion_limit = "256"]
 pub(crate) mod api;
 pub(crate) mod components;
 pub(crate) mod error;
@@ -6,20 +7,15 @@ pub(crate) mod global_state;
 pub(crate) mod routes;
 pub(crate) mod ws;
 
-use std::sync::Arc;
-
 use crate::api::get_login;
 use crate::components::recently_viewed::RecentItems;
-use crate::error::AppResult;
 use crate::global_state::{
-    cheapest_prices::CheapestPrices,
-    clipboard_text::GlobalLastCopiedText,
-    cookies::Cookies,
-    home_world::{use_home_world, GuessedRegion},
+    cheapest_prices::CheapestPrices, clipboard_text::GlobalLastCopiedText, cookies::Cookies,
+    home_world::use_home_world,
 };
+pub use crate::global_state::{home_world::GuessedRegion, LocalWorldData};
 use crate::{
     components::{ad::Ad, profile_display::*, search_box::*, tooltip::*},
-    global_state::LocalWorldData,
     routes::{
         analyzer::*,
         currency_exchange::{CurrencyExchange, CurrencySelection, ExchangeItem},
@@ -48,13 +44,83 @@ use leptos_router::components::{ParentRoute, Route, Router, Routes, A};
 use leptos_router::path;
 use ultros_api_types::world_helper::WorldHelper;
 
+pub fn shell(options: LeptosOptions) -> impl IntoView {
+    let git_hash = git_short_hash!();
+    view! {
+        <!DOCTYPE html>
+        <html lang="en">
+            <head>
+                <meta charset="utf-8"/>
+                <AutoReload options=options.clone() />
+                <HydrationScripts options/>
+                <MetaTags/>
+                <link id="xiv-icons" rel="stylesheet" href="/static/classjob-icons/src/xivicon.css"/>
+                <meta name="twitter:card" content="summary_large_image"/>
+                <meta name="viewport" content="initial-scale=1.0,width=device-width"/>
+                <meta name="theme-color" content="#0f0710"/>
+                <meta property="og:type" content="website"/>
+                <meta property="og:locale" content="en-US"/>
+                <meta property="og:site_name" content="Ultros"/>
+            </head>
+            <body>
+                // Background gradient
+                <div class="fixed inset-0 -z-10 bg-black">
+                    <div class="absolute inset-0 bg-gradient-to-br from-violet-950/90 via-black/95 to-violet-950/90"/>
+                    <div class="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(139,92,246,0.05),transparent_50%)]"/>
+                </div>
+                <App/>
+                    <footer class="bg-black/40 backdrop-blur-sm border-t border-white/5">
+                        <div class="container mx-auto px-6 py-8 space-y-6">
+                        <div class="flex flex-wrap justify-center gap-x-6 gap-y-2">
+                            <a href="https://discord.gg/pgdq9nGUP2" class="text-gray-400 hover:text-amber-200 transition-colors">
+                                "Discord"
+                            </a>
+                            <a href="https://github.com/akarras/ultros" class="text-gray-400 hover:text-amber-200 transition-colors">
+                                "GitHub"
+                            </a>
+                            <a href="https://leekspin.com" class="text-gray-400 hover:text-amber-200 transition-colors">
+                                "Patreon"
+                            </a>
+                            <a href="https://book.ultros.app" class="text-gray-400 hover:text-amber-200 transition-colors">
+                                "Book"
+                            </a>
+                        </div>
+
+                        <div class="text-center space-y-2 text-gray-500 text-sm">
+                            <p>
+                                "Ultros is still under constant development. If you have suggestions or feedback,
+                                    feel free to leave suggestions in the discord."
+                            </p>
+                            <p>
+                                "Made using "
+                                <a href="https://universalis.app/" class="text-amber-200 hover:text-amber-100 transition-colors">
+                                    "universalis"
+                                </a>
+                                "' API. Please contribute to Universalis to help this site stay up to date."
+                            </p>
+                            <p>
+                                "Version: "
+                                <a href=format!("https://github.com/akarras/ultros/commit/{git_hash}")
+                                    class="text-amber-200 hover:text-amber-100 transition-colors">
+                                    {git_hash}
+                                </a>
+                            </p>
+                            <p class="text-xs">
+                                "FINAL FANTASY XIV © 2010 - 2020 SQUARE ENIX CO., LTD. All Rights Reserved."
+                            </p>
+                        </div>
+                    </div>
+                </footer>
+            </body>
+        </html>
+    }
+}
+
 #[component]
-pub fn App(worlds: AppResult<Arc<WorldHelper>>, region: String) -> impl IntoView {
+pub fn App() -> impl IntoView {
     provide_meta_context();
     let cookies = Cookies::new();
-    provide_context(GuessedRegion(region));
     provide_context(cookies);
-    provide_context(LocalWorldData(worlds));
     provide_context(CheapestPrices::new());
     provide_context(GlobalLastCopiedText(RwSignal::new(None)));
     provide_context(RecentItems::new());
@@ -66,23 +132,9 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>, region: String) -> impl IntoView
     let git_hash = git_short_hash!();
     let sheet_url = ["/pkg/", git_hash, "/ultros.css"].concat();
     view! {
-        <Stylesheet id="xiv-icons" href="/static/classjob-icons/src/xivicon.css"/>
+
         <Link id="leptos" rel="stylesheet" href=sheet_url/>
         <Title text="Ultros"/>
-        // <Meta name="twitter:card" content="summary_large_image"/>
-        <Meta name="viewport" content="initial-scale=1.0,width=device-width"/>
-        <Meta name="theme-color" content="#0f0710"/>
-        <Meta property="og:type" content="website"/>
-        <Meta property="og:locale" content="en-US"/>
-        <Meta property="og:site_name" content="Ultros"/>
-        // TODO: put these props in the app skeleton
-        // <Html class="m-0 p-0" lang="en-US"/>
-
-        // Background gradient
-        <div class="fixed inset-0 -z-10 bg-black">
-            <div class="absolute inset-0 bg-gradient-to-br from-violet-950/90 via-black/95 to-violet-950/90"/>
-            <div class="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(139,92,246,0.05),transparent_50%)]"/>
-        </div>
 
         <div node_ref=root_node_ref class="min-h-screen flex flex-col m-0">
             <Router>
@@ -223,49 +275,6 @@ pub fn App(worlds: AppResult<Arc<WorldHelper>>, region: String) -> impl IntoView
                 </main>
             </Router>
         </div>
-        <footer class="bg-black/40 backdrop-blur-sm border-t border-white/5">
-            <div class="container mx-auto px-6 py-8 space-y-6">
-                                <Ad/>
 
-                                <div class="flex flex-wrap justify-center gap-x-6 gap-y-2">
-                                    <a href="https://discord.gg/pgdq9nGUP2" class="text-gray-400 hover:text-amber-200 transition-colors">
-                                        "Discord"
-                                    </a>
-                                    <a href="https://github.com/akarras/ultros" class="text-gray-400 hover:text-amber-200 transition-colors">
-                                        "GitHub"
-                                    </a>
-                                    <a href="https://leekspin.com" class="text-gray-400 hover:text-amber-200 transition-colors">
-                                        "Patreon"
-                                    </a>
-                                    <a href="https://book.ultros.app" class="text-gray-400 hover:text-amber-200 transition-colors">
-                                        "Book"
-                                    </a>
-                                </div>
-
-                                <div class="text-center space-y-2 text-gray-500 text-sm">
-                                    <p>
-                                        "Ultros is still under constant development. If you have suggestions or feedback,
-                                         feel free to leave suggestions in the discord."
-                                    </p>
-                                    <p>
-                                        "Made using "
-                                        <a href="https://universalis.app/" class="text-amber-200 hover:text-amber-100 transition-colors">
-                                            "universalis"
-                                        </a>
-                                        "' API. Please contribute to Universalis to help this site stay up to date."
-                                    </p>
-                                    <p>
-                                        "Version: "
-                                        <a href=format!("https://github.com/akarras/ultros/commit/{git_hash}")
-                                           class="text-amber-200 hover:text-amber-100 transition-colors">
-                                            {git_hash}
-                                        </a>
-                                    </p>
-                                    <p class="text-xs">
-                                        "FINAL FANTASY XIV © 2010 - 2020 SQUARE ENIX CO., LTD. All Rights Reserved."
-                                    </p>
-                                </div>
-                            </div>
-                        </footer>
     }
 }

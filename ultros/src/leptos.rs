@@ -37,9 +37,11 @@ async fn custom_handler(
     region: Option<Region>,
     req: Request<Body>,
 ) -> Response {
-    let handler = leptos_axum::render_app_to_stream(
-        move || view! { <App worlds=Ok(worlds.clone()) region=region.unwrap_or(Region::NorthAmerica).to_string()/> },
-    );
+    provide_context(LocalWorldData(Ok(worlds)));
+    provide_context(GuessedRegion(
+        region.unwrap_or(Region::NorthAmerica).to_string(),
+    ));
+    let handler = leptos_axum::render_app_to_stream(move || shell(options.as_ref().clone()));
     handler(req).await.into_response()
 }
 
@@ -86,7 +88,9 @@ pub(crate) async fn create_leptos_app(
     let worlds = Ok(worlds);
     let routes = generate_route_list(move || {
         let worlds = worlds.clone();
-        view! { <App worlds region="North-America".to_string()/> }
+        provide_context(LocalWorldData(worlds));
+        provide_context(GuessedRegion("North-America".to_string()));
+        view! { <App /> }
     });
 
     // simple_logger::init_with_level(log::Level::Debug).expect("couldn't initialize logging");

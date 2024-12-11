@@ -179,8 +179,9 @@ pub fn hydrate() {
             let worlds = worlds.clone();
             let region = region.clone();
             let worlds = Ok(worlds);
-            provide_meta_context();
-            view! { <App worlds region/> }
+            provide_context(GuessedRegion(region));
+            provide_context(LocalWorldData(worlds));
+            view! { <App /> }
         });
     });
 }
