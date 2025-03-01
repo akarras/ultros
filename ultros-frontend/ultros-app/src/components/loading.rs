@@ -10,6 +10,7 @@ pub fn Loading() -> impl IntoView {
             <div></div>
         </div>
     }
+    .into_any()
 }
 
 #[component]

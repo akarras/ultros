@@ -41,4 +41,5 @@ where
             }
         />
     }
+    .into_any()
 }

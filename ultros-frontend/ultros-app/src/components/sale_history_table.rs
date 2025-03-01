@@ -296,6 +296,7 @@ fn WindowStats(#[prop(into)] sales: Signal<SalesWindow>) -> impl IntoView {
             </tr>
         </table>
     }
+    .into_any()
 }
 
 #[component]

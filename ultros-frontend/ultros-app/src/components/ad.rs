@@ -69,5 +69,5 @@ pub fn Ad(#[prop(optional)] class: Option<&'static str>) -> impl IntoView {
                 </div>
             </div>
         </Show>
-    }
+    }.into_any()
 }

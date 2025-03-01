@@ -119,4 +119,5 @@ pub fn WorldPicker(
             </div>
         }),
     }
+    .into_any()
 }

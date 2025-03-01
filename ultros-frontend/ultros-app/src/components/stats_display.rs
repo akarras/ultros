@@ -110,5 +110,5 @@ pub(crate) fn ItemStats(item_id: ItemId) -> impl IntoView {
                 .map(|p| view! { <ParamView data=p/> })
                 .collect::<Vec<_>>()
         })
-        .into_view()
+        .into_any()
 }

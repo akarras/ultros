@@ -143,5 +143,5 @@ pub fn SearchBox() -> impl IntoView {
                 </div>
             </div>
         </div>
-    }
+    }.into_any()
 }

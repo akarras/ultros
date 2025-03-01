@@ -252,6 +252,7 @@ pub fn CategoryItems() -> impl IntoView {
         <h3 class="text-xl">{category_view_name}</h3>
         <ItemList items/>
     }
+    .into_any()
 }
 
 #[component]
@@ -307,6 +308,7 @@ pub fn JobItems() -> impl IntoView {
         </div>
         <ItemList items/>
     }
+    .into_any()
 }
 
 #[component]
@@ -321,7 +323,7 @@ pub fn DefaultItems() -> impl IntoView {
             </div>
             <div>""</div>
         </div>
-    }
+    }.into_any()
 }
 
 #[derive(PartialEq, PartialOrd, Copy, Clone)]
@@ -654,7 +656,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                 </div>
             </QueryButton>
         </div>
-    }
+    }.into_any()
 }
 
 #[component]

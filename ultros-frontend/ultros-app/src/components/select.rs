@@ -196,5 +196,5 @@ where
                 </For>
             </div>
         </div>
-    }
+    }.into_any()
 }

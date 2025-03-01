@@ -13,6 +13,7 @@ fn ItemDetails(item: &'static Item) -> impl IntoView {
         <span style="width: 300px;">{item.name.as_str()}</span>
         <span style="color: #abc; width: 50px;">{item.level_item.0}</span>
     }
+    .into_any()
 }
 
 #[component]
@@ -44,4 +45,5 @@ pub fn SmallItemDisplay(item: &'static Item) -> impl IntoView {
 
         </div>
     }
+    .into_any()
 }

@@ -458,5 +458,5 @@ pub fn ItemView() -> impl IntoView {
                 </div>
             </div>
         </div>
-    }
+    }.into_any()
 }

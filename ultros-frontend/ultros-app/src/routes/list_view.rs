@@ -609,5 +609,5 @@ pub fn ListView() -> impl IntoView {
             }}
 
         </Transition>
-    }
+    }.into_any()
 }

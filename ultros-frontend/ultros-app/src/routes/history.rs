@@ -91,5 +91,5 @@ pub fn History() -> impl IntoView {
                 </div>
             </div>
         </div>
-    }
+    }.into_any()
 }

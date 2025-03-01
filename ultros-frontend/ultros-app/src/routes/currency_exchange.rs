@@ -671,7 +671,7 @@ pub fn CurrencySelection() -> impl IntoView {
                 }
             }}
         </div>
-    }
+    }.into_any()
 }
 
 #[component]
@@ -686,5 +686,5 @@ pub fn CurrencyExchange() -> impl IntoView {
             </A>
             <Outlet/>
         </div>
-    }
+    }.into_any()
 }

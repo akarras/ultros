@@ -90,4 +90,5 @@ where
             </div>
         </div>
     }
+    .into_any()
 }

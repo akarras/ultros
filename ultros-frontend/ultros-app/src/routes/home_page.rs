@@ -103,5 +103,5 @@ pub fn HomePage() -> impl IntoView {
                 </div>
             </div>
         </div>
-    }
+    }.into_any()
 }

@@ -46,4 +46,5 @@ pub fn PriceViewer(quantity: i32, hq: Option<bool>, listings: Vec<ActiveListing>
                 .collect::<Vec<_>>()}
         </div>
     }
+    .into_any()
 }

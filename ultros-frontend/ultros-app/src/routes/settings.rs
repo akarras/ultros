@@ -335,7 +335,7 @@ pub fn Profile() -> impl IntoView {
                                 <div class="flex items-center justify-center p-8">
                                     <Loading/>
                                 </div>
-                            }
+                            }.into_any()
                         }
                     >
                     {move || pending_verifications.get().map(|verifications| match verifications {
@@ -354,7 +354,7 @@ pub fn Profile() -> impl IntoView {
                                                 </div>
                                             }
                                         })
-                                        .collect::<Vec<_>>()}
+                                        .collect::<Vec<_>>().into_any()}
                                 </div>
                             </div>
                         }),

@@ -53,5 +53,5 @@ pub fn Toggle(
                 }}
             </span>
         </label>
-    }
+    }.into_any()
 }

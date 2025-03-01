@@ -44,5 +44,5 @@ pub fn ProfileDisplay() -> impl IntoView {
             }}
 
         </Suspense>
-    }
+    }.into_any()
 }

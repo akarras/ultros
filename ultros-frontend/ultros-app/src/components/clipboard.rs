@@ -49,4 +49,5 @@ pub fn Clipboard(#[prop(into)] clipboard_text: Signal<String>) -> impl IntoView 
             </Tooltip>
         </div>
     }
+    .into_any()
 }

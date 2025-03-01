@@ -39,5 +39,5 @@ pub fn ItemIcon(#[prop(into)] item_id: Signal<i32>, icon_size: IconSize) -> impl
                 }
             />
         </div>
-    }
+    }.into_any()
 }

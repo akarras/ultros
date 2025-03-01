@@ -173,14 +173,14 @@ fn TextParts(text: String) -> impl IntoView {
     } else {
         text_parts.push(Either::Left(view! { <RawText text /> }));
     }
-    text_parts
+    text_parts.into_any()
 }
 
 /// A UI component that takes the raw FFXIV text and converts it into HTML
 /// For example: "This is unstyled <UIGlow>32113</UIGlow>blah blah<Emphasis>Hello world</Emphasis><UIGlow>01</UIGlow>" -> "This is unstyled <span style="color: #32113"><i>blah blah</i></span>"
 #[component]
 pub fn UIText(text: String) -> impl IntoView {
-    view! { <div class="ui-text"><TextParts text=text /></div> }
+    view! { <div class="ui-text"><TextParts text=text /></div> }.into_any()
 }
 
 #[cfg(test)]

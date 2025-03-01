@@ -238,5 +238,5 @@ pub fn EditRetainers() -> impl IntoView {
                 </Suspense>
             </div>
         </div>
-    }
+    }.into_any()
 }

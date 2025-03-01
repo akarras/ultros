@@ -45,4 +45,5 @@ pub fn CheapestPrice(item_id: ItemId, #[prop(optional)] show_hq: Option<bool>) -
             }}
         </Suspense>
     }
+    .into_any()
 }

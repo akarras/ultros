@@ -1,6 +1,6 @@
 use leptos::prelude::*;
-use leptos_router::*;
 use leptos_icons::*;
+use leptos_router::*;
 
 #[component]
 pub fn ListsNav() -> impl IntoView {
@@ -14,4 +14,5 @@ pub fn ListsNav() -> impl IntoView {
             "Lists"
         </A>
     </div>}
+    .into_any()
 }

@@ -203,6 +203,7 @@ pub(crate) fn CharacterRetainerList(
 
         </div>
     }
+    .into_any()
 }
 
 #[component]
@@ -223,7 +224,7 @@ pub(crate) fn CharacterRetainerUndercutList(
             }}
 
         </div>
-    }
+    }.into_any()
 }
 
 #[component]
@@ -394,7 +395,7 @@ pub fn RetainerListings() -> impl IntoView {
             }}
 
         </Suspense>
-    }
+    }.into_any()
 }
 
 #[component]
@@ -428,6 +429,7 @@ pub fn Retainers() -> impl IntoView {
             </div>
         </div>
     }
+    .into_any()
 }
 
 #[cfg(test)]

@@ -26,4 +26,5 @@ where
             <div>{move || amount().separate_with_commas()}</div>
         </div>
     }
+    .into_any()
 }

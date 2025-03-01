@@ -83,4 +83,5 @@ pub fn ListingsTable(
             </tbody>
         </table>
     }
+    .into_any()
 }

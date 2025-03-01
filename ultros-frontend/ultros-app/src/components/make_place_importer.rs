@@ -119,7 +119,7 @@ where
 
             </div>
         </div>
-    }
+    }.into_any()
 }
 
 #[cfg(test)]

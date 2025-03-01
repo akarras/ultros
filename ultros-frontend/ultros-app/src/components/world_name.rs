@@ -19,4 +19,5 @@ pub(crate) fn WorldName(id: AnySelector) -> impl IntoView {
         }),
         _ => Either::Right(view! { <span>"None"</span> }),
     }
+    .into_any()
 }

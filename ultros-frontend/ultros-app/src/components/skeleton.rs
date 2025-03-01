@@ -7,7 +7,7 @@ pub fn SingleLineSkeleton() -> impl IntoView {
             <div class="w-full h-3 bg-gradient-to-r from-purple-950 to-transparent rounded-md background-animate"></div>
             <div class="sr-only">"Loading"</div>
         </div>
-    }
+    }.into_any()
 }
 
 #[component]
@@ -16,5 +16,5 @@ pub fn BoxSkeleton() -> impl IntoView {
         <div class="w-full h-full bg-gradient-to-r from-purple-950 to-transparent rounded-md background-animate m-2">
             <div class="sr-only">"loading"</div>
         </div>
-    }
+    }.into_any()
 }

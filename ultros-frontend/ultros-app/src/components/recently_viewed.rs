@@ -126,5 +126,5 @@ pub fn RecentlyViewed() -> impl IntoView {
                 </div>
             </Suspense>
         </div>
-    }
+    }.into_any()
 }

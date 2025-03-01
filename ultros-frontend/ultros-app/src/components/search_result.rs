@@ -124,5 +124,5 @@ pub fn ItemSearchResult(
                 "Invalid result"
             </a>
         })
-    }
+    }.into_any()
 }

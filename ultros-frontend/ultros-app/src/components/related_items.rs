@@ -196,7 +196,7 @@ fn Recipe(recipe: &'static Recipe) -> impl IntoView {
                 <RecipePriceEstimate recipe/>
             </div>
         </div>
-    })
+    }.into_any())
 }
 
 fn npc_rows(npc: &ENpcBase) -> impl Iterator<Item = u32> + '_ {
@@ -272,6 +272,7 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
             {data}
         </div>
     }
+    .into_any()
 }
 
 #[component]
@@ -347,5 +348,5 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                 />
             </div>
         </div>
-    }
+    }.into_any()
 }

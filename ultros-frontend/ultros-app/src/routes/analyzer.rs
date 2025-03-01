@@ -550,13 +550,13 @@ fn AnalyzerTable(
                                             .unwrap_or_else(|| "---".to_string())}
                                     </div>
                                 </div>
-                            }
+                            }.into_any()
                         }
                     />
                 </div>
             </div>
         </div>
-    }
+    }.into_any()
 }
 
 #[component]

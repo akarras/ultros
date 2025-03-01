@@ -174,5 +174,5 @@ pub fn LiveSaleTicker() -> impl IntoView {
                 </div>
             </div>
         </div>
-    }
+    }.into_any()
 }

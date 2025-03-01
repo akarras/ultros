@@ -229,4 +229,5 @@ pub fn Lists() -> impl IntoView {
             </div>
         </div>
     }
+    .into_any()
 }

@@ -25,4 +25,5 @@ pub(crate) fn DatacenterName(world_id: i32) -> impl IntoView {
         }
         _ => Either::Right(view! { "" }),
     }
+    .into_any()
 }
