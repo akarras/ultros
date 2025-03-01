@@ -2,6 +2,7 @@ use std::borrow::Cow;
 use std::{collections::HashSet, str::FromStr};
 
 use crate::components::ad::Ad;
+use crate::components::clipboard::Clipboard;
 use crate::components::query_button::QueryButton;
 use crate::components::toggle::Toggle;
 use crate::components::{
@@ -17,6 +18,7 @@ use leptos::prelude::*;
 use leptos::reactive::wrappers::write::SignalSetter;
 use leptos::text_prop::TextProp;
 use leptos_icons::*;
+use leptos_router::components::A;
 use leptos_router::*;
 use location::Url;
 use log::info;
@@ -432,63 +434,10 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
     let (sort, _set_sort) = query_signal::<ItemSortOption>("sort");
 
     let cheapest_prices = use_context::<CheapestPrices>().unwrap();
-    let items = Memo::new(move |_| {
-        let direction = direction().unwrap_or(SortDirection::Desc);
-        let item_property = sort().unwrap_or(ItemSortOption::ItemLevel);
-        let price_map = cheapest_prices.read_listings.get().and_then(|r| r.ok());
-        items()
-            .into_iter()
-            .filter(|(id, _)| {
-                if ItemSortOption::Price == item_property {
-                    // filter items without a price if we're sorting by price
-                    if let Some(map) = &price_map {
-                        map.find_matching_listings(id.0).lowest_gil().is_some()
-                    } else {
-                        true
-                    }
-                } else {
-                    true
-                }
-            })
-            .sorted_by(|a, b| {
-                let ((_, item_a), (_, item_b)) = match direction {
-                    SortDirection::Asc => (a, b),
-                    SortDirection::Desc => (b, a),
-                };
-                match item_property {
-                    ItemSortOption::ItemLevel => item_a.level_item.0.cmp(&item_b.level_item.0),
-                    ItemSortOption::Name => item_a.name.cmp(&item_b.name),
-                    // TODO lookup price data for this case
-                    ItemSortOption::Price => {
-                        if let Some(price_map) = &price_map {
-                            let price_a = price_map
-                                .find_matching_listings(item_a.key_id.0)
-                                .lowest_gil();
-                            let price_b = price_map
-                                .find_matching_listings(item_b.key_id.0)
-                                .lowest_gil();
-                            price_a.cmp(&price_b)
-                        } else {
-                            item_a.level_item.0.cmp(&item_b.level_item.0)
-                        }
-                    }
-                    ItemSortOption::Key => item_a.key_id.0.cmp(&item_b.key_id.0),
-                }
-            })
-            .collect::<Vec<_>>()
-    });
+    
     let items_len = Memo::new(move |_| items.with(|i| i.len()));
     let pages = move || Pages::new(items_len(), 50);
-    let items = move || {
-        // now take a subslice of the items
-        let page = pages().with_offset((page().unwrap_or_default() - 1).try_into().unwrap_or(0));
-        items.with(|items| {
-            items
-                .get(page.start..=page.end)
-                .unwrap_or_default()
-                .to_vec()
-        })
-    };
+    
     view! {
         <div class="flex flex-col gap-4">
             // Sort and Direction Controls
@@ -585,7 +534,66 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
 
             // Item List
             <div class="flex flex-col gap-2">
-            <For
+            <Suspense>
+                {move ||{
+                    let items = Memo::new(move |_| {
+                        let direction = direction().unwrap_or(SortDirection::Desc);
+                        let item_property = sort().unwrap_or(ItemSortOption::ItemLevel);
+                        let price_map = cheapest_prices.read_listings.get().and_then(|r| r.ok());
+                        items()
+                            .into_iter()
+                            .filter(|(id, _)| {
+                                if ItemSortOption::Price == item_property {
+                                    // filter items without a price if we're sorting by price
+                                    if let Some(map) = &price_map {
+                                        map.find_matching_listings(id.0).lowest_gil().is_some()
+                                    } else {
+                                        true
+                                    }
+                                } else {
+                                    true
+                                }
+                            })
+                            .sorted_by(|a, b| {
+                                let ((_, item_a), (_, item_b)) = match direction {
+                                    SortDirection::Asc => (a, b),
+                                    SortDirection::Desc => (b, a),
+                                };
+                                match item_property {
+                                    ItemSortOption::ItemLevel => item_a.level_item.0.cmp(&item_b.level_item.0),
+                                    ItemSortOption::Name => item_a.name.cmp(&item_b.name),
+                                    // TODO lookup price data for this case
+                                    ItemSortOption::Price => {
+                                        if let Some(price_map) = &price_map {
+                                            let price_a = price_map
+                                                .find_matching_listings(item_a.key_id.0)
+                                                .lowest_gil();
+                                            let price_b = price_map
+                                                .find_matching_listings(item_b.key_id.0)
+                                                .lowest_gil();
+                                            price_a.cmp(&price_b)
+                                        } else {
+                                            item_a.level_item.0.cmp(&item_b.level_item.0)
+                                        }
+                                    }
+                                    ItemSortOption::Key => item_a.key_id.0.cmp(&item_b.key_id.0),
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                    });
+                    let items = move || {
+                        // now take a subslice of the items
+                        let page = pages().with_offset((page().unwrap_or_default() - 1).try_into().unwrap_or(0));
+                        items.with(|items| {
+                            items
+                                .get(page.start..=page.end)
+                                .unwrap_or_default()
+                                .to_vec()
+                        })
+                    };
+                    
+                    view!{
+                        <For
                 each=items
                 key=|(id, item)| (id.0, &item.name)
                 children=|(id, item)| {
@@ -596,13 +604,19 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                   hover:from-violet-900/30 hover:to-violet-800/30
                                   transition-all duration-200">
                             // Item Info Section
-                            <div class="flex flex-row items-center justify-between md:col-span-5 gap-2 min-w-0"> // Added min-w-0
-                                <div class="flex-1 min-w-0"> // Added container with min-w-0
+                            <div class="flex flex-row items-center justify-between md:col-span-5 gap-2 min-w-0">
+                                <div class="flex-1 min-w-0 flex flex-row"> // Added container with min-w-0
                                     <SmallItemDisplay item=item/>
+                                    <Clipboard clipboard_text=item.name.clone() />
                                 </div>
                                 <div class="flex-shrink-0"> // Prevent shrinking of add button
                                     <AddToList item_id=id.0/>
                                 </div>
+                            </div>
+
+                            // Min level
+                            <div class="flex flex-row items-center justify-between md:col-span-2 gap-2 min-w-0">
+                                "Equip level: "{item.level_equip}
                             </div>
 
                             // Normal Quality Price
@@ -629,8 +643,10 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                     }
                 }
             />
+                }}
+            }
+            </Suspense>
             </div>
-
             // Next Page Button
             <QueryButton
                 key="page"
@@ -696,8 +712,9 @@ pub fn ItemExplorer() -> impl IntoView {
         <div class="main-content p-6">
             <div class="container mx-auto max-w-7xl">
                 // Toggle Button
-                <button
-                    class=button_classes
+                <A
+                    attr:class=button_classes
+                    href=move || if menu_open() { "?" } else { "?menu-open=true" }.to_string()
                 >
                     <div class="relative w-6 h-6">
                         <div class="absolute inset-0 transition-all duration-300"
@@ -712,7 +729,7 @@ pub fn ItemExplorer() -> impl IntoView {
                     <span class="font-medium">
                         {move || if menu_open() { "Close Categories" } else { "Browse Categories" }}
                     </span>
-                </button>
+                </A>
 
                 <div class="relative mt-4">
                     // Mobile Overlay

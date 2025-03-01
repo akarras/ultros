@@ -44,7 +44,6 @@ use leptos_router::path;
 use log::info;
 
 pub fn shell(options: LeptosOptions) -> impl IntoView {
-    let prices = use_context::<LocalWorldData>().expect("Prices to be available?");
     view! {
         <!DOCTYPE html>
         <html lang="en">

@@ -99,7 +99,7 @@ pub fn HomePage() -> impl IntoView {
                         </a>
                     </div>
 
-                    <Ad class="w-full aspect-[21/9] rounded-2xl overflow-hidden"/>
+                    <Ad class="w-96 aspect-[21/9] rounded-2xl overflow-hidden"/>
                 </div>
             </div>
         </div>

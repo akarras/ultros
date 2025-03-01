@@ -5,6 +5,7 @@ use crate::{
 use gloo_timers::future::TimeoutFuture;
 use icondata as i;
 use leptos::{html::Input, prelude::*, task::spawn_local};
+use leptos_hotkeys::{use_hotkeys, use_hotkeys_scoped};
 // use leptos_hotkeys::use_hotkeys;
 use leptos_icons::*;
 use leptos_router::{hooks::use_navigate, NavigateOptions};
@@ -27,18 +28,19 @@ pub fn SearchBox() -> impl IntoView {
     let (search, set_search) = signal(String::new());
     let navigate = use_navigate();
     let (active, set_active) = signal(false);
-    // use_hotkeys!(("meta+k,ctrl+k") => move |_| {
-    //     set_active(true);
-    //     if let Some(input) = text_input() {
-    //         let _ = input.focus();
-    //     }
-    // });
-    // leptos_hotkeys::use_hotkeys_ref_scoped(
-    //     text_input,
-    //     "escape".to_string(),
-    //     Callback::new(move |_| {}),
-    //     vec!["*".to_string()],
-    // );
+    use_hotkeys!(("meta+k,ctrl+k") => move |_| {
+        set_active(true);
+        if let Some(input) = text_input.get() {
+            let _ = input.focus();
+        }
+    });
+    
+    leptos_hotkeys::use_hotkeys_ref(
+        text_input,
+        "escape".to_string(),
+        Callback::new(move |_| {}),
+        vec!["*".to_string()],
+    );
     let on_input = move |ev| {
         set_search(event_target_value(&ev));
     };
@@ -99,7 +101,7 @@ pub fn SearchBox() -> impl IntoView {
         }
     };
     view! {
-        <div class="relative w-full sm:w-[424px]">
+        <div class="relative md:w-full sm:w-[424px]">
             <div class="relative">
                 <input
                     node_ref=text_input
