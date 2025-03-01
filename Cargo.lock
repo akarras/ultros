@@ -7418,6 +7418,7 @@ dependencies = [
 name = "ultros-client"
 version = "0.1.0"
 dependencies = [
+ "any_spawner",
  "anyhow",
  "console_error_panic_hook",
  "console_log",

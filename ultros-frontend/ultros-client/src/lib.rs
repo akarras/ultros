@@ -1,3 +1,4 @@
+use any_spawner::Executor;
 use anyhow::{anyhow, Result};
 use futures::{future::join, Future};
 use gloo_net::http::Request;
@@ -166,7 +167,7 @@ pub fn hydrate() {
     _ = console_log::init_with_level(log::Level::Debug);
     console_error_panic_hook::set_once();
     // check that we have the right client version data
-
+    let _ = Executor::init_wasm_bindgen();
     log::info!("hydrate mode - hydrating");
     spawn_local(async move {
         info!("fetching..");

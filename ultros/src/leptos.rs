@@ -38,7 +38,7 @@ async fn custom_handler(
     req: Request<Body>,
 ) -> Response {
     info!("Custom handler");
-    let handler = leptos_axum::render_app_to_stream_with_context(move || {
+    let handler = leptos_axum::render_app_to_stream_with_context_and_replace_blocks(move || {
         provide_context(LocalWorldData(Ok(worlds.clone())));
         provide_context(GuessedRegion(
         region.unwrap_or(Region::NorthAmerica).to_string(),
@@ -46,7 +46,7 @@ async fn custom_handler(
     }, move || {
         
         shell(options.clone())
-    });
+    }, true);
     handler(req).await.into_response()
 }
 
@@ -103,11 +103,11 @@ pub(crate) async fn create_leptos_app(
     // build our application with a route
     Ok(Router::new()
         // `GET /` goes to `root`
-        // .nest_service(
-        //     &["/", &leptos_options.site_pkg_dir].concat(),
-        //     cargo_leptos_service.clone(),
-        // ) // Only need if using wasm-pack. Can be deleted if using cargo-leptos
-        .nest_service(&bundle_path, cargo_leptos_service) // Only needed if using cargo-leptos. Can be deleted if using wasm-pack and cargo-run
+        .nest_service(
+            &["/", &leptos_options.site_pkg_dir].concat(),
+            cargo_leptos_service.clone(),
+        ) // Only need if using wasm-pack. Can be deleted if using cargo-leptos
+        // .nest_service(&bundle_path, cargo_leptos_service) // Only needed if using cargo-leptos. Can be deleted if using wasm-pack and cargo-run
         //.nest_service("/static", static_service)
         .leptos_routes_with_handler(routes, custom_handler)
         )

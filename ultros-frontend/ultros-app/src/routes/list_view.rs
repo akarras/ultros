@@ -586,7 +586,7 @@ pub fn ListView() -> impl IntoView {
                                                             </button>
                                                         </td>
                                                     </tr>
-                                                }
+                                                }.into_any()
                                             }
                                         />
 

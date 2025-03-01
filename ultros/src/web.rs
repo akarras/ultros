@@ -866,8 +866,6 @@ async fn listings_redirect(Path((world, id)): Path<(String, i32)>) -> Redirect {
 pub(crate) async fn start_web(state: WebState) {
     // build our application with a route
     let worlds = state.world_helper.clone();
-    provide_context(LocalWorldData(Ok(worlds)));
-    provide_context(GuessedRegion("North-America".to_string()));
     let app = Router::new()
         .route("/alerts/websocket", get(connect_websocket))
         .route("/api/v1/realtime/events", get(real_time_data))
@@ -941,7 +939,9 @@ pub(crate) async fn start_web(state: WebState) {
             "/",
             create_leptos_app(state.world_helper.clone()).await.unwrap(),
         )
-        .fallback(leptos_axum::file_and_error_handler::<WebState, _>(shell))
+        .fallback(leptos_axum::file_and_error_handler_with_context::<WebState, _>(move || {
+            provide_context(LocalWorldData(Ok(worlds.clone())));
+        }, shell))
         .with_state(state)
         .route_layer(middleware::from_fn(track_metrics))
         .layer(TraceLayer::new_for_http())

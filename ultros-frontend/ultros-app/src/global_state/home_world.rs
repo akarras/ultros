@@ -76,15 +76,14 @@ pub fn get_price_zone() -> (
 ) {
     let cookies = use_context::<Cookies>().unwrap();
     let (cookie, set_cookie) = cookies.get_cookie(DEFAULT_PRICE_ZONE);
-
+    let worlds = use_context::<LocalWorldData>().and_then(|worlds| worlds.0.ok());
+    let guessed_region = use_context::<GuessedRegion>().map(|r| r.0);
     let world = Memo::new(move |_| {
-        let worlds = use_context::<LocalWorldData>().unwrap().0.ok();
-        worlds.and_then(|w| {
+        worlds.clone().and_then(|w| {
             cookie()
                 .map(|cookie| cookie.value().to_string())
                 .or_else(|| {
-                    let region = use_context::<GuessedRegion>().unwrap();
-                    Some(region.0)
+                    guessed_region.clone()
                 })
                 .and_then(move |cookie| w.lookup_world_by_name(&cookie).map(|w| w.into()))
         })

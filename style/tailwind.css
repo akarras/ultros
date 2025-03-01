@@ -1,5 +1,12 @@
-@import "tailwindcss";
+@import "tailwindcss" source("../ultros-frontend/ultros-app/src");
 
+.btn {
+    @apply text-violet-300;
+}
+
+a {
+    @apply text-violet-300;
+}
 
 .btn-secondary {
     @apply p-2 m-1 flex flex-row text-center rounded-2xl

@@ -671,7 +671,7 @@ fn CategorySection(
             {category.map(|cat| view! { <CategoryView category=cat/> })}
             {children.map(|c| c())}
         </div>
-    }
+    }.into_any()
 }
 
 #[component]
@@ -790,5 +790,5 @@ pub fn ItemExplorer() -> impl IntoView {
                 </div>
             </div>
         </div>
-    }
+    }.into_any()
 }

@@ -22,9 +22,9 @@ pub fn QueryButton<T>(
     #[prop(optional)]
     remove_queries: &'static [&'static str],
     children: TypedChildren<T>,
-) -> impl IntoView
+) -> impl IntoView + 'static
 where
-    T: IntoView,
+    T: IntoView + 'static,
 {
     let Location {
         pathname, query, ..
@@ -53,5 +53,5 @@ where
         >
             {children.into_inner()().into_view()}
         </a>
-    }
+    }.into_any()
 }

@@ -188,7 +188,7 @@ fn HomeWorldPicker() -> impl IntoView {
                 </div>
             </div>
         </div>
-    }
+    }.into_any()
 }
 
 #[component]
@@ -230,7 +230,7 @@ fn AdChoice() -> impl IntoView {
                 <Ad/>
             </div>
         </div>
-    }
+    }.into_any()
 }
 
 #[component]
@@ -272,7 +272,7 @@ fn DeleteUser() -> impl IntoView {
                 </button>
             </div>
         </div>
-    }
+    }.into_any()
 }
 
 #[component]
@@ -288,7 +288,7 @@ pub fn Settings() -> impl IntoView {
                 <AdChoice/>
             </div>
         </div>
-    }
+    }.into_any()
 }
 #[component]
 pub fn Profile() -> impl IntoView {
@@ -439,5 +439,5 @@ pub fn Profile() -> impl IntoView {
                 <DeleteUser/>
             </div>
         </div>
-    }
+    }.into_any()
 }

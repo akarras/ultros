@@ -89,7 +89,7 @@ fn ItemAmount(item_amount: Option<ItemAmount>) -> impl IntoView {
                 <Clipboard clipboard_text=item_amount.item.name.as_str()/>
             </div>
         }
-    })
+    }).into_any()
 }
 
 struct ShopItems {
@@ -188,7 +188,7 @@ fn FilterModal(filter_name: &'static str) -> impl IntoView {
             }}
 
         </div>
-    }
+    }.into_any()
 }
 
 fn is_in_range(value: i32, field_label: &str, query_map: &ParamsMap) -> bool {
@@ -486,7 +486,7 @@ pub fn ExchangeItem() -> impl IntoView {
                 }}
             </div>
         </div>
-    }
+    }.into_any()
 }
 
 #[field_iter(field_prefix = "item_cost_", count = 3)]

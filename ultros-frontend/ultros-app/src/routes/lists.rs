@@ -79,7 +79,7 @@ pub fn EditLists() -> impl IntoView {
                                 <Icon icon=i::BiSaveSolid/>
                             </button>
                         </div>
-                    }
+                    }.into_any()
                 })
         }}
 
@@ -200,7 +200,7 @@ pub fn EditLists() -> impl IntoView {
 
             </Suspense>
         </div>
-    }
+    }.into_any()
 }
 
 #[component]

@@ -56,7 +56,7 @@ fn WorldButton(
             {move || is_home_world.get().then(|| view! { <Icon icon=icondata::AiHomeFilled attr:class="text-purple-300"/><div class="w-1"></div> })}
             {world_name}
         </A>
-    }
+    }.into_any()
 }
 
 #[component]
@@ -64,7 +64,7 @@ fn HomeWorldButton(current_world: Memo<String>, item_id: Memo<i32>) -> impl Into
     let (home_world, _) = use_home_world();
     home_world.get().map(move |world| {
         view! { <WorldButton current_world world=AnyResult::World(&world) item_id=item_id() /> }
-    })
+    }).into_any()
 }
 
 #[component]
@@ -163,7 +163,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                 </div>
             </div>
         </div>
-    }
+    }.into_any()
 }
 
 #[component]
@@ -308,7 +308,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
                 <Ad class="h-[336px] w-[280px] rounded-xl overflow-hidden"/>
             </div>
         </div>
-    }
+    }.into_any()
 }
 
 #[component]

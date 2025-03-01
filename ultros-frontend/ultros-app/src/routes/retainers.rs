@@ -92,7 +92,7 @@ fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> imp
                         </div>
                     </td>
                 </tr>
-            }
+            }.into_any()
         })
         .collect();
     view! {
@@ -114,7 +114,7 @@ fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> imp
                 <tbody>{listings}</tbody>
             </table>
         </div>
-    }
+    }.into_any()
 }
 
 #[component]
@@ -160,7 +160,7 @@ fn RetainerTable(retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoV
                         <Gil amount=total/>
                     </td>
                 </tr>
-            }
+            }.into_any()
         })
         .collect();
     view! {
@@ -181,7 +181,7 @@ fn RetainerTable(retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoV
                 <tbody>{listings}</tbody>
             </table>
         </div>
-    }
+    }.into_any()
 }
 
 #[component]
