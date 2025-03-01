@@ -84,7 +84,7 @@ pub fn LiveSaleTicker() -> impl IntoView {
             }
             set_done_loading(true);
         });
-        let retrigger = retrigger.set(false);
+        let _retrigger = retrigger.set(false);
     });
 
     view! {

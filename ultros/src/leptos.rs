@@ -23,25 +23,30 @@ use leptos_axum::{generate_route_list, LeptosRoutes};
 use leptos_router::RouteListing;
 #[cfg(not(debug_assertions))]
 use tower_http::set_header::SetResponseHeader;
-use tracing::instrument;
+use tracing::{info, instrument};
 use ultros_api_types::world_helper::WorldHelper;
 use ultros_app::*;
 
 use crate::web::{country_code_decoder::Region, WebState};
 
 #[instrument(skip(worlds, options, req))]
-#[axum::debug_handler]
+#[axum::debug_handler(state = WebState)]
 async fn custom_handler(
     State(worlds): State<Arc<WorldHelper>>,
-    Extension(options): Extension<Arc<LeptosOptions>>,
+    State(options): State<LeptosOptions>,
     region: Option<Region>,
     req: Request<Body>,
 ) -> Response {
-    provide_context(LocalWorldData(Ok(worlds)));
-    provide_context(GuessedRegion(
+    info!("Custom handler");
+    let handler = leptos_axum::render_app_to_stream_with_context(move || {
+        provide_context(LocalWorldData(Ok(worlds.clone())));
+        provide_context(GuessedRegion(
         region.unwrap_or(Region::NorthAmerica).to_string(),
     ));
-    let handler = leptos_axum::render_app_to_stream(move || shell(options.as_ref().clone()));
+    }, move || {
+        
+        shell(options.clone())
+    });
     handler(req).await.into_response()
 }
 
@@ -98,13 +103,14 @@ pub(crate) async fn create_leptos_app(
     // build our application with a route
     Ok(Router::new()
         // `GET /` goes to `root`
-        .nest_service(
-            &["/", &leptos_options.site_pkg_dir].concat(),
-            cargo_leptos_service.clone(),
-        ) // Only need if using wasm-pack. Can be deleted if using cargo-leptos
+        // .nest_service(
+        //     &["/", &leptos_options.site_pkg_dir].concat(),
+        //     cargo_leptos_service.clone(),
+        // ) // Only need if using wasm-pack. Can be deleted if using cargo-leptos
         .nest_service(&bundle_path, cargo_leptos_service) // Only needed if using cargo-leptos. Can be deleted if using wasm-pack and cargo-run
         //.nest_service("/static", static_service)
-        .leptos_routes_with_handler(routes, custom_handler))
+        .leptos_routes_with_handler(routes, custom_handler)
+        )
     // .with_state(state)
     // .layer(Extension(Arc::new(leptos_options))))
 }

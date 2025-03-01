@@ -1,4 +1,3 @@
-#![feature(async_closure)]
 #![recursion_limit = "256"]
 pub(crate) mod api;
 pub(crate) mod components;
@@ -42,10 +41,9 @@ use leptos_icons::*;
 use leptos_meta::*;
 use leptos_router::components::{ParentRoute, Route, Router, Routes, A};
 use leptos_router::path;
-use ultros_api_types::world_helper::WorldHelper;
+use log::info;
 
 pub fn shell(options: LeptosOptions) -> impl IntoView {
-    let git_hash = git_short_hash!();
     view! {
         <!DOCTYPE html>
         <html lang="en">
@@ -63,13 +61,17 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
                 <meta property="og:site_name" content="Ultros"/>
             </head>
             <body>
-                // Background gradient
-                <div class="fixed inset-0 -z-10 bg-black">
-                    <div class="absolute inset-0 bg-gradient-to-br from-violet-950/90 via-black/95 to-violet-950/90"/>
-                    <div class="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(139,92,246,0.05),transparent_50%)]"/>
-                </div>
                 <App/>
-                    <footer class="bg-black/40 backdrop-blur-sm border-t border-white/5">
+            </body>
+        </html>
+    }
+}
+
+#[component]
+pub fn Footer() -> impl IntoView {
+    let git_hash = git_short_hash!();
+    view!{
+        <footer class="bg-black/40 backdrop-blur-sm border-t border-white/5">
                         <div class="container mx-auto px-6 py-8 space-y-6">
                         <div class="flex flex-wrap justify-center gap-x-6 gap-y-2">
                             <a href="https://discord.gg/pgdq9nGUP2" class="text-gray-400 hover:text-amber-200 transition-colors">
@@ -111,13 +113,110 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
                         </div>
                     </div>
                 </footer>
-            </body>
-        </html>
+    }.into_any()
+}
+
+#[component]
+pub fn NavRow() -> impl IntoView {
+    let login = Resource::new(move || {}, move |_| async move { get_login().await.ok() });
+    let (homeworld, _set_homeworld) = use_home_world();
+    view!{
+        // Navigation
+        <nav class="sticky top-0 z-50 backdrop-blur-sm border-b border-white/5 bg-black/40">
+        <div class="mx-auto max-w-7xl px-2 sm:px-4 lg:px-6 py-2 flex flex-col md:flex-row items-center">
+            // Left section
+            <div class="flex items-center space-x-2">
+                <A href="/" exact=true
+                    attr:class="flex items-center gap-2 px-3 py-2 rounded-lg
+                            hover:bg-white/5 transition-colors
+                            text-gray-200 hover:text-amber-200">
+                    <Icon icon=i::BiHomeSolid height="1.75em" width="1.75em"/>
+                    <span class="hidden sm:inline">"Home"</span>
+                </A>
+
+                {move || {
+                    view! {
+                        <A href=homeworld()
+                            .map(|w| format!("/analyzer/{}", w.name))
+                            .unwrap_or("/analyzer".to_string())
+                           attr:class="flex items-center gap-2 px-3 py-2 rounded-lg
+                                   hover:bg-white/5 transition-colors
+                                   text-gray-200 hover:text-amber-200">
+                            <Icon
+                                width="1.75em"
+                                height="1.75em"
+                                icon=i::FaMoneyBillTrendUpSolid
+                            />
+                            <span class="hidden sm:inline">"Analyzer"</span>
+                        </A>
+                    }
+                }}
+
+                <Suspense fallback=move || {}>
+                    {move || {
+                        login
+                            .get()
+                            .flatten()
+                            .map(|_| {
+                                view! {
+                                    <A href="/list"
+                                       attr:class="flex items-center gap-2 px-3 py-2 rounded-lg
+                                               hover:bg-white/5 transition-colors
+                                               text-gray-200 hover:text-amber-200">
+                                        <Icon
+                                            width="1.75em"
+                                            height="1.75em"
+                                            icon=i::AiOrderedListOutlined
+                                        />
+                                        <span class="hidden sm:inline">"Lists"</span>
+                                    </A>
+                                    <A href="/retainers/listings"
+                                       attr:class="flex items-center gap-2 px-3 py-2 rounded-lg
+                                               hover:bg-white/5 transition-colors
+                                               text-gray-200 hover:text-amber-200">
+                                        <Icon width="1.75em" height="1.75em" icon=i::BiGroupSolid/>
+                                        <span class="hidden sm:inline">"Retainers"</span>
+                                    </A>
+                                }
+                            })
+                    }}
+                </Suspense>
+            </div>
+
+            // Center section
+            <div class="flex-1 max-w-xl">
+                <SearchBox/>
+            </div>
+
+            // Right section
+            <div class="flex items-center gap-4">
+                <A href="/items?menu-open=true"
+                   attr:class="flex items-center gap-2 px-3 py-2 rounded-lg
+                            hover:bg-white/5 transition-colors
+                            text-gray-200 hover:text-amber-200">
+                    <Tooltip tooltip_text="Item Explorer">
+                        <Icon width="1.75em" height="1.75em" icon=i::FaScrewdriverWrenchSolid/>
+                    </Tooltip>
+                    <span class="sr-only">"Item Explorer"</span>
+                </A>
+
+                <a rel="external" href="/invitebot"
+                   class="px-4 py-2 rounded-lg bg-violet-600/20 hover:bg-violet-600/30
+                                border border-violet-400/10 hover:border-violet-400/20
+                                transition-all duration-300 text-gray-200 hover:text-amber-200">
+                    "Invite Bot"
+                </a>
+
+                <ProfileDisplay/>
+            </div>
+        </div>
+    </nav>
     }
 }
 
 #[component]
 pub fn App() -> impl IntoView {
+    info!("app run!");
     provide_meta_context();
     let cookies = Cookies::new();
     provide_context(cookies);
@@ -127,107 +226,21 @@ pub fn App() -> impl IntoView {
     // AnimationContext::provide();
     let root_node_ref = NodeRef::<Div>::new();
     provide_hotkeys_context(root_node_ref, false, scopes!());
-    let login = Resource::new(move || {}, move |_| async move { get_login().await.ok() });
-    let (homeworld, _set_homeworld) = use_home_world();
+    
     let git_hash = git_short_hash!();
     let sheet_url = ["/pkg/", git_hash, "/ultros.css"].concat();
     view! {
 
         <Link id="leptos" rel="stylesheet" href=sheet_url/>
         <Title text="Ultros"/>
-
+        // Background gradient
+            <div class="fixed inset-0 -z-10 bg-black">
+            <div class="absolute inset-0 bg-gradient-to-br from-violet-950/90 via-black/95 to-violet-950/90"/>
+            <div class="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(139,92,246,0.05),transparent_50%)]"/>
+        </div>
         <div node_ref=root_node_ref class="min-h-screen flex flex-col m-0">
             <Router>
-                // Navigation
-                <nav class="sticky top-0 z-50 backdrop-blur-sm border-b border-white/5 bg-black/40">
-                    <div class="mx-auto max-w-7xl px-2 sm:px-4 lg:px-6 py-2 flex flex-col md:flex-row items-center">
-                        // Left section
-                        <div class="flex items-center space-x-2">
-                            <A href="/" exact=true
-                                attr:class="flex items-center gap-2 px-3 py-2 rounded-lg
-                                        hover:bg-white/5 transition-colors
-                                        text-gray-200 hover:text-amber-200">
-                                <Icon icon=i::BiHomeSolid height="1.75em" width="1.75em"/>
-                                <span class="hidden sm:inline">"Home"</span>
-                            </A>
-
-                            {move || {
-                                view! {
-                                    <A href=homeworld()
-                                        .map(|w| format!("/analyzer/{}", w.name))
-                                        .unwrap_or("/analyzer".to_string())
-                                       attr:class="flex items-center gap-2 px-3 py-2 rounded-lg
-                                               hover:bg-white/5 transition-colors
-                                               text-gray-200 hover:text-amber-200">
-                                        <Icon
-                                            width="1.75em"
-                                            height="1.75em"
-                                            icon=i::FaMoneyBillTrendUpSolid
-                                        />
-                                        <span class="hidden sm:inline">"Analyzer"</span>
-                                    </A>
-                                }
-                            }}
-
-                            <Suspense fallback=move || {}>
-                                {move || {
-                                    login
-                                        .get()
-                                        .flatten()
-                                        .map(|_| {
-                                            view! {
-                                                <A href="/list"
-                                                   attr:class="flex items-center gap-2 px-3 py-2 rounded-lg
-                                                           hover:bg-white/5 transition-colors
-                                                           text-gray-200 hover:text-amber-200">
-                                                    <Icon
-                                                        width="1.75em"
-                                                        height="1.75em"
-                                                        icon=i::AiOrderedListOutlined
-                                                    />
-                                                    <span class="hidden sm:inline">"Lists"</span>
-                                                </A>
-                                                <A href="/retainers/listings"
-                                                   attr:class="flex items-center gap-2 px-3 py-2 rounded-lg
-                                                           hover:bg-white/5 transition-colors
-                                                           text-gray-200 hover:text-amber-200">
-                                                    <Icon width="1.75em" height="1.75em" icon=i::BiGroupSolid/>
-                                                    <span class="hidden sm:inline">"Retainers"</span>
-                                                </A>
-                                            }
-                                        })
-                                }}
-                            </Suspense>
-                        </div>
-
-                        // Center section
-                        <div class="flex-1 max-w-xl">
-                            <SearchBox/>
-                        </div>
-
-                        // Right section
-                        <div class="flex items-center gap-4">
-                            <A href="/items?menu-open=true"
-                               attr:class="flex items-center gap-2 px-3 py-2 rounded-lg
-                                        hover:bg-white/5 transition-colors
-                                        text-gray-200 hover:text-amber-200">
-                                <Tooltip tooltip_text="Item Explorer">
-                                    <Icon width="1.75em" height="1.75em" icon=i::FaScrewdriverWrenchSolid/>
-                                </Tooltip>
-                                <span class="sr-only">"Item Explorer"</span>
-                            </A>
-
-                            <a rel="external" href="/invitebot"
-                               class="px-4 py-2 rounded-lg bg-violet-600/20 hover:bg-violet-600/30
-                                            border border-violet-400/10 hover:border-violet-400/20
-                                            transition-all duration-300 text-gray-200 hover:text-amber-200">
-                                "Invite Bot"
-                            </a>
-
-                            <ProfileDisplay/>
-                        </div>
-                    </div>
-                </nav>
+                <NavRow />
                 // <AnimatedRoutes outro="route-out" intro="route-in" outro_back="route-out-back" intro_back="route-in-back">
                 // https://github.com/leptos-rs/leptos/issues/1754
                 <main class="flex-1">
@@ -275,6 +288,7 @@ pub fn App() -> impl IntoView {
                 </main>
             </Router>
         </div>
+        <Footer />
 
     }
 }

@@ -1,6 +1,5 @@
 use futures::future::join_all;
 use itertools::Itertools;
-use leptos::prelude::*;
 use log::error;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::collections::HashMap;
@@ -329,6 +328,7 @@ where
     T: DeserializeOwned,
 {
     use axum::http::request::Parts;
+    use leptos::prelude::use_context;
     // use the original headers of the scope
     // add the hostname when using the ssr path.
     use tracing::Instrument;
@@ -410,6 +410,7 @@ where
     // use the original headers of the scope
     // add the hostname when using the ssr path.
     use axum::http::request::Parts;
+    use leptos::prelude::use_context;
     use tracing::Instrument;
 
     static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();

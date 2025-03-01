@@ -57,9 +57,7 @@ where
         bottom,
         top,
         left,
-        right,
         width,
-        height,
         ..
     } = use_element_bounding(target);
 

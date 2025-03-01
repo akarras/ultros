@@ -2,8 +2,7 @@ use anyhow::{anyhow, Result};
 use futures::{future::join, Future};
 use gloo_net::http::Request;
 use leptos::{prelude::*, task::spawn_local};
-use leptos_meta::provide_meta_context;
-use log::error;
+use log::{error, info};
 use rexie::{ObjectStore, Rexie, Store, Transaction, TransactionMode};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -170,11 +169,13 @@ pub fn hydrate() {
 
     log::info!("hydrate mode - hydrating");
     spawn_local(async move {
+        info!("fetching..");
         let (_, (worlds, region)) = join(
             populate_xiv_gen_data(),
             join(get_world_data(), get_region()),
         )
         .await;
+        info!("hydrating body");
         hydrate_body(move || {
             let worlds = worlds.clone();
             let region = region.clone();
