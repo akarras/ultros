@@ -3,7 +3,7 @@
 FROM debian:bookworm as builder
 # Install system packages
 RUN apt update; apt upgrade -y
-RUN apt install -y libfreetype6 libfreetype6-dev cmake build-essential curl sudo
+RUN apt install -y libfreetype6 libfreetype6-dev cmake build-essential curl sudo pkg-config libssl-dev
 # Configure rustup
 RUN curl https://sh.rustup.rs -sSf | bash -s -- -y --default-toolchain nightly
 ENV PATH="/root/.cargo/bin:${PATH}"
