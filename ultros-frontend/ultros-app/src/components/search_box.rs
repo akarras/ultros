@@ -5,7 +5,7 @@ use crate::{
 use gloo_timers::future::TimeoutFuture;
 use icondata as i;
 use leptos::{html::Input, prelude::*, task::spawn_local};
-use leptos_hotkeys::{use_hotkeys, use_hotkeys_scoped};
+use leptos_hotkeys::use_hotkeys;
 // use leptos_hotkeys::use_hotkeys;
 use leptos_icons::*;
 use leptos_router::{hooks::use_navigate, NavigateOptions};
@@ -34,7 +34,7 @@ pub fn SearchBox() -> impl IntoView {
             let _ = input.focus();
         }
     });
-    
+
     leptos_hotkeys::use_hotkeys_ref(
         text_input,
         "escape".to_string(),

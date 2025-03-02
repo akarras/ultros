@@ -33,6 +33,8 @@ pub enum SystemError {
     Message(String),
     ReqwestError(Arc<reqwest::Error>),
     Anyhow(Arc<anyhow::Error>),
+    #[cfg(feature = "hydrate")]
+    GlooNet(Arc<gloo_net::Error>)
 }
 
 impl PartialEq for SystemError {
@@ -68,12 +70,21 @@ impl From<reqwest::Error> for AppError {
     }
 }
 
+#[cfg(feature = "hydrate")]
+impl From<gloo_net::Error> for AppError {
+    fn from(value: gloo_net::Error) -> Self {
+        Self::SystemError(SystemError::GlooNet(Arc::new(value)))
+    }
+}
+
 impl Display for SystemError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SystemError::Message(message) => write!(f, "{}", message),
             SystemError::ReqwestError(reqwest) => write!(f, "{}", reqwest),
             SystemError::Anyhow(anyhow) => write!(f, "{}", anyhow),
+            #[cfg(feature = "hydrate")]
+            SystemError::GlooNet(error) => write!(f, "{}", error),
         }
     }
 }
@@ -84,6 +95,8 @@ impl error::Error for SystemError {
             SystemError::Message(_) => None,
             SystemError::ReqwestError(reqwest) => Some(reqwest.as_ref()),
             SystemError::Anyhow(anyhow) => Some(anyhow.root_cause()),
+            #[cfg(feature = "hydrate")]
+            SystemError::GlooNet(error) => Some(error),
         }
     }
 }

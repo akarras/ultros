@@ -21,7 +21,8 @@ fn FeatureCard(children: ChildrenFn) -> impl IntoView {
         w-full aspect-[4/3] justify-center gap-3">
             {children().into_view()}
         </div>
-    }.into_any()
+    }
+    .into_any()
 }
 
 #[component]

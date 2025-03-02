@@ -16,7 +16,7 @@ use oauth2::{
 use sitemap_rs::{sitemap_index_error::SitemapIndexError, url_set_error::UrlSetError};
 use thiserror::Error;
 use tokio::{sync::broadcast::error::SendError, time::error::Elapsed};
-use tracing::{info, log::error};
+use tracing::{error, info};
 use ultros_api_types::result::JsonErrorWrapper;
 use ultros_db::{
     common_type_conversions::ApiConversionError, world_cache::WorldCacheError, SeaDbErr,
@@ -121,7 +121,7 @@ impl IntoResponse for ApiError {
             )
                 .into_response();
         }
-        error!("error {}", self);
+        error!(error = ?self, "Generic API error");
         (self.as_status_code(), Json(JsonErrorWrapper::from(self))).into_response()
     }
 }
@@ -200,7 +200,7 @@ impl WebError {
 
 impl IntoResponse for WebError {
     fn into_response(self) -> Response {
-        error!("Error returned {self:?}");
+        tracing::error!(error = %self, "Returning web error");
 
         (self.as_status_code(), format!("{self}")).into_response()
     }

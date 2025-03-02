@@ -120,7 +120,7 @@ pub fn Footer() -> impl IntoView {
 pub fn NavRow() -> impl IntoView {
     let login = Resource::new(move || {}, move |_| async move { get_login().await.ok() });
     let (homeworld, _set_homeworld) = use_home_world();
-    view!{
+    view! {
         // Navigation
         <nav class="sticky top-0 z-50 backdrop-blur-sm border-b border-white/5 bg-black/40">
         <div class="mx-auto max-w-7xl px-2 sm:px-4 lg:px-6 py-2 flex flex-col md:flex-row items-center">
@@ -226,7 +226,7 @@ pub fn App() -> impl IntoView {
     // AnimationContext::provide();
     let root_node_ref = NodeRef::<Div>::new();
     provide_hotkeys_context(root_node_ref, false, scopes!());
-    
+
     let git_hash = git_short_hash!();
     let sheet_url = ["/pkg/", git_hash, "/ultros.css"].concat();
     view! {

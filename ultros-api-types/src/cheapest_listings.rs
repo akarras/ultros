@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-
-use serde::{Deserialize, Serialize};
+use std::fmt;
+use serde::{de, Deserialize, Deserializer, Serialize};
 
 /// "item_id":6605,"hq":false,"cheapest_price":6999999,"world_id":99
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -16,10 +16,58 @@ pub struct CheapestListings {
     pub cheapest_listings: Vec<CheapestListingItem>,
 }
 
-#[derive(Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Clone, Copy)]
+#[derive(Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 pub struct CheapestListingMapKey {
     pub item_id: i32,
     pub hq: bool,
+}
+
+impl Serialize for CheapestListingMapKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer {
+        serializer.serialize_str(&format!("{}_{}", self.item_id, self.hq))
+    }
+}
+
+impl<'de> Deserialize<'de> for CheapestListingMapKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de> {
+        struct KeyVisitor;
+
+        impl<'de> de::Visitor<'de> for KeyVisitor {
+            type Value = CheapestListingMapKey;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a string in the format 'item_id_hq'")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                let parts: Vec<&str> = value.splitn(2, '_').collect();
+                if parts.len() != 2 {
+                    return Err(E::custom(format!("Invalid format: expected 'item_id_hq', got '{}'", value)));
+                }
+
+                let item_id_str = parts[0];
+                let hq_str = parts[1];
+
+                let item_id: i32 = item_id_str.parse::<i32>().map_err(|e| {
+                    E::custom(format!("Failed to parse item_id: '{}', error: {}", item_id_str, e))
+                })?;
+                let hq: bool = hq_str.parse::<bool>().map_err(|e| {
+                    E::custom(format!("Failed to parse hq: '{}', error: {}", hq_str, e))
+                })?;
+
+                Ok(CheapestListingMapKey { item_id, hq })
+            }
+        }
+
+        deserializer.deserialize_str(KeyVisitor)
+    }
 }
 
 #[derive(Deserialize, Serialize, Clone, Copy, PartialEq, PartialOrd)]

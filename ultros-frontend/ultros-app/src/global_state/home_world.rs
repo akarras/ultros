@@ -22,7 +22,7 @@ pub struct GuessedRegion(pub String);
 pub fn use_home_world() -> (Signal<Option<World>>, SignalSetter<Option<World>>) {
     let cookies = use_context::<Cookies>().unwrap();
     let (cookie, set_cookie) = cookies.get_cookie(HOMEWORLD_COOKIE_NAME);
-    let world_1 = use_context::<LocalWorldData>().unwrap().0.ok();
+    let world_1 = Some(use_context::<LocalWorldData>().unwrap().0.unwrap());
     let world_2 = world_1.clone();
     let world = Memo::new(move |_| {
         world_1.as_ref().and_then(|w| {
@@ -82,9 +82,7 @@ pub fn get_price_zone() -> (
         worlds.clone().and_then(|w| {
             cookie()
                 .map(|cookie| cookie.value().to_string())
-                .or_else(|| {
-                    guessed_region.clone()
-                })
+                .or_else(|| guessed_region.clone())
                 .and_then(move |cookie| w.lookup_world_by_name(&cookie).map(|w| w.into()))
         })
     });

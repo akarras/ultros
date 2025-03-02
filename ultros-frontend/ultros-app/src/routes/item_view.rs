@@ -1,19 +1,22 @@
 use crate::api::get_listings;
 use crate::components::{
     ad::Ad, add_to_list::AddToList, clipboard::*, item_icon::*, listings_table::*, meta::*,
-    price_history_chart::*, recently_viewed::RecentItems, related_items::*, sale_history_table::*,
+    recently_viewed::RecentItems, related_items::*, sale_history_table::*,
     skeleton::BoxSkeleton, stats_display::*, ui_text::*,
 };
+use crate::error::AppError;
 use crate::global_state::home_world::{get_price_zone, use_home_world};
 use crate::global_state::LocalWorldData;
 use leptos::either::{Either, EitherOf3};
 use leptos::prelude::*;
+use leptos::task::spawn_local_scoped;
 use leptos_icons::Icon;
 use leptos_meta::{Link, Meta};
 use leptos_router::components::A;
 use leptos_router::hooks::use_params_map;
 use leptos_router::location::Url;
 use ultros_api_types::world_helper::{AnyResult, OwnedResult};
+use ultros_api_types::CurrentlyShownItem;
 use xiv_gen::ItemId;
 
 #[component]
@@ -40,6 +43,7 @@ fn WorldButton(
     };
     let is_selected = move || current_world.with(|w| w == world_3.as_str());
     view! {
+        <div>
         <A
             attr:class=move || [
                 "rounded-md text-sm px-4 py-2 text-white/90 mx-1 flex items-center gap-2 transition-all duration-200",
@@ -56,15 +60,19 @@ fn WorldButton(
             {move || is_home_world.get().then(|| view! { <Icon icon=icondata::AiHomeFilled attr:class="text-purple-300"/><div class="w-1"></div> })}
             {world_name}
         </A>
+        </div>
     }.into_any()
 }
 
 #[component]
 fn HomeWorldButton(current_world: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
     let (home_world, _) = use_home_world();
-    home_world.get().map(move |world| {
-        view! { <WorldButton current_world world=AnyResult::World(&world) item_id=item_id() /> }
-    }).into_any()
+    home_world
+        .get_untracked()
+        .map(move |world| {
+            view! { <WorldButton current_world world=AnyResult::World(&world) item_id=item_id() /> }
+        })
+        .into_any()
 }
 
 #[component]
@@ -79,7 +87,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                 <div class="flex flex-wrap gap-2 py-3">
                     {move || {
                         let world = world_name();
-                        let world_name = Url::escape(&world);
+                        let world_name = Url::unescape(&world);
                         if let Some(world) = world_data.lookup_world_by_name(&world_name) {
                             Either::Left(match world {
                                 AnyResult::World(world) => {
@@ -119,7 +127,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                                     let should_show_homeworld = !dc
                                         .worlds
                                         .iter()
-                                        .any(|w| home_world.with(|world| world.as_ref().map(|world| world.name == w.name).unwrap_or_default()));
+                                        .any(|w| home_world.with_untracked(|world| world.as_ref().map(|world| world.name == w.name).unwrap_or_default()));
                                     EitherOf3::B(view! {
                                         {views}
                                         <div class="w-2"></div>
@@ -167,16 +175,11 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
 }
 
 #[component]
-fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
-    let listing_resource = Resource::new(
-        move || (item_id(), world()),
-        |(item_id, world)| async move { get_listings(item_id, world.as_str()).await },
-    );
-
-    view! {
-        <div class="container mx-auto px-4 py-8">
-            <div class="grid grid-cols-1 gap-6">
-                <Transition
+pub fn PriceHistoryChart(
+    listing_resource: Resource<Result<CurrentlyShownItem, AppError>>,
+) -> impl IntoView {
+    view!{
+        <Transition
                     fallback=move || {
                         view! {
                             <div class="animate-pulse bg-purple-900/20 rounded-xl h-[35em]">
@@ -195,120 +198,167 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
                         });
                         view! {
                             <div class="bg-black/40 rounded-xl p-6 backdrop-blur-sm border border-purple-800/20">
-                                <PriceHistoryChart sales=sales/>
+                                // <PriceHistoryChart sales=sales/>
                             </div>
                         }
                     }}
                 </Transition>
+    }.into_any()
+}
 
-                <div class="space-y-6">
-                    <Transition
-                        fallback=move || view! { <BoxSkeleton/> }
-                    >
-                        {move || {
-                            let hq_listings = Memo::new(move |_| {
-                                listing_resource
-                                    .with(|l| {
+#[component]
+fn HighQualityTable(
+    listing_resource: Resource<Result<CurrentlyShownItem, AppError>>,
+) -> impl IntoView {
+    view ! {
+        <div class="space-y-6">
+            <Transition
+                fallback=move || view! { <BoxSkeleton/> }
+            >
+                {move || {
+                    let hq_listings = Memo::new(move |_| {
+                        listing_resource
+                            .with(|l| {
+                                l.as_ref()
+                                    .and_then(|l| {
                                         l.as_ref()
-                                            .and_then(|l| {
-                                                l.as_ref()
-                                                    .ok()
-                                                    .map(|l| {
-                                                        l.listings
-                                                            .iter()
-                                                            .cloned()
-                                                            .filter(|(l, _)| l.hq)
-                                                            .collect::<Vec<_>>()
-                                                    })
+                                            .ok()
+                                            .map(|l| {
+                                                l.listings
+                                                    .iter()
+                                                    .cloned()
+                                                    .filter(|(l, _)| l.hq)
+                                                    .collect::<Vec<_>>()
                                             })
                                     })
-                                    .unwrap_or_default()
-                            });
-                            view! {
-                                <div
-                                    class="bg-black/40 rounded-xl p-6 backdrop-blur-sm border border-purple-800/20"
-                                    class:hidden=move || hq_listings.with(|l| l.is_empty())
-                                >
-                                    <h2 class="text-xl font-bold text-center mb-4 text-purple-200">
-                                        "High Quality Listings"
-                                    </h2>
-                                    <ListingsTable listings=hq_listings/>
-                                </div>
-                            }
-                        }}
-                    </Transition>
+                            })
+                            .unwrap_or_default()
+                    });
+                    view! {
+                        <div
+                            class="bg-black/40 rounded-xl p-6 backdrop-blur-sm border border-purple-800/20"
+                            class:hidden=move || hq_listings.with(|l| l.is_empty())
+                        >
+                            <h2 class="text-xl font-bold text-center mb-4 text-purple-200">
+                                "High Quality Listings"
+                            </h2>
+                            <ListingsTable listings=hq_listings/>
+                        </div>
+                    }
+                }}
+            </Transition>
+        </div>
+    }.into_any()
+}
 
-                    <Transition
-                        fallback=move || view! { <BoxSkeleton/> }
-                    >
-                        {move || {
-                            let lq_listings = Memo::new(move |_| {
-                                listing_resource
-                                    .with(|l| {
+#[component]
+fn LowQualityTable(
+    listing_resource: Resource<Result<CurrentlyShownItem, AppError>>,
+) -> impl IntoView {
+    view! {
+        <div class="space-y-6">
+            <Transition
+                fallback=move || view! { <BoxSkeleton/> }
+            >
+                {move || {
+                    let lq_listings = Memo::new(move |_| {
+                        listing_resource
+                            .with(|l| {
+                                l.as_ref()
+                                    .and_then(|l| {
                                         l.as_ref()
-                                            .and_then(|l| {
-                                                l.as_ref()
-                                                    .ok()
-                                                    .map(|l| {
-                                                        l.listings
-                                                            .iter()
-                                                            .cloned()
-                                                            .filter(|(l, _)| !l.hq)
-                                                            .collect::<Vec<_>>()
-                                                    })
+                                            .ok()
+                                            .map(|l| {
+                                                l.listings
+                                                    .iter()
+                                                    .cloned()
+                                                    .filter(|(l, _)| !l.hq)
+                                                    .collect::<Vec<_>>()
                                             })
                                     })
-                                    .unwrap_or_default()
-                            });
-                            view! {
-                                <div
-                                    class="bg-black/40 rounded-xl p-6 backdrop-blur-sm border border-purple-800/20"
-                                    class:hidden=move || lq_listings.with(|l| l.is_empty())
-                                >
-                                    <h2 class="text-xl font-bold text-center mb-4 text-purple-200">
-                                        "Low Quality Listings"
-                                    </h2>
-                                    <ListingsTable listings=lq_listings/>
-                                </div>
-                            }
-                        }}
-                    </Transition>
-                </div>
-            </div>
-            <div class="mt-8 space-y-6">
-                <Transition
-                    fallback=move || view! { <BoxSkeleton/> }
-                >
-                    {move || {
-                        let sales = Memo::new(move |_| {
-                            listing_resource
-                                .with(|l| l.as_ref().and_then(|l| l.as_ref().map(|l| l.sales.clone()).ok()))
-                                .unwrap_or_default()
-                        });
+                            })
+                            .unwrap_or_default()
+                    });
+                    view! {
+                        <div
+                            class="bg-black/40 rounded-xl p-6 backdrop-blur-sm border border-purple-800/20"
+                            class:hidden=move || lq_listings.with(|l| l.is_empty())
+                        >
+                            <h2 class="text-xl font-bold text-center mb-4 text-purple-200">
+                                "Low Quality Listings"
+                            </h2>
+                            <ListingsTable listings=lq_listings/>
+                        </div>
+                    }.into_any()
+                }}
+            </Transition>
+        </div>
+    }
+}
 
-                        view! {
-                            <div class="space-y-6">
-                                <div class="bg-black/40 rounded-xl p-6 backdrop-blur-sm border border-purple-800/20">
-                                    <h2 class="text-xl font-bold text-center mb-4 text-purple-200">
-                                        "Sale History"
-                                    </h2>
-                                    <SaleHistoryTable sales=sales.into()/>
-                                </div>
+#[component]
+fn SalesDetails(listing_resource: Resource<Result<CurrentlyShownItem, AppError>>) -> impl IntoView {
+    view! {
+        <div class="mt-8 space-y-6">
+            <Transition
+                fallback=move || view! { <BoxSkeleton/> }
+            >
+                {move || {
+                    let sales = Memo::new(move |_| {
+                        listing_resource
+                            .with(|l| l.as_ref().and_then(|l| l.as_ref().map(|l| l.sales.clone()).ok()))
+                            .unwrap_or_default()
+                    });
 
-                                <div class="bg-black/40 rounded-xl p-6 backdrop-blur-sm border border-purple-800/20">
-                                    <SalesInsights sales=sales.into()/>
-                                </div>
+                    view! {
+                        <div class="space-y-6">
+                            <div class="bg-black/40 rounded-xl p-6 backdrop-blur-sm border border-purple-800/20">
+                                <h2 class="text-xl font-bold text-center mb-4 text-purple-200">
+                                    "Sale History"
+                                </h2>
+                                <SaleHistoryTable sales=sales.into() />
                             </div>
-                        }
-                    }}
-                </Transition>
+
+                            <div class="bg-black/40 rounded-xl p-6 backdrop-blur-sm border border-purple-800/20">
+                                <SalesInsights sales=sales.into()/>
+                            </div>
+                        </div>
+                    }.into_any()
+                }}
+            </Transition>
+        </div>
+    }
+}
+
+#[component]
+fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
+    let listing_resource = Resource::new(
+        move || (item_id(), world()),
+        |(item_id, world)| async move {
+            get_listings(item_id, world.as_str())
+                .await
+                .inspect_err(|e| tracing::error!(error = ?e, "Error getting value"))
+        },
+    );
+    Effect::new(move |_| {
+        let val = listing_resource.get();
+        tracing::info!(?val, "Listings updated");
+    });
+    view! {
+        <div class="container mx-auto px-4 py-8">
+            <div class="grid grid-cols-1 gap-6">
+                <PriceHistoryChart listing_resource />
+                <HighQualityTable listing_resource />
+                <LowQualityTable listing_resource />
             </div>
+            <SalesDetails listing_resource />
 
             <div class="mt-6 mx-auto">
                 <Ad class="h-[336px] w-[280px] rounded-xl overflow-hidden"/>
             </div>
         </div>
-    }.into_any()
+    }
+    .into_any()
 }
 
 #[component]

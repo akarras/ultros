@@ -416,7 +416,6 @@ where
         let link_path = href.get();
 
         path.with(|path| {
-            info!("{link_path} {path}");
             &Url::escape(&link_path) == path
         })
     });
@@ -434,10 +433,10 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
     let (sort, _set_sort) = query_signal::<ItemSortOption>("sort");
 
     let cheapest_prices = use_context::<CheapestPrices>().unwrap();
-    
+
     let items_len = Memo::new(move |_| items.with(|i| i.len()));
     let pages = move || Pages::new(items_len(), 50);
-    
+
     view! {
         <div class="flex flex-col gap-4">
             // Sort and Direction Controls
@@ -591,7 +590,6 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                 .to_vec()
                         })
                     };
-                    
                     view!{
                         <For
                 each=items
@@ -687,7 +685,8 @@ fn CategorySection(
             {category.map(|cat| view! { <CategoryView category=cat/> })}
             {children.map(|c| c())}
         </div>
-    }.into_any()
+    }
+    .into_any()
 }
 
 #[component]

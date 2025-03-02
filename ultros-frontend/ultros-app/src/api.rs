@@ -1,8 +1,8 @@
 use futures::future::join_all;
 use itertools::Itertools;
-use log::error;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::collections::HashMap;
+use tracing::error;
 use tracing::instrument;
 use ultros_api_types::{
     cheapest_listings::CheapestListings,
@@ -377,28 +377,36 @@ where
     T: DeserializeOwned,
 {
     use leptos::task::spawn_local;
+
+    use crate::error::SystemError;
     let (tx, rx) = flume::unbounded();
-    let path = path.to_string();
-    spawn_local(async move {
-        let inner_impl = async move || -> AppResult<String> {
-            let json: String = reqwest::get(path)
-                .await
-                .map_err(|e| {
-                    error!("{}", e);
-                    e
-                })?
-                .text()
-                .await?;
-            Ok(json)
-        };
-        let result = inner_impl().await;
-        tx.send(result).unwrap();
+    
+    spawn_local({
+        let path = path.to_string();
+        async move {
+            let inner_impl = async move || -> AppResult<String> {
+                let json: String = gloo_net::http::Request::get(&path)
+                    // .abort_signal(abort_signal.as_ref())
+                    .send()
+                    .await
+                    .inspect_err(|e| {
+                        error!(error = %e, "Error making http request")
+                    })?
+                    .text()
+                    .await?;
+                Ok(json)
+            };
+            let result = inner_impl().await;
+            let _ = tx.send(result);
+        }
     });
     let json = rx
         .into_recv_async()
         .await
         .expect("The channel to just work")?;
-    deserialize(&json)
+    deserialize(&json).inspect_err(|e| {
+        error!(error = ?e, path, "Error deserializing");
+    })
 }
 
 #[cfg(feature = "ssr")]
@@ -411,7 +419,7 @@ where
     // add the hostname when using the ssr path.
     use axum::http::request::Parts;
     use leptos::prelude::use_context;
-    use tracing::Instrument;
+    use tracing::{info, Instrument};
 
     static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     let client = CLIENT.get_or_init(|| {
@@ -440,13 +448,12 @@ where
         .await
         .instrument(tracing::trace_span!("HTTP FETCH"))
         .into_inner()
-        .map_err(|e| {
-            error!("Response {e}. {path}");
-            e
+        .inspect_err(|e| {
+            error!(error = ?e, path, "Error doing leptos fetch");
         })?
         .text()
         .await?;
-    deserialize(&json)
+    deserialize(&json).inspect_err(|e| error!(error = ?e, path, json, "Error deserializing text"))
 }
 
 #[cfg(not(feature = "ssr"))]

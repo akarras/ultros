@@ -272,7 +272,8 @@ fn DeleteUser() -> impl IntoView {
                 </button>
             </div>
         </div>
-    }.into_any()
+    }
+    .into_any()
 }
 
 #[component]
@@ -288,7 +289,8 @@ pub fn Settings() -> impl IntoView {
                 <AdChoice/>
             </div>
         </div>
-    }.into_any()
+    }
+    .into_any()
 }
 #[component]
 pub fn Profile() -> impl IntoView {

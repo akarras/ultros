@@ -156,7 +156,7 @@ pub(crate) fn get_cookies() -> Option<CookieJar> {
 #[cfg(feature = "ssr")]
 pub(crate) fn get_cookies() -> Option<CookieJar> {
     use axum::http::request::Parts;
-    let request_parts = use_context::<Parts>()?;
+    let request_parts = use_context::<Parts>().expect("Request parts not provided");
     let cookie = request_parts.headers.get("Cookie")?;
     let value = cookie.to_str().ok()?.to_string();
     let mut cookie_jar = CookieJar::new();

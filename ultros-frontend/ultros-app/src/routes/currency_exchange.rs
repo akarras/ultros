@@ -76,20 +76,22 @@ impl Ord for ItemAmount {
 
 #[component]
 fn ItemAmount(item_amount: Option<ItemAmount>) -> impl IntoView {
-    item_amount.map(|item_amount| {
-        view! {
-            <div class="flex flex-row gap-1">
-                <A attr:class="flex flex-row gap-1"
-                    href=format!("/item/{}", item_amount.item.key_id.0)>
-                    <ItemIcon item_id=item_amount.item.key_id.0 icon_size=IconSize::Small/>
-                    <span>{item_amount.item.name.as_str()}</span>
-                </A>
-                <div>"x" {item_amount.amount}</div>
-                <AddToList item_id=item_amount.item.key_id.0/>
-                <Clipboard clipboard_text=item_amount.item.name.as_str()/>
-            </div>
-        }
-    }).into_any()
+    item_amount
+        .map(|item_amount| {
+            view! {
+                <div class="flex flex-row gap-1">
+                    <A attr:class="flex flex-row gap-1"
+                        href=format!("/item/{}", item_amount.item.key_id.0)>
+                        <ItemIcon item_id=item_amount.item.key_id.0 icon_size=IconSize::Small/>
+                        <span>{item_amount.item.name.as_str()}</span>
+                    </A>
+                    <div>"x" {item_amount.amount}</div>
+                    <AddToList item_id=item_amount.item.key_id.0/>
+                    <Clipboard clipboard_text=item_amount.item.name.as_str()/>
+                </div>
+            }
+        })
+        .into_any()
 }
 
 struct ShopItems {
@@ -188,7 +190,8 @@ fn FilterModal(filter_name: &'static str) -> impl IntoView {
             }}
 
         </div>
-    }.into_any()
+    }
+    .into_any()
 }
 
 fn is_in_range(value: i32, field_label: &str, query_map: &ParamsMap) -> bool {

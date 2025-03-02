@@ -81,12 +81,12 @@ pathfinder_simd = { git = "https://github.com/servo/pathfinder.git" } # needed o
 
 [profile.release]
 # lto = true
-opt-level = 3
+opt-level = "z"
 # codegen-units = 1
 
 [profile.dev]
-opt-level = 1
-codegen-units = 256
+# opt-level = 1
+# codegen-units = 256
 
 
 [profile.sane]

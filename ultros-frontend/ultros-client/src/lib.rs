@@ -164,8 +164,8 @@ async fn get_region() -> String {
 
 #[wasm_bindgen]
 pub fn hydrate() {
-    _ = console_log::init_with_level(log::Level::Debug);
     console_error_panic_hook::set_once();
+    tracing_wasm::set_as_global_default();
     // check that we have the right client version data
     let _ = Executor::init_wasm_bindgen();
     log::info!("hydrate mode - hydrating");

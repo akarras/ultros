@@ -20,13 +20,14 @@ use crate::item_update_service::UpdateService;
 #[cfg(feature = "profiling")]
 use crate::profiling::start_profiling_server;
 use crate::web::WebState;
-use ::leptos::config::{get_configuration, LeptosOptions};
+use ::leptos::config::get_configuration;
 use analyzer_service::AnalyzerService;
 use anyhow::Result;
 use axum_extra::extract::cookie::Key;
 use discord::start_discord;
 use event::{create_event_busses, EventProducer, EventType};
 use tracing::{error, info};
+use tracing_subscriber::EnvFilter;
 use ultros_api_types::websocket::{ListingEventData, SaleEventData};
 use ultros_api_types::world::WorldData;
 use ultros_api_types::world_helper::WorldHelper;
@@ -87,55 +88,67 @@ async fn run_socket_listener(
                         listings,
                     })) => match db.update_listings(listings.clone(), item, world).await {
                         Ok((listings, removed)) => {
-                            let listings = Arc::new(ListingEventData { item_id: item.0, world_id: world.0, listings });
-                            let removed = Arc::new(ListingEventData { item_id: item.0, world_id: world.0, listings: removed });
+                            let listings = Arc::new(ListingEventData {
+                                item_id: item.0,
+                                world_id: world.0,
+                                listings,
+                            });
+                            let removed = Arc::new(ListingEventData {
+                                item_id: item.0,
+                                world_id: world.0,
+                                listings: removed,
+                            });
                             match listings_tx.send(EventType::Remove(removed)) {
-                                Ok(o) => info!("sent removed listings {o} slack remaining"),
-                                Err(e) => error!("Error removing listings {e}"),
+                                Ok(o) => info!(slack_remaining = o, "sent removed listings"),
+                                Err(e) => error!(error = ?e, "Error removing listings"),
                             }
                             match listings_tx.send(EventType::Add(listings)) {
-                                Ok(o) => info!("updated listings, sent {o} slack remaining"),
-                                Err(e) => error!("Error adding listings {e}"),
+                                Ok(o) => info!(remaining_slack = o, "updated listings"),
+                                Err(e) => error!(error = ?e, "Error adding listings"),
                             };
                         }
-                        Err(e) => error!("Listing add failed {e} {listings:?}"),
+                        Err(e) => error!(error = ?e, listings = ?listings, "Listing add failed"),
                     },
                     SocketRx::Event(Ok(WSMessage::ListingsRemove {
                         item,
                         world,
                         listings,
-                    })) => {
-                        match db.remove_listings(listings.clone(), item, world).await {
-                            Ok(listings) => {
-                                info!("Removed listings {listings:?} {item:?} {world:?}");
-                                if let Err(e) = listings_tx.send(EventType::removed(ListingEventData { item_id: item.0, world_id: world.0, listings })) {
-                                    error!("Error sending remove listings {e:?}");
-                                }
-                            },
-                            Err(e) => error!("Error removing listings {e:?}. Listings set {listings:?} {item:?} {world:?}")
+                    })) => match db.remove_listings(listings.clone(), item, world).await {
+                        Ok(listings) => {
+                            info!(?listings, ?item, ?world, "Removed listings");
+                            if let Err(e) = listings_tx.send(EventType::removed(ListingEventData {
+                                item_id: item.0,
+                                world_id: world.0,
+                                listings,
+                            })) {
+                                error!(error = ?e, "Error sending remove listings");
+                            }
                         }
-                    }
+                        Err(e) => {
+                            error!(error = ?e, ?listings, ?item, ?world, "Error removing listings. Listings set")
+                        }
+                    },
                     SocketRx::Event(Ok(WSMessage::SalesAdd { item, world, sales })) => {
                         match db.update_sales(sales.clone(), item, world).await {
                             Ok(added_sales) => {
-                                info!(
-                                    "Stored sale data. Last id: {added_sales:?} {item:?} {world:?}"
-                                );
-                                match sales_tx.send(EventType::added(SaleEventData{sales: added_sales})) {
-                                    Ok(o) => info!("Sent sale {o} slack remaining"),
-                                    Err(e) => error!("Error sending sale update {e:?}"),
+                                info!(?added_sales, ?item, ?world, "Stored sale data");
+                                match sales_tx
+                                    .send(EventType::added(SaleEventData { sales: added_sales }))
+                                {
+                                    Ok(o) => info!(slack_remaining = o, "Sent sale"),
+                                    Err(e) => error!(error = ?e, "Error sending sale update"),
                                 }
                             }
                             Err(e) => {
-                                error!("Error inserting sale {e}. {sales:?} {item:?} {world:?}")
+                                error!(error = ?e, ?sales, ?item, ?world, "Error inserting sale.")
                             }
                         }
                     }
                     SocketRx::Event(Ok(WSMessage::SalesRemove { item, world, sales })) => {
-                        info!("sales removed {item:?} {world:?} {sales:?}");
+                        info!(?item, ?world, ?sales, "sales removed");
                     }
                     SocketRx::Event(Err(e)) => {
-                        error!("Error {e:?}");
+                        error!(error = ?e, "Error");
                     }
                 }
             });
@@ -163,7 +176,14 @@ async fn init_db(
 #[tokio::main]
 async fn main() -> Result<()> {
     // Create the db before we proceed
-    tracing_subscriber::fmt::init();
+    let filter: EnvFilter =
+        EnvFilter::try_from_default_env().unwrap_or("warn,ultros=info,ultros-app=info".into());
+    tracing_subscriber::fmt::fmt()
+        .with_file(true)
+        .with_line_number(true)
+        .with_env_filter(filter)
+        .pretty()
+        .init();
     #[cfg(feature = "profiling")]
     tokio::spawn(async move { start_profiling_server().await });
     info!("Ultros starting!");

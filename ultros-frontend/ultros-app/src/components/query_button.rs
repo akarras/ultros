@@ -53,5 +53,6 @@ where
         >
             {children.into_inner()().into_view()}
         </a>
-    }.into_any()
+    }
+    .into_any()
 }

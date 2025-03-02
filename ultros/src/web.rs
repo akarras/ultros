@@ -26,7 +26,6 @@ use itertools::Itertools;
 use leptos::config::LeptosOptions;
 use leptos::prelude::provide_context;
 use serde::Deserialize;
-use ultros_app::{shell, GuessedRegion, LocalWorldData};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::{Arc, OnceLock};
@@ -47,6 +46,7 @@ use ultros_api_types::world_helper::WorldHelper;
 use ultros_api_types::{
     ActiveListing, CurrentlyShownItem, FfxivCharacter, FfxivCharacterVerification, Retainer,
 };
+use ultros_app::{shell, GuessedRegion, LocalWorldData};
 use ultros_db::common_type_conversions::ApiConversionError;
 use ultros_db::world_cache::AnySelector;
 use ultros_db::ActiveValue;
@@ -92,6 +92,7 @@ async fn remove_owned_retainer(
     Ok(Redirect::to("/retainers/edit"))
 }
 
+#[tracing::instrument(skip(db, world_cache))]
 async fn world_item_listings(
     State(db): State<UltrosDb>,
     State(world_cache): State<Arc<WorldCache>>,
@@ -107,7 +108,8 @@ async fn world_item_listings(
         db_clone.get_all_listings_in_worlds_with_retainers(&worlds, ItemId(item_id)),
         db.get_sale_history_from_multiple_worlds(world_iter, item_id, 200),
     )
-    .await?;
+    .await
+    .inspect_err(|e| tracing::error!(error = ?e, "Error getting listings"))?;
     let currently_shown = CurrentlyShownItem {
         listings: listings
             .into_iter()
@@ -939,9 +941,15 @@ pub(crate) async fn start_web(state: WebState) {
             "/",
             create_leptos_app(state.world_helper.clone()).await.unwrap(),
         )
-        .fallback(leptos_axum::file_and_error_handler_with_context::<WebState, _>(move || {
-            provide_context(LocalWorldData(Ok(worlds.clone())));
-        }, shell))
+        .fallback(leptos_axum::file_and_error_handler_with_context::<
+            WebState,
+            _,
+        >(
+            move || {
+                provide_context(LocalWorldData(Ok(worlds.clone())));
+            },
+            shell,
+        ))
         .with_state(state)
         .route_layer(middleware::from_fn(track_metrics))
         .layer(TraceLayer::new_for_http())
