@@ -21,7 +21,6 @@ use leptos_icons::*;
 use leptos_router::components::A;
 use leptos_router::*;
 use location::Url;
-use log::info;
 use paginate::Pages;
 use percent_encoding::percent_decode_str;
 use xiv_gen::{ClassJobCategory, Item, ItemId};
@@ -596,26 +595,24 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                 key=|(id, item)| (id.0, &item.name)
                 children=|(id, item)| {
                     view! {
-                        <div class="flex flex-col md:grid md:grid-cols-12 gap-2 p-3 rounded-lg
+                        <div class="sm:flex sm:flex-col md:grid md:grid-cols-12 gap-2 p-3 rounded-lg
                                   border border-white/10 backdrop-blur-sm
                                   bg-gradient-to-br from-violet-950/20 to-violet-900/20
                                   hover:from-violet-900/30 hover:to-violet-800/30
-                                  transition-all duration-200">
+                                  transition-all duration-200
+                                  items-center">
                             // Item Info Section
-                            <div class="flex flex-row items-center justify-between md:col-span-5 gap-2 min-w-0">
+                            <div class="flex flex-row items-center justify-between md:col-span-5 gap-1 min-w-0">
                                 <div class="flex-1 min-w-0 flex flex-row"> // Added container with min-w-0
                                     <SmallItemDisplay item=item/>
                                     <Clipboard clipboard_text=item.name.clone() />
                                 </div>
-                                <div class="flex-shrink-0"> // Prevent shrinking of add button
+                                
+                            </div>
+                            <div class="flex-shrink-1"> // Prevent shrinking of add button
                                     <AddToList item_id=id.0/>
-                                </div>
                             </div>
-
-                            // Min level
-                            <div class="flex flex-row items-center justify-between md:col-span-2 gap-2 min-w-0">
-                                "Equip level: "{item.level_equip}
-                            </div>
+                            <div class="flex-shrink-1 md:col-span-2 gray-700">"min level: "{item.level_equip}</div>
 
                             // Normal Quality Price
                             <div class="md:col-span-3 flex flex-row md:justify-center items-center gap-2">
@@ -627,18 +624,18 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                             {move || {
                                 if item.can_be_hq {
                                     Either::Left(view! {
-                                        <div class="md:col-span-4 flex flex-row md:justify-center items-center gap-2">
+                                        <div class="md:col-span-3 flex flex-row md:justify-center items-center gap-2">
                                             <span class="text-gray-400 md:hidden">"HQ: "</span>
                                             <CheapestPrice item_id=*id show_hq=true/>
                                         </div>
                                     })
                                 } else {
                                     // Take up the space on desktop but don't show anything
-                                    Either::Right(view! { <div class="md:col-span-4"></div> })
+                                    Either::Right(view! { <div class="md:col-span-3"></div> })
                                 }
                             }}
                         </div>
-                    }
+                    }.into_any()
                 }
             />
                 }}

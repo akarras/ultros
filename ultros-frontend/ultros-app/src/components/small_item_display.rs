@@ -10,8 +10,8 @@ use leptos_router::components::A;
 fn ItemDetails(item: &'static Item) -> impl IntoView {
     view! {
         <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Small/>
-        <span style="width: 300px;">{item.name.as_str()}</span>
-        <span style="color: #abc; width: 50px;">{item.level_item.0}</span>
+        <span class="w-60">{item.name.as_str()}</span>
+        <span class="w-10 text-gray-500">{item.level_item.0}</span>
     }
     .into_any()
 }

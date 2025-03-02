@@ -377,8 +377,6 @@ where
     T: DeserializeOwned,
 {
     use leptos::task::spawn_local;
-
-    use crate::error::SystemError;
     let (tx, rx) = flume::unbounded();
     
     spawn_local({
@@ -390,7 +388,7 @@ where
                     .send()
                     .await
                     .inspect_err(|e| {
-                        error!(error = %e, "Error making http request")
+                        error!(error = %e, path, "Error making http request")
                     })?
                     .text()
                     .await?;

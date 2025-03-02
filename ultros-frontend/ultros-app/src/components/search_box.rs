@@ -28,7 +28,7 @@ pub fn SearchBox() -> impl IntoView {
     let (search, set_search) = signal(String::new());
     let navigate = use_navigate();
     let (active, set_active) = signal(false);
-    use_hotkeys!(("meta+k,ctrl+k") => move |_| {
+    use_hotkeys!(("MetaLeft+KeyK,ControlLeft+KeyK", "*") => move |_| {
         set_active(true);
         if let Some(input) = text_input.get() {
             let _ = input.focus();
@@ -37,7 +37,7 @@ pub fn SearchBox() -> impl IntoView {
 
     leptos_hotkeys::use_hotkeys_ref(
         text_input,
-        "escape".to_string(),
+        "Escape".to_string(),
         Callback::new(move |_| {}),
         vec!["*".to_string()],
     );
@@ -109,7 +109,7 @@ pub fn SearchBox() -> impl IntoView {
                     on:input=on_input
                     on:focusin=focus_in
                     on:focusout=focus_out
-                    placeholder="Search items... (⌘K)"
+                    placeholder="Search items... (⌘K / CTRL K)"
                     class="w-full px-4 py-2 pl-10 rounded-lg
                                bg-violet-950/50 border border-white/10
                                focus:border-violet-400/30 focus:outline-none

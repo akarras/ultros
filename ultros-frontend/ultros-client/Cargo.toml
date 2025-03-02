@@ -13,7 +13,7 @@ ultros-app = { path = "../ultros-app", default-features = false, features = [
     "hydrate",
 ] }
 ultros-api-types = { path = "../../ultros-api-types" }
-leptos = { workspace = true, default-features = false, features = ["hydrate"] }
+leptos = { workspace = true, default-features = false, features = ["hydrate", "nightly"] }
 log = "0.4"
 wasm-bindgen = "0.2"
 console_error_panic_hook = "0.1"

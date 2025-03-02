@@ -1,4 +1,5 @@
 use crate::api::get_listings;
+use crate::components::price_history_chart::PriceHistoryChart;
 use crate::components::{
     ad::Ad, add_to_list::AddToList, clipboard::*, item_icon::*, listings_table::*, meta::*,
     recently_viewed::RecentItems, related_items::*, sale_history_table::*,
@@ -9,7 +10,6 @@ use crate::global_state::home_world::{get_price_zone, use_home_world};
 use crate::global_state::LocalWorldData;
 use leptos::either::{Either, EitherOf3};
 use leptos::prelude::*;
-use leptos::task::spawn_local_scoped;
 use leptos_icons::Icon;
 use leptos_meta::{Link, Meta};
 use leptos_router::components::A;
@@ -175,7 +175,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
 }
 
 #[component]
-pub fn PriceHistoryChart(
+pub fn ChartWrapper(
     listing_resource: Resource<Result<CurrentlyShownItem, AppError>>,
 ) -> impl IntoView {
     view!{
@@ -198,7 +198,7 @@ pub fn PriceHistoryChart(
                         });
                         view! {
                             <div class="bg-black/40 rounded-xl p-6 backdrop-blur-sm border border-purple-800/20">
-                                // <PriceHistoryChart sales=sales/>
+                                <PriceHistoryChart sales=sales/>
                             </div>
                         }
                     }}
@@ -347,7 +347,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
     view! {
         <div class="container mx-auto px-4 py-8">
             <div class="grid grid-cols-1 gap-6">
-                <PriceHistoryChart listing_resource />
+                <ChartWrapper listing_resource />
                 <HighQualityTable listing_resource />
                 <LowQualityTable listing_resource />
             </div>
@@ -468,7 +468,7 @@ pub fn ItemView() -> impl IntoView {
                         </div>
                     </div>
 
-                    <div class="md:ml-auto flex flex-wrap gap-2">
+                    <div class="md:ml-auto flex flex-wrap gap-2 items-center">
                         <AddToList item_id/>
                         <a
                             class="btn bg-blue-900/50 hover:bg-blue-800/50 transition-all"
