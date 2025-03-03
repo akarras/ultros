@@ -293,7 +293,7 @@ fn LowQualityTable(
                 }}
             </Transition>
         </div>
-    }
+    }.into_any()
 }
 
 #[component]
@@ -327,7 +327,7 @@ fn SalesDetails(listing_resource: Resource<Result<CurrentlyShownItem, AppError>>
                 }}
             </Transition>
         </div>
-    }
+    }.into_any()
 }
 
 #[component]

@@ -95,6 +95,7 @@ pub fn EditLists() -> impl IntoView {
                                         Either::Left(view! {
                                             <h3>"Current lists"</h3>
                                             <table class="w-full">
+                                                <tbody>
                                                 <tr>
                                                     <td>"List Name"</td>
                                                     <td>"World"</td>
@@ -184,7 +185,7 @@ pub fn EditLists() -> impl IntoView {
                                                         }
                                                     }
                                                 />
-
+                                                </tbody>
                                             </table>
                                         })
                                     }

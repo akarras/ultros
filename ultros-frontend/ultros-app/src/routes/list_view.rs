@@ -418,6 +418,7 @@ pub fn ListView() -> impl IntoView {
                                         </div>
                                     </div>
                                     <table class="w-full">
+                                        <tbody>
                                         <tr>
                                             <th class:hidden=move || !edit_list_mode()>"✅"</th>
                                             <th>"HQ"</th>
@@ -589,7 +590,7 @@ pub fn ListView() -> impl IntoView {
                                                 }.into_any()
                                             }
                                         />
-
+                                        </tbody>
                                     </table>
                                 </div>
                             })

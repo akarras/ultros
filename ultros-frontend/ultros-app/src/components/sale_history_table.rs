@@ -228,72 +228,74 @@ impl SalesSummaryData {
 #[component]
 fn WindowStats(#[prop(into)] sales: Signal<SalesWindow>) -> impl IntoView {
     let total_gil = Memo::new(move |_| sales.with(|s| s.total_gil));
-    let average_unit_price = Memo::new(move |_| sales.with(|s| s.average_unit_price));
+    let average_unit_price = Memo::new(move |_| sales.with(|s| s.average_unit_price.round() as i32));
     let max_unit_price = Memo::new(move |_| sales.with(|s| s.max_unit_price));
     let median_unit_price = Memo::new(move |_| sales.with(|s| s.median_unit_price));
     let min_unit_price = Memo::new(move |_| sales.with(|s| s.min_unit_price));
     let median_stack_size = Memo::new(move |_| sales.with(|s| s.median_stack_size));
-    let guessed_next_sale_price = Memo::new(move |_| sales.with(|s| s.guessed_next_sale_price));
+    let guessed_next_sale_price = Memo::new(move |_| sales.with(|s| s.guessed_next_sale_price.round() as i32));
     let time_between_sales = Memo::new(move |_| sales.with(|s| s.time_between_sales));
     let p_value = Memo::new(move |_| sales.with(|s| s.p_value));
     view! {
         <table>
-            <tr>
-                <td>"Total gil"</td>
-                <td>
-                    <GenericGil<u64> amount=total_gil />
-                </td>
-            </tr>
-            <tr>
-                <td>"Average unit price"</td>
-                <td>
-                    <GenericGil<f64> amount=average_unit_price />
-                </td>
-            </tr>
-            <tr>
-                <td>"Max unit price"</td>
-                <td>
-                    <Gil amount=max_unit_price />
-                </td>
-            </tr>
-            <tr>
-                <td>"Median unit price"</td>
-                <td>
-                    <Gil amount=median_unit_price />
-                </td>
-            </tr>
-            <tr>
-                <td>"Min unit price unit price"</td>
-                <td>
-                    <Gil amount=min_unit_price />
-                </td>
-            </tr>
-            <tr>
-                <td>"Median stack size"</td>
-                <td>{median_stack_size}</td>
-            </tr>
-            <tr>
-                <td>"Guessed next sale price"</td>
-                <td>
-                    <GenericGil<f64> amount=guessed_next_sale_price/>
-                </td>
-            </tr>
-            <tr>
-                <td>"p-value"</td>
-                <td>{move || format!("{:.4}", p_value())}</td>
-            </tr>
-            <tr>
-                <td>"Average sale within period"</td>
-                <td>
-                    {move || {
-                        time_between_sales()
-                            .abs()
-                            .to_std()
-                            .map(|d| format_duration(d).to_string())
-                            .unwrap_or_default()
-                    }}
-                </td>
-            </tr>
+            <tbody>
+                <tr>
+                    <td>"Total gil"</td>
+                    <td>
+                        <GenericGil<u64> amount=total_gil />
+                    </td>
+                </tr>
+                <tr>
+                    <td>"Average unit price"</td>
+                    <td>
+                        <Gil amount=average_unit_price />
+                    </td>
+                </tr>
+                <tr>
+                    <td>"Max unit price"</td>
+                    <td>
+                        <Gil amount=max_unit_price />
+                    </td>
+                </tr>
+                <tr>
+                    <td>"Median unit price"</td>
+                    <td>
+                        <Gil amount=median_unit_price />
+                    </td>
+                </tr>
+                <tr>
+                    <td>"Min unit price unit price"</td>
+                    <td>
+                        <Gil amount=min_unit_price />
+                    </td>
+                </tr>
+                <tr>
+                    <td>"Median stack size"</td>
+                    <td>{median_stack_size}</td>
+                </tr>
+                <tr>
+                    <td>"Guessed next sale price"</td>
+                    <td>
+                        <Gil amount=guessed_next_sale_price/>
+                    </td>
+                </tr>
+                <tr>
+                    <td>"p-value"</td>
+                    <td>{move || format!("{:.4}", p_value())}</td>
+                </tr>
+                <tr>
+                    <td>"Average sale within period"</td>
+                    <td>
+                        {move || {
+                            time_between_sales()
+                                .abs()
+                                .to_std()
+                                .map(|d| format_duration(d).to_string())
+                                .unwrap_or_default()
+                        }}
+                    </td>
+                </tr>
+            </tbody>
         </table>
     }
     .into_any()
@@ -316,5 +318,5 @@ pub fn SalesInsights(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
                 <WindowStats sales=month_sales/>
             </div>
         </div>
-    }
+    }.into_any()
 }
