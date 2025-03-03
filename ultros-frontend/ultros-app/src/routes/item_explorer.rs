@@ -712,8 +712,9 @@ pub fn ItemExplorer() -> impl IntoView {
                     attr:class=button_classes
                     href=move || if menu_open() { "?" } else { "?menu-open=true" }.to_string()
                 >
-                    <div class="relative w-6 h-6">
-                        <div class="absolute inset-0 transition-all duration-300"
+                    <div class="relative w-6 h-6 items-center">
+                        <div class="absolute inset-0 transition-all duration-300
+                        text-violet-300 hover:text-violet-200 aria-current:text-violet-400"
                             class=(["opacity-0", "rotate-90", "scale-0"], menu_closed)>
                             <Icon icon=i::BiXRegular/>
                         </div>
@@ -722,7 +723,7 @@ pub fn ItemExplorer() -> impl IntoView {
                             <Icon icon=i::BiMenuRegular/>
                         </div>
                     </div>
-                    <span class="font-medium">
+                    <span class="font-extrabold">
                         {move || if menu_open() { "Close Categories" } else { "Browse Categories" }}
                     </span>
                 </A>

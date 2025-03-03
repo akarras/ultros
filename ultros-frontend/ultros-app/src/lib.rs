@@ -44,21 +44,24 @@ use leptos_router::path;
 use log::info;
 
 pub fn shell(options: LeptosOptions) -> impl IntoView {
+    let git_hash = git_short_hash!();
+    let sheet_url = ["/pkg/", git_hash, "/ultros.css"].concat();
     view! {
         <!DOCTYPE html>
         <html lang="en">
             <head>
                 <meta charset="utf-8"/>
-                <AutoReload options=options.clone() />
-                <HydrationScripts options/>
-                <MetaTags/>
                 <link id="xiv-icons" rel="stylesheet" href="/static/classjob-icons/src/xivicon.css"/>
+                <link id="leptos" rel="stylesheet" href=sheet_url />
                 <meta name="twitter:card" content="summary_large_image"/>
                 <meta name="viewport" content="initial-scale=1.0,width=device-width"/>
                 <meta name="theme-color" content="#0f0710"/>
                 <meta property="og:type" content="website"/>
                 <meta property="og:locale" content="en-US"/>
-                <meta property="og:site_name" content="Ultros"/>
+                <meta property="og:site_name" content="Ultros" />
+                <AutoReload options=options.clone() />
+                <HydrationScripts options/>
+                <MetaTags/>
             </head>
             <body>
                 <App/>
@@ -120,7 +123,7 @@ pub fn Footer() -> impl IntoView {
 pub fn NavRow() -> impl IntoView {
     let login = Resource::new(move || {}, move |_| async move { get_login().await.ok() });
     let (homeworld, _set_homeworld) = use_home_world();
-    view! {
+    view!{
         // Navigation
         <nav class="sticky top-0 z-50 backdrop-blur-sm border-b border-white/5 bg-black/40">
         <div class="mx-auto max-w-7xl px-2 sm:px-4 lg:px-6 py-2 flex flex-col md:flex-row items-center">
@@ -147,7 +150,7 @@ pub fn NavRow() -> impl IntoView {
                                 height="1.75em"
                                 icon=i::FaMoneyBillTrendUpSolid
                             />
-                            <span class="hidden sm:inline">"Analyzer"</span>
+                            <span class="hidden md:inline">"Analyzer"</span>
                         </A>
                     }
                 }}
@@ -217,8 +220,8 @@ pub fn NavRow() -> impl IntoView {
 #[component]
 pub fn App() -> impl IntoView {
     info!("app run!");
-    provide_meta_context();
     let cookies = Cookies::new();
+    provide_meta_context();
     provide_context(cookies);
     provide_context(CheapestPrices::new());
     provide_context(GlobalLastCopiedText(RwSignal::new(None)));
@@ -226,12 +229,9 @@ pub fn App() -> impl IntoView {
     // AnimationContext::provide();
     let root_node_ref = NodeRef::<Div>::new();
     provide_hotkeys_context(root_node_ref, false, scopes!());
-
-    let git_hash = git_short_hash!();
-    let sheet_url = ["/pkg/", git_hash, "/ultros.css"].concat();
+    
+    
     view! {
-
-        <Link id="leptos" rel="stylesheet" href=sheet_url/>
         <Title text="Ultros"/>
         // Background gradient
             <div class="fixed inset-0 -z-10 bg-black">

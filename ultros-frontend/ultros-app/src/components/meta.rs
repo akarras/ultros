@@ -14,7 +14,7 @@ pub fn MetaTitle(#[prop(into)] title: TextProp) -> impl IntoView {
 pub fn MetaImage(#[prop(into)] url: TextProp) -> impl IntoView {
     view! {
         <Meta name="twitter:image" content=url.clone()/>
-        <Meta property="og:image" content=url/>
+        <Meta name="og:image" property="og:image" content=url/>
     }
 }
 
@@ -23,7 +23,7 @@ pub fn MetaImage(#[prop(into)] url: TextProp) -> impl IntoView {
 pub fn MetaDescription(#[prop(into)] text: TextProp) -> impl IntoView {
     view! {
         <Meta name="twitter:description" content=text.clone()/>
-        <Meta property="og:description" content=text.clone()/>
+        <Meta name="og:description" property="og:description" content=text.clone()/>
         <Meta name="description" content=text/>
     }
 }
