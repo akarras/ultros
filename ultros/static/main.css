@@ -731,19 +731,9 @@ select optgroup {
     grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
     gap: var(--spacing-md);
 }
-
-.flex-grow {
-    flex-grow: 3;
-}
-
-.hidden {
-    display: none;
-}
-
 .slidecontainer {
     width: 300px;
 }
-
 .slider {
     width: 100%;
     height: 15px;
@@ -866,31 +856,6 @@ select optgroup {
 
 .grid-header > div {
     flex-shrink: 0;
-}
-
-.grid-row {
-    display: flex;
-    flex-direction: row;
-    overflow-x: none;
-    flex-shrink: 0;
-}
-
-.grid-row > div {
-    display: flex;
-    flex-direction: row;
-    flex-wrap: nowrap;
-    align-items: center;
-    /* overflow-x: auto; */
-    flex-shrink: 0;
-    column-gap: 0.1em;
-}
-
-.grid-row.odd {
-    background-color: rgba(64, 33, 68, 0.7);
-}
-
-.grid-row.even {
-    background-color: rgba(136, 0, 96, 0.09);
 }
 
 .stock-ticker {
