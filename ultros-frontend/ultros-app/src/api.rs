@@ -378,7 +378,7 @@ where
 {
     use leptos::task::spawn_local;
     let (tx, rx) = flume::unbounded();
-    
+
     spawn_local({
         let path = path.to_string();
         async move {
@@ -387,9 +387,7 @@ where
                     // .abort_signal(abort_signal.as_ref())
                     .send()
                     .await
-                    .inspect_err(|e| {
-                        error!(error = %e, path, "Error making http request")
-                    })?
+                    .inspect_err(|e| error!(error = %e, path, "Error making http request"))?
                     .text()
                     .await?;
                 Ok(json)

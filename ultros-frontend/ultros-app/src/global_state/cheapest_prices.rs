@@ -1,7 +1,6 @@
 use leptos::prelude::*;
 use ultros_api_types::cheapest_listings::CheapestListingsMap;
 
-
 use crate::api::get_cheapest_listings;
 
 use super::home_world::get_price_zone;
@@ -16,9 +15,7 @@ impl CheapestPrices {
     pub fn new() -> Self {
         let (read, _) = get_price_zone();
         let read_listings = Resource::new(
-            move || {
-                read.get()
-            },
+            move || read.get(),
             move |world| async move {
                 get_cheapest_listings(
                     world

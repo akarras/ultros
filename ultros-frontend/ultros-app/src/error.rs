@@ -34,7 +34,7 @@ pub enum SystemError {
     ReqwestError(Arc<reqwest::Error>),
     Anyhow(Arc<anyhow::Error>),
     #[cfg(feature = "hydrate")]
-    GlooNet(Arc<gloo_net::Error>)
+    GlooNet(Arc<gloo_net::Error>),
 }
 
 impl PartialEq for SystemError {

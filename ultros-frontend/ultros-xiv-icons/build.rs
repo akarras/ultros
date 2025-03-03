@@ -1,4 +1,3 @@
-#![feature(async_closure)]
 use flate2::{write::GzEncoder, Compression};
 use futures::{stream, StreamExt};
 use image::{imageops::FilterType, io::Reader as ImageReader, ImageFormat};

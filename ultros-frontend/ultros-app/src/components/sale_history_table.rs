@@ -228,12 +228,14 @@ impl SalesSummaryData {
 #[component]
 fn WindowStats(#[prop(into)] sales: Signal<SalesWindow>) -> impl IntoView {
     let total_gil = Memo::new(move |_| sales.with(|s| s.total_gil));
-    let average_unit_price = Memo::new(move |_| sales.with(|s| s.average_unit_price.round() as i32));
+    let average_unit_price =
+        Memo::new(move |_| sales.with(|s| s.average_unit_price.round() as i32));
     let max_unit_price = Memo::new(move |_| sales.with(|s| s.max_unit_price));
     let median_unit_price = Memo::new(move |_| sales.with(|s| s.median_unit_price));
     let min_unit_price = Memo::new(move |_| sales.with(|s| s.min_unit_price));
     let median_stack_size = Memo::new(move |_| sales.with(|s| s.median_stack_size));
-    let guessed_next_sale_price = Memo::new(move |_| sales.with(|s| s.guessed_next_sale_price.round() as i32));
+    let guessed_next_sale_price =
+        Memo::new(move |_| sales.with(|s| s.guessed_next_sale_price.round() as i32));
     let time_between_sales = Memo::new(move |_| sales.with(|s| s.time_between_sales));
     let p_value = Memo::new(move |_| sales.with(|s| s.p_value));
     view! {
@@ -318,5 +320,6 @@ pub fn SalesInsights(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
                 <WindowStats sales=month_sales/>
             </div>
         </div>
-    }.into_any()
+    }
+    .into_any()
 }

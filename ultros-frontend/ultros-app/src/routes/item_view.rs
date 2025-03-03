@@ -2,8 +2,8 @@ use crate::api::get_listings;
 use crate::components::price_history_chart::PriceHistoryChart;
 use crate::components::{
     ad::Ad, add_to_list::AddToList, clipboard::*, item_icon::*, listings_table::*, meta::*,
-    recently_viewed::RecentItems, related_items::*, sale_history_table::*,
-    skeleton::BoxSkeleton, stats_display::*, ui_text::*,
+    recently_viewed::RecentItems, related_items::*, sale_history_table::*, skeleton::BoxSkeleton,
+    stats_display::*, ui_text::*,
 };
 use crate::error::AppError;
 use crate::global_state::home_world::{get_price_zone, use_home_world};
@@ -492,7 +492,7 @@ pub fn ItemView() -> impl IntoView {
                             {move || item().map(|item| item.level_item.0).unwrap_or_default()}
                         </span>
                     </div>
-                    <div class="bg-black/20 p-4 rounded-lg backdrop-blur-sm">
+                    <div class="bg-black/20 p-4 rounded-lg backdrop-blur-sm" class:hidden=move || { item_description().is_empty() }>
                         {move || view! { <UIText text=item_description().to_string()/> }}
                     </div>
                     <div>{move || view! { <ItemStats item_id=ItemId(item_id())/> }}</div>

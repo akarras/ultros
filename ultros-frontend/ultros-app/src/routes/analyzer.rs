@@ -489,7 +489,7 @@ fn AnalyzerTable(
 
                             view! {
                                 <div
-                                    class="grid-row hover:bg-violet-900/20 transition-colors"
+                                    class="hover:bg-violet-900/20 transition-colors"
                                     role="row-group"
                                     class:even=move || (i % 2) == 0
                                     class:odd=move || (i % 2) == 1

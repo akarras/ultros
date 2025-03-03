@@ -414,9 +414,7 @@ where
     let is_active = Memo::new(move |_| {
         let link_path = href.get();
 
-        path.with(|path| {
-            &Url::escape(&link_path) == path
-        })
+        path.with(|path| &Url::escape(&link_path) == path)
     });
     view! {
         <a aria-current=move || is_active.get().then(|| "page") href=url>
