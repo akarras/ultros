@@ -224,10 +224,10 @@ where
 {
     view! {
         <div class="p-6 flex flex-col rounded-2xl
-            backdrop-blur-sm backdrop-brightness-110
-            border border-white/10
-            bg-gradient-to-br from-violet-900/20 via-black/10 to-amber-500/10
-            w-full">
+        backdrop-blur-sm backdrop-brightness-110
+        border border-white/10
+        bg-gradient-to-br from-violet-900/20 via-black/10 to-amber-500/10
+        w-full">
             <h3 class="font-bold text-xl text-amber-200 mb-2">{title}</h3>
             <p class="text-gray-300 mb-4">{description}</p>
             {children.into_inner()().into_view()}
@@ -239,11 +239,11 @@ where
 fn PresetFilterButton(href: &'static str, label: &'static str) -> impl IntoView {
     view! {
         <a
-            href={href}
+            href=href
             class="px-4 py-2 rounded-lg bg-violet-900/30 hover:bg-violet-800/40
-                   border border-white/10 hover:border-yellow-200/30
-                   transition-all duration-300 text-amber-200 hover:text-amber-100
-                   hover:transform hover:scale-[1.02] hover:shadow-lg hover:shadow-violet-500/10"
+             border border-white/10 hover:border-yellow-200/30
+             transition-all duration-300 text-amber-200 hover:text-amber-100
+             hover:transform hover:scale-[1.02] hover:shadow-lg hover:shadow-violet-500/10"
         >
             {label}
         </a>
@@ -354,11 +354,15 @@ fn AnalyzerTable(
                 >
                     <div class="flex flex-col gap-2">
                         <div class="text-amber-200">
-                            {move || minimum_profit().map(|profit| Either::Left(view! { <Gil amount=profit/> })).unwrap_or(Either::Right("---"))}
+                            {move || {
+                                minimum_profit()
+                                    .map(|profit| Either::Left(view! { <Gil amount=profit /> }))
+                                    .unwrap_or(Either::Right("---"))
+                            }}
                         </div>
                         <input
                             class="p-2 rounded-lg bg-violet-950/50 border border-white/10 w-full
-                                   focus:outline-none focus:border-yellow-200/30 transition-colors"
+                             focus:outline-none focus:border-yellow-200/30 transition-colors"
                             min=0
                             max=100000
                             type="number"
@@ -381,11 +385,15 @@ fn AnalyzerTable(
                 >
                     <div class="flex flex-col gap-2">
                         <div class="text-amber-200">
-                            {move || minimum_roi().map(|roi| format!("{roi}%")).unwrap_or("---".to_string())}
+                            {move || {
+                                minimum_roi()
+                                    .map(|roi| format!("{roi}%"))
+                                    .unwrap_or("---".to_string())
+                            }}
                         </div>
                         <input
                             class="p-2 rounded-lg bg-violet-950/50 border border-white/10 w-full
-                                   focus:outline-none focus:border-yellow-200/30 transition-colors"
+                             focus:outline-none focus:border-yellow-200/30 transition-colors"
                             min=0
                             max=100000
                             type="number"
@@ -410,7 +418,7 @@ fn AnalyzerTable(
                         <div class="text-amber-200">{predicted_time_string}</div>
                         <input
                             class="p-2 rounded-lg bg-violet-950/50 border border-white/10 w-full
-                                   focus:outline-none focus:border-yellow-200/30 transition-colors"
+                             focus:outline-none focus:border-yellow-200/30 transition-colors"
                             prop:value=move || max_predicted_time().unwrap_or_default()
                             on:input=move |input| {
                                 let value = event_target_value(&input);
@@ -422,11 +430,15 @@ fn AnalyzerTable(
             </div>
 
             // Results table
-            <div class="rounded-2xl overflow-hidden border border-white/10 backdrop-blur-sm backdrop-brightness-110">
+            <div class="rounded-2xl overflow-x-auto overflow-y-hidden border border-white/10 backdrop-blur-sm backdrop-brightness-110">
                 <div class="grid-table" role="table">
                     <div class="grid-header bg-violet-900/30" role="rowgroup">
-                        <div role="columnheader" class="w-[25px] p-4">"HQ"</div>
-                        <div role="columnheader" class="w-[450px] p-4">"Item"</div>
+                        <div role="columnheader" class="w-[25px] p-4">
+                            "HQ"
+                        </div>
+                        <div role="columnheader" class="w-[450px] p-4">
+                            "Item"
+                        </div>
                         <div role="columnheader" class="w-[120px] p-4">
                             <QueryButton
                                 class="!text-amber-300 hover:text-amber-200"
@@ -436,8 +448,10 @@ fn AnalyzerTable(
                             >
                                 <div class="flex items-center gap-2">
                                     "Profit"
-                                    {move || (sort_mode() == Some(SortMode::Profit))
-                                        .then(|| view! { <Icon icon=i::BiSortDownRegular/> })}
+                                    {move || {
+                                        (sort_mode() == Some(SortMode::Profit))
+                                            .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
+                                    }}
                                 </div>
                             </QueryButton>
                         </div>
@@ -451,25 +465,42 @@ fn AnalyzerTable(
                             >
                                 <div class="flex items-center gap-2">
                                     "ROI"
-                                    {move || (sort_mode() == Some(SortMode::Roi))
-                                        .then(|| view! { <Icon icon=i::BiSortDownRegular/> })}
+                                    {move || {
+                                        (sort_mode() == Some(SortMode::Roi))
+                                            .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
+                                    }}
                                 </div>
                             </QueryButton>
                         </div>
-                        <div role="columnheader" class="w-[200px] p-4">"Buy Price"</div>
-                        <div role="columnheader" class="w-[200px] p-4">"World"</div>
-                        <div role="columnheader" class="w-[150px] p-4">"Datacenter"</div>
-                        <div role="columnheader" class="w-[150px] p-4">"Avg Sale Time"</div>
+                        <div role="columnheader" class="w-[100px] p-4">
+                            "Buy Price"
+                        </div>
+                        <div role="columnheader" class="w-[100px] p-4">
+                            "World"
+                        </div>
+                        <div role="columnheader" class="w-[150px] p-4">
+                            "Datacenter"
+                        </div>
+                        <div role="columnheader" class="w-[150px] p-4">
+                            "Avg Sale Time"
+                        </div>
                     </div>
 
                     <VirtualScroller
                         viewport_height=1000.0
-                        row_height=80.0
+                        row_height=48.0
                         each=sorted_data.into()
-                        key=move |(i, data)| (*i, data.sale_summary.item_id, data.cheapest_world_id, data.sale_summary.hq)
+                        key=move |(i, data)| (
+                            *i,
+                            data.sale_summary.item_id,
+                            data.cheapest_world_id,
+                            data.sale_summary.hq,
+                        )
                         view=move |(i, data)| {
-                            let world = worlds.lookup_selector(AnySelector::World(data.cheapest_world_id));
-                            let datacenter = world.as_ref()
+                            let world = worlds
+                                .lookup_selector(AnySelector::World(data.cheapest_world_id));
+                            let datacenter = world
+                                .as_ref()
                                 .and_then(|world| {
                                     let datacenters = worlds.get_datacenters(world);
                                     datacenters.first().map(|dc| dc.name.as_str())
@@ -477,19 +508,21 @@ fn AnalyzerTable(
                                 .unwrap_or_default()
                                 .to_string();
                             let datacenter = Signal::derive(move || datacenter.clone());
-                            let world = world.as_ref()
+                            let world = world
+                                .as_ref()
                                 .map(|r| r.get_name())
                                 .unwrap_or_default()
                                 .to_string();
                             let world = Signal::derive(move || world.clone());
                             let item_id = data.sale_summary.item_id;
-                            let item = items.get(&ItemId(item_id))
+                            let item = items
+                                .get(&ItemId(item_id))
                                 .map(|item| item.name.as_str())
                                 .unwrap_or_default();
 
                             view! {
                                 <div
-                                    class="hover:bg-violet-900/20 transition-colors"
+                                    class="hover:bg-violet-900/20 transition-colors h-10 text-nowrap flex flex-row flex-nowrap"
                                     role="row-group"
                                     class:even=move || (i % 2) == 0
                                     class:odd=move || (i % 2) == 1
@@ -497,28 +530,34 @@ fn AnalyzerTable(
                                     <div role="cell" class="p-4 w-[25px]">
                                         {data.sale_summary.hq.then_some("✅")}
                                     </div>
-                                    <div role="cell" class="p-4 flex flex-row w-[450px] items-center gap-2">
+                                    <div
+                                        role="cell"
+                                        class="p-4 flex flex-row w-[450px] items-center gap-2"
+                                    >
                                         <a
                                             class="flex flex-row items-center gap-2 hover:text-amber-200 transition-colors"
                                             href=format!("/item/{}/{item_id}", world())
                                         >
-                                            <ItemIcon item_id icon_size=IconSize::Small/>
+                                            <ItemIcon item_id icon_size=IconSize::Small />
                                             {item}
                                         </a>
-                                        <AddToList item_id/>
-                                        <Clipboard clipboard_text=item.to_string()/>
+                                        <AddToList item_id />
+                                        <Clipboard clipboard_text=item.to_string() />
                                     </div>
                                     <div role="cell" class="p-4 w-[120px] text-right">
-                                        <Gil amount=data.profit/>
+                                        <Gil amount=data.profit />
                                     </div>
                                     <div role="cell" class="p-4 w-[100px] text-right">
-                                        {data.return_on_investment}"%"
+                                        {data.return_on_investment}
+                                        "%"
                                     </div>
-                                    <div role="cell" class="p-4 w-[200px] text-right">
-                                        <Gil amount=data.cheapest_price/>
+                                    <div role="cell" class="p-4 w-[100px] text-right">
+                                        <Gil amount=data.cheapest_price />
                                     </div>
                                     <div role="cell" class="p-4 w-[200px]">
-                                        <Tooltip tooltip_text=Signal::derive(move || format!("Only show {}", world()))>
+                                        <Tooltip tooltip_text=Signal::derive(move || {
+                                            format!("Only show {}", world())
+                                        })>
                                             <QueryButton
                                                 key="world"
                                                 value=world.clone()
@@ -531,7 +570,9 @@ fn AnalyzerTable(
                                         </Tooltip>
                                     </div>
                                     <div role="cell" class="p-4 w-[150px]">
-                                        <Tooltip tooltip_text=Signal::derive(move || format!("Only show {}", datacenter()))>
+                                        <Tooltip tooltip_text=Signal::derive(move || {
+                                            format!("Only show {}", datacenter())
+                                        })>
                                             <QueryButton
                                                 key="datacenter"
                                                 value=datacenter.clone()
@@ -544,13 +585,16 @@ fn AnalyzerTable(
                                         </Tooltip>
                                     </div>
                                     <div role="cell" class="p-4 w-[150px]">
-                                        {data.sale_summary.avg_sale_duration
+                                        {data
+                                            .sale_summary
+                                            .avg_sale_duration
                                             .and_then(|duration| duration.to_std().ok())
                                             .map(|duration| format_duration(duration).to_string())
                                             .unwrap_or_else(|| "---".to_string())}
                                     </div>
                                 </div>
-                            }.into_any()
+                            }
+                                .into_any()
                         }
                     />
                 </div>
@@ -636,58 +680,70 @@ pub fn AnalyzerWorldView() -> impl IntoView {
 
     view! {
         <div class="main-content p-6">
-            <Title text=move || format!("Analyzer - {}", world())/>
+            <Title text=move || format!("Analyzer - {}", world()) />
             <div class="container mx-auto max-w-7xl">
                 <div class="flex flex-col gap-8">
                     // Header Section
                     <div class="bg-gradient-to-br from-violet-900/30 to-amber-500/20
-                               rounded-2xl p-8 border border-white/10 backdrop-blur-sm">
+                    rounded-2xl p-8 border border-white/10 backdrop-blur-sm">
                         <h1 class="text-3xl font-bold text-amber-200 mb-4">
                             "Market Analysis for " {world}
                         </h1>
                         <div class="flex flex-col gap-4">
-                            <MetaTitle title=move || format!("Price Analyzer - {}", world())/>
+                            <MetaTitle title=move || format!("Price Analyzer - {}", world()) />
                             <MetaDescription text=move || {
                                 format!(
                                     "The analyzer enables FFXIV merchants to find the best items to buy on other worlds and sell on {}. Filter for the best profits or return, make gil through market arbitrage.",
                                     world(),
                                 )
-                            }/>
+                            } />
 
                             // World Navigator
                             <div class="flex flex-col md:flex-row gap-4 items-center">
-                                <AnalyzerWorldNavigator/>
+                                <AnalyzerWorldNavigator />
                                 <div class="flex flex-col gap-2">
                                     <Toggle
-                                        checked=Signal::derive(move || cross_region_enabled().unwrap_or_default())
-                                        set_checked=SignalSetter::map(move |val: bool|
-                                            set_cross_region_enabled(val.then(|| true)))
+                                        checked=Signal::derive(move || {
+                                            cross_region_enabled().unwrap_or_default()
+                                        })
+                                        set_checked=SignalSetter::map(move |val: bool| set_cross_region_enabled(
+                                            val.then(|| true),
+                                        ))
                                         checked_label=Oco::Borrowed("Cross region enabled")
                                         unchecked_label=Oco::Borrowed("Cross region disabled")
                                     />
 
-                                    <div class="flex flex-wrap gap-2"
-                                        class:hidden=move || !cross_region_enabled().unwrap_or_default()>
-                                        {move || region().map(|region| move || {
-                                            connected_regions
-                                                .into_iter()
-                                                .filter(|r| **r != region.as_str())
-                                                .map(|region| {
-                                                    let (enabled, set_enabled) =
-                                                        query_signal::<bool>(region.to_string());
-                                                    view! {
-                                                        <Toggle
-                                                            checked=Signal::derive(move || enabled().unwrap_or(true))
-                                                            set_checked=SignalSetter::map(move |checked: bool| {
-                                                                set_enabled(Some(checked));
-                                                            })
-                                                            checked_label=format!("{} enabled", region)
-                                                            unchecked_label=format!("{} disabled", region)
-                                                        />
-                                                    }
+                                    <div
+                                        class="flex flex-wrap gap-2"
+                                        class:hidden=move || {
+                                            !cross_region_enabled().unwrap_or_default()
+                                        }
+                                    >
+                                        {move || {
+                                            region()
+                                                .map(|region| move || {
+                                                    connected_regions
+                                                        .into_iter()
+                                                        .filter(|r| **r != region.as_str())
+                                                        .map(|region| {
+                                                            let (enabled, set_enabled) = query_signal::<
+                                                                bool,
+                                                            >(region.to_string());
+                                                            view! {
+                                                                <Toggle
+                                                                    checked=Signal::derive(move || enabled().unwrap_or(true))
+                                                                    set_checked=SignalSetter::map(move |checked: bool| {
+                                                                        set_enabled(Some(checked));
+                                                                    })
+                                                                    checked_label=format!("{} enabled", region)
+                                                                    unchecked_label=format!("{} disabled", region)
+                                                                />
+                                                            }
+                                                        })
+                                                        .collect::<Vec<_>>()
                                                 })
-                                                .collect::<Vec<_>>()
-                                        }).ok()}
+                                                .ok()
+                                        }}
                                     </div>
                                 </div>
                             </div>
@@ -702,10 +758,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                     href="?next-sale=1M&roi=500&profit=200000&"
                                     label="500% return - 200K min profit - 1 month"
                                 />
-                                <PresetFilterButton
-                                    href="?profit=100000"
-                                    label="100K profit"
-                                />
+                                <PresetFilterButton href="?profit=100000" label="100K profit" />
                             </div>
                         </div>
                     </div>
@@ -725,26 +778,32 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                     .expect("Worlds should always be populated here")
                                     .0
                                     .unwrap();
-
                                 match (world_cheapest, sales, global_cheapest_listings) {
                                     (Some(Ok(w)), Some(Ok(s)), Some(Ok(g))) => {
-                                        Either::Left(view! {
-                                            <AnalyzerTable
-                                                sales=s
-                                                global_cheapest_listings=g
-                                                world_cheapest_listings=w
-                                                cross_region
-                                                worlds
-                                                world=world.into()
-                                            />
-                                        })
-                                    },
-                                    _ => Either::Right(view! {
-                                        <div class="text-xl text-amber-200 text-center p-8
-                                                    bg-violet-900/20 rounded-2xl border border-white/10">
-                                            "Failed to load analyzer - try again in 30 seconds"
-                                        </div>
-                                    })
+                                        Either::Left(
+
+                                            view! {
+                                                <AnalyzerTable
+                                                    sales=s
+                                                    global_cheapest_listings=g
+                                                    world_cheapest_listings=w
+                                                    cross_region
+                                                    worlds
+                                                    world=world.into()
+                                                />
+                                            },
+                                        )
+                                    }
+                                    _ => {
+                                        Either::Right(
+                                            view! {
+                                                <div class="text-xl text-amber-200 text-center p-8
+                                                 bg-violet-900/20 rounded-2xl border border-white/10">
+                                                    "Failed to load analyzer - try again in 30 seconds"
+                                                </div>
+                                            },
+                                        )
+                                    }
                                 }
                             }}
                         </Suspense>
@@ -802,15 +861,15 @@ fn AnalyzerWorldNavigator() -> impl IntoView {
 #[component]
 pub fn Analyzer() -> impl IntoView {
     view! {
-        <MetaTitle title="Analyzer - Ultros"/>
-        <MetaDescription text="Find items on the Final Fantasy 14 marketboard that are great for resale. Used to earn gil quickly."/>
+        <MetaTitle title="Analyzer - Ultros" />
+        <MetaDescription text="Find items on the Final Fantasy 14 marketboard that are great for resale. Used to earn gil quickly." />
 
         <div class="main-content p-6">
             <div class="container mx-auto max-w-7xl">
                 <div class="flex flex-col gap-8">
                     // Hero Section
                     <div class="bg-gradient-to-br from-violet-900/30 to-amber-500/20
-                               rounded-2xl p-8 border border-white/10 backdrop-blur-sm">
+                    rounded-2xl p-8 border border-white/10 backdrop-blur-sm">
                         <h1 class="text-3xl font-bold text-amber-200 mb-4">
                             "Market Board Analyzer"
                         </h1>
@@ -828,55 +887,49 @@ pub fn Analyzer() -> impl IntoView {
                             <h2 class="text-xl font-medium text-amber-200 mb-4">
                                 "Choose a world to get started:"
                             </h2>
-                            <AnalyzerWorldNavigator/>
+                            <AnalyzerWorldNavigator />
                         </div>
                     </div>
 
                     // Features Grid
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                         <div class="p-6 rounded-2xl bg-violet-900/20 border border-white/10
-                                  backdrop-blur-sm">
+                        backdrop-blur-sm">
                             <Icon
                                 attr:class="text-amber-300 mb-4"
                                 width="2.5em"
                                 height="2.5em"
                                 icon=i::FaMoneyBillTrendUpSolid
                             />
-                            <h3 class="text-xl font-bold text-amber-200 mb-2">
-                                "Profit Tracking"
-                            </h3>
+                            <h3 class="text-xl font-bold text-amber-200 mb-2">"Profit Tracking"</h3>
                             <p class="text-gray-300">
                                 "Monitor profit margins and ROI across different worlds"
                             </p>
                         </div>
 
                         <div class="p-6 rounded-2xl bg-violet-900/20 border border-white/10
-                                  backdrop-blur-sm">
+                        backdrop-blur-sm">
                             <Icon
                                 attr:class="text-amber-300 mb-4"
                                 width="2.5em"
                                 height="2.5em"
                                 icon=i::FaChartLineSolid
                             />
-                            <h3 class="text-xl font-bold text-amber-200 mb-2">
-                                "Market Analysis"
-                            </h3>
+                            <h3 class="text-xl font-bold text-amber-200 mb-2">"Market Analysis"</h3>
                             <p class="text-gray-300">
                                 "Track market trends and identify profitable opportunities"
                             </p>
                         </div>
 
                         <div class="p-6 rounded-2xl bg-violet-900/20 border border-white/10
-                                  backdrop-blur-sm">
+                        backdrop-blur-sm">
                             <Icon
                                 attr:class="text-amber-300 mb-4"
                                 width="2.5em"
                                 height="2.5em"
                                 icon=i::FaFilterSolid
                             />
-                            <h3 class="text-xl font-bold text-amber-200 mb-2">
-                                "Custom Filters"
-                            </h3>
+                            <h3 class="text-xl font-bold text-amber-200 mb-2">"Custom Filters"</h3>
                             <p class="text-gray-300">
                                 "Set custom parameters to find your perfect trades"
                             </p>
@@ -885,14 +938,18 @@ pub fn Analyzer() -> impl IntoView {
 
                     // Tips Section
                     <div class="bg-violet-900/20 rounded-2xl p-6 border border-white/10">
-                        <h2 class="text-xl font-bold text-amber-200 mb-4">
-                            "Trading Tips"
-                        </h2>
+                        <h2 class="text-xl font-bold text-amber-200 mb-4">"Trading Tips"</h2>
                         <ul class="list-disc list-inside text-gray-300 space-y-2">
-                            <li>"Use the ROI filter to find items with the best return on investment"</li>
-                            <li>"Check the sale frequency to ensure items will sell in a reasonable time"</li>
+                            <li>
+                                "Use the ROI filter to find items with the best return on investment"
+                            </li>
+                            <li>
+                                "Check the sale frequency to ensure items will sell in a reasonable time"
+                            </li>
                             <li>"Consider transportation costs when calculating profits"</li>
-                            <li>"Start with smaller investments until you understand the market"</li>
+                            <li>
+                                "Start with smaller investments until you understand the market"
+                            </li>
                         </ul>
                     </div>
                 </div>

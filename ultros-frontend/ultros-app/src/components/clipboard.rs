@@ -45,7 +45,7 @@ pub fn Clipboard(#[prop(into)] clipboard_text: Signal<String>) -> impl IntoView 
                     "Text copied!".to_string()
                 }
             })>
-                <Icon icon/>
+                <Icon icon />
             </Tooltip>
         </div>
     }

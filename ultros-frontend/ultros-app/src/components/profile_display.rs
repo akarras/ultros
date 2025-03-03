@@ -13,34 +13,38 @@ pub fn ProfileDisplay() -> impl IntoView {
                 user.get()
                     .map(|user| match user {
                         Some(auth) => {
-                            Either::Left(view! {
-                                <A href="/profile">
-                                    <img
-                                        class="avatar"
-                                        src=auth.avatar
-                                        alt=auth.username
-                                    />
-                                </A>
-                                <a rel="external" class="btn" href="/logout">
-                                    "Logout"
-                                </a>
-                            })
+                            Either::Left(
+                                view! {
+                                    <A href="/profile">
+                                        <img class="avatar" src=auth.avatar alt=auth.username />
+                                    </A>
+                                    <a rel="external" class="btn" href="/logout">
+                                        "Logout"
+                                    </a>
+                                },
+                            )
                         }
                         _ => {
-                            Either::Right(view! {
-                                <a rel="external" class="px-4 py-2 rounded-lg bg-violet-600/20 hover:bg-violet-600/30
-                                                        border border-violet-400/10 hover:border-violet-400/20
-                                                        transition-all duration-300 text-gray-200 hover:text-amber-200 flex flex-row" href="/login">
-                                    <div class="max-h-full">
-                                        <Icon height="2rem" width="2em" icon=i::BsDiscord/>
-                                    </div>
-                                    <div>"Login"</div>
-                                </a>
-                                <A href="/settings">
-                                    <Icon height="2em" width="2em" icon=i::IoSettingsSharp/>
-                                    <span class="sr-only">Settings</span>
-                                </A>
-                            })
+                            Either::Right(
+                                view! {
+                                    <a
+                                        rel="external"
+                                        class="px-4 py-2 rounded-lg bg-violet-600/20 hover:bg-violet-600/30
+                                        border border-violet-400/10 hover:border-violet-400/20
+                                        transition-all duration-300 text-gray-200 hover:text-amber-200 flex flex-row"
+                                        href="/login"
+                                    >
+                                        <div class="max-h-full">
+                                            <Icon height="2rem" width="2em" icon=i::BsDiscord />
+                                        </div>
+                                        <div>"Login"</div>
+                                    </a>
+                                    <A href="/settings">
+                                        <Icon height="2em" width="2em" icon=i::IoSettingsSharp />
+                                        <span class="sr-only">Settings</span>
+                                    </A>
+                                },
+                            )
                         }
                     })
             }}

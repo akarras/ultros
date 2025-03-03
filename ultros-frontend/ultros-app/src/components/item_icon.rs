@@ -22,7 +22,11 @@ pub fn ItemIcon(#[prop(into)] item_id: Signal<i32>, icon_size: IconSize) -> impl
         )
     };
     view! {
-        <div class="overflow-hidden" style:width=icon_size.get_size_px() style:height=icon_size.get_size_px()>
+        <div
+            class="overflow-hidden"
+            style:width=icon_size.get_size_px()
+            style:height=icon_size.get_size_px()
+        >
             <img
                 prop:alt=item_name
                 class=format!("{} max-w-full max-h-full object-contain", icon_size.get_class())

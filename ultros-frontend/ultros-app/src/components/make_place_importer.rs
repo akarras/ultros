@@ -102,7 +102,7 @@ where
             >
                 "Bulk add"
             </button>
-            {move || add_items_to_list.pending()().then(|| view! { <Loading/> })}
+            {move || add_items_to_list.pending()().then(|| view! { <Loading /> })}
             <div>
                 {move || {
                     add_items_to_list
@@ -110,9 +110,13 @@ where
                         .map(|result| match result {
                             Ok(_) => Either::Left(view! { <span>"Added items to list!"</span> }),
                             Err(e) => {
-                                Either::Right(view! {
-                                    <span>"Error adding items to list :( " {format!("{e:?}")}</span>
-                                })
+                                Either::Right(
+                                    view! {
+                                        <span>
+                                            "Error adding items to list :( " {format!("{e:?}")}
+                                        </span>
+                                    },
+                                )
                             }
                         })
                 }}

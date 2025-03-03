@@ -37,9 +37,9 @@ pub fn PriceViewer(quantity: i32, hq: Option<bool>, listings: Vec<ActiveListing>
                 .map(|listing| {
                     view! {
                         <div class="flex flex-row gap-1">
-                            {listing.quantity} "x" <Gil amount=listing.price_per_unit/> " on "
-                            <WorldName id=AnySelector::World(listing.world_id)/> "-"
-                            <DatacenterName world_id=listing.world_id/>
+                            {listing.quantity} "x" <Gil amount=listing.price_per_unit /> " on "
+                            <WorldName id=AnySelector::World(listing.world_id) /> "-"
+                            <DatacenterName world_id=listing.world_id />
                         </div>
                     }
                 })

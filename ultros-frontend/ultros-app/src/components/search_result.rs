@@ -60,17 +60,14 @@ pub fn ItemSearchResult(
                 on:click=move |_| set_search("".to_string())
                 href=move || {
                     let zone = price_zone();
-                    let price_zone = zone
-                        .as_ref()
-                        .map(|z| z.get_name())
-                        .unwrap_or("North-America");
+                    let price_zone = zone.as_ref().map(|z| z.get_name()).unwrap_or("North-America");
                     format!("/item/{price_zone}/{item_id}")
                 }
             >
                 <div class="flex items-center px-3 py-2 hover:bg-violet-800/30
-                           transition-colors duration-200 group gap-3 w-full">
+                transition-colors duration-200 group gap-3 w-full">
                     <div class="flex-shrink-0">
-                        <ItemIcon item_id icon_size=IconSize::Small/>
+                        <ItemIcon item_id icon_size=IconSize::Small />
                     </div>
 
                     <div class="flex flex-col min-w-0 flex-1">
@@ -83,7 +80,9 @@ pub fn ItemSearchResult(
                                         .map(|item| item.name.as_str())
                                         .unwrap_or_default();
                                     if let Some(m) = best_match(&search(), item_name) {
-                                        Either::Left(view! { <MatchFormatter m target=item_name.to_string()/> })
+                                        Either::Left(
+                                            view! { <MatchFormatter m target=item_name.to_string() /> },
+                                        )
                                     } else {
                                         Either::Right(item_name)
                                     }
@@ -111,8 +110,8 @@ pub fn ItemSearchResult(
                     </div>
 
                     <div class="flex-shrink-0 pl-4 text-right min-w-[100px]
-                              text-amber-200 font-medium">
-                        <CheapestPrice item_id=item.key_id/>
+                    text-amber-200 font-medium">
+                        <CheapestPrice item_id=item.key_id />
                     </div>
                 </div>
             </a>

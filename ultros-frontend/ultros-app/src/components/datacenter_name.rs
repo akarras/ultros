@@ -18,7 +18,7 @@ pub(crate) fn DatacenterName(world_id: i32) -> impl IntoView {
                     _ => unreachable!("World cannot return non world"),
                 };
 
-                Either::Left(view! { <WorldName id=AnySelector::Datacenter(world.datacenter_id)/> })
+                Either::Left(view! { <WorldName id=AnySelector::Datacenter(world.datacenter_id) /> })
             } else {
                 Either::Right(view! { "" })
             }

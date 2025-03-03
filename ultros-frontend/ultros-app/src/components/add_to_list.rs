@@ -29,10 +29,10 @@ pub fn AddToList(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                 }
             >
 
-                <Icon icon=RiPlayListAddMediaLine/>
+                <Icon icon=RiPlayListAddMediaLine />
                 <div class="sr-only">"Add To List"</div>
                 <Show when=modal_visible>
-                    <AddToListModal item_id set_visible=set_modal_visible/>
+                    <AddToListModal item_id set_visible=set_modal_visible />
                 </Show>
 
             </button>
@@ -56,7 +56,7 @@ fn AddToListModal(
             <div class="flex flex-col">
                 <div class="text-xl font-bold">"Add to list"</div>
                 <div class="flex flex-row">
-                    <ItemIcon item_id icon_size=IconSize::Medium/>
+                    <ItemIcon item_id icon_size=IconSize::Medium />
                     <span class="text-xl font-semibold">
                         {move || item().map(|i| i.name.as_str())}
                     </span>
@@ -87,63 +87,71 @@ fn AddToListModal(
                         {move || {
                             let Ok(lists) = lists.get()? else {
                                 return Some(
-                                    Either::Right(view! { <div>"Unable to get lists- are you logged in?"</div> }),
+                                    Either::Right(
+                                        view! {
+                                            <div>"Unable to get lists- are you logged in?"</div>
+                                        },
+                                    ),
                                 );
                             };
-                            Some(Either::Left(
-                                lists
-                                    .into_iter()
-                                    .map(|list| {
-                                        let (saved, set_saved) = signal(false);
-                                        let (running, set_running) = signal(false);
-                                        view! {
-                                            <div class="flex flex-row text-xl justify-between">
-                                                <div>{list.name}</div>
-                                                <div
-                                                    class="flex flex-row hover:bg-fuchsia-700 bg-fuchsia-950 border border-fuchsia-900 rounded hover:bg-fucshia-950 cursor-pointer p-1 transition-all duration-150 ease-in-out"
-                                                    on:click=move |_| {
-                                                        set_running(true);
-                                                        spawn_local(async move {
-                                                            let _ = add_item_to_list(
-                                                                    list.id,
-                                                                    ListItem {
-                                                                        id: 0,
-                                                                        item_id: item_id.get_untracked(),
-                                                                        list_id: list.id,
-                                                                        hq: Some(hq.get_untracked()),
-                                                                        quantity: Some(quantity.get_untracked()),
-                                                                        acquired: None,
+                            Some(
+                                Either::Left(
+                                    lists
+                                        .into_iter()
+                                        .map(|list| {
+                                            let (saved, set_saved) = signal(false);
+                                            let (running, set_running) = signal(false);
+                                            view! {
+                                                <div class="flex flex-row text-xl justify-between">
+                                                    <div>{list.name}</div>
+                                                    <div
+                                                        class="flex flex-row hover:bg-fuchsia-700 bg-fuchsia-950 border border-fuchsia-900 rounded hover:bg-fucshia-950 cursor-pointer p-1 transition-all duration-150 ease-in-out"
+                                                        on:click=move |_| {
+                                                            set_running(true);
+                                                            spawn_local(async move {
+                                                                let _ = add_item_to_list(
+                                                                        list.id,
+                                                                        ListItem {
+                                                                            id: 0,
+                                                                            item_id: item_id.get_untracked(),
+                                                                            list_id: list.id,
+                                                                            hq: Some(hq.get_untracked()),
+                                                                            quantity: Some(quantity.get_untracked()),
+                                                                            acquired: None,
+                                                                        },
+                                                                    )
+                                                                    .await;
+                                                                set_saved(true);
+                                                            });
+                                                        }
+                                                    >
+                                                        {move || {
+                                                            if saved() {
+                                                                EitherOf3::A(view! { <div class="mx-1">"Saved"</div> })
+                                                            } else if running() {
+                                                                EitherOf3::B(view! { <div class="mx-1">"Saving"</div> })
+                                                            } else {
+                                                                EitherOf3::C(
+                                                                    view! {
+                                                                        <Icon
+                                                                            attr:class="text-white"
+                                                                            icon=i::BiPlusRegular
+                                                                            width="1.2em"
+                                                                            height="1.2em"
+                                                                        />
+                                                                        <div class="mx-1">"Add"</div>
                                                                     },
                                                                 )
-                                                                .await;
-                                                            set_saved(true);
-                                                        });
-                                                    }
-                                                >
-                                                    {move || {
-                                                        if saved() {
-                                                            EitherOf3::A(view! { <div class="mx-1">"Saved"</div> })
-                                                        } else if running() {
-                                                            EitherOf3::B(view! { <div class="mx-1">"Saving"</div> })
-                                                        } else {
-                                                            EitherOf3::C(view! {
-                                                                <Icon
-                                                                    attr:class="text-white"
-                                                                    icon=i::BiPlusRegular
-                                                                    width="1.2em"
-                                                                    height="1.2em"
-                                                                />
-                                                                <div class="mx-1">"Add"</div>
-                                                            })
-                                                        }
-                                                    }}
+                                                            }
+                                                        }}
+                                                    </div>
                                                 </div>
-                                            </div>
-                                        }
-                                    })
-                                    .collect::<Vec<_>>()
-                                    .into_view(),
-                            ))
+                                            }
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .into_view(),
+                                ),
+                            )
                         }}
 
                     </Suspense>

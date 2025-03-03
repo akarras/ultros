@@ -54,7 +54,7 @@ pub fn Ad(#[prop(optional)] class: Option<&'static str>) -> impl IntoView {
                     ></script>
                     // <!-- Ultros-Ad-Main -->
                     <ins
-                        class={["adsbygoogle ", ad_class].concat()}
+                        class=["adsbygoogle ", ad_class].concat()
                         style="display:block"
                         data-ad-client="ca-pub-8789160460804755"
                         data-ad-slot="1163555858"

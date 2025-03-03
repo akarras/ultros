@@ -102,13 +102,13 @@ where
                         <div
                             node_ref=node_ref
                             class="fixed z-50 px-4 py-2 text-sm
-                                  bg-gradient-to-br from-violet-950/95 to-violet-900/95
-                                  border border-violet-800/50
-                                  rounded-lg shadow-lg shadow-violet-950/50
-                                  backdrop-blur-md
-                                  text-gray-200
-                                  transition-opacity duration-150
-                                  animate-fade-in"
+                            bg-gradient-to-br from-violet-950/95 to-violet-900/95
+                            border border-violet-800/50
+                            rounded-lg shadow-lg shadow-violet-950/50
+                            backdrop-blur-md
+                            text-gray-200
+                            transition-opacity duration-150
+                            animate-fade-in"
                             style=calculate_position
                         >
                             {move || tooltip_text().to_string()}

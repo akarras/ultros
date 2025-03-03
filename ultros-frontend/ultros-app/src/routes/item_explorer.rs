@@ -34,24 +34,24 @@ where
     view! {
         <APersistQuery href remove_values=&["page", "menu-open"]>
             <div class="flex items-center gap-3 px-4 py-3 rounded-lg
-                        transition-all duration-200
-                        border border-transparent
-                        hover:border-white/10
-                        hover:bg-gradient-to-r hover:from-violet-800/20 hover:to-violet-700/10
-                        active:from-violet-700/30 active:to-violet-600/20
-                        text-gray-300 hover:text-amber-200
-                        relative group">
+             transition-all duration-200
+             border border-transparent
+             hover:border-white/10
+             hover:bg-gradient-to-r hover:from-violet-800/20 hover:to-violet-700/10
+             active:from-violet-700/30 active:to-violet-600/20
+             text-gray-300 hover:text-amber-200
+             relative group">
                 // Glossy highlight
                 <div class="absolute inset-0 rounded-lg opacity-0 group-hover:opacity-100
-                           transition-opacity duration-200
-                           bg-gradient-to-b from-white/5 to-transparent
-                           pointer-events-none"/>
+                transition-opacity duration-200
+                bg-gradient-to-b from-white/5 to-transparent
+                pointer-events-none" />
 
                 // Icon container with subtle glow
                 <div class="relative">
                     <div class="absolute inset-0 rounded-full bg-violet-500/10 blur-sm
-                               scale-150 opacity-0 group-hover:opacity-100
-                               transition-opacity duration-200"/>
+                    scale-150 opacity-0 group-hover:opacity-100
+                    transition-opacity duration-200" />
                     {children()}
                 </div>
             </div>
@@ -80,8 +80,9 @@ fn CategoryView(category: u8) -> impl IntoView {
                 .into_iter()
                 .map(|(_, name, id)| {
                     view! {
-                        <SideMenuButton href=["/items/category/", &name.replace("/", "%2F")].concat()>
-                            <ItemSearchCategoryIcon id=*id/>
+                        <SideMenuButton href=["/items/category/", &name.replace("/", "%2F")]
+                            .concat()>
+                            <ItemSearchCategoryIcon id=*id />
                             {name.as_str()}
                         </SideMenuButton>
                     }
@@ -203,7 +204,7 @@ fn JobsList() -> impl IntoView {
                 .map(|(_id, job)| {
                     view! {
                         <SideMenuButton href=["/items/jobset/", &job.abbreviation].concat()>
-                            <ClassJobIcon id=job.key_id/>
+                            <ClassJobIcon id=job.key_id />
                             // {&job.abbreviation}
                             {job.name_english.as_str()}
                         </SideMenuButton>
@@ -246,12 +247,12 @@ pub fn CategoryItems() -> impl IntoView {
             .to_string()
     });
     view! {
-        <MetaTitle title=move || format!("{} - Item Explorer", category_view_name())/>
+        <MetaTitle title=move || format!("{} - Item Explorer", category_view_name()) />
         <MetaDescription text=move || {
             ["List of items for the item category ", &category_view_name()].concat()
-        }/>
+        } />
         <h3 class="text-xl">{category_view_name}</h3>
-        <ItemList items/>
+        <ItemList items />
     }
     .into_any()
 }
@@ -296,8 +297,8 @@ pub fn JobItems() -> impl IntoView {
             .to_string()
     });
     view! {
-        <MetaTitle title=move || format!("{} - Item Explorer", job_set())/>
-        <MetaDescription text=move || ["All items equippable by ", &job_set()].concat()/>
+        <MetaTitle title=move || format!("{} - Item Explorer", job_set()) />
+        <MetaDescription text=move || ["All items equippable by ", &job_set()].concat() />
         <h3 class="text-xl">{job_set}</h3>
         <div class="flex-row">
             <Toggle
@@ -307,7 +308,7 @@ pub fn JobItems() -> impl IntoView {
                 unchecked_label="Showing all items"
             />
         </div>
-        <ItemList items/>
+        <ItemList items />
     }
     .into_any()
 }
@@ -315,8 +316,8 @@ pub fn JobItems() -> impl IntoView {
 #[component]
 pub fn DefaultItems() -> impl IntoView {
     view! {
-        <MetaTitle title="Items Explorer"/>
-        <MetaDescription text="Lookup items by their category. Similar to the market board categories that are visible in Final Fantasy 14. Find the cheapest minions, or find that new piece of glamour for your Summoner."/>
+        <MetaTitle title="Items Explorer" />
+        <MetaDescription text="Lookup items by their category. Similar to the market board categories that are visible in Final Fantasy 14. Find the cheapest minions, or find that new piece of glamour for your Summoner." />
         <div class="flex flex-col">
             <div>"Choose a category from the menu to explore items."</div>
             <div>
@@ -446,7 +447,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                         active_classes="p-1 !text-violet-500"
                     >
                         <div class="flex flex-row items-center gap-1">
-                            <Icon icon=i::BiCalendarAltRegular/>
+                            <Icon icon=i::BiCalendarAltRegular />
                             <span class="hidden sm:inline">"ADDED"</span>
                         </div>
                     </QueryButton>
@@ -457,7 +458,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                         active_classes="p-1 !text-violet-500"
                     >
                         <div class="flex flex-row items-center gap-1">
-                            <Icon icon=i::ImPriceTag/>
+                            <Icon icon=i::ImPriceTag />
                             <span class="hidden sm:inline">"PRICE"</span>
                         </div>
                     </QueryButton>
@@ -487,7 +488,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                         active_classes="p-1 !text-violet-500"
                     >
                         <div class="flex flex-row items-center gap-1">
-                            <Icon icon=i::BiSortUpRegular/>
+                            <Icon icon=i::BiSortUpRegular />
                             <span class="hidden sm:inline">"ASC"</span>
                         </div>
                     </QueryButton>
@@ -499,7 +500,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                         default=true
                     >
                         <div class="flex flex-row items-center gap-1">
-                            <Icon icon=i::BiSortDownRegular/>
+                            <Icon icon=i::BiSortDownRegular />
                             <span class="hidden sm:inline">"DESC"</span>
                         </div>
                     </QueryButton>
@@ -530,115 +531,130 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
 
             // Item List
             <div class="flex flex-col gap-2">
-            <Suspense>
-                {move ||{
-                    let items = Memo::new(move |_| {
-                        let direction = direction().unwrap_or(SortDirection::Desc);
-                        let item_property = sort().unwrap_or(ItemSortOption::ItemLevel);
-                        let price_map = cheapest_prices.read_listings.get().and_then(|r| r.ok());
-                        items()
-                            .into_iter()
-                            .filter(|(id, _)| {
-                                if ItemSortOption::Price == item_property {
-                                    // filter items without a price if we're sorting by price
-                                    if let Some(map) = &price_map {
-                                        map.find_matching_listings(id.0).lowest_gil().is_some()
+                <Suspense>
+                    {move || {
+                        let items = Memo::new(move |_| {
+                            let direction = direction().unwrap_or(SortDirection::Desc);
+                            let item_property = sort().unwrap_or(ItemSortOption::ItemLevel);
+                            let price_map = cheapest_prices
+                                .read_listings
+                                .get()
+                                .and_then(|r| r.ok());
+                            items()
+                                .into_iter()
+                                .filter(|(id, _)| {
+                                    if ItemSortOption::Price == item_property {
+                                        if let Some(map) = &price_map {
+                                            map.find_matching_listings(id.0).lowest_gil().is_some()
+                                        } else {
+                                            true
+                                        }
                                     } else {
                                         true
                                     }
-                                } else {
-                                    true
-                                }
-                            })
-                            .sorted_by(|a, b| {
-                                let ((_, item_a), (_, item_b)) = match direction {
-                                    SortDirection::Asc => (a, b),
-                                    SortDirection::Desc => (b, a),
-                                };
-                                match item_property {
-                                    ItemSortOption::ItemLevel => item_a.level_item.0.cmp(&item_b.level_item.0),
-                                    ItemSortOption::Name => item_a.name.cmp(&item_b.name),
-                                    // TODO lookup price data for this case
-                                    ItemSortOption::Price => {
-                                        if let Some(price_map) = &price_map {
-                                            let price_a = price_map
-                                                .find_matching_listings(item_a.key_id.0)
-                                                .lowest_gil();
-                                            let price_b = price_map
-                                                .find_matching_listings(item_b.key_id.0)
-                                                .lowest_gil();
-                                            price_a.cmp(&price_b)
-                                        } else {
+                                })
+                                .sorted_by(|a, b| {
+                                    let ((_, item_a), (_, item_b)) = match direction {
+                                        SortDirection::Asc => (a, b),
+                                        SortDirection::Desc => (b, a),
+                                    };
+                                    match item_property {
+                                        ItemSortOption::ItemLevel => {
                                             item_a.level_item.0.cmp(&item_b.level_item.0)
                                         }
+                                        ItemSortOption::Name => item_a.name.cmp(&item_b.name),
+                                        ItemSortOption::Price => {
+                                            if let Some(price_map) = &price_map {
+                                                let price_a = price_map
+                                                    .find_matching_listings(item_a.key_id.0)
+                                                    .lowest_gil();
+                                                let price_b = price_map
+                                                    .find_matching_listings(item_b.key_id.0)
+                                                    .lowest_gil();
+                                                price_a.cmp(&price_b)
+                                            } else {
+                                                item_a.level_item.0.cmp(&item_b.level_item.0)
+                                            }
+                                        }
+                                        ItemSortOption::Key => item_a.key_id.0.cmp(&item_b.key_id.0),
                                     }
-                                    ItemSortOption::Key => item_a.key_id.0.cmp(&item_b.key_id.0),
-                                }
-                            })
-                            .collect::<Vec<_>>()
-                    });
-                    let items = move || {
-                        // now take a subslice of the items
-                        let page = pages().with_offset((page().unwrap_or_default() - 1).try_into().unwrap_or(0));
-                        items.with(|items| {
+                                })
+                                .collect::<Vec<_>>()
+                        });
+                        let items = move || {
+                            let page = pages()
+                                .with_offset(
+                                    (page().unwrap_or_default() - 1).try_into().unwrap_or(0),
+                                );
                             items
-                                .get(page.start..=page.end)
-                                .unwrap_or_default()
-                                .to_vec()
-                        })
-                    };
-                    view!{
-                        <For
-                each=items
-                key=|(id, item)| (id.0, &item.name)
-                children=|(id, item)| {
-                    view! {
-                        <div class="sm:flex sm:flex-col md:grid md:grid-cols-12 gap-2 p-3 rounded-lg
-                                  border border-white/10 backdrop-blur-sm
-                                  bg-gradient-to-br from-violet-950/20 to-violet-900/20
-                                  hover:from-violet-900/30 hover:to-violet-800/30
-                                  transition-all duration-200
-                                  items-center">
-                            // Item Info Section
-                            <div class="flex flex-row items-center justify-between md:col-span-5 gap-1 min-w-0">
-                                <div class="flex-1 min-w-0 flex flex-row"> // Added container with min-w-0
-                                    <SmallItemDisplay item=item/>
-                                    <Clipboard clipboard_text=item.name.clone() />
-                                </div>
-                                
-                            </div>
-                            <div class="flex-shrink-1"> // Prevent shrinking of add button
-                                    <AddToList item_id=id.0/>
-                            </div>
-                            <div class="flex-shrink-1 md:col-span-2 gray-700">"min level: "{item.level_equip}</div>
+                                .with(|items| {
+                                    items.get(page.start..=page.end).unwrap_or_default().to_vec()
+                                })
+                        };
+                        // filter items without a price if we're sorting by price
+                        // TODO lookup price data for this case
+                        // now take a subslice of the items
+                        view! {
+                            <For
+                                each=items
+                                key=|(id, item)| (id.0, &item.name)
+                                children=|(id, item)| {
+                                    view! {
+                                        <div class="sm:flex sm:flex-col md:grid md:grid-cols-12 gap-2 p-3 rounded-lg
+                                        border border-white/10 backdrop-blur-sm
+                                        bg-gradient-to-br from-violet-950/20 to-violet-900/20
+                                        hover:from-violet-900/30 hover:to-violet-800/30
+                                        transition-all duration-200
+                                        items-center">
+                                            // Item Info Section
+                                            <div class="flex flex-row items-center justify-between md:col-span-5 gap-1 min-w-0">
+                                                // Added container with min-w-0
+                                                <div class="flex-1 min-w-0 flex flex-row">
+                                                    <SmallItemDisplay item=item />
+                                                    <Clipboard clipboard_text=item.name.clone() />
+                                                </div>
 
-                            // Normal Quality Price
-                            <div class="md:col-span-3 flex flex-row md:justify-center items-center gap-2">
-                                <span class="text-gray-400 md:hidden">"NQ: "</span>
-                                <CheapestPrice item_id=*id show_hq=false/>
-                            </div>
+                                            </div>
+                                            // Prevent shrinking of add button
+                                            <div class="flex-shrink-1">
+                                                <AddToList item_id=id.0 />
+                                            </div>
+                                            <div class="flex-shrink-1 md:col-span-2 gray-700">
+                                                "min level: "{item.level_equip}
+                                            </div>
 
-                            // High Quality Price (if available)
-                            {move || {
-                                if item.can_be_hq {
-                                    Either::Left(view! {
-                                        <div class="md:col-span-3 flex flex-row md:justify-center items-center gap-2">
-                                            <span class="text-gray-400 md:hidden">"HQ: "</span>
-                                            <CheapestPrice item_id=*id show_hq=true/>
+                                            // Normal Quality Price
+                                            <div class="md:col-span-3 flex flex-row md:justify-center items-center gap-2">
+                                                <span class="text-gray-400 md:hidden">"NQ: "</span>
+                                                <CheapestPrice item_id=*id show_hq=false />
+                                            </div>
+
+                                            // High Quality Price (if available)
+                                            {move || {
+                                                if item.can_be_hq {
+                                                    Either::Left(
+                                                        view! {
+                                                            <div class="md:col-span-3 flex flex-row md:justify-center items-center gap-2">
+                                                                <span class="text-gray-400 md:hidden">"HQ: "</span>
+                                                                <CheapestPrice item_id=*id show_hq=true />
+                                                            </div>
+                                                        },
+                                                    )
+                                                } else {
+                                                    Either::Right(
+                                                        // Take up the space on desktop but don't show anything
+                                                        view! { <div class="md:col-span-3"></div> },
+                                                    )
+                                                }
+                                            }}
                                         </div>
-                                    })
-                                } else {
-                                    // Take up the space on desktop but don't show anything
-                                    Either::Right(view! { <div class="md:col-span-3"></div> })
+                                    }
+                                        .into_any()
                                 }
-                            }}
-                        </div>
-                    }.into_any()
-                }
-            />
-                }}
-            }
-            </Suspense>
+                            />
+                        }
+                    }}
+                </Suspense>
             </div>
             // Next Page Button
             <QueryButton
@@ -661,7 +677,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                 <div class="flex items-center justify-center gap-2">
                     <span>"Next Page:"</span>
                     <span class="font-bold">{page().unwrap_or(1) + 1}</span>
-                    <Icon icon=i::BiChevronRightRegular/>
+                    <Icon icon=i::BiChevronRightRegular />
                 </div>
             </QueryButton>
         </div>
@@ -677,7 +693,7 @@ fn CategorySection(
     view! {
         <div class="p-4 space-y-4">
             <h2 class="text-xl font-bold text-amber-200">{title}</h2>
-            {category.map(|cat| view! { <CategoryView category=cat/> })}
+            {category.map(|cat| view! { <CategoryView category=cat /> })}
             {children.map(|c| c())}
         </div>
     }
@@ -711,14 +727,18 @@ pub fn ItemExplorer() -> impl IntoView {
                     href=move || if menu_open() { "?" } else { "?menu-open=true" }.to_string()
                 >
                     <div class="relative w-6 h-6 items-center">
-                        <div class="absolute inset-0 transition-all duration-300
-                        text-violet-300 hover:text-violet-200 aria-current:text-violet-400"
-                            class=(["opacity-0", "rotate-90", "scale-0"], menu_closed)>
-                            <Icon icon=i::BiXRegular/>
+                        <div
+                            class="absolute inset-0 transition-all duration-300
+                            text-violet-300 hover:text-violet-200 aria-current:text-violet-400"
+                            class=(["opacity-0", "rotate-90", "scale-0"], menu_closed)
+                        >
+                            <Icon icon=i::BiXRegular />
                         </div>
-                        <div class="absolute inset-0 transition-all duration-300"
-                             class=(["opacity-100", "rotate-0", "scale-100"], menu_open)>
-                            <Icon icon=i::BiMenuRegular/>
+                        <div
+                            class="absolute inset-0 transition-all duration-300"
+                            class=(["opacity-100", "rotate-0", "scale-100"], menu_open)
+                        >
+                            <Icon icon=i::BiMenuRegular />
                         </div>
                     </div>
                     <span class="font-extrabold">
@@ -730,73 +750,75 @@ pub fn ItemExplorer() -> impl IntoView {
                     // Mobile Overlay
                     {move || {
                         if menu_open() {
-                            Either::Left(view! {
-                                <div
-                                    class="fixed inset-0 bg-black/50 backdrop-blur-sm z-40 md:hidden"
-                                    on:click=move |_| set_open.set(Some(false))
-                                />
-                            })
+                            Either::Left(
+                                view! {
+                                    <div
+                                        class="fixed inset-0 bg-black/50 backdrop-blur-sm z-40 md:hidden"
+                                        on:click=move |_| set_open.set(Some(false))
+                                    />
+                                },
+                            )
                         } else {
-                            Either::Right(view! { <div/> })
+                            Either::Right(view! { <div /> })
                         }
                     }}
-
                     // Sidebar
                     <div
                         class="fixed md:absolute top-0 bottom-0 left-0 z-50
-                               w-[85vw] md:w-80 transition-all duration-300 ease-in-out
-                               rounded-xl border border-white/10
-                               bg-gradient-to-br from-violet-950/90 to-violet-900/80
-                               backdrop-filter backdrop-blur-xl
-                               min-h-screen"
+                         w-[85vw] md:w-80 transition-all duration-300 ease-in-out
+                         rounded-xl border border-white/10
+                         bg-gradient-to-br from-violet-950/90 to-violet-900/80
+                         backdrop-filter backdrop-blur-xl
+                         min-h-screen"
                         class=("translate-x-0", move || menu_open())
                         class=("-translate-x-[105%]", move || !menu_open())
                         class=("opacity-0", move || !menu_open())
                         class=("opacity-100", move || menu_open())
                     >
                         // Glossy overlay effect
-                        <div class="absolute inset-0 rounded-xl bg-gradient-to-br from-white/5 to-transparent pointer-events-none"/>
+                        <div class="absolute inset-0 rounded-xl bg-gradient-to-br from-white/5 to-transparent pointer-events-none" />
 
                         // Content container with fade edges
                         <div class="relative h-full">
                             // Top fade
                             <div class="absolute top-0 left-0 right-0 h-4 bg-gradient-to-b
-                                        from-violet-950/50 to-transparent z-10 pointer-events-none"/>
+                             from-violet-950/50 to-transparent z-10 pointer-events-none" />
 
                             // Main scrollable content
                             <div class="h-full overflow-y-auto overflow-x-hidden
-                                       scrollbar-thin scrollbar-thumb-white/20 hover:scrollbar-thumb-violet-400/30
-                                       scrollbar-track-transparent">
+                            scrollbar-thin scrollbar-thumb-white/20 hover:scrollbar-thumb-violet-400/30
+                            scrollbar-track-transparent">
                                 <div class="space-y-1 p-2">
-                                    <CategorySection title="Weapons" category=1/>
-                                    <CategorySection title="Armor" category=2/>
-                                    <CategorySection title="Items" category=3/>
-                                    <CategorySection title="Housing" category=4/>
+                                    <CategorySection title="Weapons" category=1 />
+                                    <CategorySection title="Armor" category=2 />
+                                    <CategorySection title="Items" category=3 />
+                                    <CategorySection title="Housing" category=4 />
                                     <CategorySection title="Job Sets">
-                                        <JobsList/>
+                                        <JobsList />
                                     </CategorySection>
                                 </div>
                             </div>
 
                             // Bottom fade
                             <div class="absolute bottom-0 left-0 right-0 h-4 bg-gradient-to-t
-                                        from-violet-950/50 to-transparent z-10 pointer-events-none"/>
+                             from-violet-950/50 to-transparent z-10 pointer-events-none" />
                         </div>
                     </div>
-
                     // Main Content Area
                     <div
                         class="transition-all duration-300"
                         class=("md:ml-[21rem]", move || menu_open())
                     >
                         <div class="space-y-6">
-                            <Ad class="w-full h-24 rounded-xl overflow-hidden"/>
+                            <Ad class="w-full h-24 rounded-xl overflow-hidden" />
                             <div class="p-6 rounded-xl bg-gradient-to-br from-violet-950/20 to-violet-900/20
-                                      border border-white/10 backdrop-blur-sm">
-                                <h1 class="text-2xl font-bold text-amber-200 mb-4">"Item Explorer"</h1>
-                                <Outlet/>
+                            border border-white/10 backdrop-blur-sm">
+                                <h1 class="text-2xl font-bold text-amber-200 mb-4">
+                                    "Item Explorer"
+                                </h1>
+                                <Outlet />
                             </div>
-                            <Ad class="w-full max-h-72 rounded-xl overflow-hidden"/>
+                            <Ad class="w-full max-h-72 rounded-xl overflow-hidden" />
                         </div>
                     </div>
                 </div>

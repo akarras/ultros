@@ -53,16 +53,14 @@ pub fn RecentlyViewed() -> impl IntoView {
     let local_items = LocalResource::new(move || async move { items() });
     view! {
         <div class="p-6 rounded-xl bg-gradient-to-br from-violet-950/20 to-violet-900/20
-                    border border-white/10 backdrop-blur-sm">
-            <Suspense
-                fallback=move || {
-                    view! {
-                        <div class="h-[400px] animate-pulse">
-                            <BoxSkeleton/>
-                        </div>
-                    }
+         border border-white/10 backdrop-blur-sm">
+            <Suspense fallback=move || {
+                view! {
+                    <div class="h-[400px] animate-pulse">
+                        <BoxSkeleton />
+                    </div>
                 }
-            >
+            }>
                 <div
                     class="space-y-4"
                     class:hidden=move || {
@@ -80,7 +78,7 @@ pub fn RecentlyViewed() -> impl IntoView {
                     </div>
 
                     <div class="space-y-2 max-h-[400px] overflow-y-auto overflow-x-hidden
-                              scrollbar-thin scrollbar-thumb-violet-600/50 scrollbar-track-transparent">
+                    scrollbar-thin scrollbar-thumb-violet-600/50 scrollbar-track-transparent">
                         {move || {
                             let items = local_items.get();
                             Some(
@@ -88,17 +86,19 @@ pub fn RecentlyViewed() -> impl IntoView {
                                     .iter()
                                     .map(|item| {
                                         let item_id = *item;
-                                        let item_data = xiv_gen_db::data().items.get(&ItemId(item_id));
+                                        let item_data = xiv_gen_db::data()
+                                            .items
+                                            .get(&ItemId(item_id));
 
                                         view! {
                                             <A href=format!("/item/{item_id}")>
 
                                                 <div class="flex items-center gap-4 p-3 rounded-lg
-                                                           bg-violet-950/30 border border-white/5
-                                                           hover:bg-violet-900/30 hover:border-white/10
-                                                           transition-all duration-200 group">
+                                                bg-violet-950/30 border border-white/5
+                                                hover:bg-violet-900/30 hover:border-white/10
+                                                transition-all duration-200 group">
                                                     <div class="flex items-center gap-4 w-full transform transition-transform duration-200 group-hover:translate-x-1">
-                                                        <ItemIcon item_id icon_size=IconSize::Medium/>
+                                                        <ItemIcon item_id icon_size=IconSize::Medium />
 
                                                         <div class="flex flex-col min-w-0 flex-1">
                                                             <div class="flex items-center gap-2 truncate">
@@ -118,8 +118,10 @@ pub fn RecentlyViewed() -> impl IntoView {
                     </div>
 
                     <div class="text-center pt-2 border-t border-white/5">
-                        <a href="/history"
-                           class="text-sm text-gray-400 hover:text-amber-200 transition-colors">
+                        <a
+                            href="/history"
+                            class="text-sm text-gray-400 hover:text-amber-200 transition-colors"
+                        >
                             "View All Recently Viewed"
                         </a>
                     </div>

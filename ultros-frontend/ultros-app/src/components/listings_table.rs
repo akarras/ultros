@@ -43,11 +43,11 @@ pub fn ListingsTable(
                                 view! {
                                     <tr>
                                         <td>
-                                            <Gil amount=listing.price_per_unit/>
+                                            <Gil amount=listing.price_per_unit />
                                         </td>
                                         <td>{listing.quantity}</td>
                                         <td>
-                                            <Gil amount=total/>
+                                            <Gil amount=total />
                                         </td>
                                         <td>
                                             <A href=format!(
@@ -56,13 +56,13 @@ pub fn ListingsTable(
                                             )>{retainer.name}</A>
                                         </td>
                                         <td>
-                                            <WorldName id=AnySelector::World(listing.world_id)/>
+                                            <WorldName id=AnySelector::World(listing.world_id) />
                                         </td>
                                         <td>
-                                            <DatacenterName world_id=listing.world_id/>
+                                            <DatacenterName world_id=listing.world_id />
                                         </td>
                                         <td>
-                                            <RelativeToNow timestamp=listing.timestamp/>
+                                            <RelativeToNow timestamp=listing.timestamp />
                                         </td>
                                     </tr>
                                 }

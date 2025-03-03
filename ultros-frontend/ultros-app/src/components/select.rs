@@ -152,25 +152,22 @@ where
                             }
                         }
                     >
-                        <div
-                            class=move || {
-                                let is_selected = choice
-                                    .with(|choice| {
-                                        choice
-                                            .as_ref()
-                                            .and_then(|choice| {
-                                                items.with(|i| i.get(data.0).map(|item| item == choice))
-                                            })
-                                    })
-                                    .unwrap_or_default();
-
-                                if is_selected {
-                                    "flex items-center bg-violet-800/50 rounded-lg p-2 transition-colors duration-200"
-                                } else {
-                                    "flex items-center hover:bg-violet-800/30 rounded-lg p-2 transition-colors duration-200"
-                                }
+                        <div class=move || {
+                            let is_selected = choice
+                                .with(|choice| {
+                                    choice
+                                        .as_ref()
+                                        .and_then(|choice| {
+                                            items.with(|i| i.get(data.0).map(|item| item == choice))
+                                        })
+                                })
+                                .unwrap_or_default();
+                            if is_selected {
+                                "flex items-center bg-violet-800/50 rounded-lg p-2 transition-colors duration-200"
+                            } else {
+                                "flex items-center hover:bg-violet-800/30 rounded-lg p-2 transition-colors duration-200"
                             }
-                        >
+                        }>
                             {items
                                 .with(|i| i.get(data.0).cloned())
                                 .map(|c| children(
@@ -179,13 +176,9 @@ where
                                         move || {
                                             if let Some(m) = fuzzy_search(&current_input(), &data.1) {
                                                 let target = data.1.clone();
-                                                Either::Left(view! {
-                                                    <MatchFormatter m=m target=target/>
-                                                })
+                                                Either::Left(view! { <MatchFormatter m=m target=target /> })
                                             } else {
-                                                Either::Right(view! {
-                                                    <div>{data.1.to_string()}</div>
-                                                })
+                                                Either::Right(view! { <div>{data.1.to_string()}</div> })
                                             }
                                         }
                                     }

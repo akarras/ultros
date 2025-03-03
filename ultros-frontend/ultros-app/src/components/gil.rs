@@ -6,7 +6,7 @@ pub fn Gil(#[prop(into)] amount: Signal<i32>) -> impl IntoView {
     view! {
         <div class="flex flex-row">
             <div class="h-7 w-7 -m-1 aspect-square p-1">
-                <img alt="gil" src="/static/images/gil.webp"/>
+                <img alt="gil" src="/static/images/gil.webp" />
             </div>
             <div>{move || amount().separate_with_commas()}</div>
         </div>
@@ -21,7 +21,7 @@ where
     view! {
         <div class="flex flex-row">
             <div class="h-7 w-7 -m-1 aspect-square p-1">
-                <img alt="gil" src="/static/images/gil.webp"/>
+                <img alt="gil" src="/static/images/gil.webp" />
             </div>
             <div>{move || amount().separate_with_commas()}</div>
         </div>

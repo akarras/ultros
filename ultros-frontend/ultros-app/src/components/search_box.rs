@@ -111,33 +111,35 @@ pub fn SearchBox() -> impl IntoView {
                     on:focusout=focus_out
                     placeholder="Search items... (⌘K / CTRL K)"
                     class="w-full px-4 py-2 pl-10 rounded-lg
-                               bg-violet-950/50 border border-white/10
-                               focus:border-violet-400/30 focus:outline-none
-                               text-gray-200 placeholder-gray-500
-                               transition-all duration-200"
+                         bg-violet-950/50 border border-white/10
+                         focus:border-violet-400/30 focus:outline-none
+                         text-gray-200 placeholder-gray-500
+                         transition-all duration-200"
                     class:ring-violet-400=active
                     type="text"
                     prop:value=search
                 />
                 <div class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
-                    <Icon icon=i::AiSearchOutlined/>
+                    <Icon icon=i::AiSearchOutlined />
                 </div>
             </div>
 
             // Search Results
-            <div class="absolute w-full mt-2 z-50"
-                 class:hidden=move || !active() || search().is_empty()>
+            <div
+                class="absolute w-full mt-2 z-50"
+                class:hidden=move || !active() || search().is_empty()
+            >
                 <div class="max-h-[500px] overflow-y-auto overflow-x-hidden
-                               rounded-lg border border-white/10
-                               bg-gradient-to-br from-violet-950/95 to-violet-900/95
-                               backdrop-blur-md shadow-lg shadow-black/50
-                               scrollbar-thin scrollbar-thumb-violet-600/50 scrollbar-track-transparent">
+                    rounded-lg border border-white/10
+                    bg-gradient-to-br from-violet-950/95 to-violet-900/95
+                    backdrop-blur-md shadow-lg shadow-black/50
+                    scrollbar-thin scrollbar-thumb-violet-600/50 scrollbar-track-transparent">
                     <VirtualScroller
                         each=Signal::derive(item_search)
                         key=move |(id, _item)| id.0
                         view=move |(id, _): (&xiv_gen::ItemId, &xiv_gen::Item)| {
                             let item_id = id.0;
-                            view! { <ItemSearchResult item_id set_search search/> }
+                            view! { <ItemSearchResult item_id set_search search /> }
                         }
                         viewport_height=500.0
                         row_height=42.0

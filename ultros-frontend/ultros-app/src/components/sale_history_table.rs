@@ -46,24 +46,26 @@ pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
                                 <td>
                                     {sale
                                         .hq
-                                        .then(|| { view! { <Icon icon=i::BsCheck/> }.into_view() })}
+                                        .then(|| {
+                                            view! { <Icon icon=i::BsCheck /> }.into_view()
+                                        })}
                                 </td>
                                 <td>
-                                    <Gil amount=sale.price_per_item/>
+                                    <Gil amount=sale.price_per_item />
                                 </td>
                                 <td>{sale.quantity}</td>
                                 <td>
-                                    <Gil amount=total/>
+                                    <Gil amount=total />
                                 </td>
                                 <td>{sale.buyer_name}</td>
                                 <td>
-                                    <WorldName id=AnySelector::World(sale.world_id)/>
+                                    <WorldName id=AnySelector::World(sale.world_id) />
                                 </td>
                                 <td>
-                                    <DatacenterName world_id=sale.world_id/>
+                                    <DatacenterName world_id=sale.world_id />
                                 </td>
                                 <td>
-                                    <RelativeToNow timestamp=sale.sold_date/>
+                                    <RelativeToNow timestamp=sale.sold_date />
                                 </td>
                             </tr>
                         }
@@ -278,7 +280,7 @@ fn WindowStats(#[prop(into)] sales: Signal<SalesWindow>) -> impl IntoView {
                 <tr>
                     <td>"Guessed next sale price"</td>
                     <td>
-                        <Gil amount=guessed_next_sale_price/>
+                        <Gil amount=guessed_next_sale_price />
                     </td>
                 </tr>
                 <tr>
@@ -313,11 +315,11 @@ pub fn SalesInsights(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
         <div class="flex flex-row items-start">
             <div class:hidden=move || sales.with(|s| s.past_day.is_none())>
                 <h4>"Day stats"</h4>
-                <WindowStats sales=day_sales/>
+                <WindowStats sales=day_sales />
             </div>
             <div class:hidden=move || sales.with(|s| s.month.is_none())>
                 <h4>"Month stats"</h4>
-                <WindowStats sales=month_sales/>
+                <WindowStats sales=month_sales />
             </div>
         </div>
     }

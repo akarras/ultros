@@ -415,7 +415,7 @@ where
     // add the hostname when using the ssr path.
     use axum::http::request::Parts;
     use leptos::prelude::use_context;
-    use tracing::{info, Instrument};
+    use tracing::{Instrument};
 
     static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     let client = CLIENT.get_or_init(|| {

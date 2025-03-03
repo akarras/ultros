@@ -31,7 +31,7 @@ pub fn EditLists() -> impl IntoView {
             <span class="content-title">"Edit Lists"</span>
             <Tooltip tooltip_text="Create list">
                 <button class="btn" on:click=move |_| set_creating(!creating())>
-                    <Icon icon=i::BiPlusRegular/>
+                    <Icon icon=i::BiPlusRegular />
                 </button>
             </Tooltip>
         </div>
@@ -76,15 +76,16 @@ pub fn EditLists() -> impl IntoView {
                                 }
                             >
 
-                                <Icon icon=i::BiSaveSolid/>
+                                <Icon icon=i::BiSaveSolid />
                             </button>
                         </div>
-                    }.into_any()
+                    }
+                        .into_any()
                 })
         }}
 
         <div class="content-well">
-            <Suspense fallback=move || view! { <Loading/> }>
+            <Suspense fallback=move || view! { <Loading /> }>
                 <>
                     {move || {
                         lists
@@ -92,107 +93,121 @@ pub fn EditLists() -> impl IntoView {
                             .map(|lists| {
                                 match lists {
                                     Ok(lists) => {
-                                        Either::Left(view! {
-                                            <h3>"Current lists"</h3>
-                                            <table class="w-full">
-                                                <tbody>
-                                                <tr>
-                                                    <td>"List Name"</td>
-                                                    <td>"World"</td>
-                                                </tr>
-                                                <For
-                                                    each=move || lists.clone()
-                                                    key=move |list| list.id
-                                                    children=move |list| {
-                                                        let (is_edit, set_is_edit) = signal(false);
-                                                        let (list, _set_list) = signal(list);
-                                                        let (name, set_name) = signal(list().name);
-                                                        let (current_world, set_current_world) = signal(
-                                                            Some(list().wdr_filter),
-                                                        );
-                                                        view! {
-                                                            <tr>
-                                                                {move || {
-                                                                    if is_edit() {
-                                                                        Either::Left(view! {
-                                                                            <td>
-                                                                                <input
-                                                                                    class="w-52"
-                                                                                    prop:value=name
-                                                                                    on:input=move |input| set_name(event_target_value(&input))
-                                                                                />
-                                                                            </td>
-                                                                            <td>
-                                                                                <WorldPicker
-                                                                                    current_world=current_world.into()
-                                                                                    set_current_world=set_current_world.into()
-                                                                                />
-                                                                            </td>
-                                                                        })
-                                                                    } else {
-                                                                        Either::Right(view! {
-                                                                            <td>
-                                                                                <a href=format!("/list/{}", list().id)>{list().name}</a>
-                                                                            </td>
-                                                                            <td>
-                                                                                <WorldName id=list().wdr_filter/>
-                                                                            </td>
-                                                                        })
-                                                                    }
-                                                                }}
-                                                                <td>
-                                                                    {move || {
-                                                                        if is_edit() {
-                                                                            Either::Left(view! {
-                                                                                <Tooltip tooltip_text="Save changes to this list">
-                                                                                    <button
-                                                                                        class="btn"
-                                                                                        on:click=move |_| {
-                                                                                            let mut list = list();
-                                                                                            list.name = name();
-                                                                                            if let Some(world) = current_world() {
-                                                                                                list.wdr_filter = world;
-                                                                                            }
-                                                                                            edit_list.dispatch(list);
-                                                                                        }
-                                                                                    >
+                                        Either::Left(
+                                            view! {
+                                                <h3>"Current lists"</h3>
+                                                <table class="w-full">
+                                                    <tbody>
+                                                        <tr>
+                                                            <td>"List Name"</td>
+                                                            <td>"World"</td>
+                                                        </tr>
+                                                        <For
+                                                            each=move || lists.clone()
+                                                            key=move |list| list.id
+                                                            children=move |list| {
+                                                                let (is_edit, set_is_edit) = signal(false);
+                                                                let (list, _set_list) = signal(list);
+                                                                let (name, set_name) = signal(list().name);
+                                                                let (current_world, set_current_world) = signal(
+                                                                    Some(list().wdr_filter),
+                                                                );
+                                                                view! {
+                                                                    <tr>
+                                                                        {move || {
+                                                                            if is_edit() {
+                                                                                Either::Left(
+                                                                                    view! {
+                                                                                        <td>
+                                                                                            <input
+                                                                                                class="w-52"
+                                                                                                prop:value=name
+                                                                                                on:input=move |input| set_name(event_target_value(&input))
+                                                                                            />
+                                                                                        </td>
+                                                                                        <td>
+                                                                                            <WorldPicker
+                                                                                                current_world=current_world.into()
+                                                                                                set_current_world=set_current_world.into()
+                                                                                            />
+                                                                                        </td>
+                                                                                    },
+                                                                                )
+                                                                            } else {
+                                                                                Either::Right(
+                                                                                    view! {
+                                                                                        <td>
+                                                                                            <a href=format!("/list/{}", list().id)>{list().name}</a>
+                                                                                        </td>
+                                                                                        <td>
+                                                                                            <WorldName id=list().wdr_filter />
+                                                                                        </td>
+                                                                                    },
+                                                                                )
+                                                                            }
+                                                                        }}
+                                                                        <td>
+                                                                            {move || {
+                                                                                if is_edit() {
+                                                                                    Either::Left(
+                                                                                        view! {
+                                                                                            <Tooltip tooltip_text="Save changes to this list">
+                                                                                                <button
+                                                                                                    class="btn"
+                                                                                                    on:click=move |_| {
+                                                                                                        let mut list = list();
+                                                                                                        list.name = name();
+                                                                                                        if let Some(world) = current_world() {
+                                                                                                            list.wdr_filter = world;
+                                                                                                        }
+                                                                                                        edit_list.dispatch(list);
+                                                                                                    }
+                                                                                                >
 
-                                                                                        <Icon icon=i::BiSaveSolid/>
-                                                                                    </button>
-                                                                                </Tooltip>
-                                                                                <Tooltip tooltip_text="Delete this list">
-                                                                                    <button
-                                                                                        class="btn"
-                                                                                        on:click=move |_| { let _ = delete_list.dispatch(list().id); }
-                                                                                    >
-                                                                                        <Icon icon=i::BiTrashSolid/>
-                                                                                    </button>
-                                                                                </Tooltip>
-                                                                            })
-                                                                        } else {
-                                                                            Either::Right(view! {
-                                                                                <Tooltip tooltip_text="Edit this list">
-                                                                                    <button class="btn" on:click=move |_| set_is_edit(true)>
-                                                                                        <Icon icon=i::BsPencilFill/>
-                                                                                    </button>
-                                                                                </Tooltip>
-                                                                            })
-                                                                        }
-                                                                    }}
+                                                                                                    <Icon icon=i::BiSaveSolid />
+                                                                                                </button>
+                                                                                            </Tooltip>
+                                                                                            <Tooltip tooltip_text="Delete this list">
+                                                                                                <button
+                                                                                                    class="btn"
+                                                                                                    on:click=move |_| {
+                                                                                                        let _ = delete_list.dispatch(list().id);
+                                                                                                    }
+                                                                                                >
+                                                                                                    <Icon icon=i::BiTrashSolid />
+                                                                                                </button>
+                                                                                            </Tooltip>
+                                                                                        },
+                                                                                    )
+                                                                                } else {
+                                                                                    Either::Right(
+                                                                                        view! {
+                                                                                            <Tooltip tooltip_text="Edit this list">
+                                                                                                <button class="btn" on:click=move |_| set_is_edit(true)>
+                                                                                                    <Icon icon=i::BsPencilFill />
+                                                                                                </button>
+                                                                                            </Tooltip>
+                                                                                        },
+                                                                                    )
+                                                                                }
+                                                                            }}
 
-                                                                </td>
-                                                            </tr>
-                                                        }
-                                                    }
-                                                />
-                                                </tbody>
-                                            </table>
-                                        })
+                                                                        </td>
+                                                                    </tr>
+                                                                }
+                                                            }
+                                                        />
+                                                    </tbody>
+                                                </table>
+                                            },
+                                        )
                                     }
                                     Err(e) => {
-                                        Either::Right(view! {
-                                            <div>{format!("Error getting listings\n{e}")}</div>
-                                        })
+                                        Either::Right(
+                                            view! {
+                                                <div>{format!("Error getting listings\n{e}")}</div>
+                                            },
+                                        )
                                     }
                                 }
                             })
@@ -209,9 +224,8 @@ pub fn Lists() -> impl IntoView {
     view! {
         <div class="mx-auto">
             <div class="content-nav">
-                <A attr:class="btn-secondary flex flex-row"
-                    href="/list">
-                    <Icon height="2em" width="2em" icon=i::AiOrderedListOutlined/>
+                <A attr:class="btn-secondary flex flex-row" href="/list">
+                    <Icon height="2em" width="2em" icon=i::AiOrderedListOutlined />
                     "Lists"
                 </A>
             </div>
@@ -219,12 +233,12 @@ pub fn Lists() -> impl IntoView {
                 <div class="container mx-auto flex flex-col xl:flex-row items-start">
                     <div class="flex flex-col grow">
                         <div class="grow w-full">
-                            <Ad class="h-20 w-full"/>
+                            <Ad class="h-20 w-full" />
                         </div>
                         <Outlet />
                     </div>
                     <div>
-                        <Ad class="h-96 w-96 xl:h-[600px] xl:w-40"/>
+                        <Ad class="h-96 w-96 xl:h-[600px] xl:w-40" />
                     </div>
                 </div>
             </div>

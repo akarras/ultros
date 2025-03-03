@@ -47,13 +47,15 @@ pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl 
     });
     view! {
         <div class="mx-auto min-h-[440px]" class:hidden=move || !hidden()>
-            <BoxSkeleton/>
+            <BoxSkeleton />
         </div>
         <div node_ref=div class="flex flex-col min-h-[480px] mx-auto" class:hidden=hidden>
             <canvas
                 width=width
                 height=move || height.get().min(480.0)
-                style={move || format!("width: {}px; height: {}px", width.get(), height.get().min(480.0))}
+                style=move || {
+                    format!("width: {}px; height: {}px", width.get(), height.get().min(480.0))
+                }
                 node_ref=canvas
             ></canvas>
             <Toggle

@@ -12,7 +12,7 @@ pub fn ItemSearchCategoryIcon(id: ItemSearchCategoryId) -> impl IntoView {
         let class_job = category.class_job;
         if let Some(class_job) = class_jobs.get(&class_job) {
             // view! {<i class=format!("icon xiv-ItemCategory_{}", class_job.abbreviation)></i>}
-            Either::Left(view! { <ClassJobIcon id=class_job.key_id/> })
+            Either::Left(view! { <ClassJobIcon id=class_job.key_id /> })
         } else {
             let value: Oco<'static, str> = match id.0 {
                 // singular armory items

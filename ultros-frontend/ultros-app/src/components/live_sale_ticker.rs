@@ -89,16 +89,18 @@ pub fn LiveSaleTicker() -> impl IntoView {
 
     view! {
         <div class="p-6 rounded-xl bg-gradient-to-br from-violet-950/20 to-violet-900/20
-                    border border-white/10 backdrop-blur-sm">
+         border border-white/10 backdrop-blur-sm">
             // No homeworld set warning
             <div class="space-y-4" class:hidden=move || homeworld.with(|w| w.is_some())>
                 <h3 class="text-xl font-bold text-amber-200">"No Homeworld Set"</h3>
                 <div class="text-gray-300">
                     "No homeworld is currently set. Go to "
-                    <A href="/settings" attr:class="text-amber-200 hover:text-amber-100 transition-colors">
+                    <A
+                        href="/settings"
+                        attr:class="text-amber-200 hover:text-amber-100 transition-colors"
+                    >
                         "Settings"
-                    </A>
-                    " to set your homeworld."
+                    </A> " to set your homeworld."
                 </div>
             </div>
 
@@ -113,26 +115,26 @@ pub fn LiveSaleTicker() -> impl IntoView {
                     </h3>
                     <button
                         class="text-sm text-gray-400 hover:text-amber-200 transition-colors
-                               flex items-center gap-2"
+                         flex items-center gap-2"
                         on:click=move |_| {
                             sales.update(|s| s.clear());
                             set_done_loading(false);
                             retrigger.set(true);
                         }
                     >
-                        <Icon icon=i::BiRefreshRegular/>
+                        <Icon icon=i::BiRefreshRegular />
                         "Refresh"
                     </button>
                 </div>
 
                 <div class="space-y-2 max-h-[400px] overflow-y-auto overflow-x-hidden
-                          scrollbar-thin scrollbar-thumb-violet-600/50 scrollbar-track-transparent">
+                scrollbar-thin scrollbar-thumb-violet-600/50 scrollbar-track-transparent">
                     <Show
                         when=done_loading
                         fallback=move || {
                             view! {
                                 <div class="h-[400px] animate-pulse">
-                                    <BoxSkeleton/>
+                                    <BoxSkeleton />
                                 </div>
                             }
                         }
@@ -145,28 +147,32 @@ pub fn LiveSaleTicker() -> impl IntoView {
                                     sale.item_id,
                                 )
                             }>
-                            <div class="flex items-center gap-4 p-3 rounded-lg
-                                       bg-violet-950/30 border border-white/5
-                                       hover:bg-violet-900/30 hover:border-white/10
-                                       transition-all duration-200 group">
-                                <div class="flex items-center gap-4 w-full transform transition-transform duration-200 group-hover:translate-x-1">
-                                    <ItemIcon item_id=sale.item_id icon_size=IconSize::Medium/>
+                                <div class="flex items-center gap-4 p-3 rounded-lg
+                                bg-violet-950/30 border border-white/5
+                                hover:bg-violet-900/30 hover:border-white/10
+                                transition-all duration-200 group">
+                                    <div class="flex items-center gap-4 w-full transform transition-transform duration-200 group-hover:translate-x-1">
+                                        <ItemIcon item_id=sale.item_id icon_size=IconSize::Medium />
 
-                                    <div class="flex flex-col min-w-0 flex-1">
-                                        <div class="flex items-center gap-2">
-                                            <Item item_id=sale.item_id/>
-                                            {sale.hq.then(|| view! {
-                                                <span class="px-1.5 py-0.5 rounded text-xs bg-amber-500/20 text-amber-200">
-                                                    "HQ"
-                                                </span>
-                                            })}
-                                        </div>
-                                        <div class="flex items-center gap-4 text-sm text-gray-400">
-                                            <Gil amount=sale.price/>
-                                            <RelativeToNow timestamp=sale.sold_date/>
+                                        <div class="flex flex-col min-w-0 flex-1">
+                                            <div class="flex items-center gap-2">
+                                                <Item item_id=sale.item_id />
+                                                {sale
+                                                    .hq
+                                                    .then(|| {
+                                                        view! {
+                                                            <span class="px-1.5 py-0.5 rounded text-xs bg-amber-500/20 text-amber-200">
+                                                                "HQ"
+                                                            </span>
+                                                        }
+                                                    })}
+                                            </div>
+                                            <div class="flex items-center gap-4 text-sm text-gray-400">
+                                                <Gil amount=sale.price />
+                                                <RelativeToNow timestamp=sale.sold_date />
+                                            </div>
                                         </div>
                                     </div>
-                                </div>
                                 </div>
                             </A>
                         </For>

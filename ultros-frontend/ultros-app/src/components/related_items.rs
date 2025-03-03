@@ -112,14 +112,13 @@ fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
 
     view! {
         <Suspense fallback=move || {
-            view! { <SingleLineSkeleton/> }
+            view! { <SingleLineSkeleton /> }
         }>
             {move || {
                 cheapest_prices
                     .read_listings
                     .with(|prices| {
-                        let prices = prices
-                            .as_ref()?;
+                        let prices = prices.as_ref()?;
                         let prices = prices.as_ref().ok()?;
                         let hq_amount: i32 = IngredientsIter::new(recipe)
                             .flat_map(|(ingredient, amount)| {
@@ -155,7 +154,7 @@ fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
                             .sum();
                         let result_view = view! {
                             <span class="flex flex-row gap-1">
-                                "HQ: " <Gil amount=hq_amount/> " LQ:" <Gil amount/>
+                                "HQ: " <Gil amount=hq_amount /> " LQ:" <Gil amount />
                             </span>
                         };
                         Some(result_view)
@@ -177,9 +176,9 @@ fn Recipe(recipe: &'static Recipe) -> impl IntoView {
                     <div class="flex flex-row">
                         <span style="color:#dab;">{amount.to_string()}</span>
                         "x"
-                        <SmallItemDisplay item=ingredient/>
+                        <SmallItemDisplay item=ingredient />
                     </div>
-                    <CheapestPrice item_id=ingredient.key_id/>
+                    <CheapestPrice item_id=ingredient.key_id />
                 </div>
             }
         })
@@ -188,12 +187,12 @@ fn Recipe(recipe: &'static Recipe) -> impl IntoView {
     Some(view! {
         <div class="content-well">
             "Crafting Recipe:" <div class="flex md:flex-row flex-col">
-                <SmallItemDisplay item=target_item/>
-                <CheapestPrice item_id=target_item.key_id/>
+                <SmallItemDisplay item=target_item />
+                <CheapestPrice item_id=target_item.key_id />
             </div> "Ingredients:" {ingredients} <div class="flex md:flex-row flex-col p-1 gap-1">
                 <span class="underline">"Total craft cost:"</span>
                 " "
-                <RecipePriceEstimate recipe/>
+                <RecipePriceEstimate recipe />
             </div>
         </div>
     }.into_any())
@@ -258,7 +257,7 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                     >
                         <div class="flex flex-row">
                             <div class="text-md">{resident.singular.as_str()}</div>
-                            <Gil amount=price/>
+                            <Gil amount=price />
                         </div>
                         <div class="text-sm italic">"(" {shop.name.as_str()} ")"</div>
                     </a>
@@ -297,25 +296,27 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                                 // transition-all duration-500 bg-gradient-to-br to-fuchsia-950 via-black from-violet-950 bg-size-200 bg-pos-0
                                 // hover:bg-pos-100 p-2"
                                 exact=true
-                                href=move || format!(
-                                    "/item/{}/{}",
-                                    price_zone()
-                                        .as_ref()
-                                        .map(|z| z.get_name())
-                                        .unwrap_or("North-America"),
-                                    item.key_id.0,
-                                )
+                                href=move || {
+                                    format!(
+                                        "/item/{}/{}",
+                                        price_zone()
+                                            .as_ref()
+                                            .map(|z| z.get_name())
+                                            .unwrap_or("North-America"),
+                                        item.key_id.0,
+                                    )
+                                }
                             >
 
                                 <div class="flex flex-row">
-                                    <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium/>
+                                    <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
                                     <span style="width: 300px;">{item.name.as_str()}</span>
                                     <span style="color: #abc; width: 50px;">
                                         {item.level_item.0}
                                     </span>
                                 </div>
                                 <div class="min-w-60 h-5">
-                                    <CheapestPrice item_id=item.key_id/>
+                                    <CheapestPrice item_id=item.key_id />
                                 </div>
                             </A>
                         }
@@ -336,14 +337,18 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
             <span class="content-title">"related items"</span>
             <div class="flex-row flex-wrap gap-3">{item_set}</div>
         </div>
-        <VendorItems item_id/>
-        <div class="content-well flex-col p-2" class:hidden=move || recipes.with(|recipes| recipes.is_empty())>
+        <VendorItems item_id />
+        <div
+            class="content-well flex-col p-2"
+            class:hidden=move || recipes.with(|recipes| recipes.is_empty())
+        >
             <span class="content-title">"crafting recipes"</span>
             <div class="flex-wrap">
-                <For each=recipes
+                <For
+                    each=recipes
                     key=|recipe| recipe.key_id
                     children=move |recipe: &'static Recipe| {
-                        view!{ <Recipe recipe/> }
+                        view! { <Recipe recipe /> }
                     }
                 />
             </div>

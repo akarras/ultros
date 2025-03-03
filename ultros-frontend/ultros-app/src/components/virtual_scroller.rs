@@ -85,7 +85,7 @@ where
                     // {move || virtual_children().into_iter().map(|child| view(child)).collect::<Vec<_>>()}
                     // For component currently has issues. Possibly
                     // https://github.com/leptos-rs/leptos/issues/533
-                    <For each=virtual_children key=key children=view/>
+                    <For each=virtual_children key=key children=view />
                 </div>
             </div>
         </div>
