@@ -14,7 +14,7 @@ use crate::global_state::{
 };
 pub use crate::global_state::{home_world::GuessedRegion, LocalWorldData};
 use crate::{
-    components::{ad::Ad, profile_display::*, search_box::*, tooltip::*},
+    components::{ad::Ad, profile_display::*, search_box::*, tooltip::*, patreon::*},
     routes::{
         analyzer::*,
         currency_exchange::{CurrencyExchange, CurrencySelection, ExchangeItem},
@@ -93,12 +93,11 @@ pub fn Footer() -> impl IntoView {
                     >
                         "GitHub"
                     </a>
-                    <a
-                        href="https://leekspin.com"
-                        class="text-gray-400 hover:text-amber-200 transition-colors"
-                    >
+                    <PatreonWrapper>
+                        <a class="text-gray-400 hover:text-amber-200 transition-colors"> // nobody can tell it's not real.
                         "Patreon"
-                    </a>
+                        </a>
+                    </PatreonWrapper>
                     <a
                         href="https://book.ultros.app"
                         class="text-gray-400 hover:text-amber-200 transition-colors"

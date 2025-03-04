@@ -30,12 +30,11 @@ where
         pathname, query, ..
     } = use_location();
     let key_1 = key.clone();
-    let value_1 = value.clone();
     let is_active = Signal::derive(move || {
         query.with(|q| {
             let name = key_1.as_str();
             let query_val = q.get_str(name);
-            value_1.with(|val| val.as_str() == query_val.unwrap_or_default())
+            value.with(|val| val.as_str() == query_val.unwrap_or_default())
                 || (default == true && query_val.is_none())
         })
     });
@@ -47,7 +46,7 @@ where
                 for remove in remove_queries {
                     query.remove(remove);
                 }
-                let _ = query.insert(key.to_string(), key.to_string());
+                let _ = query.insert(key.to_string(), value.get());
                 format!("{}{}", pathname(), query.to_query_string())
             }
         >

@@ -344,7 +344,6 @@ fn AnalyzerTable(
         }
         sorted_data.into_iter().enumerate().collect()
     });
-
     view! {
         <div class="flex flex-col gap-6">
             <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
@@ -436,10 +435,10 @@ fn AnalyzerTable(
                         <div role="columnheader" class="w-[25px] p-4">
                             "HQ"
                         </div>
-                        <div role="columnheader" class="w-[200px] p-4">
+                        <div role="columnheader" class="w-60 p-4">
                             "Item"
                         </div>
-                        <div role="columnheader" class="w-[120px] p-4">
+                        <div role="columnheader" class="w-50 p-4">
                             <QueryButton
                                 class="!text-amber-300 hover:text-amber-200"
                                 active_classes="!text-neutral-300 hover:text-neutral-200"
@@ -455,7 +454,7 @@ fn AnalyzerTable(
                                 </div>
                             </QueryButton>
                         </div>
-                        <div role="columnheader" class="w-[100px] p-4">
+                        <div role="columnheader" class="w-50 p-4">
                             <QueryButton
                                 class="!text-amber-300 hover:text-amber-200"
                                 active_classes="!text-neutral-300 hover:text-neutral-200"
@@ -472,16 +471,16 @@ fn AnalyzerTable(
                                 </div>
                             </QueryButton>
                         </div>
-                        <div role="columnheader" class="w-[100px] p-4">
+                        <div role="columnheader" class="w-50 p-4">
                             "Buy Price"
                         </div>
-                        <div role="columnheader" class="w-[100px] p-4">
+                        <div role="columnheader" class="w-50 p-4">
                             "World"
                         </div>
-                        <div role="columnheader" class="w-[100px] p-4">
+                        <div role="columnheader" class="w-50 p-4">
                             "Datacenter"
                         </div>
-                        <div role="columnheader" class="w-[100px] p-4">
+                        <div role="columnheader" class="w-50 p-4">
                             "Avg Sale Time"
                         </div>
                     </div>
@@ -519,23 +518,27 @@ fn AnalyzerTable(
                                 .get(&ItemId(item_id))
                                 .map(|item| item.name.as_str())
                                 .unwrap_or_default();
-
+                            // if even
+                            
+                            let classes = if (i % 2) == 0 {
+                                "flex flex-row flex-nowrap h-10 hover:bg-violet-700 bg-violet-900 transition-colors"
+                            } else {
+                                "flex flex-row flex-nowrap h-10 hover:bg-violet-700 bg-violet-800 transition-colors"
+                            };
                             view! {
                                 <div
-                                    class="hover:bg-violet-900/20 transition-colors h-10 text-nowrap flex flex-row flex-nowrap"
+                                    class=classes
                                     role="row-group"
-                                    class:even=move || (i % 2) == 0
-                                    class:odd=move || (i % 2) == 1
                                 >
                                     <div role="cell" class="p-4 w-[25px]">
                                         {data.sale_summary.hq.then_some("✅")}
                                     </div>
                                     <div
                                         role="cell"
-                                        class="p-4 flex flex-row w-[200px] items-center gap-2"
+                                        class="p-4 flex flex-row w-60 items-center gap-2"
                                     >
                                         <a
-                                            class="flex flex-row items-center gap-2 hover:text-amber-200 transition-colors text-nowrap overflow-x-clip w-full"
+                                            class="flex flex-row items-center gap-2 hover:text-amber-200 transition-colors truncate overflow-x-clip w-full"
                                             href=format!("/item/{}/{item_id}", world())
                                         >
                                             <ItemIcon item_id icon_size=IconSize::Small />
@@ -544,17 +547,17 @@ fn AnalyzerTable(
                                         <AddToList item_id />
                                         <Clipboard clipboard_text=item.to_string() />
                                     </div>
-                                    <div role="cell" class="p-4 w-[120px] text-right">
+                                    <div role="cell" class="p-4 w-50 text-right">
                                         <Gil amount=data.profit />
                                     </div>
-                                    <div role="cell" class="p-4 w-[100px] text-right">
+                                    <div role="cell" class="p-4 w-50 text-right">
                                         {data.return_on_investment}
                                         "%"
                                     </div>
-                                    <div role="cell" class="p-4 w-[100px] text-right">
+                                    <div role="cell" class="p-4 w-50 text-right">
                                         <Gil amount=data.cheapest_price />
                                     </div>
-                                    <div role="cell" class="p-4 w-[100px]">
+                                    <div role="cell" class="p-4 w-50">
                                         <Tooltip tooltip_text=Signal::derive(move || {
                                             format!("Only show {}", world())
                                         })>
@@ -569,7 +572,7 @@ fn AnalyzerTable(
                                             </QueryButton>
                                         </Tooltip>
                                     </div>
-                                    <div role="cell" class="p-4 w-[100px]">
+                                    <div role="cell" class="p-4 w-50">
                                         <Tooltip tooltip_text=Signal::derive(move || {
                                             format!("Only show {}", datacenter())
                                         })>
@@ -584,7 +587,7 @@ fn AnalyzerTable(
                                             </QueryButton>
                                         </Tooltip>
                                     </div>
-                                    <div role="cell" class="p-4 w-[100px]">
+                                    <div role="cell" class="p-4 w-50 truncate">
                                         {data
                                             .sale_summary
                                             .avg_sale_duration
