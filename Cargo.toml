@@ -65,7 +65,7 @@ xiv-gen = { path = "./xiv-gen", features = [
     "e_npc_resident",
     "special_shop",
 ] }
-icondata = "0.3"
+icondata = "0.5"
 leptos_icons = { git = "https://github.com/ozpv/leptos-icons.git", branch = "leptos-0.7.0" }
 cfg-if = "1.0.0"
 git-const = "1.1.0"

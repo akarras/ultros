@@ -474,32 +474,32 @@ fn AnalyzerTable(
                         <div role="columnheader" class="w-30 p-4">
                             "Buy Price"
                         </div>
-                        <div role="columnheader" class="w-30 p-4 flex flex-col gap-2">
+                        <div role="columnheader" class="w-30 p-4 flex flex-row gap-2">
                             "World"
                             <div>
                             {move || {
                                 world_filter().map(|_filter| {
                                     view!{
-                                        <div class="bg-violet-800/30 hover:bg-violet-700/40 transition-colors border border-amber-300 rounded-sm backdrop-blur-sm text-amber-300 cursor-pointer" on:click=move |_| {
+                                        <div class="hover:text-amber:200 transition-colors rounded-sm p-2 text-amber-300 cursor-pointer" on:click=move |_| {
                                             set_world_filter(None);
                                         }>
-                                            "Clear filter"
+                                            <Icon icon=icondata::MdiFilterRemove />
                                         </div>
                                     }
                                 }) 
                             }}
                             </div>
                         </div>
-                        <div role="columnheader" class="w-30 p-4">
+                        <div role="columnheader" class="w-30 p-4 flex flex-row gap-2">
                             "Datacenter"
                             <div>
                             {move || {
                                 datacenter_filter().map(|_filter| {
                                     view!{
-                                        <div class="bg-violet-800/30 hover:bg-violet-700/40 transition-colors border border-amber-300 rounded-sm p-2 text-amber-300 cursor-pointer" on:click=move |_| {
+                                        <div class="hover:text-amber:200 transition-colors rounded-sm p-2 text-amber-300 cursor-pointer" on:click=move |_| {
                                             set_datacenter_filter(None);
                                         }>
-                                            "Clear filter"
+                                            <Icon icon=icondata::MdiFilterRemove />
                                         </div>
                                     }
                                 }) 
