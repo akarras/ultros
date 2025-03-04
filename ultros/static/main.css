@@ -845,15 +845,6 @@ select optgroup {
     overflow-x: auto;
 }
 
-.grid-header {
-    display: flex;
-    flex-direction: row;
-}
-
-.grid-header > div {
-    flex-shrink: 0;
-}
-
 .stock-ticker {
     overflow-x: clip;
     width: 100%;

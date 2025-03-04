@@ -10,9 +10,9 @@ pub fn PatreonWrapper(children: Children) -> impl IntoView {
                 *show = !*show;
              });
         }>
-            <div class="fixed bottom-0 left-0 flex flex-col w-50" class:invisible=move || !show()>
+            <div class="fixed bottom-0 left-0 flex flex-col cursor-not-allowed" class:invisible=move || !show()>
                 <img src=move || if show() { "/static/images/leekspin.gif".to_string() } else { String::new() } />
-                <audio controls loop autoplay src=move || if show() { "/static/ratata.mp3".to_string() } else {String::new()} />
+                <Show when=show><audio controls loop autoplay src=move || if show() { "/static/ratata.mp3".to_string() } else {String::new()} /></Show>
             </div>
             {children()}
         </div>

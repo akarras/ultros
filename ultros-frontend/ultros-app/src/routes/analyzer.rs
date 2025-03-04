@@ -271,8 +271,8 @@ fn AnalyzerTable(
     let (minimum_profit, set_minimum_profit) = query_signal::<i32>("profit");
     let (minimum_roi, set_minimum_roi) = query_signal("roi");
     let (max_predicted_time, set_max_predicted_time) = query_signal::<String>("next-sale");
-    let (world_filter, _set_world_filter) = query_signal::<String>("world");
-    let (datacenter_filter, _set_datacenter_filter) = query_signal::<String>("datacenter");
+    let (world_filter, set_world_filter) = query_signal::<String>("world");
+    let (datacenter_filter, set_datacenter_filter) = query_signal::<String>("datacenter");
 
     let world_clone = worlds.clone();
     let world_filter_list = Memo::new(move |_| {
@@ -431,14 +431,14 @@ fn AnalyzerTable(
             // Results table
             <div class="rounded-2xl overflow-x-auto overflow-y-hidden border border-white/10 backdrop-blur-sm backdrop-brightness-110">
                 <div class="grid-table" role="table">
-                    <div class="grid-header bg-violet-900/30" role="rowgroup">
+                    <div class="flex flex-row align-top h-20 bg-violet-900/30" role="rowgroup">
                         <div role="columnheader" class="w-[25px] p-4">
                             "HQ"
                         </div>
-                        <div role="columnheader" class="w-60 p-4">
+                        <div role="columnheader" class="w-84 p-4">
                             "Item"
                         </div>
-                        <div role="columnheader" class="w-50 p-4">
+                        <div role="columnheader" class="w-30 p-4">
                             <QueryButton
                                 class="!text-amber-300 hover:text-amber-200"
                                 active_classes="!text-neutral-300 hover:text-neutral-200"
@@ -454,7 +454,7 @@ fn AnalyzerTable(
                                 </div>
                             </QueryButton>
                         </div>
-                        <div role="columnheader" class="w-50 p-4">
+                        <div role="columnheader" class="w-30 p-4">
                             <QueryButton
                                 class="!text-amber-300 hover:text-amber-200"
                                 active_classes="!text-neutral-300 hover:text-neutral-200"
@@ -471,16 +471,42 @@ fn AnalyzerTable(
                                 </div>
                             </QueryButton>
                         </div>
-                        <div role="columnheader" class="w-50 p-4">
+                        <div role="columnheader" class="w-30 p-4">
                             "Buy Price"
                         </div>
-                        <div role="columnheader" class="w-50 p-4">
+                        <div role="columnheader" class="w-30 p-4 flex flex-col gap-2">
                             "World"
+                            <div>
+                            {move || {
+                                world_filter().map(|_filter| {
+                                    view!{
+                                        <div class="bg-violet-800/30 hover:bg-violet-700/40 transition-colors border border-amber-300 rounded-sm backdrop-blur-sm text-amber-300 cursor-pointer" on:click=move |_| {
+                                            set_world_filter(None);
+                                        }>
+                                            "Clear filter"
+                                        </div>
+                                    }
+                                }) 
+                            }}
+                            </div>
                         </div>
-                        <div role="columnheader" class="w-50 p-4">
+                        <div role="columnheader" class="w-30 p-4">
                             "Datacenter"
+                            <div>
+                            {move || {
+                                datacenter_filter().map(|_filter| {
+                                    view!{
+                                        <div class="bg-violet-800/30 hover:bg-violet-700/40 transition-colors border border-amber-300 rounded-sm p-2 text-amber-300 cursor-pointer" on:click=move |_| {
+                                            set_datacenter_filter(None);
+                                        }>
+                                            "Clear filter"
+                                        </div>
+                                    }
+                                }) 
+                            }}
+                            </div>
                         </div>
-                        <div role="columnheader" class="w-50 p-4">
+                        <div role="columnheader" class="w-30 p-4">
                             "Avg Sale Time"
                         </div>
                     </div>
@@ -519,11 +545,10 @@ fn AnalyzerTable(
                                 .map(|item| item.name.as_str())
                                 .unwrap_or_default();
                             // if even
-                            
                             let classes = if (i % 2) == 0 {
-                                "flex flex-row flex-nowrap h-10 hover:bg-violet-700 bg-violet-900 transition-colors"
+                                "flex flex-row flex-nowrap h-10 hover:bg-violet-700/20 bg-violet-900/20 transition-colors"
                             } else {
-                                "flex flex-row flex-nowrap h-10 hover:bg-violet-700 bg-violet-800 transition-colors"
+                                "flex flex-row flex-nowrap h-10 hover:bg-violet-700/20 bg-violet-800/20 transition-colors"
                             };
                             view! {
                                 <div
@@ -535,7 +560,7 @@ fn AnalyzerTable(
                                     </div>
                                     <div
                                         role="cell"
-                                        class="p-4 flex flex-row w-60 items-center gap-2"
+                                        class="p-4 flex flex-row w-84 items-center gap-2"
                                     >
                                         <a
                                             class="flex flex-row items-center gap-2 hover:text-amber-200 transition-colors truncate overflow-x-clip w-full"
@@ -547,17 +572,17 @@ fn AnalyzerTable(
                                         <AddToList item_id />
                                         <Clipboard clipboard_text=item.to_string() />
                                     </div>
-                                    <div role="cell" class="p-4 w-50 text-right">
+                                    <div role="cell" class="p-4 w-30 text-right">
                                         <Gil amount=data.profit />
                                     </div>
-                                    <div role="cell" class="p-4 w-50 text-right">
+                                    <div role="cell" class="p-4 w-30 text-right">
                                         {data.return_on_investment}
                                         "%"
                                     </div>
-                                    <div role="cell" class="p-4 w-50 text-right">
+                                    <div role="cell" class="p-4 w-30 text-right">
                                         <Gil amount=data.cheapest_price />
                                     </div>
-                                    <div role="cell" class="p-4 w-50">
+                                    <div role="cell" class="p-4 w-30">
                                         <Tooltip tooltip_text=Signal::derive(move || {
                                             format!("Only show {}", world())
                                         })>
@@ -572,7 +597,7 @@ fn AnalyzerTable(
                                             </QueryButton>
                                         </Tooltip>
                                     </div>
-                                    <div role="cell" class="p-4 w-50">
+                                    <div role="cell" class="p-4 w-30">
                                         <Tooltip tooltip_text=Signal::derive(move || {
                                             format!("Only show {}", datacenter())
                                         })>
@@ -587,7 +612,7 @@ fn AnalyzerTable(
                                             </QueryButton>
                                         </Tooltip>
                                     </div>
-                                    <div role="cell" class="p-4 w-50 truncate">
+                                    <div role="cell" class="p-4 w-30 truncate">
                                         {data
                                             .sale_summary
                                             .avg_sale_duration
