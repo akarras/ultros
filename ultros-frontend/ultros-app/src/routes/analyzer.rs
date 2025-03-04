@@ -436,7 +436,7 @@ fn AnalyzerTable(
                         <div role="columnheader" class="w-[25px] p-4">
                             "HQ"
                         </div>
-                        <div role="columnheader" class="w-[450px] p-4">
+                        <div role="columnheader" class="w-[200px] p-4">
                             "Item"
                         </div>
                         <div role="columnheader" class="w-[120px] p-4">
@@ -478,10 +478,10 @@ fn AnalyzerTable(
                         <div role="columnheader" class="w-[100px] p-4">
                             "World"
                         </div>
-                        <div role="columnheader" class="w-[150px] p-4">
+                        <div role="columnheader" class="w-[100px] p-4">
                             "Datacenter"
                         </div>
-                        <div role="columnheader" class="w-[150px] p-4">
+                        <div role="columnheader" class="w-[100px] p-4">
                             "Avg Sale Time"
                         </div>
                     </div>
@@ -532,10 +532,10 @@ fn AnalyzerTable(
                                     </div>
                                     <div
                                         role="cell"
-                                        class="p-4 flex flex-row w-[450px] items-center gap-2"
+                                        class="p-4 flex flex-row w-[200px] items-center gap-2"
                                     >
                                         <a
-                                            class="flex flex-row items-center gap-2 hover:text-amber-200 transition-colors"
+                                            class="flex flex-row items-center gap-2 hover:text-amber-200 transition-colors text-nowrap overflow-x-clip w-full"
                                             href=format!("/item/{}/{item_id}", world())
                                         >
                                             <ItemIcon item_id icon_size=IconSize::Small />
@@ -554,7 +554,7 @@ fn AnalyzerTable(
                                     <div role="cell" class="p-4 w-[100px] text-right">
                                         <Gil amount=data.cheapest_price />
                                     </div>
-                                    <div role="cell" class="p-4 w-[200px]">
+                                    <div role="cell" class="p-4 w-[100px]">
                                         <Tooltip tooltip_text=Signal::derive(move || {
                                             format!("Only show {}", world())
                                         })>
@@ -569,7 +569,7 @@ fn AnalyzerTable(
                                             </QueryButton>
                                         </Tooltip>
                                     </div>
-                                    <div role="cell" class="p-4 w-[150px]">
+                                    <div role="cell" class="p-4 w-[100px]">
                                         <Tooltip tooltip_text=Signal::derive(move || {
                                             format!("Only show {}", datacenter())
                                         })>
@@ -584,7 +584,7 @@ fn AnalyzerTable(
                                             </QueryButton>
                                         </Tooltip>
                                     </div>
-                                    <div role="cell" class="p-4 w-[150px]">
+                                    <div role="cell" class="p-4 w-[100px]">
                                         {data
                                             .sale_summary
                                             .avg_sale_duration

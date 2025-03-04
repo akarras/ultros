@@ -217,7 +217,7 @@ pub fn NavRow() -> impl IntoView {
                 </div>
 
                 // Center section
-                <div class="flex-1 max-w-xl">
+                <div class="flex-1 max-w-xl w-full">
                     <SearchBox />
                 </div>
 

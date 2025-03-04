@@ -52,7 +52,7 @@ where
         height: {}px;
         overflow-y: auto;
         overflow-x: visible;
-        width: fit-content;
+        width: 100%;
       "#,
                 viewport_height.ceil() as u32,
             )
@@ -66,7 +66,7 @@ where
           overflow-x: visible;
           will-change: transform;
           position: relative;
-          width: fit-content;
+          width: 100%;
         "#,
                     (each.with(|children| children.len() + render_ahead as usize) as f64
                         * row_height)

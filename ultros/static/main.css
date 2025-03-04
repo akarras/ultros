@@ -218,10 +218,6 @@ nav > * > a {
     transition: 0.25s;
 }
 
-nav a > * {
-    padding: 5px;
-}
-
 nav > a:hover,
 nav > * > a:hover {
     color: #846d8f;

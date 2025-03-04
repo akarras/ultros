@@ -57,6 +57,7 @@ pub fn ItemSearchResult(
     if let Some(item) = item {
         let left_view = view! {
             <a
+                class="w-full"
                 on:click=move |_| set_search("".to_string())
                 href=move || {
                     let zone = price_zone();
@@ -64,7 +65,7 @@ pub fn ItemSearchResult(
                     format!("/item/{price_zone}/{item_id}")
                 }
             >
-                <div class="flex items-center px-3 py-2 hover:bg-violet-800/30
+                <div class="flex flex-row items-center px-3 py-2 hover:bg-violet-800/30
                 transition-colors duration-200 group gap-3 w-full">
                     <div class="flex-shrink-0">
                         <ItemIcon item_id icon_size=IconSize::Small />
@@ -109,7 +110,7 @@ pub fn ItemSearchResult(
                         </div>
                     </div>
 
-                    <div class="flex-shrink-0 pl-4 text-right min-w-[100px]
+                    <div class="flex flex-shrink-0 pl-4 text-right min-w-[100px]
                     text-amber-200 font-medium">
                         <CheapestPrice item_id=item.key_id />
                     </div>
