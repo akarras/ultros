@@ -140,6 +140,8 @@ fn job_category_lookup(class_job_category: &ClassJobCategory, job_acronym: &str)
         dnc,
         rpr,
         sge,
+        vpr,
+        pct,
         ..
     } = class_job_category;
     match lower_case.as_str() {
@@ -184,8 +186,10 @@ fn job_category_lookup(class_job_category: &ClassJobCategory, job_acronym: &str)
         "dnc" => *dnc,
         "rpr" => *rpr,
         "sge" => *sge,
+        "vpr" => *vpr,
+        "pct" => *pct,
         _ => {
-            log::warn!("Unknown job acronym {job_acronym}");
+            tracing::warn!(job_acronym, "Unknown job acronym");
             false
         }
     }
