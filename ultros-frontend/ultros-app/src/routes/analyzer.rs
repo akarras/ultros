@@ -566,7 +566,7 @@ fn AnalyzerTable(
                                             class="flex flex-row items-center gap-2 hover:text-amber-200 transition-colors truncate overflow-x-clip w-full"
                                             href=format!("/item/{}/{item_id}", world())
                                         >
-                                            <ItemIcon item_id icon_size=IconSize::Small />
+                                            <div class="shrink-0"><ItemIcon item_id icon_size=IconSize::Small /></div>
                                             {item}
                                         </a>
                                         <AddToList item_id />
