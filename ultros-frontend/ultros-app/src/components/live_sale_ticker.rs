@@ -89,7 +89,7 @@ pub fn LiveSaleTicker() -> impl IntoView {
 
     view! {
         <div class="p-6 rounded-xl bg-gradient-to-br from-violet-950/20 to-violet-900/20
-         border border-white/10 backdrop-blur-sm">
+        border border-white/10 backdrop-blur-sm">
             // No homeworld set warning
             <div class="space-y-4" class:hidden=move || homeworld.with(|w| w.is_some())>
                 <h3 class="text-xl font-bold text-amber-200">"No Homeworld Set"</h3>
@@ -115,7 +115,7 @@ pub fn LiveSaleTicker() -> impl IntoView {
                     </h3>
                     <button
                         class="text-sm text-gray-400 hover:text-amber-200 transition-colors
-                         flex items-center gap-2"
+                        flex items-center gap-2"
                         on:click=move |_| {
                             sales.update(|s| s.clear());
                             set_done_loading(false);

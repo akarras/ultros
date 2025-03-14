@@ -28,9 +28,9 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
     view! {
         <button
             class="px-4 py-2 rounded-lg bg-violet-900/30 hover:bg-violet-800/40
-             border border-white/10 hover:border-yellow-200/30
-             transition-all duration-300 text-amber-200 hover:text-amber-100
-             flex items-center gap-2"
+            border border-white/10 hover:border-yellow-200/30
+            transition-all duration-300 text-amber-200 hover:text-amber-100
+            flex items-center gap-2"
             on:click=move |_| set_is_open(!is_open())
         >
             <Icon icon=i::BiPlusRegular />
@@ -81,7 +81,7 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
                             <div class="flex gap-2">
                                 <input
                                     class="flex-grow p-2 rounded-lg bg-violet-950/50 border border-white/10
-                                     focus:outline-none focus:border-yellow-200/30 transition-colors"
+                                    focus:outline-none focus:border-yellow-200/30 transition-colors"
                                     placeholder="Enter character name..."
                                     prop:value=character_search
                                     on:input=move |input| set_character_search(
@@ -90,8 +90,8 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
                                 />
                                 <button
                                     class="px-4 py-2 rounded-lg bg-violet-900/30 hover:bg-violet-800/40
-                                     border border-white/10 hover:border-yellow-200/30
-                                     transition-all duration-300 text-amber-200 hover:text-amber-100"
+                                    border border-white/10 hover:border-yellow-200/30
+                                    transition-all duration-300 text-amber-200 hover:text-amber-100"
                                     on:click=move |_| {
                                         let _ = search_action.dispatch(character_search());
                                     }
@@ -129,7 +129,7 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
                                                                             .map(|character| {
                                                                                 view! {
                                                                                     <div class="flex items-center justify-between p-2 rounded-lg
-                                                                                     bg-violet-950/30 border border-white/5">
+                                                                                    bg-violet-950/30 border border-white/5">
                                                                                         <div class="flex items-center gap-4">
                                                                                             <span class="text-amber-100">
                                                                                                 {character.first_name} " " {character.last_name}
@@ -140,8 +140,8 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
                                                                                         </div>
                                                                                         <button
                                                                                             class="px-3 py-1 rounded-lg bg-violet-800/30 hover:bg-violet-700/40
-                                                                                             border border-white/10 hover:border-yellow-200/30
-                                                                                             transition-all duration-300 text-amber-200 hover:text-amber-100"
+                                                                                            border border-white/10 hover:border-yellow-200/30
+                                                                                            transition-all duration-300 text-amber-200 hover:text-amber-100"
                                                                                             on:click=move |_| {
                                                                                                 set_is_open(false);
                                                                                                 claim_character.dispatch(character.id);
@@ -188,7 +188,7 @@ fn HomeWorldPicker() -> impl IntoView {
 
     view! {
         <div class="p-6 rounded-xl bg-gradient-to-br from-violet-900/30 to-amber-500/20
-         border border-white/10 backdrop-blur-sm">
+        border border-white/10 backdrop-blur-sm">
             <h3 class="text-2xl font-bold text-amber-200 mb-4">"World Settings"</h3>
             <div class="grid md:grid-cols-3 gap-6">
                 <div class="space-y-2">
@@ -214,7 +214,8 @@ fn HomeWorldPicker() -> impl IntoView {
                 </div>
             </div>
         </div>
-    }.into_any()
+    }
+    .into_any()
 }
 
 #[component]
@@ -224,7 +225,7 @@ fn AdChoice() -> impl IntoView {
 
     view! {
         <div class="p-6 rounded-xl bg-gradient-to-br from-violet-900/30 to-amber-500/20
-         border border-white/10 backdrop-blur-sm">
+        border border-white/10 backdrop-blur-sm">
             <h3 class="text-2xl font-bold text-amber-200 mb-4">"Ad Settings"</h3>
             <div class="grid md:grid-cols-3 gap-6">
                 <div class="col-span-2 space-y-2">
@@ -351,7 +352,7 @@ pub fn Profile() -> impl IntoView {
 
                 // Characters Section
                 <div class="p-6 rounded-xl bg-gradient-to-br from-violet-900/30 to-amber-500/20
-                 border border-white/10 backdrop-blur-sm">
+                border border-white/10 backdrop-blur-sm">
                     <div class="flex items-center justify-between mb-6">
                         <h2 class="text-2xl font-bold text-amber-200">"Characters"</h2>
                         <AddCharacterMenu claim_character />
@@ -382,8 +383,8 @@ pub fn Profile() -> impl IntoView {
                                                             .into_iter()
                                                             .map(|_verification| {
                                                                 view! {
-                                                                    <div class="p-4 rounded-lg bg-violet-950/30 border border-white/5 space-y-2">// ... rest of the verification view ...
-                                                                    </div>
+                                                                    // ... rest of the verification view ...
+                                                                    <div class="p-4 rounded-lg bg-violet-950/30 border border-white/5 space-y-2"></div>
                                                                 }
                                                             })
                                                             .collect::<Vec<_>>()
@@ -437,8 +438,8 @@ pub fn Profile() -> impl IntoView {
                                                         .map(|character| {
                                                             view! {
                                                                 <div class="flex items-center justify-between p-4
-                                                                 rounded-lg bg-violet-950/30 border border-white/5
-                                                                 group hover:border-white/10 transition-colors">
+                                                                rounded-lg bg-violet-950/30 border border-white/5
+                                                                group hover:border-white/10 transition-colors">
                                                                     <div class="flex items-center gap-4">
                                                                         <span class="text-amber-100">
                                                                             {character.first_name} " " {character.last_name}
@@ -449,10 +450,10 @@ pub fn Profile() -> impl IntoView {
                                                                     </div>
                                                                     <button
                                                                         class="p-2 rounded-lg bg-red-900/0 hover:bg-red-900/30
-                                                                         border border-transparent hover:border-red-800/30
-                                                                         text-gray-400 hover:text-red-400
-                                                                         opacity-0 group-hover:opacity-100
-                                                                         transition-all duration-200"
+                                                                        border border-transparent hover:border-red-800/30
+                                                                        text-gray-400 hover:text-red-400
+                                                                        opacity-0 group-hover:opacity-100
+                                                                        transition-all duration-200"
                                                                         on:click=move |_| {
                                                                             let _ = unclaim_character.dispatch(character.id);
                                                                         }

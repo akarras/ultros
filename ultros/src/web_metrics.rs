@@ -4,6 +4,7 @@ use axum::{
     extract::MatchedPath, extract::Request, middleware::Next, response::IntoResponse, routing::get,
     Router,
 };
+use hyper::header::USER_AGENT;
 use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
 
 pub(crate) async fn track_metrics(req: Request, next: Next) -> impl IntoResponse {
@@ -15,6 +16,11 @@ pub(crate) async fn track_metrics(req: Request, next: Next) -> impl IntoResponse
     };
     let method = req.method().clone();
 
+    let user_agent = req
+        .headers()
+        .get(USER_AGENT)
+        .and_then(|value| value.to_str().ok().map(|s| s.to_string()))
+        .unwrap_or_default();
     let response = next.run(req).await;
 
     let latency = start.elapsed().as_secs_f64();
@@ -24,6 +30,7 @@ pub(crate) async fn track_metrics(req: Request, next: Next) -> impl IntoResponse
         ("method", method.to_string()),
         ("path", path),
         ("status", status),
+        ("user-agent", user_agent),
     ];
 
     metrics::counter!("ultros_http_requests_total", &labels).increment(1);

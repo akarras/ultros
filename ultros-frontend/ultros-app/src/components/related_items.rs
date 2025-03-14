@@ -353,5 +353,6 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                 />
             </div>
         </div>
-    }.into_any()
+    }
+    .into_any()
 }

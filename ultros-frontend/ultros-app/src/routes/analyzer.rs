@@ -241,9 +241,9 @@ fn PresetFilterButton(href: &'static str, label: &'static str) -> impl IntoView 
         <a
             href=href
             class="px-4 py-2 rounded-lg bg-violet-900/30 hover:bg-violet-800/40
-             border border-white/10 hover:border-yellow-200/30
-             transition-all duration-300 text-amber-200 hover:text-amber-100
-             hover:transform hover:scale-[1.02] hover:shadow-lg hover:shadow-violet-500/10"
+            border border-white/10 hover:border-yellow-200/30
+            transition-all duration-300 text-amber-200 hover:text-amber-100
+            hover:transform hover:scale-[1.02] hover:shadow-lg hover:shadow-violet-500/10"
         >
             {label}
         </a>
@@ -361,7 +361,7 @@ fn AnalyzerTable(
                         </div>
                         <input
                             class="p-2 rounded-lg bg-violet-950/50 border border-white/10 w-full
-                             focus:outline-none focus:border-yellow-200/30 transition-colors"
+                            focus:outline-none focus:border-yellow-200/30 transition-colors"
                             min=0
                             max=100000
                             type="number"
@@ -392,7 +392,7 @@ fn AnalyzerTable(
                         </div>
                         <input
                             class="p-2 rounded-lg bg-violet-950/50 border border-white/10 w-full
-                             focus:outline-none focus:border-yellow-200/30 transition-colors"
+                            focus:outline-none focus:border-yellow-200/30 transition-colors"
                             min=0
                             max=100000
                             type="number"
@@ -417,7 +417,7 @@ fn AnalyzerTable(
                         <div class="text-amber-200">{predicted_time_string}</div>
                         <input
                             class="p-2 rounded-lg bg-violet-950/50 border border-white/10 w-full
-                             focus:outline-none focus:border-yellow-200/30 transition-colors"
+                            focus:outline-none focus:border-yellow-200/30 transition-colors"
                             prop:value=move || max_predicted_time().unwrap_or_default()
                             on:input=move |input| {
                                 let value = event_target_value(&input);
@@ -477,33 +477,41 @@ fn AnalyzerTable(
                         <div role="columnheader" class="w-30 p-4 flex flex-row gap-2">
                             "World"
                             <div>
-                            {move || {
-                                world_filter().map(|_filter| {
-                                    view!{
-                                        <div class="hover:text-amber:200 transition-colors rounded-sm p-2 text-amber-300 cursor-pointer" on:click=move |_| {
-                                            set_world_filter(None);
-                                        }>
-                                            <Icon icon=icondata::MdiFilterRemove />
-                                        </div>
-                                    }
-                                }) 
-                            }}
+                                {move || {
+                                    world_filter()
+                                        .map(|_filter| {
+                                            view! {
+                                                <div
+                                                    class="hover:text-amber:200 transition-colors rounded-sm p-2 text-amber-300 cursor-pointer"
+                                                    on:click=move |_| {
+                                                        set_world_filter(None);
+                                                    }
+                                                >
+                                                    <Icon icon=icondata::MdiFilterRemove />
+                                                </div>
+                                            }
+                                        })
+                                }}
                             </div>
                         </div>
                         <div role="columnheader" class="w-30 p-4 flex flex-row gap-2">
                             "Datacenter"
                             <div>
-                            {move || {
-                                datacenter_filter().map(|_filter| {
-                                    view!{
-                                        <div class="hover:text-amber:200 transition-colors rounded-sm p-2 text-amber-300 cursor-pointer" on:click=move |_| {
-                                            set_datacenter_filter(None);
-                                        }>
-                                            <Icon icon=icondata::MdiFilterRemove />
-                                        </div>
-                                    }
-                                }) 
-                            }}
+                                {move || {
+                                    datacenter_filter()
+                                        .map(|_filter| {
+                                            view! {
+                                                <div
+                                                    class="hover:text-amber:200 transition-colors rounded-sm p-2 text-amber-300 cursor-pointer"
+                                                    on:click=move |_| {
+                                                        set_datacenter_filter(None);
+                                                    }
+                                                >
+                                                    <Icon icon=icondata::MdiFilterRemove />
+                                                </div>
+                                            }
+                                        })
+                                }}
                             </div>
                         </div>
                         <div role="columnheader" class="w-30 p-4">
@@ -544,17 +552,14 @@ fn AnalyzerTable(
                                 .get(&ItemId(item_id))
                                 .map(|item| item.name.as_str())
                                 .unwrap_or_default();
-                            // if even
                             let classes = if (i % 2) == 0 {
                                 "flex flex-row flex-nowrap h-10 hover:bg-violet-700/20 bg-violet-900/20 transition-colors"
                             } else {
                                 "flex flex-row flex-nowrap h-10 hover:bg-violet-700/20 bg-violet-800/20 transition-colors"
                             };
+                            // if even
                             view! {
-                                <div
-                                    class=classes
-                                    role="row-group"
-                                >
+                                <div class=classes role="row-group">
                                     <div role="cell" class="p-4 w-[25px]">
                                         {data.sale_summary.hq.then_some("✅")}
                                     </div>
@@ -566,7 +571,9 @@ fn AnalyzerTable(
                                             class="flex flex-row items-center gap-2 hover:text-amber-200 transition-colors truncate overflow-x-clip w-full"
                                             href=format!("/item/{}/{item_id}", world())
                                         >
-                                            <div class="shrink-0"><ItemIcon item_id icon_size=IconSize::Small /></div>
+                                            <div class="shrink-0">
+                                                <ItemIcon item_id icon_size=IconSize::Small />
+                                            </div>
                                             {item}
                                         </a>
                                         <AddToList item_id />
@@ -826,7 +833,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                         Either::Right(
                                             view! {
                                                 <div class="text-xl text-amber-200 text-center p-8
-                                                 bg-violet-900/20 rounded-2xl border border-white/10">
+                                                bg-violet-900/20 rounded-2xl border border-white/10">
                                                     "Failed to load analyzer - try again in 30 seconds"
                                                 </div>
                                             },

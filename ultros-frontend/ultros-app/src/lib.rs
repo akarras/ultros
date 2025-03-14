@@ -14,7 +14,7 @@ use crate::global_state::{
 };
 pub use crate::global_state::{home_world::GuessedRegion, LocalWorldData};
 use crate::{
-    components::{ad::Ad, profile_display::*, search_box::*, tooltip::*, patreon::*},
+    components::{ad::Ad, patreon::*, profile_display::*, search_box::*, tooltip::*},
     routes::{
         analyzer::*,
         currency_exchange::{CurrencyExchange, CurrencySelection, ExchangeItem},
@@ -94,8 +94,9 @@ pub fn Footer() -> impl IntoView {
                         "GitHub"
                     </a>
                     <PatreonWrapper>
-                        <a class="text-gray-400 hover:text-amber-200 transition-colors"> // nobody can tell it's not real.
-                        "Patreon"
+                        // nobody can tell it's not real.
+                        <a class="text-gray-400 hover:text-amber-200 transition-colors">
+                            "Patreon"
                         </a>
                     </PatreonWrapper>
                     <a
@@ -238,8 +239,8 @@ pub fn NavRow() -> impl IntoView {
                         rel="external"
                         href="/invitebot"
                         class="px-4 py-2 rounded-lg bg-violet-600/20 hover:bg-violet-600/30
-                               border border-violet-400/10 hover:border-violet-400/20
-                               transition-all duration-300 text-gray-200 hover:text-amber-200"
+                         border border-violet-400/10 hover:border-violet-400/20
+                         transition-all duration-300 text-gray-200 hover:text-amber-200"
                     >
                         "Invite Bot"
                     </a>

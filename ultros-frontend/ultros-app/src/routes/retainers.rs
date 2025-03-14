@@ -240,7 +240,8 @@ pub(crate) fn CharacterRetainerUndercutList(
             }}
 
         </div>
-    }.into_any()
+    }
+    .into_any()
 }
 
 #[component]

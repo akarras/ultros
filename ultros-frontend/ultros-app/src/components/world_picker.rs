@@ -94,8 +94,8 @@ pub fn WorldPicker(
                         children=move |(_, s), view| {
                             view! {
                                 <div class="flex justify-between px-4 py-2
-                                 hover:bg-violet-800/30 rounded-lg transition-colors
-                                 items-end gap-2">
+                                hover:bg-violet-800/30 rounded-lg transition-colors
+                                items-end gap-2">
                                     <div>{view}</div>
                                     <div class="text-sm text-gray-400">
                                         {match s {

@@ -34,13 +34,13 @@ where
     view! {
         <APersistQuery href remove_values=&["page", "menu-open"]>
             <div class="flex items-center gap-3 px-4 py-3 rounded-lg
-             transition-all duration-200
-             border border-transparent
-             hover:border-white/10
-             hover:bg-gradient-to-r hover:from-violet-800/20 hover:to-violet-700/10
-             active:from-violet-700/30 active:to-violet-600/20
-             text-gray-300 hover:text-amber-200
-             relative group">
+            transition-all duration-200
+            border border-transparent
+            hover:border-white/10
+            hover:bg-gradient-to-r hover:from-violet-800/20 hover:to-violet-700/10
+            active:from-violet-700/30 active:to-violet-600/20
+            text-gray-300 hover:text-amber-200
+            relative group">
                 // Glossy highlight
                 <div class="absolute inset-0 rounded-lg opacity-0 group-hover:opacity-100
                 transition-opacity duration-200
@@ -765,15 +765,14 @@ pub fn ItemExplorer() -> impl IntoView {
                         } else {
                             Either::Right(view! { <div /> })
                         }
-                    }}
-                    // Sidebar
+                    }} // Sidebar
                     <div
                         class="fixed md:absolute top-0 bottom-0 left-0 z-50
-                         w-[85vw] md:w-80 transition-all duration-300 ease-in-out
-                         rounded-xl border border-white/10
-                         bg-gradient-to-br from-violet-950/90 to-violet-900/80
-                         backdrop-filter backdrop-blur-xl
-                         min-h-screen"
+                        w-[85vw] md:w-80 transition-all duration-300 ease-in-out
+                        rounded-xl border border-white/10
+                        bg-gradient-to-br from-violet-950/90 to-violet-900/80
+                        backdrop-filter backdrop-blur-xl
+                        min-h-screen"
                         class=("translate-x-0", move || menu_open())
                         class=("-translate-x-[105%]", move || !menu_open())
                         class=("opacity-0", move || !menu_open())
@@ -786,7 +785,7 @@ pub fn ItemExplorer() -> impl IntoView {
                         <div class="relative h-full">
                             // Top fade
                             <div class="absolute top-0 left-0 right-0 h-4 bg-gradient-to-b
-                             from-violet-950/50 to-transparent z-10 pointer-events-none" />
+                            from-violet-950/50 to-transparent z-10 pointer-events-none" />
 
                             // Main scrollable content
                             <div class="h-full overflow-y-auto overflow-x-hidden
@@ -805,10 +804,9 @@ pub fn ItemExplorer() -> impl IntoView {
 
                             // Bottom fade
                             <div class="absolute bottom-0 left-0 right-0 h-4 bg-gradient-to-t
-                             from-violet-950/50 to-transparent z-10 pointer-events-none" />
+                            from-violet-950/50 to-transparent z-10 pointer-events-none" />
                         </div>
-                    </div>
-                    // Main Content Area
+                    </div> // Main Content Area
                     <div
                         class="transition-all duration-300"
                         class=("md:ml-[21rem]", move || menu_open())

@@ -184,7 +184,8 @@ pub fn UIText(text: String) -> impl IntoView {
         <div class="ui-text">
             <TextParts text=text />
         </div>
-    }.into_any()
+    }
+    .into_any()
 }
 
 #[cfg(test)]

@@ -65,5 +65,6 @@ pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl 
                 unchecked_label="No filter"
             />
         </div>
-    }.into_any()
+    }
+    .into_any()
 }

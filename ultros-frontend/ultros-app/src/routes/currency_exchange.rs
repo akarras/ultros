@@ -641,7 +641,7 @@ pub fn CurrencySelection() -> impl IntoView {
         <div class="container mx-auto space-y-6">
             // Description Card
             <div class="p-6 rounded-xl bg-gradient-to-br from-violet-950/20 to-violet-900/20
-             border border-white/10 backdrop-blur-sm">
+            border border-white/10 backdrop-blur-sm">
                 <p class="text-gray-300 leading-relaxed">
                     "Discover lucrative opportunities in Final Fantasy 14 with our Currency Exchange tool.
                         Easily locate items purchasable with in-game currencies, such as Allied Seals or Wolf Marks, that can be resold for significant profits on the marketboard.
@@ -654,7 +654,7 @@ pub fn CurrencySelection() -> impl IntoView {
 
             // Search Section
             <div class="p-6 rounded-xl bg-gradient-to-br from-violet-950/20 to-violet-900/20
-             border border-white/10 backdrop-blur-sm">
+            border border-white/10 backdrop-blur-sm">
                 <div class="flex items-center gap-4">
                     <div class="relative flex-1 max-w-xl">
                         <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -667,10 +667,10 @@ pub fn CurrencySelection() -> impl IntoView {
                             type="text"
                             placeholder="Search currencies..."
                             class="w-full pl-10 pr-4 py-2 rounded-lg
-                                 bg-violet-950/40 border border-white/10
-                                 text-gray-200 placeholder-gray-400
-                                 focus:outline-none focus:border-violet-400/30
-                                 transition-all duration-200"
+                            bg-violet-950/40 border border-white/10
+                            text-gray-200 placeholder-gray-400
+                            focus:outline-none focus:border-violet-400/30
+                            transition-all duration-200"
                             on:input=move |ev| set_search_text(event_target_value(&ev))
                         />
                     </div>
