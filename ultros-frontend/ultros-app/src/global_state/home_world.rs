@@ -25,8 +25,9 @@ pub fn use_home_world() -> (Signal<Option<World>>, SignalSetter<Option<World>>) 
     let world_1 = Some(use_context::<LocalWorldData>().unwrap().0.unwrap());
     let world_2 = world_1.clone();
     let world = Memo::new(move |_| {
+        let cookie = cookie();
         world_1.as_ref().and_then(|w| {
-            cookie().and_then(|cookie| {
+            cookie.and_then(|cookie| {
                 w.lookup_world_by_name(cookie.value())
                     .and_then(|w| w.as_world().map(|w| w.to_owned()))
             })

@@ -79,7 +79,7 @@ where
                     {
                         element.blur().unwrap();
                     }
-                    let input = input.get().unwrap();
+                    let input = input.get_untracked().unwrap();
                     input.focus().unwrap();
                     input.blur().unwrap();
                 }
@@ -128,7 +128,7 @@ where
                     }
                 }
             >
-                {current_choice_view()}
+                {current_choice_view}
             </div>
             <div
                 node_ref=dropdown
@@ -168,21 +168,18 @@ where
                                 "flex items-center hover:bg-violet-800/30 rounded-lg p-2 transition-colors duration-200"
                             }
                         }>
-                            {items
+                            {move || items
                                 .with(|i| i.get(data.0).cloned())
                                 .map(|c| children(
                                     c,
                                     {
-                                        move || {
-                                            if let Some(m) = fuzzy_search(&current_input(), &data.1) {
-                                                let target = data.1.clone();
-                                                Either::Left(view! { <MatchFormatter m=m target=target /> })
-                                            } else {
-                                                Either::Right(view! { <div>{data.1.to_string()}</div> })
-                                            }
-                                        }
+                                        if let Some(m) = fuzzy_search(&current_input(), &data.1) {
+                                            let target = data.1.clone();
+                                            Either::Left(view! { <MatchFormatter m=m target=target /> })
+                                        } else {
+                                            Either::Right(view! { <div>{data.1.to_string()}</div> })
+                                        }.into_any()
                                     }
-                                        .into_any(),
                                 ))}
                         </div>
                     </button>

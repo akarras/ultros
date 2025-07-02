@@ -30,6 +30,7 @@ anyhow.workspace = true
 rexie = "0.5"
 any_spawner = "0.3"
 tracing-wasm = "0.2.1"
+console_log = { version = "1.0.0", features = ["color"] }
 
 [features]
 default = ["hydrate"]

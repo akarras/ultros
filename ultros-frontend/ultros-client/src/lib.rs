@@ -3,7 +3,7 @@ use anyhow::{anyhow, Result};
 use futures::{future::join, Future};
 use gloo_net::http::Request;
 use leptos::{prelude::*, task::spawn_local};
-use log::{error, info};
+use log::{error, info, Level};
 use rexie::{ObjectStore, Rexie, Store, Transaction, TransactionMode};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -165,7 +165,8 @@ async fn get_region() -> String {
 #[wasm_bindgen]
 pub fn hydrate() {
     console_error_panic_hook::set_once();
-    tracing_wasm::set_as_global_default();
+    // tracing_wasm::set_as_global_default();
+    console_log::init_with_level(Level::Info);
     // check that we have the right client version data
     let _ = Executor::init_wasm_bindgen();
     log::info!("hydrate mode - hydrating");
