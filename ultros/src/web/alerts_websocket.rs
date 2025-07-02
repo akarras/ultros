@@ -99,7 +99,7 @@ async fn handle_upgrade(
                             Message::Ping(ping) => {
                                 // todo figure out how to ping
                                 debug!("received ping {ping:?}");
-                                AlertsRx::Ping(ping)
+                                AlertsRx::Ping(ping.to_vec())
                             }
                             Message::Pong(pong) => {
                                 debug!("received pong {pong:?}");
@@ -172,8 +172,8 @@ async fn handle_upgrade(
         };
 
         if let Err(value) = match result {
-            Action::Tx(tx) => ws.send(Message::Text(serde_json::to_string(&tx).unwrap())),
-            Action::Pong(pong) => ws.send(Message::Pong(pong)),
+            Action::Tx(tx) => ws.send(Message::Text(serde_json::to_string(&tx).unwrap().into())),
+            Action::Pong(pong) => ws.send(Message::Pong(pong.into())),
         }
         .await
         {

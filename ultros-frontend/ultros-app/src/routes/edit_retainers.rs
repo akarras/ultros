@@ -73,12 +73,14 @@ pub fn EditRetainers() -> impl IntoView {
                                         view! {
                                             {move || {
                                                 update_retainers
-                                                    .value()()
-                                                    .map(|value| {
-                                                        match value {
-                                                            Ok(_) => None,
-                                                            Err(e) => Some(format!("App error: {e:?}")),
-                                                        }
+                                                    .value()
+                                                    .with(|value| {
+                                                        value.as_ref().map(|value| {
+                                                            match value {
+                                                                Ok(_) => None,
+                                                                Err(e) => Some(format!("App error: {e:?}")),
+                                                            }
+                                                        })
                                                     })
                                             }}
 

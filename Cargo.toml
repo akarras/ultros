@@ -18,8 +18,8 @@ members = [
 resolver = "2"
 
 [workspace.dependencies]
-axum = { version = "0.7.9", features = ["ws", "json", "macros"] }
-axum-extra = { version = "0.9.0", features = [
+axum = { version = "0.8.4", features = ["ws", "json", "macros"] }
+axum-extra = { version = "0.10.1", features = [
     "cookie",
     "cookie-private",
     "typed-header",
@@ -29,16 +29,16 @@ tracing = "0.1.36"
 tracing-subscriber = "0.3"
 futures = "0.3.24"
 anyhow = "1.0.72"
-leptos = { version = "0.7.7", default-features = false, features = ["nightly"] }
-leptos_axum = { version = "0.7.7" }
-leptos_router = { version = "0.7.7", default-features = false, features = [
+leptos = { version = "0.8.2", default-features = false, features = ["nightly"] }
+leptos_axum = { version = "0.8.2" }
+leptos_router = { version = "0.8.2", default-features = false, features = [
     "nightly",
 ] }
-leptos_meta = { version = "0.7.7", default-features = false, features = [] }
-leptos-use = { version = "0.15.6", features = [] }
+leptos_meta = { version = "0.8.2", default-features = false, features = [] }
+leptos-use = { version = "0.16.2", features = [] }
 chrono = "0.4.23"
-itertools = "0.12.0"
-image = "0.25.1"
+itertools = "0.14.0"
+image = "0.25.6"
 plotters = "0.3"
 sea-orm = { version = "0.12", features = [
     "sqlx-postgres",
@@ -65,8 +65,8 @@ xiv-gen = { path = "./xiv-gen", features = [
     "e_npc_resident",
     "special_shop",
 ] }
-icondata = "0.5"
-leptos_icons = { git = "https://github.com/ozpv/leptos-icons.git", branch = "leptos-0.7.0" }
+icondata = "0.6"
+leptos_icons = "0.6"
 cfg-if = "1.0.0"
 git-const = "1.1.0"
 gloo-net = { version = "0.5.0", features = ["http", "websocket"] }

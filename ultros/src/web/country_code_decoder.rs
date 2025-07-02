@@ -2,7 +2,7 @@ use std::iter;
 
 use async_trait::async_trait;
 use axum::{
-    extract::FromRequestParts,
+    extract::{OptionalFromRequestParts},
     http::{request::Parts, HeaderName, HeaderValue},
     response::IntoResponse,
 };
@@ -57,13 +57,13 @@ impl Header for CloudflareCountryCode {
     }
 }
 
-#[async_trait]
-impl<S: Sized + Send + Sync> FromRequestParts<S> for Region {
+// #[async_trait]
+impl<S: Sized + Send + Sync> OptionalFromRequestParts<S> for Region {
     type Rejection = TypedHeaderRejection;
-    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let TypedHeader(country) =
-            TypedHeader::<CloudflareCountryCode>::from_request_parts(parts, state).await?;
-        Ok(country.0.into())
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Option<Self>, Self::Rejection> {
+        let result = TypedHeader::<CloudflareCountryCode>::from_request_parts(parts, state).await?.map(|typed_header| typed_header.0.0.into());
+        Ok(result)
+        
     }
 }
 

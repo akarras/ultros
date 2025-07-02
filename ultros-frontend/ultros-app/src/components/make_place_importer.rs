@@ -106,7 +106,7 @@ where
             <div>
                 {move || {
                     add_items_to_list
-                        .value()()
+                        .value().with(|result| result.as_ref()
                         .map(|result| match result {
                             Ok(_) => Either::Left(view! { <span>"Added items to list!"</span> }),
                             Err(e) => {
@@ -118,7 +118,7 @@ where
                                     },
                                 )
                             }
-                        })
+                        }))
                 }}
 
             </div>

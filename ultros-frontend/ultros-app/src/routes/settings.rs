@@ -39,7 +39,7 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
 
         {move || {
             claim_character
-                .value()()
+                .value().get()
                 .map(|result| {
                     view! {
                         <div class="mt-4 p-4 rounded-xl bg-violet-900/20 border border-white/10 backdrop-blur-sm">
@@ -103,7 +103,7 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
                             <div class="mt-4">
                                 {search_action.pending()().then(|| view! { <Loading /> })}
                                 {search_action
-                                    .value()()
+                                    .value().get()
                                     .map(|value| match value {
                                         Ok(characters) => {
                                             Either::Left(

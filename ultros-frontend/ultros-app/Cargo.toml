@@ -68,8 +68,8 @@ async-trait = "0.1.77"
 linregress = "0.5.3"
 field-iterator = { path = "../../field-iterator" }
 # leptos_animation = "0.5.0"
-leptos_hotkeys = { git = "https://github.com/gaucho-labs/leptos-hotkeys.git", branch = "leptos-0.7" }
-codee = {version = "0.2", features = ["json_serde"]}
+leptos_hotkeys = { git = "https://github.com/slowtec/leptos-hotkeys.git", branch = "leptos-0.8" }
+codee = {version = "0.3", features = ["json_serde"]}
 send_wrapper = "0.6"
 flume = { version = "0.11", features = ["async"] }
 

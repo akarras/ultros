@@ -126,7 +126,7 @@ async fn handle_socket(
     sender
         .send(Message::Text(serde_json::to_string(
             &ServerClient::SocketConnected,
-        )?))
+        )?.into()))
         .await?;
     // sender.send(Message::Ping(vec![1, 2, 3, 4])).await?;
 
@@ -198,7 +198,7 @@ async fn handle_socket(
             Either::Right((Some(right), _l)) => {
                 info!("Sending websocket message {right:?}");
                 sender
-                    .send(Message::Text(serde_json::to_string(&right)?))
+                    .send(Message::Text(serde_json::to_string(&right)?.into()))
                     .await?;
             }
             Either::Left((left, _l)) => {

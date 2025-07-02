@@ -222,7 +222,6 @@ pub struct AuthDiscordUser {
     pub(crate) avatar_url: String,
 }
 
-#[async_trait]
 impl<S> FromRequestParts<S> for AuthDiscordUser
 where
     S: Send + Sync,

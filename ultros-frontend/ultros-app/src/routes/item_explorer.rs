@@ -9,8 +9,8 @@ use crate::components::{
     add_to_list::*, cheapest_price::*, fonts::*, meta::*, small_item_display::*,
 };
 use crate::CheapestPrices;
-use components::Outlet;
-use hooks::{query_signal, use_location, use_params_map};
+use leptos_router::components::Outlet;
+use leptos_router::hooks::{query_signal, use_location, use_params_map};
 use icondata as i;
 use itertools::Itertools;
 use leptos::either::Either;
@@ -19,8 +19,7 @@ use leptos::reactive::wrappers::write::SignalSetter;
 use leptos::text_prop::TextProp;
 use leptos_icons::*;
 use leptos_router::components::A;
-use leptos_router::*;
-use location::Url;
+use leptos_router::location::Url;
 use paginate::Pages;
 use percent_encoding::percent_decode_str;
 use xiv_gen::{ClassJobCategory, Item, ItemId};

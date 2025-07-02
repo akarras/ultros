@@ -274,7 +274,7 @@ pub fn ListView() -> impl IntoView {
                             </div>
                             {move || pending().then(|| view! { <Loading /> })}
                             {move || {
-                                result()
+                                result.get()
                                     .map(|v| match v {
                                         Ok(()) => format!("Success").into_view(),
                                         Err(e) => format!("{e:?}").into_view(),
