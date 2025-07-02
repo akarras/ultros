@@ -42,7 +42,7 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
                 .value().get()
                 .map(|result| {
                     view! {
-                        <div class="mt-4 p-4 rounded-xl bg-violet-900/20 border border-white/10 backdrop-blur-sm">
+                        <div class="mt-4 p-4 rounded-xl bg-violet-900/20 border border-white/10 ">
                             {match result {
                                 Ok((_id, value)) => {
                                     Either::Left(
@@ -74,7 +74,7 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
             is_open()
                 .then(|| {
                     view! {
-                        <div class="mt-4 p-6 rounded-xl bg-violet-900/20 border border-white/10 backdrop-blur-sm">
+                        <div class="mt-4 p-6 rounded-xl bg-violet-900/20 border border-white/10 ">
                             <h3 class="text-xl font-bold text-amber-200 mb-4">
                                 "Search Character"
                             </h3>
@@ -188,7 +188,7 @@ fn HomeWorldPicker() -> impl IntoView {
 
     view! {
         <div class="p-6 rounded-xl bg-gradient-to-br from-violet-900/30 to-amber-500/20
-        border border-white/10 backdrop-blur-sm">
+        border border-white/10 ">
             <h3 class="text-2xl font-bold text-amber-200 mb-4">"World Settings"</h3>
             <div class="grid md:grid-cols-3 gap-6">
                 <div class="space-y-2">
@@ -225,7 +225,7 @@ fn AdChoice() -> impl IntoView {
 
     view! {
         <div class="p-6 rounded-xl bg-gradient-to-br from-violet-900/30 to-amber-500/20
-        border border-white/10 backdrop-blur-sm">
+        border border-white/10 ">
             <h3 class="text-2xl font-bold text-amber-200 mb-4">"Ad Settings"</h3>
             <div class="grid md:grid-cols-3 gap-6">
                 <div class="col-span-2 space-y-2">
@@ -266,7 +266,7 @@ fn DeleteUser() -> impl IntoView {
     let (confirmed, set_confirmed) = signal(false);
 
     view! {
-        <div class="p-6 rounded-xl bg-red-900/20 border border-red-800/30 backdrop-blur-sm">
+        <div class="p-6 rounded-xl bg-red-900/20 border border-red-800/30 ">
             <h3 class="text-2xl font-bold text-red-400 mb-4">"Delete Account"</h3>
             <p class="text-gray-300 mb-4">
                 "DANGER: If you wish to delete your account and all information associated with it,
@@ -352,7 +352,7 @@ pub fn Profile() -> impl IntoView {
 
                 // Characters Section
                 <div class="p-6 rounded-xl bg-gradient-to-br from-violet-900/30 to-amber-500/20
-                border border-white/10 backdrop-blur-sm">
+                border border-white/10 ">
                     <div class="flex items-center justify-between mb-6">
                         <h2 class="text-2xl font-bold text-amber-200">"Characters"</h2>
                         <AddCharacterMenu claim_character />

@@ -23,7 +23,7 @@ where
     view! {
         <Portal>
             <div
-                class="fixed inset-0 bg-black/60 backdrop-blur-sm z-40
+                class="fixed inset-0 bg-black/60  z-40
                 transition-opacity duration-300 ease-in-out
                 animate-fade-in"
                 on:click=move |_| set_visible(false)

@@ -604,7 +604,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                 children=|(id, item)| {
                                     view! {
                                         <div class="sm:flex sm:flex-col md:grid md:grid-cols-12 gap-2 p-3 rounded-lg
-                                        border border-white/10 backdrop-blur-sm
+                                        border border-white/10 
                                         bg-gradient-to-br from-violet-950/20 to-violet-900/20
                                         hover:from-violet-900/30 hover:to-violet-800/30
                                         transition-all duration-200
@@ -709,7 +709,7 @@ pub fn ItemExplorer() -> impl IntoView {
     let menu_open = Memo::new(move |_| menu_open().unwrap_or(false));
     const BASE_CLASSES: &str = "group px-4 py-2 rounded-lg flex items-center gap-2
                            transition-all duration-200 relative
-                           border backdrop-blur-sm ";
+                           border  ";
     const OPEN_CLASSES: &str = "bg-violet-900/40 border-violet-400/20 text-amber-200";
     const CLOSED_CLASSES: &str =
         "bg-violet-950/20 border-white/10 text-gray-200 hover:text-amber-200";
@@ -756,7 +756,7 @@ pub fn ItemExplorer() -> impl IntoView {
                             Either::Left(
                                 view! {
                                     <div
-                                        class="fixed inset-0 bg-black/50 backdrop-blur-sm z-40 md:hidden"
+                                        class="fixed inset-0 bg-black/50  z-40 md:hidden"
                                         on:click=move |_| set_open.set(Some(false))
                                     />
                                 },
@@ -813,7 +813,7 @@ pub fn ItemExplorer() -> impl IntoView {
                         <div class="space-y-6">
                             <Ad class="w-full h-24 rounded-xl overflow-hidden" />
                             <div class="p-6 rounded-xl bg-gradient-to-br from-violet-950/20 to-violet-900/20
-                            border border-white/10 backdrop-blur-sm">
+                            border border-white/10 ">
                                 <h1 class="text-2xl font-bold text-amber-200 mb-4">
                                     "Item Explorer"
                                 </h1>

@@ -223,7 +223,7 @@ where
 {
     view! {
         <div class="p-6 flex flex-col rounded-2xl
-        backdrop-blur-sm backdrop-brightness-110
+         backdrop-brightness-110
         border border-white/10
         bg-gradient-to-br from-violet-900/20 via-black/10 to-amber-500/10
         w-full">
@@ -428,7 +428,7 @@ fn AnalyzerTable(
             </div>
 
             // Results table
-            <div class="rounded-2xl overflow-x-auto overflow-y-hidden border border-white/10 backdrop-blur-sm backdrop-brightness-110">
+            <div class="rounded-2xl overflow-x-auto overflow-y-hidden border border-white/10  backdrop-brightness-110">
                 <div class="grid-table" role="table">
                     <div class="flex flex-row align-top h-20 bg-violet-900/30" role="rowgroup">
                         <div role="columnheader" class="w-[25px] p-4">
@@ -719,7 +719,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                 <div class="flex flex-col gap-8">
                     // Header Section
                     <div class="bg-gradient-to-br from-violet-900/30 to-amber-500/20
-                    rounded-2xl p-8 border border-white/10 backdrop-blur-sm">
+                    rounded-2xl p-8 border border-white/10 ">
                         <h1 class="text-3xl font-bold text-amber-200 mb-4">
                             "Market Analysis for " {world}
                         </h1>
@@ -903,7 +903,7 @@ pub fn Analyzer() -> impl IntoView {
                 <div class="flex flex-col gap-8">
                     // Hero Section
                     <div class="bg-gradient-to-br from-violet-900/30 to-amber-500/20
-                    rounded-2xl p-8 border border-white/10 backdrop-blur-sm">
+                    rounded-2xl p-8 border border-white/10 ">
                         <h1 class="text-3xl font-bold text-amber-200 mb-4">
                             "Market Board Analyzer"
                         </h1>
@@ -928,7 +928,7 @@ pub fn Analyzer() -> impl IntoView {
                     // Features Grid
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                         <div class="p-6 rounded-2xl bg-violet-900/20 border border-white/10
-                        backdrop-blur-sm">
+                        ">
                             <Icon
                                 attr:class="text-amber-300 mb-4"
                                 width="2.5em"
@@ -942,7 +942,7 @@ pub fn Analyzer() -> impl IntoView {
                         </div>
 
                         <div class="p-6 rounded-2xl bg-violet-900/20 border border-white/10
-                        backdrop-blur-sm">
+                        ">
                             <Icon
                                 attr:class="text-amber-300 mb-4"
                                 width="2.5em"
@@ -956,7 +956,7 @@ pub fn Analyzer() -> impl IntoView {
                         </div>
 
                         <div class="p-6 rounded-2xl bg-violet-900/20 border border-white/10
-                        backdrop-blur-sm">
+                        ">
                             <Icon
                                 attr:class="text-amber-300 mb-4"
                                 width="2.5em"

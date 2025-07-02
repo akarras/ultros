@@ -641,7 +641,7 @@ pub fn CurrencySelection() -> impl IntoView {
         <div class="container mx-auto space-y-6">
             // Description Card
             <div class="p-6 rounded-xl bg-gradient-to-br from-violet-950/20 to-violet-900/20
-            border border-white/10 backdrop-blur-sm">
+            border border-white/10 ">
                 <p class="text-gray-300 leading-relaxed">
                     "Discover lucrative opportunities in Final Fantasy 14 with our Currency Exchange tool.
                         Easily locate items purchasable with in-game currencies, such as Allied Seals or Wolf Marks, that can be resold for significant profits on the marketboard.
@@ -654,7 +654,7 @@ pub fn CurrencySelection() -> impl IntoView {
 
             // Search Section
             <div class="p-6 rounded-xl bg-gradient-to-br from-violet-950/20 to-violet-900/20
-            border border-white/10 backdrop-blur-sm">
+            border border-white/10 ">
                 <div class="flex items-center gap-4">
                     <div class="relative flex-1 max-w-xl">
                         <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -688,7 +688,7 @@ pub fn CurrencySelection() -> impl IntoView {
                                     href=item_id.to_string()
                                     attr:class="p-4 rounded-lg
                                     bg-gradient-to-br from-violet-950/20 to-violet-900/20
-                                    border border-white/10 backdrop-blur-sm
+                                    border border-white/10 
                                     hover:from-violet-900/30 hover:to-violet-800/30
                                     hover:border-violet-400/20
                                     transition-all duration-200 group"

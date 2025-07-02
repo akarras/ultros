@@ -90,7 +90,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
     let (home_world, _) = use_home_world();
 
     view! {
-        <div class="sticky top-0 z-10 bg-gradient-to-r from-slate-950 to-purple-950/90 backdrop-blur-sm border-b border-purple-800/30">
+        <div class="sticky top-0 z-10 bg-gradient-to-r from-slate-950 to-purple-950/90  border-b border-purple-800/30">
             <div class="container mx-auto px-4">
                 <div class="flex flex-wrap gap-2 py-3">
                     {move || {
@@ -290,7 +290,7 @@ pub fn ChartWrapper(
                         .unwrap_or_default()
                 });
                 view! {
-                    <div class="bg-black/40 rounded-xl p-6 backdrop-blur-sm border border-purple-800/20">
+                    <div class="bg-black/40 rounded-xl p-6  border border-purple-800/20">
                         <PriceHistoryChart sales=sales />
                     </div>
                 }
@@ -329,7 +329,7 @@ fn HighQualityTable(
                     });
                     view! {
                         <div
-                            class="bg-black/40 rounded-xl p-6 backdrop-blur-sm border border-purple-800/20"
+                            class="bg-black/40 rounded-xl p-6  border border-purple-800/20"
                             class:hidden=move || hq_listings.with(|l| l.is_empty())
                         >
                             <h2 class="text-xl font-bold text-center mb-4 text-purple-200">
@@ -374,7 +374,7 @@ fn LowQualityTable(
                     });
                     view! {
                         <div
-                            class="bg-black/40 rounded-xl p-6 backdrop-blur-sm border border-purple-800/20"
+                            class="bg-black/40 rounded-xl p-6  border border-purple-800/20"
                             class:hidden=move || lq_listings.with(|l| l.is_empty())
                         >
                             <h2 class="text-xl font-bold text-center mb-4 text-purple-200">
@@ -408,14 +408,14 @@ fn SalesDetails(listing_resource: Resource<Result<CurrentlyShownItem, AppError>>
 
                     view! {
                         <div class="space-y-6">
-                            <div class="bg-black/40 rounded-xl p-6 backdrop-blur-sm border border-purple-800/20">
+                            <div class="bg-black/40 rounded-xl p-6  border border-purple-800/20">
                                 <h2 class="text-xl font-bold text-center mb-4 text-purple-200">
                                     "Sale History"
                                 </h2>
                                 <SaleHistoryTable sales=sales.into() />
                             </div>
 
-                            <div class="bg-black/40 rounded-xl p-6 backdrop-blur-sm border border-purple-800/20">
+                            <div class="bg-black/40 rounded-xl p-6  border border-purple-800/20">
                                 <SalesInsights sales=sales.into() />
                             </div>
                         </div>
@@ -540,7 +540,7 @@ pub fn ItemView() -> impl IntoView {
         <Link rel="canonical" prop:href=move || format!("https://ultros.app/item/{}", item_id()) />
         <div class="min-h-screen bg-gradient-to-br from-slate-950 to-purple-950/30">
             <div class="container mx-auto px-4 py-6">
-                <div class="flex flex-col md:flex-row items-start gap-4 p-4 backdrop-blur-sm bg-black/20 rounded-lg">
+                <div class="flex flex-col md:flex-row items-start gap-4 p-4  bg-black/20 rounded-lg">
                     <div class="flex items-center gap-4">
                         <ItemIcon item_id icon_size=IconSize::Large />
                         <div class="flex flex-col">
@@ -595,7 +595,7 @@ pub fn ItemView() -> impl IntoView {
                         </span>
                     </div>
                     <div
-                        class="bg-black/20 p-4 rounded-lg backdrop-blur-sm"
+                        class="bg-black/20 p-4 rounded-lg "
                         class:hidden=move || { item_description().is_empty() }
                     >
                         {move || view! { <UIText text=item_description().to_string() /> }}

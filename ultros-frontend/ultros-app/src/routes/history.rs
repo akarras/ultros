@@ -31,7 +31,7 @@ pub fn History() -> impl IntoView {
                 </div>
 
                 <div class="p-6 rounded-xl bg-gradient-to-br from-violet-950/20 to-violet-900/20
-                border border-white/10 backdrop-blur-sm">
+                border border-white/10 ">
                     <Suspense fallback=move || {
                         view! {
                             <div class="h-[400px] animate-pulse">

@@ -26,7 +26,7 @@ pub fn Toggle(
             peer-checked:bg-violet-900/60
             peer-checked:border-violet-400/20
             peer-focus:ring-2 peer-focus:ring-violet-500/30
-            backdrop-blur-sm">
+            ">
 
                 <div
                     class="absolute top-0.5 left-0.5

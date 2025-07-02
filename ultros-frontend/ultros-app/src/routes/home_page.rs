@@ -12,7 +12,7 @@ use crate::components::{
 fn FeatureCard(children: ChildrenFn) -> impl IntoView {
     view! {
         <div class="p-6 flex flex-col text-center rounded-2xl
-        backdrop-blur-sm backdrop-brightness-110
+         backdrop-brightness-110
         border border-white/10 hover:border-yellow-200/30
         transition-all duration-300 ease-in-out
         bg-gradient-to-br from-violet-900/20 via-black/10 to-amber-500/10
@@ -41,7 +41,7 @@ pub fn HomePage() -> impl IntoView {
                 <div class="flex flex-col grow gap-8">
                     <div class="text-2xl font-light bg-gradient-to-r from-violet-200 to-amber-200
                     bg-clip-text text-transparent p-4 rounded-xl
-                    backdrop-blur-sm backdrop-brightness-110 border border-white/10">
+                     backdrop-brightness-110 border border-white/10">
                         <h1 class="font-bold mb-4 text-3xl">"Welcome to Ultros"</h1>
                         "Ultros is a modern market board tool for Final Fantasy 14."
                         <br />

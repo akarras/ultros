@@ -78,7 +78,7 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
 pub fn Footer() -> impl IntoView {
     let git_hash = git_short_hash!();
     view! {
-        <footer class="bg-black/40 backdrop-blur-sm border-t border-white/5">
+        <footer class="bg-black/40  border-t border-white/5">
             <div class="container mx-auto px-6 py-8 space-y-6">
                 <div class="flex flex-wrap justify-center gap-x-6 gap-y-2">
                     <a
@@ -146,7 +146,7 @@ pub fn NavRow() -> impl IntoView {
     let (homeworld, _set_homeworld) = use_home_world();
     view! {
         // Navigation
-        <nav class="sticky top-0 z-50 backdrop-blur-sm border-b border-white/5 bg-black/40">
+        <nav class="sticky top-0 z-50  border-b border-white/5 bg-black/40">
             <div class="mx-auto max-w-7xl px-2 sm:px-4 lg:px-6 py-2 flex flex-col md:flex-row items-center">
                 // Left section
                 <div class="flex items-center space-x-2">
