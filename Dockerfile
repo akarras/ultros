@@ -14,7 +14,7 @@ RUN cargo install --locked cargo-leptos --version 0.2.36
 RUN rustup update
 RUN mkdir -p /app
 WORKDIR /app
-RUN apt install -y git pkg-config fontconfig libfontconfig1-dev binaryen
+RUN apt install -y git pkg-config fontconfig libfontconfig1-dev
 COPY . .
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
 # ENV WASM_BINDGEN_WEAKREF=1
