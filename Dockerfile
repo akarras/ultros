@@ -17,7 +17,7 @@ WORKDIR /app
 RUN apt install -y git pkg-config fontconfig libfontconfig1-dev
 COPY . .
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
-# ENV WASM_BINDGEN_WEAKREF=1
+ENV WASM_BINDGEN_WEAKREF=1
 RUN cargo leptos --manifest-path=./Cargo.toml build --release -vv
 
 FROM debian:bookworm-slim as runner

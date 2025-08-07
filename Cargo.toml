@@ -69,7 +69,7 @@ icondata = "0.6"
 leptos_icons = "0.6"
 cfg-if = "1.0.0"
 git-const = "1.1.0"
-gloo-net = { version = "0.5.0", features = ["http", "websocket"] }
+gloo-net = { version = "0.6.0", features = ["http", "websocket"] }
 
 [patch.crates-io]
 #leptos = { path = "../leptos/leptos" }

@@ -11,7 +11,7 @@ ultros-db = { path = "../ultros-db" }
 anyhow = { workspace = true }
 axum.workspace = true
 axum-extra.workspace = true
-axum-macros = "0.4.1"
+axum-macros = "0.5.0"
 cookie = "0.18"
 xiv-gen-db = { path = "../xiv-gen-db", features = ["embed"] }
 poise = { version = "0.5.6" }
@@ -37,7 +37,7 @@ thiserror = "1.0.36"
 metrics = "0.22.0"
 metrics-exporter-prometheus = { version = "0.13.0", default-features = false }
 serde_with = "3.0.0"
-tower-http = { version = "0.5.1", features = ["full"] }
+tower-http = { version = "0.6.6", features = ["full"] }
 sha2 = "0.10.6"
 base64 = "0.21.0"
 smallvec = { version = "1.10.0", features = [

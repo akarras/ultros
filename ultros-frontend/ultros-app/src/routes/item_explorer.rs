@@ -208,8 +208,9 @@ fn JobsList() -> impl IntoView {
                     view! {
                         <SideMenuButton href=["/items/jobset/", &job.abbreviation].concat()>
                             <ClassJobIcon id=job.key_id />
-                            // {&job.abbreviation}
-                            {job.name_english.as_str()}
+                            {job.abbreviation.as_str()}
+                            
+                            // {job.name_english.as_str()} this column changed and it breaks things...
                         </SideMenuButton>
                     }
                 })

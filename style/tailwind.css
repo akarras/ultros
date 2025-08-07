@@ -10,7 +10,7 @@ a {
 
 .btn-secondary {
     @apply p-2 m-1 flex flex-row text-center rounded-2xl
-    backdrop-blur-sm backdrop-brightness-110
+     backdrop-brightness-110
     border border-white/10 hover:border-yellow-200/30
     transition-all duration-300 ease-in-out
     bg-gradient-to-br from-violet-900/20 via-black/10 to-amber-500/10
@@ -22,7 +22,7 @@ a {
 .btn-secondary > * {
     @apply text-xl font-extrabold bg-gradient-to-r from-violet-200 to-amber-200 active:to-violet-200
     bg-clip-text text-transparent rounded-xl
-    backdrop-blur-sm text-amber-200 active:text-violet-200;
+     text-amber-200 active:text-violet-200;
 }
 
 [aria-current="page"].btn-secondary {
