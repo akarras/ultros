@@ -1,6 +1,8 @@
 # This docker file avoids using the rust provided images since we intentionally want to build for arm64/v8
 
-FROM rust:slim as builder
+FROM debian:bookworm-slim as builder
+RUN curl https://sh.rustup.rs -sSf | bash -s -- -y --default-toolchain nightly
+ENV PATH="/root/.cargo/bin:${PATH}"
 # Install system packages
 COPY rust-toolchain .
 RUN apt update; apt upgrade -y
