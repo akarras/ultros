@@ -1,16 +1,17 @@
 # This docker file avoids using the rust provided images since we intentionally want to build for arm64/v8
 
-FROM debian:bookworm as builder
+FROM rust:slim as builder
 # Install system packages
+COPY rust-toolchain .
 RUN apt update; apt upgrade -y
 RUN apt install -y libfreetype6 libfreetype6-dev cmake build-essential curl sudo pkg-config libssl-dev
 # Configure rustup
-RUN curl https://sh.rustup.rs -sSf | bash -s -- -y --default-toolchain nightly
-ENV PATH="/root/.cargo/bin:${PATH}"
 RUN rustup component add rust-src
 RUN rustup target add wasm32-unknown-unknown
+RUN curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+RUN cargo binstall cargo-leptos -y
 # cargo-leptos 0.2.5 has a dependency on openssl, but the git version doesn't
-RUN cargo install --locked cargo-leptos --version 0.2.36
+RUN cargo install --locked cargo-leptos --version 0.2.42 -v
 RUN rustup update
 RUN mkdir -p /app
 WORKDIR /app
