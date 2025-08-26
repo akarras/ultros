@@ -1,13 +1,13 @@
-# This docker file avoids using the rust provided images since we intentionally want to build for arm64/v8
 
-FROM debian:bookworm-slim as builder
-RUN curl https://sh.rustup.rs -sSf | bash -s -- -y --default-toolchain nightly
+FROM rust:bookworm as builder
+# RUN curl https://sh.rustup.rs -sSf | bash -s -- -y --default-toolchain nightly
 ENV PATH="/root/.cargo/bin:${PATH}"
 # Install system packages
-COPY rust-toolchain .
 RUN apt update; apt upgrade -y
 RUN apt install -y libfreetype6 libfreetype6-dev cmake build-essential curl sudo pkg-config libssl-dev
 # Configure rustup
+#ENV PATH="/root/.cargo/bin:${PATH}"
+# RUN ls -l 
 RUN rustup component add rust-src
 RUN rustup target add wasm32-unknown-unknown
 RUN curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
