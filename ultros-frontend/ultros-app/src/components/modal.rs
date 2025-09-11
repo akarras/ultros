@@ -30,7 +30,7 @@ where
             >
                 <div
                     class="flex flex-col mx-auto max-w-2xl w-[95%] sm:w-[500px]
-                    bg-gradient-to-br from-violet-950/70 via-black/60 to-violet-950/70
+                    bg-gradient-to-br from-brand-950/70 via-black/60 to-brand-950/70
                     border border-white/10
                     rounded-2xl shadow-xl shadow-black/40
                     backdrop-blur-md
@@ -43,10 +43,10 @@ where
                 >
                     <div class="flex justify-end mb-2">
                         <button
-                            class="p-2 rounded-lg hover:bg-violet-800/20
-                            text-gray-400 hover:text-violet-300
+                            class="p-2 rounded-lg hover:bg-brand-800/20
+                            text-gray-400 hover:text-brand-300
                             transition-colors duration-200
-                            focus:outline-none focus:ring-2 focus:ring-violet-500/40"
+                            focus:outline-none focus:ring-2 focus:ring-brand-500/40"
                             on:click=move |_| set_visible(false)
                             on:focusout=move |_| set_visible(false)
                             aria-label="Close modal"

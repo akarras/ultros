@@ -252,8 +252,8 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                 Some(view! {
                     <a
                         href=format!("https://garlandtools.org/db/#npc/{}", resident.key_id.0)
-                        class="flex flex-col p-1 bg-gradient- border border-solid border-violet-950
-                        transition-all duration-500 bg-gradient-to-tl to-fuchsia-950 via-black from-violet-950 bg-size-200 bg-pos-0 hover:bg-pos-100"
+                        class="flex flex-col p-1 bg-gradient- border border-solid border-brand-950
+                                                transition-all duration-500 bg-gradient-to-tl to-fuchsia-950 via-black from-brand-950 bg-size-200 bg-pos-0 hover:bg-pos-100"
                     >
                         <div class="flex flex-row">
                             <div class="text-md">{resident.singular.as_str()}</div>
@@ -292,9 +292,9 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                     .map(|item| {
                         view! {
                             <A
-                                attr:class="flex flex-col gap-1 rounded border border-violet-950
-                                // transition-all duration-500 bg-gradient-to-br to-fuchsia-950 via-black from-violet-950 bg-size-200 bg-pos-0
-                                // hover:bg-pos-100 p-2"
+                                attr:class="flex flex-col gap-1 rounded border border-brand-950
+                                                                // transition-all duration-500 bg-gradient-to-br to-fuchsia-950 via-black from-brand-950 bg-size-200 bg-pos-0
+                                                                // hover:bg-pos-100 p-2"
                                 exact=true
                                 href=move || {
                                     format!(

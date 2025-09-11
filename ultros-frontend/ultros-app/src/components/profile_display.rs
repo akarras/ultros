@@ -29,9 +29,9 @@ pub fn ProfileDisplay() -> impl IntoView {
                                 view! {
                                     <a
                                         rel="external"
-                                        class="px-4 py-2 rounded-lg bg-violet-600/20 hover:bg-violet-600/30
-                                        border border-violet-400/10 hover:border-violet-400/20
-                                        transition-all duration-300 text-gray-200 hover:text-violet-300 gap-2
+                                        class="px-4 py-2 rounded-lg bg-brand-600/20 hover:bg-brand-600/30
+                                        border border-brand-400/10 hover:border-brand-400/20
+                                        transition-all duration-300 text-gray-200 hover:text-brand-300 gap-2
                                         flex flex-row"
                                         href="/login"
                                     >

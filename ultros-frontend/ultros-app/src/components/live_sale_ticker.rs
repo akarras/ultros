@@ -88,16 +88,16 @@ pub fn LiveSaleTicker() -> impl IntoView {
     });
 
     view! {
-        <div class="p-6 rounded-xl bg-gradient-to-br from-violet-950/10 to-black/20
+        <div class="p-6 rounded-xl bg-gradient-to-br from-brand-950/10 to-black/20
         border border-white/10 ">
             // No homeworld set warning
             <div class="space-y-4" class:hidden=move || homeworld.with(|w| w.is_some())>
-                <h3 class="text-xl font-bold text-violet-300">"No Homeworld Set"</h3>
+                <h3 class="text-xl font-bold text-brand-300">"No Homeworld Set"</h3>
                 <div class="text-gray-300">
                     "No homeworld is currently set. Go to "
                     <A
                         href="/settings"
-                        attr:class="text-violet-300 hover:text-violet-200 transition-colors"
+                        attr:class="text-brand-300 hover:text-brand-200 transition-colors"
                     >
                         "Settings"
                     </A> " to set your homeworld."
@@ -107,14 +107,14 @@ pub fn LiveSaleTicker() -> impl IntoView {
             // Sales ticker content
             <div class="space-y-4" class:hidden=move || homeworld.with(|w| w.is_none())>
                 <div class="flex items-center justify-between">
-                    <h3 class="text-xl font-bold text-violet-300">
+                    <h3 class="text-xl font-bold text-brand-300">
                         "Recent Sales on "
                         <span class="text-gray-200">
                             {move || homeworld().map(|world| world.name).unwrap_or_default()}
                         </span>
                     </h3>
                     <button
-                        class="text-sm text-gray-400 hover:text-violet-300 transition-colors
+                        class="text-sm text-gray-400 hover:text-brand-300 transition-colors
                         flex items-center gap-2"
                         on:click=move |_| {
                             sales.update(|s| s.clear());
@@ -128,7 +128,7 @@ pub fn LiveSaleTicker() -> impl IntoView {
                 </div>
 
                 <div class="space-y-2 max-h-[400px] overflow-y-auto overflow-x-hidden
-                scrollbar-thin scrollbar-thumb-violet-500/30 scrollbar-track-transparent">
+                scrollbar-thin scrollbar-thumb-brand-500/30 scrollbar-track-transparent">
                     <Show
                         when=done_loading
                         fallback=move || {
@@ -148,8 +148,8 @@ pub fn LiveSaleTicker() -> impl IntoView {
                                 )
                             }>
                                 <div class="flex items-center gap-4 p-3 rounded-lg
-                                bg-violet-950/20 border border-white/5
-                                hover:bg-violet-900/25 hover:border-white/10
+                                bg-brand-950/20 border border-white/5
+                                hover:bg-brand-900/25 hover:border-white/10
                                 transition-all duration-200 group">
                                     <div class="flex items-center gap-4 w-full transform transition-transform duration-200 group-hover:translate-x-1">
                                         <ItemIcon item_id=sale.item_id icon_size=IconSize::Medium />
@@ -161,7 +161,7 @@ pub fn LiveSaleTicker() -> impl IntoView {
                                                     .hq
                                                     .then(|| {
                                                         view! {
-                                                            <span class="px-1.5 py-0.5 rounded text-xs bg-violet-500/20 text-violet-200">
+                                                            <span class="px-1.5 py-0.5 rounded text-xs bg-brand-500/20 text-brand-200">
                                                                 "HQ"
                                                             </span>
                                                         }

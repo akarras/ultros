@@ -20,7 +20,7 @@ where
                 if failed_to_parse() {
                     "border-2 border-red-950 rounded"
                 } else {
-                    "border rounded border-violet-950"
+                    "border rounded border-brand-950"
                 }
             }
 

@@ -24,7 +24,7 @@ pub fn MatchFormatter(m: Match, target: String) -> impl IntoView {
 
         // This match
         pieces.push(Either::Right(view! {
-            <span class="font-medium text-violet-300">
+            <span class="font-medium text-brand-300">
                 {target.chars().skip(c.start()).take(c.len()).collect::<String>()}
             </span>
         }));

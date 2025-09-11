@@ -111,11 +111,11 @@ pub fn SearchBox() -> impl IntoView {
                     on:focusout=focus_out
                     placeholder="Search items... (⌘K / CTRL K)"
                     class="w-full px-4 py-2 pl-10 rounded-lg
-                    bg-violet-950/50 border border-white/10
-                    focus:border-violet-400/30 focus:outline-none
+                    bg-brand-950/50 border border-white/10
+                    focus:border-brand-400/30 focus:outline-none
                     text-gray-200 placeholder-gray-500
                     transition-all duration-200"
-                    class:ring-violet-400=active
+                    class:ring-brand-400=active
                     type="text"
                     prop:value=search
                 />
@@ -131,9 +131,9 @@ pub fn SearchBox() -> impl IntoView {
             >
                 <div class="max-h-[500px] overflow-y-auto overflow-x-hidden
                 rounded-lg border border-white/10
-                bg-gradient-to-br from-violet-950/95 to-violet-900/95
+                bg-gradient-to-br from-brand-950/95 to-brand-900/95
                 backdrop-blur-md shadow-lg shadow-black/50
-                scrollbar-thin scrollbar-thumb-violet-600/50 scrollbar-track-transparent">
+                scrollbar-thin scrollbar-thumb-brand-600/50 scrollbar-track-transparent">
                     <VirtualScroller
                         each=Signal::derive(item_search)
                         key=move |(id, _item)| id.0

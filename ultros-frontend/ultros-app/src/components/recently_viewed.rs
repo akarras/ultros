@@ -52,8 +52,8 @@ pub fn RecentlyViewed() -> impl IntoView {
     let items = item_data.reader();
     let local_items = LocalResource::new(move || async move { items() });
     view! {
-        <div class="p-6 rounded-xl bg-gradient-to-br from-violet-950/10 to-black/20
-        border border-white/10 ">
+        <div class="p-6 rounded-xl bg-gradient-to-br from-brand-950/10 to-black/20
+                border border-white/10 ">
             <Suspense fallback=move || {
                 view! {
                     <div class="h-[400px] animate-pulse">
@@ -68,9 +68,9 @@ pub fn RecentlyViewed() -> impl IntoView {
                     }
                 >
                     <div class="flex items-center justify-between">
-                        <h4 class="text-xl font-bold text-violet-300">"Recently Viewed"</h4>
+                        <h4 class="text-xl font-bold text-brand-300">"Recently Viewed"</h4>
                         <button
-                            class="text-sm text-gray-400 hover:text-violet-300 transition-colors"
+                            class="text-sm text-gray-400 hover:text-brand-300 transition-colors"
                             on:click=move |_| item_data.clear_items()
                         >
                             "Clear All"
@@ -78,7 +78,7 @@ pub fn RecentlyViewed() -> impl IntoView {
                     </div>
 
                     <div class="space-y-2 max-h-[400px] overflow-y-auto overflow-x-hidden
-                    scrollbar-thin scrollbar-thumb-violet-500/30 scrollbar-track-transparent">
+                    scrollbar-thin scrollbar-thumb-brand-500/30 scrollbar-track-transparent">
                         {move || {
                             let items = local_items.get();
                             Some(
@@ -94,8 +94,8 @@ pub fn RecentlyViewed() -> impl IntoView {
                                             <A href=format!("/item/{item_id}")>
 
                                                 <div class="flex items-center gap-4 p-3 rounded-lg
-                                                bg-violet-950/20 border border-white/5
-                                                hover:bg-violet-900/25 hover:border-white/10
+                                                bg-brand-950/20 border border-white/5
+                                                hover:bg-brand-900/25 hover:border-white/10
                                                 transition-all duration-200 group">
                                                     <div class="flex items-center gap-4 w-full transform transition-transform duration-200 group-hover:translate-x-1">
                                                         <ItemIcon item_id icon_size=IconSize::Medium />
@@ -120,7 +120,7 @@ pub fn RecentlyViewed() -> impl IntoView {
                     <div class="text-center pt-2 border-t border-white/5">
                         <a
                             href="/history"
-                            class="text-sm text-gray-400 hover:text-violet-300 transition-colors"
+                            class="text-sm text-gray-400 hover:text-brand-300 transition-colors"
                         >
                             "View All Recently Viewed"
                         </a>
