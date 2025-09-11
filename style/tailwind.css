@@ -1,5 +1,40 @@
 @import "tailwindcss" source("../ultros-frontend/ultros-app/src");
 
+@theme {
+    /* Custom violet scale tuned for dark UI */
+    --color-violet-50: #f6f2ff;
+    --color-violet-100: #ede8ff;
+    --color-violet-200: #d8d0ff;
+    --color-violet-300: #beaefc;
+    --color-violet-400: #a38af7;
+    --color-violet-500: #8b67f0;
+    --color-violet-600: #744ee2;
+    --color-violet-700: #5e3ccd;
+    --color-violet-800: #4930a8;
+    --color-violet-900: #37267f;
+    --color-violet-950: #1a1538;
+
+    /* Brand alias (single + scale) */
+    --color-brand: #8b67f0;
+    --color-brand-50: #f6f2ff;
+    --color-brand-100: #ede8ff;
+    --color-brand-200: #d8d0ff;
+    --color-brand-300: #beaefc;
+    --color-brand-400: #a38af7;
+    --color-brand-500: #8b67f0;
+    --color-brand-600: #744ee2;
+    --color-brand-700: #5e3ccd;
+    --color-brand-800: #4930a8;
+    --color-brand-900: #37267f;
+    --color-brand-950: #1a1538;
+
+    /* Dark background tokens */
+    --color-background: #0a0a0b;
+    --color-background-muted: #0d0c12;
+    --color-background-elevated: #11101a;
+    --color-background-panel: #0f0e16;
+}
+
 .btn {
     @apply text-gray-200 hover:text-violet-300;
 }
