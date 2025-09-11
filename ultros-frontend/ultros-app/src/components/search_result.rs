@@ -24,7 +24,7 @@ pub fn MatchFormatter(m: Match, target: String) -> impl IntoView {
 
         // This match
         pieces.push(Either::Right(view! {
-            <span class="font-medium text-amber-200">
+            <span class="font-medium text-violet-300">
                 {target.chars().skip(c.start()).take(c.len()).collect::<String>()}
             </span>
         }));
@@ -111,7 +111,7 @@ pub fn ItemSearchResult(
                     </div>
 
                     <div class="flex flex-shrink-0 pl-4 text-right min-w-[100px]
-                    text-amber-200 font-medium">
+                    text-violet-300 font-medium">
                         <CheapestPrice item_id=item.key_id />
                     </div>
                 </div>

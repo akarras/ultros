@@ -83,25 +83,25 @@ pub fn Footer() -> impl IntoView {
                 <div class="flex flex-wrap justify-center gap-x-6 gap-y-2">
                     <a
                         href="https://discord.gg/pgdq9nGUP2"
-                        class="text-gray-400 hover:text-amber-200 transition-colors"
+                        class="text-gray-400 hover:text-violet-300 transition-colors"
                     >
                         "Discord"
                     </a>
                     <a
                         href="https://github.com/akarras/ultros"
-                        class="text-gray-400 hover:text-amber-200 transition-colors"
+                        class="text-gray-400 hover:text-violet-300 transition-colors"
                     >
                         "GitHub"
                     </a>
                     <PatreonWrapper>
                         // nobody can tell it's not real.
-                        <a class="text-gray-400 hover:text-amber-200 transition-colors">
+                        <a class="text-gray-400 hover:text-violet-300 transition-colors">
                             "Patreon"
                         </a>
                     </PatreonWrapper>
                     <a
                         href="https://book.ultros.app"
-                        class="text-gray-400 hover:text-amber-200 transition-colors"
+                        class="text-gray-400 hover:text-violet-300 transition-colors"
                     >
                         "Book"
                     </a>
@@ -116,7 +116,7 @@ pub fn Footer() -> impl IntoView {
                         "Made using "
                         <a
                             href="https://universalis.app/"
-                            class="text-amber-200 hover:text-amber-100 transition-colors"
+                            class="text-violet-300 hover:text-violet-200 transition-colors"
                         >
                             "universalis"
                         </a>
@@ -126,7 +126,7 @@ pub fn Footer() -> impl IntoView {
                         "Version: "
                         <a
                             href=format!("https://github.com/akarras/ultros/commit/{git_hash}")
-                            class="text-amber-200 hover:text-amber-100 transition-colors"
+                            class="text-violet-300 hover:text-violet-200 transition-colors"
                         >
                             {git_hash}
                         </a>
@@ -155,7 +155,7 @@ pub fn NavRow() -> impl IntoView {
                         exact=true
                         attr:class="flex items-center gap-2 px-3 py-2 rounded-lg
                         hover:bg-white/5 transition-colors
-                        text-gray-200 hover:text-amber-200"
+                        text-gray-200 hover:text-violet-300"
                     >
                         <Icon icon=i::BiHomeSolid height="1.75em" width="1.75em" />
                         <span class="hidden sm:inline">"Home"</span>
@@ -169,7 +169,7 @@ pub fn NavRow() -> impl IntoView {
                                     .unwrap_or("/analyzer".to_string())
                                 attr:class="flex items-center gap-2 px-3 py-2 rounded-lg
                                 hover:bg-white/5 transition-colors
-                                text-gray-200 hover:text-amber-200"
+                                text-gray-200 hover:text-violet-300"
                             >
                                 <Icon
                                     width="1.75em"
@@ -192,7 +192,7 @@ pub fn NavRow() -> impl IntoView {
                                             href="/list"
                                             attr:class="flex items-center gap-2 px-3 py-2 rounded-lg
                                             hover:bg-white/5 transition-colors
-                                            text-gray-200 hover:text-amber-200"
+                                            text-gray-200 hover:text-violet-300"
                                         >
                                             <Icon
                                                 width="1.75em"
@@ -205,7 +205,7 @@ pub fn NavRow() -> impl IntoView {
                                             href="/retainers/listings"
                                             attr:class="flex items-center gap-2 px-3 py-2 rounded-lg
                                             hover:bg-white/5 transition-colors
-                                            text-gray-200 hover:text-amber-200"
+                                            text-gray-200 hover:text-violet-300"
                                         >
                                             <Icon width="1.75em" height="1.75em" icon=i::BiGroupSolid />
                                             <span class="hidden sm:inline">"Retainers"</span>
@@ -227,7 +227,7 @@ pub fn NavRow() -> impl IntoView {
                         href="/items?menu-open=true"
                         attr:class="flex items-center gap-2 px-3 py-2 rounded-lg
                         hover:bg-white/5 transition-colors
-                        text-gray-200 hover:text-amber-200"
+                        text-gray-200 hover:text-violet-300"
                     >
                         <Tooltip tooltip_text="Item Explorer">
                             <Icon width="1.75em" height="1.75em" icon=i::FaScrewdriverWrenchSolid />
@@ -240,7 +240,7 @@ pub fn NavRow() -> impl IntoView {
                         href="/invitebot"
                         class="px-4 py-2 rounded-lg bg-violet-600/20 hover:bg-violet-600/30
                          border border-violet-400/10 hover:border-violet-400/20
-                         transition-all duration-300 text-gray-200 hover:text-amber-200"
+                         transition-all duration-300 text-gray-200 hover:text-violet-300"
                     >
                         "Invite Bot"
                     </a>
@@ -269,8 +269,8 @@ pub fn App() -> impl IntoView {
         <Title text="Ultros" />
         // Background gradient
         <div class="fixed inset-0 -z-10 bg-black">
-            <div class="absolute inset-0 bg-gradient-to-br from-violet-950/90 via-black/95 to-violet-950/90" />
-            <div class="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(139,92,246,0.05),transparent_50%)]" />
+            <div class="absolute inset-0 bg-gradient-to-br from-violet-950/30 via-black/95 to-violet-950/30" />
+            <div class="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(139,92,246,0.03),transparent_60%)]" />
         </div>
         <div node_ref=root_node_ref class="min-h-screen flex flex-col m-0">
             <Router>

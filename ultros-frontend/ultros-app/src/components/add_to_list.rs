@@ -23,7 +23,7 @@ pub fn AddToList(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     view! {
         <Tooltip tooltip_text="Add to list">
             <button
-                class="cursor-pointer text-white hover:text-violet-300"
+                class="cursor-pointer text-gray-200 hover:text-violet-300"
                 on:click=move |_| {
                     set_modal_visible(!modal_visible());
                 }
@@ -105,7 +105,7 @@ fn AddToListModal(
                                                 <div class="flex flex-row text-xl justify-between">
                                                     <div>{list.name}</div>
                                                     <div
-                                                        class="flex flex-row hover:bg-fuchsia-700 bg-fuchsia-950 border border-fuchsia-900 rounded hover:bg-fucshia-950 cursor-pointer p-1 transition-all duration-150 ease-in-out"
+                                                        class="flex flex-row bg-violet-950/20 hover:bg-violet-900/25 border border-white/10 hover:border-white/20 rounded cursor-pointer p-1 transition-all duration-150 ease-in-out"
                                                         on:click=move |_| {
                                                             set_running(true);
                                                             spawn_local(async move {
@@ -134,7 +134,7 @@ fn AddToListModal(
                                                                 EitherOf3::C(
                                                                     view! {
                                                                         <Icon
-                                                                            attr:class="text-white"
+                                                                            attr:class="text-gray-200"
                                                                             icon=i::BiPlusRegular
                                                                             width="1.2em"
                                                                             height="1.2em"

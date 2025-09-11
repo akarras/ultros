@@ -688,14 +688,14 @@ pub fn CurrencySelection() -> impl IntoView {
                                     href=item_id.to_string()
                                     attr:class="p-4 rounded-lg
                                     bg-gradient-to-br from-violet-950/20 to-violet-900/20
-                                    border border-white/10 
+                                    border border-white/10
                                     hover:from-violet-900/30 hover:to-violet-800/30
                                     hover:border-violet-400/20
                                     transition-all duration-200 group"
                                 >
                                     <div class="flex flex-col gap-2">
                                         <span class="text-lg font-medium text-gray-200
-                                        group-hover:text-amber-200 transition-colors">
+                                        group-hover:text-violet-300 transition-colors">
                                             {item_name}
                                         </span>
                                         <span class="text-sm text-gray-400 italic

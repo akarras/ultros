@@ -9,12 +9,15 @@ use crate::{
     global_state::LocalWorldData,
 };
 use chrono::{Duration, Utc};
-use leptos_router::{hooks::{query_signal, use_navigate, use_params_map, use_query_map}, NavigateOptions};
 use humantime::{format_duration, parse_duration};
 use icondata as i;
 use leptos::{either::Either, prelude::*, reactive::wrappers::write::SignalSetter};
 use leptos_icons::*;
 use leptos_meta::Title;
+use leptos_router::{
+    hooks::{query_signal, use_navigate, use_params_map, use_query_map},
+    NavigateOptions,
+};
 use std::{
     cmp::Reverse,
     collections::{hash_map::Entry, HashMap},
@@ -225,9 +228,9 @@ where
         <div class="p-6 flex flex-col rounded-2xl
          backdrop-brightness-110
         border border-white/10
-        bg-gradient-to-br from-violet-900/20 via-black/10 to-amber-500/10
+        bg-gradient-to-br from-violet-950/10 via-black/10 to-black/20
         w-full">
-            <h3 class="font-bold text-xl text-amber-200 mb-2">{title}</h3>
+            <h3 class="font-bold text-xl text-violet-300 mb-2">{title}</h3>
             <p class="text-gray-300 mb-4">{description}</p>
             {children.into_inner()().into_view()}
         </div>
@@ -240,8 +243,8 @@ fn PresetFilterButton(href: &'static str, label: &'static str) -> impl IntoView 
         <a
             href=href
             class="px-4 py-2 rounded-lg bg-violet-900/30 hover:bg-violet-800/40
-            border border-white/10 hover:border-yellow-200/30
-            transition-all duration-300 text-amber-200 hover:text-amber-100
+            border border-white/10 hover:border-violet-300/30
+            transition-all duration-300 text-gray-200 hover:text-violet-300
             hover:transform hover:scale-[1.02] hover:shadow-lg hover:shadow-violet-500/10"
         >
             {label}
@@ -351,7 +354,7 @@ fn AnalyzerTable(
                     description="Set the minimum profit margin you want to see"
                 >
                     <div class="flex flex-col gap-2">
-                        <div class="text-amber-200">
+                        <div class="text-violet-300">
                             {move || {
                                 minimum_profit()
                                     .map(|profit| Either::Left(view! { <Gil amount=profit /> }))
@@ -382,7 +385,7 @@ fn AnalyzerTable(
                     description="Set the minimum return on investment percentage"
                 >
                     <div class="flex flex-col gap-2">
-                        <div class="text-amber-200">
+                        <div class="text-violet-300">
                             {move || {
                                 minimum_roi()
                                     .map(|roi| format!("{roi}%"))
@@ -413,7 +416,7 @@ fn AnalyzerTable(
                     description="Filter by predicted time to next sale (e.g., 1w 30m)"
                 >
                     <div class="flex flex-col gap-2">
-                        <div class="text-amber-200">{predicted_time_string}</div>
+                        <div class="text-violet-300">{predicted_time_string}</div>
                         <input
                             class="p-2 rounded-lg bg-violet-950/50 border border-white/10 w-full
                             focus:outline-none focus:border-yellow-200/30 transition-colors"
@@ -439,7 +442,7 @@ fn AnalyzerTable(
                         </div>
                         <div role="columnheader" class="w-30 p-4">
                             <QueryButton
-                                class="!text-amber-300 hover:text-amber-200"
+                                class="!text-violet-300 hover:text-violet-200"
                                 active_classes="!text-neutral-300 hover:text-neutral-200"
                                 key="sort"
                                 value="profit"
@@ -455,7 +458,7 @@ fn AnalyzerTable(
                         </div>
                         <div role="columnheader" class="w-30 p-4">
                             <QueryButton
-                                class="!text-amber-300 hover:text-amber-200"
+                                class="!text-violet-300 hover:text-violet-200"
                                 active_classes="!text-neutral-300 hover:text-neutral-200"
                                 key="sort"
                                 value="roi"
@@ -481,7 +484,7 @@ fn AnalyzerTable(
                                         .map(|_filter| {
                                             view! {
                                                 <div
-                                                    class="hover:text-amber:200 transition-colors rounded-sm p-2 text-amber-300 cursor-pointer"
+                                                    class="hover:text-violet-200 transition-colors rounded-sm p-2 text-violet-300 cursor-pointer"
                                                     on:click=move |_| {
                                                         set_world_filter(None);
                                                     }
@@ -501,7 +504,7 @@ fn AnalyzerTable(
                                         .map(|_filter| {
                                             view! {
                                                 <div
-                                                    class="hover:text-amber:200 transition-colors rounded-sm p-2 text-amber-300 cursor-pointer"
+                                                    class="hover:text-violet-200 transition-colors rounded-sm p-2 text-violet-300 cursor-pointer"
                                                     on:click=move |_| {
                                                         set_datacenter_filter(None);
                                                     }
@@ -567,7 +570,7 @@ fn AnalyzerTable(
                                         class="p-4 flex flex-row w-84 items-center gap-2"
                                     >
                                         <a
-                                            class="flex flex-row items-center gap-2 hover:text-amber-200 transition-colors truncate overflow-x-clip w-full"
+                                            class="flex flex-row items-center gap-2 hover:text-violet-300 transition-colors truncate overflow-x-clip w-full"
                                             href=format!("/item/{}/{item_id}", world())
                                         >
                                             <div class="shrink-0">
@@ -595,7 +598,7 @@ fn AnalyzerTable(
                                             <QueryButton
                                                 key="world"
                                                 value=world.clone()
-                                                class="!text-amber-300 hover:text-amber-200"
+                                                class="!text-violet-300 hover:text-violet-200"
                                                 active_classes="!text-neutral-300 hover:text-neutral-200"
                                                 remove_queries=&["datacenter"]
                                             >
@@ -610,7 +613,7 @@ fn AnalyzerTable(
                                             <QueryButton
                                                 key="datacenter"
                                                 value=datacenter.clone()
-                                                class="!text-amber-300 hover:text-amber-200"
+                                                class="!text-violet-300 hover:text-violet-200"
                                                 active_classes="!text-neutral-300 hover:text-neutral-200"
                                                 remove_queries=&["world"]
                                             >
@@ -718,9 +721,9 @@ pub fn AnalyzerWorldView() -> impl IntoView {
             <div class="container mx-auto max-w-7xl">
                 <div class="flex flex-col gap-8">
                     // Header Section
-                    <div class="bg-gradient-to-br from-violet-900/30 to-amber-500/20
+                    <div class="bg-gradient-to-br from-violet-950/10 to-black/20
                     rounded-2xl p-8 border border-white/10 ">
-                        <h1 class="text-3xl font-bold text-amber-200 mb-4">
+                        <h1 class="text-3xl font-bold text-violet-300 mb-4">
                             "Market Analysis for " {world}
                         </h1>
                         <div class="flex flex-col gap-4">
@@ -831,7 +834,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                     _ => {
                                         Either::Right(
                                             view! {
-                                                <div class="text-xl text-amber-200 text-center p-8
+                                                <div class="text-xl text-violet-300 text-center p-8
                                                 bg-violet-900/20 rounded-2xl border border-white/10">
                                                     "Failed to load analyzer - try again in 30 seconds"
                                                 </div>
@@ -881,7 +884,7 @@ fn AnalyzerWorldNavigator() -> impl IntoView {
 
     view! {
         <div class="flex flex-col md:flex-row items-center gap-2">
-            <label class="text-amber-200 font-medium">"Select World:"</label>
+            <label class="text-violet-300 font-medium">"Select World:"</label>
             <div class="w-full md:w-auto">
                 <WorldOnlyPicker
                     current_world=current_world.into()
@@ -902,9 +905,9 @@ pub fn Analyzer() -> impl IntoView {
             <div class="container mx-auto max-w-7xl">
                 <div class="flex flex-col gap-8">
                     // Hero Section
-                    <div class="bg-gradient-to-br from-violet-900/30 to-amber-500/20
+                    <div class="bg-gradient-to-br from-violet-950/10 to-black/20
                     rounded-2xl p-8 border border-white/10 ">
-                        <h1 class="text-3xl font-bold text-amber-200 mb-4">
+                        <h1 class="text-3xl font-bold text-violet-300 mb-4">
                             "Market Board Analyzer"
                         </h1>
                         <p class="text-xl text-gray-300 leading-relaxed mb-6">
@@ -918,7 +921,7 @@ pub fn Analyzer() -> impl IntoView {
 
                         // World Selection
                         <div class="bg-black/20 rounded-xl p-6 border border-white/5">
-                            <h2 class="text-xl font-medium text-amber-200 mb-4">
+                            <h2 class="text-xl font-medium text-violet-300 mb-4">
                                 "Choose a world to get started:"
                             </h2>
                             <AnalyzerWorldNavigator />
@@ -930,12 +933,12 @@ pub fn Analyzer() -> impl IntoView {
                         <div class="p-6 rounded-2xl bg-violet-900/20 border border-white/10
                         ">
                             <Icon
-                                attr:class="text-amber-300 mb-4"
+                                attr:class="text-violet-300 mb-4"
                                 width="2.5em"
                                 height="2.5em"
                                 icon=i::FaMoneyBillTrendUpSolid
                             />
-                            <h3 class="text-xl font-bold text-amber-200 mb-2">"Profit Tracking"</h3>
+                            <h3 class="text-xl font-bold text-violet-300 mb-2">"Profit Tracking"</h3>
                             <p class="text-gray-300">
                                 "Monitor profit margins and ROI across different worlds"
                             </p>
@@ -944,12 +947,12 @@ pub fn Analyzer() -> impl IntoView {
                         <div class="p-6 rounded-2xl bg-violet-900/20 border border-white/10
                         ">
                             <Icon
-                                attr:class="text-amber-300 mb-4"
+                                attr:class="text-violet-300 mb-4"
                                 width="2.5em"
                                 height="2.5em"
                                 icon=i::FaChartLineSolid
                             />
-                            <h3 class="text-xl font-bold text-amber-200 mb-2">"Market Analysis"</h3>
+                            <h3 class="text-xl font-bold text-violet-300 mb-2">"Market Analysis"</h3>
                             <p class="text-gray-300">
                                 "Track market trends and identify profitable opportunities"
                             </p>
@@ -958,12 +961,12 @@ pub fn Analyzer() -> impl IntoView {
                         <div class="p-6 rounded-2xl bg-violet-900/20 border border-white/10
                         ">
                             <Icon
-                                attr:class="text-amber-300 mb-4"
+                                attr:class="text-violet-300 mb-4"
                                 width="2.5em"
                                 height="2.5em"
                                 icon=i::FaFilterSolid
                             />
-                            <h3 class="text-xl font-bold text-amber-200 mb-2">"Custom Filters"</h3>
+                            <h3 class="text-xl font-bold text-violet-300 mb-2">"Custom Filters"</h3>
                             <p class="text-gray-300">
                                 "Set custom parameters to find your perfect trades"
                             </p>
@@ -972,7 +975,7 @@ pub fn Analyzer() -> impl IntoView {
 
                     // Tips Section
                     <div class="bg-violet-900/20 rounded-2xl p-6 border border-white/10">
-                        <h2 class="text-xl font-bold text-amber-200 mb-4">"Trading Tips"</h2>
+                        <h2 class="text-xl font-bold text-violet-300 mb-4">"Trading Tips"</h2>
                         <ul class="list-disc list-inside text-gray-300 space-y-2">
                             <li>
                                 "Use the ROI filter to find items with the best return on investment"

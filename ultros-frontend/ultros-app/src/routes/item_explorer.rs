@@ -9,8 +9,6 @@ use crate::components::{
     add_to_list::*, cheapest_price::*, fonts::*, meta::*, small_item_display::*,
 };
 use crate::CheapestPrices;
-use leptos_router::components::Outlet;
-use leptos_router::hooks::{query_signal, use_location, use_params_map};
 use icondata as i;
 use itertools::Itertools;
 use leptos::either::Either;
@@ -18,7 +16,9 @@ use leptos::prelude::*;
 use leptos::reactive::wrappers::write::SignalSetter;
 use leptos::text_prop::TextProp;
 use leptos_icons::*;
+use leptos_router::components::Outlet;
 use leptos_router::components::A;
+use leptos_router::hooks::{query_signal, use_location, use_params_map};
 use leptos_router::location::Url;
 use paginate::Pages;
 use percent_encoding::percent_decode_str;
@@ -38,7 +38,7 @@ where
             hover:border-white/10
             hover:bg-gradient-to-r hover:from-violet-800/20 hover:to-violet-700/10
             active:from-violet-700/30 active:to-violet-600/20
-            text-gray-300 hover:text-amber-200
+            text-gray-300 hover:text-violet-300
             relative group">
                 // Glossy highlight
                 <div class="absolute inset-0 rounded-lg opacity-0 group-hover:opacity-100
@@ -605,7 +605,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                 children=|(id, item)| {
                                     view! {
                                         <div class="sm:flex sm:flex-col md:grid md:grid-cols-12 gap-2 p-3 rounded-lg
-                                        border border-white/10 
+                                        border border-white/10
                                         bg-gradient-to-br from-violet-950/20 to-violet-900/20
                                         hover:from-violet-900/30 hover:to-violet-800/30
                                         transition-all duration-200
@@ -671,7 +671,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                         "px-4 py-2 rounded-lg text-center
                              bg-violet-900/40 border border-violet-400/20
                              hover:bg-violet-800/40 hover:border-violet-400/30
-                             text-amber-200 transition-all duration-200"
+                             text-violet-300 transition-all duration-200"
                     } else {
                         "hidden"
                     }
@@ -696,7 +696,7 @@ fn CategorySection(
 ) -> impl IntoView {
     view! {
         <div class="p-4 space-y-4">
-            <h2 class="text-xl font-bold text-amber-200">{title}</h2>
+            <h2 class="text-xl font-bold text-violet-300">{title}</h2>
             {category.map(|cat| view! { <CategoryView category=cat /> })}
             {children.map(|c| c())}
         </div>
@@ -711,9 +711,9 @@ pub fn ItemExplorer() -> impl IntoView {
     const BASE_CLASSES: &str = "group px-4 py-2 rounded-lg flex items-center gap-2
                            transition-all duration-200 relative
                            border  ";
-    const OPEN_CLASSES: &str = "bg-violet-900/40 border-violet-400/20 text-amber-200";
+    const OPEN_CLASSES: &str = "bg-violet-900/40 border-violet-400/20 text-violet-300";
     const CLOSED_CLASSES: &str =
-        "bg-violet-950/20 border-white/10 text-gray-200 hover:text-amber-200";
+        "bg-violet-950/20 border-white/10 text-gray-200 hover:text-violet-300";
     let button_classes = move || {
         if menu_open() {
             [BASE_CLASSES, OPEN_CLASSES].concat()
@@ -815,7 +815,7 @@ pub fn ItemExplorer() -> impl IntoView {
                             <Ad class="w-full h-24 rounded-xl overflow-hidden" />
                             <div class="p-6 rounded-xl bg-gradient-to-br from-violet-950/20 to-violet-900/20
                             border border-white/10 ">
-                                <h1 class="text-2xl font-bold text-amber-200 mb-4">
+                                <h1 class="text-2xl font-bold text-violet-300 mb-4">
                                     "Item Explorer"
                                 </h1>
                                 <Outlet />

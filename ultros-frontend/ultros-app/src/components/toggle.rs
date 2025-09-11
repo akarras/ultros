@@ -32,10 +32,10 @@ pub fn Toggle(
                     class="absolute top-0.5 left-0.5
                     w-5 h-5 rounded-full
                     transition-all duration-300 ease-in-out transform bg-gradient-to-br
-                    group-hover:from-amber-100 group-hover:to-amber-200
+                    group-hover:from-violet-200 group-hover:to-violet-300
                     shadow-md"
                     class=(["translate-x-0", "from-gray-200", "to-gray-300"], move || !checked())
-                    class=(["translate-x-6", "to-amber-300", "from-amber-200"], move || checked())
+                    class=(["translate-x-6", "to-violet-300", "from-violet-200"], move || checked())
                 >
                     <div class="absolute inset-[15%] rounded-full
                     bg-gradient-to-br from-white/80 to-transparent"></div>
@@ -43,7 +43,7 @@ pub fn Toggle(
             </div>
 
             <span class="text-sm font-medium text-gray-300 transition-colors duration-300
-            group-hover:text-amber-200">
+            group-hover:text-violet-300">
                 {move || {
                     if checked() { checked_label.to_string() } else { unchecked_label.to_string() }
                 }}

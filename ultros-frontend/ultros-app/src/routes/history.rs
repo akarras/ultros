@@ -19,11 +19,11 @@ pub fn History() -> impl IntoView {
 
             <div class="container mx-auto max-w-7xl space-y-6">
                 <div class="flex items-center justify-between">
-                    <h1 class="text-3xl font-bold text-amber-200">"Viewing History"</h1>
+                    <h1 class="text-3xl font-bold text-violet-300">"Viewing History"</h1>
                     <button
                         class="px-4 py-2 rounded-lg bg-violet-600/20 hover:bg-violet-600/30
                         border border-violet-400/10 hover:border-violet-400/20
-                        transition-all duration-300 text-gray-200 hover:text-amber-200"
+                        transition-all duration-300 text-gray-200 hover:text-violet-300"
                         on:click=move |_| item_data.clear_items()
                     >
                         "Clear History"

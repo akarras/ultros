@@ -43,7 +43,7 @@ pub fn Ad(#[prop(optional)] class: Option<&'static str>) -> impl IntoView {
         <Show when=ads_visible>
             <div class:hidden=unfilled class="ad">
                 <div class="flex flex-col h-full">
-                    <span class="text-sm p-1 px-2 rounded-md bg-violet-950 shrink max-w-fit">
+                    <span class="text-sm p-1 px-2 rounded-md bg-violet-950/20 border border-white/10 text-gray-300 shrink max-w-fit">
                         "Ad"
                     </span>
                     <script
