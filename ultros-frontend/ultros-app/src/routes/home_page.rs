@@ -2,6 +2,7 @@ use icondata as i;
 use leptos::prelude::*;
 use leptos_icons::*;
 use leptos_meta::*;
+use leptos_router::components::A;
 
 use crate::components::{
     ad::Ad, live_sale_ticker::LiveSaleTicker, meta::MetaDescription,
@@ -9,16 +10,27 @@ use crate::components::{
 };
 
 #[component]
-fn FeatureCard(children: ChildrenFn) -> impl IntoView {
+fn FeatureCard(
+    href: &'static str,
+    title: &'static str,
+    description: &'static str,
+    #[prop(optional)] external: bool,
+    #[prop(optional)] badge: Option<&'static str>,
+    children: ChildrenFn,
+) -> impl IntoView {
+    let aria = format!("{title} — {description}");
+    let rel = if external { Some("external") } else { None };
     view! {
-        <div class="p-6 flex flex-col text-center rounded-2xl
-         backdrop-brightness-110
-        border border-white/10 hover:border-violet-300/30
-        transition-all duration-300 ease-in-out
-        bg-gradient-to-br from-violet-950/10 via-black/10 to-black/20
-        hover:from-violet-900/20 hover:to-black/20
-        hover:transform hover:scale-[1.02] hover:shadow-lg hover:shadow-violet-500/10
-        w-full aspect-[4/3] justify-center gap-3">{children().into_view()}</div>
+        <A href=href attr:rel=rel attr:aria-label=aria attr:class="group focus:outline-none">
+            <div class="feature-card w-full aspect-square flex flex-col items-center justify-center text-center gap-3">
+                <div aria-hidden="true">
+                    {children().into_view()}
+                </div>
+                {badge.map(|b| view! { <span class="feature-badge">{b}</span> })}
+                <h3 class="feature-card-title">{title}</h3>
+                <span class="feature-card-desc">{description}</span>
+            </div>
+        </A>
     }
     .into_any()
 }
@@ -39,17 +51,15 @@ pub fn HomePage() -> impl IntoView {
 
                 // Main content
                 <div class="flex flex-col grow gap-8">
-                    <div class="text-2xl font-light bg-gradient-to-r from-violet-200 to-violet-100
-                    bg-clip-text text-transparent p-4 rounded-xl
-                     backdrop-brightness-110 border border-white/10">
-                        <h1 class="font-bold mb-4 text-3xl">"Welcome to Ultros"</h1>
+                    <div class="text-2xl font-light p-4 rounded-xl panel text-gray-200">
+                        <h1 class="font-bold mb-4 text-3xl bg-gradient-to-r from-brand-200 to-brand-100 bg-clip-text text-transparent">"Welcome to Ultros"</h1>
                         "Ultros is a modern market board tool for Final Fantasy 14."
                         <br />
                         "Get started by reading the "
                         <b>
                             <a
                                 href="https://book.ultros.app"
-                                class="text-violet-300 hover:text-violet-200 transition-colors"
+                                class="text-brand-300 hover:text-brand-200 transition-colors"
                             >
                                 "book"
                             </a>
@@ -58,7 +68,7 @@ pub fn HomePage() -> impl IntoView {
                         <a
                             rel="external"
                             href="/invitebot"
-                            class="text-violet-300 hover:text-violet-200 transition-colors"
+                            class="text-brand-300 hover:text-brand-200 transition-colors"
                         >
                             "discord bot to your server"
                         </a>
@@ -66,89 +76,55 @@ pub fn HomePage() -> impl IntoView {
                     </div>
 
                     // Feature cards grid
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        <a href="/items?menu-open=true">
-                            <FeatureCard>
-                                <Icon
-                                    attr:class="text-violet-300"
-                                    width="3.5em"
-                                    height="3.5em"
-                                    icon=i::FaScrewdriverWrenchSolid
-                                />
-                                <h3 class="font-bold text-xl text-violet-300">"Item Explorer"</h3>
-                                <span class="text-gray-300">
-                                    "Explore all the items on the market board"
-                                </span>
-                            </FeatureCard>
-                        </a>
-                        <a href="/analyzer">
-                            <FeatureCard>
-                                <Icon
-                                    attr:class="text-violet-300"
-                                    width="3.5em"
-                                    height="3.5em"
-                                    icon=i::FaMoneyBillTrendUpSolid
-                                />
-                                <h3 class="font-bold text-xl text-violet-300">"Analyzer"</h3>
-                                <span class="text-gray-300">
-                                    "Earn gil by buying low, selling high"
-                                </span>
-                            </FeatureCard>
-                        </a>
-                        <a href="/retainers">
-                            <FeatureCard>
-                                <Icon
-                                    attr:class="text-violet-300"
-                                    width="3.5em"
-                                    height="3.5em"
-                                    icon=i::BiGroupSolid
-                                />
-                                <h3 class="font-bold text-xl text-violet-300">"Retainers"</h3>
-                                <span class="text-gray-300">"Track your retainers online"</span>
-                            </FeatureCard>
-                        </a>
-                        <a href="/list">
-                            <FeatureCard>
-                                <Icon
-                                    attr:class="text-violet-300"
-                                    width="3.5em"
-                                    height="3.5em"
-                                    icon=i::AiOrderedListOutlined
-                                />
-                                <h3 class="font-bold text-xl text-violet-300">"Lists"</h3>
-                                <span class="text-gray-300">
-                                    "Create lists & buy the cheapest items"
-                                </span>
-                            </FeatureCard>
-                        </a>
-                        <a rel="external" href="/invitebot">
-                            <FeatureCard>
-                                <Icon
-                                    attr:class="text-violet-300"
-                                    width="3.5em"
-                                    height="3.5em"
-                                    icon=i::BsDiscord
-                                />
-                                <h3 class="font-bold text-xl text-violet-300">"Discord Bot"</h3>
-                                <span class="text-gray-300">
-                                    "Get alerts when your retainer is undercut"
-                                </span>
-                            </FeatureCard>
-                        </a>
-                        <a href="/currency-exchange">
-                            <FeatureCard>
-                                <Icon
-                                    attr:class="text-violet-300"
-                                    width="3.5em"
-                                    height="3.5em"
-                                    icon=i::RiExchangeFinanceLine
-                                />
-                                <h3 class="font-bold text-xl text-violet-300">
-                                    "Currency Exchange"
-                                </h3>
-                                <span class="text-gray-300">"Spend tomestones, get gil"</span>
-                            </FeatureCard>
-                        </a>
+                                        <div class="feature-grid">
+                        <FeatureCard href="/items?menu-open=true" title="Item Explorer" description="Explore all the items on the market board" badge="New">
+                            <Icon
+                                attr:class="feature-card-icon"
+                                width="3.5em"
+                                height="3.5em"
+                                icon=i::FaScrewdriverWrenchSolid
+                            />
+                        </FeatureCard>
+                        <FeatureCard href="/analyzer" title="Analyzer" description="Earn gil by buying low, selling high">
+                            <Icon
+                                attr:class="feature-card-icon"
+                                width="3.5em"
+                                height="3.5em"
+                                icon=i::FaMoneyBillTrendUpSolid
+                            />
+                        </FeatureCard>
+                        <FeatureCard href="/retainers" title="Retainers" description="Track your retainers online">
+                            <Icon
+                                attr:class="feature-card-icon"
+                                width="3.5em"
+                                height="3.5em"
+                                icon=i::BiGroupSolid
+                            />
+                        </FeatureCard>
+                        <FeatureCard href="/list" title="Lists" description="Create lists & buy the cheapest items">
+                            <Icon
+                                attr:class="feature-card-icon"
+                                width="3.5em"
+                                height="3.5em"
+                                icon=i::AiOrderedListOutlined
+                            />
+                        </FeatureCard>
+                        <FeatureCard href="/invitebot" external=true title="Discord Bot" description="Get alerts when your retainer is undercut">
+                            <Icon
+                                attr:class="feature-card-icon"
+                                width="3.5em"
+                                height="3.5em"
+                                icon=i::BsDiscord
+                            />
+                        </FeatureCard>
+                        <FeatureCard href="/currency-exchange" title="Currency Exchange" description="Spend tomestones, get gil">
+                            <Icon
+                                attr:class="feature-card-icon"
+                                width="3.5em"
+                                height="3.5em"
+                                icon=i::RiExchangeFinanceLine
+                            />
+                        </FeatureCard>
                     </div>
 
                     <Ad class="w-96 aspect-[21/9] rounded-2xl overflow-hidden" />

@@ -209,7 +209,7 @@ fn JobsList() -> impl IntoView {
                         <SideMenuButton href=["/items/jobset/", &job.abbreviation].concat()>
                             <ClassJobIcon id=job.key_id />
                             {job.abbreviation.as_str()}
-                            
+
                             // {job.name_english.as_str()} this column changed and it breaks things...
                         </SideMenuButton>
                     }
@@ -604,53 +604,50 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                 key=|(id, item)| (id.0, &item.name)
                                 children=|(id, item)| {
                                     view! {
-                                        <div class="sm:flex sm:flex-col md:grid md:grid-cols-12 gap-2 p-3 rounded-lg
+                                        <div class="w-full sm:flex sm:flex-col md:grid md:grid-cols-12 gap-2 p-3 rounded-lg
                                         border border-white/10
                                         bg-gradient-to-br from-violet-950/20 to-violet-900/20
                                         hover:from-violet-900/30 hover:to-violet-800/30
                                         transition-all duration-200
                                         items-center">
                                             // Item Info Section
-                                            <div class="flex flex-row items-center justify-between md:col-span-5 gap-1 min-w-0">
+                                            <div class="flex flex-row items-center md:col-span-8 gap-2 min-w-0">
                                                 // Added container with min-w-0
-                                                <div class="flex-1 min-w-0 flex flex-row">
+                                                <div class="flex-1 min-w-0 flex flex-row items-center gap-3">
                                                     <SmallItemDisplay item=item />
+                                                    <span class="hidden md:inline text-gray-400 whitespace-nowrap">
+                                                        "min level: "{item.level_equip}
+                                                    </span>
                                                     <Clipboard clipboard_text=item.name.clone() />
                                                 </div>
-
                                             </div>
                                             // Prevent shrinking of add button
-                                            <div class="flex-shrink-1">
+                                            <div class="shrink-0 md:col-span-1">
                                                 <AddToList item_id=id.0 />
                                             </div>
-                                            <div class="flex-shrink-1 md:col-span-2 gray-700">
-                                                "min level: "{item.level_equip}
-                                            </div>
+
 
                                             // Normal Quality Price
-                                            <div class="md:col-span-3 flex flex-row md:justify-center items-center gap-2">
-                                                <span class="text-gray-400 md:hidden">"NQ: "</span>
-                                                <CheapestPrice item_id=*id show_hq=false />
+                                            <div class="md:col-span-3 flex flex-row md:justify-center items-center gap-6">
+                                                <div class="flex flex-row items-center gap-2">
+                                                    <span class="text-gray-400 md:hidden">"NQ: "</span>
+                                                    <CheapestPrice item_id=*id show_hq=false />
+                                                </div>
+                                                {move || {
+                                                    if item.can_be_hq {
+                                                        Either::Left(
+                                                            view! {
+                                                                <div class="flex flex-row items-center gap-2">
+                                                                    <span class="text-gray-400 md:hidden">"HQ: "</span>
+                                                                    <CheapestPrice item_id=*id show_hq=true />
+                                                                </div>
+                                                            },
+                                                        )
+                                                    } else {
+                                                        Either::Right(view! { <div /> })
+                                                    }
+                                                }}
                                             </div>
-
-                                            // High Quality Price (if available)
-                                            {move || {
-                                                if item.can_be_hq {
-                                                    Either::Left(
-                                                        view! {
-                                                            <div class="md:col-span-3 flex flex-row md:justify-center items-center gap-2">
-                                                                <span class="text-gray-400 md:hidden">"HQ: "</span>
-                                                                <CheapestPrice item_id=*id show_hq=true />
-                                                            </div>
-                                                        },
-                                                    )
-                                                } else {
-                                                    Either::Right(
-                                                        // Take up the space on desktop but don't show anything
-                                                        view! { <div class="md:col-span-3"></div> },
-                                                    )
-                                                }
-                                            }}
                                         </div>
                                     }
                                         .into_any()

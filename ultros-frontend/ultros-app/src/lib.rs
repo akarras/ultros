@@ -78,36 +78,36 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
 pub fn Footer() -> impl IntoView {
     let git_hash = git_short_hash!();
     view! {
-        <footer class="bg-black/40  border-t border-white/5">
-            <div class="container mx-auto px-6 py-8 space-y-6">
-                <div class="flex flex-wrap justify-center gap-x-6 gap-y-2">
+        <footer class="bg-black/60 border-t border-white/5 backdrop-blur-md">
+            <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-10 space-y-6">
+                <div class="flex flex-wrap justify-center items-center gap-x-8 gap-y-3">
                     <a
                         href="https://discord.gg/pgdq9nGUP2"
-                        class="text-gray-400 hover:text-violet-300 transition-colors"
+                        class="muted hover:text-brand-300 transition-colors"
                     >
                         "Discord"
                     </a>
                     <a
                         href="https://github.com/akarras/ultros"
-                        class="text-gray-400 hover:text-violet-300 transition-colors"
+                        class="muted hover:text-brand-300 transition-colors"
                     >
                         "GitHub"
                     </a>
                     <PatreonWrapper>
                         // nobody can tell it's not real.
-                        <a class="text-gray-400 hover:text-violet-300 transition-colors">
+                        <a class="muted hover:text-brand-300 transition-colors">
                             "Patreon"
                         </a>
                     </PatreonWrapper>
                     <a
                         href="https://book.ultros.app"
-                        class="text-gray-400 hover:text-violet-300 transition-colors"
+                        class="muted hover:text-brand-300 transition-colors"
                     >
                         "Book"
                     </a>
                 </div>
 
-                <div class="text-center space-y-2 text-gray-500 text-sm">
+                <div class="text-center space-y-2 muted text-sm">
                     <p>
                         "Ultros is still under constant development. If you have suggestions or feedback,
                             feel free to leave suggestions in the discord."
@@ -116,7 +116,7 @@ pub fn Footer() -> impl IntoView {
                         "Made using "
                         <a
                             href="https://universalis.app/"
-                            class="text-violet-300 hover:text-violet-200 transition-colors"
+                            class="text-brand-300 hover:text-brand-200 transition-colors"
                         >
                             "universalis"
                         </a>
@@ -126,7 +126,7 @@ pub fn Footer() -> impl IntoView {
                         "Version: "
                         <a
                             href=format!("https://github.com/akarras/ultros/commit/{git_hash}")
-                            class="text-violet-300 hover:text-violet-200 transition-colors"
+                            class="text-brand-300 hover:text-brand-200 transition-colors"
                         >
                             {git_hash}
                         </a>
@@ -146,16 +146,14 @@ pub fn NavRow() -> impl IntoView {
     let (homeworld, _set_homeworld) = use_home_world();
     view! {
         // Navigation
-        <nav class="sticky top-0 z-50  border-b border-white/5 bg-black/40">
-            <div class="mx-auto max-w-7xl px-2 sm:px-4 lg:px-6 py-2 flex flex-col md:flex-row items-center">
+        <nav class="sticky top-0 z-50 border-b border-white/5 bg-black/50 backdrop-blur-md">
+            <div class="mx-auto max-w-7xl px-3 sm:px-4 lg:px-6 py-3 flex flex-col md:flex-row items-center gap-3">
                 // Left section
-                <div class="flex items-center space-x-2">
+                <div class="flex items-center gap-2">
                     <A
                         href="/"
                         exact=true
-                        attr:class="flex items-center gap-2 px-3 py-2 rounded-lg
-                        hover:bg-white/5 transition-colors
-                        text-gray-200 hover:text-violet-300"
+                        attr:class="nav-link"
                     >
                         <Icon icon=i::BiHomeSolid height="1.75em" width="1.75em" />
                         <span class="hidden sm:inline">"Home"</span>
@@ -167,9 +165,7 @@ pub fn NavRow() -> impl IntoView {
                                 href=homeworld()
                                     .map(|w| format!("/analyzer/{}", w.name))
                                     .unwrap_or("/analyzer".to_string())
-                                attr:class="flex items-center gap-2 px-3 py-2 rounded-lg
-                                hover:bg-white/5 transition-colors
-                                text-gray-200 hover:text-violet-300"
+                                attr:class="nav-link"
                             >
                                 <Icon
                                     width="1.75em"
@@ -190,9 +186,7 @@ pub fn NavRow() -> impl IntoView {
                                     view! {
                                         <A
                                             href="/list"
-                                            attr:class="flex items-center gap-2 px-3 py-2 rounded-lg
-                                            hover:bg-white/5 transition-colors
-                                            text-gray-200 hover:text-violet-300"
+                                            attr:class="nav-link"
                                         >
                                             <Icon
                                                 width="1.75em"
@@ -203,9 +197,7 @@ pub fn NavRow() -> impl IntoView {
                                         </A>
                                         <A
                                             href="/retainers/listings"
-                                            attr:class="flex items-center gap-2 px-3 py-2 rounded-lg
-                                            hover:bg-white/5 transition-colors
-                                            text-gray-200 hover:text-violet-300"
+                                            attr:class="nav-link"
                                         >
                                             <Icon width="1.75em" height="1.75em" icon=i::BiGroupSolid />
                                             <span class="hidden sm:inline">"Retainers"</span>
@@ -225,9 +217,7 @@ pub fn NavRow() -> impl IntoView {
                 <div class="flex items-center gap-4">
                     <A
                         href="/items?menu-open=true"
-                        attr:class="flex items-center gap-2 px-3 py-2 rounded-lg
-                        hover:bg-white/5 transition-colors
-                        text-gray-200 hover:text-violet-300"
+                        attr:class="nav-link"
                     >
                         <Tooltip tooltip_text="Item Explorer">
                             <Icon width="1.75em" height="1.75em" icon=i::FaScrewdriverWrenchSolid />
@@ -238,9 +228,7 @@ pub fn NavRow() -> impl IntoView {
                     <a
                         rel="external"
                         href="/invitebot"
-                        class="px-4 py-2 rounded-lg bg-violet-600/20 hover:bg-violet-600/30
-                         border border-violet-400/10 hover:border-violet-400/20
-                         transition-all duration-300 text-gray-200 hover:text-violet-300"
+                        class="btn-primary"
                     >
                         "Invite Bot"
                     </a>

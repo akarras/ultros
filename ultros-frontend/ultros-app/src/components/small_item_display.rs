@@ -9,9 +9,13 @@ use leptos_router::components::A;
 #[component]
 fn ItemDetails(item: &'static Item) -> impl IntoView {
     view! {
-        <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Small />
-        <span class="w-60">{item.name.as_str()}</span>
-        <span class="w-10 text-gray-500">{item.level_item.0}</span>
+        <div class="flex flex-row items-center gap-2 min-w-0">
+            <div class="shrink-0">
+                <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Small />
+            </div>
+            <span class="flex-1 min-w-0 truncate">{item.name.as_str()}</span>
+            <span class="w-10 text-gray-500 text-right shrink-0">{item.level_item.0}</span>
+        </div>
     }
     .into_any()
 }
@@ -20,7 +24,7 @@ fn ItemDetails(item: &'static Item) -> impl IntoView {
 pub fn SmallItemDisplay(item: &'static Item) -> impl IntoView {
     let (price_zone, _) = get_price_zone();
     view! {
-        <div class="flex-row">
+        <div class="flex flex-row items-center gap-2 min-w-0">
             // If the item isn't marketable then do not display a market link
             {if item.item_search_category.0 == 0 {
                 Either::Left(view! { <ItemDetails item /> })
@@ -28,7 +32,7 @@ pub fn SmallItemDisplay(item: &'static Item) -> impl IntoView {
                 Either::Right(
                     view! {
                         <A
-                            attr:class="flex-row"
+                            attr:class="flex flex-row items-center gap-2 min-w-0"
                             exact=true
                             href=move || {
                                 format!(

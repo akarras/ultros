@@ -110,12 +110,8 @@ pub fn SearchBox() -> impl IntoView {
                     on:focusin=focus_in
                     on:focusout=focus_out
                     placeholder="Search items... (⌘K / CTRL K)"
-                    class="w-full px-4 py-2 pl-10 rounded-lg
-                    bg-brand-950/50 border border-white/10
-                    focus:border-brand-400/30 focus:outline-none
-                    text-gray-200 placeholder-gray-500
-                    transition-all duration-200"
-                    class:ring-brand-400=active
+                    class="input pl-10"
+                    class:gradient-ring=active
                     type="text"
                     prop:value=search
                 />
@@ -129,20 +125,19 @@ pub fn SearchBox() -> impl IntoView {
                 class="absolute w-full mt-2 z-50"
                 class:hidden=move || !active() || search().is_empty()
             >
-                <div class="max-h-[500px] overflow-y-auto overflow-x-hidden
-                rounded-lg border border-white/10
-                bg-gradient-to-br from-brand-950/95 to-brand-900/95
-                backdrop-blur-md shadow-lg shadow-black/50
-                scrollbar-thin scrollbar-thumb-brand-600/50 scrollbar-track-transparent">
+                <div class="scroll-panel">
                     <VirtualScroller
                         each=Signal::derive(item_search)
-                        key=move |(id, _item)| id.0
+                        key=move |(id, _item): &(&xiv_gen::ItemId, &xiv_gen::Item)| id.0
                         view=move |(id, _): (&xiv_gen::ItemId, &xiv_gen::Item)| {
                             let item_id = id.0;
                             view! { <ItemSearchResult item_id set_search search /> }
                         }
                         viewport_height=500.0
                         row_height=42.0
+                        overscan=10
+                        header_height=0.0
+
                     />
                 </div>
             </div>

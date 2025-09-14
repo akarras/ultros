@@ -1,3 +1,4 @@
+#![recursion_limit = "256"]
 use any_spawner::Executor;
 use anyhow::{anyhow, Result};
 use futures::{future::join, Future};

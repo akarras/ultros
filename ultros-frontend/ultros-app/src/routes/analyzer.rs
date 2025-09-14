@@ -271,7 +271,7 @@ fn AnalyzerTable(
     let items = &xiv_gen_db::data().items;
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
     let (minimum_profit, set_minimum_profit) = query_signal::<i32>("profit");
-    let (minimum_roi, set_minimum_roi) = query_signal("roi");
+    let (minimum_roi, set_minimum_roi) = query_signal::<i32>("roi");
     let (max_predicted_time, set_max_predicted_time) = query_signal::<String>("next-sale");
     let (world_filter, set_world_filter) = query_signal::<String>("world");
     let (datacenter_filter, set_datacenter_filter) = query_signal::<String>("datacenter");
@@ -344,7 +344,10 @@ fn AnalyzerTable(
             SortMode::Roi => sorted_data.sort_by_key(|data| Reverse(data.return_on_investment)),
             SortMode::Profit => sorted_data.sort_by_key(|data| Reverse(data.profit)),
         }
-        sorted_data.into_iter().enumerate().collect()
+        sorted_data
+            .into_iter()
+            .enumerate()
+            .collect::<Vec<(usize, ProfitData)>>()
     });
     view! {
         <div class="flex flex-col gap-6">
@@ -362,10 +365,11 @@ fn AnalyzerTable(
                             }}
                         </div>
                         <input
-                            class="p-2 rounded-lg bg-violet-950/50 border border-white/10 w-full
-                            focus:outline-none focus:border-yellow-200/30 transition-colors"
+                            class="p-2 rounded-lg bg-violet-950/50 border border-white/10 w-full focus:outline-none focus:border-yellow-200/30 focus:ring-1 focus:ring-violet-500/30 transition-colors"
                             min=0
                             max=100000
+                            step=1000
+                            placeholder="e.g. 100000"
                             type="number"
                             prop:value=minimum_profit
                             on:input=move |input| {
@@ -393,10 +397,11 @@ fn AnalyzerTable(
                             }}
                         </div>
                         <input
-                            class="p-2 rounded-lg bg-violet-950/50 border border-white/10 w-full
-                            focus:outline-none focus:border-yellow-200/30 transition-colors"
+                            class="p-2 rounded-lg bg-violet-950/50 border border-white/10 w-full focus:outline-none focus:border-yellow-200/30 focus:ring-1 focus:ring-violet-500/30 transition-colors"
                             min=0
                             max=100000
+                            step=10
+                            placeholder="e.g. 200"
                             type="number"
                             prop:value=minimum_roi
                             on:input=move |input| {
@@ -418,8 +423,9 @@ fn AnalyzerTable(
                     <div class="flex flex-col gap-2">
                         <div class="text-violet-300">{predicted_time_string}</div>
                         <input
-                            class="p-2 rounded-lg bg-violet-950/50 border border-white/10 w-full
-                            focus:outline-none focus:border-yellow-200/30 transition-colors"
+                            class="p-2 rounded-lg bg-violet-950/50 border border-white/10 w-full focus:outline-none focus:border-yellow-200/30 focus:ring-1 focus:ring-violet-500/30 transition-colors"
+                            placeholder="e.g. 7d 12h"
+                            title="Accepts formats like 1h 30m, 7d, 1M (month), etc."
                             prop:value=move || max_predicted_time().unwrap_or_default()
                             on:input=move |input| {
                                 let value = event_target_value(&input);
@@ -430,108 +436,186 @@ fn AnalyzerTable(
                 </FilterCard>
             </div>
 
-            // Results table
-            <div class="rounded-2xl overflow-x-auto overflow-y-hidden border border-white/10  backdrop-brightness-110">
-                <div class="grid-table" role="table">
-                    <div class="flex flex-row align-top h-20 bg-violet-900/30" role="rowgroup">
-                        <div role="columnheader" class="w-[25px] p-4">
-                            "HQ"
-                        </div>
-                        <div role="columnheader" class="w-84 p-4">
-                            "Item"
-                        </div>
-                        <div role="columnheader" class="w-30 p-4">
-                            <QueryButton
-                                class="!text-violet-300 hover:text-violet-200"
-                                active_classes="!text-neutral-300 hover:text-neutral-200"
-                                key="sort"
-                                value="profit"
-                            >
-                                <div class="flex items-center gap-2">
-                                    "Profit"
-                                    {move || {
-                                        (sort_mode() == Some(SortMode::Profit))
-                                            .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
-                                    }}
-                                </div>
-                            </QueryButton>
-                        </div>
-                        <div role="columnheader" class="w-30 p-4">
-                            <QueryButton
-                                class="!text-violet-300 hover:text-violet-200"
-                                active_classes="!text-neutral-300 hover:text-neutral-200"
-                                key="sort"
-                                value="roi"
-                                default=true
-                            >
-                                <div class="flex items-center gap-2">
-                                    "ROI"
-                                    {move || {
-                                        (sort_mode() == Some(SortMode::Roi))
-                                            .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
-                                    }}
-                                </div>
-                            </QueryButton>
-                        </div>
-                        <div role="columnheader" class="w-30 p-4">
-                            "Buy Price"
-                        </div>
-                        <div role="columnheader" class="w-30 p-4 flex flex-row gap-2">
-                            "World"
-                            <div>
-                                {move || {
-                                    world_filter()
-                                        .map(|_filter| {
-                                            view! {
-                                                <div
-                                                    class="hover:text-violet-200 transition-colors rounded-sm p-2 text-violet-300 cursor-pointer"
-                                                    on:click=move |_| {
-                                                        set_world_filter(None);
-                                                    }
-                                                >
-                                                    <Icon icon=icondata::MdiFilterRemove />
-                                                </div>
-                                            }
-                                        })
-                                }}
-                            </div>
-                        </div>
-                        <div role="columnheader" class="w-30 p-4 flex flex-row gap-2">
-                            "Datacenter"
-                            <div>
-                                {move || {
-                                    datacenter_filter()
-                                        .map(|_filter| {
-                                            view! {
-                                                <div
-                                                    class="hover:text-violet-200 transition-colors rounded-sm p-2 text-violet-300 cursor-pointer"
-                                                    on:click=move |_| {
-                                                        set_datacenter_filter(None);
-                                                    }
-                                                >
-                                                    <Icon icon=icondata::MdiFilterRemove />
-                                                </div>
-                                            }
-                                        })
-                                }}
-                            </div>
-                        </div>
-                        <div role="columnheader" class="w-30 p-4">
-                            "Avg Sale Time"
-                        </div>
-                    </div>
+            // Results summary
+            <div class="flex flex-col md:flex-row md:items-center gap-3 md:gap-0 md:justify-between rounded-xl border border-white/10 bg-violet-900/20 px-4 py-3">
+                <div class="text-sm text-gray-300">
+                    <span class="text-violet-300 font-semibold">{move || sorted_data().len()}</span> " results"
+                </div>
+                <div class="flex flex-wrap gap-2">
+                    {move || {
+                        let mut chips: Vec<_> = Vec::new();
+                        if let Some(p) = minimum_profit() {
+                            chips.push(view! {
+                                <span class="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/30 px-3 py-1 text-sm text-gray-200">
+                                    "Profit ≥ " <Gil amount=p />
+                                    <button class="ml-1 text-gray-400 hover:text-violet-300" on:click=move |_| set_minimum_profit(None)>
+                                        <Icon icon=icondata::MdiClose />
+                                    </button>
+                                </span>
+                            }.into_any());
+                        }
+                        if let Some(roi) = minimum_roi() {
+                            chips.push(view! {
+                                <span class="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/30 px-3 py-1 text-sm text-gray-200">
+                                    "ROI ≥ " {format!("{roi}%")}
+                                    <button class="ml-1 text-gray-400 hover:text-violet-300" on:click=move |_| set_minimum_roi(None)>
+                                        <Icon icon=icondata::MdiClose />
+                                    </button>
+                                </span>
+                            }.into_any());
+                        }
+                        if let Some(_ns) = max_predicted_time() {
+                            chips.push(view! {
+                                <span class="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/30 px-3 py-1 text-sm text-gray-200">
+                                    "Next Sale ≤ " {predicted_time_string()}
+                                    <button class="ml-1 text-gray-400 hover:text-violet-300" on:click=move |_| set_max_predicted_time(None)>
+                                        <Icon icon=icondata::MdiClose />
+                                    </button>
+                                </span>
+                            }.into_any());
+                        }
+                        if let Some(w) = world_filter() {
+                            chips.push(view! {
+                                <span class="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/30 px-3 py-1 text-sm text-gray-200">
+                                    "World: " {w.clone()}
+                                    <button class="ml-1 text-gray-400 hover:text-violet-300" on:click=move |_| set_world_filter(None)>
+                                        <Icon icon=icondata::MdiClose />
+                                    </button>
+                                </span>
+                            }.into_any());
+                        }
+                        if let Some(dc) = datacenter_filter() {
+                            chips.push(view! {
+                                <span class="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/30 px-3 py-1 text-sm text-gray-200">
+                                    "Datacenter: " {dc.clone()}
+                                    <button class="ml-1 text-gray-400 hover:text-violet-300" on:click=move |_| set_datacenter_filter(None)>
+                                        <Icon icon=icondata::MdiClose />
+                                    </button>
+                                </span>
+                            }.into_any());
+                        }
+                        if chips.is_empty() {
+                            Either::Left(view! { <span class="text-sm text-gray-500">"no active filters"</span> })
+                        } else {
+                            Either::Right(view! { <>{chips}</> })
+                        }
+                    }}
+                </div>
+                <button class="text-sm text-gray-400 hover:text-violet-300 self-start md:self-auto" on:click=move |_| {
+                    set_minimum_profit(None);
+                    set_minimum_roi(None);
+                    set_max_predicted_time(None);
+                    set_world_filter(None);
+                    set_datacenter_filter(None);
+                }>
+                    "Clear all"
+                </button>
+            </div>
 
-                    <VirtualScroller
-                        viewport_height=1000.0
-                        row_height=48.0
+            // Results table
+            <div class="rounded-2xl overflow-x-auto border border-white/10  backdrop-brightness-110">
+                <VirtualScroller
+                        viewport_height=720.0
+                        row_height=40.0
+                        overscan=20
+                        header_height=64.0
+                        header=view! {
+                            <div class="flex flex-row align-top h-16 bg-violet-900/40 backdrop-blur supports-[backdrop-filter]:bg-violet-900/30" role="rowgroup">
+                                <div role="columnheader" class="w-[25px] p-4">
+                                    "HQ"
+                                </div>
+                                <div role="columnheader" class="w-84 p-4">
+                                    "Item"
+                                </div>
+                                <div role="columnheader" class="w-30 p-4">
+                                    <QueryButton
+                                        class="!text-violet-300 hover:text-violet-200"
+                                        active_classes="!text-neutral-300 hover:text-neutral-200"
+                                        key="sort"
+                                        value="profit"
+                                    >
+                                        <div class="flex items-center gap-2">
+                                            "Profit"
+                                            {move || {
+                                                (sort_mode() == Some(SortMode::Profit))
+                                                    .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
+                                            }}
+                                        </div>
+                                    </QueryButton>
+                                </div>
+                                <div role="columnheader" class="w-30 p-4">
+                                    <QueryButton
+                                        class="!text-violet-300 hover:text-violet-200"
+                                        active_classes="!text-neutral-300 hover:text-neutral-200"
+                                        key="sort"
+                                        value="roi"
+                                        default=true
+                                    >
+                                        <div class="flex items-center gap-2">
+                                            "ROI"
+                                            {move || {
+                                                (sort_mode() == Some(SortMode::Roi))
+                                                    .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
+                                            }}
+                                        </div>
+                                    </QueryButton>
+                                </div>
+                                <div role="columnheader" class="w-30 p-4">
+                                    "Buy Price"
+                                </div>
+                                <div role="columnheader" class="w-30 p-4 flex flex-row gap-2 hidden lg:flex">
+                                    "World"
+                                    <div>
+                                        {move || {
+                                            world_filter()
+                                                .map(|_filter| {
+                                                    view! {
+                                                        <div
+                                                            class="hover:text-violet-200 transition-colors rounded-sm p-2 text-violet-300 cursor-pointer"
+                                                            on:click=move |_| {
+                                                                set_world_filter(None);
+                                                            }
+                                                        >
+                                                            <Icon icon=icondata::MdiFilterRemove />
+                                                        </div>
+                                                    }
+                                                })
+                                        }}
+                                    </div>
+                                </div>
+                                <div role="columnheader" class="w-30 p-4 flex flex-row gap-2 hidden xl:flex">
+                                    "Datacenter"
+                                    <div>
+                                        {move || {
+                                            datacenter_filter()
+                                                .map(|_filter| {
+                                                    view! {
+                                                        <div
+                                                            class="hover:text-violet-200 transition-colors rounded-sm p-2 text-violet-300 cursor-pointer"
+                                                            on:click=move |_| {
+                                                                set_datacenter_filter(None);
+                                                            }
+                                                        >
+                                                            <Icon icon=icondata::MdiFilterRemove />
+                                                        </div>
+                                                    }
+                                                })
+                                        }}
+                                    </div>
+                                </div>
+                                <div role="columnheader" class="w-30 p-4 hidden md:block">
+                                    "Avg Sale Time"
+                                </div>
+                            </div>
+                        }.into_any()
                         each=sorted_data.into()
-                        key=move |(i, data)| (
-                            *i,
+                        key=move |(index, data): &(usize, ProfitData)| (
+                            *index,
                             data.sale_summary.item_id,
                             data.cheapest_world_id,
                             data.sale_summary.hq,
                         )
-                        view=move |(i, data)| {
+                        view=move |(index, data): (usize, ProfitData)| {
                             let world = worlds
                                 .lookup_selector(AnySelector::World(data.cheapest_world_id));
                             let datacenter = world
@@ -554,21 +638,21 @@ fn AnalyzerTable(
                                 .get(&ItemId(item_id))
                                 .map(|item| item.name.as_str())
                                 .unwrap_or_default();
-                            let classes = if (i % 2) == 0 {
-                                "flex flex-row flex-nowrap h-10 hover:bg-violet-700/20 bg-violet-900/20 transition-colors"
+                            let classes = if (index % 2) == 0 {
+                                "flex flex-row flex-nowrap h-10 hover:bg-violet-700/20 hover:ring-1 hover:ring-violet-500/20 bg-violet-900/20 transition-colors"
                             } else {
-                                "flex flex-row flex-nowrap h-10 hover:bg-violet-700/20 bg-violet-800/20 transition-colors"
+                                "flex flex-row flex-nowrap h-10 hover:bg-violet-700/20 hover:ring-1 hover:ring-violet-500/20 bg-violet-800/20 transition-colors"
                             };
-                            // if even
                             view! {
                                 <div class=classes role="row-group">
                                     <div role="cell" class="p-4 w-[25px]">
-                                        {data.sale_summary.hq.then_some("✅")}
+                                        {if data.sale_summary.hq {
+                                            Either::Left(view! { <span class="px-2 py-0.5 rounded-full text-xs font-semibold border bg-violet-900/30 text-violet-300 border-violet-500/20">"HQ"</span> })
+                                        } else {
+                                            Either::Right(view! { <span class="px-2 py-0.5 rounded-full text-xs font-semibold border bg-slate-800/50 text-slate-300 border-white/10">"NQ"</span> })
+                                        }}
                                     </div>
-                                    <div
-                                        role="cell"
-                                        class="p-4 flex flex-row w-84 items-center gap-2"
-                                    >
+                                    <div role="cell" class="p-4 flex flex-row w-84 items-center gap-2">
                                         <a
                                             class="flex flex-row items-center gap-2 hover:text-violet-300 transition-colors truncate overflow-x-clip w-full"
                                             href=format!("/item/{}/{item_id}", world())
@@ -585,13 +669,28 @@ fn AnalyzerTable(
                                         <Gil amount=data.profit />
                                     </div>
                                     <div role="cell" class="p-4 w-30 text-right">
-                                        {data.return_on_investment}
-                                        "%"
+                                        <span class=move || {
+                                            let roi = data.return_on_investment;
+                                            let cls = if roi >= 500 {
+                                                "bg-emerald-900/30 text-emerald-300 border-emerald-500/20"
+                                            } else if roi >= 200 {
+                                                "bg-lime-900/30 text-lime-300 border-lime-500/20"
+                                            } else if roi >= 100 {
+                                                "bg-yellow-900/30 text-yellow-300 border-yellow-500/20"
+                                            } else if roi >= 50 {
+                                                "bg-orange-900/30 text-orange-300 border-orange-500/20"
+                                            } else {
+                                                "bg-red-900/30 text-red-300 border-red-500/20"
+                                            };
+                                            format!("inline-flex items-center justify-end px-2 py-1 rounded-full text-xs font-semibold border {}", cls)
+                                        }>
+                                            {format!("{}%", data.return_on_investment)}
+                                        </span>
                                     </div>
                                     <div role="cell" class="p-4 w-30 text-right">
                                         <Gil amount=data.cheapest_price />
                                     </div>
-                                    <div role="cell" class="p-4 w-30">
+                                    <div role="cell" class="p-4 w-30 hidden lg:block">
                                         <Tooltip tooltip_text=Signal::derive(move || {
                                             format!("Only show {}", world())
                                         })>
@@ -606,7 +705,7 @@ fn AnalyzerTable(
                                             </QueryButton>
                                         </Tooltip>
                                     </div>
-                                    <div role="cell" class="p-4 w-30">
+                                    <div role="cell" class="p-4 w-30 hidden xl:block">
                                         <Tooltip tooltip_text=Signal::derive(move || {
                                             format!("Only show {}", datacenter())
                                         })>
@@ -621,7 +720,7 @@ fn AnalyzerTable(
                                             </QueryButton>
                                         </Tooltip>
                                     </div>
-                                    <div role="cell" class="p-4 w-30 truncate">
+                                    <div role="cell" class="p-4 w-30 truncate hidden md:block">
                                         {data
                                             .sale_summary
                                             .avg_sale_duration
@@ -634,7 +733,6 @@ fn AnalyzerTable(
                                 .into_any()
                         }
                     />
-                </div>
             </div>
         </div>
     }.into_any()

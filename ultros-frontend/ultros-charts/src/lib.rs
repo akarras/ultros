@@ -154,7 +154,7 @@ where
     };
 
     let root = DrawingArea::from(&backend);
-    root.fill(&RGBColor(16, 10, 18))?;
+    root.fill(&TRANSPARENT)?;
     let line = map_sale_history_to_line(world_helper, &sales);
     let item_name = &xiv_gen_db::data()
         .items
