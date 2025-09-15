@@ -11,6 +11,7 @@ use ultros_charts::draw_sale_history_scatter_plot;
 use ultros_charts::ChartOptions;
 
 use crate::components::skeleton::BoxSkeleton;
+use crate::global_state::theme::use_theme_settings;
 use crate::{components::toggle::Toggle, global_state::LocalWorldData};
 
 #[component]
@@ -22,10 +23,13 @@ pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl 
     let width = parent_div_size.width;
     let height = parent_div_size.height;
     let helper = local_world_data.0.unwrap();
+    let theme = use_theme_settings();
     let (filter_outliers, set_filter_outliers) = signal(true);
     let hidden = Memo::new(move |_| {
         width.track();
         height.track();
+        let _ = theme.mode.get();
+        let _ = theme.palette.get();
         if let Some(canvas) = canvas.get() {
             let backend = CanvasBackend::with_canvas_object(canvas.clone()).unwrap();
             // if there's an error drawing, we should hide the canvas

@@ -368,7 +368,7 @@ pub fn ExchangeItem() -> impl IntoView {
                     {move || item().map(|i| i.name.as_str())} " - Currency Exchange"
                 </h2>
                 <div class="flex items-center gap-4 mb-4">
-                    <label class="text-[color:var(--color-text-muted)]">Amount to exchange:</label>
+                    <label class="text-[color:var(--color-text-muted)]">How many of this currency do you have?</label>
                     <input
                         class="input w-24"
                         prop:value=currency_quantity
@@ -380,12 +380,24 @@ pub fn ExchangeItem() -> impl IntoView {
                         }
                     />
                 </div>
-                <div class="flex items-center flex-wrap gap-2 text-sm">
+                <div class="flex items-center flex-wrap gap-3 text-sm">
                     <span class="text-[color:var(--color-text-muted)] mr-1">"Quick filters:"</span>
-                    <FilterModal filter_name="price_per_item" />
-                    <FilterModal filter_name="number_received" />
-                    <FilterModal filter_name="total_profit" />
-                    <FilterModal filter_name="hours_between_sales" />
+                    <div class="inline-flex items-center gap-1">
+                        <span class="text-[color:var(--color-text)]">"Price/item"</span>
+                        <FilterModal filter_name="price_per_item" />
+                    </div>
+                    <div class="inline-flex items-center gap-1">
+                        <span class="text-[color:var(--color-text)]">"Qty recv"</span>
+                        <FilterModal filter_name="number_received" />
+                    </div>
+                    <div class="inline-flex items-center gap-1">
+                        <span class="text-[color:var(--color-text)]">"Profit"</span>
+                        <FilterModal filter_name="total_profit" />
+                    </div>
+                    <div class="inline-flex items-center gap-1">
+                        <span class="text-[color:var(--color-text)]">"Hours/sale"</span>
+                        <FilterModal filter_name="hours_between_sales" />
+                    </div>
                 </div>
             </div>
             <div class="overflow-x-auto">

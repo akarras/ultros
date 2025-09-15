@@ -192,12 +192,12 @@ fn JobsList() -> impl IntoView {
                 .into_iter()
                 .filter(|(_id, job)| job.class_job_parent.0 != 0)
                 .map(|(_id, job)| {
+                    let seg = if job.abbreviation.is_empty() { job.name.as_str() } else { job.abbreviation.as_str() };
+                    let href = ["/items/jobset/", &seg.replace("/", "%2F")].concat();
                     view! {
-                        <SideMenuButton href=["/items/jobset/", &job.abbreviation].concat()>
+                        <SideMenuButton href=href>
                             <ClassJobIcon id=job.key_id />
-                            {job.abbreviation.as_str()}
-
-                            // {job.name_english.as_str()} this column changed and it breaks things...
+                            {seg}
                         </SideMenuButton>
                     }
                 })
@@ -257,19 +257,40 @@ pub fn JobItems() -> impl IntoView {
     let set_market_only =
         SignalSetter::map(move |market: bool| set_non_market((!market).then_some(true)));
     let items = Memo::new(move |_| {
-        let job_set = match params().get("jobset") {
+        // decode, normalize, and map to a known job abbreviation if possible
+        let raw = match params().get("jobset") {
             Some(p) => p.clone(),
             None => return vec![],
         };
+        let decoded = percent_encoding::percent_decode_str(&raw)
+            .decode_utf8()
+            .map(|s| s.to_string())
+            .unwrap_or(raw.clone());
+        let lower = decoded.to_lowercase();
 
-        // let item_category_items = category
-        // lookup jobs that match the acronym for the given job set
+        // try to resolve to a canonical abbreviation (fallback: decoded input)
+        let canonical_abbr = data
+            .class_jobs
+            .iter()
+            .find_map(|(_id, job)| {
+                let abbr = job.abbreviation.as_str();
+                let name = job.name.as_str();
+                if abbr.eq_ignore_ascii_case(&lower) || name.eq_ignore_ascii_case(&lower) {
+                    Some(abbr.to_string())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(decoded.clone());
+
+        // lookup jobs that match the resolved acronym for the given job set
         let job_categories: HashSet<_> = data
             .class_job_categorys
             .iter()
-            .filter(|(_id, job_category)| job_category_lookup(job_category, &job_set))
+            .filter(|(_id, job_category)| job_category_lookup(job_category, &canonical_abbr))
             .map(|(id, _)| *id)
             .collect();
+
         let market_only = market_only();
         let job_items: Vec<_> = data
             .items
@@ -283,9 +304,9 @@ pub fn JobItems() -> impl IntoView {
         params()
             .get("jobset")
             .as_ref()
-            .map(|s| s.as_str())
-            .unwrap_or("Job Set")
-            .to_string()
+            .and_then(|s| percent_encoding::percent_decode_str(s).decode_utf8().ok())
+            .map(|s| s.to_string())
+            .unwrap_or("Job Set".to_string())
     });
     view! {
         <MetaTitle title=move || format!("{} - Item Explorer", job_set()) />
