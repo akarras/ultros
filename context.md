@@ -1,165 +1,194 @@
-# Theming Status — Dark/Light, Palettes, and UI Unification (Updated)
+# UI Theming/Polish — Current Status, Completed Work, and Next Steps
 
-This document is the single source of truth for our ongoing retheme: current status, what changed in the latest batch, and what to do next.
-
----
-
-## What’s Newly Completed (this batch)
-
-High-priority flows and components updated to tokens (dark/light + brand palette), removing hardcoded grays/whites/black and legacy gradients.
-
-1) Currency Exchange (both routes)
-- CurrencySelection (the “all currencies” list)
-  - Replaced gradient panels with tokenized `panel`/`card`.
-  - Search input uses `input` utility; icon color uses `--color-text-muted`.
-  - List items use `card`, hover text uses `--brand-fg`.
-  - Empty state uses muted token color.
-- ExchangeItem (the sales/profit table for a selected currency)
-  - Page title and header now use `--brand-fg` (fixes white title issue).
-  - Header container uses `panel`.
-  - “Amount to exchange” input uses `input`; label uses `--color-text-muted`.
-  - Table header/body adopt token table styles (no `bg-gray-*`, `text-gray-*`, or `divide-gray-*`; now use `--color-outline`, `--color-text`).
-  - Sort/active labels use `--brand-fg` and underline for clarity in light mode.
-
-2) Sale history table
-- Header uses uppercase tokenized style; body rows now divide with `--color-outline`.
-- Insight badges (e.g., “Avg price”, “Median price”) use token chip pattern:
-  - bg: color-mix(var(--brand-ring) 14%, transparent)
-  - border: `--color-outline`
-  - label text: `--color-text-muted`
-- Titles use `--brand-fg`. Removes all `white/gray/*`.
-
-3) Lists page (nav + Edit Lists)
-- The “Lists” and “Edit Lists” actions are now horizontal “tabs” matching Retainers: `nav-link` with normalized icon sizing.
-- Edit Lists header keeps brand title + “Create” action (`btn-primary`), adds nav-link tabs for parity and clarity.
-
-4) Loading skeletons
-- Removed dark-only gradients and black panels; now use brand-ring gradient tints and `panel` for row shells.
-- Works in both modes without washing out text around them.
-
-5) Item Explorer (first pass of this batch)
-- Sidebar category buttons moved from black/gradient to `panel` with token hover/active text colors.
-- aria-current now uses `--brand-fg` to indicate active state.
-- Additional subtle text color fixes to align with tokens.
-
-6) Related items
-- Vendor and related-item rows/cards moved to `card`.
-- Ingredient amount badges now use token chip pattern (tint + outline); muted captions tokenized.
-
-7) Modal
-- Backdrop uses color-mix with `--color-text` over `--color-background` (no raw black overlay).
-- Surface uses `panel`; close button hover/focus uses brand-tinted bg and a proper focus ring.
-
-8) Misc polish
-- Search results: item/category text colors tokenized.
-- Add-to-list modal rows use `card` and token hover.
-- Live sale ticker item text and small item display’s ilvl use token colors.
-- Theme picker panel and headings tokenized; copy uses muted token color.
-- “Ad” badge uses chip-style token tints instead of black/white overlays.
-- Large loading overlay uses brand-ring mixed with background for consistent dim in light/dark.
+This document replaces prior context and reflects the latest work on light/dark theming, brand palette adoption, UI polish, and navigation structure. It serves as the single source of truth for what’s done and what remains.
 
 ---
 
-## What’s Already In Place (unchanged from prior context)
+## TL;DR
 
-- Theme architecture: tokens, light-mode overrides, palette system, SSR first-paint script, persisted settings provider.
-- Core utilities: `panel`, `card`, `btn*`, `nav-link`, `input/select/textarea/kbd`.
-- Shell, Home, Search, Analyzer (first pass), World Selector, Item View cleanup, and first pass on Item Explorer were previously converted to tokens.
+- Theme is standardized across major routes with tokenized colors and utilities (panel/card/btn/nav-link/input).
+- Currency Exchange now has labeled quick filters, inline min/max controls, and visible active chips.
+- Item Explorer rows reworked into a responsive grid with stronger light‑mode labels and a non‑wrapping “Add to List.”
+- Nav right cluster unified (Login/Settings/Logout/Invite look consistent).
+- Search results contrast improved; fuzzy search optimized for speed.
+- Item View charts update instantly when theme/palette changes.
+- History/Footer tokenized for light mode.
+- Analyzer sort works as a replacement (no duplicated query keys), chips readable in light mode.
 
----
-
-## Remaining Work / Next Steps
-
-Targeted sweeps to fully remove lingering grays/whites/black/legacy gradients, and to unify action patterns.
-
-1) List View tables and actions
-- Convert remaining “content-well” usage to pure utilities where helpful. The CSS already tokenizes it, but bring structure in line with other rethemed pages:
-  - Wrap key content areas in `panel`.
-  - Normalize form inputs to `input` and action buttons to `btn-primary` / `btn-secondary` / `btn-danger`.
-  - If there are sub-page actions, consider a simple `nav-link` group for clarity, mirroring Retainers/Lists/Explorer patterns.
-- Table header/body should rely on tokens: `--color-outline` for dividers, `--color-text` for text, and brand accents for active/sort states if needed.
-
-2) Analyzer refinements
-- Reduce any remaining legacy hover color intensity; ensure any residual “text-brand-*” is replaced by token link style or `--brand-fg` where appropriate.
-
-3) Item Explorer (phase 2 layout)
-- Improve density/scan-ability of category and item lists:
-  - Prefer `card` for grouped elements.
-  - Consider subtle section headers and spacing rules using tokens.
-  - Keep hover/active to brand-tint and consistent focus rings.
-
-4) Profile display and settings (quick sweep)
-- Ensure all header actions/links align with token button/link utilities.
-- Remove any `text-gray-*`/`hover:bg-white/*` remnants.
-
-5) Tables everywhere
-- If you encounter sticky headers or zebra rows with legacy colors, swap to token backgrounds and outlines, with brand-tinted hovers as needed.
-- Keep contrast AA-friendly in both modes.
-
-6) A11y and polish
-- Verify small captions, badges, and chips meet contrast in light mode.
-- Ensure all interactive elements have visible focus rings (buttons, tabs, toggles, links inside panels/cards).
+Focus next: finish Currency Exchange UX (clear-all, table header polish), finalize Item Explorer layout for mobile and sidebar perf, and complete small contrast/perf refinements for Search & Nav.
 
 ---
 
-## QA Checklist (light and dark)
+## What’s Implemented (Latest Batch)
+
+1) Currency Exchange (UX clarity and light-mode visibility)
+- Labeled quick filters:
+  - “Price/item”, “Qty recv”, “Profit”, “Hours/sale”
+- Inline min/max controls next to each label (desktop-friendly), with the original filter modal still available via icon.
+- Active filter chips shown below the quick bar; each chip has a clear (x) action.
+- Improved control visibility in light mode via token text, outline, and brand-ring tints.
+- Primary input label clarified:
+  - From: “Amount to exchange”
+  - To: “How many of this currency do you have?”
+- Sorting buttons previously tokenized to improve readability in light mode.
+
+2) Item Explorer (readability + layout)
+- Results reflowed to a responsive grid for desktop:
+  - Fixed column spans ensure the “Add to List” button never wraps onto its own line.
+  - Gaps and alignment tightened to reduce redundant whitespace.
+- Labels strengthened in light mode:
+  - Sort/direction controls (“ADDED/PRICE/NAME/ILVL/ASC/DESC”) use muted text for idle and brand-fg + underline for active.
+- Sidebar menu buttons compacted; button text improved; overall visibility aligned to token colors.
+
+3) Navigation — Right cluster uniformity
+- All actionable items (Login/Settings/Logout/Invite) are consistent with nav-link styling and spacing, improving appearance on small viewports.
+
+4) Search
+- Improved readability in light mode:
+  - Category text and iLvl use token text instead of overly-muted colors.
+  - Hover/active tones slightly softened for clarity.
+- Performance optimized:
+  - Fast paths for very short queries (substring match).
+  - Prefilter candidates by substring before doing fuzzy scoring.
+  - Results capped to top 100.
+  - Leaner scoring profile.
+
+5) Item View
+- Chart now redraws automatically on theme/palette changes (no refresh required).
+  - ChartOptions derive text/grid colors from CSS variables at draw time.
+  - A theme signal triggers redraw when mode/palette updates.
+- World selector menu width/structure aligned with page panels so it visually matches content width.
+- Add-to-List shows pointer on hover; Toggle thumb visually centered.
+
+6) History & Footer
+- History:
+  - Tokenized panels/cards; “Clear History” is btn-secondary in light mode.
+- Footer:
+  - Uses token elevated background (white in light mode), outline token for border.
+  - Patreon shows pointer; floating easter egg overlay uses default cursor.
+
+7) Analyzer
+- Sort by Profit/ROI replaces existing value (no duplicate query keys).
+- Chips (HQ/ROI/etc.) now follow token readability standards in light mode.
+- ROI emphasis tuned so high-ROI looks slightly more emphasized than low.
+
+---
+
+## Previous Foundation (Still in Effect)
+
+- Theme architecture (tokens for text/outline/brand; light-mode overrides; palette system via data-palette; SSR first-paint guard).
+- Utilities adopted (panel, card, btn-*, nav-link, input/select/textarea/kbd).
+- Global shell and multiple pages previously swept for tokenization and contrast.
+
+---
+
+## Known Issues / Deferred
+
+- Job Sets in Item Explorer: still not showing as expected. This appears tied to game/data shape changes. We added resilience (fallback to job.name, case-insensitive matching by abbreviation or English name, URL decoding), but we will revisit functionality after data stabilizes.
+- Some fine-grained contrast cases may still appear on certain displays/palettes; ongoing micro-adjustments.
+
+---
+
+## Next Steps (Execution Order)
+
+1) Currency Exchange (finish UX polish)
+- Add “Clear All” button for active chips.
+- Align sort header visuals with chip/filter state for maximum clarity.
+- Optional: Preset filter bundles (power users).
+
+2) Item Explorer (layout + performance)
+- Mobile-first improvements:
+  - Switch smallest breakpoints to a compact two-column layout to prevent awkward wrapping.
+  - Keep price and add-to-list inline on small screens.
+- Desktop sidebar animation:
+  - Reduce animation cost (duration, transform intensity).
+  - If perf issues persist on desktop, disable the animation at lg+ breakpoints.
+
+3) Search
+- Re-scan for any low-contrast remnants in the dropdown and ensure consistent token usage.
+- Consider lightweight input throttling (if needed on mobile) now that fuzzy is optimized.
+
+4) Nav (Right cluster on mobile)
+- Validate multi-row wrap behavior across device sizes and ensure balanced spacing.
+
+5) A11y & QA
+- Contrast checks (light/dark) across chips, badges, and small captions.
+- Focus rings present on all interactive controls (filters/links/buttons).
+- Confirm chart label legibility in both themes across palettes.
+
+6) Optional: Faction-Themed Palettes (post polish)
+- Add curated palettes inspired by FFXIV factions:
+  - Maelstrom (crimson/brass)
+  - Twin Adder (woodland/amber)
+  - Ishgard (frost/silver)
+  - Crystarium (aurora/pale gold)
+  - Old Sharlayan (deep blue/parchment)
+  - Tuliyollal (terracotta/jade)
+- Wire to palette toggles and token system with both light/dark tuning.
+
+---
+
+## Acceptance Checklist (Spot-Check)
 
 - Currency Exchange:
-  - Title readable and brand-colored.
-  - Search card and list cards legible in light mode.
-  - Sales table headers/body have correct contrast; active sort clearly indicated.
-- Lists:
-  - “Lists” and “Edit Lists” nav links match Retainers tabs visually.
-  - Create/Edit list panels and inputs look consistent with tokens.
-- Skeletons:
-  - Gradients visible but subtle; no harsh black overlays in light mode.
+  - Quick filters labeled and usable.
+  - Inline min/max controls working.
+  - Active chips with per-chip clear; (next) clear-all present.
+  - Main amount label feels intuitive for users.
+
 - Item Explorer:
-  - No dark gradients in side menu on light mode; hover/active readable.
+  - Desktop grid rows: Add-to-List never wraps; price aligned; spacing consistent.
+  - Light-mode labels readable and clearly “active” vs “inactive.”
+  - Sidebar open/close feels performant.
+
+- Nav (Right):
+  - All items (Login/Settings/Logout/Invite) are visually consistent and look good at small widths.
+
+- Search:
+  - Results readable in light/dark; hover/active subtle but clear.
+  - Feels responsive on mobile.
+
+- Item View:
+  - Chart text/grid updates immediately with theme changes; legible in both modes.
 
 ---
 
-## Build and Validation
+## Build & Commit
 
-- Built the workspace with the Leptos build to surface any Tailwind/tokenization issues:
-  - Use: cargo leptos build
-- Also validated a regular build:
-  - Use: cargo build
+- Build:
+  - Use “cargo leptos build” for a full pass (ensures styles are up to date).
+  - Use “cargo build” to validate server-side code paths where needed.
 
-Both completed with warnings only (expected in this phase), no errors.
-
----
-
-## Commit Guidance
-
-After you validate the behavior locally, commit the work:
-- Suggested message:
-  theme: retheme currency-exchange (lists + sales), sale history, skeletons; unify Lists nav to nav-link; panel/card/token sweep for related items, modal, search results, theme picker, overlays
-
-Push once confirmed working.
+- Commit discipline:
+  - Group changes by feature or route.
+  - Avoid committing broken states; aggregate cohesive UX pieces per commit.
 
 ---
 
-## Quick Utility Reference
+## Appendix: Utilities Reference
 
-- Panels/cards:
-  - panel: section containers and table shells
-  - card: small row/clickable containers
-- Text:
-  - --color-text, --color-text-muted
-  - --brand-fg for headings/active states
-- Borders/Dividers:
-  - --color-outline
-- Tints and chips:
-  - color-mix(var(--brand-ring) X%, transparent)
-- Interactives:
-  - Buttons: btn-primary / btn-secondary / btn-danger
-  - Links-as-tabs: nav-link
-  - Inputs: input (plus size classes as needed)
+- Panels/Cards: `panel`, `card`
+- Text: `--color-text`, `--color-text-muted`, `--brand-fg`
+- Borders/Dividers: `--color-outline`
+- Tinting: `color-mix(var(--brand-ring) X%, transparent)`
+- Buttons: `btn-primary`, `btn-secondary`, `btn-danger`
+- Links-as-tabs: `nav-link`
+- Inputs: `input`
 
 ---
 
-## Resume Here
+## Where To Resume
 
-- List View page: convert inputs/buttons/tables to token utilities and panels; ensure actions mirror Retainers/Lists tabs if applicable.
-- Analyzer: soften remaining hover accents; eliminate any straggling non-token text colors.
-- Item Explorer: phase 2 layout/card pass to improve scan-ability and consistency.
+- Currency Exchange:
+  - Add “clear all” to filter chips bar.
+  - Verify sort header affordances.
+
+- Item Explorer:
+  - Mobile layout pass (2-column), ensure inline CTA aligns with price.
+  - Reduce sidebar animation cost on desktop.
+
+- Search/Nav:
+  - Final contrast/perf micro-sweeps.
+  - Confirm nav right cluster wrapping behavior on small screens.
+
+- After UI polish: implement faction-themed palettes.

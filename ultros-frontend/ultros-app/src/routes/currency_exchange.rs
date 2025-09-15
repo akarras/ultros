@@ -154,9 +154,31 @@ fn shop_items(special_shop: &SpecialShop) -> impl Iterator<Item = ShopItems> + '
 #[component]
 fn FilterModal(filter_name: &'static str) -> impl IntoView {
     let (is_open, set_open) = signal(false);
+
+    // highlight the filter icon when an active min/max is set for this column
+    let query = use_query_map();
+    let is_active = Signal::derive(move || {
+        let q = query.get();
+        let has_min = q
+            .get(&format!("{filter_name}_min"))
+            .and_then(|p| p.parse::<i32>().ok())
+            .is_some();
+        let has_max = q
+            .get(&format!("{filter_name}_max"))
+            .and_then(|p| p.parse::<i32>().ok())
+            .is_some();
+        has_min || has_max
+    });
+
     view! {
         <div on:click=move |_| set_open(true)>
-            <div class="cursor-pointer inline-flex items-center justify-center w-8 h-8 rounded-md border border-[color:var(--color-outline)] text-[color:var(--color-text)] hover:text-[color:var(--brand-fg)] hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)]">
+            <div class=move || {
+                if is_active() {
+                    "cursor-pointer inline-flex items-center justify-center w-8 h-8 rounded-md border border-[color:var(--brand-fg)] text-[color:var(--brand-fg)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)]".to_string()
+                } else {
+                    "cursor-pointer inline-flex items-center justify-center w-8 h-8 rounded-md border border-[color:var(--color-outline)] text-[color:var(--color-text)] hover:text-[color:var(--brand-fg)] hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)]".to_string()
+                }
+            }>
                 <Icon icon=icondata::AiFilterFilled />
             </div>
             {move || {
@@ -467,7 +489,7 @@ pub fn ExchangeItem() -> impl IntoView {
                 <div class="flex flex-wrap gap-2 mt-2">
                     {move || {
                         let q = query();
-                        let mut chips = Vec::new();
+                        let mut chips: Vec<AnyView> = Vec::new();
 
                         let get_i = |k: &str| q.get(k).and_then(|v| v.parse::<i32>().ok());
 
@@ -489,7 +511,7 @@ pub fn ExchangeItem() -> impl IntoView {
                                             <Icon icon=icondata::MdiClose />
                                         </QueryButton>
                                     </span>
-                                });
+                                }.into_any());
                             }
                         };
 
@@ -502,6 +524,36 @@ pub fn ExchangeItem() -> impl IntoView {
                         push_chip("Hours min", "hours_between_sales_min", get_i("hours_between_sales_min"));
                         push_chip("Hours max", "hours_between_sales_max", get_i("hours_between_sales_max"));
 
+                        if !chips.is_empty() {
+                            chips.push(view! {
+                                <span class="inline-flex items-center gap-2 rounded-full border px-2 py-0.5 text-xs
+                                              text-[color:var(--color-text)]
+                                              bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)]
+                                              border-[color:var(--color-outline)]">
+                                    <QueryButton
+                                        key="sorted-by"
+                                        value=Signal::derive(move || sorted_by().unwrap_or_else(|| "total_profit".into()))
+                                        class="inline-flex items-center gap-1 text-[color:var(--color-text)] hover:text-[color:var(--brand-fg)]"
+                                        active_classes=""
+                                        remove_queries=&[
+                                            "price_per_item_min",
+                                            "price_per_item_max",
+                                            "number_received_min",
+                                            "number_received_max",
+                                            "total_profit_min",
+                                            "total_profit_max",
+                                            "hours_between_sales_min",
+                                            "hours_between_sales_max",
+                                        ]
+                                    >
+                                        <span class="inline-flex items-center gap-1">
+                                            <Icon icon=icondata::MdiClose />
+                                            "Clear all"
+                                        </span>
+                                    </QueryButton>
+                                </span>
+                            }.into_any());
+                        }
                         view! { <>{chips}</> }
                     }}
                 </div>
@@ -606,8 +658,8 @@ pub fn ExchangeItem() -> impl IntoView {
                                                                                 <QueryButton
                                                                                     key="sorted-by"
                                                                                     value=*l
-                                                                                    class="hover:text-[color:var(--brand-fg)] transition-colors"
-                                                                                    active_classes="text-[color:var(--brand-fg)] underline"
+                                                                                    class="underline decoration-transparent hover:text-[color:var(--brand-fg)] transition-colors"
+                                                                                    active_classes="text-[color:var(--brand-fg)] underline underline-offset-4 decoration-2"
                                                                                     default="total_profit" == *l
                                                                                 >
                                                                                     {l.replace("_", " ")}
