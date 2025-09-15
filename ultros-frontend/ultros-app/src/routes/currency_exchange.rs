@@ -316,7 +316,14 @@ pub fn ExchangeItem() -> impl IntoView {
                     .find(|i| i.item.item_search_category.0 >= 0)?;
                 let item_key = (false, recv.item.key_id.0);
                 let sales = &sales.get(&item_key)?.sales;
-                let sale = sales.first()?.price_per_unit;
+                // filter out stale items that haven't sold in ~2 months
+                let recent = sales.first()?;
+                let most_recent = recent.sale_date;
+                let stale_threshold = now - TimeDelta::days(60);
+                if most_recent < stale_threshold {
+                    return None;
+                }
+                let sale = recent.price_per_unit;
                 let current_listing_price = world_listings
                     .get(&item_key)
                     .map(|listing| listing.cheapest_price - 1);
@@ -499,7 +506,7 @@ pub fn ExchangeItem() -> impl IntoView {
                                 chips.push(view! {
                                     <span class="inline-flex items-center gap-2 rounded-full border px-2 py-0.5 text-xs
                                                   text-[color:var(--color-text)]
-                                                  bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)]
+                                                  bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]
                                                   border-[color:var(--color-outline)]">
                                         {format!("{label}: {v}")}
                                         <QueryButton
@@ -528,7 +535,7 @@ pub fn ExchangeItem() -> impl IntoView {
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-2 py-0.5 text-xs
                                               text-[color:var(--color-text)]
-                                              bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)]
+                                              bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]
                                               border-[color:var(--color-outline)]">
                                     <QueryButton
                                         key="sorted-by"
@@ -575,6 +582,9 @@ pub fn ExchangeItem() -> impl IntoView {
                         Either::Left(left)
                     } else {
                         let right = view! {
+                            <div class="text-xs text-[color:var(--color-text-muted)] mb-2">
+                                {move || home_world().map(|w| format!("Assuming sales on your home world: {}", w.name))}
+                            </div>
                             <Suspense fallback=Loading>
                                 {move || {
                                     let sort_label = sorted_by();
@@ -610,11 +620,18 @@ pub fn ExchangeItem() -> impl IntoView {
                                                             )
                                                     })
                                                     .collect::<Vec<_>>();
-                                                CurrencyTrade::sort_vec_by_label(
-                                                    &mut p,
-                                                    sort_label.as_deref().unwrap_or("total_profit"),
-                                                    None,
-                                                );
+                                                // surface best option at top by default (total_profit desc)
+                                                match sort_label.as_deref() {
+                                                    None => {
+                                                        p.sort_by(|a, b| b.total_profit.cmp(&a.total_profit));
+                                                    }
+                                                    Some("total_profit") => {
+                                                        p.sort_by(|a, b| b.total_profit.cmp(&a.total_profit));
+                                                    }
+                                                    Some(label) => {
+                                                        CurrencyTrade::sort_vec_by_label(&mut p, label, None);
+                                                    }
+                                                }
                                                 p.into_iter()
                                                     .map(|p| {
                                                         view! {

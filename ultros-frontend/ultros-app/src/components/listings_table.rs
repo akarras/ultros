@@ -22,7 +22,8 @@ pub fn ListingsTable(
         }
     });
     view! {
-        <table class="w-full">
+        <div class="overflow-x-auto">
+            <table class="w-full min-w-[720px]">
             <tr>
                 <th>"price"</th>
                 <th>"qty."</th>
@@ -81,7 +82,8 @@ pub fn ListingsTable(
                     </td>
                 </tr>
             </tbody>
-        </table>
+            </table>
+        </div>
     }
     .into_any()
 }

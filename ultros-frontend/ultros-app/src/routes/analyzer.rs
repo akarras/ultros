@@ -225,7 +225,7 @@ where
     T: IntoView,
 {
     view! {
-        <div class="panel p-6 flex flex-col w-full">
+        <div class="panel p-6 flex flex-col w-full bg-[color:var(--color-background-elevated)] bg-opacity-100 z-20" style="backdrop-filter: none; background-image: none;">
             <h3 class="font-bold text-xl mb-2 text-[color:var(--brand-fg)]">{title}</h3>
             <p class="mb-4 text-[color:var(--color-text-muted)]">{description}</p>
             {children.into_inner()().into_view()}

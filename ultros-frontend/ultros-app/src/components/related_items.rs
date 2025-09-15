@@ -120,53 +120,51 @@ fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
                     .with(|prices| {
                         let prices = prices.as_ref()?;
                         let prices = prices.as_ref().ok()?;
-                        let hq_amount: i32 = IngredientsIter::new(recipe)
-                            .flat_map(|(ingredient, amount)| {
-                                items.get(&ingredient).map(|item| (item, amount))
-                            })
-                            .flat_map(|(item, quantity)| {
-                                prices
-                                    .map
-                                    .get(
-                                        &CheapestListingMapKey {
-                                            item_id: item.key_id.0,
-                                            hq: item.can_be_hq,
-                                        },
-                                    )
-                                    .map(|data| data.price * quantity as i32)
-                            })
-                            .sum();
-                        let amount: i32 = IngredientsIter::new(recipe)
-                            .flat_map(|(ingredient, amount)| {
-                                items.get(&ingredient).map(|item| (item, amount))
-                            })
-                            .flat_map(|(item, quantity)| {
-                                prices
-                                    .map
-                                    .get(
-                                        &CheapestListingMapKey {
-                                            item_id: item.key_id.0,
-                                            hq: item.can_be_hq,
-                                        },
-                                    )
-                                    .map(|data| data.price * quantity as i32)
-                            })
-                            .sum();
+
+                        // sum helper that prefers HQ or LQ and falls back if missing
+                        let sum_for = |prefer_hq: bool| -> i32 {
+                            IngredientsIter::new(recipe)
+                                .flat_map(|(ingredient, amount)| {
+                                    items.get(&ingredient).map(|item| (item, amount))
+                                })
+                                .flat_map(|(item, quantity)| {
+                                    let pref_key = CheapestListingMapKey {
+                                        item_id: item.key_id.0,
+                                        hq: prefer_hq && item.can_be_hq,
+                                    };
+                                    let fallback_key = CheapestListingMapKey {
+                                        item_id: item.key_id.0,
+                                        hq: false,
+                                    };
+                                    prices
+                                        .map
+                                        .get(&pref_key)
+                                        .or_else(|| prices.map.get(&fallback_key))
+                                        .map(|d| d.price * quantity as i32)
+                                })
+                                .sum()
+                        };
+
+                        let hq_amount = sum_for(true);
+                        let lq_amount = sum_for(false);
+
                         let result_view = view! {
-                            <span class="flex flex-row gap-1">
-                                "HQ: " <Gil amount=hq_amount /> " LQ:" <Gil amount />
+                            <span class="flex flex-row gap-2 items-center">
+                                <span class="px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--brand-ring)_16%,transparent)] text-xs">"HQ:"</span>
+                                <Gil amount=hq_amount />
+                                <span class="px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)] text-xs">"LQ:"</span>
+                                <Gil amount=lq_amount />
                             </span>
                         };
                         Some(result_view)
                     })
             }}
-
         </Suspense>
     }
 }
 
 #[component]
-fn Recipe(recipe: &'static Recipe) -> impl IntoView {
+fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
     let items = &xiv_gen_db::data().items;
     let ingredients = IngredientsIter::new(recipe)
         .flat_map(|(ingredient, amount)| items.get(&ingredient).map(|item| (item, amount)))
@@ -183,16 +181,118 @@ fn Recipe(recipe: &'static Recipe) -> impl IntoView {
         })
         .collect::<Vec<_>>();
     let target_item = items.get(&recipe.item_result)?;
+    // role chips
+    let is_target = recipe.item_result == item_id;
+    let is_ingredient = IngredientsIter::new(recipe).any(|(i, _)| i == item_id);
+
     Some(view! {
         <div class="card p-3 space-y-2 rounded-lg">
-            "Crafting Recipe:" <div class="flex items-center justify-between gap-2">
-                <SmallItemDisplay item=target_item />
-                <CheapestPrice item_id=target_item.key_id />
-            </div> "Ingredients:" {ingredients} <div class="flex items-center gap-2 text-sm pt-1">
+            "Crafting Recipe:"
+            <div class="flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2">
+                    <SmallItemDisplay item=target_item />
+                    <CheapestPrice item_id=target_item.key_id />
+                </div>
+                <div class="flex items-center gap-1">
+                    {is_target.then(|| view! {
+                        <span class="px-2 py-0.5 rounded-full text-xs font-medium
+                                     bg-[color:color-mix(in_srgb,var(--brand-ring)_22%,transparent)]
+                                     text-[color:var(--brand-fg)] border border-[color:var(--color-outline)]">
+                            "target"
+                        </span>
+                    })}
+                    {is_ingredient.then(|| view! {
+                        <span class="px-2 py-0.5 rounded-full text-xs font-medium
+                                     bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)]
+                                     text-[color:var(--color-text)] border border-[color:var(--color-outline)]">
+                            "ingredient"
+                        </span>
+                    })}
+                </div>
+            </div>
+
+            "Ingredients:"
+            {ingredients}
+
+            <div class="flex items-center gap-2 text-sm pt-1">
                 <span class="underline">"Total craft cost:"</span>
                 " "
                 <RecipePriceEstimate recipe />
             </div>
+
+            // Profitability at a glance
+            <Suspense fallback=move || {
+                view! { <SingleLineSkeleton /> }
+            }>
+                {move || {
+                    use_context::<CheapestPrices>()
+                        .unwrap()
+                        .read_listings
+                        .with(|data| {
+                            let data = data.as_ref()?.as_ref().ok()?;
+                            // compute costs again to compare directly
+                            let sum_for = |prefer_hq: bool| -> i32 {
+                                IngredientsIter::new(recipe)
+                                    .flat_map(|(ingredient, amount)| {
+                                        items.get(&ingredient).map(|item| (item, amount))
+                                    })
+                                    .flat_map(|(item, quantity)| {
+                                        let pref_key = CheapestListingMapKey {
+                                            item_id: item.key_id.0,
+                                            hq: prefer_hq && item.can_be_hq,
+                                        };
+                                        let fallback_key = CheapestListingMapKey {
+                                            item_id: item.key_id.0,
+                                            hq: false,
+                                        };
+                                        data.map
+                                            .get(&pref_key)
+                                            .or_else(|| data.map.get(&fallback_key))
+                                            .map(|d| d.price * quantity as i32)
+                                    })
+                                    .sum()
+                            };
+                            let hq_cost = sum_for(true);
+                            let lq_cost = sum_for(false);
+
+                            let lq_sell = data
+                                .map
+                                .get(&CheapestListingMapKey { item_id: target_item.key_id.0, hq: false })
+                                .map(|d| d.price as i32);
+                            let hq_sell = if target_item.can_be_hq {
+                                data.map
+                                    .get(&CheapestListingMapKey { item_id: target_item.key_id.0, hq: true })
+                                    .or_else(|| data.map.get(&CheapestListingMapKey { item_id: target_item.key_id.0, hq: false }))
+                                    .map(|d| d.price as i32)
+                            } else {
+                                None
+                            };
+
+                            let profit_chip = |label: &str, profit_opt: Option<i32>| {
+                                profit_opt.map(|profit| {
+                                    let cls = if profit >= 0 {
+                                        "px-2 py-0.5 rounded-full text-xs font-medium bg-[color:color-mix(in_srgb,#16a34a_22%,transparent)] text-[color:#bbf7d0] border border-[color:var(--color-outline)]"
+                                    } else {
+                                        "px-2 py-0.5 rounded-full text-xs font-medium bg-[color:color-mix(in_srgb,#dc2626_18%,transparent)] text-[color:#fecaca] border border-[color:var(--color-outline)]"
+                                    };
+                                    view! {
+                                        <span class=cls>
+                                            {label} ": " <Gil amount=profit />
+                                        </span>
+                                    }.into_any()
+                                })
+                            };
+
+                            Some(view! {
+                                <div class="flex flex-wrap items-center gap-2 text-sm">
+                                    <span class="text-[color:var(--color-text-muted)] mr-1">"Profit:"</span>
+                                    {profit_chip("HQ", hq_sell.map(|p| p - hq_cost))}
+                                    {profit_chip("LQ", lq_sell.map(|p| p - lq_cost))}
+                                </div>
+                            })
+                        })
+                }}
+            </Suspense>
         </div>
     }.into_any())
 }
@@ -326,9 +426,23 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
             .collect::<Vec<_>>()
     });
     let (show_more, set_show_more) = signal(false);
+    let has_more = move || {
+        item()
+            .map(|item| {
+                item_set_iter(item)
+                    .chain(prefix_item_iterator(item))
+                    .chain(suffix_item_iterator(item))
+                    .unique_by(|i| i.key_id)
+                    .filter(|i| i.item_search_category.0 > 0)
+                    .filter(|i| i.key_id.0 != item.key_id.0)
+                    .count()
+                    > 12
+            })
+            .unwrap_or(false)
+    };
 
     view! {
-        <div class="flex-col flex-auto flex-wrap p-1" class:hidden=move || item_set().is_empty()>
+        <div class="flex-col flex-auto flex-wrap p-1 w-full" class:hidden=move || item_set().is_empty()>
             <span class="content-title">"related items"</span>
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
                 {item_set}
@@ -378,7 +492,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                     })
                 }}
             </div>
-            <div class="mt-2 flex justify-center">
+            <div class="mt-2 flex justify-center" class:hidden=move || !has_more()>
                 <button class="btn-secondary" on:click=move |_| set_show_more(!show_more())>
                     {move || if show_more() { "Show less" } else { "Show more" }}
                 </button>
@@ -392,10 +506,10 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
             <span class="content-title">"crafting recipes"</span>
             <div class="flex-wrap">
                 <For
-                    each=recipes
+                    each=Signal::derive(move || recipes().into_iter().take(5).collect::<Vec<_>>())
                     key=|recipe| recipe.key_id
                     children=move |recipe: &'static Recipe| {
-                        view! { <Recipe recipe /> }
+                        view! { <Recipe recipe item_id=ItemId(item_id()) /> }
                     }
                 />
             </div>

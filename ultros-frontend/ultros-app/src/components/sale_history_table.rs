@@ -22,7 +22,8 @@ pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
         sales
     });
     view! {
-        <table class="w-full text-sm">
+        <div class="overflow-x-auto max-h-[60vh] overflow-y-auto rounded-lg">
+            <table class="w-full text-sm min-w-[720px]">
             <thead class="text-xs uppercase">
                 <tr>
                     <th>"hq"</th>
@@ -92,6 +93,7 @@ pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
 
             </tbody>
         </table>
+        </div>
     }
 }
 
@@ -104,6 +106,7 @@ struct SalesWindow {
     median_unit_price: i32,
     min_unit_price: i32,
     median_stack_size: i32,
+    hq_percent: i32,
     guessed_next_sale_price: f64,
     p_value: f64,
     time_between_sales: Duration,
@@ -181,6 +184,9 @@ impl SalesWindow {
             max_unit_price: *unit_prices.last()?,
             min_unit_price: *unit_prices.first()?,
             median_stack_size,
+            hq_percent: ((sales.iter().filter(|sale| sale.hq).count() as f64 / sales.len() as f64)
+                * 100.0)
+                .round() as i32,
             guessed_next_sale_price: next,
             time_between_sales: avg_duration,
             median_unit_price,
@@ -239,6 +245,7 @@ fn WindowStats(#[prop(into)] sales: Signal<SalesWindow>) -> impl IntoView {
         Memo::new(move |_| sales.with(|s| s.guessed_next_sale_price.round() as i32));
     let time_between_sales = Memo::new(move |_| sales.with(|s| s.time_between_sales));
     let p_value = Memo::new(move |_| sales.with(|s| s.p_value));
+    let hq_percent = Memo::new(move |_| sales.with(|s| s.hq_percent));
     view! {
         <div class="flex flex-wrap gap-2">
             <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
@@ -264,6 +271,10 @@ fn WindowStats(#[prop(into)] sales: Signal<SalesWindow>) -> impl IntoView {
             <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
                 <span class="text-[color:var(--color-text-muted)] mr-1">"Typical stack"</span>
                 {median_stack_size}
+            </div>
+            <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
+                <span class="text-[color:var(--color-text-muted)] mr-1">"HQ %"</span>
+                {move || format!("{}%", hq_percent())}
             </div>
             <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
                 <span class="text-[color:var(--color-text-muted)] mr-1">"Next sale (est.)"</span>
