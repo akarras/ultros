@@ -830,7 +830,7 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 }
 
 @utility feature-card {
-    @apply relative isolate rounded-2xl border border-white/10 ring-1 ring-white/5 hover:ring-brand-400/20 text-gray-200;
+    @apply relative isolate rounded-2xl border border-[color:var(--color-outline)] ring-1 text-[color:var(--color-text)];
     @apply aspect-square overflow-hidden p-5;
     background-color: var(--color-background-elevated);
     background-image:
@@ -846,7 +846,7 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
         );
     @apply bg-blend-overlay;
     @apply transition-transform duration-150 ease-out transform-gpu will-change-[transform];
-    @apply sm:hover:-translate-y-0.5 active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400/30;
+    @apply sm:hover:-translate-y-0.5 active:translate-y-0 focus-visible:outline-none;
 }
 
 /* Sheen sweep (GPU-only transforms) */
@@ -957,7 +957,10 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 }
 
 @utility feature-badge {
-    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-brand-900/40 text-brand-200 ring-1 ring-brand-400/20;
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold;
+    background-color: color-mix(in srgb, var(--brand-bg) 40%, transparent);
+    color: var(--brand-fg);
+    border: 1px solid color-mix(in srgb, var(--brand-ring) 20%, transparent);
 }
 
 @utility feature-grid {
@@ -1116,7 +1119,8 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 }
 
 @utility gradient-ring {
-    @apply ring-1 ring-brand-400/20 hover:ring-brand-400/30;
+    @apply ring-1;
+    --tw-ring-color: color-mix(in srgb, var(--brand-ring) 20%, transparent);
 }
 
 @utility scroll-panel {

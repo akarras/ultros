@@ -87,7 +87,7 @@ where
                 "Copy+Paste a list with a bunch of items in it formatted as Item1: Quantity. Make place users can paste their furniture+dye lists here."
             </label>
             <textarea
-                class="bg-brand-950 h-96"
+                class="input h-96"
                 on:input=move |input| set_list(event_target_value(&input))
             ></textarea>
             {parsed_items}

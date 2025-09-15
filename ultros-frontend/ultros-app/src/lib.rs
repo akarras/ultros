@@ -88,25 +88,25 @@ pub fn Footer() -> impl IntoView {
                 <div class="flex flex-wrap justify-center items-center gap-x-8 gap-y-3">
                     <a
                         href="https://discord.gg/pgdq9nGUP2"
-                        class="muted hover:text-brand-300 transition-colors"
+                        class="muted hover:text-[color:var(--brand-fg)] transition-colors"
                     >
                         "Discord"
                     </a>
                     <a
                         href="https://github.com/akarras/ultros"
-                        class="muted hover:text-brand-300 transition-colors"
+                        class="muted hover:text-[color:var(--brand-fg)] transition-colors"
                     >
                         "GitHub"
                     </a>
                     <PatreonWrapper>
                         // nobody can tell it's not real.
-                        <a class="muted hover:text-brand-300 transition-colors cursor-pointer">
+                        <a class="muted hover:text-[color:var(--brand-fg)] transition-colors cursor-pointer">
                             "Patreon"
                         </a>
                     </PatreonWrapper>
                     <a
                         href="https://book.ultros.app"
-                        class="muted hover:text-brand-300 transition-colors"
+                        class="muted hover:text-[color:var(--brand-fg)] transition-colors"
                     >
                         "Book"
                     </a>
@@ -121,7 +121,7 @@ pub fn Footer() -> impl IntoView {
                         "Made using "
                         <a
                             href="https://universalis.app/"
-                            class="text-brand-300 hover:text-brand-200 transition-colors"
+                            class="text-brand-300 hover:text-[color:var(--brand-fg)] transition-colors"
                         >
                             "universalis"
                         </a>
@@ -131,7 +131,7 @@ pub fn Footer() -> impl IntoView {
                         "Version: "
                         <a
                             href=format!("https://github.com/akarras/ultros/commit/{git_hash}")
-                            class="text-brand-300 hover:text-brand-200 transition-colors"
+                            class="text-brand-300 hover:text-[color:var(--brand-fg)] transition-colors"
                         >
                             {git_hash}
                         </a>

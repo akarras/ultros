@@ -265,7 +265,7 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     let empty = move || npcs.with(|n| n.is_empty());
     view! {
         <div class:collapse=empty class="space-y-1.5 p-1 max-h-80 overflow-y-auto w-full sm:w-96 xl:w-[600px]">
-            <span class="text-sm font-semibold text-brand-200">"Vendor sources"</span>
+            <span class="text-sm font-semibold text-[color:var(--brand-fg)]">"Vendor sources"</span>
             <div class="grid grid-cols-1 gap-1.5">{data}</div>
         </div>
     }
@@ -309,7 +309,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                                     <span class="flex-1 truncate">{item.name.as_str()}</span>
                                     <span class="text-xs text-[color:var(--color-text-muted)]">{item.level_item.0}</span>
                                 </div>
-                                <div class="text-xs text-brand-200">
+                                <div class="text-xs text-[color:var(--brand-fg)]">
                                     <CheapestPrice item_id=item.key_id />
                                 </div>
                             </A>
@@ -366,7 +366,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                                                     <span class="flex-1 truncate">{item.name.as_str()}</span>
                                                     <span class="text-xs text-[color:var(--color-text-muted)]">{item.level_item.0}</span>
                                                 </div>
-                                                <div class="text-xs text-brand-200">
+                                                <div class="text-xs text-[color:var(--brand-fg)]">
                                                     <CheapestPrice item_id=item.key_id />
                                                 </div>
                                             </A>

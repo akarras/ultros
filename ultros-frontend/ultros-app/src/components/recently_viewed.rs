@@ -115,7 +115,7 @@ pub fn RecentlyViewed() -> impl IntoView {
                     <div class="text-center pt-2 border-t border-[color:var(--color-outline)]">
                         <a
                             href="/history"
-                            class="text-sm text-[color:var(--color-text-muted)] hover:text-brand-300 transition-colors"
+                            class="text-sm text-[color:var(--color-text-muted)] hover:text-[color:var(--brand-fg)] transition-colors"
                         >
                             "View All Recently Viewed"
                         </a>

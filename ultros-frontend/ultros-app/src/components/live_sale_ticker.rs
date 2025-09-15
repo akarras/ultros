@@ -111,7 +111,7 @@ pub fn LiveSaleTicker() -> impl IntoView {
                     "No homeworld is currently set. Go to "
                     <A
                         href="/settings"
-                        attr:class="text-brand-300 hover:text-brand-200 transition-colors"
+                        attr:class="text-[color:var(--brand-fg)] hover:underline transition-colors"
                     >
                         "Settings"
                     </A> " to set your homeworld."
