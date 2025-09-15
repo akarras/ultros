@@ -15,30 +15,34 @@ pub fn ProfileDisplay() -> impl IntoView {
                         Some(auth) => {
                             Either::Left(
                                 view! {
-                                    <A href="/profile">
-                                        <img class="avatar" src=auth.avatar alt=auth.username />
-                                    </A>
-                                    <a rel="external" class="nav-link" href="/logout">
-                                        "Logout"
-                                    </a>
+                                    <div class="flex items-center gap-2">
+                                        <A href="/profile">
+                                            <img class="avatar" src=auth.avatar alt=auth.username />
+                                        </A>
+                                        <a rel="external" class="nav-link" href="/logout">
+                                            "Logout"
+                                        </a>
+                                    </div>
                                 },
                             )
                         }
                         _ => {
                             Either::Right(
                                 view! {
-                                    <a
-                                        rel="external"
-                                        class="nav-link"
-                                        href="/login"
-                                    >
-                                        <Icon height="1.2em" width="1.2em" icon=i::BsDiscord />
-                                        <span>"Login"</span>
-                                    </a>
-                                    <A href="/settings" attr:class="nav-link">
-                                        <Icon height="2em" width="2em" icon=i::IoSettingsSharp />
-                                        <span class="sr-only">Settings</span>
-                                    </A>
+                                    <div class="flex items-center gap-2">
+                                        <a
+                                            rel="external"
+                                            class="nav-link"
+                                            href="/login"
+                                        >
+                                            <Icon height="1.2em" width="1.2em" icon=i::BsDiscord />
+                                            <span>"Login"</span>
+                                        </a>
+                                        <A href="/settings" attr:class="nav-link">
+                                            <Icon height="2em" width="2em" icon=i::IoSettingsSharp />
+                                            <span class="sr-only">Settings</span>
+                                        </A>
+                                    </div>
                                 },
                             )
                         }

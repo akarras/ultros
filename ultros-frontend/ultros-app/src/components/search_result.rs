@@ -92,7 +92,7 @@ pub fn ItemSearchResult(
                         </div>
 
                         <div class="flex items-center justify-between text-sm">
-                            <span class="text-[color:var(--color-text-muted)] truncate">
+                            <span class="text-[color:var(--color-text)] truncate">
                                 {categories
                                     .get(&item.item_ui_category)
                                     .map(|i| i.name.as_str())
@@ -120,7 +120,7 @@ pub fn ItemSearchResult(
         Either::Left(left_view)
     } else {
         Either::Right(view! {
-            <a class="block px-3 py-2 text-[color:var(--color-text-muted)] text-center hover:bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)] transition-colors">
+            <a class="block px-3 py-2 text-[color:var(--color-text-muted)] text-center hover:bg-[color:color-mix(in_srgb,_var(--brand-ring)_12%,_transparent)] transition-colors">
                 "Invalid result"
             </a>
         })

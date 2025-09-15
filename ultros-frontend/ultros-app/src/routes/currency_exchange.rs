@@ -382,22 +382,128 @@ pub fn ExchangeItem() -> impl IntoView {
                 </div>
                 <div class="flex items-center flex-wrap gap-3 text-sm">
                     <span class="text-[color:var(--color-text-muted)] mr-1">"Quick filters:"</span>
-                    <div class="inline-flex items-center gap-1">
+
+                    <div class="inline-flex items-center gap-2">
                         <span class="text-[color:var(--color-text)]">"Price/item"</span>
-                        <FilterModal filter_name="price_per_item" />
+                        {move || {
+                            let (min, set_min) = query_signal::<i32>("price_per_item_min");
+                            let (max, set_max) = query_signal::<i32>("price_per_item_max");
+                            view! {
+                                <ParseableInputBox
+                                    input=Signal::derive(move || min())
+                                    set_value=SignalSetter::map(move |v| set_min(v))
+                                />
+                                <span class="text-[color:var(--color-text-muted)]">"–"</span>
+                                <ParseableInputBox
+                                    input=Signal::derive(move || max())
+                                    set_value=SignalSetter::map(move |v| set_max(v))
+                                />
+                                <FilterModal filter_name="price_per_item" />
+                            }
+                        }}
                     </div>
-                    <div class="inline-flex items-center gap-1">
+
+                    <div class="inline-flex items-center gap-2">
                         <span class="text-[color:var(--color-text)]">"Qty recv"</span>
-                        <FilterModal filter_name="number_received" />
+                        {move || {
+                            let (min, set_min) = query_signal::<i32>("number_received_min");
+                            let (max, set_max) = query_signal::<i32>("number_received_max");
+                            view! {
+                                <ParseableInputBox
+                                    input=Signal::derive(move || min())
+                                    set_value=SignalSetter::map(move |v| set_min(v))
+                                />
+                                <span class="text-[color:var(--color-text-muted)]">"–"</span>
+                                <ParseableInputBox
+                                    input=Signal::derive(move || max())
+                                    set_value=SignalSetter::map(move |v| set_max(v))
+                                />
+                                <FilterModal filter_name="number_received" />
+                            }
+                        }}
                     </div>
-                    <div class="inline-flex items-center gap-1">
+
+                    <div class="inline-flex items-center gap-2">
                         <span class="text-[color:var(--color-text)]">"Profit"</span>
-                        <FilterModal filter_name="total_profit" />
+                        {move || {
+                            let (min, set_min) = query_signal::<i32>("total_profit_min");
+                            let (max, set_max) = query_signal::<i32>("total_profit_max");
+                            view! {
+                                <ParseableInputBox
+                                    input=Signal::derive(move || min())
+                                    set_value=SignalSetter::map(move |v| set_min(v))
+                                />
+                                <span class="text-[color:var(--color-text-muted)]">"–"</span>
+                                <ParseableInputBox
+                                    input=Signal::derive(move || max())
+                                    set_value=SignalSetter::map(move |v| set_max(v))
+                                />
+                                <FilterModal filter_name="total_profit" />
+                            }
+                        }}
                     </div>
-                    <div class="inline-flex items-center gap-1">
+
+                    <div class="inline-flex items-center gap-2">
                         <span class="text-[color:var(--color-text)]">"Hours/sale"</span>
-                        <FilterModal filter_name="hours_between_sales" />
+                        {move || {
+                            let (min, set_min) = query_signal::<i32>("hours_between_sales_min");
+                            let (max, set_max) = query_signal::<i32>("hours_between_sales_max");
+                            view! {
+                                <ParseableInputBox
+                                    input=Signal::derive(move || min())
+                                    set_value=SignalSetter::map(move |v| set_min(v))
+                                />
+                                <span class="text-[color:var(--color-text-muted)]">"–"</span>
+                                <ParseableInputBox
+                                    input=Signal::derive(move || max())
+                                    set_value=SignalSetter::map(move |v| set_max(v))
+                                />
+                                <FilterModal filter_name="hours_between_sales" />
+                            }
+                        }}
                     </div>
+                </div>
+
+                <div class="flex flex-wrap gap-2 mt-2">
+                    {move || {
+                        let q = query();
+                        let mut chips = Vec::new();
+
+                        let get_i = |k: &str| q.get(k).and_then(|v| v.parse::<i32>().ok());
+
+                        let mut push_chip = |label: &str, key: &'static str, val: Option<i32>| {
+                            if let Some(v) = val {
+                                let key_owned = key.to_string();
+                                chips.push(view! {
+                                    <span class="inline-flex items-center gap-2 rounded-full border px-2 py-0.5 text-xs
+                                                  text-[color:var(--color-text)]
+                                                  bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)]
+                                                  border-[color:var(--color-outline)]">
+                                        {format!("{label}: {v}")}
+                                        <QueryButton
+                                            key=key_owned.clone()
+                                            value=""
+                                            class="text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
+                                            active_classes=""
+                                        >
+                                            <Icon icon=icondata::MdiClose />
+                                        </QueryButton>
+                                    </span>
+                                });
+                            }
+                        };
+
+                        push_chip("Price min", "price_per_item_min", get_i("price_per_item_min"));
+                        push_chip("Price max", "price_per_item_max", get_i("price_per_item_max"));
+                        push_chip("Qty min", "number_received_min", get_i("number_received_min"));
+                        push_chip("Qty max", "number_received_max", get_i("number_received_max"));
+                        push_chip("Profit min", "total_profit_min", get_i("total_profit_min"));
+                        push_chip("Profit max", "total_profit_max", get_i("total_profit_max"));
+                        push_chip("Hours min", "hours_between_sales_min", get_i("hours_between_sales_min"));
+                        push_chip("Hours max", "hours_between_sales_max", get_i("hours_between_sales_max"));
+
+                        view! { <>{chips}</> }
+                    }}
                 </div>
             </div>
             <div class="overflow-x-auto">
