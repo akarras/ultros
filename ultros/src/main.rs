@@ -257,12 +257,7 @@ async fn main() -> Result<()> {
         oauth_config: DiscordAuthConfig::new(
             client_id,
             client_secret,
-            PathBuf::from(hostname)
-                .join("redirect")
-                .into_os_string()
-                .to_str()
-                .unwrap()
-                .to_string(),
+            format!("{}/redirect", hostname.trim_end_matches('/')),
             HashSet::from_iter([OAuthScope::Identify]),
         ),
         user_cache: AuthUserCache::new(),
