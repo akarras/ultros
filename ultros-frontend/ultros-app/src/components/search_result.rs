@@ -24,7 +24,7 @@ pub fn MatchFormatter(m: Match, target: String) -> impl IntoView {
 
         // This match
         pieces.push(Either::Right(view! {
-            <span class="font-medium text-[color:var(--brand-fg)]">
+            <span class="font-medium text-brand-300">
                 {target.chars().skip(c.start()).take(c.len()).collect::<String>()}
             </span>
         }));
@@ -65,7 +65,7 @@ pub fn ItemSearchResult(
                     format!("/item/{price_zone}/{item_id}")
                 }
             >
-                <div class="flex flex-row items-center px-3 py-2 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)]
+                <div class="flex flex-row items-center px-3 py-2 hover:bg-brand-800/30
                 transition-colors duration-200 group gap-3 w-full">
                     <div class="flex-shrink-0">
                         <ItemIcon item_id icon_size=IconSize::Small />
@@ -92,7 +92,7 @@ pub fn ItemSearchResult(
                         </div>
 
                         <div class="flex items-center justify-between text-sm">
-                            <span class="text-[color:var(--color-text-muted)] truncate">
+                            <span class="text-[color:var(--color-text)] truncate">
                                 {categories
                                     .get(&item.item_ui_category)
                                     .map(|i| i.name.as_str())
@@ -102,7 +102,7 @@ pub fn ItemSearchResult(
                             {(item.level_item.0 != 0)
                                 .then(|| {
                                     view! {
-                                        <span class="text-[color:var(--color-text-muted)]">
+                                        <span class="text-[color:var(--color-text)]">
                                             "iLvl " {item.level_item.0}
                                         </span>
                                     }
@@ -111,7 +111,7 @@ pub fn ItemSearchResult(
                     </div>
 
                     <div class="flex flex-shrink-0 pl-4 text-right min-w-[100px]
-                    text-[color:var(--brand-fg)] font-medium">
+                    text-brand-300 font-medium">
                         <CheapestPrice item_id=item.key_id />
                     </div>
                 </div>
