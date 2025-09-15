@@ -455,8 +455,8 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                     <QueryButton
                         key="sort"
                         value="key"
-                        class="p-1 !text-brand-200 hover:text-brand-300"
-                        active_classes="p-1 !text-brand-300"
+                        class="p-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--brand-fg)]"
+                        active_classes="p-1 text-[color:var(--brand-fg)] underline"
                     >
                         <div class="flex flex-row items-center gap-1">
                             <Icon icon=i::BiCalendarAltRegular />
@@ -466,8 +466,8 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                     <QueryButton
                         key="sort"
                         value="price"
-                        class="p-1 !text-brand-200 hover:text-brand-300"
-                        active_classes="p-1 !text-brand-300"
+                        class="p-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--brand-fg)]"
+                        active_classes="p-1 text-[color:var(--brand-fg)] underline"
                     >
                         <div class="flex flex-row items-center gap-1">
                             <Icon icon=i::ImPriceTag />
@@ -477,15 +477,15 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                     <QueryButton
                         key="sort"
                         value="name"
-                        class="p-1 !text-brand-200 hover:text-brand-300"
-                        active_classes="p-1 !text-brand-300"
+                        class="p-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--brand-fg)]"
+                        active_classes="p-1 text-[color:var(--brand-fg)] underline"
                     >
                         "NAME"
                     </QueryButton>
                     <QueryButton
                         key="sort"
                         value="ilvl"
-                        class="p-1 !text-brand-200 hover:text-brand-300"
+                        class="p-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--brand-fg)]"
                         active_classes="p-1 !text-brand-300"
                         default=true
                     >
@@ -496,8 +496,8 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                     <QueryButton
                         key="dir"
                         value="asc"
-                        class="p-1 !text-brand-200 hover:text-brand-300"
-                        active_classes="p-1 !text-brand-300"
+                        class="p-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--brand-fg)]"
+                        active_classes="p-1 text-[color:var(--brand-fg)] underline"
                     >
                         <div class="flex flex-row items-center gap-1">
                             <Icon icon=i::BiSortUpRegular />
@@ -507,8 +507,8 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                     <QueryButton
                         key="dir"
                         value="desc"
-                        class="p-1 !text-brand-200 hover:text-brand-300"
-                        active_classes="p-1 !text-brand-300"
+                        class="p-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--brand-fg)]"
+                        active_classes="p-1 text-[color:var(--brand-fg)] underline"
                         default=true
                     >
                         <div class="flex flex-row items-center gap-1">
@@ -530,7 +530,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                     key="page"
                                     value=(page.offset + 1).to_string()
                                     class="p-1 min-w-[2rem] text-center !text-brand-200 hover:text-brand-300"
-                                    active_classes="p-1 !text-brand-300"
+                                    active_classes="p-1 text-[color:var(--brand-fg)] underline"
                                     default=page.offset == 0
                                 >
                                     {page.offset + 1}
@@ -612,31 +612,31 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                 key=|(id, item)| (id.0, &item.name)
                                 children=|(id, item)| {
                                     view! {
-                                        <div class="w-full sm:flex sm:flex-col md:grid md:grid-cols-12 gap-3 p-4 rounded-xl
+                                        <div class="grid grid-cols-12 gap-3 p-4 rounded-xl
                                         panel
                                         transition-colors duration-200
                                         items-center">
                                             // Item Info Section
-                                            <div class="flex flex-row items-center md:col-span-8 gap-2 min-w-0">
+                                            <div class="col-span-8 flex flex-row items-center gap-2 min-w-0">
                                                 // Added container with min-w-0
                                                 <div class="flex-1 min-w-0 flex flex-row items-center gap-3">
                                                     <SmallItemDisplay item=item />
-                                                    <span class="hidden md:inline text-gray-400 whitespace-nowrap">
+                                                    <span class="hidden md:inline text-[color:var(--color-text-muted)] whitespace-nowrap">
                                                         "min level: "{item.level_equip}
                                                     </span>
                                                     <Clipboard clipboard_text=item.name.clone() />
                                                 </div>
                                             </div>
                                             // Prevent shrinking of add button
-                                            <div class="shrink-0 md:col-span-1">
+                                            <div class="col-span-2 shrink-0 flex justify-center">
                                                 <AddToList item_id=id.0 />
                                             </div>
 
 
                                             // Normal Quality Price
-                                            <div class="md:col-span-3 flex flex-row md:justify-center items-center gap-6">
+                                            <div class="col-span-2 flex flex-row justify-end items-center gap-4">
                                                 <div class="flex flex-row items-center gap-2">
-                                                    <span class="text-gray-400 md:hidden">"NQ: "</span>
+                                                    <span class="text-[color:var(--color-text-muted)] md:hidden">"NQ: "</span>
                                                     <CheapestPrice item_id=*id show_hq=false />
                                                 </div>
                                                 {move || {
@@ -644,7 +644,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                                         Either::Left(
                                                             view! {
                                                                 <div class="flex flex-row items-center gap-2">
-                                                                    <span class="text-gray-400 md:hidden">"HQ: "</span>
+                                                                    <span class="text-[color:var(--color-text-muted)] md:hidden">"HQ: "</span>
                                                                     <CheapestPrice item_id=*id show_hq=true />
                                                                 </div>
                                                             },
