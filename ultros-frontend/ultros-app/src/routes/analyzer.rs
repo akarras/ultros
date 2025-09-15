@@ -439,9 +439,9 @@ fn AnalyzerTable(
                         let mut chips: Vec<_> = Vec::new();
                         if let Some(p) = minimum_profit() {
                             chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--brand-fg)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
+                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
                                     "Profit ≥ " <Gil amount=p />
-                                    <button class="ml-1 text-gray-400 hover:text-brand-300" on:click=move |_| set_minimum_profit(None)>
+                                    <button class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_profit(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -449,9 +449,9 @@ fn AnalyzerTable(
                         }
                         if let Some(roi) = minimum_roi() {
                             chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--brand-fg)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
+                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
                                     "ROI ≥ " {format!("{roi}%")}
-                                    <button class="ml-1 text-gray-400 hover:text-brand-300" on:click=move |_| set_minimum_roi(None)>
+                                    <button class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_roi(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -459,9 +459,9 @@ fn AnalyzerTable(
                         }
                         if let Some(_ns) = max_predicted_time() {
                             chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--brand-fg)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
+                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
                                     "Next Sale ≤ " {predicted_time_string()}
-                                    <button class="ml-1 text-gray-400 hover:text-brand-300" on:click=move |_| set_max_predicted_time(None)>
+                                    <button class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_max_predicted_time(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -469,9 +469,9 @@ fn AnalyzerTable(
                         }
                         if let Some(w) = world_filter() {
                             chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--brand-fg)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
+                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
                                     "World: " {w.clone()}
-                                    <button class="ml-1 text-gray-400 hover:text-brand-300" on:click=move |_| set_world_filter(None)>
+                                    <button class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_world_filter(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -479,16 +479,16 @@ fn AnalyzerTable(
                         }
                         if let Some(dc) = datacenter_filter() {
                             chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--brand-fg)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
+                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
                                     "Datacenter: " {dc.clone()}
-                                    <button class="ml-1 text-gray-400 hover:text-brand-300" on:click=move |_| set_datacenter_filter(None)>
+                                    <button class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_datacenter_filter(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
                             }.into_any());
                         }
                         if chips.is_empty() {
-                            Either::Left(view! { <span class="text-sm text-gray-500">"no active filters"</span> })
+                            Either::Left(view! { <span class="text-sm text-[color:var(--color-text-muted)]">"no active filters"</span> })
                         } else {
                             Either::Right(view! { <>{chips}</> })
                         }
@@ -642,7 +642,7 @@ fn AnalyzerTable(
                                 <div class=classes role="row-group">
                                     <div role="cell" class="px-2 py-2 w-[40px] flex items-center justify-center">
                                         {if data.sale_summary.hq {
-                                            Either::Left(view! { <span class="px-2 py-0.5 rounded-full text-xs font-semibold border bg-brand-900/30 text-brand-300 border-brand-500/20">"HQ"</span> })
+                                            Either::Left(view! { <span class="px-2 py-0.5 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)]">"HQ"</span> })
                                         } else {
                                             Either::Right(view! { <></> })
                                         }}
@@ -666,18 +666,20 @@ fn AnalyzerTable(
                                     <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
                                         <span class=move || {
                                             let roi = data.return_on_investment;
-                                            let cls = if roi >= 500 {
-                                                "bg-emerald-900/30 text-emerald-300 border-emerald-500/20"
+                                            let tint = if roi >= 500 {
+                                                "24%"
                                             } else if roi >= 200 {
-                                                "bg-lime-900/30 text-lime-300 border-lime-500/20"
+                                                "20%"
                                             } else if roi >= 100 {
-                                                "bg-yellow-900/30 text-yellow-300 border-yellow-500/20"
+                                                "16%"
                                             } else if roi >= 50 {
-                                                "bg-orange-900/30 text-orange-300 border-orange-500/20"
+                                                "12%"
                                             } else {
-                                                "bg-red-900/30 text-red-300 border-red-500/20"
+                                                "10%"
                                             };
-                                            format!("inline-flex items-center justify-end px-2 py-1 rounded-full text-xs font-semibold border {}", cls)
+                                            format!(
+                                                "inline-flex items-center justify-end px-2 py-1 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_{tint},transparent)]"
+                                            )
                                         }>
                                             {format!("{}%", data.return_on_investment)}
                                         </span>

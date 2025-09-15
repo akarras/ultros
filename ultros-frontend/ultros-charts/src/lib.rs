@@ -83,6 +83,10 @@ pub struct ChartOptions {
     pub remove_outliers: bool,
     pub icon_item_id: i32,
     pub draw_icon: bool,
+    /// Optional override for chart text/label color as (r, g, b)
+    pub text_rgb: Option<(u8, u8, u8)>,
+    /// Optional override for grid line base color as (r, g, b)
+    pub grid_rgb: Option<(u8, u8, u8)>,
 }
 
 // #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -139,6 +143,8 @@ fn draw_impl<'a, T>(
         remove_outliers,
         icon_item_id,
         draw_icon,
+        text_rgb,
+        grid_rgb,
     }: ChartOptions,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'a>>
 where
@@ -151,6 +157,18 @@ where
         filter_outliers(sales)
     } else {
         Cow::Borrowed(sales)
+    };
+
+    // derive colors from options or fall back to sensible defaults
+    let label_color = if let Some((r, g, b)) = text_rgb {
+        RGBColor(r, g, b)
+    } else {
+        RGBColor(255, 255, 255)
+    };
+    let grid_base = if let Some((r, g, b)) = grid_rgb {
+        RGBColor(r, g, b)
+    } else {
+        RGBColor(200, 200, 200)
     };
 
     let root = DrawingArea::from(&backend);
@@ -196,14 +214,16 @@ where
         .margin(10)
         .caption(
             format!("{} - Sale History", item_name),
-            ("Jaldi, sans-serif", title_size).into_font().color(&WHITE),
+            ("Jaldi, sans-serif", title_size)
+                .into_font()
+                .color(&label_color),
         )
         .build_cartesian_2d(*first_sale..*last_sale, 0..pad_top)?;
 
     chart
         .configure_mesh()
-        .bold_line_style(RGBColor(200, 200, 200).mix(0.2))
-        .light_line_style(RGBColor(200, 200, 200).mix(0.02))
+        .bold_line_style(grid_base.mix(0.2))
+        .light_line_style(grid_base.mix(0.02))
         .x_desc("Time")
         .y_desc("Price per unit")
         .x_label_formatter(&move |x| match label {
@@ -213,7 +233,7 @@ where
         })
         .y_label_formatter(&|y| short_number(*y))
         .x_labels(5)
-        .label_style(("Jaldi, sans-serif", 20.0).into_font().color(&WHITE))
+        .label_style(("Jaldi, sans-serif", 20.0).into_font().color(&label_color))
         .draw()?;
 
     let colors = vec![
@@ -245,7 +265,7 @@ where
         .configure_series_labels()
         .border_style(PURPLE_A400)
         .position(SeriesLabelPosition::UpperRight)
-        .label_font(("Jaldi, sans-serif", 18.0).into_font().color(&WHITE))
+        .label_font(("Jaldi, sans-serif", 18.0).into_font().color(&label_color))
         .draw()?;
 
     #[cfg(feature = "image")]
@@ -338,4 +358,3 @@ fn map_sale_history_to_line(
         .sorted_by_cached_key(|(name, _)| name.clone())
         .collect()
 }
-

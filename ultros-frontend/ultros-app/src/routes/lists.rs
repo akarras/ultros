@@ -233,12 +233,7 @@ pub fn EditLists() -> impl IntoView {
 pub fn Lists() -> impl IntoView {
     view! {
         <div class="mx-auto">
-            <div class="content-nav">
-                <A exact=true attr:class="nav-link" href="/list">
-                    <Icon height="1.25em" width="1.25em" icon=i::AiOrderedListOutlined />
-                    <span>"Lists"</span>
-                </A>
-            </div>
+
             <div class="main-content">
                 <div class="container mx-auto flex flex-col xl:flex-row items-start">
                     <div class="flex flex-col grow">

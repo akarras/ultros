@@ -32,8 +32,8 @@ pub fn Toggle(
             ">
 
                 <div
-                    class="absolute top-0.5 left-0.5
-                    w-6 h-6 rounded-full
+                    class="absolute top-[1px] left-0.5
+                    w-6 h-[22px] rounded-full
                     transition-all duration-300 ease-in-out transform
                     shadow-md border border-[color:var(--color-outline-strong)]
                     bg-[color:var(--color-background-elevated)]"

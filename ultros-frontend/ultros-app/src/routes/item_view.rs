@@ -90,8 +90,9 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
     let (home_world, _) = use_home_world();
 
     view! {
-        <div class="sticky top-0 z-10 panel">
+        <div class="sticky top-0 z-10">
             <div class="container mx-auto px-4">
+                <div class="panel">
                 <div class="flex flex-wrap gap-2 py-3">
                     {move || {
                         let world = world_name();
@@ -264,6 +265,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                         }
                     }}
                 </div>
+            </div>
             </div>
         </div>
     }.into_any()
@@ -598,7 +600,7 @@ pub fn ItemView() -> impl IntoView {
                     </div>
 
                     <div class="md:ml-auto flex flex-wrap gap-2 items-center">
-                        <AddToList item_id />
+                        <div class="cursor-pointer"><AddToList item_id /></div>
                         <a
                             class="btn-primary"
                             target="_blank"
