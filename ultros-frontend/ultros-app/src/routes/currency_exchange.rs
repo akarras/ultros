@@ -88,8 +88,12 @@ fn ItemAmount(#[prop(into)] item_amount: Option<ItemAmount>) -> impl IntoView {
                         <span>{item_amount.item.name.as_str()}</span>
                     </A>
                     <div>"x" {item_amount.amount}</div>
-                    <AddToList item_id=item_amount.item.key_id.0 />
-                    <Clipboard clipboard_text=item_amount.item.name.as_str() />
+                    <span on:click=move |ev| { ev.stop_propagation(); ev.prevent_default(); }>
+                        <AddToList item_id=item_amount.item.key_id.0 />
+                    </span>
+                    <span on:click=move |ev| { ev.stop_propagation(); ev.prevent_default(); }>
+                        <Clipboard clipboard_text=item_amount.item.name.as_str() />
+                    </span>
                 </div>
             }
         })
@@ -591,16 +595,20 @@ pub fn ExchangeItem() -> impl IntoView {
                                     rows.sort_by(|a, b| b.total_profit.cmp(&a.total_profit));
                                     let top = rows.into_iter().take(5).collect::<Vec<_>>();
                                     view! {
-                                        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 mb-4">
+                                        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-5 gap-3 mb-4 items-stretch">
                                             {top.into_iter().map(|t| view! {
-                                                <A
-                                                    href=move || {
-                                                        t.receive_item
+                                                <div
+                                                    class="card p-4 rounded-lg transition-colors hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] cursor-pointer"
+                                                    on:click=move |_| {
+                                                        let url = t
+                                                            .receive_item
                                                             .as_ref()
                                                             .map(|ri| format!("/item/{}", ri.item.key_id.0))
-                                                            .unwrap_or_default()
+                                                            .unwrap_or_default();
+                                                        if let Some(w) = web_sys::window() {
+                                                            let _ = w.location().set_href(&url);
+                                                        }
                                                     }
-                                                    attr:class="card p-4 rounded-lg transition-colors hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)]"
                                                 >
                                                     <div class="text-sm text-[color:var(--color-text-muted)] mb-1">
                                                         <ShopNames shop_names=t.shop_names.clone() />
@@ -618,12 +626,13 @@ pub fn ExchangeItem() -> impl IntoView {
                                                         <span>{format!("{} items", t.number_received)}</span>
                                                         <span>{format!("{}h/sale", t.hours_between_sales)}</span>
                                                     </div>
-                                                </A>
+                                                </div>
                                             }).collect_view()}
                                         </div>
                                     }
                                 })
                             }}
+                            <h3 class="text-xl font-bold text-[color:var(--brand-fg)] mb-2">"Full results"</h3>
                             <Suspense fallback=Loading>
                                 {move || {
                                     let sort_label = sorted_by();
