@@ -88,31 +88,31 @@ pub fn Footer() -> impl IntoView {
                 <div class="flex flex-wrap justify-center items-center gap-x-8 gap-y-3">
                     <a
                         href="https://discord.gg/pgdq9nGUP2"
-                        class="muted hover:text-[color:var(--brand-fg)] transition-colors"
+                        class="btn-ghost"
                     >
-                        "Discord"
+                        <Icon icon=i::BsDiscord width="1.1em" height="1.1em" /><span>"Discord"</span>
                     </a>
                     <a
                         href="https://github.com/akarras/ultros"
-                        class="muted hover:text-[color:var(--brand-fg)] transition-colors"
+                        class="btn-ghost"
                     >
-                        "GitHub"
+                        <Icon icon=i::IoLogoGithub width="1.1em" height="1.1em" /><span>"GitHub"</span>
                     </a>
                     <PatreonWrapper>
                         // nobody can tell it's not real.
-                        <a class="muted hover:text-[color:var(--brand-fg)] transition-colors cursor-pointer">
-                            "Patreon"
+                        <a class="btn-ghost cursor-pointer">
+                            <span>"Patreon"</span>
                         </a>
                     </PatreonWrapper>
                     <a
                         href="https://book.ultros.app"
-                        class="muted hover:text-[color:var(--brand-fg)] transition-colors"
+                        class="btn-ghost"
                     >
-                        "Book"
+                        <Icon icon=i::BsBook width="1.1em" height="1.1em" /><span>"Book"</span>
                     </a>
                 </div>
-
-                <div class="text-center space-y-2 muted text-sm">
+                <div class="divider"></div>
+                <div class="text-center space-y-2 muted text-sm max-w-3xl mx-auto">
                     <p>
                         "Ultros is still under constant development. If you have suggestions or feedback,
                             feel free to leave suggestions in the discord."
