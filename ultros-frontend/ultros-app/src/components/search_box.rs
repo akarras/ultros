@@ -143,7 +143,7 @@ pub fn SearchBox() -> impl IntoView {
                     on:focusin=focus_in
                     on:focusout=focus_out
                     placeholder="Search items... (⌘K / CTRL K)"
-                    class="input w-full pl-10 placeholder-[color:var(--color-text-muted)] focus:outline-none focus-visible:ring-1 focus-visible:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] focus:border-[color:color-mix(in_srgb,var(--brand-ring)_30%,var(--color-outline))]"
+                    class="input w-full pl-10"
 
                     type="text"
                     prop:value=search

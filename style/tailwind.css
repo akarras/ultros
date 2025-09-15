@@ -152,6 +152,34 @@
     --color-brand-950: #f5f3ff;
 }
 
+/* Contrast guards: ensure readable field/dropdown surfaces in light mode */
+[data-theme="light"] .input,
+[data-theme="light"] input:not([type="checkbox"]):not([type="radio"]),
+[data-theme="light"] select,
+[data-theme="light"] textarea {
+    background-color: var(--color-background-elevated);
+    color: var(--color-text);
+    border-color: var(--color-outline);
+}
+
+/* Light mode search dropdown container */
+[data-theme="light"] .scroll-panel,
+[data-theme="light"] .search-results {
+    background-color: var(--color-background-elevated);
+    border: 1px solid var(--color-outline);
+    border-radius: 0.75rem;
+}
+
+/* Dark mode guard: keep high contrast for inputs as well */
+[data-theme="dark"] .input,
+[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]),
+[data-theme="dark"] select,
+[data-theme="dark"] textarea {
+    background-color: var(--color-background-elevated);
+    color: var(--color-text);
+    border-color: var(--color-outline);
+}
+
 /* Runtime-swappable brand palettes */
 :root[data-palette="violet"],
 [data-theme="light"][data-palette="violet"] {
@@ -767,6 +795,37 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 
 @utility card {
     @apply panel p-4 transition-all duration-300;
+    border-color: var(--color-outline);
+}
+
+@utility input {
+    @apply rounded-lg px-3 py-2 border transition-colors duration-150;
+    background-color: var(--color-background-elevated);
+    color: var(--color-text);
+    border-color: var(--color-outline);
+}
+
+/* Placeholder contrast */
+.input::placeholder {
+    color: var(--color-text-muted);
+}
+
+/* Focus ring with brand tint */
+.input:focus,
+.input:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand-ring) 30%, transparent);
+    border-color: color-mix(
+        in srgb,
+        var(--brand-ring) 30%,
+        var(--color-outline)
+    );
+}
+
+/* Light mode: ensure high-contrast field surface and text */
+[data-theme="light"] .input {
+    background-color: var(--color-background-elevated);
+    color: var(--color-text);
     border-color: var(--color-outline);
 }
 

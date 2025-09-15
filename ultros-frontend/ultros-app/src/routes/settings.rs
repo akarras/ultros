@@ -188,10 +188,10 @@ fn HomeWorldPicker() -> impl IntoView {
 
     view! {
         <div class="panel p-6 rounded-xl">
-            <h3 class="text-2xl font-bold text-brand-300 mb-4">"World Settings"</h3>
+            <h3 class="text-2xl font-bold text-[color:var(--brand-fg)] mb-4">"World Settings"</h3>
             <div class="grid md:grid-cols-3 gap-6">
                 <div class="space-y-2">
-                    <label class="text-lg text-brand-200">"Home World"</label>
+                    <label class="text-lg text-[color:var(--color-text)]">"Home World"</label>
                     <WorldOnlyPicker current_world=homeworld set_current_world=set_homeworld />
                     <p class="text-sm text-gray-400">
                         "The home world will default for the analyzer and several other pages"
@@ -199,13 +199,13 @@ fn HomeWorldPicker() -> impl IntoView {
                 </div>
 
                 <div class="space-y-2">
-                    <label class="text-lg text-brand-200">"Default Price Zone"</label>
+                    <label class="text-lg text-[color:var(--color-text)]">"Default Price Zone"</label>
                     <WorldPicker current_world=price_region set_current_world=set_price_region />
                     <p class="text-sm text-gray-400">
                         "What world/region to show prices by default for within "
                         <a
                             href="/items"
-                            class="text-brand-300 hover:text-brand-200 transition-colors"
+                            class="text-[color:var(--brand-fg)] hover:underline transition-colors"
                         >
                             "items"
                         </a> " pages"
@@ -224,7 +224,7 @@ fn AdChoice() -> impl IntoView {
 
     view! {
         <div class="panel p-6 rounded-xl">
-            <h3 class="text-2xl font-bold text-brand-300 mb-4">"Ad Settings"</h3>
+            <h3 class="text-2xl font-bold text-[color:var(--brand-fg)] mb-4">"Ad Settings"</h3>
             <div class="grid md:grid-cols-3 gap-6">
                 <div class="col-span-2 space-y-2">
                     <p class="text-gray-300">
@@ -311,7 +311,7 @@ pub fn Settings() -> impl IntoView {
             <MetaDescription text="Manage settings such as homeworld or other for Ultros" />
 
             <div class="container mx-auto max-w-7xl space-y-6">
-                <h1 class="text-3xl font-bold text-brand-300">"Settings"</h1>
+                <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">"Settings"</h1>
                 <HomeWorldPicker />
                 <ThemePicker />
                 <AdChoice />
