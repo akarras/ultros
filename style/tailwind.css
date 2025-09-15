@@ -740,9 +740,29 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 @utility panel {
     @apply rounded-xl border;
     border-color: var(--color-outline);
+    /* base panel surface */
     background-color: var(--color-background-elevated);
+    /* subtle dark-mode gradient shading like settings world panel */
+    background-image:
+        radial-gradient(
+            1200px 600px at 50% -20%,
+            var(--decor-spot),
+            transparent 60%
+        ),
+        linear-gradient(
+            135deg,
+            color-mix(in srgb, var(--brand-bg) 6%, transparent),
+            color-mix(in srgb, var(--color-background) 4%, transparent)
+        );
+    background-blend-mode: overlay, normal;
     backdrop-filter: blur(4px);
     box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2);
+}
+
+/* Light mode panels: keep clean, high-contrast surfaces */
+[data-theme="light"] .panel {
+    background-image: none;
+    background-color: var(--color-background-elevated);
 }
 
 @utility card {

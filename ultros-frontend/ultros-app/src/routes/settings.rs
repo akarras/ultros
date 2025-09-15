@@ -187,8 +187,7 @@ fn HomeWorldPicker() -> impl IntoView {
     let set_price_region = selector_to_setter_signal(set_price_region);
 
     view! {
-        <div class="p-6 rounded-xl bg-gradient-to-br from-brand-950/10 to-black/20
-        border border-white/10 ">
+        <div class="panel p-6 rounded-xl">
             <h3 class="text-2xl font-bold text-brand-300 mb-4">"World Settings"</h3>
             <div class="grid md:grid-cols-3 gap-6">
                 <div class="space-y-2">
@@ -224,8 +223,7 @@ fn AdChoice() -> impl IntoView {
     let (cookie, set_cookie) = ad_choice.use_cookie_typed::<_, bool>("HIDE_ADS");
 
     view! {
-        <div class="p-6 rounded-xl bg-gradient-to-br from-brand-950/10 to-black/20
-        border border-white/10 ">
+        <div class="panel p-6 rounded-xl">
             <h3 class="text-2xl font-bold text-brand-300 mb-4">"Ad Settings"</h3>
             <div class="grid md:grid-cols-3 gap-6">
                 <div class="col-span-2 space-y-2">

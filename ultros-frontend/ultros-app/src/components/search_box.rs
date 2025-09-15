@@ -158,7 +158,7 @@ pub fn SearchBox() -> impl IntoView {
                 class="absolute w-full mt-2 z-50 content-visible contain-content forced-layer"
                 class:hidden=move || !active() || search().is_empty()
             >
-                <div class="scroll-panel content-auto contain-layout contain-paint will-change-scroll forced-layer cis-42">
+                <div class="panel p-1 rounded-xl scroll-panel content-auto contain-layout contain-paint will-change-scroll forced-layer cis-42">
                     <VirtualScroller
                         each=Signal::derive(item_search)
                         key=move |(id, _item): &(&xiv_gen::ItemId, &xiv_gen::Item)| id.0
@@ -166,7 +166,7 @@ pub fn SearchBox() -> impl IntoView {
                             let item_id = id.0;
                             view! { <ItemSearchResult item_id set_search search /> }
                         }
-                        viewport_height=500.0
+                        viewport_height=504.0
                         row_height=42.0
                         overscan=10
                         header_height=0.0
