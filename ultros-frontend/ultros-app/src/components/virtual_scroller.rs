@@ -235,13 +235,27 @@ where
                                     }
                                 });
                             }
-                            view! { <div node_ref=row class=move || {
-                                if variable_height {
-                                    "content-auto contain-layout contain-paint will-change-transform cis-40".to_string()
-                                } else {
-                                    "content-visible contain-layout contain-paint will-change-transform cis-40".to_string()
-                                }
-                            }>{view(child)}</div> }
+                            view! {
+                                <div
+                                    node_ref=row
+                                    class=move || {
+                                        if variable_height {
+                                            "content-auto contain-layout contain-paint will-change-transform".to_string()
+                                        } else {
+                                            "content-visible contain-layout contain-paint will-change-transform overflow-hidden".to_string()
+                                        }
+                                    }
+                                    style=move || {
+                                        if variable_height {
+                                            String::new()
+                                        } else {
+                                            format!("height: {}px;", row_height.round() as u32)
+                                        }
+                                    }
+                                >
+                                    {view(child)}
+                                </div>
+                            }
                         }
                     />
                 </div>
