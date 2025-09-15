@@ -102,7 +102,7 @@ fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> imp
         })
         .collect();
     view! {
-        <div class="content-well">
+        <div class="panel p-4 rounded-xl">
             <span class="content-title">
                 {retainer.name} " - " <WorldName id=AnySelector::World(retainer.world_id) />
             </span>
@@ -177,7 +177,7 @@ fn RetainerTable(retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoV
         })
         .collect();
     view! {
-        <div class="content-well">
+        <div class="panel p-4 rounded-xl">
             <span class="content-title">
                 {retainer.name} " - " <WorldName id=AnySelector::World(retainer.world_id) />
             </span>
@@ -429,17 +429,18 @@ pub fn RetainerListings() -> impl IntoView {
 pub fn Retainers() -> impl IntoView {
     // let retainers = create_resource(|| "retainers", move |_| get_retainer_listings(cx));
     view! {
-        <div class="content-nav">
-            <A exact=true attr:class="btn flex flex-row" href="/retainers/edit">
-                <Icon width="1.75em" height="1.75em" icon=i::BsPencilFill />
-                "Edit"
+        <div class="flex items-center gap-2 md:gap-3 mb-3">
+            <A exact=true attr:class="nav-link" href="/retainers/edit">
+                <Icon height="1.25em" width="1.25em" icon=i::BsPencilFill />
+                <span>"Edit"</span>
             </A>
-            <A exact=true attr:class="btn" href="/retainers/listings">
-                "All Listings"
+            <A exact=true attr:class="nav-link" href="/retainers/listings">
+                <Icon height="1.25em" width="1.25em" icon=i::AiOrderedListOutlined />
+                <span>"All Listings"</span>
             </A>
-            <A exact=true attr:class="btn flex flex-row" href="/retainers/undercuts">
-                <Icon width="1.75em" height="1.75em" icon=i::AiExclamationOutlined />
-                "Undercuts"
+            <A exact=true attr:class="nav-link" href="/retainers/undercuts">
+                <Icon height="1.25em" width="1.25em" icon=i::AiExclamationOutlined />
+                <span>"Undercuts"</span>
             </A>
         </div>
         <div class="main-content">

@@ -101,7 +101,7 @@ pub fn ListView() -> impl IntoView {
                     )
                 >
 
-                    <i style="padding-right: 5px;">
+                    <i class="pr-1.5">
                         <Icon icon=i::BiPlusRegular />
                     </i>
                     <span>"Add Item"</span>
@@ -193,7 +193,7 @@ pub fn ListView() -> impl IntoView {
                                                 view! {
                                                     <div class="flex-row">
                                                         <ItemIcon item_id=id.0 icon_size=IconSize::Medium />
-                                                        <span style="width: 400px">{item.name.as_str()}</span>
+                                                        <span class="w-[400px] truncate">{item.name.as_str()}</span>
                                                         <label for="amount">"quantity:"</label>
                                                         <input on:input=read_input_quantity prop:value=quantity />
                                                         <button
@@ -376,7 +376,7 @@ pub fn ListView() -> impl IntoView {
                                             <div class="flex flex-row">
                                                 <button
                                                     class="btn"
-                                                    class:bg-violet-950=edit_list_mode
+                                                    class:bg-brand-950=edit_list_mode
                                                     on:click=move |_| {
                                                         edit_list_mode
                                                             .update(|u| {

@@ -112,3 +112,4 @@ pub(crate) fn ItemStats(item_id: ItemId) -> impl IntoView {
         })
         .into_any()
 }
+

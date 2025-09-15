@@ -33,9 +33,9 @@ pub fn CheapestPrice(item_id: ItemId, #[prop(optional)] show_hq: Option<bool>) -
                                         };
                                         data.map(|(label, listing)| {
                                             view! {
-                                                <div class="flex flex-row">
+                                                <div class="flex flex-row items-center gap-1.5">
                                                     {label} <Gil amount=listing.price />
-                                                    <span style="padding-right: 5px"></span> <span>
+                                                    <span>
                                                         <WorldName id=AnySelector::World(listing.world_id) />
                                                     </span>
                                                 </div>

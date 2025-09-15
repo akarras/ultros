@@ -18,3 +18,4 @@ pub fn WasmLoadingIndicator() -> impl IntoView {
         }
     }
 }
+

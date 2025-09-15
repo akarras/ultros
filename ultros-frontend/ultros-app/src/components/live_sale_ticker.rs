@@ -39,6 +39,21 @@ pub fn LiveSaleTicker() -> impl IntoView {
     let sales = RwSignal::<VecDeque<SaleView>>::new(VecDeque::new());
     let (homeworld, _) = use_home_world();
     let retrigger = RwSignal::new(false);
+    // auto-trigger initial load and refresh on homeworld changes
+    Effect::new({
+        let sales = sales;
+        let set_done_loading = set_done_loading;
+        let retrigger = retrigger;
+        let homeworld = homeworld;
+        move |_| {
+            let hw = homeworld();
+            if hw.is_some() {
+                sales.update(|s| s.clear());
+                set_done_loading(false);
+                retrigger.set(true);
+            }
+        }
+    });
     Effect::new(move |_| {
         #[cfg(not(feature = "ssr"))]
         let hw_1 = homeworld();
@@ -88,12 +103,11 @@ pub fn LiveSaleTicker() -> impl IntoView {
     });
 
     view! {
-        <div class="p-6 rounded-xl bg-gradient-to-br from-brand-950/10 to-black/20
-        border border-white/10 ">
+        <div class="p-6 rounded-xl panel">
             // No homeworld set warning
             <div class="space-y-4" class:hidden=move || homeworld.with(|w| w.is_some())>
-                <h3 class="text-xl font-bold text-brand-300">"No Homeworld Set"</h3>
-                <div class="text-gray-300">
+                <h3 class="text-xl font-bold text-[color:var(--color-text)]">"No Homeworld Set"</h3>
+                <div class="text-[color:var(--color-text-muted)]">
                     "No homeworld is currently set. Go to "
                     <A
                         href="/settings"
@@ -107,14 +121,14 @@ pub fn LiveSaleTicker() -> impl IntoView {
             // Sales ticker content
             <div class="space-y-4" class:hidden=move || homeworld.with(|w| w.is_none())>
                 <div class="flex items-center justify-between">
-                    <h3 class="text-xl font-bold text-brand-300">
+                    <h3 class="text-xl font-bold text-[color:var(--color-text)]">
                         "Recent Sales on "
-                        <span class="text-gray-200">
+                        <span class="text-[color:var(--color-text)]">
                             {move || homeworld().map(|world| world.name).unwrap_or_default()}
                         </span>
                     </h3>
                     <button
-                        class="text-sm text-gray-400 hover:text-brand-300 transition-colors
+                        class="text-sm text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] transition-colors
                         flex items-center gap-2"
                         on:click=move |_| {
                             sales.update(|s| s.clear());
@@ -128,7 +142,7 @@ pub fn LiveSaleTicker() -> impl IntoView {
                 </div>
 
                 <div class="space-y-2 max-h-[400px] overflow-y-auto overflow-x-hidden
-                scrollbar-thin scrollbar-thumb-brand-500/30 scrollbar-track-transparent">
+                scrollbar-thin">
                     <Show
                         when=done_loading
                         fallback=move || {
@@ -147,10 +161,7 @@ pub fn LiveSaleTicker() -> impl IntoView {
                                     sale.item_id,
                                 )
                             }>
-                                <div class="flex items-center gap-4 p-3 rounded-lg
-                                bg-brand-950/20 border border-white/5
-                                hover:bg-brand-900/25 hover:border-white/10
-                                transition-all duration-200 group">
+                                <div class="card p-3 transition-all duration-200 group">
                                     <div class="flex items-center gap-4 w-full transform transition-transform duration-200 group-hover:translate-x-1">
                                         <ItemIcon item_id=sale.item_id icon_size=IconSize::Medium />
 
@@ -161,13 +172,13 @@ pub fn LiveSaleTicker() -> impl IntoView {
                                                     .hq
                                                     .then(|| {
                                                         view! {
-                                                            <span class="px-1.5 py-0.5 rounded text-xs bg-brand-500/20 text-brand-200">
+                                                            <span class="px-1.5 py-0.5 rounded text-xs bg-[color:color-mix(in_srgb,var(--brand-ring)_18%,transparent)] text-[color:var(--brand-fg)]">
                                                                 "HQ"
                                                             </span>
                                                         }
                                                     })}
                                             </div>
-                                            <div class="flex items-center gap-4 text-sm text-gray-400">
+                                            <div class="flex items-center gap-4 text-sm text-[color:var(--color-text-muted)]">
                                                 <Gil amount=sale.price />
                                                 <RelativeToNow timestamp=sale.sold_date />
                                             </div>

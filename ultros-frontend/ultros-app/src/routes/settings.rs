@@ -27,9 +27,9 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
 
     view! {
         <button
-            class="px-4 py-2 rounded-lg bg-violet-900/30 hover:bg-violet-800/40
-            border border-white/10 hover:border-violet-300/30
-            transition-all duration-300 text-gray-200 hover:text-violet-300
+            class="px-4 py-2 rounded-lg bg-brand-900/30 hover:bg-brand-800/40
+            border border-white/10 hover:border-brand-300/30
+            transition-all duration-300 text-gray-200 hover:text-brand-300
             flex items-center gap-2"
             on:click=move |_| set_is_open(!is_open())
         >
@@ -42,7 +42,7 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
                 .value().get()
                 .map(|result| {
                     view! {
-                        <div class="mt-4 p-4 rounded-xl bg-violet-900/20 border border-white/10 ">
+                        <div class="mt-4 p-4 rounded-xl bg-brand-900/20 border border-white/10 ">
                             {match result {
                                 Ok((_id, value)) => {
                                     Either::Left(
@@ -74,14 +74,14 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
             is_open()
                 .then(|| {
                     view! {
-                        <div class="mt-4 p-6 rounded-xl bg-violet-900/20 border border-white/10 ">
-                            <h3 class="text-xl font-bold text-violet-300 mb-4">
+                        <div class="mt-4 p-6 rounded-xl bg-brand-900/20 border border-white/10 ">
+                            <h3 class="text-xl font-bold text-brand-300 mb-4">
                                 "Search Character"
                             </h3>
                             <div class="flex gap-2">
                                 <input
-                                    class="flex-grow p-2 rounded-lg bg-violet-950/50 border border-white/10
-                                    focus:outline-none focus:border-violet-300/30 transition-colors"
+                                    class="flex-grow p-2 rounded-lg bg-brand-950/50 border border-white/10
+                                    focus:outline-none focus:border-brand-300/30 transition-colors"
                                     placeholder="Enter character name..."
                                     prop:value=character_search
                                     on:input=move |input| set_character_search(
@@ -89,9 +89,9 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
                                     )
                                 />
                                 <button
-                                    class="px-4 py-2 rounded-lg bg-violet-900/30 hover:bg-violet-800/40
-                                    border border-white/10 hover:border-violet-300/30
-                                    transition-all duration-300 text-gray-200 hover:text-violet-300"
+                                    class="px-4 py-2 rounded-lg bg-brand-900/30 hover:bg-brand-800/40
+                                    border border-white/10 hover:border-brand-300/30
+                                    transition-all duration-300 text-gray-200 hover:text-brand-300"
                                     on:click=move |_| {
                                         let _ = search_action.dispatch(character_search());
                                     }
@@ -109,7 +109,7 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
                                             Either::Left(
                                                 view! {
                                                     <div class="space-y-2">
-                                                        <h4 class="text-lg font-medium text-violet-300">
+                                                        <h4 class="text-lg font-medium text-brand-300">
                                                             "Search Results"
                                                         </h4>
                                                         {if characters.is_empty() {
@@ -129,9 +129,9 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
                                                                             .map(|character| {
                                                                                 view! {
                                                                                     <div class="flex items-center justify-between p-2 rounded-lg
-                                                                                    bg-violet-950/30 border border-white/5">
+                                                                                    bg-brand-950/30 border border-white/5">
                                                                                         <div class="flex items-center gap-4">
-                                                                                            <span class="text-violet-200">
+                                                                                            <span class="text-brand-200">
                                                                                                 {character.first_name} " " {character.last_name}
                                                                                             </span>
                                                                                             <span class="text-gray-400">
@@ -139,9 +139,9 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
                                                                                             </span>
                                                                                         </div>
                                                                                         <button
-                                                                                            class="px-3 py-1 rounded-lg bg-violet-800/30 hover:bg-violet-700/40
-                                                                                            border border-white/10 hover:border-violet-300/30
-                                                                                            transition-all duration-300 text-gray-200 hover:text-violet-300"
+                                                                                            class="px-3 py-1 rounded-lg bg-brand-800/30 hover:bg-brand-700/40
+                                                                                            border border-white/10 hover:border-brand-300/30
+                                                                                            transition-all duration-300 text-gray-200 hover:text-brand-300"
                                                                                             on:click=move |_| {
                                                                                                 set_is_open(false);
                                                                                                 claim_character.dispatch(character.id);
@@ -187,12 +187,12 @@ fn HomeWorldPicker() -> impl IntoView {
     let set_price_region = selector_to_setter_signal(set_price_region);
 
     view! {
-        <div class="p-6 rounded-xl bg-gradient-to-br from-violet-950/10 to-black/20
+        <div class="p-6 rounded-xl bg-gradient-to-br from-brand-950/10 to-black/20
         border border-white/10 ">
-            <h3 class="text-2xl font-bold text-violet-300 mb-4">"World Settings"</h3>
+            <h3 class="text-2xl font-bold text-brand-300 mb-4">"World Settings"</h3>
             <div class="grid md:grid-cols-3 gap-6">
                 <div class="space-y-2">
-                    <label class="text-lg text-violet-200">"Home World"</label>
+                    <label class="text-lg text-brand-200">"Home World"</label>
                     <WorldOnlyPicker current_world=homeworld set_current_world=set_homeworld />
                     <p class="text-sm text-gray-400">
                         "The home world will default for the analyzer and several other pages"
@@ -200,13 +200,13 @@ fn HomeWorldPicker() -> impl IntoView {
                 </div>
 
                 <div class="space-y-2">
-                    <label class="text-lg text-violet-200">"Default Price Zone"</label>
+                    <label class="text-lg text-brand-200">"Default Price Zone"</label>
                     <WorldPicker current_world=price_region set_current_world=set_price_region />
                     <p class="text-sm text-gray-400">
                         "What world/region to show prices by default for within "
                         <a
                             href="/items"
-                            class="text-violet-300 hover:text-violet-200 transition-colors"
+                            class="text-brand-300 hover:text-brand-200 transition-colors"
                         >
                             "items"
                         </a> " pages"
@@ -224,9 +224,9 @@ fn AdChoice() -> impl IntoView {
     let (cookie, set_cookie) = ad_choice.use_cookie_typed::<_, bool>("HIDE_ADS");
 
     view! {
-        <div class="p-6 rounded-xl bg-gradient-to-br from-violet-950/10 to-black/20
+        <div class="p-6 rounded-xl bg-gradient-to-br from-brand-950/10 to-black/20
         border border-white/10 ">
-            <h3 class="text-2xl font-bold text-violet-300 mb-4">"Ad Settings"</h3>
+            <h3 class="text-2xl font-bold text-brand-300 mb-4">"Ad Settings"</h3>
             <div class="grid md:grid-cols-3 gap-6">
                 <div class="col-span-2 space-y-2">
                     <p class="text-gray-300">
@@ -306,14 +306,16 @@ fn DeleteUser() -> impl IntoView {
 
 #[component]
 pub fn Settings() -> impl IntoView {
+    use crate::components::theme_picker::ThemePicker;
     view! {
         <div class="main-content p-6">
             <MetaTitle title="Ultros settings page" />
             <MetaDescription text="Manage settings such as homeworld or other for Ultros" />
 
             <div class="container mx-auto max-w-7xl space-y-6">
-                <h1 class="text-3xl font-bold text-violet-300">"Settings"</h1>
+                <h1 class="text-3xl font-bold text-brand-300">"Settings"</h1>
                 <HomeWorldPicker />
+                <ThemePicker />
                 <AdChoice />
             </div>
         </div>
@@ -344,17 +346,17 @@ pub fn Profile() -> impl IntoView {
         <div class="main-content p-6">
             <div class="container mx-auto max-w-7xl space-y-6">
                 <div class="flex items-center justify-between">
-                    <h1 class="text-3xl font-bold text-violet-300">"Profile Settings"</h1>
+                    <h1 class="text-3xl font-bold text-brand-300">"Profile Settings"</h1>
                 </div>
 
                 <HomeWorldPicker />
                 <AdChoice />
 
                 // Characters Section
-                                <div class="p-6 rounded-xl bg-gradient-to-br from-violet-950/10 to-black/20
+                                <div class="p-6 rounded-xl bg-gradient-to-br from-brand-950/10 to-black/20
                                 border border-white/10 ">
                     <div class="flex items-center justify-between mb-6">
-                        <h2 class="text-2xl font-bold text-violet-300">"Characters"</h2>
+                        <h2 class="text-2xl font-bold text-brand-300">"Characters"</h2>
                         <AddCharacterMenu claim_character />
                     </div>
 
@@ -375,7 +377,7 @@ pub fn Profile() -> impl IntoView {
                                         EitherOf3::A(
                                             view! {
                                                 <div class="mb-6 space-y-4">
-                                                    <h3 class="text-xl font-semibold text-violet-200">
+                                                    <h3 class="text-xl font-semibold text-brand-200">
                                                         "Pending Verifications"
                                                     </h3>
                                                     <div class="space-y-3">
@@ -384,7 +386,7 @@ pub fn Profile() -> impl IntoView {
                                                             .map(|_verification| {
                                                                 view! {
                                                                     // ... rest of the verification view ...
-                                                                    <div class="p-4 rounded-lg bg-violet-950/30 border border-white/5 space-y-2"></div>
+                                                                    <div class="p-4 rounded-lg bg-brand-950/30 border border-white/5 space-y-2"></div>
                                                                 }
                                                             })
                                                             .collect::<Vec<_>>()
@@ -438,10 +440,10 @@ pub fn Profile() -> impl IntoView {
                                                         .map(|character| {
                                                             view! {
                                                                 <div class="flex items-center justify-between p-4
-                                                                rounded-lg bg-violet-950/30 border border-white/5
+                                                                rounded-lg bg-brand-950/30 border border-white/5
                                                                 group hover:border-white/10 transition-colors">
                                                                     <div class="flex items-center gap-4">
-                                                                        <span class="text-violet-200">
+                                                                        <span class="text-brand-200">
                                                                             {character.first_name} " " {character.last_name}
                                                                         </span>
                                                                         <span class="text-gray-400">

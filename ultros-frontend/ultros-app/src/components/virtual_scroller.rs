@@ -1,6 +1,8 @@
 use leptos::prelude::*;
 use std::hash::Hash;
-use web_sys::HtmlDivElement;
+use web_sys::wasm_bindgen::closure::Closure;
+use web_sys::wasm_bindgen::JsCast;
+use web_sys::{window, HtmlDivElement};
 
 struct Fenwick {
     n: usize,
@@ -59,18 +61,22 @@ pub fn VirtualScroller<T, D, V, KF, K>(
     #[prop(optional, into)] header: Option<AnyView>,
     #[prop(optional)] header_height: f64,
     #[prop(optional)] overscan: u32,
+    #[prop(optional)] variable_height: bool,
 ) -> impl IntoView
 where
     D: Fn(T) -> V + 'static + Clone + Send,
     V: IntoView + 'static,
     KF: Fn(&T) -> K + 'static + Clone + Send,
     K: Eq + Hash + 'static,
-    T: 'static + Clone + Send + Sync,
+    T: 'static + Clone + Send + Sync + PartialEq,
 {
     let render_ahead: u32 = if overscan == 0 { 10 } else { overscan };
     let header_h: f64 = header_height.max(0.0);
     let header_opt: Option<AnyView> = header;
     let (scroll_offset, set_scroll_offset) = signal(0);
+    // rAF-based scroll coalescing to reduce state churn under heavy scroll
+    let last_scroll = RwSignal::new(0);
+    let raf_pending = RwSignal::new(false);
     // hybrid variable-height state: per-index delta from estimated row_height and prefix sums
     let children_len = Memo::new(move |_| each.with(|children| children.len()));
     let (height_deltas, set_height_deltas) = signal(Vec::<f64>::new());
@@ -114,7 +120,7 @@ where
             }
         }
         {
-            let lo_u32 = (lo.max(0) as u32);
+            let lo_u32 = lo.max(0) as u32;
             lo_u32.saturating_sub(render_ahead / 2)
         }
     });
@@ -152,37 +158,43 @@ where
         <div
             on:scroll=move |scroll| {
                 let div = event_target::<HtmlDivElement>(&scroll);
-                set_scroll_offset(div.scroll_top());
+                last_scroll.set(div.scroll_top());
+                if !raf_pending.get_untracked() {
+                    raf_pending.set(true);
+                    let last_scroll = last_scroll.clone();
+                    let set_scroll_offset = set_scroll_offset.clone();
+                    let raf_pending = raf_pending.clone();
+                    if let Some(w) = window() {
+                        let cb = Closure::wrap(Box::new(move |_: f64| {
+                            set_scroll_offset(last_scroll.get_untracked());
+                            raf_pending.set(false);
+                        }) as Box<dyn FnMut(f64)>);
+                        let _ = w.request_animation_frame(cb.as_ref().unchecked_ref());
+                        cb.forget();
+                    } else {
+                        // non-browser or fallback
+                        set_scroll_offset(last_scroll.get_untracked());
+                        raf_pending.set(false);
+                    }
+                }
             }
 
-            style=format!(
-                r#"
-        height: {}px;
-        overflow-y: auto;
-        overflow-x: visible;
-        width: 100%;
-      "#,
-                viewport_height.ceil() as u32,
-            )
+            class="overflow-y-auto overflow-x-visible w-full will-change-scroll contain-paint forced-layer"
+            style=format!("height: {}px;", viewport_height.ceil() as u32)
         >
-            {header_opt.map(|h| view! { <div style="position: sticky; top: 0; z-index: 10;">{h}</div> })}
-            <div style=move || {
-                format!(
-                    r#"
-          height: {}px;
-          overflow-y: hidden;
-          overflow-x: visible;
-          will-change: transform;
-          position: relative;
-          width: 100%;
-        "#,
-                    {
-                        let base = each.with(|children| children.len() as f64) * row_height;
-                        let delta_total = fenwick.with(|f| f.sum(children_len()));
-                        (base + delta_total).ceil() as u32
-                    },
-                )
-            }>
+            {header_opt.map(|h| view! { <div class="sticky top-0 z-10 content-visible contain-content">{h}</div> })}
+            <div
+                class="overflow-y-hidden overflow-x-visible will-change-[transform] relative w-full contain-layout contain-paint content-visible forced-layer"
+                style=move || {
+                    format!(
+                        r#"height: {}px;"#,
+                        {
+                            let base = each.with(|children| children.len() as f64) * row_height;
+                            let delta_total = fenwick.with(|f| f.sum(children_len()));
+                            (base + delta_total).ceil() as u32
+                        },
+                    )
+                }>
                 // offset for visible nodes
                 <div style=move || {
                     format!(
@@ -193,7 +205,7 @@ where
                             let start = child_start() as usize;
                             let delta_before = fenwick.with(|f| f.sum(start));
                             let val = child_start() as f64 * row_height + delta_before;
-                            (val.max(0.0).round() as i32)
+                            val.max(0.0).round() as i32
                         },
                     )
                 }>
@@ -205,23 +217,31 @@ where
                             let set_height_deltas = set_height_deltas.clone();
                             let height_deltas = height_deltas.clone();
                             let fenwick = fenwick.clone();
-                            Effect::new(move |_| {
-                                if let Some(el) = row.get() {
-                                    let measured = el.offset_height() as f64;
-                                    let delta = measured - row_height;
-                                    let mut v = height_deltas.get_untracked();
-                                    if idx < v.len() {
-                                        let old = v[idx];
-                                        if (old - delta).abs() > 0.5 {
-                                            v[idx] = delta;
-                                            set_height_deltas.set(v.clone());
-                                            // O(log n) update instead of rebuilding prefix sums
-                                            fenwick.update(|f| f.add(idx, delta - old));
+                            if variable_height {
+                                Effect::new(move |_| {
+                                    if let Some(el) = row.get() {
+                                        let measured = el.offset_height() as f64;
+                                        let delta = measured - row_height;
+                                        let mut v = height_deltas.get_untracked();
+                                        if idx < v.len() {
+                                            let old = v[idx];
+                                            if (old - delta).abs() > 0.5 {
+                                                v[idx] = delta;
+                                                set_height_deltas.set(v.clone());
+                                                // O(log n) update instead of rebuilding prefix sums
+                                                fenwick.update(|f| f.add(idx, delta - old));
+                                            }
                                         }
                                     }
+                                });
+                            }
+                            view! { <div node_ref=row class=move || {
+                                if variable_height {
+                                    "content-auto contain-layout contain-paint will-change-transform cis-40".to_string()
+                                } else {
+                                    "content-visible contain-layout contain-paint will-change-transform cis-40".to_string()
                                 }
-                            });
-                            view! { <div node_ref=row>{view(child)}</div> }
+                            }>{view(child)}</div> }
                         }
                     />
                 </div>

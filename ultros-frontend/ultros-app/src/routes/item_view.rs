@@ -37,9 +37,9 @@ fn WorldButton(
         }
     });
     let bg_color = match world {
-        OwnedResult::Region(_) => "bg-violet-950/80 hover:bg-violet-800/80",
-        OwnedResult::Datacenter(_) => "bg-violet-900/80 hover:bg-violet-800/80",
-        OwnedResult::World(_) => "bg-violet-800/80 hover:bg-violet-700/80",
+        OwnedResult::Region(_) => "bg-brand-600/15 hover:bg-brand-600/25",
+        OwnedResult::Datacenter(_) => "bg-brand-600/15 hover:bg-brand-600/25",
+        OwnedResult::World(_) => "bg-brand-600/15 hover:bg-brand-600/25",
     };
     let is_selected = move || current_world.with(|w| w == world_3.as_str());
     view! {
@@ -47,9 +47,9 @@ fn WorldButton(
             <A
                 attr:class=move || {
                     [
-                        "rounded-md text-sm px-4 py-2 text-white/90 mx-1 flex items-center gap-2 transition-all duration-200",
+                        "rounded-md text-sm px-4 py-2 text-[color:var(--color-text)] mx-1 flex items-center gap-2 transition-all duration-200",
                         bg_color,
-                        "hover:scale-105 hover:shadow-lg shadow-purple-900/20",
+                        "hover:scale-105 hover:shadow-lg shadow-brand-900/20",
                         if is_selected() { "font-bold" } else { "" },
                     ]
                         .join(" ")
@@ -61,7 +61,7 @@ fn WorldButton(
                         .get()
                         .then(|| {
                             view! {
-                                <Icon icon=icondata::AiHomeFilled attr:class="text-purple-300" />
+                                <Icon icon=icondata::AiHomeFilled attr:class="text-brand-200" />
                                 <div class="w-1"></div>
                             }
                         })
@@ -90,7 +90,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
     let (home_world, _) = use_home_world();
 
     view! {
-        <div class="sticky top-0 z-10 bg-gradient-to-r from-slate-950 to-purple-950/90  border-b border-purple-800/30">
+        <div class="sticky top-0 z-10 panel">
             <div class="container mx-auto px-4">
                 <div class="flex flex-wrap gap-2 py-3">
                     {move || {
@@ -276,23 +276,47 @@ pub fn ChartWrapper(
     view! {
         <Transition fallback=move || {
             view! {
-                <div class="animate-pulse bg-black/40 rounded-xl h-[35em] border border-purple-800/20">
+                <div class="animate-pulse panel h-[35em] text-[color:var(--color-text)]">
                     <div class="h-full w-full flex items-center justify-center">
-                        <div class="w-16 h-16 border-4 border-purple-500 border-t-transparent rounded-full animate-spin" />
+                        <div class="w-16 h-16 border-4 border-brand-400/40 border-t-transparent rounded-full animate-spin" />
                     </div>
                 </div>
             }
         }>
             {move || {
-                let sales = Memo::new(move |_| {
-                    listing_resource
-                        .with(|l| l.as_ref().and_then(|l| l.as_ref().map(|l| l.sales.clone()).ok()))
-                        .unwrap_or_default()
-                });
-                view! {
-                    <div class="bg-black/40 rounded-xl p-6 border border-purple-800/20">
-                        <PriceHistoryChart sales=sales />
-                    </div>
+                let error = listing_resource
+                    .with(|l| l.as_ref().and_then(|r| r.as_ref().err()).map(|e| e.to_string()));
+                if let Some(msg) = error {
+                    view! {
+                        <div role="alert" class="bg-red-900/30 text-red-200 border border-red-700/40 rounded-xl p-4">
+                            <strong class="font-semibold">"Error:"</strong>
+                            <span class="ml-2">{msg}</span>
+                            <div class="text-sm text-red-300/80 mt-1">"Unable to load recent sales. Please try refreshing."</div>
+                        </div>
+                    }.into_any()
+                } else {
+                    let sales = Memo::new(move |_| {
+                        listing_resource
+                            .with(|l| l.as_ref().and_then(|l| l.as_ref().map(|l| l.sales.clone()).ok()))
+                            .unwrap_or_default()
+                    });
+                    view! {
+                        <div class="space-y-4">
+                            <div class="panel p-6 text-[color:var(--color-text)]">
+                                <PriceHistoryChart sales=sales />
+                            </div>
+                            {move || {
+                                let no_listings = listing_resource.with(|l| {
+                                    l.as_ref().and_then(|r| r.as_ref().ok()).map(|l| l.listings.is_empty()).unwrap_or(false)
+                                });
+                                no_listings.then(|| view! {
+                                    <div role="status" class="bg-amber-900/30 text-amber-200 border border-amber-700/40 rounded-xl p-4">
+                                        "No active listings found for this world. Try checking other worlds or come back later."
+                                    </div>
+                                })
+                            }}
+                        </div>
+                    }.into_any()
                 }
             }}
         </Transition>
@@ -329,10 +353,10 @@ fn HighQualityTable(
                     });
                     view! {
                         <div
-                            class="bg-black/40 rounded-xl p-6  border border-purple-800/20"
+                            class="panel p-6"
                             class:hidden=move || hq_listings.with(|l| l.is_empty())
                         >
-                            <h2 class="text-xl font-bold text-center mb-4 text-purple-200">
+                            <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
                                 "High Quality Listings"
                             </h2>
                             <ListingsTable listings=hq_listings />
@@ -375,10 +399,10 @@ fn LowQualityTable(
                     });
                     view! {
                         <div
-                            class="bg-black/40 rounded-xl p-6  border border-purple-800/20"
+                            class="panel p-6"
                             class:hidden=move || lq_listings.with(|l| l.is_empty())
                         >
-                            <h2 class="text-xl font-bold text-center mb-4 text-purple-200">
+                            <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
                                 "Low Quality Listings"
                             </h2>
                             <ListingsTable listings=lq_listings />
@@ -410,14 +434,14 @@ fn SalesDetails(listing_resource: Resource<Result<CurrentlyShownItem, AppError>>
 
                     view! {
                         <div class="space-y-6">
-                            <div class="bg-black/40 rounded-xl p-6  border border-purple-800/20">
-                                <h2 class="text-xl font-bold text-center mb-4 text-purple-200">
+                            <div class="panel p-6">
+                                <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
                                     "Sale History"
                                 </h2>
                                 <SaleHistoryTable sales=sales.into() />
                             </div>
 
-                            <div class="bg-black/40 rounded-xl p-6  border border-purple-800/20">
+                            <div class="panel p-6">
                                 <SalesInsights sales=sales.into() />
                             </div>
                         </div>
@@ -541,26 +565,26 @@ pub fn ItemView() -> impl IntoView {
             content=move || format!("https://ultros.app/static/itemicon/{}?size=Large", item_id())
         />
         <Link rel="canonical" prop:href=move || format!("https://ultros.app/item/{}", item_id()) />
-        <div class="min-h-screen bg-gradient-to-br from-slate-950 to-purple-950/30">
+        <div class="min-h-screen">
             <div class="container mx-auto px-4 py-6">
-                <div class="flex flex-col md:flex-row items-start gap-4 p-4  bg-black/20 rounded-lg">
+                <div class="flex flex-col md:flex-row items-start gap-4 p-4 panel">
                     <div class="flex items-center gap-4">
                         <ItemIcon item_id icon_size=IconSize::Large />
                         <div class="flex flex-col">
-                            <h1 class="text-3xl font-bold text-white/90 flex items-center gap-2">
+                            <h1 class="text-3xl font-bold text-[color:var(--color-text)] flex items-center gap-2">
                                 {item_name}
                                 <Clipboard clipboard_text=Signal::derive(move || {
                                     item_name().to_string()
                                 }) />
                             </h1>
-                            <div class="text-purple-200/80 text-lg">
+                            <div class="text-brand-300 text-lg">
                                 {move || {
                                     item_category()
                                         .and_then(|c| item_search_category().map(|s| (c, s)))
                                         .map(|(c, s)| {
                                             view! {
                                                 <a
-                                                    class="text-fuchsia-300 hover:text-fuchsia-400 transition-colors"
+                                                    class="text-brand-300 hover:text-brand-200 transition-colors"
                                                     href=["/items/category/", &s.name.replace("/", "%2F")]
                                                         .concat()
                                                 >
@@ -576,41 +600,35 @@ pub fn ItemView() -> impl IntoView {
                     <div class="md:ml-auto flex flex-wrap gap-2 items-center">
                         <AddToList item_id />
                         <a
-                            class="inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium bg-violet-900/40 hover:bg-violet-800/50 border border-violet-700/50 text-violet-200 shadow-sm hover:shadow-md transition-colors"
+                            class="btn-primary"
                             target="_blank"
                             rel="noopener noreferrer"
+                            aria-label="Open Universalis market page in a new tab"
                             href=move || format!("https://universalis.app/market/{}", item_id())
                         >
                             "Universalis"
-                            <svg class="w-4 h-4 opacity-80" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 15l6-6M13 9h2a2 2 0 012 2v6a2 2 0 01-2 2H9a2 2 0 01-2-2v-2" />
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 9V5h-4" />
-                            </svg>
                         </a>
                         <a
-                            class="inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium bg-violet-900/40 hover:bg-violet-800/50 border border-violet-700/50 text-violet-200 shadow-sm hover:shadow-md transition-colors"
+                            class="btn-primary"
                             target="_blank"
                             rel="noopener noreferrer"
+                            aria-label="Open Garlandtools item page in a new tab"
                             href=move || format!("https://garlandtools.org/db/#item/{}", item_id())
                         >
                             "Garlandtools"
-                            <svg class="w-4 h-4 opacity-80" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 15l6-6M13 9h2a2 2 0 012 2v6a2 2 0 01-2 2H9a2 2 0 01-2-2v-2" />
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 9V5h-4" />
-                            </svg>
                         </a>
                     </div>
                 </div>
 
-                <div class="mt-4 space-y-3 text-gray-200/90">
+                <div class="mt-4 space-y-3 text-[color:var(--color-text)]/90">
                     <div class="flex items-center gap-2">
-                        <span class="text-purple-300">Item Level:</span>
-                        <span class="bg-purple-900/30 px-2 py-1 rounded">
+                        <span class="text-brand-300">Item Level:</span>
+                        <span class="bg-brand-900/30 px-2 py-1 rounded">
                             {move || item().map(|item| item.level_item.0).unwrap_or_default()}
                         </span>
                     </div>
                     <div
-                        class="bg-black/20 p-4 rounded-lg "
+                        class="panel p-4 "
                         class:hidden=move || { item_description().is_empty() }
                     >
                         {move || view! { <UIText text=item_description().to_string() /> }}
@@ -623,7 +641,7 @@ pub fn ItemView() -> impl IntoView {
 
             <div class="main-content">
                 <ListingsContent item_id world />
-                <div class="mt-6 bg-black/40 rounded-xl p-6 border border-purple-800/20">
+                <div class="mt-6 panel p-3">
                     <RelatedItems item_id=Signal::from(item_id) />
                 </div>
             </div>

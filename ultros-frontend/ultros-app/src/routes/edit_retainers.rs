@@ -57,7 +57,7 @@ pub fn EditRetainers() -> impl IntoView {
     };
 
     view! {
-        <div style="width: 500px;" class="retainer-list flex-column">
+        <div class="retainer-list flex-column w-full max-w-lg">
             <MetaTitle title="Edit Retainers" />
             <span class="content-title">"Retainers"</span>
             <Transition fallback=move || {
@@ -144,8 +144,8 @@ pub fn EditRetainers() -> impl IntoView {
                                                                     let world_id = retainer.world_id;
                                                                     view! {
                                                                         <div class="flex-row">
-                                                                            <div style="width: 300px" class="flex">
-                                                                                <span style="width: 200px">{retainer_name}</span>
+                                                                            <div class="flex w-full md:w-[300px]">
+                                                                                <span class="w-full md:w-[200px] truncate">{retainer_name}</span>
                                                                                 <span>
                                                                                     <WorldName id=AnySelector::World(world_id) />
                                                                                 </span>
@@ -218,8 +218,8 @@ pub fn EditRetainers() -> impl IntoView {
                                                             let world = AnySelector::World(retainer.world_id);
                                                             view! {
                                                                 <div class="card flex-row">
-                                                                    <div style="width: 300px" class="flex">
-                                                                        <span style="width: 200px;">{retainer.name}</span>
+                                                                    <div class="flex w-full md:w-[300px]">
+                                                                        <span class="w-full md:w-[200px] truncate">{retainer.name}</span>
                                                                         <WorldName id=world />
                                                                     </div>
                                                                     <button

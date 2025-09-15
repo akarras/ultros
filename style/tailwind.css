@@ -8,7 +8,7 @@
         --secondary-color: var(--color-brand-400);
         --background-color: var(--color-background);
         --surface-color: var(--color-background-panel);
-        --text-color: #fff;
+        --text-color: var(--color-text);
 
         --transition-quick: 0.25s;
         --transition-medium: 0.5s;
@@ -16,6 +16,24 @@
         --spacing-sm: 5px;
         --spacing-md: 10px;
         --spacing-lg: 20px;
+
+        /* Theme tokens: neutrals, text, outlines, brand semantics, charts */
+        --color-text: #ffffff;
+        --color-text-muted: #bfbfd4;
+        --color-outline: rgba(255, 255, 255, 0.1);
+        --color-outline-strong: rgba(255, 255, 255, 0.2);
+        --brand-bg: var(--color-brand-900);
+        --brand-fg: var(--color-brand-100);
+        --brand-ring: var(--color-brand-400);
+
+        --chart-line: var(--color-brand-300);
+        --chart-fill: color-mix(
+            in srgb,
+            var(--color-brand-300) 20%,
+            transparent
+        );
+        --chart-grid: rgba(255, 255, 255, 0.06);
+        --decor-spot: rgba(255, 255, 255, 0.06);
     }
 
     /* Fonts (kept as-is for wide support) */
@@ -95,6 +113,131 @@
     }
 }
 
+/* Light mode overrides */
+[data-theme="light"] {
+    /* Surfaces */
+    --color-background: #f8fafc; /* near-white */
+    --color-background-muted: #eef2f7; /* subtle gray */
+    --color-background-elevated: #ffffff; /* cards */
+    --color-background-panel: #ffffff;
+
+    /* Text */
+    --color-text: #0b0b0c;
+    --color-text-muted: #475569;
+
+    /* Outlines and grid */
+    --color-outline: rgba(0, 0, 0, 0.12);
+    --color-outline-strong: rgba(0, 0, 0, 0.2);
+    --chart-grid: rgba(0, 0, 0, 0.06);
+
+    /* Flip brand semantics for light */
+    --brand-bg: var(--color-brand-200);
+    --brand-fg: var(--color-brand-900);
+    --brand-ring: var(--color-brand-600);
+
+    /* Decorative spot for gradients in light */
+    --decor-spot: rgba(0, 0, 0, 0.06);
+
+    /* Flip brand scale (violet) for better contrast on light backgrounds) */
+    --color-brand-50: #2e1065;
+    --color-brand-100: #4c1d95;
+    --color-brand-200: #5b21b6;
+    --color-brand-300: #6d28d9;
+    --color-brand-400: #7c3aed;
+    --color-brand-500: #8b5cf6;
+    --color-brand-600: #a78bfa;
+    --color-brand-700: #c4b5fd;
+    --color-brand-800: #ddd6fe;
+    --color-brand-900: #ede9fe;
+    --color-brand-950: #f5f3ff;
+}
+
+/* Runtime-swappable brand palettes */
+:root[data-palette="violet"],
+[data-theme="light"][data-palette="violet"] {
+    --color-brand-50: #f5f3ff;
+    --color-brand-100: #ede9fe;
+    --color-brand-200: #ddd6fe;
+    --color-brand-300: #c4b5fd;
+    --color-brand-400: #a78bfa;
+    --color-brand-500: #8b5cf6;
+    --color-brand-600: #7c3aed;
+    --color-brand-700: #6d28d9;
+    --color-brand-800: #5b21b6;
+    --color-brand-900: #4c1d95;
+    --color-brand-950: #2e1065;
+}
+:root[data-palette="teal"],
+[data-theme="light"][data-palette="teal"] {
+    --color-brand-50: #f0fdfa;
+    --color-brand-100: #ccfbf1;
+    --color-brand-200: #99f6e4;
+    --color-brand-300: #5eead4;
+    --color-brand-400: #2dd4bf;
+    --color-brand-500: #14b8a6;
+    --color-brand-600: #0d9488;
+    --color-brand-700: #0f766e;
+    --color-brand-800: #115e59;
+    --color-brand-900: #134e4a;
+    --color-brand-950: #042f2e;
+}
+:root[data-palette="emerald"],
+[data-theme="light"][data-palette="emerald"] {
+    --color-brand-50: #ecfdf5;
+    --color-brand-100: #d1fae5;
+    --color-brand-200: #a7f3d0;
+    --color-brand-300: #6ee7b7;
+    --color-brand-400: #34d399;
+    --color-brand-500: #10b981;
+    --color-brand-600: #059669;
+    --color-brand-700: #047857;
+    --color-brand-800: #065f46;
+    --color-brand-900: #064e3b;
+    --color-brand-950: #022c22;
+}
+:root[data-palette="amber"],
+[data-theme="light"][data-palette="amber"] {
+    --color-brand-50: #fffbeb;
+    --color-brand-100: #fef3c7;
+    --color-brand-200: #fde68a;
+    --color-brand-300: #fcd34d;
+    --color-brand-400: #fbbf24;
+    --color-brand-500: #f59e0b;
+    --color-brand-600: #d97706;
+    --color-brand-700: #b45309;
+    --color-brand-800: #92400e;
+    --color-brand-900: #78350f;
+    --color-brand-950: #451a03;
+}
+:root[data-palette="rose"],
+[data-theme="light"][data-palette="rose"] {
+    --color-brand-50: #fff1f2;
+    --color-brand-100: #ffe4e6;
+    --color-brand-200: #fecdd3;
+    --color-brand-300: #fda4af;
+    --color-brand-400: #fb7185;
+    --color-brand-500: #f43f5e;
+    --color-brand-600: #e11d48;
+    --color-brand-700: #be123c;
+    --color-brand-800: #9f1239;
+    --color-brand-900: #881337;
+    --color-brand-950: #4c0519;
+}
+:root[data-palette="sky"],
+[data-theme="light"][data-palette="sky"] {
+    --color-brand-50: #f0f9ff;
+    --color-brand-100: #e0f2fe;
+    --color-brand-200: #bae6fd;
+    --color-brand-300: #7dd3fc;
+    --color-brand-400: #38bdf8;
+    --color-brand-500: #0ea5e9;
+    --color-brand-600: #0284c7;
+    --color-brand-700: #0369a1;
+    --color-brand-800: #075985;
+    --color-brand-900: #0c4a6e;
+    --color-brand-950: #082f49;
+}
+
 @layer components {
     /* Hero title */
     .hero-title {
@@ -120,9 +263,9 @@
         flex-direction: column;
         font-family: inherit;
         font-size: large;
-        color: #fff;
+        color: var(--color-text);
         background-color: var(--color-background-panel);
-        border: 1px solid var(--color-brand-700);
+        border: 1px solid var(--color-outline);
         border-radius: 4px;
         transition: 0.5s 0s cubic-bezier(0.075, 0.82, 0.165, 1) background-color;
     }
@@ -249,7 +392,7 @@
 
     .main-content td {
         padding: var(--spacing-md);
-        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        border-bottom: 1px solid var(--color-outline);
     }
 
     .content-well {
@@ -257,7 +400,7 @@
         padding: 1rem 3rem;
         border-radius: 1rem;
         background-color: var(--color-background-elevated);
-        border: 1px solid rgba(255, 255, 255, 0.1);
+        border: 1px solid var(--color-outline);
     }
 
     .content-title {
@@ -364,17 +507,17 @@
 
 @theme {
     /* Custom violet scale tuned for dark UI */
-    --color-violet-50: #f6f2ff;
-    --color-violet-100: #ede8ff;
-    --color-violet-200: #d8d0ff;
-    --color-violet-300: #beaefc;
-    --color-violet-400: #a38af7;
-    --color-violet-500: #8b67f0;
-    --color-violet-600: #744ee2;
-    --color-violet-700: #5e3ccd;
-    --color-violet-800: #4930a8;
-    --color-violet-900: #37267f;
-    --color-violet-950: #1a1538;
+    --color-brand-50: #f6f2ff;
+    --color-brand-100: #ede8ff;
+    --color-brand-200: #d8d0ff;
+    --color-brand-300: #beaefc;
+    --color-brand-400: #a38af7;
+    --color-brand-500: #8b67f0;
+    --color-brand-600: #744ee2;
+    --color-brand-700: #5e3ccd;
+    --color-brand-800: #4930a8;
+    --color-brand-900: #37267f;
+    --color-brand-950: #1a1538;
 
     /* Brand alias (single + scale) */
     --color-brand: #8b5cf6;
@@ -398,53 +541,102 @@
 }
 
 .btn {
-    @apply text-gray-200 hover:text-brand-300;
+    color: var(--color-text);
+}
+.btn:hover {
+    color: var(--brand-fg);
 }
 
-a {
-    @apply text-brand-400 hover:text-brand-300 hover:underline;
+a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
+        .btn-ghost
+    ) {
+    @apply hover:underline rounded-md;
+    color: var(--brand-fg);
+    background-color: transparent;
+}
+a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
+        .btn-ghost
+    ):hover {
+    color: color-mix(in srgb, var(--brand-ring) 60%, var(--brand-fg));
+    background-color: color-mix(in srgb, var(--brand-ring) 22%, transparent);
+}
+
+/* Light-mode link tuning for higher contrast */
+[data-theme="light"]
+    a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
+        .btn-ghost
+    ) {
+    color: color-mix(in srgb, var(--brand-ring) 70%, var(--color-text));
+}
+[data-theme="light"]
+    a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
+        .btn-ghost
+    ):hover {
+    color: color-mix(in srgb, var(--brand-ring) 85%, var(--color-text));
+    background-color: color-mix(in srgb, var(--brand-ring) 28%, transparent);
 }
 
 .btn-secondary {
-    @apply p-2 m-1 flex flex-row text-center rounded-2xl
-    backdrop-blur-sm backdrop-brightness-110
-    border border-white/10 hover:border-brand-300/30
-    transition-all duration-300 ease-in-out
-    bg-gradient-to-br from-brand-950/20 via-black/10 to-black/20
-    hover:from-brand-900/30 hover:to-black/20 text-gray-200 items-center
-    hover:transform hover:scale-[1.02] hover:shadow-lg hover:shadow-brand-500/10 justify-center gap-3;
+    @apply p-2 m-1 flex flex-row text-center rounded-2xl transition-all duration-300 ease-in-out justify-center gap-3;
+    color: var(--color-text);
+    background-color: color-mix(
+        in srgb,
+        var(--brand-bg) 10%,
+        var(--color-background-elevated)
+    );
+    border: 1px solid var(--color-outline);
+    backdrop-filter: blur(6px);
 }
 
 .btn-secondary > * {
-    @apply text-xl font-extrabold bg-gradient-to-r from-brand-200 to-brand-100 active:to-brand-200
-    bg-clip-text text-transparent rounded-xl
-    backdrop-blur-sm text-gray-200 active:text-brand-200;
+    @apply text-xl font-extrabold rounded-xl;
+    color: var(--color-text);
 }
 
 [aria-current="page"].btn-secondary {
-    @apply from-brand-400/30 to-black/30 text-white;
-    * {
-        @apply text-white;
-    }
+    background-color: color-mix(
+        in srgb,
+        var(--brand-ring) 22%,
+        var(--color-background-elevated)
+    );
+    border-color: color-mix(
+        in srgb,
+        var(--brand-ring) 40%,
+        var(--color-outline)
+    );
+    color: var(--color-text);
 }
 
 /* Design system: panels, cards, nav links, buttons, inputs, kbd, and utilities */
 @utility panel {
-    @apply rounded-xl border border-white/10
-    bg-gradient-to-br from-brand-950/20 via-black/10 to-black/10
-    backdrop-blur-sm shadow-lg shadow-black/20;
+    @apply rounded-xl border;
+    border-color: var(--color-outline);
+    background-color: var(--color-background-elevated);
+    backdrop-filter: blur(4px);
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2);
 }
 
 @utility card {
-    @apply panel p-4 transition-all duration-300
-    hover:from-brand-900/20 hover:to-black/20
-    hover:shadow-lg hover:shadow-brand-500/10;
+    @apply panel p-4 transition-all duration-300;
+    border-color: var(--color-outline);
 }
 
 @utility feature-card {
     @apply relative isolate rounded-2xl border border-white/10 ring-1 ring-white/5 hover:ring-brand-400/20 text-gray-200;
-    @apply aspect-square overflow-hidden p-5 bg-black/20 bg-gradient-to-br from-brand-950/20 via-black/10 to-black/10;
-    @apply bg-[radial-gradient(1200px_600px_at_50%_-20%,rgba(255,255,255,0.06),transparent_60%)] bg-blend-overlay;
+    @apply aspect-square overflow-hidden p-5;
+    background-color: var(--color-background-elevated);
+    background-image:
+        radial-gradient(
+            1200px 600px at 50% -20%,
+            var(--decor-spot),
+            transparent 60%
+        ),
+        linear-gradient(
+            135deg,
+            color-mix(in srgb, var(--brand-bg) 6%, transparent),
+            color-mix(in srgb, var(--color-background) 4%, transparent)
+        );
+    @apply bg-blend-overlay;
     @apply transition-transform duration-150 ease-out transform-gpu will-change-[transform];
     @apply sm:hover:-translate-y-0.5 active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400/30;
 }
@@ -461,7 +653,7 @@ a {
     background: linear-gradient(
         90deg,
         transparent 0%,
-        rgba(255, 255, 255, 0.08) 50%,
+        var(--color-outline-strong) 50%,
         transparent 100%
     );
     opacity: 0;
@@ -485,10 +677,10 @@ a {
     border-radius: inherit;
     background: conic-gradient(
         from 0deg,
-        rgba(167, 139, 250, 0.2),
+        color-mix(in srgb, var(--color-brand-400) 20%, transparent),
         transparent 35%,
         transparent 65%,
-        rgba(167, 139, 250, 0.2)
+        color-mix(in srgb, var(--color-brand-400) 20%, transparent)
     );
     -webkit-mask:
         linear-gradient(#000 0 0) content-box,
@@ -543,7 +735,8 @@ a {
 }
 
 @utility feature-card-icon {
-    @apply w-14 h-14 md:w-16 md:h-16 p-3 rounded-xl text-brand-200 group-hover:text-brand-100 transition-colors duration-150 transform-gpu group-hover:scale-[1.02];
+    @apply w-14 h-14 md:w-16 md:h-16 p-3 rounded-xl transition-colors duration-150 transform-gpu group-hover:scale-[1.02];
+    color: var(--brand-ring);
 }
 /* Tasteful hover glow for icon (no ring/shadow) */
 .group:hover .feature-card-icon {
@@ -552,6 +745,7 @@ a {
         rgba(167, 139, 250, 0.16),
         transparent 70%
     );
+    color: var(--color-text);
 }
 
 @utility feature-badge {
@@ -566,25 +760,82 @@ a {
 }
 
 @utility nav-link {
-    @apply flex items-center gap-2 px-3 py-2 rounded-lg
-    hover:bg-white/5 transition-colors
-    text-gray-200 hover:text-brand-300;
+    @apply flex items-center gap-2 px-3 py-2 rounded-lg transition-colors;
+    color: var(--color-text);
+    border: 1px solid
+        color-mix(in srgb, var(--brand-ring) 24%, var(--color-outline));
+    background-color: color-mix(in srgb, var(--brand-ring) 16%, transparent);
+}
+.nav-link:hover {
+    background-color: color-mix(in srgb, var(--brand-ring) 28%, transparent);
+    border-color: color-mix(
+        in srgb,
+        var(--brand-ring) 40%,
+        var(--color-outline)
+    );
 }
 
 .nav-link[aria-current="page"] {
-    @apply bg-white/5 text-white;
+    background-color: color-mix(in srgb, var(--brand-ring) 32%, transparent);
+    border-color: color-mix(
+        in srgb,
+        var(--brand-ring) 50%,
+        var(--color-outline)
+    );
+    color: var(--color-text);
 }
 
 /* Buttons */
-@utility btn-primary {
+.app-nav {
+    background-color: color-mix(
+        in srgb,
+        var(--color-background) 60%,
+        transparent
+    );
+    border-bottom: 1px solid var(--color-outline);
+    backdrop-filter: blur(12px);
+    color: var(--color-text);
+}
+@utility btn {
     @apply inline-flex items-center justify-center gap-2
-    px-4 py-2 rounded-lg
-    bg-brand-600/20 hover:bg-brand-600/30
-    border border-brand-400/10 hover:border-brand-400/20
+    px-3 py-2 rounded-lg
     transition-all duration-200
-    text-gray-200 hover:text-brand-200
-    focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-400/40
+    leading-none
+    focus:outline-none focus-visible:ring-2
     active:scale-[0.98];
+    color: var(--color-text);
+}
+
+/* Ensure inline icons sit perfectly centered beside text */
+.btn > svg,
+.btn-primary > svg,
+.btn-secondary > svg {
+    vertical-align: middle;
+}
+
+@utility btn-primary {
+    @apply btn px-4;
+    border: 1px solid color-mix(in srgb, var(--brand-ring) 20%, transparent);
+    color: var(--brand-fg);
+    background-color: color-mix(
+        in srgb,
+        var(--brand-bg) 22%,
+        var(--color-background-elevated)
+    );
+}
+
+@utility btn-secondary {
+    @apply btn;
+    border: 1px solid var(--color-outline);
+    color: var(--color-text);
+    background-color: color-mix(in srgb, var(--color-text) 5%, transparent);
+}
+
+@utility btn-primary {
+    @apply btn px-4;
+    border: 1px solid color-mix(in srgb, var(--brand-ring) 20%, transparent);
+    color: var(--brand-fg);
+    background-color: color-mix(in srgb, var(--brand-bg) 18%, transparent);
 }
 
 @utility btn-ghost {
@@ -606,12 +857,10 @@ a {
 
 /* Inputs */
 @utility input-base {
-    @apply w-full px-3 py-2 rounded-lg
-    bg-brand-950/50 border border-white/10
-    focus:border-brand-400/30 focus:outline-none
-    text-gray-200 placeholder-gray-500
-    transition-all duration-200
-    focus-visible:ring-1 focus-visible:ring-brand-400/30;
+    @apply w-full px-3 py-2 rounded-lg transition-all duration-200;
+    background-color: var(--color-background-panel);
+    border: 1px solid var(--color-outline);
+    color: var(--color-text);
 }
 
 @utility input {
@@ -665,11 +914,11 @@ a {
 @utility scroll-panel {
     @apply max-h-[500px] overflow-y-auto overflow-x-hidden
     rounded-lg border border-white/10
-    bg-gradient-to-br from-brand-950/95 to-brand-900/95
+    bg-gradient-to-br from-brand-950/90 to-brand-900/85
     backdrop-blur-md shadow-lg shadow-black/50;
     /* Firefox */
     scrollbar-width: thin;
-    scrollbar-color: color-mix(in srgb, var(--color-brand-600) 60%, transparent)
+    scrollbar-color: color-mix(in srgb, var(--color-brand-600) 50%, transparent)
         transparent;
 }
 /* WebKit */
@@ -683,11 +932,65 @@ a {
 .scroll-panel::-webkit-scrollbar-thumb {
     background-color: color-mix(
         in srgb,
-        var(--color-brand-600) 60%,
+        var(--color-brand-600) 50%,
         transparent
     );
     border-radius: 9999px;
 }
 .scroll-panel::-webkit-scrollbar-thumb:hover {
     background-color: var(--color-brand-600);
+}
+
+/* Performance utilities for virtualization and large lists */
+@utility content-auto {
+    content-visibility: auto;
+}
+@utility content-visible {
+    content-visibility: visible;
+}
+
+/* Containment helpers to isolate heavy subtrees */
+@utility contain-strict {
+    contain: strict;
+}
+@utility contain-content {
+    contain: content;
+}
+@utility contain-layout {
+    contain: layout;
+}
+@utility contain-size {
+    contain: size;
+}
+@utility contain-paint {
+    contain: paint;
+}
+@utility contain-style {
+    contain: style;
+}
+@utility contain-inline-size {
+    contain: inline-size;
+}
+
+/* Reserve space when using content-visibility to avoid layout shifts.
+   Use the one closest to your row height for virtual scrollers. */
+@utility cis-40 {
+    contain-intrinsic-size: 40px 1000px;
+}
+@utility cis-42 {
+    contain-intrinsic-size: 42px 1000px;
+}
+@utility cis-64 {
+    contain-intrinsic-size: 64px 1000px;
+}
+
+/* Rendering hints */
+@utility will-change-transform {
+    will-change: transform;
+}
+@utility will-change-scroll {
+    will-change: scroll-position;
+}
+@utility forced-layer {
+    transform: translateZ(0);
 }

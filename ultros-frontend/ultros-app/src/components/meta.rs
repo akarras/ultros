@@ -27,3 +27,4 @@ pub fn MetaDescription(#[prop(into)] text: TextProp) -> impl IntoView {
         <Meta name="description" content=text />
     }
 }
+

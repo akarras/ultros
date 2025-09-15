@@ -43,7 +43,7 @@ pub fn Ad(#[prop(optional)] class: Option<&'static str>) -> impl IntoView {
         <Show when=ads_visible>
             <div class:hidden=unfilled class="ad">
                 <div class="flex flex-col h-full">
-                    <span class="text-sm p-1 px-2 rounded-md bg-brand-950/20 border border-white/10 text-gray-300 shrink max-w-fit">
+                    <span class="text-sm p-1 px-2 rounded-md bg-black/30 border border-white/10 text-gray-400 shrink max-w-fit">
                         "Ad"
                     </span>
                     <script
@@ -54,8 +54,8 @@ pub fn Ad(#[prop(optional)] class: Option<&'static str>) -> impl IntoView {
                     ></script>
                     // <!-- Ultros-Ad-Main -->
                     <ins
-                        class=["adsbygoogle ", ad_class].concat()
-                        style="display:block"
+                        class=["adsbygoogle block ", ad_class].concat()
+
                         data-ad-client="ca-pub-8789160460804755"
                         data-ad-slot="1163555858"
                         // data-adtest="on"

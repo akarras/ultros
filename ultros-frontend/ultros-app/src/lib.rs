@@ -10,11 +10,13 @@ use crate::api::get_login;
 use crate::components::recently_viewed::RecentItems;
 use crate::global_state::{
     cheapest_prices::CheapestPrices, clipboard_text::GlobalLastCopiedText, cookies::Cookies,
-    home_world::use_home_world,
+    home_world::use_home_world, theme::provide_theme_settings,
 };
 pub use crate::global_state::{home_world::GuessedRegion, LocalWorldData};
 use crate::{
-    components::{ad::Ad, patreon::*, profile_display::*, search_box::*, tooltip::*},
+    components::{
+        ad::Ad, patreon::*, profile_display::*, search_box::*, theme_picker::*, tooltip::*,
+    },
     routes::{
         analyzer::*,
         currency_exchange::{CurrencyExchange, CurrencySelection, ExchangeItem},
@@ -48,9 +50,12 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
     let sheet_url = ["/pkg/", git_hash, "/ultros.css"].concat();
     view! {
         <!DOCTYPE html>
-        <html lang="en">
+        <html lang="en" data-theme="dark" data-palette="violet">
             <head>
                 <meta charset="utf-8" />
+                <script>
+    "(function(){try{var d=document.documentElement;var ls=localStorage;var g=function(k){try{return ls.getItem(k)}catch(_){return null}};var gc=function(n){var m=document.cookie.match(new RegExp('(?:^|; )'+n+'=([^;]+)'));return m?decodeURIComponent(m[1]):null};var mode=g('theme.mode')||gc('theme_mode')||'system';if(mode==='system'){mode=(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light'};d.setAttribute('data-theme',mode==='light'?'light':'dark');var palette=g('theme.palette')||gc('theme_palette')||'violet';d.setAttribute('data-palette',palette)}catch(_){}})();"
+                </script>
                 <link
                     id="xiv-icons"
                     rel="stylesheet"
@@ -146,8 +151,8 @@ pub fn NavRow() -> impl IntoView {
     let (homeworld, _set_homeworld) = use_home_world();
     view! {
         // Navigation
-        <nav class="sticky top-0 z-50 border-b border-white/5 bg-black/50 backdrop-blur-md">
-            <div class="mx-auto max-w-7xl px-3 sm:px-4 lg:px-6 py-3 flex flex-col md:flex-row items-center gap-3">
+        <nav class="sticky top-0 z-50 app-nav">
+            <div class="mx-auto max-w-7xl px-3 sm:px-4 lg:px-6 py-3 flex flex-col md:flex-row items-center gap-3 text-gray-200">
                 // Left section
                 <div class="flex items-center gap-2">
                     <A
@@ -217,13 +222,15 @@ pub fn NavRow() -> impl IntoView {
                 <div class="flex items-center gap-4">
                     <A
                         href="/items?menu-open=true"
-                        attr:class="nav-link"
+                        attr:class="inline-flex items-center gap-2 px-3 py-2 rounded-md text-gray-300 hover:text-white hover:bg-white/5 transition-colors"
                     >
                         <Tooltip tooltip_text="Item Explorer">
                             <Icon width="1.75em" height="1.75em" icon=i::FaScrewdriverWrenchSolid />
                         </Tooltip>
                         <span class="sr-only">"Item Explorer"</span>
                     </A>
+
+                    <QuickThemeToggle />
 
                     <a
                         rel="external"
@@ -249,6 +256,7 @@ pub fn App() -> impl IntoView {
     provide_context(CheapestPrices::new());
     provide_context(GlobalLastCopiedText(RwSignal::new(None)));
     provide_context(RecentItems::new());
+    provide_theme_settings();
     // AnimationContext::provide();
     let root_node_ref = NodeRef::<Div>::new();
     provide_hotkeys_context(root_node_ref, false, scopes!());
@@ -256,9 +264,8 @@ pub fn App() -> impl IntoView {
     view! {
         <Title text="Ultros" />
         // Background gradient
-        <div class="fixed inset-0 -z-10 bg-black">
-            <div class="absolute inset-0 bg-gradient-to-br from-violet-950/30 via-black/95 to-violet-950/30" />
-            <div class="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(139,92,246,0.03),transparent_60%)]" />
+        <div class="fixed inset-0 -z-10" style="background-color: var(--color-background);">
+            <div class="absolute inset-0" style="background-image: radial-gradient(80% 60% at 50% 30%, var(--decor-spot), transparent 60%);" />
         </div>
         <div node_ref=root_node_ref class="min-h-screen flex flex-col m-0">
             <Router>

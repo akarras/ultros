@@ -110,22 +110,22 @@ pub fn SearchBox() -> impl IntoView {
                     on:focusin=focus_in
                     on:focusout=focus_out
                     placeholder="Search items... (⌘K / CTRL K)"
-                    class="input pl-10"
-                    class:gradient-ring=active
+                    class="input w-full pl-10 placeholder-[color:var(--color-text-muted)] focus:outline-none focus-visible:ring-1 focus-visible:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] focus:border-[color:color-mix(in_srgb,var(--brand-ring)_30%,var(--color-outline))]"
+
                     type="text"
                     prop:value=search
                 />
-                <div class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
+                <div class="absolute left-3 top-1/2 -translate-y-1/2 text-[color:var(--color-text-muted)]">
                     <Icon icon=i::AiSearchOutlined />
                 </div>
             </div>
 
             // Search Results
             <div
-                class="absolute w-full mt-2 z-50"
+                class="absolute w-full mt-2 z-50 content-visible contain-content forced-layer"
                 class:hidden=move || !active() || search().is_empty()
             >
-                <div class="scroll-panel">
+                <div class="scroll-panel content-auto contain-layout contain-paint will-change-scroll forced-layer cis-42">
                     <VirtualScroller
                         each=Signal::derive(item_search)
                         key=move |(id, _item): &(&xiv_gen::ItemId, &xiv_gen::Item)| id.0
@@ -137,6 +137,7 @@ pub fn SearchBox() -> impl IntoView {
                         row_height=42.0
                         overscan=10
                         header_height=0.0
+                        variable_height=false
 
                     />
                 </div>

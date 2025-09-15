@@ -3,7 +3,11 @@ pub use ultros_api_types::icon_size::IconSize;
 use xiv_gen::ItemId;
 
 #[component]
-pub fn ItemIcon(#[prop(into)] item_id: Signal<i32>, icon_size: IconSize) -> impl IntoView {
+pub fn ItemIcon(
+    #[prop(into)] item_id: Signal<i32>,
+    icon_size: IconSize,
+    #[prop(optional)] loading: &'static str,
+) -> impl IntoView {
     let valid_search_category = move || {
         xiv_gen_db::data()
             .items
@@ -37,7 +41,7 @@ pub fn ItemIcon(#[prop(into)] item_id: Signal<i32>, icon_size: IconSize) -> impl
                         "/static/itemicon/fallback".to_string()
                     }
                 }
-                loading="lazy"
+                loading=move || { if loading.is_empty() { "lazy" } else { loading } }
                 on:error=move |_| {
                     set_failed(item_id.get_untracked());
                 }

@@ -29,6 +29,7 @@ pub mod select;
 pub mod skeleton;
 pub mod small_item_display;
 pub mod stats_display;
+pub mod theme_picker;
 pub mod toggle;
 pub mod tooltip;
 pub mod ui_text;

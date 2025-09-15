@@ -225,13 +225,9 @@ where
     T: IntoView,
 {
     view! {
-        <div class="p-6 flex flex-col rounded-2xl
-         backdrop-brightness-110
-        border border-white/10
-        bg-gradient-to-br from-violet-950/10 via-black/10 to-black/20
-        w-full">
-            <h3 class="font-bold text-xl text-violet-300 mb-2">{title}</h3>
-            <p class="text-gray-300 mb-4">{description}</p>
+        <div class="panel p-6 flex flex-col w-full">
+            <h3 class="font-bold text-xl mb-2 text-[color:var(--brand-fg)]">{title}</h3>
+            <p class="mb-4 text-[color:var(--color-text-muted)]">{description}</p>
             {children.into_inner()().into_view()}
         </div>
     }
@@ -242,10 +238,7 @@ fn PresetFilterButton(href: &'static str, label: &'static str) -> impl IntoView 
     view! {
         <a
             href=href
-            class="px-4 py-2 rounded-lg bg-violet-900/30 hover:bg-violet-800/40
-            border border-white/10 hover:border-violet-300/30
-            transition-all duration-300 text-gray-200 hover:text-violet-300
-            hover:transform hover:scale-[1.02] hover:shadow-lg hover:shadow-violet-500/10"
+            class="btn-secondary"
         >
             {label}
         </a>
@@ -357,7 +350,7 @@ fn AnalyzerTable(
                     description="Set the minimum profit margin you want to see"
                 >
                     <div class="flex flex-col gap-2">
-                        <div class="text-violet-300">
+                        <div class="text-brand-300">
                             {move || {
                                 minimum_profit()
                                     .map(|profit| Either::Left(view! { <Gil amount=profit /> }))
@@ -365,7 +358,7 @@ fn AnalyzerTable(
                             }}
                         </div>
                         <input
-                            class="p-2 rounded-lg bg-violet-950/50 border border-white/10 w-full focus:outline-none focus:border-yellow-200/30 focus:ring-1 focus:ring-violet-500/30 transition-colors"
+                            class="input"
                             min=0
                             max=100000
                             step=1000
@@ -389,7 +382,7 @@ fn AnalyzerTable(
                     description="Set the minimum return on investment percentage"
                 >
                     <div class="flex flex-col gap-2">
-                        <div class="text-violet-300">
+                        <div class="text-brand-300">
                             {move || {
                                 minimum_roi()
                                     .map(|roi| format!("{roi}%"))
@@ -397,7 +390,7 @@ fn AnalyzerTable(
                             }}
                         </div>
                         <input
-                            class="p-2 rounded-lg bg-violet-950/50 border border-white/10 w-full focus:outline-none focus:border-yellow-200/30 focus:ring-1 focus:ring-violet-500/30 transition-colors"
+                            class="input"
                             min=0
                             max=100000
                             step=10
@@ -421,9 +414,9 @@ fn AnalyzerTable(
                     description="Filter by predicted time to next sale (e.g., 1w 30m)"
                 >
                     <div class="flex flex-col gap-2">
-                        <div class="text-violet-300">{predicted_time_string}</div>
+                        <div class="text-brand-300">{predicted_time_string}</div>
                         <input
-                            class="p-2 rounded-lg bg-violet-950/50 border border-white/10 w-full focus:outline-none focus:border-yellow-200/30 focus:ring-1 focus:ring-violet-500/30 transition-colors"
+                            class="input"
                             placeholder="e.g. 7d 12h"
                             title="Accepts formats like 1h 30m, 7d, 1M (month), etc."
                             prop:value=move || max_predicted_time().unwrap_or_default()
@@ -437,18 +430,18 @@ fn AnalyzerTable(
             </div>
 
             // Results summary
-            <div class="flex flex-col md:flex-row md:items-center gap-3 md:gap-0 md:justify-between rounded-xl border border-white/10 bg-violet-900/20 px-4 py-3">
-                <div class="text-sm text-gray-300">
-                    <span class="text-violet-300 font-semibold">{move || sorted_data().len()}</span> " results"
+            <div class="panel px-4 py-3 flex flex-col md:flex-row md:items-center gap-3 md:gap-0 md:justify-between">
+                <div class="text-sm text-[color:var(--color-text)]">
+                    <span class="text-brand-300 font-semibold">{move || sorted_data().len()}</span> " results"
                 </div>
                 <div class="flex flex-wrap gap-2">
                     {move || {
                         let mut chips: Vec<_> = Vec::new();
                         if let Some(p) = minimum_profit() {
                             chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/30 px-3 py-1 text-sm text-gray-200">
+                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--brand-fg)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
                                     "Profit ≥ " <Gil amount=p />
-                                    <button class="ml-1 text-gray-400 hover:text-violet-300" on:click=move |_| set_minimum_profit(None)>
+                                    <button class="ml-1 text-gray-400 hover:text-brand-300" on:click=move |_| set_minimum_profit(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -456,9 +449,9 @@ fn AnalyzerTable(
                         }
                         if let Some(roi) = minimum_roi() {
                             chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/30 px-3 py-1 text-sm text-gray-200">
+                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--brand-fg)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
                                     "ROI ≥ " {format!("{roi}%")}
-                                    <button class="ml-1 text-gray-400 hover:text-violet-300" on:click=move |_| set_minimum_roi(None)>
+                                    <button class="ml-1 text-gray-400 hover:text-brand-300" on:click=move |_| set_minimum_roi(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -466,9 +459,9 @@ fn AnalyzerTable(
                         }
                         if let Some(_ns) = max_predicted_time() {
                             chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/30 px-3 py-1 text-sm text-gray-200">
+                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--brand-fg)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
                                     "Next Sale ≤ " {predicted_time_string()}
-                                    <button class="ml-1 text-gray-400 hover:text-violet-300" on:click=move |_| set_max_predicted_time(None)>
+                                    <button class="ml-1 text-gray-400 hover:text-brand-300" on:click=move |_| set_max_predicted_time(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -476,9 +469,9 @@ fn AnalyzerTable(
                         }
                         if let Some(w) = world_filter() {
                             chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/30 px-3 py-1 text-sm text-gray-200">
+                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--brand-fg)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
                                     "World: " {w.clone()}
-                                    <button class="ml-1 text-gray-400 hover:text-violet-300" on:click=move |_| set_world_filter(None)>
+                                    <button class="ml-1 text-gray-400 hover:text-brand-300" on:click=move |_| set_world_filter(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -486,9 +479,9 @@ fn AnalyzerTable(
                         }
                         if let Some(dc) = datacenter_filter() {
                             chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/30 px-3 py-1 text-sm text-gray-200">
+                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--brand-fg)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
                                     "Datacenter: " {dc.clone()}
-                                    <button class="ml-1 text-gray-400 hover:text-violet-300" on:click=move |_| set_datacenter_filter(None)>
+                                    <button class="ml-1 text-gray-400 hover:text-brand-300" on:click=move |_| set_datacenter_filter(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -501,7 +494,7 @@ fn AnalyzerTable(
                         }
                     }}
                 </div>
-                <button class="text-sm text-gray-400 hover:text-violet-300 self-start md:self-auto" on:click=move |_| {
+                <button class="text-sm text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] self-start md:self-auto" on:click=move |_| {
                     set_minimum_profit(None);
                     set_minimum_roi(None);
                     set_max_predicted_time(None);
@@ -513,15 +506,16 @@ fn AnalyzerTable(
             </div>
 
             // Results table
-            <div class="rounded-2xl overflow-x-auto border border-white/10  backdrop-brightness-110">
+            <div class="rounded-2xl overflow-x-auto panel content-visible contain-layout contain-paint will-change-scroll forced-layer">
                 <VirtualScroller
                         viewport_height=720.0
                         row_height=40.0
-                        overscan=20
+                        overscan=8
                         header_height=64.0
+                        variable_height=false
                         header=view! {
-                            <div class="flex flex-row align-top h-16 bg-violet-900/40 backdrop-blur supports-[backdrop-filter]:bg-violet-900/30" role="rowgroup">
-                                <div role="columnheader" class="w-[25px] p-4">
+                            <div class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]" role="rowgroup">
+                                <div role="columnheader" class="w-[40px] p-4 text-center">
                                     "HQ"
                                 </div>
                                 <div role="columnheader" class="w-84 p-4">
@@ -529,8 +523,8 @@ fn AnalyzerTable(
                                 </div>
                                 <div role="columnheader" class="w-30 p-4">
                                     <QueryButton
-                                        class="!text-violet-300 hover:text-violet-200"
-                                        active_classes="!text-neutral-300 hover:text-neutral-200"
+                                        class="!text-brand-300 hover:text-brand-200"
+                                        active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
                                         key="sort"
                                         value="profit"
                                     >
@@ -545,8 +539,8 @@ fn AnalyzerTable(
                                 </div>
                                 <div role="columnheader" class="w-30 p-4">
                                     <QueryButton
-                                        class="!text-violet-300 hover:text-violet-200"
-                                        active_classes="!text-neutral-300 hover:text-neutral-200"
+                                        class="!text-brand-300 hover:text-brand-200"
+                                        active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
                                         key="sort"
                                         value="roi"
                                         default=true
@@ -571,7 +565,7 @@ fn AnalyzerTable(
                                                 .map(|_filter| {
                                                     view! {
                                                         <div
-                                                            class="hover:text-violet-200 transition-colors rounded-sm p-2 text-violet-300 cursor-pointer"
+                                                            class="hover:text-brand-200 transition-colors rounded-sm p-2 text-brand-300 cursor-pointer"
                                                             on:click=move |_| {
                                                                 set_world_filter(None);
                                                             }
@@ -591,7 +585,7 @@ fn AnalyzerTable(
                                                 .map(|_filter| {
                                                     view! {
                                                         <div
-                                                            class="hover:text-violet-200 transition-colors rounded-sm p-2 text-violet-300 cursor-pointer"
+                                                            class="hover:text-brand-200 transition-colors rounded-sm p-2 text-brand-300 cursor-pointer"
                                                             on:click=move |_| {
                                                                 set_datacenter_filter(None);
                                                             }
@@ -638,37 +632,38 @@ fn AnalyzerTable(
                                 .get(&ItemId(item_id))
                                 .map(|item| item.name.as_str())
                                 .unwrap_or_default();
+                            let icon_loading = if index < 20 { "eager" } else { "" };
                             let classes = if (index % 2) == 0 {
-                                "flex flex-row flex-nowrap h-10 hover:bg-violet-700/20 hover:ring-1 hover:ring-violet-500/20 bg-violet-900/20 transition-colors"
+                                "flex flex-row items-center flex-nowrap h-10 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_6%,transparent)] transition-colors"
                             } else {
-                                "flex flex-row flex-nowrap h-10 hover:bg-violet-700/20 hover:ring-1 hover:ring-violet-500/20 bg-violet-800/20 transition-colors"
+                                "flex flex-row items-center flex-nowrap h-10 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_8%,transparent)] transition-colors"
                             };
                             view! {
                                 <div class=classes role="row-group">
-                                    <div role="cell" class="p-4 w-[25px]">
+                                    <div role="cell" class="px-2 py-2 w-[40px] flex items-center justify-center">
                                         {if data.sale_summary.hq {
-                                            Either::Left(view! { <span class="px-2 py-0.5 rounded-full text-xs font-semibold border bg-violet-900/30 text-violet-300 border-violet-500/20">"HQ"</span> })
+                                            Either::Left(view! { <span class="px-2 py-0.5 rounded-full text-xs font-semibold border bg-brand-900/30 text-brand-300 border-brand-500/20">"HQ"</span> })
                                         } else {
-                                            Either::Right(view! { <span class="px-2 py-0.5 rounded-full text-xs font-semibold border bg-slate-800/50 text-slate-300 border-white/10">"NQ"</span> })
+                                            Either::Right(view! { <></> })
                                         }}
                                     </div>
-                                    <div role="cell" class="p-4 flex flex-row w-84 items-center gap-2">
+                                    <div role="cell" class="px-4 py-2 flex flex-row w-84 items-center gap-2">
                                         <a
-                                            class="flex flex-row items-center gap-2 hover:text-violet-300 transition-colors truncate overflow-x-clip w-full"
+                                            class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip w-full"
                                             href=format!("/item/{}/{item_id}", world())
                                         >
                                             <div class="shrink-0">
-                                                <ItemIcon item_id icon_size=IconSize::Small />
+                                                <ItemIcon item_id icon_size=IconSize::Small loading=icon_loading />
                                             </div>
                                             {item}
                                         </a>
                                         <AddToList item_id />
                                         <Clipboard clipboard_text=item.to_string() />
                                     </div>
-                                    <div role="cell" class="p-4 w-30 text-right">
+                                    <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
                                         <Gil amount=data.profit />
                                     </div>
-                                    <div role="cell" class="p-4 w-30 text-right">
+                                    <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
                                         <span class=move || {
                                             let roi = data.return_on_investment;
                                             let cls = if roi >= 500 {
@@ -687,17 +682,17 @@ fn AnalyzerTable(
                                             {format!("{}%", data.return_on_investment)}
                                         </span>
                                     </div>
-                                    <div role="cell" class="p-4 w-30 text-right">
+                                    <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
                                         <Gil amount=data.cheapest_price />
                                     </div>
-                                    <div role="cell" class="p-4 w-30 hidden lg:block">
+                                    <div role="cell" class="px-4 py-2 w-30 hidden lg:block flex items-center">
                                         <Tooltip tooltip_text=Signal::derive(move || {
                                             format!("Only show {}", world())
                                         })>
                                             <QueryButton
                                                 key="world"
                                                 value=world.clone()
-                                                class="!text-violet-300 hover:text-violet-200"
+                                                class="!text-brand-300 hover:text-brand-200"
                                                 active_classes="!text-neutral-300 hover:text-neutral-200"
                                                 remove_queries=&["datacenter"]
                                             >
@@ -705,14 +700,14 @@ fn AnalyzerTable(
                                             </QueryButton>
                                         </Tooltip>
                                     </div>
-                                    <div role="cell" class="p-4 w-30 hidden xl:block">
+                                    <div role="cell" class="px-4 py-2 w-30 hidden xl:block flex items-center">
                                         <Tooltip tooltip_text=Signal::derive(move || {
                                             format!("Only show {}", datacenter())
                                         })>
                                             <QueryButton
                                                 key="datacenter"
                                                 value=datacenter.clone()
-                                                class="!text-violet-300 hover:text-violet-200"
+                                                class="!text-brand-300 hover:text-brand-200"
                                                 active_classes="!text-neutral-300 hover:text-neutral-200"
                                                 remove_queries=&["world"]
                                             >
@@ -720,12 +715,24 @@ fn AnalyzerTable(
                                             </QueryButton>
                                         </Tooltip>
                                     </div>
-                                    <div role="cell" class="p-4 w-30 truncate hidden md:block">
+                                    <div role="cell" class="px-4 py-2 w-30 truncate hidden md:block flex items-center">
                                         {data
                                             .sale_summary
                                             .avg_sale_duration
                                             .and_then(|duration| duration.to_std().ok())
-                                            .map(|duration| format_duration(duration).to_string())
+                                            .map(|duration| {
+                                                let secs = duration.as_secs();
+                                                let days = secs / 86_400;
+                                                let hours = (secs % 86_400) / 3_600;
+                                                let minutes = (secs % 3_600) / 60;
+                                                let seconds = secs % 60;
+                                                let mut parts = Vec::new();
+                                                if days > 0 { parts.push(format!("{}d", days)); }
+                                                if hours > 0 { parts.push(format!("{}h", hours)); }
+                                                if minutes > 0 && parts.len() < 2 { parts.push(format!("{}m", minutes)); }
+                                                if seconds > 0 && parts.len() < 2 { parts.push(format!("{}s", seconds)); }
+                                                if parts.is_empty() { "0s".to_string() } else { parts[..parts.len().min(2)].join(" ") }
+                                            })
                                             .unwrap_or_else(|| "---".to_string())}
                                     </div>
                                 </div>
@@ -819,9 +826,8 @@ pub fn AnalyzerWorldView() -> impl IntoView {
             <div class="container mx-auto max-w-7xl">
                 <div class="flex flex-col gap-8">
                     // Header Section
-                    <div class="bg-gradient-to-br from-violet-950/10 to-black/20
-                    rounded-2xl p-8 border border-white/10 ">
-                        <h1 class="text-3xl font-bold text-violet-300 mb-4">
+                    <div class="panel p-8 rounded-2xl">
+                        <h1 class="text-3xl font-bold text-[color:var(--brand-fg)] mb-4">
                             "Market Analysis for " {world}
                         </h1>
                         <div class="flex flex-col gap-4">
@@ -932,8 +938,8 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                     _ => {
                                         Either::Right(
                                             view! {
-                                                <div class="text-xl text-violet-300 text-center p-8
-                                                bg-violet-900/20 rounded-2xl border border-white/10">
+                                                <div class="text-xl text-brand-300 text-center p-8
+                                                bg-brand-900/20 rounded-2xl border border-white/10">
                                                     "Failed to load analyzer - try again in 30 seconds"
                                                 </div>
                                             },
@@ -982,7 +988,7 @@ fn AnalyzerWorldNavigator() -> impl IntoView {
 
     view! {
         <div class="flex flex-col md:flex-row items-center gap-2">
-            <label class="text-violet-300 font-medium">"Select World:"</label>
+            <label class="text-brand-300 font-medium">"Select World:"</label>
             <div class="w-full md:w-auto">
                 <WorldOnlyPicker
                     current_world=current_world.into()
@@ -1003,23 +1009,22 @@ pub fn Analyzer() -> impl IntoView {
             <div class="container mx-auto max-w-7xl">
                 <div class="flex flex-col gap-8">
                     // Hero Section
-                    <div class="bg-gradient-to-br from-violet-950/10 to-black/20
-                    rounded-2xl p-8 border border-white/10 ">
-                        <h1 class="text-3xl font-bold text-violet-300 mb-4">
+                    <div class="panel p-8 rounded-2xl">
+                        <h1 class="text-3xl font-bold text-[color:var(--brand-fg)] mb-4">
                             "Market Board Analyzer"
                         </h1>
-                        <p class="text-xl text-gray-300 leading-relaxed mb-6">
+                        <p class="text-xl text-[color:var(--color-text)] leading-relaxed mb-6">
                             "The analyzer helps find items on the Final Fantasy 14 marketboard that are
                              cheaper on other worlds that sell for more on your world, enabling you to
                              earn gil through market arbitrage."
                         </p>
-                        <p class="text-lg text-gray-400 mb-8">
+                        <p class="text-lg text-[color:var(--color-text)]/90 mb-8">
                             "Adjust parameters to find items that sell well and maximize your profits."
                         </p>
 
                         // World Selection
-                        <div class="bg-black/20 rounded-xl p-6 border border-white/5">
-                            <h2 class="text-xl font-medium text-violet-300 mb-4">
+                        <div class="panel p-6 rounded-xl">
+                            <h2 class="text-xl font-medium text-brand-300 mb-4">
                                 "Choose a world to get started:"
                             </h2>
                             <AnalyzerWorldNavigator />
@@ -1028,43 +1033,40 @@ pub fn Analyzer() -> impl IntoView {
 
                     // Features Grid
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        <div class="p-6 rounded-2xl bg-violet-900/20 border border-white/10
-                        ">
+                        <div class="card p-6">
                             <Icon
-                                attr:class="text-violet-300 mb-4"
+                                attr:class="text-brand-300 mb-4"
                                 width="2.5em"
                                 height="2.5em"
                                 icon=i::FaMoneyBillTrendUpSolid
                             />
-                            <h3 class="text-xl font-bold text-violet-300 mb-2">"Profit Tracking"</h3>
+                            <h3 class="text-xl font-bold text-brand-300 mb-2">"Profit Tracking"</h3>
                             <p class="text-gray-300">
                                 "Monitor profit margins and ROI across different worlds"
                             </p>
                         </div>
 
-                        <div class="p-6 rounded-2xl bg-violet-900/20 border border-white/10
-                        ">
+                        <div class="card p-6">
                             <Icon
-                                attr:class="text-violet-300 mb-4"
+                                attr:class="text-brand-300 mb-4"
                                 width="2.5em"
                                 height="2.5em"
                                 icon=i::FaChartLineSolid
                             />
-                            <h3 class="text-xl font-bold text-violet-300 mb-2">"Market Analysis"</h3>
+                            <h3 class="text-xl font-bold text-brand-300 mb-2">"Market Analysis"</h3>
                             <p class="text-gray-300">
                                 "Track market trends and identify profitable opportunities"
                             </p>
                         </div>
 
-                        <div class="p-6 rounded-2xl bg-violet-900/20 border border-white/10
-                        ">
+                        <div class="card p-6">
                             <Icon
-                                attr:class="text-violet-300 mb-4"
+                                attr:class="text-brand-300 mb-4"
                                 width="2.5em"
                                 height="2.5em"
                                 icon=i::FaFilterSolid
                             />
-                            <h3 class="text-xl font-bold text-violet-300 mb-2">"Custom Filters"</h3>
+                            <h3 class="text-xl font-bold text-brand-300 mb-2">"Custom Filters"</h3>
                             <p class="text-gray-300">
                                 "Set custom parameters to find your perfect trades"
                             </p>
@@ -1072,8 +1074,8 @@ pub fn Analyzer() -> impl IntoView {
                     </div>
 
                     // Tips Section
-                    <div class="bg-violet-900/20 rounded-2xl p-6 border border-white/10">
-                        <h2 class="text-xl font-bold text-violet-300 mb-4">"Trading Tips"</h2>
+                    <div class="panel p-6 rounded-2xl">
+                        <h2 class="text-xl font-bold text-brand-300 mb-4">"Trading Tips"</h2>
                         <ul class="list-disc list-inside text-gray-300 space-y-2">
                             <li>
                                 "Use the ROI filter to find items with the best return on investment"

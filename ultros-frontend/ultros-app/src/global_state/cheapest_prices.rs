@@ -34,3 +34,4 @@ impl CheapestPrices {
         Self { read_listings }
     }
 }
+

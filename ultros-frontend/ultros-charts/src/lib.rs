@@ -338,3 +338,4 @@ fn map_sale_history_to_line(
         .sorted_by_cached_key(|(name, _)| name.clone())
         .collect()
 }
+

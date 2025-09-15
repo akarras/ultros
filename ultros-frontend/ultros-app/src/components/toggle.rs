@@ -21,29 +21,30 @@ pub fn Toggle(
 
             <div class="w-12 h-6 rounded-full relative
             transition-all duration-300 ease-in-out
-            bg-violet-950/60 border border-white/10
-            hover:border-violet-400/30
-            peer-checked:bg-violet-900/60
-            peer-checked:border-violet-400/20
-            peer-focus:ring-2 peer-focus:ring-violet-500/30
+            border
+            bg-[color:color-mix(in_srgb,var(--color-text)_8%,transparent)]
+            border-[color:var(--color-outline)]
+            hover:border-[color:color-mix(in_srgb,var(--brand-ring)_30%,var(--color-outline))]
+            peer-checked:bg-[color:color-mix(in_srgb,var(--brand-ring)_28%,transparent)]
+            peer-checked:border-[color:color-mix(in_srgb,var(--brand-ring)_40%,var(--color-outline))]
+            peer-focus:outline-none peer-focus:ring-2
+            peer-focus:ring-[color:color-mix(in_srgb,var(--brand-ring)_35%,transparent)]
             ">
 
                 <div
                     class="absolute top-0.5 left-0.5
-                    w-5 h-5 rounded-full
-                    transition-all duration-300 ease-in-out transform bg-gradient-to-br
-                    group-hover:from-violet-200 group-hover:to-violet-300
-                    shadow-md"
-                    class=(["translate-x-0", "from-gray-200", "to-gray-300"], move || !checked())
-                    class=(["translate-x-6", "to-violet-300", "from-violet-200"], move || checked())
+                    w-6 h-6 rounded-full
+                    transition-all duration-300 ease-in-out transform
+                    shadow-md border border-[color:var(--color-outline-strong)]
+                    bg-[color:var(--color-background-elevated)]"
+                    class=(["translate-x-0"], move || !checked())
+                    class=(["translate-x-6"], move || checked())
                 >
-                    <div class="absolute inset-[15%] rounded-full
-                    bg-gradient-to-br from-white/80 to-transparent"></div>
                 </div>
             </div>
 
-            <span class="text-sm font-medium text-gray-300 transition-colors duration-300
-            group-hover:text-violet-300">
+            <span class="text-sm font-medium text-[color:var(--color-text-muted)] transition-colors duration-300
+            group-hover:text-[color:var(--color-text)]">
                 {move || {
                     if checked() { checked_label.to_string() } else { unchecked_label.to_string() }
                 }}

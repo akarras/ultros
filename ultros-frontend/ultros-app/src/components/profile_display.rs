@@ -18,7 +18,7 @@ pub fn ProfileDisplay() -> impl IntoView {
                                     <A href="/profile">
                                         <img class="avatar" src=auth.avatar alt=auth.username />
                                     </A>
-                                    <a rel="external" class="btn" href="/logout">
+                                    <a rel="external" class="btn-secondary" href="/logout">
                                         "Logout"
                                     </a>
                                 },
@@ -29,18 +29,13 @@ pub fn ProfileDisplay() -> impl IntoView {
                                 view! {
                                     <a
                                         rel="external"
-                                        class="px-4 py-2 rounded-lg bg-brand-600/20 hover:bg-brand-600/30
-                                        border border-brand-400/10 hover:border-brand-400/20
-                                        transition-all duration-300 text-gray-200 hover:text-brand-300 gap-2
-                                        flex flex-row"
+                                        class="btn-primary"
                                         href="/login"
                                     >
-                                        <div>
-                                            <Icon height="1.2rem" width="1.2em" icon=i::BsDiscord />
-                                        </div>
+                                        <Icon height="1.2em" width="1.2em" icon=i::BsDiscord />
                                         <span>"Login"</span>
                                     </a>
-                                    <A href="/settings">
+                                    <A href="/settings" attr:class="inline-flex items-center gap-2 px-3 py-2 rounded-md text-gray-300 hover:text-white hover:bg-white/5 transition-colors">
                                         <Icon height="2em" width="2em" icon=i::IoSettingsSharp />
                                         <span class="sr-only">Settings</span>
                                     </A>

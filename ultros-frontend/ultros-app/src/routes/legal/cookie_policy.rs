@@ -84,3 +84,4 @@ pub fn CookiePolicy() -> impl IntoView {
         </ul>
     }
 }
+

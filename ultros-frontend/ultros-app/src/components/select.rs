@@ -87,17 +87,10 @@ where
         }
     };
 
-    let default_input_class = "p-2 rounded-lg bg-violet-950 \
-                             border border-violet-800/30 w-full \
-                             hover:bg-violet-900 hover:border-violet-700/50 \
-                             focus:bg-violet-900/90 focus:border-violet-600/50 \
-                             transition-colors duration-200 outline-none";
+    let default_input_class = "input w-full";
 
-    let default_dropdown_class = "absolute w-full max-h-96 overflow-y-auto top-12 \
-                                bg-gradient-to-br from-violet-950/95 to-violet-900/95 \
-                                border border-violet-800/30 rounded-lg \
-                                shadow-lg shadow-violet-950/50 \
-                                backdrop-blur-md z-[100]";
+    let default_dropdown_class =
+        "absolute w-full max-h-96 overflow-y-auto top-12 panel rounded-lg shadow-lg z-[100]";
 
     let current_choice_view = move || {
         choice()
@@ -163,9 +156,9 @@ where
                                 })
                                 .unwrap_or_default();
                             if is_selected {
-                                "flex items-center bg-violet-800/50 rounded-lg p-2 transition-colors duration-200"
+                                "flex items-center rounded-lg p-2 transition-colors duration-200 bg-[color:color-mix(in_srgb,var(--brand-ring)_18%,transparent)]"
                             } else {
-                                "flex items-center hover:bg-violet-800/30 rounded-lg p-2 transition-colors duration-200"
+                                "flex items-center rounded-lg p-2 transition-colors duration-200 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)]"
                             }
                         }>
                             {move || items

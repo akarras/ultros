@@ -19,18 +19,18 @@ pub fn History() -> impl IntoView {
 
             <div class="container mx-auto max-w-7xl space-y-6">
                 <div class="flex items-center justify-between">
-                    <h1 class="text-3xl font-bold text-violet-300">"Viewing History"</h1>
+                    <h1 class="text-3xl font-bold text-brand-300">"Viewing History"</h1>
                     <button
-                        class="px-4 py-2 rounded-lg bg-violet-600/20 hover:bg-violet-600/30
-                        border border-violet-400/10 hover:border-violet-400/20
-                        transition-all duration-300 text-gray-200 hover:text-violet-300"
+                        class="px-4 py-2 rounded-lg bg-brand-600/20 hover:bg-brand-600/30
+                        border border-brand-400/10 hover:border-brand-400/20
+                        transition-all duration-300 text-gray-200 hover:text-brand-300"
                         on:click=move |_| item_data.clear_items()
                     >
                         "Clear History"
                     </button>
                 </div>
 
-                <div class="p-6 rounded-xl bg-gradient-to-br from-violet-950/20 to-violet-900/20
+                <div class="p-6 rounded-xl bg-gradient-to-br from-brand-950/20 to-brand-900/20
                 border border-white/10 ">
                     <Suspense fallback=move || {
                         view! {
@@ -69,8 +69,8 @@ pub fn History() -> impl IntoView {
                                                     view! {
                                                         <A href=format!("/item/{item_id}")>
                                                             <div class="flex items-center gap-4 p-3 rounded-lg
-                                                            bg-violet-950/30 border border-white/5
-                                                            hover:bg-violet-900/30 hover:border-white/10
+                                                            bg-brand-950/30 border border-white/5
+                                                            hover:bg-brand-900/30 hover:border-white/10
                                                             transition-all duration-200 hover:translate-x-1">
                                                                 <ItemIcon item_id icon_size=IconSize::Medium />
 
@@ -97,3 +97,4 @@ pub fn History() -> impl IntoView {
         </div>
     }.into_any()
 }
+

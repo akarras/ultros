@@ -18,9 +18,9 @@ where
         <input
             class=move || {
                 if failed_to_parse() {
-                    "border-2 border-red-950 rounded"
+                    "input w-full border-red-600/40 focus-visible:ring-red-500/30"
                 } else {
-                    "border rounded border-brand-950"
+                    "input w-full"
                 }
             }
 

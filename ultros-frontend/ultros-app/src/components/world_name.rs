@@ -21,3 +21,4 @@ pub(crate) fn WorldName(id: AnySelector) -> impl IntoView {
     }
     .into_any()
 }
+

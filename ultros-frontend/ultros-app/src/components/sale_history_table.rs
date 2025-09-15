@@ -79,8 +79,7 @@ pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
                                 <tr>
                                     <td colspan="8">
                                         <button
-                                            class="btn"
-                                            style="width: 100%;"
+                                            class="btn btn-primary w-full"
                                             on:click=move |_| set_show_more(true)
                                         >
                                             "Show more"
@@ -241,66 +240,59 @@ fn WindowStats(#[prop(into)] sales: Signal<SalesWindow>) -> impl IntoView {
     let time_between_sales = Memo::new(move |_| sales.with(|s| s.time_between_sales));
     let p_value = Memo::new(move |_| sales.with(|s| s.p_value));
     view! {
-        <table>
-            <tbody>
-                <tr>
-                    <td>"Total gil"</td>
-                    <td>
-                        <GenericGil<u64> amount=total_gil />
-                    </td>
-                </tr>
-                <tr>
-                    <td>"Average unit price"</td>
-                    <td>
-                        <Gil amount=average_unit_price />
-                    </td>
-                </tr>
-                <tr>
-                    <td>"Max unit price"</td>
-                    <td>
-                        <Gil amount=max_unit_price />
-                    </td>
-                </tr>
-                <tr>
-                    <td>"Median unit price"</td>
-                    <td>
-                        <Gil amount=median_unit_price />
-                    </td>
-                </tr>
-                <tr>
-                    <td>"Min unit price unit price"</td>
-                    <td>
-                        <Gil amount=min_unit_price />
-                    </td>
-                </tr>
-                <tr>
-                    <td>"Median stack size"</td>
-                    <td>{median_stack_size}</td>
-                </tr>
-                <tr>
-                    <td>"Guessed next sale price"</td>
-                    <td>
-                        <Gil amount=guessed_next_sale_price />
-                    </td>
-                </tr>
-                <tr>
-                    <td>"p-value"</td>
-                    <td>{move || format!("{:.4}", p_value())}</td>
-                </tr>
-                <tr>
-                    <td>"Average sale within period"</td>
-                    <td>
-                        {move || {
-                            time_between_sales()
-                                .abs()
-                                .to_std()
-                                .map(|d| format_duration(d).to_string())
-                                .unwrap_or_default()
-                        }}
-                    </td>
-                </tr>
-            </tbody>
-        </table>
+        <div class="flex flex-wrap gap-2">
+            <div class="bg-white/5 border border-white/10 rounded-md px-3 py-1.5 text-sm">
+                <span class="text-gray-400 mr-1">"Gil sold"</span>
+                <GenericGil<u64> amount=total_gil />
+            </div>
+            <div class="bg-white/5 border border-white/10 rounded-md px-3 py-1.5 text-sm">
+                <span class="text-gray-400 mr-1">"Avg price"</span>
+                <Gil amount=average_unit_price />
+            </div>
+            <div class="bg-white/5 border border-white/10 rounded-md px-3 py-1.5 text-sm">
+                <span class="text-gray-400 mr-1">"Median price"</span>
+                <Gil amount=median_unit_price />
+            </div>
+            <div class="bg-white/5 border border-white/10 rounded-md px-3 py-1.5 text-sm">
+                <span class="text-gray-400 mr-1">"Min"</span>
+                <Gil amount=min_unit_price />
+            </div>
+            <div class="bg-white/5 border border-white/10 rounded-md px-3 py-1.5 text-sm">
+                <span class="text-gray-400 mr-1">"Max"</span>
+                <Gil amount=max_unit_price />
+            </div>
+            <div class="bg-white/5 border border-white/10 rounded-md px-3 py-1.5 text-sm">
+                <span class="text-gray-400 mr-1">"Typical stack"</span>
+                {median_stack_size}
+            </div>
+            <div class="bg-white/5 border border-white/10 rounded-md px-3 py-1.5 text-sm">
+                <span class="text-gray-400 mr-1">"Next sale (est.)"</span>
+                <Gil amount=guessed_next_sale_price />
+            </div>
+            <div class="bg-white/5 border border-white/10 rounded-md px-3 py-1.5 text-sm">
+                <span class="text-gray-400 mr-1">"Time between sales"</span>
+                {move || {
+                    time_between_sales()
+                        .abs()
+                        .to_std()
+                        .map(|d| {
+                            let secs = d.as_secs();
+                            let days = secs / 86_400;
+                            let hours = (secs % 86_400) / 3_600;
+                            let mins = (secs % 3_600) / 60;
+                            let seconds = secs % 60;
+                            let mut parts = Vec::new();
+                            if days > 0 { parts.push(format!("{}d", days)); }
+                            if hours > 0 { parts.push(format!("{}h", hours)); }
+                            if mins > 0 { parts.push(format!("{}m", mins)); }
+                            if seconds > 0 && parts.len() < 2 { parts.push(format!("{}s", seconds)); }
+                            if parts.len() > 2 { parts.truncate(2); }
+                            if parts.is_empty() { "0s".to_string() } else { parts.join(" ") }
+                        })
+                        .unwrap_or_default()
+                }}
+            </div>
+        </div>
     }
     .into_any()
 }
@@ -311,14 +303,14 @@ pub fn SalesInsights(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
     let day_sales = Memo::new(move |_| sales.with(|s| s.past_day.clone()).unwrap_or_default());
     let month_sales = Memo::new(move |_| sales.with(|s| s.month.clone()).unwrap_or_default());
     view! {
-        <h3 class="text-2xl text-white">"Sales Insights"</h3>
-        <div class="flex flex-row items-start">
+        <h3 class="text-xl font-bold text-brand-200 mb-2">"Sales at a glance"</h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div class:hidden=move || sales.with(|s| s.past_day.is_none())>
-                <h4>"Day stats"</h4>
+                <h4 class="text-sm text-gray-300 mb-1">"Last 24 hours"</h4>
                 <WindowStats sales=day_sales />
             </div>
             <div class:hidden=move || sales.with(|s| s.month.is_none())>
-                <h4>"Month stats"</h4>
+                <h4 class="text-sm text-gray-300 mb-1">"Last 30 days"</h4>
                 <WindowStats sales=month_sales />
             </div>
         </div>

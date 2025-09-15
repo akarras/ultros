@@ -3,5 +3,6 @@ pub mod clipboard_text;
 pub mod cookies;
 pub mod home_world;
 mod local_world_data;
+pub mod theme;
 pub mod user;
 pub use local_world_data::LocalWorldData;

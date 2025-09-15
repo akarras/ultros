@@ -52,8 +52,7 @@ pub fn RecentlyViewed() -> impl IntoView {
     let items = item_data.reader();
     let local_items = LocalResource::new(move || async move { items() });
     view! {
-        <div class="p-6 rounded-xl bg-gradient-to-br from-brand-950/10 to-black/20
-                border border-white/10 ">
+        <div class="p-6 rounded-xl panel">
             <Suspense fallback=move || {
                 view! {
                     <div class="h-[400px] animate-pulse">
@@ -68,17 +67,16 @@ pub fn RecentlyViewed() -> impl IntoView {
                     }
                 >
                     <div class="flex items-center justify-between">
-                        <h4 class="text-xl font-bold text-brand-300">"Recently Viewed"</h4>
+                        <h4 class="text-xl font-bold text-[color:var(--color-text)]">"Recently Viewed"</h4>
                         <button
-                            class="text-sm text-gray-400 hover:text-brand-300 transition-colors"
+                            class="text-sm text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] transition-colors"
                             on:click=move |_| item_data.clear_items()
                         >
                             "Clear All"
                         </button>
                     </div>
 
-                    <div class="space-y-2 max-h-[400px] overflow-y-auto overflow-x-hidden
-                    scrollbar-thin scrollbar-thumb-brand-500/30 scrollbar-track-transparent">
+                    <div class="space-y-2 max-h-[400px] overflow-y-auto overflow-x-hidden scrollbar-thin">
                         {move || {
                             let items = local_items.get();
                             Some(
@@ -93,16 +91,13 @@ pub fn RecentlyViewed() -> impl IntoView {
                                         view! {
                                             <A href=format!("/item/{item_id}")>
 
-                                                <div class="flex items-center gap-4 p-3 rounded-lg
-                                                bg-brand-950/20 border border-white/5
-                                                hover:bg-brand-900/25 hover:border-white/10
-                                                transition-all duration-200 group">
+                                                <div class="card p-3 transition-all duration-200 group">
                                                     <div class="flex items-center gap-4 w-full transform transition-transform duration-200 group-hover:translate-x-1">
                                                         <ItemIcon item_id icon_size=IconSize::Medium />
 
                                                         <div class="flex flex-col min-w-0 flex-1">
                                                             <div class="flex items-center gap-2 truncate">
-                                                                <span class="text-gray-200 truncate">
+                                                                <span class="text-[color:var(--color-text)] truncate">
                                                                     {item_data.map(|i| i.name.as_str()).unwrap_or_default()}
                                                                 </span>
                                                             </div>
@@ -117,10 +112,10 @@ pub fn RecentlyViewed() -> impl IntoView {
                         }}
                     </div>
 
-                    <div class="text-center pt-2 border-t border-white/5">
+                    <div class="text-center pt-2 border-t border-[color:var(--color-outline)]">
                         <a
                             href="/history"
-                            class="text-sm text-gray-400 hover:text-brand-300 transition-colors"
+                            class="text-sm text-[color:var(--color-text-muted)] hover:text-brand-300 transition-colors"
                         >
                             "View All Recently Viewed"
                         </a>

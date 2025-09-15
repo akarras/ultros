@@ -177,7 +177,7 @@ fn TextParts(text: String) -> impl IntoView {
 }
 
 /// A UI component that takes the raw FFXIV text and converts it into HTML
-/// For example: "This is unstyled <UIGlow>32113</UIGlow>blah blah<Emphasis>Hello world</Emphasis><UIGlow>01</UIGlow>" -> "This is unstyled <span style="color: #32113"><i>blah blah</i></span>"
+/// For example: "This is unstyled <UIGlow>32113</UIGlow>blah blah<Emphasis>Hello world</Emphasis><UIGlow>01</UIGlow>" -> "This is unstyled <span class="text-brand-300 italic">blah blah</span>"
 #[component]
 pub fn UIText(text: String) -> impl IntoView {
     view! {

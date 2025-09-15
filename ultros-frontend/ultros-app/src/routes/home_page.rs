@@ -27,8 +27,8 @@ fn FeatureCard(
                     {children().into_view()}
                 </div>
                 {badge.map(|b| view! { <span class="feature-badge">{b}</span> })}
-                <h3 class="feature-card-title">{title}</h3>
-                <span class="feature-card-desc">{description}</span>
+                <h3 class="font-extrabold tracking-tight text-[color:var(--brand-fg)]">{title}</h3>
+                <span class="text-sm md:text-base text-[color:var(--color-text)]/90">{description}</span>
             </div>
         </A>
     }
@@ -51,8 +51,8 @@ pub fn HomePage() -> impl IntoView {
 
                 // Main content
                 <div class="flex flex-col grow gap-8">
-                    <div class="text-2xl font-light p-4 rounded-xl panel text-gray-200">
-                        <h1 class="font-bold mb-4 text-3xl bg-gradient-to-r from-brand-200 to-brand-100 bg-clip-text text-transparent">"Welcome to Ultros"</h1>
+                    <div class="panel p-4 text-2xl text-[color:var(--color-text)]">
+                        <h1 class="font-bold mb-4 text-3xl text-[color:var(--brand-fg)]">"Welcome to Ultros"</h1>
                         "Ultros is a modern market board tool for Final Fantasy 14."
                         <br />
                         "Get started by reading the "

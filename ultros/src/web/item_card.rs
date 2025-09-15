@@ -48,6 +48,7 @@ pub(crate) async fn generate_image<'a>(
                 remove_outliers: true,
                 icon_item_id: item.key_id.0,
                 draw_icon: true,
+                ..Default::default()
             },
         ) {
             Err(anyhow!("can't draw scatter plot {e}"))?

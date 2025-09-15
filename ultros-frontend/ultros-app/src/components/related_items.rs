@@ -172,24 +172,23 @@ fn Recipe(recipe: &'static Recipe) -> impl IntoView {
         .flat_map(|(ingredient, amount)| items.get(&ingredient).map(|item| (item, amount)))
         .map(|(ingredient, amount)| {
             view! {
-                <div class="flex md:flex-row flex-col">
-                    <div class="flex flex-row">
-                        <span style="color:#dab;">{amount.to_string()}</span>
-                        "x"
+                <div class="flex items-center justify-between gap-2 py-0.5">
+                    <div class="flex items-center gap-2">
+                        <span class="px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-gray-300 text-xs">{amount.to_string()}</span>
                         <SmallItemDisplay item=ingredient />
                     </div>
-                    <CheapestPrice item_id=ingredient.key_id />
+                    <div class="text-xs"><CheapestPrice item_id=ingredient.key_id /></div>
                 </div>
             }
         })
         .collect::<Vec<_>>();
     let target_item = items.get(&recipe.item_result)?;
     Some(view! {
-        <div class="content-well">
-            "Crafting Recipe:" <div class="flex md:flex-row flex-col">
+        <div class="rounded-lg bg-black/20 border border-white/10 p-3 space-y-2">
+            "Crafting Recipe:" <div class="flex items-center justify-between gap-2">
                 <SmallItemDisplay item=target_item />
                 <CheapestPrice item_id=target_item.key_id />
-            </div> "Ingredients:" {ingredients} <div class="flex md:flex-row flex-col p-1 gap-1">
+            </div> "Ingredients:" {ingredients} <div class="flex items-center gap-2 text-sm pt-1">
                 <span class="underline">"Total craft cost:"</span>
                 " "
                 <RecipePriceEstimate recipe />
@@ -252,22 +251,22 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                 Some(view! {
                     <a
                         href=format!("https://garlandtools.org/db/#npc/{}", resident.key_id.0)
-                        class="flex flex-col p-2 rounded-md border border-violet-800/40 bg-[#100a12] text-violet-200 hover:bg-violet-900/40 transition-colors"
+                        class="group flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-black/30 p-1.5 text-gray-200 hover:bg-white/10 transition-colors"
                     >
-                        <div class="flex flex-row">
+                        <div class="flex items-center justify-between gap-2">
                             <div class="text-md">{resident.singular.as_str()}</div>
                             <Gil amount=price />
                         </div>
-                        <div class="text-sm italic">"(" {shop.name.as_str()} ")"</div>
+                        <div class="text-xs italic text-gray-400 truncate">"(" {shop.name.as_str()} ")"</div>
                     </a>
                 })
             }).collect_view())
     };
     let empty = move || npcs.with(|n| n.is_empty());
     view! {
-        <div class:collapse=empty class="flex-col p-2 max-h-96 overflow-y-auto w-96 xl-w-[600px]">
-            <span class="text-2xl">"Vendor sources"</span>
-            {data}
+        <div class:collapse=empty class="space-y-1.5 p-1 max-h-80 overflow-y-auto w-full sm:w-96 xl:w-[600px]">
+            <span class="text-sm font-semibold text-brand-200">"Vendor sources"</span>
+            <div class="grid grid-cols-1 gap-1.5">{data}</div>
         </div>
     }
     .into_any()
@@ -291,7 +290,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                     .map(|item| {
                         view! {
                             <A
-                                attr:class="flex flex-col gap-1 rounded border border-violet-800/40 bg-[#100a12] p-2 hover:bg-violet-900/40 transition-colors"
+                                attr:class="group flex flex-col gap-1 rounded-lg border border-white/10 bg-black/30 p-1.5 hover:bg-white/10 transition-colors shadow-sm"
                                 exact=true
                                 href=move || {
                                     format!(
@@ -305,20 +304,18 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                                 }
                             >
 
-                                <div class="flex flex-row">
+                                <div class="flex items-center gap-2 text-sm">
                                     <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
-                                    <span style="width: 300px;">{item.name.as_str()}</span>
-                                    <span style="color: #abc; width: 50px;">
-                                        {item.level_item.0}
-                                    </span>
+                                    <span class="flex-1 truncate">{item.name.as_str()}</span>
+                                    <span class="text-xs text-gray-400">{item.level_item.0}</span>
                                 </div>
-                                <div class="min-w-60 h-5">
+                                <div class="text-xs text-brand-200">
                                     <CheapestPrice item_id=item.key_id />
                                 </div>
                             </A>
                         }
                     })
-                    .take(15)
+                    .take(12)
                     .collect_view()
             })
             .unwrap_or_default()
@@ -328,15 +325,68 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
             .take(30)
             .collect::<Vec<_>>()
     });
+    let (show_more, set_show_more) = signal(false);
 
     view! {
-        <div class="flex-col flex-auto flex-wrap p-2" class:hidden=move || item_set().is_empty()>
+        <div class="flex-col flex-auto flex-wrap p-1" class:hidden=move || item_set().is_empty()>
             <span class="content-title">"related items"</span>
-            <div class="flex-row flex-wrap gap-3">{item_set}</div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
+                {item_set}
+                {move || {
+                    show_more().then(|| {
+                        item()
+                            .map(|item| {
+                                item_set_iter(item)
+                                    .chain(prefix_item_iterator(item))
+                                    .chain(suffix_item_iterator(item))
+                                    .sorted_by_key(|i| i.key_id.0)
+                                    .unique_by(|i| i.key_id)
+                                    .filter(|i| i.item_search_category.0 > 0)
+                                    .filter(|i| i.key_id.0 != item.key_id.0)
+                                    .skip(12)
+                                    .map(|item| {
+                                        view! {
+                                            <A
+                                                attr:class="group flex flex-col gap-1 rounded-lg border border-white/10 bg-black/30 p-1.5 hover:bg-white/10 transition-colors shadow-sm"
+                                                exact=true
+                                                href=move || {
+                                                    format!(
+                                                        "/item/{}/{}",
+                                                        price_zone()
+                                                            .as_ref()
+                                                            .map(|z| z.get_name())
+                                                            .unwrap_or("North-America"),
+                                                        item.key_id.0,
+                                                    )
+                                                }
+                                            >
+
+                                                <div class="flex items-center gap-2 text-sm">
+                                                    <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
+                                                    <span class="flex-1 truncate">{item.name.as_str()}</span>
+                                                    <span class="text-xs text-gray-400">{item.level_item.0}</span>
+                                                </div>
+                                                <div class="text-xs text-brand-200">
+                                                    <CheapestPrice item_id=item.key_id />
+                                                </div>
+                                            </A>
+                                        }
+                                    })
+                                    .collect_view()
+                            })
+                            .unwrap_or_default()
+                    })
+                }}
+            </div>
+            <div class="mt-2 flex justify-center">
+                <button class="btn-secondary" on:click=move |_| set_show_more(!show_more())>
+                    {move || if show_more() { "Show less" } else { "Show more" }}
+                </button>
+            </div>
         </div>
         <VendorItems item_id />
         <div
-            class="content-well flex-col p-2"
+            class="content-well flex-col p-1"
             class:hidden=move || recipes.with(|recipes| recipes.is_empty())
         >
             <span class="content-title">"crafting recipes"</span>

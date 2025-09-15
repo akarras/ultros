@@ -3,3 +3,4 @@
 
 // #[derive(Debug, Clone)]
 // pub struct LoggedInUser(pub Resource<(), Option<UserData>>);
+

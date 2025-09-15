@@ -55,3 +55,4 @@ pub fn SmallItemDisplay(item: &'static Item) -> impl IntoView {
     }
     .into_any()
 }
+

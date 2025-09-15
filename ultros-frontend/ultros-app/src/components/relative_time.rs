@@ -21,3 +21,4 @@ pub fn RelativeToNow(timestamp: NaiveDateTime) -> impl IntoView {
     });
     view! { <span>{time_display}</span> }.into_any()
 }
+

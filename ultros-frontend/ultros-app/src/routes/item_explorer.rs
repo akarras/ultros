@@ -33,26 +33,14 @@ where
     view! {
         <APersistQuery href remove_values=&["page", "menu-open"]>
             <div class="flex items-center gap-3 px-4 py-3 rounded-lg
-            transition-all duration-200
-            border border-transparent
-            hover:border-white/10
-            hover:bg-gradient-to-r hover:from-violet-800/20 hover:to-violet-700/10
-            active:from-violet-700/30 active:to-violet-600/20
-            text-gray-300 hover:text-violet-300
+            transition-colors duration-200
+            border border-white/10
+            bg-gradient-to-r from-brand-950/15 via-black/10 to-black/10 hover:bg-white/5
+            text-gray-300 hover:text-brand-200
             relative group">
-                // Glossy highlight
-                <div class="absolute inset-0 rounded-lg opacity-0 group-hover:opacity-100
-                transition-opacity duration-200
-                bg-gradient-to-b from-white/5 to-transparent
-                pointer-events-none" />
 
-                // Icon container with subtle glow
-                <div class="relative">
-                    <div class="absolute inset-0 rounded-full bg-violet-500/10 blur-sm
-                    scale-150 opacity-0 group-hover:opacity-100
-                    transition-opacity duration-200" />
-                    {children()}
-                </div>
+
+                {children()}
             </div>
         </APersistQuery>
     }
@@ -447,8 +435,8 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                     <QueryButton
                         key="sort"
                         value="key"
-                        class="p-1 !text-violet-200 hover:text-violet-600"
-                        active_classes="p-1 !text-violet-500"
+                        class="p-1 !text-brand-200 hover:text-brand-300"
+                        active_classes="p-1 !text-brand-300"
                     >
                         <div class="flex flex-row items-center gap-1">
                             <Icon icon=i::BiCalendarAltRegular />
@@ -458,8 +446,8 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                     <QueryButton
                         key="sort"
                         value="price"
-                        class="p-1 !text-violet-200 hover:text-violet-600"
-                        active_classes="p-1 !text-violet-500"
+                        class="p-1 !text-brand-200 hover:text-brand-300"
+                        active_classes="p-1 !text-brand-300"
                     >
                         <div class="flex flex-row items-center gap-1">
                             <Icon icon=i::ImPriceTag />
@@ -469,16 +457,16 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                     <QueryButton
                         key="sort"
                         value="name"
-                        class="p-1 !text-violet-200 hover:text-violet-600"
-                        active_classes="p-1 !text-violet-500"
+                        class="p-1 !text-brand-200 hover:text-brand-300"
+                        active_classes="p-1 !text-brand-300"
                     >
                         "NAME"
                     </QueryButton>
                     <QueryButton
                         key="sort"
                         value="ilvl"
-                        class="p-1 !text-violet-200 hover:text-violet-600"
-                        active_classes="p-1 !text-violet-500"
+                        class="p-1 !text-brand-200 hover:text-brand-300"
+                        active_classes="p-1 !text-brand-300"
                         default=true
                     >
                         "ILVL"
@@ -488,8 +476,8 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                     <QueryButton
                         key="dir"
                         value="asc"
-                        class="p-1 !text-violet-200 hover:text-violet-600"
-                        active_classes="p-1 !text-violet-500"
+                        class="p-1 !text-brand-200 hover:text-brand-300"
+                        active_classes="p-1 !text-brand-300"
                     >
                         <div class="flex flex-row items-center gap-1">
                             <Icon icon=i::BiSortUpRegular />
@@ -499,8 +487,8 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                     <QueryButton
                         key="dir"
                         value="desc"
-                        class="p-1 !text-violet-200 hover:text-violet-600"
-                        active_classes="p-1 !text-violet-500"
+                        class="p-1 !text-brand-200 hover:text-brand-300"
+                        active_classes="p-1 !text-brand-300"
                         default=true
                     >
                         <div class="flex flex-row items-center gap-1">
@@ -521,8 +509,8 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                 <QueryButton
                                     key="page"
                                     value=(page.offset + 1).to_string()
-                                    class="p-1 min-w-[2rem] text-center !text-violet-200 hover:text-violet-600"
-                                    active_classes="p-1 !text-violet-500"
+                                    class="p-1 min-w-[2rem] text-center !text-brand-200 hover:text-brand-300"
+                                    active_classes="p-1 !text-brand-300"
                                     default=page.offset == 0
                                 >
                                     {page.offset + 1}
@@ -604,11 +592,9 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                 key=|(id, item)| (id.0, &item.name)
                                 children=|(id, item)| {
                                     view! {
-                                        <div class="w-full sm:flex sm:flex-col md:grid md:grid-cols-12 gap-2 p-3 rounded-lg
-                                        border border-white/10
-                                        bg-gradient-to-br from-violet-950/20 to-violet-900/20
-                                        hover:from-violet-900/30 hover:to-violet-800/30
-                                        transition-all duration-200
+                                        <div class="w-full sm:flex sm:flex-col md:grid md:grid-cols-12 gap-3 p-4 rounded-xl
+                                        panel
+                                        transition-colors duration-200
                                         items-center">
                                             // Item Info Section
                                             <div class="flex flex-row items-center md:col-span-8 gap-2 min-w-0">
@@ -666,14 +652,14 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                     let page = page();
                     if pages.page_count() > page.unwrap_or(1).try_into().unwrap_or(1) {
                         "px-4 py-2 rounded-lg text-center
-                             bg-violet-900/40 border border-violet-400/20
-                             hover:bg-violet-800/40 hover:border-violet-400/30
-                             text-violet-300 transition-all duration-200"
+                             bg-brand-900/40 border border-brand-400/20
+                             hover:bg-brand-800/40 hover:border-brand-400/30
+                             text-brand-300 transition-all duration-200"
                     } else {
                         "hidden"
                     }
                 })
-                active_classes="p-1 !text-violet-500"
+                active_classes="p-1 !text-brand-500"
             >
                 <div class="flex items-center justify-center gap-2">
                     <span>"Next Page:"</span>
@@ -693,7 +679,7 @@ fn CategorySection(
 ) -> impl IntoView {
     view! {
         <div class="p-4 space-y-4">
-            <h2 class="text-xl font-bold text-violet-300">{title}</h2>
+            <h2 class="text-xl font-bold text-brand-200">{title}</h2>
             {category.map(|cat| view! { <CategoryView category=cat /> })}
             {children.map(|c| c())}
         </div>
@@ -705,12 +691,9 @@ fn CategorySection(
 pub fn ItemExplorer() -> impl IntoView {
     let (menu_open, set_open) = query_signal("menu-open");
     let menu_open = Memo::new(move |_| menu_open().unwrap_or(false));
-    const BASE_CLASSES: &str = "group px-4 py-2 rounded-lg flex items-center gap-2
-                           transition-all duration-200 relative
-                           border  ";
-    const OPEN_CLASSES: &str = "bg-violet-900/40 border-violet-400/20 text-violet-300";
-    const CLOSED_CLASSES: &str =
-        "bg-violet-950/20 border-white/10 text-gray-200 hover:text-violet-300";
+    const BASE_CLASSES: &str = "btn-secondary flex items-center gap-2";
+    const OPEN_CLASSES: &str = "bg-[color:color-mix(in_srgb,var(--brand-ring)_22%,transparent)]";
+    const CLOSED_CLASSES: &str = "";
     let button_classes = move || {
         if menu_open() {
             [BASE_CLASSES, OPEN_CLASSES].concat()
@@ -730,7 +713,7 @@ pub fn ItemExplorer() -> impl IntoView {
                     <div class="relative w-6 h-6 items-center">
                         <div
                             class="absolute inset-0 transition-all duration-300
-                            text-violet-300 hover:text-violet-200 aria-current:text-violet-400"
+                            text-gray-300 hover:text-brand-200 aria-current:text-brand-300"
                             class=(["opacity-0", "rotate-90", "scale-0"], menu_closed)
                         >
                             <Icon icon=i::BiXRegular />
@@ -754,7 +737,7 @@ pub fn ItemExplorer() -> impl IntoView {
                             Either::Left(
                                 view! {
                                     <div
-                                        class="fixed inset-0 bg-black/50  z-40 md:hidden"
+                                        class="fixed inset-0 z-40 md:hidden bg-[color:color-mix(in_srgb,var(--color-text)_30%,transparent)]"
                                         on:click=move |_| set_open.set(Some(false))
                                     />
                                 },
@@ -766,28 +749,22 @@ pub fn ItemExplorer() -> impl IntoView {
                     <div
                         class="fixed md:absolute top-0 bottom-0 left-0 z-50
                         w-[85vw] md:w-80 transition-all duration-300 ease-in-out
-                        rounded-xl border border-white/10
-                        bg-gradient-to-br from-violet-950/90 to-violet-900/80
-                        backdrop-filter backdrop-blur-xl
+                        panel
                         min-h-screen"
                         class=("translate-x-0", move || menu_open())
                         class=("-translate-x-[105%]", move || !menu_open())
                         class=("opacity-0", move || !menu_open())
                         class=("opacity-100", move || menu_open())
                     >
-                        // Glossy overlay effect
-                        <div class="absolute inset-0 rounded-xl bg-gradient-to-br from-white/5 to-transparent pointer-events-none" />
+
 
                         // Content container with fade edges
                         <div class="relative h-full">
-                            // Top fade
-                            <div class="absolute top-0 left-0 right-0 h-4 bg-gradient-to-b
-                            from-violet-950/50 to-transparent z-10 pointer-events-none" />
+
 
                             // Main scrollable content
                             <div class="h-full overflow-y-auto overflow-x-hidden
-                            scrollbar-thin scrollbar-thumb-white/20 hover:scrollbar-thumb-violet-400/30
-                            scrollbar-track-transparent">
+                            scrollbar-thin">
                                 <div class="space-y-1 p-2">
                                     <CategorySection title="Weapons" category=1 />
                                     <CategorySection title="Armor" category=2 />
@@ -799,9 +776,7 @@ pub fn ItemExplorer() -> impl IntoView {
                                 </div>
                             </div>
 
-                            // Bottom fade
-                            <div class="absolute bottom-0 left-0 right-0 h-4 bg-gradient-to-t
-                            from-violet-950/50 to-transparent z-10 pointer-events-none" />
+
                         </div>
                     </div> // Main Content Area
                     <div
@@ -810,9 +785,8 @@ pub fn ItemExplorer() -> impl IntoView {
                     >
                         <div class="space-y-6">
                             <Ad class="w-full h-24 rounded-xl overflow-hidden" />
-                            <div class="p-6 rounded-xl bg-gradient-to-br from-violet-950/20 to-violet-900/20
-                            border border-white/10 ">
-                                <h1 class="text-2xl font-bold text-violet-300 mb-4">
+                            <div class="p-6 rounded-xl panel">
+                                <h1 class="text-2xl font-bold text-brand-200 mb-4">
                                     "Item Explorer"
                                 </h1>
                                 <Outlet />
@@ -823,5 +797,6 @@ pub fn ItemExplorer() -> impl IntoView {
                 </div>
             </div>
         </div>
-    }.into_any()
+    }
+    .into_any()
 }

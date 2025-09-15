@@ -33,7 +33,7 @@ pub fn WorldOnlyPicker(
                         set_choice=set_current_world
                         children=move |_w, label| {
                             view! {
-                                <div class="flex items-center px-4 py-2 hover:bg-violet-800/30 rounded-lg transition-colors">
+                                <div class="flex items-center px-4 py-2 rounded-lg transition-colors hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)]">
                                     {label}
                                 </div>
                             }
@@ -94,10 +94,10 @@ pub fn WorldPicker(
                         children=move |(_, s), view| {
                             view! {
                                 <div class="flex justify-between px-4 py-2
-                                hover:bg-violet-800/30 rounded-lg transition-colors
+                                hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] rounded-lg transition-colors
                                 items-end gap-2">
                                     <div>{view}</div>
-                                    <div class="text-sm text-gray-400">
+                                    <div class="text-sm text-[color:var(--color-text-muted)]">
                                         {match s {
                                             AnySelector::World(_) => "world",
                                             AnySelector::Region(_) => "region",

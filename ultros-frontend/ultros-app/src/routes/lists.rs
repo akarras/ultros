@@ -28,9 +28,9 @@ pub fn EditLists() -> impl IntoView {
     let (creating, set_creating) = signal(false);
     view! {
         <div class="flex-row">
-            <span class="content-title">"Edit Lists"</span>
+            <span class="text-3xl font-bold text-[color:var(--brand-fg)]">"Edit Lists"</span>
             <Tooltip tooltip_text="Create list">
-                <button class="btn" on:click=move |_| set_creating(!creating())>
+                <button class="btn-primary" on:click=move |_| set_creating(!creating())>
                     <Icon icon=i::BiPlusRegular />
                 </button>
             </Tooltip>
@@ -43,11 +43,11 @@ pub fn EditLists() -> impl IntoView {
                     let selector = global().map(|global| global.into());
                     let (wdr_filter, set_wdr_filter) = signal(selector);
                     view! {
-                        <div class="content-well">
+                        <div class="panel p-4 rounded-xl">
                             <div class="flex flex-row gap-1">
                                 <label for="list-name">"List name:"</label>
                                 <input
-                                    class="w-52"
+                                    class="input w-52"
                                     id="list-name"
                                     prop:value=new_list
                                     on:input=move |input| set_new_list(event_target_value(&input))
@@ -62,7 +62,7 @@ pub fn EditLists() -> impl IntoView {
                             </div>
                             <button
                                 prop:disabled=move || wdr_filter().is_none()
-                                class="btn"
+                                class="btn-primary"
                                 on:click=move |_| {
                                     if let Some(wdr_filter) = wdr_filter() {
                                         let list = CreateList {
@@ -84,7 +84,7 @@ pub fn EditLists() -> impl IntoView {
                 })
         }}
 
-        <div class="content-well">
+        <div class="panel p-4 rounded-xl">
             <Suspense fallback=move || view! { <Loading /> }>
                 <>
                     {move || {
@@ -120,7 +120,7 @@ pub fn EditLists() -> impl IntoView {
                                                                                     view! {
                                                                                         <td>
                                                                                             <input
-                                                                                                class="w-52"
+                                                                                                class="input w-52"
                                                                                                 prop:value=name
                                                                                                 on:input=move |input| set_name(event_target_value(&input))
                                                                                             />
@@ -153,7 +153,7 @@ pub fn EditLists() -> impl IntoView {
                                                                                         view! {
                                                                                             <Tooltip tooltip_text="Save changes to this list">
                                                                                                 <button
-                                                                                                    class="btn"
+                                                                                                    class="btn-primary"
                                                                                                     on:click=move |_| {
                                                                                                         let mut list = list();
                                                                                                         list.name = name();
@@ -169,7 +169,7 @@ pub fn EditLists() -> impl IntoView {
                                                                                             </Tooltip>
                                                                                             <Tooltip tooltip_text="Delete this list">
                                                                                                 <button
-                                                                                                    class="btn"
+                                                                                                    class="btn-danger"
                                                                                                     on:click=move |_| {
                                                                                                         let _ = delete_list.dispatch(list().id);
                                                                                                     }
@@ -183,7 +183,7 @@ pub fn EditLists() -> impl IntoView {
                                                                                     Either::Right(
                                                                                         view! {
                                                                                             <Tooltip tooltip_text="Edit this list">
-                                                                                                <button class="btn" on:click=move |_| set_is_edit(true)>
+                                                                                                <button class="btn-secondary" on:click=move |_| set_is_edit(true)>
                                                                                                     <Icon icon=i::BsPencilFill />
                                                                                                 </button>
                                                                                             </Tooltip>

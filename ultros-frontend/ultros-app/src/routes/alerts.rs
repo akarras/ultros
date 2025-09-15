@@ -9,3 +9,4 @@ pub fn Alerts() -> impl IntoView {
         </div>
     }
 }
+

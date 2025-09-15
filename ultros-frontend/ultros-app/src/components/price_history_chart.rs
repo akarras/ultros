@@ -68,3 +68,4 @@ pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl 
     }
     .into_any()
 }
+

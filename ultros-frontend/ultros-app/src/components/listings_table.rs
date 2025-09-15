@@ -75,7 +75,7 @@ pub fn ListingsTable(
                     class:hidden=move || { listing_count() < 10 || show_more() }
                 >
                     <td colspan=7>
-                        <button on:click=show_click style="width: 100%;" class="btn">
+                        <button on:click=show_click class="btn w-full">
                             "Show More"
                         </button>
                     </td>

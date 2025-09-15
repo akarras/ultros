@@ -102,9 +102,9 @@ where
                         <div
                             node_ref=node_ref
                             class="fixed z-50 px-4 py-2 text-sm
-                            bg-gradient-to-br from-violet-950/95 to-violet-900/95
-                            border border-violet-800/50
-                            rounded-lg shadow-lg shadow-violet-950/50
+                            bg-gradient-to-br from-brand-950/95 to-brand-900/95
+                            border border-brand-800/50
+                            rounded-lg shadow-lg shadow-brand-950/50
                             backdrop-blur-md
                             text-gray-200
                             transition-opacity duration-150

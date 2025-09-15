@@ -65,7 +65,7 @@ pub fn ItemSearchResult(
                     format!("/item/{price_zone}/{item_id}")
                 }
             >
-                <div class="flex flex-row items-center px-3 py-2 hover:bg-violet-800/30
+                <div class="flex flex-row items-center px-3 py-2 hover:bg-brand-800/30
                 transition-colors duration-200 group gap-3 w-full">
                     <div class="flex-shrink-0">
                         <ItemIcon item_id icon_size=IconSize::Small />
@@ -111,7 +111,7 @@ pub fn ItemSearchResult(
                     </div>
 
                     <div class="flex flex-shrink-0 pl-4 text-right min-w-[100px]
-                    text-violet-300 font-medium">
+                    text-brand-300 font-medium">
                         <CheapestPrice item_id=item.key_id />
                     </div>
                 </div>
@@ -120,9 +120,10 @@ pub fn ItemSearchResult(
         Either::Left(left_view)
     } else {
         Either::Right(view! {
-            <a class="block px-3 py-2 text-gray-400 text-center hover:bg-violet-800/30 transition-colors">
+            <a class="block px-3 py-2 text-gray-400 text-center hover:bg-brand-800/30 transition-colors">
                 "Invalid result"
             </a>
         })
     }.into_any()
 }
+

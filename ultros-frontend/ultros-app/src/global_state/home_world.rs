@@ -105,3 +105,4 @@ pub fn get_price_zone() -> (
     };
     (world.into(), set_world.into_signal_setter())
 }
+

@@ -149,7 +149,10 @@ html {
 }
 
 .gradient {
-    background: linear-gradient(black 100px, transparent 200vh);
+    background: linear-gradient(
+        var(--color-background) 100px,
+        transparent 200vh
+    );
     position: relative;
     width: 100%;
     height: 110%;
@@ -197,7 +200,7 @@ html {
     bottom: 0px;
     left: 0px;
     right: 0px;
-    background: rgba(0, 0, 0, 0.5);
+    background: color-mix(in srgb, var(--color-text) 35%, transparent);
 
     z-index: -1;
 }
