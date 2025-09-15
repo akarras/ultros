@@ -5,7 +5,7 @@ pub fn PatreonWrapper(children: Children) -> impl IntoView {
     let show = RwSignal::new(false);
     view! {
         <div
-            class="flex flex-col"
+            class="flex flex-col cursor-pointer"
             on:click=move |_| {
                 show.update(|show| {
                     *show = !*show;
@@ -13,7 +13,7 @@ pub fn PatreonWrapper(children: Children) -> impl IntoView {
             }
         >
             <div
-                class="fixed bottom-0 left-0 flex flex-col cursor-not-allowed"
+                class="fixed bottom-0 left-0 flex flex-col cursor-default"
                 class:invisible=move || !show()
             >
                 <img src=move || {
@@ -34,4 +34,3 @@ pub fn PatreonWrapper(children: Children) -> impl IntoView {
         </div>
     }
 }
-

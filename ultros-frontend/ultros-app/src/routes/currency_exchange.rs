@@ -156,7 +156,7 @@ fn FilterModal(filter_name: &'static str) -> impl IntoView {
     let (is_open, set_open) = signal(false);
     view! {
         <div on:click=move |_| set_open(true)>
-            <div class="cursor-pointer text-white hover:text-brand-200">
+            <div class="cursor-pointer inline-flex items-center justify-center w-8 h-8 rounded-md border border-[color:var(--color-outline)] text-[color:var(--color-text)] hover:text-[color:var(--brand-fg)] hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)]">
                 <Icon icon=icondata::AiFilterFilled />
             </div>
             {move || {
@@ -166,21 +166,25 @@ fn FilterModal(filter_name: &'static str) -> impl IntoView {
                         let (max, set_max) = query_signal::<i32>(format!("{filter_name}_max"));
                         view! {
                             <Modal set_visible=set_open>
-                                <h3 class="text-2xl font-bold">"Edit filter"</h3>
-                                {filter_name.replace("_", " ")}
-                                <div class="flex flex-row justify-between">
-                                    <span>"Max"</span>
-                                    <ParseableInputBox
-                                        input=Signal::derive(move || { max() })
-                                        set_value=SignalSetter::map(move |value| set_max(value))
-                                    />
+                                <h3 class="text-2xl font-bold text-[color:var(--brand-fg)]">"Edit filter"</h3>
+                                <div class="text-sm text-[color:var(--color-text-muted)] mb-2">
+                                    {filter_name.replace("_", " ")}
                                 </div>
-                                <div class="flex flex-row justify-between">
-                                    <span>"Min"</span>
-                                    <ParseableInputBox
-                                        input=Signal::derive(move || { min() })
-                                        set_value=SignalSetter::map(move |value| set_min(value))
-                                    />
+                                <div class="flex flex-col gap-3">
+                                    <div class="flex items-center justify-between">
+                                        <span class="text-[color:var(--color-text)]">"Max"</span>
+                                        <ParseableInputBox
+                                            input=Signal::derive(move || { max() })
+                                            set_value=SignalSetter::map(move |value| set_max(value))
+                                        />
+                                    </div>
+                                    <div class="flex items-center justify-between">
+                                        <span class="text-[color:var(--color-text)]">"Min"</span>
+                                        <ParseableInputBox
+                                            input=Signal::derive(move || { min() })
+                                            set_value=SignalSetter::map(move |value| set_min(value))
+                                        />
+                                    </div>
                                 </div>
                             </Modal>
                         }
@@ -363,7 +367,7 @@ pub fn ExchangeItem() -> impl IntoView {
                 <h2 class="text-2xl font-bold mb-4 text-[color:var(--brand-fg)]">
                     {move || item().map(|i| i.name.as_str())} " - Currency Exchange"
                 </h2>
-                <div class="flex items-center gap-4 mb-6">
+                <div class="flex items-center gap-4 mb-4">
                     <label class="text-[color:var(--color-text-muted)]">Amount to exchange:</label>
                     <input
                         class="input w-24"
@@ -375,6 +379,13 @@ pub fn ExchangeItem() -> impl IntoView {
                             }
                         }
                     />
+                </div>
+                <div class="flex items-center flex-wrap gap-2 text-sm">
+                    <span class="text-[color:var(--color-text-muted)] mr-1">"Quick filters:"</span>
+                    <FilterModal filter_name="price_per_item" />
+                    <FilterModal filter_name="number_received" />
+                    <FilterModal filter_name="total_profit" />
+                    <FilterModal filter_name="hours_between_sales" />
                 </div>
             </div>
             <div class="overflow-x-auto">

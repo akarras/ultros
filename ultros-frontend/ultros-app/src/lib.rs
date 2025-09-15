@@ -83,7 +83,7 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
 pub fn Footer() -> impl IntoView {
     let git_hash = git_short_hash!();
     view! {
-        <footer class="bg-black/60 border-t border-white/5 backdrop-blur-md">
+        <footer class="bg-[color:var(--color-background-elevated)] border-t border-[color:var(--color-outline)]">
             <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-10 space-y-6">
                 <div class="flex flex-wrap justify-center items-center gap-x-8 gap-y-3">
                     <a
@@ -100,7 +100,7 @@ pub fn Footer() -> impl IntoView {
                     </a>
                     <PatreonWrapper>
                         // nobody can tell it's not real.
-                        <a class="muted hover:text-brand-300 transition-colors">
+                        <a class="muted hover:text-brand-300 transition-colors cursor-pointer">
                             "Patreon"
                         </a>
                     </PatreonWrapper>
@@ -152,7 +152,7 @@ pub fn NavRow() -> impl IntoView {
     view! {
         // Navigation
         <nav class="sticky top-0 z-50 app-nav">
-            <div class="mx-auto max-w-7xl px-3 sm:px-4 lg:px-6 py-3 flex flex-col md:flex-row items-center gap-3 text-gray-200">
+            <div class="mx-auto max-w-7xl px-3 sm:px-4 lg:px-6 py-3 flex flex-row flex-wrap items-center gap-3 text-gray-200">
                 // Left section
                 <div class="flex items-center gap-2">
                     <A
@@ -178,6 +178,19 @@ pub fn NavRow() -> impl IntoView {
                                     icon=i::FaMoneyBillTrendUpSolid
                                 />
                                 <span class="hidden md:inline">"Analyzer"</span>
+                            </A>
+                            <A
+                                href="/items?menu-open=true"
+                                attr:class="nav-link"
+                            >
+                                <Icon width="1.75em" height="1.75em" icon=i::FaScrewdriverWrenchSolid />
+                                <span class="hidden sm:inline">"Explorer"</span>
+                            </A>
+                            <A
+                                href="/currency-exchange"
+                                attr:class="nav-link"
+                            >
+                                <span class="hidden sm:inline">"Exchange"</span>
                             </A>
                         }
                     }}
@@ -220,22 +233,14 @@ pub fn NavRow() -> impl IntoView {
 
                 // Right section
                 <div class="flex items-center gap-4">
-                    <A
-                        href="/items?menu-open=true"
-                        attr:class="inline-flex items-center gap-2 px-3 py-2 rounded-md text-gray-300 hover:text-white hover:bg-white/5 transition-colors"
-                    >
-                        <Tooltip tooltip_text="Item Explorer">
-                            <Icon width="1.75em" height="1.75em" icon=i::FaScrewdriverWrenchSolid />
-                        </Tooltip>
-                        <span class="sr-only">"Item Explorer"</span>
-                    </A>
+
 
                     <QuickThemeToggle />
 
                     <a
                         rel="external"
                         href="/invitebot"
-                        class="btn-primary"
+                        class="nav-link"
                     >
                         "Invite Bot"
                     </a>

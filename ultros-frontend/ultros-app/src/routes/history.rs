@@ -19,19 +19,16 @@ pub fn History() -> impl IntoView {
 
             <div class="container mx-auto max-w-7xl space-y-6">
                 <div class="flex items-center justify-between">
-                    <h1 class="text-3xl font-bold text-brand-300">"Viewing History"</h1>
+                    <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">"Viewing History"</h1>
                     <button
-                        class="px-4 py-2 rounded-lg bg-brand-600/20 hover:bg-brand-600/30
-                        border border-brand-400/10 hover:border-brand-400/20
-                        transition-all duration-300 text-gray-200 hover:text-brand-300"
+                        class="btn-secondary"
                         on:click=move |_| item_data.clear_items()
                     >
                         "Clear History"
                     </button>
                 </div>
 
-                <div class="p-6 rounded-xl bg-gradient-to-br from-brand-950/20 to-brand-900/20
-                border border-white/10 ">
+                <div class="panel p-6 rounded-xl">
                     <Suspense fallback=move || {
                         view! {
                             <div class="h-[400px] animate-pulse">
@@ -45,10 +42,10 @@ pub fn History() -> impl IntoView {
                                 Either::Left(
                                     view! {
                                         <div class="text-center py-12">
-                                            <p class="text-lg text-gray-400">
+                                            <p class="text-lg text-[color:var(--color-text-muted)]">
                                                 "No items in your viewing history yet."
                                             </p>
-                                            <p class="text-sm text-gray-500 mt-2">
+                                            <p class="text-sm text-[color:var(--color-text-muted)] mt-2">
                                                 "Items you view will appear here."
                                             </p>
                                         </div>
@@ -68,15 +65,12 @@ pub fn History() -> impl IntoView {
 
                                                     view! {
                                                         <A href=format!("/item/{item_id}")>
-                                                            <div class="flex items-center gap-4 p-3 rounded-lg
-                                                            bg-brand-950/30 border border-white/5
-                                                            hover:bg-brand-900/30 hover:border-white/10
-                                                            transition-all duration-200 hover:translate-x-1">
+                                                            <div class="flex items-center gap-4 p-3 rounded-lg card transition-colors duration-200 hover:translate-x-1">
                                                                 <ItemIcon item_id icon_size=IconSize::Medium />
 
                                                                 <div class="flex flex-col min-w-0 flex-1">
                                                                     <div class="flex items-center gap-2">
-                                                                        <span class="text-gray-200">
+                                                                        <span class="text-[color:var(--color-text)]">
                                                                             {item_data.map(|i| i.name.as_str()).unwrap_or_default()}
                                                                         </span>
                                                                     </div>
@@ -97,4 +91,3 @@ pub fn History() -> impl IntoView {
         </div>
     }.into_any()
 }
-

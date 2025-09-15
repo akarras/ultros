@@ -18,7 +18,7 @@ pub fn ProfileDisplay() -> impl IntoView {
                                     <A href="/profile">
                                         <img class="avatar" src=auth.avatar alt=auth.username />
                                     </A>
-                                    <a rel="external" class="btn-secondary" href="/logout">
+                                    <a rel="external" class="nav-link" href="/logout">
                                         "Logout"
                                     </a>
                                 },
@@ -29,13 +29,13 @@ pub fn ProfileDisplay() -> impl IntoView {
                                 view! {
                                     <a
                                         rel="external"
-                                        class="btn-primary"
+                                        class="nav-link"
                                         href="/login"
                                     >
                                         <Icon height="1.2em" width="1.2em" icon=i::BsDiscord />
                                         <span>"Login"</span>
                                     </a>
-                                    <A href="/settings" attr:class="inline-flex items-center gap-2 px-3 py-2 rounded-md text-gray-300 hover:text-white hover:bg-white/5 transition-colors">
+                                    <A href="/settings" attr:class="nav-link">
                                         <Icon height="2em" width="2em" icon=i::IoSettingsSharp />
                                         <span class="sr-only">Settings</span>
                                     </A>
@@ -46,5 +46,6 @@ pub fn ProfileDisplay() -> impl IntoView {
             }}
 
         </Suspense>
-    }.into_any()
+    }
+    .into_any()
 }

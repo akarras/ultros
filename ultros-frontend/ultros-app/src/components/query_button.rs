@@ -46,6 +46,8 @@ where
                 for remove in remove_queries {
                     query.remove(remove);
                 }
+                // replace any existing value for this key instead of appending
+                query.remove(key.as_str());
                 let _ = query.insert(key.to_string(), value.get());
                 format!("{}{}", pathname(), query.to_query_string())
             }
@@ -55,4 +57,3 @@ where
     }
     .into_any()
 }
-

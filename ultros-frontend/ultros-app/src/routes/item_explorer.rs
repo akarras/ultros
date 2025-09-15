@@ -32,9 +32,9 @@ where
     let children = children.into_inner();
     view! {
         <APersistQuery href remove_values=&["page", "menu-open"]>
-            <div class="flex items-center gap-3 px-4 py-3 rounded-lg
+            <div class="flex items-center gap-1 px-1 py-1 rounded-lg
             transition-colors duration-200
-            panel
+            panel font-medium
             text-[color:var(--color-text)] hover:text-[color:var(--brand-fg)]
             relative group">
 
@@ -690,7 +690,8 @@ fn CategorySection(
 pub fn ItemExplorer() -> impl IntoView {
     let (menu_open, set_open) = query_signal("menu-open");
     let menu_open = Memo::new(move |_| menu_open().unwrap_or(false));
-    const BASE_CLASSES: &str = "btn-secondary flex items-center gap-2";
+    const BASE_CLASSES: &str =
+        "btn-secondary flex items-center gap-1 text-xs sm:text-sm font-medium";
     const OPEN_CLASSES: &str = "bg-[color:color-mix(in_srgb,var(--brand-ring)_22%,transparent)]";
     const CLOSED_CLASSES: &str = "";
     let button_classes = move || {

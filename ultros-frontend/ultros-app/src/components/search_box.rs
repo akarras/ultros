@@ -14,7 +14,7 @@ use sublime_fuzzy::{FuzzySearch, Match, Scoring};
 use web_sys::KeyboardEvent;
 
 pub(crate) fn fuzzy_search(query: &str, target: &str) -> Option<Match> {
-    let scoring = Scoring::emphasize_distance();
+    let scoring = Scoring::default();
     let search = FuzzySearch::new(query, target)
         .case_insensitive()
         .score_with(&scoring);
@@ -57,16 +57,49 @@ pub fn SearchBox() -> impl IntoView {
             if s.is_empty() {
                 return vec![];
             }
-            let mut score = items
+            let q = s.trim();
+            if q.is_empty() {
+                return vec![];
+            }
+            let ql = q.to_lowercase();
+
+            // very short queries: cheap substring match, limit output
+            if ql.len() < 2 {
+                let mut results = items
+                    .iter()
+                    .filter(|(_, i)| i.item_search_category.0 > 0)
+                    .filter(|(_, i)| i.name.to_lowercase().contains(&ql))
+                    .map(|(id, item)| (id, item))
+                    .collect::<Vec<_>>();
+                results.sort_by_key(|(_, i)| {
+                    (Reverse(i.level_item.0), i.name.as_str().to_lowercase())
+                });
+                results.truncate(100);
+                return results;
+            }
+
+            // prefilter candidates by substring to reduce fuzzy workload
+            let candidates = items
                 .iter()
                 .filter(|(_, i)| i.item_search_category.0 > 0)
-                .filter(|_| !s.is_empty())
-                .flat_map(|(id, i)| fuzzy_search(s, &i.name).map(|m| (id, i, m)))
+                .filter(|(_, i)| {
+                    let name = i.name.as_str().to_lowercase();
+                    if ql.len() < 3 {
+                        true
+                    } else {
+                        name.contains(&ql)
+                    }
+                });
+
+            let mut scored = candidates
+                .flat_map(|(id, i)| fuzzy_search(q, &i.name).map(|m| (id, i, m)))
                 .collect::<Vec<_>>();
-            score.sort_by_key(|(_, i, m)| (Reverse(m.score()), Reverse(i.level_item.0)));
-            score
+
+            scored.sort_by_key(|(_, i, m)| (Reverse(m.score()), Reverse(i.level_item.0)));
+            scored
                 .into_iter()
-                .map(|(id, item, _ma)| (id, item))
+                .map(|(id, item, _)| (id, item))
+                .take(100)
                 .collect::<Vec<_>>()
         })
     };
