@@ -75,7 +75,7 @@ impl Ord for ItemAmount {
 }
 
 #[component]
-fn ItemAmount(item_amount: Option<ItemAmount>) -> impl IntoView {
+fn ItemAmount(#[prop(into)] item_amount: Option<ItemAmount>) -> impl IntoView {
     item_amount
         .map(|item_amount| {
             view! {
@@ -585,6 +585,45 @@ pub fn ExchangeItem() -> impl IntoView {
                             <div class="text-xs text-[color:var(--color-text-muted)] mb-2">
                                 {move || home_world().map(|w| format!("Assuming sales on your home world: {}", w.name))}
                             </div>
+                            {move || {
+                                with_prices().map(|p: Vec<CurrencyTrade>| {
+                                    let mut rows = p.clone();
+                                    rows.sort_by(|a, b| b.total_profit.cmp(&a.total_profit));
+                                    let top = rows.into_iter().take(5).collect::<Vec<_>>();
+                                    view! {
+                                        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 mb-4">
+                                            {top.into_iter().map(|t| view! {
+                                                <A
+                                                    href=move || {
+                                                        t.receive_item
+                                                            .as_ref()
+                                                            .map(|ri| format!("/item/{}", ri.item.key_id.0))
+                                                            .unwrap_or_default()
+                                                    }
+                                                    attr:class="card p-4 rounded-lg transition-colors hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)]"
+                                                >
+                                                    <div class="text-sm text-[color:var(--color-text-muted)] mb-1">
+                                                        <ShopNames shop_names=t.shop_names.clone() />
+                                                    </div>
+                                                    <div class="flex items-center justify-between">
+                                                        <div class="flex items-center gap-2">
+                                                            <ItemAmount item_amount=t.receive_item.clone() />
+                                                        </div>
+                                                        <div class="text-right">
+                                                            <div class="text-xs text-[color:var(--color-text-muted)]">"profit"</div>
+                                                            {t.total_profit}
+                                                        </div>
+                                                    </div>
+                                                    <div class="mt-2 flex items-center justify-between text-xs text-[color:var(--color-text-muted)]">
+                                                        <span>{format!("{} items", t.number_received)}</span>
+                                                        <span>{format!("{}h/sale", t.hours_between_sales)}</span>
+                                                    </div>
+                                                </A>
+                                            }).collect_view()}
+                                        </div>
+                                    }
+                                })
+                            }}
                             <Suspense fallback=Loading>
                                 {move || {
                                     let sort_label = sorted_by();
@@ -668,6 +707,7 @@ pub fn ExchangeItem() -> impl IntoView {
                                                             {labels
                                                                 .into_iter()
                                                                 .enumerate()
+                                                                .filter(|(i, _)| *i <= 6)
                                                                 .map(|(i, l)| {
                                                                     view! {
                                                                         <th class="px-6 py-3">
@@ -679,7 +719,16 @@ pub fn ExchangeItem() -> impl IntoView {
                                                                                     active_classes="text-[color:var(--brand-fg)] underline underline-offset-4 decoration-2"
                                                                                     default="total_profit" == *l
                                                                                 >
-                                                                                    {l.replace("_", " ")}
+                                                                                    {match *l {
+                                                                                        "shop_names" => "Shops".to_string(),
+                                                                                        "cost_item" => "Cost".to_string(),
+                                                                                        "receive_item" => "Item".to_string(),
+                                                                                        "price_per_item" => "Price/item".to_string(),
+                                                                                        "number_received" => "Qty recv".to_string(),
+                                                                                        "total_profit" => "Profit".to_string(),
+                                                                                        "hours_between_sales" => "Hours/sale".to_string(),
+                                                                                        _ => l.replace("_", " "),
+                                                                                    }}
                                                                                 </QueryButton>
                                                                                 {(i > 2)
                                                                                     .then(|| {
@@ -753,13 +802,13 @@ pub struct CurrencyTrade {
     hours_between_sales: i16,
 }
 
-#[derive(PartialEq, Eq, Clone, PartialOrd, Ord)]
-struct ShopNames {
+#[derive(PartialEq, Eq, Clone, PartialOrd, Ord, Debug)]
+pub struct ShopNames {
     shops: Vec<String>,
 }
 
 #[component]
-fn ShopNames(shop_names: ShopNames) -> impl IntoView {
+fn ShopNames(#[prop(into)] shop_names: ShopNames) -> impl IntoView {
     view! {
         <div class="flex flex-col">
             {shop_names
