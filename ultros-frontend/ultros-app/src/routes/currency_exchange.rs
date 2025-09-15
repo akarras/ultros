@@ -359,14 +359,14 @@ pub fn ExchangeItem() -> impl IntoView {
                     item_name(),
                 )
             } />
-            <div class="bg-gray-800 rounded-lg p-6 shadow-lg mb-6">
-                <h2 class="text-2xl font-bold mb-4 text-brand-300">
+            <div class="panel p-6 rounded-xl mb-6">
+                <h2 class="text-2xl font-bold mb-4 text-[color:var(--brand-fg)]">
                     {move || item().map(|i| i.name.as_str())} " - Currency Exchange"
                 </h2>
                 <div class="flex items-center gap-4 mb-6">
-                    <label class="text-gray-300">Amount to exchange:</label>
+                    <label class="text-[color:var(--color-text-muted)]">Amount to exchange:</label>
                     <input
-                        class="bg-gray-700 text-white px-3 py-2 rounded-md border border-gray-600 focus:border-brand-500 focus:outline-none"
+                        class="input w-24"
                         prop:value=currency_quantity
                         on:input=move |e| {
                             let event = event_target_value(&e);
@@ -385,7 +385,7 @@ pub fn ExchangeItem() -> impl IntoView {
                                 "Home world is not set, go to the "
                                 <A
                                     href="/settings"
-                                    attr:class="text-brand-300 hover:text-brand-400 underline"
+                                    attr:class="underline"
                                 >
                                     "settings"
                                 </A> " page and set your home world to see prices on this page"
@@ -437,7 +437,7 @@ pub fn ExchangeItem() -> impl IntoView {
                                                 p.into_iter()
                                                     .map(|p| {
                                                         view! {
-                                                            <tr class="bg-gray-800 hover:bg-gray-700/50 transition-colors">
+                                                            <tr class="transition-colors">
                                                                 <td class="px-6 py-4">
                                                                     <ShopNames shop_names=p.shop_names />
                                                                 </td>
@@ -464,8 +464,8 @@ pub fn ExchangeItem() -> impl IntoView {
                                             info!("{sales:?} items: {count} p: {trades}");
                                             let labels = CurrencyTrade::field_labels();
                                             view! {
-                                                <table class="w-full text-sm text-left text-gray-300">
-                                                    <thead class="text-xs uppercase bg-gray-700 text-gray-300">
+                                                <table class="w-full text-sm text-left">
+                                                    <thead class="text-xs uppercase">
                                                         <tr>
                                                             {labels
                                                                 .into_iter()
@@ -477,8 +477,8 @@ pub fn ExchangeItem() -> impl IntoView {
                                                                                 <QueryButton
                                                                                     key="sorted-by"
                                                                                     value=*l
-                                                                                    class="hover:text-brand-300 transition-colors"
-                                                                                    active_classes="text-brand-400 underline"
+                                                                                    class="hover:text-[color:var(--brand-fg)] transition-colors"
+                                                                                    active_classes="text-[color:var(--brand-fg)] underline"
                                                                                     default="total_profit" == *l
                                                                                 >
                                                                                     {l.replace("_", " ")}
@@ -501,7 +501,7 @@ pub fn ExchangeItem() -> impl IntoView {
                                                                 .collect_view()}
                                                         </tr>
                                                     </thead>
-                                                    <tbody class="divide-y divide-gray-700">
+                                                    <tbody class="divide-y divide-[color:var(--color-outline)]">
                                                         {sorted_and_filtered_rows}
                                                     </tbody>
                                                 </table>
@@ -640,9 +640,8 @@ pub fn CurrencySelection() -> impl IntoView {
     view! {
         <div class="container mx-auto space-y-6">
             // Description Card
-            <div class="p-6 rounded-xl bg-gradient-to-br from-brand-950/20 to-brand-900/20
-            border border-white/10 ">
-                <p class="text-gray-300 leading-relaxed">
+            <div class="panel p-6 rounded-xl">
+                <p class="text-[color:var(--color-text-muted)] leading-relaxed">
                     "Discover lucrative opportunities in Final Fantasy 14 with our Currency Exchange tool.
                         Easily locate items purchasable with in-game currencies, such as Allied Seals or Wolf Marks, that can be resold for significant profits on the marketboard.
                         Whether you're a seasoned trader or just starting out, maximize your earnings by identifying high-value items and optimizing your currency investments."
@@ -653,24 +652,19 @@ pub fn CurrencySelection() -> impl IntoView {
             <MetaDescription text="Find valuable items bought with in-game currency, sell for gil. Maximize earnings effortlessly. " />
 
             // Search Section
-            <div class="p-6 rounded-xl bg-gradient-to-br from-brand-950/20 to-brand-900/20
-            border border-white/10 ">
+            <div class="panel p-6 rounded-xl">
                 <div class="flex items-center gap-4">
                     <div class="relative flex-1 max-w-xl">
                         <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                             <Icon
                                 icon=icondata::BiSearchAlt2Regular
-                                attr:class="w-5 h-5 text-gray-400"
+                                attr:class="w-5 h-5 text-[color:var(--color-text-muted)]"
                             />
                         </div>
                         <input
                             type="text"
                             placeholder="Search currencies..."
-                            class="w-full pl-10 pr-4 py-2 rounded-lg
-                            bg-brand-950/40 border border-white/10
-                            text-gray-200 placeholder-gray-400
-                            focus:outline-none focus:border-brand-400/30
-                            transition-all duration-200"
+                            class="input w-full pl-10"
                             on:input=move |ev| set_search_text(event_target_value(&ev))
                         />
                     </div>
@@ -686,20 +680,15 @@ pub fn CurrencySelection() -> impl IntoView {
                             view! {
                                 <A
                                     href=item_id.to_string()
-                                    attr:class="p-4 rounded-lg
-                                    bg-gradient-to-br from-brand-950/20 to-brand-900/20
-                                    border border-white/10
-                                    hover:from-brand-900/30 hover:to-brand-800/30
-                                    hover:border-brand-400/20
-                                    transition-all duration-200 group"
+                                    attr:class="card p-4 rounded-lg transition-colors duration-200 group"
                                 >
                                     <div class="flex flex-col gap-2">
-                                        <span class="text-lg font-medium text-gray-200
-                                        group-hover:text-brand-300 transition-colors">
+                                        <span class="text-lg font-medium text-[color:var(--color-text)]
+                                        group-hover:text-[color:var(--brand-fg)] transition-colors">
                                             {item_name}
                                         </span>
-                                        <span class="text-sm text-gray-400 italic
-                                        group-hover:text-brand-300 transition-colors">
+                                        <span class="text-sm text-[color:var(--color-text-muted)] italic
+                                        group-hover:text-[color:var(--brand-fg)] transition-colors">
                                             {category_name}
                                         </span>
                                     </div>
@@ -715,7 +704,7 @@ pub fn CurrencySelection() -> impl IntoView {
                 if filtered_currencies().is_empty() {
                     Either::Left(
                         view! {
-                            <div class="text-center p-8 text-gray-400">
+                            <div class="text-center p-8 text-[color:var(--color-text-muted)]">
                                 "No currencies found matching your search."
                             </div>
                         },
@@ -734,7 +723,7 @@ pub fn CurrencyExchange() -> impl IntoView {
         <Ad class="w-full h-[100px]" />
         <div class="main-content">
             <A href="/currency-exchange">
-                <h3 class="text-2xl font-bold text-white hover:text-brand-400 transition-all ease-in-out duration-500">
+                <h3 class="text-2xl font-bold text-[color:var(--brand-fg)] hover:opacity-90 transition-all ease-in-out duration-500">
                     "Currency Exchange"
                 </h3>
             </A>

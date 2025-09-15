@@ -28,7 +28,7 @@ fn Item(item_id: i32) -> impl IntoView {
     let item = xiv_gen_db::data().items.get(&ItemId(item_id))?;
     Some(view! {
         <div class="flex items-center">
-            <span class="text-gray-200">{item.name.as_str()}</span>
+            <span class="text-[color:var(--color-text)]">{item.name.as_str()}</span>
         </div>
     })
 }

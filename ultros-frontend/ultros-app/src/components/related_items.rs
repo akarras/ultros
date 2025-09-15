@@ -174,7 +174,7 @@ fn Recipe(recipe: &'static Recipe) -> impl IntoView {
             view! {
                 <div class="flex items-center justify-between gap-2 py-0.5">
                     <div class="flex items-center gap-2">
-                        <span class="px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-gray-300 text-xs">{amount.to_string()}</span>
+                        <span class="px-1.5 py-0.5 rounded-md border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)] text-[color:var(--color-text)] text-xs">{amount.to_string()}</span>
                         <SmallItemDisplay item=ingredient />
                     </div>
                     <div class="text-xs"><CheapestPrice item_id=ingredient.key_id /></div>
@@ -184,7 +184,7 @@ fn Recipe(recipe: &'static Recipe) -> impl IntoView {
         .collect::<Vec<_>>();
     let target_item = items.get(&recipe.item_result)?;
     Some(view! {
-        <div class="rounded-lg bg-black/20 border border-white/10 p-3 space-y-2">
+        <div class="card p-3 space-y-2 rounded-lg">
             "Crafting Recipe:" <div class="flex items-center justify-between gap-2">
                 <SmallItemDisplay item=target_item />
                 <CheapestPrice item_id=target_item.key_id />
@@ -251,13 +251,13 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                 Some(view! {
                     <a
                         href=format!("https://garlandtools.org/db/#npc/{}", resident.key_id.0)
-                        class="group flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-black/30 p-1.5 text-gray-200 hover:bg-white/10 transition-colors"
+                        class="group flex items-center justify-between gap-2 rounded-lg card p-1.5 transition-colors"
                     >
                         <div class="flex items-center justify-between gap-2">
                             <div class="text-md">{resident.singular.as_str()}</div>
                             <Gil amount=price />
                         </div>
-                        <div class="text-xs italic text-gray-400 truncate">"(" {shop.name.as_str()} ")"</div>
+                        <div class="text-xs italic text-[color:var(--color-text-muted)] truncate">"(" {shop.name.as_str()} ")"</div>
                     </a>
                 })
             }).collect_view())
@@ -290,7 +290,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                     .map(|item| {
                         view! {
                             <A
-                                attr:class="group flex flex-col gap-1 rounded-lg border border-white/10 bg-black/30 p-1.5 hover:bg-white/10 transition-colors shadow-sm"
+                                attr:class="group flex flex-col gap-1 rounded-lg card p-1.5 transition-colors shadow-sm"
                                 exact=true
                                 href=move || {
                                     format!(
@@ -307,7 +307,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                                 <div class="flex items-center gap-2 text-sm">
                                     <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
                                     <span class="flex-1 truncate">{item.name.as_str()}</span>
-                                    <span class="text-xs text-gray-400">{item.level_item.0}</span>
+                                    <span class="text-xs text-[color:var(--color-text-muted)]">{item.level_item.0}</span>
                                 </div>
                                 <div class="text-xs text-brand-200">
                                     <CheapestPrice item_id=item.key_id />
@@ -347,7 +347,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                                     .map(|item| {
                                         view! {
                                             <A
-                                                attr:class="group flex flex-col gap-1 rounded-lg border border-white/10 bg-black/30 p-1.5 hover:bg-white/10 transition-colors shadow-sm"
+                                                attr:class="group flex flex-col gap-1 rounded-lg card p-1.5 transition-colors shadow-sm"
                                                 exact=true
                                                 href=move || {
                                                     format!(
@@ -364,7 +364,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                                                 <div class="flex items-center gap-2 text-sm">
                                                     <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
                                                     <span class="flex-1 truncate">{item.name.as_str()}</span>
-                                                    <span class="text-xs text-gray-400">{item.level_item.0}</span>
+                                                    <span class="text-xs text-[color:var(--color-text-muted)]">{item.level_item.0}</span>
                                                 </div>
                                                 <div class="text-xs text-brand-200">
                                                     <CheapestPrice item_id=item.key_id />

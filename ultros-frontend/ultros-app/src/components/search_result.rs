@@ -73,7 +73,7 @@ pub fn ItemSearchResult(
 
                     <div class="flex flex-col min-w-0 flex-1">
                         <div class="flex items-center gap-2">
-                            <span class="text-gray-200 truncate">
+                            <span class="text-[color:var(--color-text)] truncate">
                                 {move || {
                                     let item_name = items
                                         .get(&ItemId(item_id))
@@ -92,7 +92,7 @@ pub fn ItemSearchResult(
                         </div>
 
                         <div class="flex items-center justify-between text-sm">
-                            <span class="text-gray-400 truncate">
+                            <span class="text-[color:var(--color-text-muted)] truncate">
                                 {categories
                                     .get(&item.item_ui_category)
                                     .map(|i| i.name.as_str())
@@ -102,7 +102,7 @@ pub fn ItemSearchResult(
                             {(item.level_item.0 != 0)
                                 .then(|| {
                                     view! {
-                                        <span class="text-gray-500">
+                                        <span class="text-[color:var(--color-text-muted)]">
                                             "iLvl " {item.level_item.0}
                                         </span>
                                     }
@@ -120,10 +120,9 @@ pub fn ItemSearchResult(
         Either::Left(left_view)
     } else {
         Either::Right(view! {
-            <a class="block px-3 py-2 text-gray-400 text-center hover:bg-brand-800/30 transition-colors">
+            <a class="block px-3 py-2 text-[color:var(--color-text-muted)] text-center hover:bg-[color:color-mix(in_srgb,_var(--brand-ring)_20%,_transparent)] transition-colors">
                 "Invalid result"
             </a>
         })
     }.into_any()
 }
-

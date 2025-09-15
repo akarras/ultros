@@ -14,7 +14,7 @@ fn ItemDetails(item: &'static Item) -> impl IntoView {
                 <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Small />
             </div>
             <span class="flex-1 min-w-0 truncate">{item.name.as_str()}</span>
-            <span class="w-10 text-gray-500 text-right shrink-0">{item.level_item.0}</span>
+            <span class="w-10 text-[color:var(--color-text-muted)] text-right shrink-0">{item.level_item.0}</span>
         </div>
     }
     .into_any()
@@ -55,4 +55,3 @@ pub fn SmallItemDisplay(item: &'static Item) -> impl IntoView {
     }
     .into_any()
 }
-

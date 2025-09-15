@@ -22,8 +22,8 @@ pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
         sales
     });
     view! {
-        <table class="w-full">
-            <thead>
+        <table class="w-full text-sm">
+            <thead class="text-xs uppercase">
                 <tr>
                     <th>"hq"</th>
                     <th>"price"</th>
@@ -35,7 +35,7 @@ pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
                     <th>"time sold"</th>
                 </tr>
             </thead>
-            <tbody>
+            <tbody class="divide-y divide-[color:var(--color-outline)]">
                 <For
                     each=sale_history
                     key=move |sale| sale.sold_date.and_utc().timestamp()
@@ -241,36 +241,36 @@ fn WindowStats(#[prop(into)] sales: Signal<SalesWindow>) -> impl IntoView {
     let p_value = Memo::new(move |_| sales.with(|s| s.p_value));
     view! {
         <div class="flex flex-wrap gap-2">
-            <div class="bg-white/5 border border-white/10 rounded-md px-3 py-1.5 text-sm">
-                <span class="text-gray-400 mr-1">"Gil sold"</span>
+            <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
+                <span class="text-[color:var(--color-text-muted)] mr-1">"Gil sold"</span>
                 <GenericGil<u64> amount=total_gil />
             </div>
-            <div class="bg-white/5 border border-white/10 rounded-md px-3 py-1.5 text-sm">
-                <span class="text-gray-400 mr-1">"Avg price"</span>
+            <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
+                <span class="text-[color:var(--color-text-muted)] mr-1">"Avg price"</span>
                 <Gil amount=average_unit_price />
             </div>
-            <div class="bg-white/5 border border-white/10 rounded-md px-3 py-1.5 text-sm">
-                <span class="text-gray-400 mr-1">"Median price"</span>
+            <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
+                <span class="text-[color:var(--color-text-muted)] mr-1">"Median price"</span>
                 <Gil amount=median_unit_price />
             </div>
-            <div class="bg-white/5 border border-white/10 rounded-md px-3 py-1.5 text-sm">
-                <span class="text-gray-400 mr-1">"Min"</span>
+            <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
+                <span class="text-[color:var(--color-text-muted)] mr-1">"Min"</span>
                 <Gil amount=min_unit_price />
             </div>
-            <div class="bg-white/5 border border-white/10 rounded-md px-3 py-1.5 text-sm">
-                <span class="text-gray-400 mr-1">"Max"</span>
+            <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
+                <span class="text-[color:var(--color-text-muted)] mr-1">"Max"</span>
                 <Gil amount=max_unit_price />
             </div>
-            <div class="bg-white/5 border border-white/10 rounded-md px-3 py-1.5 text-sm">
-                <span class="text-gray-400 mr-1">"Typical stack"</span>
+            <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
+                <span class="text-[color:var(--color-text-muted)] mr-1">"Typical stack"</span>
                 {median_stack_size}
             </div>
-            <div class="bg-white/5 border border-white/10 rounded-md px-3 py-1.5 text-sm">
-                <span class="text-gray-400 mr-1">"Next sale (est.)"</span>
+            <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
+                <span class="text-[color:var(--color-text-muted)] mr-1">"Next sale (est.)"</span>
                 <Gil amount=guessed_next_sale_price />
             </div>
-            <div class="bg-white/5 border border-white/10 rounded-md px-3 py-1.5 text-sm">
-                <span class="text-gray-400 mr-1">"Time between sales"</span>
+            <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
+                <span class="text-[color:var(--color-text-muted)] mr-1">"Time between sales"</span>
                 {move || {
                     time_between_sales()
                         .abs()
@@ -303,14 +303,14 @@ pub fn SalesInsights(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
     let day_sales = Memo::new(move |_| sales.with(|s| s.past_day.clone()).unwrap_or_default());
     let month_sales = Memo::new(move |_| sales.with(|s| s.month.clone()).unwrap_or_default());
     view! {
-        <h3 class="text-xl font-bold text-brand-200 mb-2">"Sales at a glance"</h3>
+        <h3 class="text-xl font-bold text-[color:var(--brand-fg)] mb-2">"Sales at a glance"</h3>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div class:hidden=move || sales.with(|s| s.past_day.is_none())>
-                <h4 class="text-sm text-gray-300 mb-1">"Last 24 hours"</h4>
+                <h4 class="text-sm text-[color:var(--color-text-muted)] mb-1">"Last 24 hours"</h4>
                 <WindowStats sales=day_sales />
             </div>
             <div class:hidden=move || sales.with(|s| s.month.is_none())>
-                <h4 class="text-sm text-gray-300 mb-1">"Last 30 days"</h4>
+                <h4 class="text-sm text-[color:var(--color-text-muted)] mb-1">"Last 30 days"</h4>
                 <WindowStats sales=month_sales />
             </div>
         </div>

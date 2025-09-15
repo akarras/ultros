@@ -43,7 +43,7 @@ pub fn Ad(#[prop(optional)] class: Option<&'static str>) -> impl IntoView {
         <Show when=ads_visible>
             <div class:hidden=unfilled class="ad">
                 <div class="flex flex-col h-full">
-                    <span class="text-sm p-1 px-2 rounded-md bg-black/30 border border-white/10 text-gray-400 shrink max-w-fit">
+                    <span class="text-sm px-2 py-0.5 rounded-md border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)] text-[color:var(--color-text-muted)] shrink max-w-fit">
                         "Ad"
                     </span>
                     <script

@@ -105,7 +105,7 @@ fn AddToListModal(
                                                 <div class="flex flex-row text-xl justify-between">
                                                     <div>{list.name}</div>
                                                     <div
-                                                        class="flex flex-row bg-black/30 hover:bg-white/10 border border-white/10 hover:border-white/20 rounded cursor-pointer p-1 transition-colors duration-150 ease-in-out"
+                                                        class="flex flex-row card hover:bg-[color:color-mix(in_srgb,_var(--brand-ring)_20%,_transparent)] rounded cursor-pointer p-1 transition-colors duration-150 ease-in-out"
                                                         on:click=move |_| {
                                                             set_running(true);
                                                             spawn_local(async move {
@@ -134,7 +134,7 @@ fn AddToListModal(
                                                                 EitherOf3::C(
                                                                     view! {
                                                                         <Icon
-                                                                            attr:class="text-gray-200"
+                                                                            attr:class="text-[color:var(--color-text)]"
                                                                             icon=i::BiPlusRegular
                                                                             width="1.2em"
                                                                             height="1.2em"

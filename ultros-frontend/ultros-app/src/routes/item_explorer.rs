@@ -34,9 +34,8 @@ where
         <APersistQuery href remove_values=&["page", "menu-open"]>
             <div class="flex items-center gap-3 px-4 py-3 rounded-lg
             transition-colors duration-200
-            border border-white/10
-            bg-gradient-to-r from-brand-950/15 via-black/10 to-black/10 hover:bg-white/5
-            text-gray-300 hover:text-brand-200
+            panel
+            text-[color:var(--color-text)] hover:text-[color:var(--brand-fg)]
             relative group">
 
 
@@ -713,7 +712,7 @@ pub fn ItemExplorer() -> impl IntoView {
                     <div class="relative w-6 h-6 items-center">
                         <div
                             class="absolute inset-0 transition-all duration-300
-                            text-gray-300 hover:text-brand-200 aria-current:text-brand-300"
+                            text-[color:var(--color-text)] hover:text-[color:var(--brand-fg)] aria-current:text-[color:var(--brand-fg)]"
                             class=(["opacity-0", "rotate-90", "scale-0"], menu_closed)
                         >
                             <Icon icon=i::BiXRegular />

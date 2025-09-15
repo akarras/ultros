@@ -5,13 +5,13 @@ use leptos_router::*;
 #[component]
 pub fn ListsNav() -> impl IntoView {
     view! {<div class="content-nav">
-        <A class="btn-secondary flex items-center gap-2" href="/list/edit">
-            <Icon icon=AiEditFilled />
-            "Edit"
+        <A exact=true attr:class="nav-link" href="/list/edit">
+            <Icon height="1.25em" width="1.25em" icon=AiEditFilled />
+            <span>"Edit"</span>
         </A>
-        <A class="btn-secondary flex items-center gap-2" href="/list">
-            <Icon icon=AiOrderedListOutlined />
-            "Lists"
+        <A exact=true attr:class="nav-link" href="/list">
+            <Icon height="1.25em" width="1.25em" icon=AiOrderedListOutlined />
+            <span>"Lists"</span>
         </A>
     </div>}
     .into_any()

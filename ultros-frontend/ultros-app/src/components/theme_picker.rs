@@ -54,15 +54,15 @@ pub fn ThemePicker() -> impl IntoView {
     };
 
     view! {
-        <div class="p-6 rounded-xl bg-gradient-to-br from-brand-950/10 to-black/20 border border-white/10 space-y-6">
+        <div class="panel p-6 rounded-xl space-y-6">
             <div class="space-y-2">
-                <h3 class="text-2xl font-bold text-brand-300">"Theme"</h3>
-                <p class="text-sm text-gray-400">"choose your vibe and brand color palette"</p>
+                <h3 class="text-2xl font-bold text-[color:var(--brand-fg)]">"Theme"</h3>
+                <p class="text-sm text-[color:var(--color-text-muted)]">"choose your vibe and brand color palette"</p>
             </div>
 
             <div class="space-y-4">
                 <div class="space-y-2">
-                    <div class="text-brand-200 font-semibold">"Mode"</div>
+                    <div class="text-[color:var(--brand-fg)] font-semibold">"Mode"</div>
                     <div class="flex flex-wrap gap-2">
                         {mode_button("Dark", ThemeMode::Dark)}
                         {mode_button("Light", ThemeMode::Light)}

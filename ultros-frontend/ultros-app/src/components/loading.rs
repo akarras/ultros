@@ -19,7 +19,7 @@ pub fn LargeLoading(#[prop(into)] pending: Signal<bool>) -> impl IntoView {
         <div
             class:opacity-50=pending
             class:opacity-0=move || !pending()
-            class="bg-brand-950 absolute left-0 right-0 z-40 transition ease-in-out delay-250"
+            class="bg-[color:color-mix(in_srgb,_var(--brand-ring)_22%,_var(--color-background))] absolute left-0 right-0 z-40 transition ease-in-out delay-250"
         >
             <div class="ml-[50%]">
                 <Loading />

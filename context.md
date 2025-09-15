@@ -1,215 +1,165 @@
-# Theming Status — Dark/Light, Palettes, and UI Unification (In-Progress)
+# Theming Status — Dark/Light, Palettes, and UI Unification (Updated)
 
-This document captures the current state of the theming/migration, what’s already shipped, and the next steps to finish unifying the UI across the app. Use this to resume work tomorrow.
+This document is the single source of truth for our ongoing retheme: current status, what changed in the latest batch, and what to do next.
 
 ---
 
-## What’s Implemented
+## What’s Newly Completed (this batch)
 
-1) Theme architecture
-- CSS tokens for neutrals, outlines, text, and brand semantics added to Tailwind build.
-- Light-mode overrides via [data-theme="light"] including:
-  - Flipped brand semantics suitable for light backgrounds
-  - Softer “decor spot” background highlights
-- Runtime palette system via [data-palette="<name>"] with: violet, teal, emerald, amber, rose, sky.
-- SSR first-paint script sets data-theme and data-palette prior to hydration to avoid FOUC.
-- Global ThemeSettings (mode + palette) with persistence (localStorage + cookie). Providers wired at app root.
+High-priority flows and components updated to tokens (dark/light + brand palette), removing hardcoded grays/whites/black and legacy gradients.
 
-2) Core utility tokens adopted
-- panel, card, btn/btn-primary/btn-secondary/btn-danger, nav-link, input/select/textarea/kbd
-- Links: higher contrast in light; hover background uses brand-ring mix; nav-link ignores generic anchor styles.
-- Background/gradients: replaced black/white literals with token-based color-mix.
+1) Currency Exchange (both routes)
+- CurrencySelection (the “all currencies” list)
+  - Replaced gradient panels with tokenized `panel`/`card`.
+  - Search input uses `input` utility; icon color uses `--color-text-muted`.
+  - List items use `card`, hover text uses `--brand-fg`.
+  - Empty state uses muted token color.
+- ExchangeItem (the sales/profit table for a selected currency)
+  - Page title and header now use `--brand-fg` (fixes white title issue).
+  - Header container uses `panel`.
+  - “Amount to exchange” input uses `input`; label uses `--color-text-muted`.
+  - Table header/body adopt token table styles (no `bg-gray-*`, `text-gray-*`, or `divide-gray-*`; now use `--color-outline`, `--color-text`).
+  - Sort/active labels use `--brand-fg` and underline for clarity in light mode.
 
-3) Top-level shell
-- Background uses var(--color-background) and var(--decor-spot) radial highlight (no raw black/white).
-- Quick theme toggle uses nav-link styling for better legibility in light.
-
-4) Home page
-- “Welcome to Ultros” and body copy use readable token colors (no gradient text for critical headings).
-- Feature cards: softened gradients, tokenized tints; higher-contrast icons/titles.
-- Recently Viewed + Recent Sales:
-  - Tokenized panel and card rows (no bg-black/30 or border-white/5).
-  - Headings/text/metadata moved to var(--color-text)/var(--color-text-muted).
-  - Scrollbar and hover states toned to tokens.
-
-5) Search
-- Search input uses input utility and tokens (background, outline, placeholder).
-- Search results container toned down (removed old neon pink accents).
-
-6) Analyzer
-- Filter cards use panel; titles use var(--brand-fg), descriptions use var(--color-text-muted).
-- Numeric inputs use input utility; placeholder/focus ring tokenize to brand.
-- Preset filter buttons use btn-secondary.
-- Filter chips unified to token badge pattern:
+2) Sale history table
+- Header uses uppercase tokenized style; body rows now divide with `--color-outline`.
+- Insight badges (e.g., “Avg price”, “Median price”) use token chip pattern:
   - bg: color-mix(var(--brand-ring) 14%, transparent)
-  - text: var(--brand-fg)
-  - border: var(--color-outline)
-- Results summary uses panel.
-- Table:
-  - Container panel; header row uses subtle brand-ring tint for clarity in light.
-  - Zebra/hover rows via color-mix (token-driven).
-  - Active-sort header (profit/ROI) uses var(--brand-fg) for high contrast.
-- Toggle component redesigned:
-  - Token-based track/outline; checked state uses brand-ring tint.
-  - Larger thumb, improved focus ring; label uses text-muted → text on hover.
-  - Fixes “cross region enabled”/“japan enabled” readability in light.
+  - border: `--color-outline`
+  - label text: `--color-text-muted`
+- Titles use `--brand-fg`. Removes all `white/gray/*`.
 
-7) Lists
-- Create/Edit list UI is a panel with input utility; actions are btn-primary/secondary/danger.
-- Lists table wrapped in panel; tokenized headings/links.
+3) Lists page (nav + Edit Lists)
+- The “Lists” and “Edit Lists” actions are now horizontal “tabs” matching Retainers: `nav-link` with normalized icon sizing.
+- Edit Lists header keeps brand title + “Create” action (`btn-primary`), adds nav-link tabs for parity and clarity.
 
-8) Retainers
-- Header actions reworked as horizontal “tabs” with nav-link (Edit / All Listings / Undercuts); icons normalized (~1.25em).
-- Listing tables and undercut tables converted to panel; table styling remains as-is but inherits token colors.
+4) Loading skeletons
+- Removed dark-only gradients and black panels; now use brand-ring gradient tints and `panel` for row shells.
+- Works in both modes without washing out text around them.
 
-9) World selector (Select + WorldPicker)
-- Select input now uses input utility; dropdown is a panel (no brand-black gradient).
-- Menu rows use brand-ring hover mix; captions use text-muted.
-- Fixes “Select World” box readability in light mode.
+5) Item Explorer (first pass of this batch)
+- Sidebar category buttons moved from black/gradient to `panel` with token hover/active text colors.
+- aria-current now uses `--brand-fg` to indicate active state.
+- Additional subtle text color fixes to align with tokens.
 
-10) Item view
-- Removed purple/black gradients and white text blocks; replaced with panel/card tokens.
-- Sticky world menu uses panel.
-- Chart wrappers enforce text color via tokens; chart axis/grid already read CSS variables.
-- Related items container converted to panel; more local sweeps pending (see next steps).
+6) Related items
+- Vendor and related-item rows/cards moved to `card`.
+- Ingredient amount badges now use token chip pattern (tint + outline); muted captions tokenized.
 
-11) Item explorer (first pass cleanup)
-- Sidebar uses panel; removed purple→black gradients.
-- “Browse/Close Categories” button uses btn-secondary (no garish gradient).
-- Mobile overlay uses token-based dim color instead of black.
+7) Modal
+- Backdrop uses color-mix with `--color-text` over `--color-background` (no raw black overlay).
+- Surface uses `panel`; close button hover/focus uses brand-tinted bg and a proper focus ring.
+
+8) Misc polish
+- Search results: item/category text colors tokenized.
+- Add-to-list modal rows use `card` and token hover.
+- Live sale ticker item text and small item display’s ilvl use token colors.
+- Theme picker panel and headings tokenized; copy uses muted token color.
+- “Ad” badge uses chip-style token tints instead of black/white overlays.
+- Large loading overlay uses brand-ring mixed with background for consistent dim in light/dark.
 
 ---
 
-## Pages/Components To Sweep Next
+## What’s Already In Place (unchanged from prior context)
 
-High priority
-- Sale history table (components/sale_history_table.rs):
-  - Tokenize chips/badges and row borders, remove any text-gray/* or border-white/*.
-- Related items (components/related_items.rs):
-  - Convert row cards to card utility; remove bg-black/30 and border-white/* leftovers.
-- Profile/header actions:
-  - Ensure tokenized buttons/links for consistency (profile_display.rs).
-- Lists view page tables (routes/list_view.rs if present):
-  - Ensure tables and actions use panel/buttons tokens.
-
-Medium priority
-- Analyzer: further soften link hover tints if still too saturated in light; ensure all “text-brand-300” remnants are swapped to token link style where needed.
-- Item explorer: deeper layout improvements (category density, clarity of calls to action).
-- Any legacy scrollbar-white/track-transparent styles → token scrollbars where appropriate.
-
-Low priority
-- Seasonal/alt palettes; optional custom hue generator.
-- PWA-like theme-color meta managed per theme (a basic heuristic is already in place).
+- Theme architecture: tokens, light-mode overrides, palette system, SSR first-paint script, persisted settings provider.
+- Core utilities: `panel`, `card`, `btn*`, `nav-link`, `input/select/textarea/kbd`.
+- Shell, Home, Search, Analyzer (first pass), World Selector, Item View cleanup, and first pass on Item Explorer were previously converted to tokens.
 
 ---
 
-## A11y/QA
+## Remaining Work / Next Steps
 
-- Contrast (light/dark):
-  - Headings, active states, and badges meet AA where practical.
-  - Analyzer header active-sort (profit/ROI) verified; chips and badges use sufficient contrast in light and dark.
-- Focus rings:
-  - Toggles and nav links have clear focus rings; expand to any interactive tokens still missing ring treatment.
-- Charts:
-  - Client charts use CSS vars; item chart wrappers enforce readable text color.
+Targeted sweeps to fully remove lingering grays/whites/black/legacy gradients, and to unify action patterns.
 
----
+1) List View tables and actions
+- Convert remaining “content-well” usage to pure utilities where helpful. The CSS already tokenizes it, but bring structure in line with other rethemed pages:
+  - Wrap key content areas in `panel`.
+  - Normalize form inputs to `input` and action buttons to `btn-primary` / `btn-secondary` / `btn-danger`.
+  - If there are sub-page actions, consider a simple `nav-link` group for clarity, mirroring Retainers/Lists/Explorer patterns.
+- Table header/body should rely on tokens: `--color-outline` for dividers, `--color-text` for text, and brand accents for active/sort states if needed.
 
-## Known Issues (to revisit)
+2) Analyzer refinements
+- Reduce any remaining legacy hover color intensity; ensure any residual “text-brand-*” is replaced by token link style or `--brand-fg` where appropriate.
 
-- Nav bar “Light” label and certain nav items may still feel light in some palettes; adjust nav-link border/background mix one notch if needed.
-- Analyzer hyperlink intensity in light may still be slightly pink on some displays; can reduce hover mix or boost plain link foreground to brand-fg proportionally.
-- Some tables still use legacy sticky header/row colors — move to token backgrounds as we touch each route.
-- Server-rendered item cards (SVG) don’t inherit CSS; we added optional chart options previously, but further palette parity may require carefully chosen static colors or injecting theme hints.
+3) Item Explorer (phase 2 layout)
+- Improve density/scan-ability of category and item lists:
+  - Prefer `card` for grouped elements.
+  - Consider subtle section headers and spacing rules using tokens.
+  - Keep hover/active to brand-tint and consistent focus rings.
 
----
+4) Profile display and settings (quick sweep)
+- Ensure all header actions/links align with token button/link utilities.
+- Remove any `text-gray-*`/`hover:bg-white/*` remnants.
 
-## Files Touched (recent batch)
+5) Tables everywhere
+- If you encounter sticky headers or zebra rows with legacy colors, swap to token backgrounds and outlines, with brand-tinted hovers as needed.
+- Keep contrast AA-friendly in both modes.
 
-Core styles/tokens
-- style/tailwind.css
-- style/legacy.css
-
-Global/App
-- ultros-frontend/ultros-app/src/lib.rs
-- ultros-frontend/ultros-app/src/global_state/mod.rs
-- ultros-frontend/ultros-app/src/global_state/theme.rs
-- ultros-frontend/ultros-app/src/components/theme_picker.rs
-- ultros-frontend/ultros-app/src/components/toggle.rs
-
-Home
-- ultros-frontend/ultros-app/src/routes/home_page.rs
-- ultros-frontend/ultros-app/src/components/recently_viewed.rs
-- ultros-frontend/ultros-app/src/components/live_sale_ticker.rs
-
-Search
-- ultros-frontend/ultros-app/src/components/search_box.rs
-
-Analyzer
-- ultros-frontend/ultros-app/src/routes/analyzer.rs
-- ultros-frontend/ultros-app/src/components/number_input.rs
-
-World selector
-- ultros-frontend/ultros-app/src/components/select.rs
-- ultros-frontend/ultros-app/src/components/world_picker.rs
-
-Item view
-- ultros-frontend/ultros-app/src/routes/item_view.rs
-- ultros-frontend/ultros-app/src/components/price_history_chart.rs
-
-Item explorer
-- ultros-frontend/ultros-app/src/routes/item_explorer.rs
-
-Lists/Retainers
-- ultros-frontend/ultros-app/src/routes/lists.rs
-- ultros-frontend/ultros-app/src/routes/retainers.rs
+6) A11y and polish
+- Verify small captions, badges, and chips meet contrast in light mode.
+- Ensure all interactive elements have visible focus rings (buttons, tabs, toggles, links inside panels/cards).
 
 ---
 
-## Next Steps (execution order)
+## QA Checklist (light and dark)
 
-1) Tables and chips
-- sale_history_table.rs: replace hardcoded text-gray/*, border-white/*; add token chip utility; unify price chip colors to token palette.
-- related_items.rs: use card utility for rows; fix bg/border/text via tokens; ensure hover/active matches theme.
-
-2) List/profile cleanup
-- list_view.rs (if present) & profile_display.rs: buttons/links → button utilities; tokens for text/borders.
-
-3) Item explorer redesign (phase 2)
-- Rework layout density and category grid visuals:
-  - Use card utilities for category links.
-  - Optional: add quick filters/tags.
-  - Reduce large gradients and busy backgrounds; emphasize content.
-
-4) Nav readability (light)
-- If still low on your screen, bump nav-link mix/border one step:
-  - Base bg: brand-ring 18–20% → 20–24%
-  - Border: brand-ring 24% → 32–36%
-
-5) A11y pass
-- Validate contrast AA on light/dark with a few palettes (links, badges, small captions).
-- Ensure all interactive elements have a visible focus state.
-
-6) Optional enhancements
-- Palette fine-tuning for light (slightly desaturate or flip scale endpoints per palette).
-- Add “chip” utility for consistent filter/pill styling.
+- Currency Exchange:
+  - Title readable and brand-colored.
+  - Search card and list cards legible in light mode.
+  - Sales table headers/body have correct contrast; active sort clearly indicated.
+- Lists:
+  - “Lists” and “Edit Lists” nav links match Retainers tabs visually.
+  - Create/Edit list panels and inputs look consistent with tokens.
+- Skeletons:
+  - Gradients visible but subtle; no harsh black overlays in light mode.
+- Item Explorer:
+  - No dark gradients in side menu on light mode; hover/active readable.
 
 ---
 
-## Commit (to run locally)
+## Build and Validation
 
-Note: This document can’t run git for you. Suggested sequence:
+- Built the workspace with the Leptos build to surface any Tailwind/tokenization issues:
+  - Use: cargo leptos build
+- Also validated a regular build:
+  - Use: cargo build
 
-- Review changes in your IDE.
-- Then run:
-  - git add -A
-  - git commit -m "theme: unify analyzer/lists/retainers/world selector/toggle; item view & explorer cleanup; improve light-mode contrast across UI"
-  - git push
+Both completed with warnings only (expected in this phase), no errors.
 
 ---
 
-## Resume Here (tomorrow)
+## Commit Guidance
 
-- Start with: components/sale_history_table.rs and components/related_items.rs to finish token adoption for rows/chips.
-- Validate analyzer links and nav-link contrast in light; tune mix percentages if needed.
-- Begin item explorer layout (phase 2) to reduce cognitive load and remove any lingering gradient-based decor.
+After you validate the behavior locally, commit the work:
+- Suggested message:
+  theme: retheme currency-exchange (lists + sales), sale history, skeletons; unify Lists nav to nav-link; panel/card/token sweep for related items, modal, search results, theme picker, overlays
+
+Push once confirmed working.
+
+---
+
+## Quick Utility Reference
+
+- Panels/cards:
+  - panel: section containers and table shells
+  - card: small row/clickable containers
+- Text:
+  - --color-text, --color-text-muted
+  - --brand-fg for headings/active states
+- Borders/Dividers:
+  - --color-outline
+- Tints and chips:
+  - color-mix(var(--brand-ring) X%, transparent)
+- Interactives:
+  - Buttons: btn-primary / btn-secondary / btn-danger
+  - Links-as-tabs: nav-link
+  - Inputs: input (plus size classes as needed)
+
+---
+
+## Resume Here
+
+- List View page: convert inputs/buttons/tables to token utilities and panels; ensure actions mirror Retainers/Lists tabs if applicable.
+- Analyzer: soften remaining hover accents; eliminate any straggling non-token text colors.
+- Item Explorer: phase 2 layout/card pass to improve scan-ability and consistency.
