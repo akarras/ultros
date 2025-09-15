@@ -48,6 +48,14 @@ pub enum ThemePalette {
     Amber,
     Rose,
     Sky,
+    Ultros,
+    Maelstrom,
+    TwinAdder,
+    Ascian,
+    Ishgard,
+    Crystarium,
+    Sharlayan,
+    Tuliyollal,
 }
 
 impl Default for ThemePalette {
@@ -65,6 +73,14 @@ impl ThemePalette {
             ThemePalette::Amber => "amber",
             ThemePalette::Rose => "rose",
             ThemePalette::Sky => "sky",
+            ThemePalette::Ultros => "ultros",
+            ThemePalette::Maelstrom => "maelstrom",
+            ThemePalette::TwinAdder => "twin-adder",
+            ThemePalette::Ascian => "ascian",
+            ThemePalette::Ishgard => "ishgard",
+            ThemePalette::Crystarium => "crystarium",
+            ThemePalette::Sharlayan => "sharlayan",
+            ThemePalette::Tuliyollal => "tuliyollal",
         }
     }
 }
@@ -78,6 +94,14 @@ impl FromStr for ThemePalette {
             "amber" => ThemePalette::Amber,
             "rose" => ThemePalette::Rose,
             "sky" => ThemePalette::Sky,
+            "ultros" => ThemePalette::Ultros,
+            "maelstrom" => ThemePalette::Maelstrom,
+            "twin-adder" => ThemePalette::TwinAdder,
+            "ascian" => ThemePalette::Ascian,
+            "ishgard" => ThemePalette::Ishgard,
+            "crystarium" => ThemePalette::Crystarium,
+            "sharlayan" => ThemePalette::Sharlayan,
+            "tuliyollal" => ThemePalette::Tuliyollal,
             "violet" | _ => ThemePalette::Violet,
         })
     }

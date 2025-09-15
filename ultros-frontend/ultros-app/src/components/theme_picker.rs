@@ -2,9 +2,7 @@ use icondata as i;
 use leptos::prelude::*;
 use leptos_icons::Icon;
 
-use crate::global_state::theme::{
-    provide_theme_settings, use_theme_settings, ThemeMode, ThemePalette,
-};
+use crate::global_state::theme::{provide_theme_settings, ThemeMode, ThemePalette};
 
 #[component]
 pub fn ThemePicker() -> impl IntoView {
@@ -73,12 +71,14 @@ pub fn ThemePicker() -> impl IntoView {
                 <div class="space-y-2">
                     <div class="text-brand-200 font-semibold">"Palette"</div>
                     <div class="flex flex-wrap gap-2">
-                        {palette_button("Violet", ThemePalette::Violet)}
-                        {palette_button("Teal", ThemePalette::Teal)}
-                        {palette_button("Emerald", ThemePalette::Emerald)}
-                        {palette_button("Amber", ThemePalette::Amber)}
-                        {palette_button("Rose", ThemePalette::Rose)}
-                        {palette_button("Sky", ThemePalette::Sky)}
+                        {palette_button("Ultros", ThemePalette::Ultros)}
+                        {palette_button("Maelstrom", ThemePalette::Maelstrom)}
+                        {palette_button("Twin Adder", ThemePalette::TwinAdder)}
+                        {palette_button("Ascian", ThemePalette::Ascian)}
+                        {palette_button("Ishgard", ThemePalette::Ishgard)}
+                        {palette_button("Crystarium", ThemePalette::Crystarium)}
+                        {palette_button("Sharlayan", ThemePalette::Sharlayan)}
+                        {palette_button("Tuliyollal", ThemePalette::Tuliyollal)}
                     </div>
                 </div>
             </div>

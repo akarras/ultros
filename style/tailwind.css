@@ -238,6 +238,135 @@
     --color-brand-950: #082f49;
 }
 
+/* FFXIV-themed palettes */
+:root[data-palette="ultros"],
+[data-theme="light"][data-palette="ultros"] {
+    /* signature voidsent purple */
+    --color-brand-50: #f5f3ff;
+    --color-brand-100: #ede9fe;
+    --color-brand-200: #ddd6fe;
+    --color-brand-300: #c4b5fd;
+    --color-brand-400: #a78bfa;
+    --color-brand-500: #8b5cf6;
+    --color-brand-600: #7c3aed;
+    --color-brand-700: #6d28d9;
+    --color-brand-800: #5b21b6;
+    --color-brand-900: #4c1d95;
+    --color-brand-950: #2e1065;
+}
+
+:root[data-palette="maelstrom"],
+[data-theme="light"][data-palette="maelstrom"] {
+    /* naval crimson + brass */
+    --color-brand-50: #fef2f2;
+    --color-brand-100: #fee2e2;
+    --color-brand-200: #fecaca;
+    --color-brand-300: #fca5a5;
+    --color-brand-400: #f87171;
+    --color-brand-500: #ef4444;
+    --color-brand-600: #dc2626;
+    --color-brand-700: #b91c1c;
+    --color-brand-800: #991b1b;
+    --color-brand-900: #7f1d1d;
+    --color-brand-950: #450a0a;
+}
+
+:root[data-palette="twin-adder"],
+[data-theme="light"][data-palette="twin-adder"] {
+    /* woodland emerald with serpent amber accents */
+    --color-brand-50: #ecfdf5;
+    --color-brand-100: #d1fae5;
+    --color-brand-200: #a7f3d0;
+    --color-brand-300: #6ee7b7;
+    --color-brand-400: #34d399;
+    --color-brand-500: #10b981;
+    --color-brand-600: #059669;
+    --color-brand-700: #047857;
+    --color-brand-800: #065f46;
+    --color-brand-900: #064e3b;
+    --color-brand-950: #022c22;
+}
+
+:root[data-palette="ascian"],
+[data-theme="light"][data-palette="ascian"] {
+    /* void black + amaranth */
+    --color-brand-50: #fff1f2;
+    --color-brand-100: #ffe4e6;
+    --color-brand-200: #fecdd3;
+    --color-brand-300: #fda4af;
+    --color-brand-400: #fb7185;
+    --color-brand-500: #f43f5e;
+    --color-brand-600: #e11d48;
+    --color-brand-700: #be123c;
+    --color-brand-800: #9f1239;
+    --color-brand-900: #881337;
+    --color-brand-950: #4c0519;
+}
+
+:root[data-palette="ishgard"],
+[data-theme="light"][data-palette="ishgard"] {
+    /* frost + silver (sky blues) */
+    --color-brand-50: #f0f9ff;
+    --color-brand-100: #e0f2fe;
+    --color-brand-200: #bae6fd;
+    --color-brand-300: #7dd3fc;
+    --color-brand-400: #38bdf8;
+    --color-brand-500: #0ea5e9;
+    --color-brand-600: #0284c7;
+    --color-brand-700: #0369a1;
+    --color-brand-800: #075985;
+    --color-brand-900: #0c4a6e;
+    --color-brand-950: #082f49;
+}
+
+:root[data-palette="crystarium"],
+[data-theme="light"][data-palette="crystarium"] {
+    /* aurora violet with crystalline glow (fuchsia) */
+    --color-brand-50: #fdf4ff;
+    --color-brand-100: #fae8ff;
+    --color-brand-200: #f5d0fe;
+    --color-brand-300: #f0abfc;
+    --color-brand-400: #e879f9;
+    --color-brand-500: #d946ef;
+    --color-brand-600: #c026d3;
+    --color-brand-700: #a21caf;
+    --color-brand-800: #86198f;
+    --color-brand-900: #701a75;
+    --color-brand-950: #4a044e;
+}
+
+:root[data-palette="sharlayan"],
+[data-theme="light"][data-palette="sharlayan"] {
+    /* deep academy blue + parchment */
+    --color-brand-50: #eff6ff;
+    --color-brand-100: #dbeafe;
+    --color-brand-200: #bfdbfe;
+    --color-brand-300: #93c5fd;
+    --color-brand-400: #60a5fa;
+    --color-brand-500: #3b82f6;
+    --color-brand-600: #2563eb;
+    --color-brand-700: #1d4ed8;
+    --color-brand-800: #1e40af;
+    --color-brand-900: #1e3a8a;
+    --color-brand-950: #172554;
+}
+
+:root[data-palette="tuliyollal"],
+[data-theme="light"][data-palette="tuliyollal"] {
+    /* terracotta heat + jungle warmth (orange) */
+    --color-brand-50: #fff7ed;
+    --color-brand-100: #ffedd5;
+    --color-brand-200: #fed7aa;
+    --color-brand-300: #fdba74;
+    --color-brand-400: #fb923c;
+    --color-brand-500: #f97316;
+    --color-brand-600: #ea580c;
+    --color-brand-700: #c2410c;
+    --color-brand-800: #9a3412;
+    --color-brand-900: #7c2d12;
+    --color-brand-950: #431407;
+}
+
 @layer components {
     /* Hero title */
     .hero-title {
