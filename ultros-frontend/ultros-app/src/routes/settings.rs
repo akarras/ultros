@@ -227,12 +227,12 @@ fn AdChoice() -> impl IntoView {
             <h3 class="text-2xl font-bold text-[color:var(--brand-fg)] mb-4">"Ad Settings"</h3>
             <div class="grid md:grid-cols-3 gap-6">
                 <div class="col-span-2 space-y-2">
-                    <p class="text-gray-300">
+                    <p class="text-[color:var(--color-text)]">
                         "If you do not wish to see ads, this toggle will remove them entirely from the site.
                          Use of adblockers is fine as well. If you wish to support the site, do consider
                          leaving this disabled."
                     </p>
-                    <p class="text-sm text-gray-400 italic">
+                    <p class="text-sm italic text-[color:var(--color-text)]">
                         "This is mostly an experiment for the time being."
                     </p>
                 </div>

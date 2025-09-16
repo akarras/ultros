@@ -56,6 +56,10 @@ pub enum ThemePalette {
     Crystarium,
     Sharlayan,
     Tuliyollal,
+    ImmortalFlames,
+    Uldah,
+    Limsa,
+    Garlemald,
 }
 
 impl Default for ThemePalette {
@@ -81,6 +85,10 @@ impl ThemePalette {
             ThemePalette::Crystarium => "crystarium",
             ThemePalette::Sharlayan => "sharlayan",
             ThemePalette::Tuliyollal => "tuliyollal",
+            ThemePalette::ImmortalFlames => "immortal-flames",
+            ThemePalette::Uldah => "uldah",
+            ThemePalette::Limsa => "limsa",
+            ThemePalette::Garlemald => "garlemald",
         }
     }
 }
@@ -102,6 +110,10 @@ impl FromStr for ThemePalette {
             "crystarium" => ThemePalette::Crystarium,
             "sharlayan" => ThemePalette::Sharlayan,
             "tuliyollal" => ThemePalette::Tuliyollal,
+            "immortal-flames" => ThemePalette::ImmortalFlames,
+            "uldah" => ThemePalette::Uldah,
+            "limsa" => ThemePalette::Limsa,
+            "garlemald" => ThemePalette::Garlemald,
             "violet" | _ => ThemePalette::Violet,
         })
     }

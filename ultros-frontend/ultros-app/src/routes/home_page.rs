@@ -27,8 +27,8 @@ fn FeatureCard(
                     {children().into_view()}
                 </div>
                 {badge.map(|b| view! { <span class="feature-badge">{b}</span> })}
-                <h3 class="feature-card-title">{title}</h3>
-                <span class="feature-card-desc">{description}</span>
+                <h3 class="font-extrabold tracking-tight text-[color:var(--color-text)]">{title}</h3>
+                <span class="feature-card-desc" style="color: var(--color-text)">{description}</span>
             </div>
         </A>
     }
@@ -56,9 +56,9 @@ pub fn HomePage() -> impl IntoView {
                             <div class="flex-1 space-y-4">
                                 <h1 class="text-4xl sm:text-5xl font-extrabold leading-tight">
                                     <span class="bg-clip-text text-transparent bg-gradient-to-r from-brand-200 to-brand-100">"Ultros"</span>
-                                    <span class="block text-[color:var(--color-text)]/90 text-2xl sm:text-3xl mt-2">"market board analytics for final fantasy xiv"</span>
+                                    <span class="block text-[color:var(--color-text)] text-2xl sm:text-3xl mt-2 font-semibold">"market board analytics for final fantasy xiv"</span>
                                 </h1>
-                                <p class="text-lg text-[color:var(--color-text)]/80 max-w-prose">
+                                <p class="text-lg text-[color:var(--color-text)] max-w-prose">
                                     "buy low, sell high, and track your retainers with a fast, modern ui."
                                 </p>
                                 <div class="flex flex-wrap items-center gap-3 pt-2">
@@ -77,7 +77,7 @@ pub fn HomePage() -> impl IntoView {
                                         <Icon icon=i::BsDiscord width="1.25em" height="1.25em" />
                                         <span>"invite bot"</span>
                                     </a>
-                                    <A href="/analyzer" attr:class="btn-ghost">
+                                    <A href="/analyzer" attr:class="btn-primary">
                                         <Icon icon=i::FaMoneyBillTrendUpSolid width="1.25em" height="1.25em" />
                                         <span>"open analyzer"</span>
                                     </A>

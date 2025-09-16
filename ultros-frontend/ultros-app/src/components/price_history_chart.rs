@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use cfg_if::cfg_if;
 use leptos::html::Div;
 use leptos::{html::Canvas, prelude::*};
 use leptos_use::use_element_size;
@@ -18,10 +19,18 @@ use crate::{components::toggle::Toggle, global_state::LocalWorldData};
 pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
     let canvas = NodeRef::<Canvas>::new();
     let local_world_data = use_context::<LocalWorldData>().unwrap();
-    let div = NodeRef::<Div>::new();
-    let parent_div_size = use_element_size(div);
-    let width = parent_div_size.width;
-    let height = parent_div_size.height;
+    cfg_if! {
+        if #[cfg(feature = "hydrate")] {
+            let div = NodeRef::<Div>::new();
+            let parent_div_size = use_element_size(div);
+            let width = parent_div_size.width;
+            let height = parent_div_size.height;
+        } else {
+            let div = NodeRef::<Div>::new();
+            let (width, _set_width) = signal(800.0f64);
+            let (height, _set_height) = signal(480.0f64);
+        }
+    }
     let helper = local_world_data.0.unwrap();
     let theme = use_theme_settings();
     let (filter_outliers, set_filter_outliers) = signal(true);
@@ -92,6 +101,9 @@ pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl 
                         remove_outliers: filter_outliers(),
                         text_rgb,
                         grid_rgb,
+                        top_pad_ratio: 0.15,
+                        show_iqr_band: true,
+                        show_trendline: true,
                         ..Default::default()
                     },
                 )

@@ -3,6 +3,7 @@ use leptos::{portal::Portal, prelude::*, reactive::wrappers::write::SignalSetter
 // use leptos_animation::*;
 use leptos_hotkeys::use_hotkeys;
 use leptos_icons::*;
+#[cfg(feature = "hydrate")]
 use leptos_use::use_window_scroll;
 
 #[component]
@@ -13,6 +14,7 @@ pub fn Modal<T>(
 where
     T: Render + RenderHtml + Send + 'static,
 {
+    #[cfg(feature = "hydrate")]
     let (_x, _y) = use_window_scroll();
     // let y = create_animated_signal(move || y.get().into(), tween_default);
 

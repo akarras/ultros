@@ -19,9 +19,7 @@ pub fn ProfileDisplay() -> impl IntoView {
                                         <A href="/profile">
                                             <img class="avatar" src=auth.avatar alt=auth.username />
                                         </A>
-                                        <a rel="external" class="nav-link" href="/logout">
-                                            "Logout"
-                                        </a>
+
                                     </div>
                                 },
                             )

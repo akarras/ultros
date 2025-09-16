@@ -172,7 +172,7 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
             view! {
                 <div class="flex items-center justify-between gap-2 py-0.5">
                     <div class="flex items-center gap-2">
-                        <span class="px-1.5 py-0.5 rounded-md border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)] text-[color:var(--color-text)] text-xs">{amount.to_string()}</span>
+                        <span class="px-1.5 py-0.5 rounded-md bg-[color:color-mix(in_srgb,_var(--brand_ring)_14%,_transparent)] text-[color:var(--color-text)] text-xs">{amount.to_string()}</span>
                         <SmallItemDisplay item=ingredient />
                     </div>
                     <div class="text-xs"><CheapestPrice item_id=ingredient.key_id /></div>
@@ -197,14 +197,14 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
                     {is_target.then(|| view! {
                         <span class="px-2 py-0.5 rounded-full text-xs font-medium
                                      bg-[color:color-mix(in_srgb,var(--brand-ring)_22%,transparent)]
-                                     text-[color:var(--brand-fg)] border border-[color:var(--color-outline)]">
+                                     text-[color:var(--brand-fg)]">
                             "target"
                         </span>
                     })}
                     {is_ingredient.then(|| view! {
                         <span class="px-2 py-0.5 rounded-full text-xs font-medium
                                      bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)]
-                                     text-[color:var(--color-text)] border border-[color:var(--color-outline)]">
+                                     text-[color:var(--color-text)]">
                             "ingredient"
                         </span>
                     })}
@@ -271,9 +271,9 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
                             let profit_chip = |label: &str, profit_opt: Option<i32>| {
                                 profit_opt.map(|profit| {
                                     let cls = if profit >= 0 {
-                                        "px-2 py-0.5 rounded-full text-xs font-medium bg-[color:color-mix(in_srgb,#16a34a_22%,transparent)] text-[color:#bbf7d0] border border-[color:var(--color-outline)]"
+                                        "px-2 py-0.5 rounded-full text-xs font-medium bg-[color:color-mix(in_srgb,#16a34a_22%,transparent)] text-[color:#bbf7d0]"
                                     } else {
-                                        "px-2 py-0.5 rounded-full text-xs font-medium bg-[color:color-mix(in_srgb,#dc2626_18%,transparent)] text-[color:#fecaca] border border-[color:var(--color-outline)]"
+                                        "px-2 py-0.5 rounded-full text-xs font-medium bg-[color:color-mix(in_srgb,#dc2626_18%,transparent)] text-[color:#fecaca]"
                                     };
                                     view! {
                                         <span class=cls>

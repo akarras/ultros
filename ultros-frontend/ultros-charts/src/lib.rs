@@ -87,6 +87,20 @@ pub struct ChartOptions {
     pub text_rgb: Option<(u8, u8, u8)>,
     /// Optional override for grid line base color as (r, g, b)
     pub grid_rgb: Option<(u8, u8, u8)>,
+    /// Extra padding at the top of the Y axis (e.g. 0.10 for +10%)
+    pub top_pad_ratio: f32,
+    /// Draw a translucent IQR band for prices
+    pub show_iqr_band: bool,
+    /// Draw a simple least-squares trendline across all sales
+    pub show_trendline: bool,
+    /// Optional x-axis label override
+    pub x_label: Option<String>,
+    /// Optional y-axis label override
+    pub y_label: Option<String>,
+    /// Optional caption override
+    pub caption: Option<String>,
+    /// Optional custom palette (r,g,b) per series; falls back to dynamic HSL
+    pub palette_rgb: Option<Vec<(u8, u8, u8)>>,
 }
 
 // #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -145,6 +159,13 @@ fn draw_impl<'a, T>(
         draw_icon,
         text_rgb,
         grid_rgb,
+        top_pad_ratio,
+        show_iqr_band,
+        show_trendline,
+        x_label,
+        y_label,
+        caption,
+        palette_rgb,
     }: ChartOptions,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'a>>
 where
@@ -207,13 +228,17 @@ where
         DayLabelMode::Minute
     };
     let title_size = if draw_icon { 40.0 } else { 25.0 };
-    let pad_top = (max_sale as f32 * 1.5).ceil() as i32;
+    let pad_top = ((max_sale as f32) * (1.0 + top_pad_ratio.max(0.0))).ceil() as i32;
+    // Labels and caption (overrides if provided)
+    let caption_text = caption.unwrap_or_else(|| format!("{} - Sale History", item_name));
+    let x_label_text = x_label.unwrap_or_else(|| "Time".to_string());
+    let y_label_text = y_label.unwrap_or_else(|| "Price per unit".to_string());
     let mut chart = ChartBuilder::on(&root)
         .x_label_area_size(60)
         .y_label_area_size(100)
         .margin(10)
         .caption(
-            format!("{} - Sale History", item_name),
+            caption_text,
             ("Jaldi, sans-serif", title_size)
                 .into_font()
                 .color(&label_color),
@@ -224,8 +249,8 @@ where
         .configure_mesh()
         .bold_line_style(grid_base.mix(0.2))
         .light_line_style(grid_base.mix(0.02))
-        .x_desc("Time")
-        .y_desc("Price per unit")
+        .x_desc(&x_label_text)
+        .y_desc(&y_label_text)
         .x_label_formatter(&move |x| match label {
             DayLabelMode::Day => format!("{}", x.format("%Y-%m-%d")),
             DayLabelMode::Hourly => format!("{}", x.format("%Y-%m-%d %H")),
@@ -236,16 +261,76 @@ where
         .label_style(("Jaldi, sans-serif", 20.0).into_font().color(&label_color))
         .draw()?;
 
-    let colors = vec![
-        YELLOW.filled(),
-        RED.filled(),
-        GREEN.filled(),
-        BLUE.filled(),
-        PURPLE.filled(),
-        ORANGE.filled(),
-        TEAL.filled(),
-        MAGENTA.filled(),
-    ];
+    // Build a dynamic palette matching the number of series
+    let series_count = line.len();
+    let colors: Vec<_> = if let Some(palette) = palette_rgb {
+        palette
+            .into_iter()
+            .cycle()
+            .take(series_count)
+            .map(|(r, g, b)| RGBColor(r, g, b).filled())
+            .collect()
+    } else {
+        (0..series_count)
+            .map(|i| {
+                let h = if series_count == 0 {
+                    0.0
+                } else {
+                    i as f64 / series_count as f64
+                };
+                HSLColor(h, 0.70, 0.55).filled()
+            })
+            .collect()
+    };
+
+    // Optional IQR band to visualize the "typical" price region (based on current sales set)
+    if show_iqr_band {
+        if let Some((iqr_min, iqr_max)) = get_iqr_filter(sales.as_ref()) {
+            let band_color = grid_base.mix(0.12);
+            // draw translucent band between iqr_min..iqr_max across the full time range
+            let _ = chart.draw_series(AreaSeries::new(
+                vec![(*first_sale, iqr_max), (*last_sale, iqr_max)],
+                iqr_min,
+                &band_color,
+            ));
+        }
+    }
+
+    // Optional global trendline across all points (least-squares fit)
+    if show_trendline {
+        let mut xs = Vec::<f64>::new();
+        let mut ys = Vec::<f64>::new();
+        for (_, pts) in &line {
+            for (dt, price, _qty) in pts {
+                xs.push(dt.timestamp() as f64);
+                ys.push(*price as f64);
+            }
+        }
+        if xs.len() > 1 {
+            let n = xs.len() as f64;
+            let mean_x = xs.iter().sum::<f64>() / n;
+            let mean_y = ys.iter().sum::<f64>() / n;
+            let mut cov = 0.0;
+            let mut varx = 0.0;
+            for i in 0..xs.len() {
+                let dx = xs[i] - mean_x;
+                cov += dx * (ys[i] - mean_y);
+                varx += dx * dx;
+            }
+            if varx > 0.0 {
+                let m = cov / varx;
+                let b = mean_y - m * mean_x;
+                let x1 = first_sale.timestamp() as f64;
+                let x2 = last_sale.timestamp() as f64;
+                let y1 = (b + m * x1).round() as i32;
+                let y2 = (b + m * x2).round() as i32;
+                let _ = chart.draw_series(LineSeries::new(
+                    vec![(*first_sale, y1), (*last_sale, y2)],
+                    &grid_base.mix(0.40),
+                ));
+            }
+        }
+    }
     for ((series_name, sales), color) in line.into_iter().zip(colors.into_iter()) {
         chart
             .draw_series(sales.into_iter().map(|(date, price, quantity)| {

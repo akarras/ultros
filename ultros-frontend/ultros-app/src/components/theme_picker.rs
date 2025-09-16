@@ -69,7 +69,7 @@ pub fn ThemePicker() -> impl IntoView {
                 </div>
 
                 <div class="space-y-2">
-                    <div class="text-brand-200 font-semibold">"Palette"</div>
+                    <div class="text-[color:var(--brand-fg)] font-semibold">"Palette"</div>
                     <div class="flex flex-wrap gap-2">
                         {palette_button("Ultros", ThemePalette::Ultros)}
                         {palette_button("Maelstrom", ThemePalette::Maelstrom)}
@@ -79,6 +79,10 @@ pub fn ThemePicker() -> impl IntoView {
                         {palette_button("Crystarium", ThemePalette::Crystarium)}
                         {palette_button("Sharlayan", ThemePalette::Sharlayan)}
                         {palette_button("Tuliyollal", ThemePalette::Tuliyollal)}
+                        {palette_button("Immortal Flames", ThemePalette::ImmortalFlames)}
+                        {palette_button("Ul'dah", ThemePalette::Uldah)}
+                        {palette_button("Limsa", ThemePalette::Limsa)}
+                        {palette_button("Garlemald", ThemePalette::Garlemald)}
                     </div>
                 </div>
             </div>

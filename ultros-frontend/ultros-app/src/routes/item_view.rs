@@ -3,11 +3,12 @@ use crate::components::price_history_chart::PriceHistoryChart;
 use crate::components::{
     ad::Ad, add_to_list::AddToList, clipboard::*, item_icon::*, listings_table::*, meta::*,
     recently_viewed::RecentItems, related_items::*, sale_history_table::*, skeleton::BoxSkeleton,
-    stats_display::*, ui_text::*,
+    stats_display::*, toggle::Toggle, ui_text::*,
 };
 use crate::error::AppError;
 use crate::global_state::home_world::{get_price_zone, use_home_world};
 use crate::global_state::LocalWorldData;
+use chrono::{TimeDelta, Utc};
 use leptos::either::{Either, EitherOf3};
 use leptos::prelude::*;
 use leptos_icons::Icon;
@@ -274,7 +275,14 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
 #[component]
 pub fn ChartWrapper(
     listing_resource: Resource<Result<CurrentlyShownItem, AppError>>,
+    item_id: Memo<i32>,
+    world: Memo<String>,
 ) -> impl IntoView {
+    let (hq_only, set_hq_only) = signal(false);
+    let (days_range, set_days_range) = signal(30i32); // 0 = All
+
+    /* moved into Transition branch to avoid reading resource outside Suspense/Transition */
+
     view! {
         <Transition fallback=move || {
             view! {
@@ -297,16 +305,106 @@ pub fn ChartWrapper(
                         </div>
                     }.into_any()
                 } else {
-                    let sales = Memo::new(move |_| {
+                    let base_sales = Memo::new(move |_| {
                         listing_resource
-                            .with(|l| l.as_ref().and_then(|l| l.as_ref().map(|l| l.sales.clone()).ok()))
+                            .with(|l| {
+                                l.as_ref()
+                                    .and_then(|l| l.as_ref().map(|l| l.sales.clone()).ok())
+                            })
                             .unwrap_or_default()
                     });
+
+                    let filtered_sales = Memo::new(move |_| {
+                        let mut sales = base_sales();
+                        if hq_only() {
+                            sales.retain(|s| s.hq);
+                        }
+                        let days = days_range();
+                        if days > 0 {
+                            let cutoff = (Utc::now() - TimeDelta::days(days as i64)).naive_utc();
+                            sales.retain(|s| s.sold_date >= cutoff);
+                        }
+                        sales
+                    });
+
                     view! {
                         <div class="space-y-4">
-                            <div class="panel p-6 text-[color:var(--color-text)]">
-                                <PriceHistoryChart sales=sales />
+                            <div class="panel p-4 text-[color:var(--color-text)]">
+                                <div class="flex flex-wrap items-center justify-between gap-3">
+                                    <div class="flex flex-wrap items-center gap-2">
+                                        <div class="inline-flex rounded-md overflow-hidden border border-[color:var(--color-outline)]">
+                                            <button
+                                                class=move || [
+                                                    "px-3 py-1.5 text-sm transition-colors",
+                                                    if days_range() == 7 { "bg-brand-600/25 text-brand-100" } else { "bg-brand-900/30 text-[color:var(--color-text)]" },
+                                                ].join(" ")
+                                                on:click=move |_| set_days_range(7)
+                                            >
+                                                "7d"
+                                            </button>
+                                            <button
+                                                class=move || [
+                                                    "px-3 py-1.5 text-sm transition-colors border-l border-[color:var(--color-outline)]",
+                                                    if days_range() == 30 { "bg-brand-600/25 text-brand-100" } else { "bg-brand-900/30 text-[color:var(--color-text)]" },
+                                                ].join(" ")
+                                                on:click=move |_| set_days_range(30)
+                                            >
+                                                "30d"
+                                            </button>
+                                            <button
+                                                class=move || [
+                                                    "px-3 py-1.5 text-sm transition-colors border-l border-[color:var(--color-outline)]",
+                                                    if days_range() == 90 { "bg-brand-600/25 text-brand-100" } else { "bg-brand-900/30 text-[color:var(--color-text)]" },
+                                                ].join(" ")
+                                                on:click=move |_| set_days_range(90)
+                                            >
+                                                "90d"
+                                            </button>
+                                            <button
+                                                class=move || [
+                                                    "px-3 py-1.5 text-sm transition-colors border-l border-[color:var(--color-outline)]",
+                                                    if days_range() == 0 { "bg-brand-600/25 text-brand-100" } else { "bg-brand-900/30 text-[color:var(--color-text)]" },
+                                                ].join(" ")
+                                                on:click=move |_| set_days_range(0)
+                                            >
+                                                "All"
+                                            </button>
+                                        </div>
+                                        <div class="ml-2">
+                                            <Toggle
+                                                checked=hq_only
+                                                set_checked=set_hq_only
+                                                checked_label="HQ only"
+                                                unchecked_label="All qualities"
+                                            />
+                                        </div>
+                                    </div>
+                                    <a
+                                        class="btn-primary"
+
+                                        href=move || format!("/itemcard/{}/{}", world(), item_id())
+                                    >
+                                        "Download PNG"
+                                    </a>
+                                </div>
                             </div>
+
+                            {move || {
+                                if filtered_sales.with(|s| s.is_empty()) {
+                                    view! {
+                                        <div role="status" class="bg-amber-900/30 text-amber-200 border border-amber-700/40 rounded-xl p-4">
+                                            "No sales found for the selected filters. Try expanding the time range or disabling HQ-only."
+                                        </div>
+                                    }.into_any()
+                                } else {
+                                    view! {
+                                        <div class="panel p-6 text-[color:var(--color-text)]">
+                                            <PriceHistoryChart sales=filtered_sales />
+                                        </div>
+                                    }.into_any()
+                                }
+                            }}
+
                             {move || {
                                 let no_listings = listing_resource.with(|l| {
                                     l.as_ref().and_then(|r| r.as_ref().ok()).map(|l| l.listings.is_empty()).unwrap_or(false)
@@ -473,7 +571,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
     view! {
         <div class="container mx-auto px-4 py-8">
             <div class="grid grid-cols-1 gap-6">
-                <ChartWrapper listing_resource />
+                <ChartWrapper listing_resource item_id world />
                 <HighQualityTable listing_resource />
                 <LowQualityTable listing_resource />
             </div>

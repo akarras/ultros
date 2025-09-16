@@ -16,29 +16,33 @@ fn use_window_size() -> (Signal<f64>, Signal<f64>) {
     let (x, set_x) = signal(initial_x);
     let (y, set_y) = signal(initial_y);
 
-    let _ = use_event_listener_with_options(
-        use_window(),
-        resize,
-        move |_| {
-            set_x.set(
-                window()
-                    .inner_width()
-                    .unwrap_or_default()
-                    .as_f64()
-                    .unwrap_or_default(),
+    cfg_if! {
+        if #[cfg(feature = "hydrate")] {
+            let _ = use_event_listener_with_options(
+                use_window(),
+                resize,
+                move |_| {
+                    set_x.set(
+                        window()
+                            .inner_width()
+                            .unwrap_or_default()
+                            .as_f64()
+                            .unwrap_or_default(),
+                    );
+                    set_y.set(
+                        window()
+                            .inner_height()
+                            .unwrap_or_default()
+                            .as_f64()
+                            .unwrap_or_default(),
+                    );
+                },
+                UseEventListenerOptions::default()
+                    .capture(false)
+                    .passive(true),
             );
-            set_y.set(
-                window()
-                    .inner_height()
-                    .unwrap_or_default()
-                    .as_f64()
-                    .unwrap_or_default(),
-            );
-        },
-        UseEventListenerOptions::default()
-            .capture(false)
-            .passive(true),
-    );
+        }
+    }
 
     (x.into(), y.into())
 }
@@ -53,70 +57,72 @@ where
 {
     let is_hover = RwSignal::new(false);
     let target = NodeRef::<Div>::new();
-    let UseElementBoundingReturn {
-        bottom,
-        top,
-        left,
-        width,
-        ..
-    } = use_element_bounding(target);
 
-    use_window_scroll();
     let children = children.into_inner();
     let tooltip = {
-        move || {
-            (tooltip_text.with(|t| !t.is_empty()) && is_hover.get()).then(move || {
-                let (screen_width, screen_height) = use_window_size();
-                let (scroll_x, scroll_y) = use_window_scroll();
-                let node_ref = NodeRef::<Div>::new();
-                let UseElementSizeReturn {
-                    width: tooltip_width,
-                    height: tooltip_height,
-                } = use_element_size(node_ref);
+        cfg_if! {
+            if #[cfg(feature = "hydrate")] {
+                let UseElementBoundingReturn {
+                    bottom,
+                    top,
+                    left,
+                    width,
+                    ..
+                } = use_element_bounding(target);
 
-                let calculate_position = move || {
-                    let element_center_x = left() + (width() / 2.0);
-                    let viewport_right = scroll_x() + screen_width();
-                    let _viewport_bottom = scroll_y() + screen_height();
+                move || {
+                    (tooltip_text.with(|t| !t.is_empty()) && is_hover.get()).then(move || {
+                        let (screen_width, screen_height) = use_window_size();
+                        let (scroll_x, scroll_y) = use_window_scroll();
+                        let node_ref = NodeRef::<Div>::new();
+                        let UseElementSizeReturn {
+                            width: tooltip_width,
+                            height: tooltip_height,
+                        } = use_element_size(node_ref);
 
-                    // Default to showing above the element
-                    let mut pos_y = top() - tooltip_height() - 8.0; // 8px offset
-                    let mut pos_x = element_center_x - (tooltip_width() / 2.0);
+                        let calculate_position = move || {
+                            let element_center_x = left() + (width() / 2.0);
+                            let viewport_right = scroll_x() + screen_width();
+                            let _viewport_bottom = scroll_y() + screen_height();
 
-                    // If tooltip would go above viewport, show below instead
-                    if pos_y < scroll_y() {
-                        pos_y = bottom() + 8.0;
-                    }
+                            let mut pos_y = top() - tooltip_height() - 8.0;
+                            let mut pos_x = element_center_x - (tooltip_width() / 2.0);
 
-                    // Prevent tooltip from going off-screen horizontally
-                    pos_x = pos_x.clamp(
-                        scroll_x() + 8.0,                       // Left boundary
-                        viewport_right - tooltip_width() - 8.0, // Right boundary
-                    );
+                            if pos_y < scroll_y() {
+                                pos_y = bottom() + 8.0;
+                            }
 
-                    format!("top: {}px; left: {}px;", pos_y, pos_x)
-                };
+                            pos_x = pos_x.clamp(
+                                scroll_x() + 8.0,
+                                viewport_right - tooltip_width() - 8.0,
+                            );
 
-                view! {
-                    <Portal mount=document().body().unwrap()>
-                        <div
-                            node_ref=node_ref
-                            class="fixed z-50 px-4 py-2 text-sm
-                            bg-gradient-to-br from-brand-950/95 to-brand-900/95
-                            border border-brand-800/50
-                            rounded-lg shadow-lg shadow-brand-950/50
-                            backdrop-blur-md
-                            text-gray-200
-                            transition-opacity duration-150
-                            animate-fade-in"
-                            style=calculate_position
-                        >
-                            {move || tooltip_text().to_string()}
-                        </div>
-                    </Portal>
+                            format!("top: {}px; left: {}px;", pos_y, pos_x)
+                        };
+
+                        view! {
+                            <Portal mount=document().body().unwrap()>
+                                <div
+                                    node_ref=node_ref
+                                    class="fixed z-50 px-4 py-2 text-sm
+                                    bg-gradient-to-br from-brand-950/95 to-brand-900/95
+                                    border border-brand-800/50
+                                    rounded-lg shadow-lg shadow-brand-950/50
+                                    backdrop-blur-md
+                                    text-gray-200
+                                    transition-opacity duration-150
+                                    animate-fade-in"
+                                    style=calculate_position
+                                >
+                                    {move || tooltip_text().to_string()}
+                                </div>
+                            </Portal>
+                        }.into_any()
+                    })
                 }
-                .into_any()
-            })
+            } else {
+                move || None::<AnyView>
+            }
         }
     };
 

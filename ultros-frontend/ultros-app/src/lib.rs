@@ -6,17 +6,14 @@ pub(crate) mod global_state;
 pub(crate) mod routes;
 pub(crate) mod ws;
 
-use crate::api::get_login;
 use crate::components::recently_viewed::RecentItems;
 use crate::global_state::{
     cheapest_prices::CheapestPrices, clipboard_text::GlobalLastCopiedText, cookies::Cookies,
-    home_world::use_home_world, theme::provide_theme_settings,
+    theme::provide_theme_settings,
 };
 pub use crate::global_state::{home_world::GuessedRegion, LocalWorldData};
 use crate::{
-    components::{
-        ad::Ad, patreon::*, profile_display::*, search_box::*, theme_picker::*, tooltip::*,
-    },
+    components::{ad::Ad, apps_menu::*, patreon::*, search_box::*, theme_picker::*, tooltip::*},
     routes::{
         analyzer::*,
         currency_exchange::{CurrencyExchange, CurrencySelection, ExchangeItem},
@@ -147,105 +144,50 @@ pub fn Footer() -> impl IntoView {
 
 #[component]
 pub fn NavRow() -> impl IntoView {
-    let login = Resource::new(move || {}, move |_| async move { get_login().await.ok() });
-    let (homeworld, _set_homeworld) = use_home_world();
+    // mobile: inline search (no modal)
     view! {
         // Navigation
         <nav class="sticky top-0 z-50 app-nav">
-            <div class="mx-auto max-w-7xl px-3 sm:px-4 lg:px-6 py-3 flex flex-row flex-wrap items-center gap-3 text-gray-200">
+            <div class="mx-auto max-w-7xl px-3 sm:px-4 lg:px-6 py-3 flex flex-row flex-wrap items-center gap-2 text-gray-200">
                 // Left section
-                <div class="flex items-center gap-2">
+                                <div class="hidden lg:flex items-center gap-2">
                     <A
                         href="/"
                         exact=true
                         attr:class="nav-link"
                     >
-                        <Icon icon=i::BiHomeSolid height="1.75em" width="1.75em" />
+                        <Icon icon=i::BiHomeSolid />
                         <span class="hidden sm:inline">"Home"</span>
                     </A>
 
-                    {move || {
-                        view! {
-                            <A
-                                href=homeworld()
-                                    .map(|w| format!("/analyzer/{}", w.name))
-                                    .unwrap_or("/analyzer".to_string())
-                                attr:class="nav-link"
-                            >
-                                <Icon
-                                    width="1.75em"
-                                    height="1.75em"
-                                    icon=i::FaMoneyBillTrendUpSolid
-                                />
-                                <span class="hidden md:inline">"Analyzer"</span>
-                            </A>
-                            <A
-                                href="/items?menu-open=true"
-                                attr:class="nav-link"
-                            >
-                                <Icon width="1.75em" height="1.75em" icon=i::FaScrewdriverWrenchSolid />
-                                <span class="hidden sm:inline">"Explorer"</span>
-                            </A>
-                            <A
-                                href="/currency-exchange"
-                                attr:class="nav-link"
-                            >
-                                <span class="hidden sm:inline">"Exchange"</span>
-                            </A>
-                        }
-                    }}
-
-                    <Suspense fallback=move || {}>
-                        {move || {
-                            login
-                                .get()
-                                .flatten()
-                                .map(|_| {
-                                    view! {
-                                        <A
-                                            href="/list"
-                                            attr:class="nav-link"
-                                        >
-                                            <Icon
-                                                width="1.75em"
-                                                height="1.75em"
-                                                icon=i::AiOrderedListOutlined
-                                            />
-                                            <span class="hidden sm:inline">"Lists"</span>
-                                        </A>
-                                        <A
-                                            href="/retainers/listings"
-                                            attr:class="nav-link"
-                                        >
-                                            <Icon width="1.75em" height="1.75em" icon=i::BiGroupSolid />
-                                            <span class="hidden sm:inline">"Retainers"</span>
-                                        </A>
-                                    }
-                                })
-                        }}
-                    </Suspense>
+                    <AppsMenu />
                 </div>
 
                 // Center section
-                <div class="flex-1 max-w-xl w-full">
-                    <SearchBox />
-                </div>
+                                <div class="hidden lg:block flex-1 w-full">
+                                    <SearchBox />
+                                </div>
+                                // Mobile: search row on top, actions row below
+                                <div class="block lg:hidden w-full">
+                                    <div class="w-full">
+                                        <SearchBox />
+                                    </div>
+                                    <div class="mt-2 flex items-center justify-between w-full">
+                                        <A href="/" exact=true attr:class="nav-link">
+                                            <Icon icon=i::BiHomeSolid />
+                                            <span class="hidden sm:inline">"Home"</span>
+                                        </A>
+                                        <AppsMenu />
+                                        <UserMenu />
+                                    </div>
+                                </div>
 
                 // Right section
-                <div class="flex items-center gap-4">
-
-
-                    <QuickThemeToggle />
-
-                    <a
-                        rel="external"
-                        href="/invitebot"
-                        class="nav-link"
-                    >
-                        "Invite Bot"
-                    </a>
-
-                    <ProfileDisplay />
+                                <div class="hidden lg:flex items-center gap-3">
+                    <div class="hidden lg:block">
+                        <QuickThemeToggle />
+                    </div>
+                    <UserMenu />
                 </div>
             </div>
         </nav>
@@ -264,7 +206,10 @@ pub fn App() -> impl IntoView {
     provide_theme_settings();
     // AnimationContext::provide();
     let root_node_ref = NodeRef::<Div>::new();
-    provide_hotkeys_context(root_node_ref, false, scopes!());
+    #[cfg(feature = "hydrate")]
+    {
+        provide_hotkeys_context(root_node_ref, false, scopes!());
+    }
 
     view! {
         <Title text="Ultros" />

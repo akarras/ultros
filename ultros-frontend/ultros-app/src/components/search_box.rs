@@ -167,7 +167,7 @@ pub fn SearchBox() -> impl IntoView {
                             view! { <ItemSearchResult item_id set_search search /> }
                         }
                         viewport_height=528.0
-                        row_height=44.0
+                        row_height=60.0
                         overscan=10
                         header_height=0.0
                         variable_height=false

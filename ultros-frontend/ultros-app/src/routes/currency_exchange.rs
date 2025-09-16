@@ -598,7 +598,7 @@ pub fn ExchangeItem() -> impl IntoView {
                                         <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-5 gap-3 mb-4 items-stretch">
                                             {top.into_iter().map(|t| view! {
                                                 <div
-                                                    class="card p-4 rounded-lg transition-colors hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] cursor-pointer"
+                                                    class="card p-4 rounded-lg transition-colors cursor-pointer"
                                                     on:click=move |_| {
                                                         let url = t
                                                             .receive_item
@@ -897,7 +897,7 @@ pub fn CurrencySelection() -> impl IntoView {
         <div class="container mx-auto space-y-6">
             // Description Card
             <div class="panel p-6 rounded-xl">
-                <p class="text-[color:var(--color-text-muted)] leading-relaxed">
+                <p class="text-[color:var(--color-text)] leading-relaxed">
                     "Discover lucrative opportunities in Final Fantasy 14 with our Currency Exchange tool.
                         Easily locate items purchasable with in-game currencies, such as Allied Seals or Wolf Marks, that can be resold for significant profits on the marketboard.
                         Whether you're a seasoned trader or just starting out, maximize your earnings by identifying high-value items and optimizing your currency investments."
@@ -943,7 +943,7 @@ pub fn CurrencySelection() -> impl IntoView {
                                         group-hover:text-[color:var(--brand-fg)] transition-colors">
                                             {item_name}
                                         </span>
-                                        <span class="text-sm text-[color:var(--color-text-muted)] italic
+                                        <span class="text-sm text-[color:var(--color-text)] italic
                                         group-hover:text-[color:var(--brand-fg)] transition-colors">
                                             {category_name}
                                         </span>

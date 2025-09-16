@@ -940,7 +940,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                     _ => {
                                         Either::Right(
                                             view! {
-                                                <div class="text-xl text-brand-300 text-center p-8
+                                                <div class="text-xl text-[color:var(--color-text)] text-center p-8
                                                 bg-brand-900/20 rounded-2xl border border-white/10">
                                                     "Failed to load analyzer - try again in 30 seconds"
                                                 </div>
@@ -990,7 +990,7 @@ fn AnalyzerWorldNavigator() -> impl IntoView {
 
     view! {
         <div class="flex flex-col md:flex-row items-center gap-2">
-            <label class="text-brand-300 font-medium">"Select World:"</label>
+            <label class="text-[color:var(--brand-fg)] font-semibold">"Select World:"</label>
             <div class="w-full md:w-auto">
                 <WorldOnlyPicker
                     current_world=current_world.into()
@@ -1026,7 +1026,7 @@ pub fn Analyzer() -> impl IntoView {
 
                         // World Selection
                         <div class="panel p-6 rounded-xl">
-                            <h2 class="text-xl font-medium text-brand-300 mb-4">
+                            <h2 class="text-xl font-semibold text-[color:var(--brand-fg)] mb-4">
                                 "Choose a world to get started:"
                             </h2>
                             <AnalyzerWorldNavigator />
@@ -1035,7 +1035,7 @@ pub fn Analyzer() -> impl IntoView {
 
                     // Features Grid
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        <div class="card p-6">
+                        <div class="card p-6 rounded-lg transition-colors duration-200">
                             <Icon
                                 attr:class="text-brand-300 mb-4"
                                 width="2.5em"
@@ -1048,7 +1048,7 @@ pub fn Analyzer() -> impl IntoView {
                             </p>
                         </div>
 
-                        <div class="card p-6">
+                        <div class="card p-6 rounded-lg transition-colors duration-200">
                             <Icon
                                 attr:class="text-brand-300 mb-4"
                                 width="2.5em"
@@ -1061,7 +1061,7 @@ pub fn Analyzer() -> impl IntoView {
                             </p>
                         </div>
 
-                        <div class="card p-6">
+                        <div class="card p-6 rounded-lg transition-colors duration-200">
                             <Icon
                                 attr:class="text-brand-300 mb-4"
                                 width="2.5em"

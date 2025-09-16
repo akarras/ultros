@@ -91,7 +91,7 @@ pub fn RecentlyViewed() -> impl IntoView {
                                         view! {
                                             <A href=format!("/item/{item_id}")>
 
-                                                <div class="card p-3 transition-all duration-200 group">
+                                                <div class="card p-3 transition-colors duration-200 group">
                                                     <div class="flex items-center gap-4 w-full transform transition-transform duration-200 group-hover:translate-x-1">
                                                         <ItemIcon item_id icon_size=IconSize::Medium />
 
