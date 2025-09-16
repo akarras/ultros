@@ -24,7 +24,7 @@ pub fn MatchFormatter(m: Match, target: String) -> impl IntoView {
 
         // This match
         pieces.push(Either::Right(view! {
-            <span class="font-medium text-brand-300">
+            <span class="font-semibold text-[color:var(--color-text)]">
                 {target.chars().skip(c.start()).take(c.len()).collect::<String>()}
             </span>
         }));
@@ -65,7 +65,7 @@ pub fn ItemSearchResult(
                     format!("/item/{price_zone}/{item_id}")
                 }
             >
-                <div class="flex flex-row items-center px-3 py-2 hover:bg-brand-800/30
+                <div class="flex flex-row items-center px-3 py-2 hover:bg-[color:color-mix(in_srgb,_var(--brand-ring)_12%,_transparent)]
                 transition-colors duration-200 group gap-3 w-full">
                     <div class="flex-shrink-0">
                         <ItemIcon item_id icon_size=IconSize::Small />
@@ -111,7 +111,7 @@ pub fn ItemSearchResult(
                     </div>
 
                     <div class="flex flex-shrink-0 pl-4 text-right min-w-[100px]
-                    text-brand-300 font-medium">
+                    text-[color:var(--color-text)] font-semibold">
                         <CheapestPrice item_id=item.key_id />
                     </div>
                 </div>

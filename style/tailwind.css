@@ -165,7 +165,8 @@
 /* Light mode search dropdown container */
 [data-theme="light"] .scroll-panel,
 [data-theme="light"] .search-results {
-    background-color: var(--color-background-elevated);
+    background: var(--color-background-elevated);
+    background-image: none;
     border: 1px solid var(--color-outline);
     border-radius: 0.75rem;
 }
@@ -267,6 +268,69 @@
 }
 
 /* FFXIV-themed palettes */
+:root[data-palette="immortal-flames"],
+[data-theme="light"][data-palette="immortal-flames"] {
+    /* copper and ember (distinct from tuliyollal's orange) */
+    --color-brand-50: #fff3e6;
+    --color-brand-100: #ffe0c2;
+    --color-brand-200: #ffc896;
+    --color-brand-300: #ffab63;
+    --color-brand-400: #f68a2f;
+    --color-brand-500: #d96a16;
+    --color-brand-600: #b74f12;
+    --color-brand-700: #8f3d12;
+    --color-brand-800: #6d3012;
+    --color-brand-900: #4c230f;
+    --color-brand-950: #251108;
+}
+
+:root[data-palette="uldah"],
+[data-theme="light"][data-palette="uldah"] {
+    /* opulent gold and desert sand */
+    --color-brand-50: #fefce8;
+    --color-brand-100: #fef9c3;
+    --color-brand-200: #fef08a;
+    --color-brand-300: #fde047;
+    --color-brand-400: #facc15;
+    --color-brand-500: #eab308;
+    --color-brand-600: #ca8a04;
+    --color-brand-700: #a16207;
+    --color-brand-800: #854d0e;
+    --color-brand-900: #713f12;
+    --color-brand-950: #422006;
+}
+
+:root[data-palette="limsa"],
+[data-theme="light"][data-palette="limsa"] {
+    /* nautical indigo */
+    --color-brand-50: #eef2ff;
+    --color-brand-100: #e0e7ff;
+    --color-brand-200: #c7d2fe;
+    --color-brand-300: #a5b4fc;
+    --color-brand-400: #818cf8;
+    --color-brand-500: #6366f1;
+    --color-brand-600: #4f46e5;
+    --color-brand-700: #4338ca;
+    --color-brand-800: #3730a3;
+    --color-brand-900: #312e81;
+    --color-brand-950: #1e1b4b;
+}
+
+:root[data-palette="garlemald"],
+[data-theme="light"][data-palette="garlemald"] {
+    /* industrial slate */
+    --color-brand-50: #f8fafc;
+    --color-brand-100: #f1f5f9;
+    --color-brand-200: #e2e8f0;
+    --color-brand-300: #cbd5e1;
+    --color-brand-400: #94a3b8;
+    --color-brand-500: #64748b;
+    --color-brand-600: #475569;
+    --color-brand-700: #334155;
+    --color-brand-800: #1f2937;
+    --color-brand-900: #0f172a;
+    --color-brand-950: #020617;
+}
 :root[data-palette="ultros"],
 [data-theme="light"][data-palette="ultros"] {
     /* signature voidsent purple */
@@ -467,7 +531,7 @@
         opacity: 0;
         z-index: 100;
         margin-top: -2px;
-        border: 1px solid var(--color-brand-400);
+        border: 1px solid var(--color-outline);
         border-radius: 0 0 5px 5px;
     }
 
@@ -507,8 +571,10 @@
     }
 
     .avatar {
-        width: 36px;
-        height: 36px;
+        width: 32px;
+        height: 32px;
+        padding: 0;
+        border-radius: 9999px;
         border-radius: 36px;
         padding: 5px;
     }
@@ -733,6 +799,29 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     background-color: color-mix(in srgb, var(--brand-ring) 28%, transparent);
 }
 
+/* Light-mode text utility fixes for contrast */
+[data-theme="light"] .text-gray-300,
+[data-theme="light"] .text-slate-300,
+[data-theme="light"] .text-zinc-300 {
+    color: var(--color-text);
+}
+/* Use darker brand tones for text on light backgrounds */
+[data-theme="light"] .text-brand-200,
+[data-theme="light"] .text-brand-300 {
+    color: var(--color-brand-700);
+}
+
+/* Ghost button: increase contrast in light mode */
+[data-theme="light"] .btn-ghost {
+    border-color: var(--color-outline);
+    color: var(--color-text);
+    background-color: transparent;
+}
+[data-theme="light"] .btn-ghost:hover {
+    background-color: color-mix(in srgb, var(--brand-ring) 14%, transparent);
+    color: var(--color-text);
+}
+
 .btn-secondary {
     @apply p-2 m-1 flex flex-row text-center rounded-2xl transition-all duration-300 ease-in-out justify-center gap-3;
     color: var(--color-text);
@@ -794,8 +883,49 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 }
 
 @utility card {
-    @apply panel p-4 transition-all duration-300;
-    border-color: var(--color-outline);
+    @apply rounded-xl p-4 transition-all duration-300 border;
+    border-color: color-mix(
+        in srgb,
+        var(--brand-ring) 18%,
+        var(--color-outline)
+    );
+    background-color: var(--color-background-elevated);
+    background-image:
+        radial-gradient(
+            1000px 500px at 50% -20%,
+            var(--decor-spot),
+            transparent 60%
+        ),
+        linear-gradient(
+            135deg,
+            color-mix(in srgb, var(--brand-bg) 6%, transparent),
+            color-mix(in srgb, var(--color-background) 4%, transparent)
+        );
+    background-blend-mode: overlay, normal;
+    box-shadow:
+        0 12px 24px -12px rgba(0, 0, 0, 0.28),
+        0 4px 8px -6px rgba(0, 0, 0, 0.16);
+    outline: 1px solid transparent;
+    @apply bg-blend-overlay;
+    @apply hover:-translate-y-0.5 active:translate-y-0 focus-visible:outline-none;
+}
+.card:hover {
+    box-shadow:
+        0 16px 28px -12px rgba(0, 0, 0, 0.34),
+        0 6px 12px -8px rgba(0, 0, 0, 0.2);
+    outline-color: color-mix(in srgb, var(--brand-ring) 35%, transparent);
+}
+[data-theme="light"] .card {
+    background-image: none;
+    background-color: var(--color-background-elevated);
+    border-color: color-mix(
+        in srgb,
+        var(--brand-ring) 24%,
+        var(--color-outline)
+    );
+    box-shadow:
+        0 10px 16px -12px rgba(0, 0, 0, 0.12),
+        0 4px 6px -6px rgba(0, 0, 0, 0.08);
 }
 
 @utility input {
@@ -830,7 +960,12 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 }
 
 @utility feature-card {
-    @apply relative isolate rounded-2xl border border-[color:var(--color-outline)] ring-1 text-[color:var(--color-text)];
+    @apply relative isolate rounded-2xl border text-[color:var(--color-text)];
+    border-color: color-mix(
+        in srgb,
+        var(--brand-ring) 22%,
+        var(--color-outline)
+    );
     @apply aspect-square overflow-hidden p-5;
     background-color: var(--color-background-elevated);
     background-image:
@@ -934,8 +1069,37 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     width: 60%;
 }
 
+/* Light mode: stronger feature card contrast */
+[data-theme="light"] .feature-card {
+    background-image: none;
+    background-color: var(--color-background-elevated);
+    border-color: color-mix(
+        in srgb,
+        var(--brand-ring) 18%,
+        var(--color-outline)
+    );
+}
+[data-theme="light"] .feature-card-desc {
+    color: var(--color-text);
+}
+[data-theme="light"] .feature-card-title {
+    background-image: linear-gradient(
+        90deg,
+        var(--color-brand-800),
+        var(--color-brand-600)
+    );
+}
+[data-theme="light"] .group:hover .feature-card-title {
+    background-image: linear-gradient(
+        90deg,
+        var(--color-brand-900),
+        var(--color-brand-700)
+    );
+}
+
 @utility feature-card-desc {
-    @apply text-gray-300 text-sm md:text-base;
+    @apply text-sm md:text-base;
+    color: var(--color-text);
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
@@ -976,6 +1140,9 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     border: 1px solid
         color-mix(in srgb, var(--brand-ring) 24%, var(--color-outline));
     background-color: color-mix(in srgb, var(--brand-ring) 16%, transparent);
+    min-height: 40px;
+    min-width: 40px;
+    line-height: 1;
 }
 .nav-link:hover {
     background-color: color-mix(in srgb, var(--brand-ring) 28%, transparent);
@@ -994,6 +1161,26 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
         var(--color-outline)
     );
     color: var(--color-text);
+}
+
+/* Normalize icon sizing inside nav */
+.app-nav .nav-link > svg {
+    width: 1.25em;
+    height: 1.25em;
+}
+
+/* Ensure avatar matches nav icon sizing and remove extra padding */
+.app-nav .nav-link img.avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 9999px;
+    padding: 0;
+    object-fit: cover;
+}
+
+/* Let search expand fully across available space on large screens */
+.app-nav .max-w-xl {
+    max-width: none;
 }
 
 /* Buttons */
@@ -1124,14 +1311,15 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 }
 
 @utility scroll-panel {
-    @apply max-h-[500px] overflow-y-auto overflow-x-hidden
-    rounded-lg border border-white/10
-    bg-gradient-to-br from-brand-950/90 to-brand-900/85
-    backdrop-blur-md shadow-lg shadow-black/50;
+    @apply max-h-[500px] overflow-y-auto overflow-x-hidden rounded-lg border;
     /* Firefox */
     scrollbar-width: thin;
     scrollbar-color: color-mix(in srgb, var(--color-brand-600) 50%, transparent)
         transparent;
+}
+
+[data-theme="dark"] .scroll-panel {
+    @apply border-white/10 bg-gradient-to-br from-brand-950/90 to-brand-900/85 backdrop-blur-md shadow-lg shadow-black/50;
 }
 /* WebKit */
 .scroll-panel::-webkit-scrollbar {
