@@ -11,9 +11,9 @@ RUN apt install -y libfreetype6 libfreetype6-dev cmake build-essential curl sudo
 RUN rustup component add rust-src
 RUN rustup target add wasm32-unknown-unknown
 RUN curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
-RUN cargo binstall cargo-leptos -y
+RUN cargo binstall cargo-leptos@0.2.43 -y
 # cargo-leptos 0.2.5 has a dependency on openssl, but the git version doesn't
-RUN cargo install --locked cargo-leptos --version 0.2.43 -v
+# RUN cargo install --locked cargo-leptos --version 0.2.43 -v
 RUN rustup update
 RUN mkdir -p /app
 WORKDIR /app
