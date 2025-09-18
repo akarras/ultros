@@ -1,6 +1,6 @@
-# Analyzer
+# Flip Finder
 
-The core of the anayzer is the ability to find items that are cheaper on other servers.
+The core of Flip Finder is the ability to find items that are cheaper on other servers.
 
 ```bob
 
@@ -18,7 +18,7 @@ how to make gil as an ascii diagram
 
 ## Getting started
 
-Navigate your browser to the [analyzer](https://ultros.app/analyzer)- if you've set your homeworld, you should be able to just click on the analyzer button and have it navigate you directly to your homeworld, otherwise, select your homeworld from the dropdown.
+Navigate your browser to the [Flip Finder](https://ultros.app/flip-finder)- if you've set your homeworld, you should be able to just click on the flip finder button and have it navigate you directly to your homeworld, otherwise, select your homeworld from the dropdown.
 
 ## Sorting & Filtering
 
@@ -29,7 +29,7 @@ The top row contains several options for filtering that are just textboxes
 - Minimum profit - Calculates how much money you could earn from buying and selling the item
 - Minimum ROI - The % that your money would increase- with a 300% r.o.i. for every 1 gil you spend, you could earn 3 gil in return.
 - Minimum time - This takes the average time between sales from the last 4 sales. This can be a little inaccurate if someone has just purchased, but is generally useful.
-- World & Datacenter - You can filter the query down to just a single world by clicking on the world in the analyzer itself, unclear it by clicking the label at the top
+- World & Datacenter - You can filter the query down to just a single world by clicking on the world in the flip finder itself, unclear it by clicking the label at the top
 ![datacenter filter](./datacenter_filter.png)
 ### Sorting
 

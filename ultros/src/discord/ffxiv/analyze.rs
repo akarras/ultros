@@ -60,7 +60,7 @@ pub(crate) async fn profit(
                 )
                 .unwrap();
             }
-            e.title("Price Analyzer")
+            e.title("Flip Finder")
                 .color(Color::from_rgb(123, 0, 123))
                 .description(content)
         })

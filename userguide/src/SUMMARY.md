@@ -11,6 +11,6 @@
     - [Configuring Discord Undercut Alerts](./retainers/alerts.md)
 - [Lists]()
     - [Importing a Makeplace List](./lists/import_makeplace.md)
-- [Analyzer](./analyzer/analyzer.md)
+- [Flip Finder](./analyzer/analyzer.md)
 - [Hotkeys](./hotkeys.md)
 - [Data notice](./data.md)

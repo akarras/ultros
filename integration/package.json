@@ -1,0 +1,18 @@
+{
+  "name": "ultros-e2e",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Puppeteer-based E2E tests for the Ultros Leptos app",
+  "license": "MIT",
+  "scripts": {
+    "pretest": "node -e \"const B=(process.env.BASE_URL||'http://127.0.0.1:8080');const C=(process.env.CONCURRENCY||'16');console.log('BASE_URL='+B);console.log('CONCURRENCY='+C)\"",
+    "run": "node ./runner.cjs",
+    "test": "npm run test:desktop && npm run test:mobile",
+    "test:mobile": "cross-env CONCURRENCY=16 DEVICE=mobile npm run run",
+    "test:desktop": "cross-env CONCURRENCY=16 DEVICE=desktop npm run run"
+  },
+  "devDependencies": {
+    "cross-env": "^7.0.3",
+    "puppeteer": "^22.15.0"
+  }
+}

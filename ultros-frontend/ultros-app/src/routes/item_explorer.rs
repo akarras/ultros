@@ -312,7 +312,7 @@ pub fn JobItems() -> impl IntoView {
         <MetaTitle title=move || format!("{} - Item Explorer", job_set()) />
         <MetaDescription text=move || ["All items equippable by ", &job_set()].concat() />
         <h3 class="text-xl">{job_set}</h3>
-        <div class="flex-row">
+        <div class="flex flex-row items-center gap-2">
             <Toggle
                 checked=market_only
                 set_checked=set_market_only
@@ -612,12 +612,12 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                 key=|(id, item)| (id.0, &item.name)
                                 children=|(id, item)| {
                                     view! {
-                                        <div class="grid grid-cols-12 gap-3 p-4 rounded-xl
+                                        <div class="grid grid-cols-1 md:grid-cols-12 gap-3 p-4 rounded-xl
                                         panel
                                         transition-colors duration-200
-                                        items-center">
+                                        items-start md:items-center text-base md:text-lg">
                                             // Item Info Section
-                                            <div class="col-span-8 flex flex-row items-center gap-2 min-w-0">
+                                            <div class="md:col-span-8 flex flex-row items-center gap-2 min-w-0 w-full">
                                                 // Added container with min-w-0
                                                 <div class="flex-1 min-w-0 flex flex-row items-center gap-3">
                                                     <SmallItemDisplay item=item />
@@ -628,14 +628,14 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                                 </div>
                                             </div>
                                             // Prevent shrinking of add button
-                                            <div class="col-span-2 shrink-0 flex justify-center">
+                                            <div class="md:col-span-2 shrink-0 flex justify-start md:justify-center w-full">
                                                 <AddToList item_id=id.0 />
                                             </div>
 
 
                                             // Normal Quality Price
-                                            <div class="col-span-2 flex flex-row justify-end items-center gap-4">
-                                                <div class="flex flex-row items-center gap-2">
+                                            <div class="md:col-span-2 flex flex-col md:flex-row justify-between md:justify-end items-start md:items-center gap-2 md:gap-4 w-full">
+                                                <div class="flex flex-row items-center gap-2 whitespace-nowrap">
                                                     <span class="text-[color:var(--color-text-muted)] md:hidden">"NQ: "</span>
                                                     <CheapestPrice item_id=*id show_hq=false />
                                                 </div>
@@ -643,7 +643,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                                     if item.can_be_hq {
                                                         Either::Left(
                                                             view! {
-                                                                <div class="flex flex-row items-center gap-2">
+                                                                <div class="flex flex-row items-center gap-2 whitespace-nowrap">
                                                                     <span class="text-[color:var(--color-text-muted)] md:hidden">"HQ: "</span>
                                                                     <CheapestPrice item_id=*id show_hq=true />
                                                                 </div>
@@ -724,7 +724,7 @@ pub fn ItemExplorer() -> impl IntoView {
     };
     let menu_closed = Signal::derive(move || !menu_open());
     view! {
-        <div class="main-content p-6">
+        <div class="main-content p-3 md:p-6">
             <div class="container mx-auto max-w-7xl">
                 // Toggle Button
                 <A
@@ -769,7 +769,7 @@ pub fn ItemExplorer() -> impl IntoView {
                     }} // Sidebar
                     <div
                         class="fixed md:absolute top-0 bottom-0 left-0 z-50
-                        w-[85vw] md:w-80 transition-all duration-300 ease-in-out
+                        w-[92vw] sm:w-[85vw] md:w-80 transition-all duration-300 ease-in-out
                         panel
                         min-h-screen"
                         class=("translate-x-0", move || menu_open())

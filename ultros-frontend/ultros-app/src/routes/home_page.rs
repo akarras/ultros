@@ -77,9 +77,9 @@ pub fn HomePage() -> impl IntoView {
                                         <Icon icon=i::BsDiscord width="1.25em" height="1.25em" />
                                         <span>"invite bot"</span>
                                     </a>
-                                    <A href="/analyzer" attr:class="btn-primary">
+                                    <A href="/flip-finder" attr:class="btn-primary">
                                         <Icon icon=i::FaMoneyBillTrendUpSolid width="1.25em" height="1.25em" />
-                                        <span>"open analyzer"</span>
+                                        <span>"open flip finder"</span>
                                     </A>
                                 </div>
                             </div>
@@ -99,7 +99,7 @@ pub fn HomePage() -> impl IntoView {
                                 icon=i::FaScrewdriverWrenchSolid
                             />
                         </FeatureCard>
-                        <FeatureCard href="/analyzer" title="Analyzer" description="Earn gil by buying low, selling high">
+                        <FeatureCard href="/flip-finder" title="Flip Finder" description="Earn gil by buying low, selling high">
                             <Icon
                                 attr:class="feature-card-icon"
                                 width="3.5em"

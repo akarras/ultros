@@ -824,16 +824,16 @@ pub fn AnalyzerWorldView() -> impl IntoView {
 
     view! {
         <div class="main-content p-6">
-            <Title text=move || format!("Analyzer - {}", world()) />
+            <Title text=move || format!("Flip Finder - {}", world()) />
             <div class="container mx-auto max-w-7xl">
                 <div class="flex flex-col gap-8">
                     // Header Section
                     <div class="panel p-8 rounded-2xl">
                         <h1 class="text-3xl font-bold text-[color:var(--brand-fg)] mb-4">
-                            "Market Analysis for " {world}
+                            "Flip Finder for " {world}
                         </h1>
                         <div class="flex flex-col gap-4">
-                            <MetaTitle title=move || format!("Price Analyzer - {}", world()) />
+                            <MetaTitle title=move || format!("Flip Finder - {}", world()) />
                             <MetaDescription text=move || {
                                 format!(
                                     "The analyzer enables FFXIV merchants to find the best items to buy on other worlds and sell on {}. Filter for the best profits or return, make gil through market arbitrage.",
@@ -982,7 +982,7 @@ fn AnalyzerWorldNavigator() -> impl IntoView {
             let query_map = query.get_untracked();
             let query = query_map.to_query_string();
             nav(
-                &format!("/analyzer/{world}?{query}"),
+                &format!("/flip-finder/{world}?{query}"),
                 NavigateOptions::default(),
             );
         }
@@ -1004,7 +1004,7 @@ fn AnalyzerWorldNavigator() -> impl IntoView {
 #[component]
 pub fn Analyzer() -> impl IntoView {
     view! {
-        <MetaTitle title="Analyzer - Ultros" />
+        <MetaTitle title="Flip Finder - Ultros" />
         <MetaDescription text="Find items on the Final Fantasy 14 marketboard that are great for resale. Used to earn gil quickly." />
 
         <div class="main-content p-6">
@@ -1013,7 +1013,7 @@ pub fn Analyzer() -> impl IntoView {
                     // Hero Section
                     <div class="panel p-8 rounded-2xl">
                         <h1 class="text-3xl font-bold text-[color:var(--brand-fg)] mb-4">
-                            "Market Board Analyzer"
+                            "Flip Finder"
                         </h1>
                         <p class="text-xl text-[color:var(--color-text)] leading-relaxed mb-6">
                             "The analyzer helps find items on the Final Fantasy 14 marketboard that are

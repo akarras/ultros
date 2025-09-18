@@ -249,8 +249,23 @@ pub fn App() -> impl IntoView {
                             </ParentRoute>
                             <Route path=path!("item/:world/:id") view=ItemView />
                             <Route path=path!("item/:id") view=ItemView />
-                            <Route path=path!("analyzer") view=Analyzer />
-                            <Route path=path!("analyzer/:world") view=AnalyzerWorldView />
+                            <Route path=path!("flip-finder") view=Analyzer />
+                            <Route path=path!("analyzer") view=move || {
+                                let nav = leptos_router::hooks::use_navigate();
+                                create_effect(move |_| { nav("/flip-finder", Default::default()); });
+                                view! { <div /> }
+                            } />
+                            <Route path=path!("flip-finder/:world") view=AnalyzerWorldView />
+                            <Route path=path!("analyzer/:world") view=move || {
+                                let nav = leptos_router::hooks::use_navigate();
+                                let params = leptos_router::hooks::use_params_map();
+                                create_effect(move |_| {
+                                    let w = params.with_untracked(|p| p.get("world").clone().unwrap_or_default());
+                                    let to = format!("/flip-finder/{}", w);
+                                    nav(&to, Default::default());
+                                });
+                                view! { <div /> }
+                            } />
                             <Route path=path!("settings") view=Settings />
                             <Route path=path!("profile") view=Profile />
                             <Route path=path!("privacy") view=PrivacyPolicy />

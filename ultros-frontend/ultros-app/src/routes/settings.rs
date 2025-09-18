@@ -194,7 +194,7 @@ fn HomeWorldPicker() -> impl IntoView {
                     <label class="text-lg text-[color:var(--color-text)]">"Home World"</label>
                     <WorldOnlyPicker current_world=homeworld set_current_world=set_homeworld />
                     <p class="text-sm text-gray-400">
-                        "The home world will default for the analyzer and several other pages"
+                        "The home world will default for Flip Finder and several other pages"
                     </p>
                 </div>
 

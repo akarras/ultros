@@ -20,7 +20,7 @@ This document replaces prior context. It summarizes the latest UI polish to the 
 - Introduced clear CTAs:
   - “get started” (book)
   - “invite bot” (Discord, with icon)
-  - “open analyzer”
+  - “open flip finder”
 - Included a branded visual tile on the right for large screens (rounded, elevated, subtle blur).
 - Wrapped in a tokenized “panel” with tasteful background treatment that adapts to theme/palette.
 

@@ -9,7 +9,7 @@ use leptos_icons::*;
 use leptos_router::components::A;
 use leptos_use::use_element_hover;
 
-/// An overflow menu for primary app destinations (Analyzer, Explorer, Exchange).
+/// An overflow menu for primary app destinations (Flip Finder, Explorer, Exchange).
 #[component]
 pub fn AppsMenu() -> impl IntoView {
     // Focus/hover-driven open state (mirrors Select component behavior)
@@ -50,13 +50,13 @@ pub fn AppsMenu() -> impl IntoView {
                     <div class="p-2 flex flex-col gap-1">
                         <A
                             href=homeworld()
-                                .map(|w| format!("/analyzer/{}", w.name))
-                                .unwrap_or("/analyzer".to_string())
+                                .map(|w| format!("/flip-finder/{}", w.name))
+                                .unwrap_or("/flip-finder".to_string())
                             attr:class="nav-link w-full justify-start"
                             on:click=move |_| set_has_focus(false)
                         >
                             <Icon height="1.1em" width="1.1em" icon=i::FaMoneyBillTrendUpSolid />
-                            <span class="ml-2">"Analyzer"</span>
+                            <span class="ml-2">"Flip Finder"</span>
                         </A>
 
                         <A
