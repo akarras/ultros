@@ -14,6 +14,7 @@ RUN curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/ca
 RUN cargo binstall cargo-leptos@0.2.43 -y
 # cargo-leptos 0.2.5 has a dependency on openssl, but the git version doesn't
 # RUN cargo install --locked cargo-leptos --version 0.2.43 -v
+COPY ./rust-toolchain .
 RUN rustup update
 RUN mkdir -p /app
 WORKDIR /app
