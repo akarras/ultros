@@ -32,10 +32,7 @@ pub fn EditLists() -> impl IntoView {
                 <Icon height="1.25em" width="1.25em" icon=i::AiOrderedListOutlined />
                 <span>"Lists"</span>
             </A>
-            <A exact=true attr:class="nav-link" href="/list/edit">
-                <Icon height="1.25em" width="1.25em" icon=i::BsPencilFill />
-                <span>"Edit Lists"</span>
-            </A>
+
         </div>
         <div class="flex items-center gap-2">
             <span class="text-3xl font-bold text-[color:var(--brand-fg)]">"Edit Lists"</span>

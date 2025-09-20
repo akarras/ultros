@@ -765,9 +765,13 @@
 
 .btn {
     color: var(--color-text);
+    cursor: pointer;
 }
 .btn:hover {
     color: var(--brand-fg);
+}
+.btn-primary {
+    cursor: pointer;
 }
 
 a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
@@ -825,6 +829,7 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 .btn-secondary {
     @apply p-2 m-1 flex flex-row text-center rounded-2xl transition-all duration-300 ease-in-out justify-center gap-3;
     color: var(--color-text);
+    cursor: pointer;
     background-color: color-mix(
         in srgb,
         var(--brand-bg) 10%,
