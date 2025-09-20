@@ -43,8 +43,7 @@ use leptos_router::path;
 use log::info;
 
 pub fn shell(options: LeptosOptions) -> impl IntoView {
-    let git_hash = git_short_hash!();
-    let sheet_url = ["/pkg/", git_hash, "/ultros.css"].concat();
+    let sheet_url = ["/", options.site_pkg_dir.as_ref(), "/ultros.css"].concat();
     view! {
         <!DOCTYPE html>
         <html lang="en" data-theme="dark" data-palette="violet">

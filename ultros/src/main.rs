@@ -247,7 +247,9 @@ async fn main() -> Result<()> {
         world_cache: world_cache.clone(),
     };
     let conf = get_configuration(Some("Cargo.toml")).unwrap();
-    let leptos_options = conf.leptos_options;
+    let mut leptos_options = conf.leptos_options;
+    let git_hash = git_const::git_short_hash!();
+    leptos_options.site_pkg_dir = Arc::from(["pkg/", git_hash].concat());
     // let addr = leptos_options.site_addr;
     let web_state = WebState {
         analyzer_service,
