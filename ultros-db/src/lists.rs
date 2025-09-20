@@ -157,11 +157,13 @@ impl UltrosDb {
             return Err(anyhow::anyhow!("Failed to add item to list"));
         }
         // if the item already exists in the list, just update the existing list
-        let mut filter = list_item::Entity::find().filter(list_item::Column::ItemId.eq(item_id));
-        if let Some(hq) = hq {
-            filter = filter.filter(list_item::Column::Hq.eq(hq));
-        }
-        if let Some(item) = filter.one(&self.db).await? {
+        let existing = list_item::Entity::find()
+            .filter(list_item::Column::ListId.eq(list.id))
+            .filter(list_item::Column::ItemId.eq(item_id))
+            .filter(list_item::Column::Hq.eq(hq))
+            .one(&self.db)
+            .await?;
+        if let Some(item) = existing {
             let new_quantity = item.quantity.unwrap_or(1) + quantity.unwrap_or(1);
             let mut item = item.into_active_model();
             item.quantity = ActiveValue::Set(Some(new_quantity));
@@ -218,13 +220,13 @@ impl UltrosDb {
             .all(&self.db)
             .await?
             .into_iter()
-            .map(|item| ((item.hq, item.item_id), item))
+            .map(|item| ((item.list_id, item.hq, item.item_id), item))
             .collect();
 
         let mut insert_queue = vec![];
         let mut updated_models = vec![];
         items.into_iter().for_each(|item| {
-            let key = (item.hq, item.item_id);
+            let key = (list.id, item.hq, item.item_id);
             // removing from the map and assuming that the incoming list won't have duplicates
             if let Some(existing) = existing_list_items.remove(&key) {
                 let new_quantity = existing.quantity.unwrap_or(1) + item.quantity.unwrap_or(1);

@@ -91,7 +91,7 @@ pub fn ListView() -> impl IntoView {
         <div class="flex-row">
             <Tooltip tooltip_text="Add an item to the list">
                 <button
-                    class="btn"
+                    class="btn-primary"
                     class:active=move || menu() == MenuState::Item
                     on:click=move |_| set_menu(
                         match menu() {
@@ -109,7 +109,7 @@ pub fn ListView() -> impl IntoView {
             </Tooltip>
             <Tooltip tooltip_text="Add a recipe's ingredients to the list">
                 <button
-                    class="btn"
+                    class="btn-secondary"
                     class:active=move || menu() == MenuState::Recipe
                     on:click=move |_| set_menu(
                         match menu() {
@@ -124,7 +124,7 @@ pub fn ListView() -> impl IntoView {
             </Tooltip>
             <Tooltip tooltip_text="Import an item">
                 <button
-                    class="btn"
+                    class="btn-secondary"
                     class:active=move || menu() == MenuState::MakePlace
                     on:click=move |_| set_menu(
                         match menu() {
@@ -169,17 +169,27 @@ pub fn ListView() -> impl IntoView {
                                         .collect::<Vec<_>>()
                                 })
                         };
+                        let adding = add_item.pending();
+                        let add_result = add_item.value();
                         view! {
-                            <div>
-                                <div class="flex-row">
-                                    <label>"item search:"</label>
-                                    <br />
+                            <div class="panel p-4 rounded-xl space-y-3">
+                                <div class="space-y-2">
+                                    <label class="text-sm font-semibold text-[color:var(--brand-fg)]">"add item to this list"</label>
                                     <input
+                                        class="input w-full"
+                                        placeholder="search items..."
                                         prop:value=search
                                         on:input=move |input| set_search(event_target_value(&input))
                                     />
+                                    {move || add_result.get().map(|v| {
+                                        let text = match v {
+                                            Ok(()) => "added to list ✔".to_string(),
+                                            Err(e) => format!("failed to add: {e}"),
+                                        };
+                                        view! { <div class="text-sm">{text}</div> }.into_view()
+                                    })}
                                 </div>
-                                <div class="content-well flex-column">
+                                <div class="content-well flex flex-col">
                                     {move || {
                                         item_search()
                                             .into_iter()
@@ -191,13 +201,20 @@ pub fn ListView() -> impl IntoView {
                                                     }
                                                 };
                                                 view! {
-                                                    <div class="flex-row">
+                                                    <div class="card p-2 flex items-center gap-3">
                                                         <ItemIcon item_id=id.0 icon_size=IconSize::Medium />
-                                                        <span class="w-[400px] truncate">{item.name.as_str()}</span>
-                                                        <label for="amount">"quantity:"</label>
-                                                        <input on:input=read_input_quantity prop:value=quantity />
+                                                        <span class="flex-1 min-w-0 truncate">{item.name.as_str()}</span>
+                                                        <label class="text-sm text-[color:var(--color-text-muted)]">"qty"</label>
+                                                        <input
+                                                            type="number"
+                                                            min="1"
+                                                            class="input w-20"
+                                                            on:input=read_input_quantity
+                                                            prop:value=quantity
+                                                        />
                                                         <button
-                                                            class="btn"
+                                                            class="btn-primary"
+                                                            disabled=adding
                                                             on:click=move |_| {
                                                                 let item = ListItem {
                                                                     item_id: id.0,
@@ -212,8 +229,16 @@ pub fn ListView() -> impl IntoView {
                                                                 add_item.dispatch(item);
                                                             }
                                                         >
-
-                                                            <Icon icon=i::BiPlusRegular />
+                                                            {move || if adding() {
+                                                                Either::Left(view! { <span>"adding..."</span> })
+                                                            } else {
+                                                                Either::Right(view! {
+                                                                    <div class="flex items-center gap-1">
+                                                                        <Icon icon=i::BiPlusRegular />
+                                                                        <span>"add"</span>
+                                                                    </div>
+                                                                })
+                                                            }}
                                                         </button>
                                                     </div>
                                                 }

@@ -24,17 +24,16 @@ pub fn AddToList(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
         <Tooltip tooltip_text="Add to list">
             <button
                 class="btn-primary"
+                attr:aria-label="Add this item to one of your lists"
                 on:click=move |_| {
                     set_modal_visible(!modal_visible());
                 }
             >
-
                 <Icon icon=RiPlayListAddMediaLine />
                 <div class="sr-only">"Add To List"</div>
                 <Show when=modal_visible>
                     <AddToListModal item_id set_visible=set_modal_visible />
                 </Show>
-
             </button>
         </Tooltip>
     }
@@ -53,28 +52,33 @@ fn AddToListModal(
 
     view! {
         <Modal set_visible>
-            <div class="flex flex-col">
-                <div class="text-xl font-bold">"Add to list"</div>
-                <div class="flex flex-row">
-                    <ItemIcon item_id icon_size=IconSize::Medium />
-                    <span class="text-xl font-semibold">
-                        {move || item().map(|i| i.name.as_str())}
-                    </span>
+            <div class="panel p-6 rounded-xl space-y-4">
+                <div class="flex items-start gap-3">
+                    <div class="shrink-0">
+                        <ItemIcon item_id icon_size=IconSize::Medium />
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <div class="text-xl font-extrabold text-[color:var(--brand-fg)]">"add to list"</div>
+                        <div class="text-[color:var(--color-text-muted)] truncate">
+                            {move || item().map(|i| i.name.as_str()).unwrap_or("unknown item")}
+                        </div>
+                    </div>
+                    <button class="btn-secondary" on:click=move |_| set_visible(false)>"close"</button>
                 </div>
-                <div class="flex flex-col">
-                    <span>"Quantity to add:"</span>
+
+                <div class="flex flex-wrap items-center gap-3">
+                    <label class="text-sm text-[color:var(--color-text-muted)]">"quantity"</label>
                     <input
+                        type="number"
+                        min="1"
+                        class="input w-24"
                         prop:value=quantity
                         on:input=move |e| {
-                            let Ok(quantity) = event_target_value(&e).parse() else {
-                                return;
-                            };
-                            set_quantity(quantity);
+                            let Ok(q) = event_target_value(&e).parse::<i32>() else { return; };
+                            set_quantity(q.max(1));
                         }
                     />
-
-                </div>
-                <div class="flex flex-row">
+                    <div class="h-6 w-px bg-[color:var(--color-outline)] mx-1"></div>
                     <Toggle
                         checked=hq
                         set_checked=set_hq
@@ -82,78 +86,91 @@ fn AddToListModal(
                         unchecked_label="Normal quality"
                     />
                 </div>
-                <div class="rounded p-1 items-between">
+
+                <div class="rounded p-1">
                     <Suspense fallback=Loading>
                         {move || {
                             let Ok(lists) = lists.get()? else {
-                                return Some(
-                                    Either::Right(
-                                        view! {
-                                            <div>"Unable to get lists- are you logged in?"</div>
-                                        },
-                                    ),
-                                );
+                                return Some(Either::Right(view! {
+                                    <div class="text-red-400 text-sm">"unable to load your lists — are you logged in?"</div>
+                                }));
                             };
-                            Some(
-                                Either::Left(
-                                    lists
-                                        .into_iter()
-                                        .map(|list| {
-                                            let (saved, set_saved) = signal(false);
-                                            let (running, set_running) = signal(false);
-                                            view! {
-                                                <div class="flex flex-row text-xl justify-between">
-                                                    <div>{list.name}</div>
-                                                    <div
-                                                        class="flex flex-row card hover:bg-[color:color-mix(in_srgb,_var(--brand-ring)_20%,_transparent)] rounded cursor-pointer p-1 transition-colors duration-150 ease-in-out"
+
+                            Some(Either::Left(
+                                lists
+                                    .into_iter()
+                                    .map(|list| {
+                                        let (saved, set_saved) = signal(false);
+                                        let (running, set_running) = signal(false);
+                                        let (error, set_error) = signal(Option::<String>::None);
+
+                                        view! {
+                                            <div class="space-y-1">
+                                                <div class="flex items-center justify-between card p-2">
+                                                    <div class="font-semibold truncate">{list.name}</div>
+                                                    <button
+                                                        class="btn-primary"
+                                                        disabled=running
                                                         on:click=move |_| {
+                                                            set_error(None);
                                                             set_running(true);
+                                                            let list_id = list.id;
+                                                            let item_id_val = item_id.get_untracked();
+                                                            let is_hq = hq.get_untracked();
+                                                            let qty = quantity.get_untracked().max(1);
                                                             spawn_local(async move {
-                                                                let _ = add_item_to_list(
-                                                                        list.id,
-                                                                        ListItem {
-                                                                            id: 0,
-                                                                            item_id: item_id.get_untracked(),
-                                                                            list_id: list.id,
-                                                                            hq: Some(hq.get_untracked()),
-                                                                            quantity: Some(quantity.get_untracked()),
-                                                                            acquired: None,
-                                                                        },
-                                                                    )
-                                                                    .await;
-                                                                set_saved(true);
+                                                                let res = add_item_to_list(
+                                                                    list_id,
+                                                                    ListItem {
+                                                                        id: 0,
+                                                                        item_id: item_id_val,
+                                                                        list_id,
+                                                                        hq: Some(is_hq),
+                                                                        quantity: Some(qty),
+                                                                        acquired: None,
+                                                                    },
+                                                                ).await;
+                                                                match res {
+                                                                    Ok(()) => { set_saved(true); }
+                                                                    Err(e) => { set_error(Some(format!("{e}"))); }
+                                                                }
+                                                                set_running(false);
                                                             });
                                                         }
                                                     >
                                                         {move || {
                                                             if saved() {
-                                                                EitherOf3::A(view! { <div class="mx-1">"Saved"</div> })
+                                                                EitherOf3::A(view! { <span>"added ✔"</span> })
                                                             } else if running() {
-                                                                EitherOf3::B(view! { <div class="mx-1">"Saving"</div> })
+                                                                EitherOf3::B(view! { <span>"adding…"</span> })
                                                             } else {
-                                                                EitherOf3::C(
-                                                                    view! {
+                                                                EitherOf3::C(view! {
+                                                                    <div class="flex items-center gap-1">
                                                                         <Icon
                                                                             attr:class="text-[color:var(--color-text)]"
                                                                             icon=i::BiPlusRegular
-                                                                            width="1.2em"
-                                                                            height="1.2em"
+                                                                            width="1.1em"
+                                                                            height="1.1em"
                                                                         />
-                                                                        <div class="mx-1">"Add"</div>
-                                                                    },
-                                                                )
+                                                                        <span>"add"</span>
+                                                                    </div>
+                                                                })
                                                             }
                                                         }}
-                                                    </div>
+                                                    </button>
                                                 </div>
-                                            }
-                                        })
-                                        .collect::<Vec<_>>()
-                                        .into_view(),
-                                ),
-                            )
+                                                <Show when=Signal::derive(move || error().is_some())>
+                                                    <div class="text-xs text-red-400 px-2">
+                                                        {move || error().unwrap_or_default()}
+                                                    </div>
+                                                </Show>
+                                            </div>
+                                        }
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .into_view(),
+                            ))
                         }}
-
                     </Suspense>
                 </div>
             </div>

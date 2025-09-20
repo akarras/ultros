@@ -299,13 +299,12 @@ where
     let path = path.to_string();
     spawn_local(async move {
         let inner_impl = async move || -> AppResult<String> {
-            let json: String = reqwest::Client::new()
-                .delete(path)
+            let json: String = gloo_net::http::Request::delete(&path)
+                .credentials(web_sys::RequestCredentials::Include)
                 .send()
                 .await
-                .map_err(|e| {
+                .inspect_err(|e| {
                     error!("{}", e);
-                    e
                 })?
                 .text()
                 .await?;
@@ -462,27 +461,34 @@ where
     use leptos::task::spawn_local;
 
     let path = path.to_string();
-
+    log::info!("making post request: {path}");
     let (tx, rx) = flume::unbounded::<AppResult<String>>();
     let path = path.to_string();
     spawn_local(async move {
         let inner_impl = async move || -> AppResult<String> {
-            let json: String = reqwest::Client::new()
-                .post(path)
-                .json(&json)
+            tracing::info!("{}", &path);
+            let body = serde_json::to_string(&json)
+                .map_err(|e| anyhow::anyhow!("failed to serialize json body: {:?}", e))?;
+            let json: String = gloo_net::http::Request::post(&path)
+                .header("Content-Type", "application/json")
+                .credentials(web_sys::RequestCredentials::Include)
+                .body(body)
+                .map_err(|e| anyhow::anyhow!("failed to set json body: {:?}", e))?
                 .send()
                 .await
-                .map_err(|e| {
-                    error!("{e}");
-                    e
+                .inspect_err(|e| {
+                    log::error!("{e}");
                 })?
                 .text()
-                .await?;
+                .await
+                .inspect_err(|e| log::error!("{e}"))?;
             Ok(json)
         };
         let result = inner_impl().await;
+        log::info!("sent result! {result:?}");
         tx.send(result).unwrap();
     });
+    log::info!("spawn local rx");
     let json = rx
         .into_recv_async()
         .await
@@ -500,4 +506,3 @@ where
     // This really only will be called by clients- I think.
     unreachable!("post_api should only be called on clients? I think...")
 }
-
