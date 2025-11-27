@@ -15,8 +15,8 @@ use crate::api::{
 };
 use crate::components::related_items::IngredientsIter;
 use crate::components::{
-    clipboard::*, item_icon::*, loading::*, make_place_importer::*, price_viewer::*,
-    small_item_display::*, tooltip::*,
+    clipboard::*, item_icon::*, list_summary::*, loading::*, make_place_importer::*,
+    price_viewer::*, small_item_display::*, tooltip::*,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -633,6 +633,7 @@ pub fn ListView() -> impl IntoView {
                                                 />
                                             </tbody>
                                         </table>
+                                        <ListSummary items=items.get_value() />
                                     </div>
                                 },
                             )

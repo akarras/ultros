@@ -7,6 +7,7 @@ pub mod datacenter_name;
 pub mod fonts;
 pub mod gil;
 pub mod item_icon;
+pub mod list_summary;
 pub mod listings_table;
 pub mod live_sale_ticker;
 pub mod loading;
