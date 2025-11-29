@@ -1,58 +1,67 @@
 name: rust
 
 on:
-  push:
-    branches: [ "main" ]
-    # Publish semver tags as releases.
-    tags: [ 'v*.*.*' ]
-  pull_request:
-    branches: [ "main" ]
+    push:
+        branches: ["main"]
+        # Publish semver tags as releases.
+        tags: ["v*.*.*"]
+    pull_request:
+        branches: ["main"]
+
+env:
+    CARGO_TERM_COLOR: always
 
 jobs:
-  check:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out
-        uses: actions/checkout@v3
-        with:
-          submodules: 'recursive'
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: nightly
-          override: true
-          components: rustfmt, clippy
-      - name: Set up cargo cache
-        uses: actions/cache@v3
-        continue-on-error: false
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/            
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
-      - name: Lint
-        run: |
-          cargo fmt --all -- --check
-          cargo clippy -- -D warnings          
-      - name: Install cargo check tools
-        run: |
-          cargo install --locked cargo-deny || true
-          cargo install --locked cargo-outdated || true
-          cargo install --locked cargo-udeps || true
-          cargo install --locked cargo-audit || true
-          cargo install --locked cargo-pants || true          
-      - name: Check
-        run: |
-          cargo deny check
-          cargo outdated --exit-code 1
-          cargo udeps
-          rm -rf ~/.cargo/advisory-db
-          cargo audit
-          cargo pants          
-      - name: Test
-        run: cargo test
+    check:
+        name: Lint, checks, and tests
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+              with:
+                  submodules: recursive
+
+            - name: Install Rust toolchain
+              uses: rust-lang/setup-rust-toolchain@v1
+              with:
+                  toolchain: nightly-2025-06-30
+                  profile: minimal
+                  components: rustfmt, clippy
+
+            - name: Cache cargo registry and build artifacts
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cargo/bin
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                      target
+                  key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+                  restore-keys: ${{ runner.os }}-cargo-
+
+            - name: Install cargo tools
+              run: |
+                  cargo install --locked cargo-deny || true
+                  cargo install --locked cargo-outdated || true
+                  cargo install --locked cargo-udeps || true
+                  cargo install --locked cargo-audit || true
+                  cargo install --locked cargo-pants || true
+
+            - name: Check formatting
+              run: cargo fmt --all -- --check
+
+            - name: Run Clippy
+              run: cargo clippy --all-targets --all-features -- -D warnings
+
+            - name: Run cargo-deny, outdated, udeps, audit, and pants
+              run: |
+                  cargo deny check
+                  cargo outdated --exit-code 1
+                  cargo udeps
+                  rm -rf ~/.cargo/advisory-db
+                  cargo audit
+                  cargo pants
+
+            - name: Run tests
+              run: cargo test --workspace --all-features
