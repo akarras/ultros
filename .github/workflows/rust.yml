@@ -23,10 +23,9 @@ jobs:
                   submodules: recursive
 
             - name: Install Rust toolchain
-              uses: rust-lang/setup-rust-toolchain@v1
+
+              uses: actions-rust-lang/setup-rust-toolchain@v1
               with:
-                  toolchain: nightly-2025-06-30
-                  profile: minimal
                   components: rustfmt, clippy
 
             - name: Cache cargo registry and build artifacts
