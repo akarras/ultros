@@ -156,9 +156,11 @@ pub fn ListSummary(items: Vec<(ListItem, Vec<ActiveListing>)>) -> impl IntoView 
             ));
     }
 
-    // Sort datacenters by total price (descending)
+    // Sort datacenters by total item count (descending)
     let mut sorted_datacenters: Vec<_> = datacenter_totals.into_iter().collect();
-    sorted_datacenters.sort_by(|a, b| b.1.1.cmp(&a.1.1));
+    sorted_datacenters.sort_by(|(_, (_, _, a_item_count)), (_, (_, _, b_item_count))| {
+        b_item_count.cmp(a_item_count)
+    });
 
     // Sort worlds within each datacenter: by item count (descending), then alphabetically
     for worlds in datacenter_groups.values_mut() {
