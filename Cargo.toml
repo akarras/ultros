@@ -40,12 +40,14 @@ chrono = "0.4.23"
 itertools = "0.14.0"
 image = "0.25.6"
 plotters = "0.3"
-sea-orm = { version = "0.12", features = [
+sea-orm = { version = "0.12.15", features = [
     "sqlx-postgres",
+    "sqlx-sqlite",
     "runtime-tokio-rustls",
 ] }
-sea-orm-migration = { version = "0.12", features = [
+sea-orm-migration = { version = "0.12.15", features = [
     "sqlx-postgres",
+    "sqlx-sqlite",
     "runtime-tokio-rustls",
 ] }
 sea-query = "0.30.0"
@@ -70,6 +72,7 @@ leptos_icons = "0.6"
 cfg-if = "1.0.0"
 git-const = "1.1.0"
 gloo-net = { version = "0.6.0", features = ["http", "websocket"] }
+dotenvy = "0.15"
 
 [patch.crates-io]
 #leptos = { path = "../leptos/leptos" }
@@ -139,7 +142,7 @@ env = "DEV"
 # The IP and port where the server serves the content. Use it in your server setup.
 #
 # Optional, defaults to 127.0.0.1:3000. Env: LEPTOS_SITE_ADDR.
-site-address = "127.0.0.1:8080"
+site-addr = "127.0.0.1:8080"
 
 # The port number used by the reload server (only used in watch mode).
 #

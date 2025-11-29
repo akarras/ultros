@@ -25,6 +25,7 @@ use analyzer_service::AnalyzerService;
 use anyhow::Result;
 use axum_extra::extract::cookie::Key;
 use discord::start_discord;
+use dotenvy::dotenv;
 use event::{create_event_busses, EventProducer, EventType};
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
@@ -175,6 +176,9 @@ async fn init_db(
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Load environment variables from `.env` file, if present
+    dotenv().ok();
+
     // Create the db before we proceed
     let filter: EnvFilter =
         EnvFilter::try_from_default_env().unwrap_or("warn,ultros=info,ultros-app=info".into());

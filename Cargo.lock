@@ -7515,6 +7515,7 @@ dependencies = [
  "base64 0.21.7",
  "chrono",
  "cookie 0.18.1",
+ "dotenvy",
  "futures",
  "git-const",
  "http-body-util",

@@ -24,12 +24,35 @@ Currently am experimenting with running ads on the site to see how much revenue 
 covered without trying to coerce community members into donating. The ads are entirely opt out via the settings page, and adblocks will continue working.
 
 ### Environment Variables
+
+Ultros supports loading configuration from a local `.env` file in the repository root (next to this README). On startup, the `ultros` binary will load any key/value pairs from `.env` into the process environment before reading them with `std::env::var`.
+
+For local development, create a `.env` file like:
+
+```env
+DISCORD_TOKEN=...
+DATABASE_URL=postgres://user:pass@localhost:5432/ultros
+DISCORD_CLIENT_ID=...
+DISCORD_CLIENT_SECRET=...
+HOSTNAME=http://localhost:8080
+KEY=some-long-random-secret
+PORT=8080
+```
+
+Required variables:
+
 * `DISCORD_TOKEN` - A discord bot token
 * `DATABASE_URL` - Postgres connection string
 * `DISCORD_CLIENT_ID` - ID of your Discord application
 * `DISCORD_CLIENT_SECRET` - Client secret of your Discord application
 * `HOSTNAME` - Address that your app is hosted at. Necessary to get OAuth to work.
 * `KEY` - A secret hash used to encrypt cookies
+
+Optional variables:
+
+* `PORT` - Port the HTTP server listens on (defaults to `8080` if unset)
+* `POSTGRES_MAX_CONNECTIONS` - Maximum connections for the Postgres pool (defaults to `300`)
+* `UNIVERSALIS_WEBSOCKET_COOLDOWN_SECS` - Cooldown between Universalis websocket reconnect attempts (defaults to `2` seconds)
 * `RUST_LOG` - Log level to log at. ex: `RUST_LOG=ultros=info,warn`
 
 ### Contributing
