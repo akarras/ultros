@@ -1,18 +1,16 @@
 use std::collections::HashMap;
 
 use leptos::prelude::*;
-use thousands::Separable;
 use ultros_api_types::{list::ListItem, ActiveListing};
 use xiv_gen::ItemId;
 
-use super::{gil::*, tooltip::*};
+use super::gil::*;
 use crate::global_state::LocalWorldData;
 use ultros_api_types::world_helper::{AnySelector, AnyResult};
 
 /// Represents the total price for items from a specific world
 #[derive(Clone, Debug)]
 struct WorldPrice {
-    world_id: i32,
     world_name: String,
     datacenter_id: i32,
     datacenter_name: String,
@@ -84,7 +82,6 @@ fn calculate_list_totals(
                     };
 
                     WorldPrice {
-                        world_id: listing.world_id,
                         world_name,
                         datacenter_id,
                         datacenter_name,
@@ -172,61 +169,70 @@ pub fn ListSummary(items: Vec<(ListItem, Vec<ActiveListing>)>) -> impl IntoView 
         });
     }
 
-    // Build tooltip content
-    let dc_groups_clone = datacenter_groups.clone();
-    let sorted_dcs_clone = sorted_datacenters.clone();
-    let tooltip_content = Signal::derive(move || {
-        if sorted_dcs_clone.is_empty() {
-            "No price data available".to_string()
+    // Track if we have multiple datacenters (enables collapsible behavior)
+    let has_multiple_datacenters = sorted_datacenters.len() > 1;
+
+    // Create a signal to track which datacenters are expanded
+    // Initially expand all if single datacenter, or collapse all if multiple
+    let (expanded_datacenters, set_expanded_datacenters) = signal(
+        if has_multiple_datacenters {
+            std::collections::HashSet::<i32>::new()
         } else {
-            let mut content = "Total by Datacenter:\n".to_string();
-            for (dc_id, (dc_name, dc_total, dc_count)) in sorted_dcs_clone.iter() {
-                content.push_str(&format!(
-                    "• {}: {} gil ({} item{})\n",
-                    dc_name,
-                    dc_total.separate_with_commas(),
-                    dc_count,
-                    if *dc_count == 1 { "" } else { "s" }
-                ));
-                if let Some(worlds) = dc_groups_clone.get(dc_id) {
-                    for world in worlds {
-                        content.push_str(&format!(
-                            "  - {}: {} gil ({} item{})\n",
-                            world.world_name,
-                            world.total_price.separate_with_commas(),
-                            world.item_count,
-                            if world.item_count == 1 { "" } else { "s" }
-                        ));
-                    }
-                }
-            }
-            content
+            sorted_datacenters.iter().map(|(dc_id, _)| *dc_id).collect()
         }
-    });
+    );
 
     view! {
         <div class="panel p-4 rounded-xl mt-4 border-2 border-[color:var(--brand-border)]">
-            <Tooltip tooltip_text=tooltip_content>
-                <div class="flex flex-row items-center justify-center gap-2">
-                    <span class="text-lg font-semibold text-[color:var(--brand-fg)]">
-                        "List Total:"
-                    </span>
-                    <Gil amount=Signal::derive(move || grand_total) />
-                    <span class="text-sm text-[color:var(--color-text-muted)] ml-2">
-                        "(hover for breakdown)"
-                    </span>
-                </div>
-            </Tooltip>
+            <div class="flex flex-row items-center justify-center gap-2">
+                <span class="text-lg font-semibold text-[color:var(--brand-fg)]">
+                    "List Total:"
+                </span>
+                <Gil amount=Signal::derive(move || grand_total) />
+            </div>
 
             <div class="mt-3 flex flex-col gap-3 text-sm">
                 {sorted_datacenters
                     .into_iter()
                     .map(|(dc_id, (dc_name, dc_total, dc_count))| {
                         let worlds = datacenter_groups.get(&dc_id).cloned().unwrap_or_default();
+                        let is_expanded = Signal::derive(move || {
+                            expanded_datacenters.with(|set| set.contains(&dc_id))
+                        });
+
                         view! {
                             <div class="flex flex-col gap-1">
-                                <div class="flex flex-row items-center gap-2 justify-between font-semibold text-brand-300 bg-brand-900/20 px-2 py-1 rounded">
-                                    <span>{dc_name}</span>
+                                <div
+                                    class=move || {
+                                        let base = "flex flex-row items-center gap-2 justify-between font-semibold text-brand-300 bg-brand-900/20 px-2 py-1 rounded";
+                                        if has_multiple_datacenters {
+                                            format!("{} cursor-pointer hover:bg-brand-900/30 transition-colors", base)
+                                        } else {
+                                            base.to_string()
+                                        }
+                                    }
+                                    on:click=move |_| {
+                                        if has_multiple_datacenters {
+                                            set_expanded_datacenters.update(|set| {
+                                                if set.contains(&dc_id) {
+                                                    set.remove(&dc_id);
+                                                } else {
+                                                    set.insert(dc_id);
+                                                }
+                                            });
+                                        }
+                                    }
+                                >
+                                    <div class="flex items-center gap-2">
+                                        {move || has_multiple_datacenters.then(|| {
+                                            view! {
+                                                <span class="text-brand-400">
+                                                    {if is_expanded() { "▼" } else { "▶" }}
+                                                </span>
+                                            }
+                                        })}
+                                        <span>{dc_name}</span>
+                                    </div>
                                     <div class="flex flex-row items-center gap-2">
                                         <Gil amount=Signal::derive(move || dc_total) />
                                         <span class="text-[color:var(--color-text-muted)] font-normal">
@@ -238,11 +244,13 @@ pub fn ListSummary(items: Vec<(ListItem, Vec<ActiveListing>)>) -> impl IntoView 
                                         </span>
                                     </div>
                                 </div>
-                                <div class="flex flex-col gap-1 pl-4">
+                                <div
+                                    class="flex flex-col gap-1 pl-4 overflow-hidden transition-all duration-200"
+                                    class:hidden=move || has_multiple_datacenters && !is_expanded()
+                                >
                                     {worlds
                                         .into_iter()
                                         .map(|world_price| {
-                                            let world_id = world_price.world_id;
                                             let total_price = world_price.total_price;
                                             let item_count = world_price.item_count;
                                             let world_name = world_price.world_name;
