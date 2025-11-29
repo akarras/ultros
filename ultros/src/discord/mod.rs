@@ -77,13 +77,14 @@ pub(crate) async fn start_discord(
     world_cache: Arc<WorldCache>,
     world_helper: Arc<WorldHelper>,
     update_service: Arc<UpdateService>,
+    discord_token: String,
 ) {
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
             commands: vec![age(), register(), ping(), ffxiv::ffxiv()],
             ..Default::default()
         })
-        .token(std::env::var("DISCORD_TOKEN").expect("missing DISCORD_TOKEN"))
+        .token(discord_token)
         .intents(serenity::GatewayIntents::non_privileged())
         .setup(move |ctx, _ready, framework| {
             Box::pin(async move {
