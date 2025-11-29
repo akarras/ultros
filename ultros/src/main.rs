@@ -11,11 +11,6 @@ pub(crate) mod utils;
 mod web;
 mod web_metrics;
 
-use std::collections::HashSet;
-use std::env;
-use std::path::PathBuf;
-use std::sync::Arc;
-
 use crate::item_update_service::UpdateService;
 #[cfg(feature = "profiling")]
 use crate::profiling::start_profiling_server;
@@ -27,6 +22,11 @@ use axum_extra::extract::cookie::Key;
 use discord::start_discord;
 use dotenvy::dotenv;
 use event::{create_event_busses, EventProducer, EventType};
+use std::collections::HashSet;
+use std::path::PathBuf;
+use std::sync::Arc;
+#[cfg(all(not(target_env = "msvc"), feature = "jemalloc"))]
+use tikv_jemallocator::Jemalloc;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 use ultros_api_types::websocket::{ListingEventData, SaleEventData};
@@ -39,18 +39,22 @@ use universalis::websocket::SocketRx;
 use universalis::{DataCentersView, UniversalisClient, WebsocketClient, WorldId, WorldsView};
 use web::character_verifier_service::CharacterVerifierService;
 use web::oauth::{AuthUserCache, DiscordAuthConfig, OAuthScope};
-
-#[cfg(all(not(target_env = "msvc"), feature = "jemalloc"))]
-use tikv_jemallocator::Jemalloc;
-
 #[cfg(all(not(target_env = "msvc"), feature = "jemalloc"))]
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
-
 #[cfg(feature = "profiling")]
 #[allow(non_upper_case_globals)]
 #[export_name = "malloc_conf"]
 pub static malloc_conf: &[u8] = b"prof:true,prof_active:true,lg_prof_sample:19\0";
+
+#[derive(Debug, serde::Deserialize, Clone)]
+struct Config {
+    hostname: String,
+    discord_client_id: String,
+    discord_client_secret: String,
+    key: String,
+    discord_token: String,
+}
 
 async fn run_socket_listener(
     db: UltrosDb,
@@ -227,6 +231,16 @@ async fn main() -> Result<()> {
     });
     UpdateService::start_service(update_service.clone());
     // begin listening to universalis events
+    // load configuration from environment
+    let config = envy::from_env::<Config>()?;
+    let Config {
+        hostname,
+        discord_client_id,
+        discord_client_secret,
+        key,
+        discord_token,
+    } = config;
+
     tokio::spawn(start_discord(
         db.clone(),
         senders.clone(),
@@ -235,16 +249,9 @@ async fn main() -> Result<()> {
         world_cache.clone(),
         world_helper.clone(),
         update_service,
+        discord_token,
     ));
-    // create the oauth config
-    let hostname = env::var("HOSTNAME").expect(
-        "Missing env variable HOSTNAME, which should be the domain of the server running this app.",
-    );
-    let client_id =
-        env::var("DISCORD_CLIENT_ID").expect("environment variable DISCORD_CLIENT_ID not found");
-    let client_secret = env::var("DISCORD_CLIENT_SECRET")
-        .expect("environment variable DISCORD_CLIENT_SECRET for OAuth missing");
-    let key = env::var("KEY").expect("environment variable KEY not found");
+
     let character_verification = CharacterVerifierService {
         client: reqwest::Client::new(),
         db: db.clone(),
@@ -261,8 +268,8 @@ async fn main() -> Result<()> {
         key: Key::from(key.as_bytes()),
         character_verification,
         oauth_config: DiscordAuthConfig::new(
-            client_id,
-            client_secret,
+            discord_client_id,
+            discord_client_secret,
             format!("{}/redirect", hostname.trim_end_matches('/')),
             HashSet::from_iter([OAuthScope::Identify]),
         ),
