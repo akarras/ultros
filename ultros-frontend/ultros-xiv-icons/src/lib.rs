@@ -54,4 +54,3 @@ pub fn get_item_image(item_id: i32, image_size: IconSize) -> Option<&'static [u8
 
     data.get(&(item_id, image_size)).map(|v| v.as_slice())
 }
-

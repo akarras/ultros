@@ -124,9 +124,9 @@ async fn handle_socket(
     let mut subscriptions = SelectAll::<BoxStream<ServerClient>>::new();
     subscriptions.push(Box::pin(futures::stream::pending()));
     sender
-        .send(Message::Text(serde_json::to_string(
-            &ServerClient::SocketConnected,
-        )?.into()))
+        .send(Message::Text(
+            serde_json::to_string(&ServerClient::SocketConnected)?.into(),
+        ))
         .await?;
     // sender.send(Message::Ping(vec![1, 2, 3, 4])).await?;
 

@@ -175,4 +175,3 @@ pub fn ListSummary(items: Vec<(ListItem, Vec<ActiveListing>)>) -> impl IntoView 
     }
     .into_any()
 }
-

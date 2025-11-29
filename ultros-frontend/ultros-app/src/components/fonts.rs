@@ -88,4 +88,3 @@ impl StrExt for str {
 pub fn ClassJobIcon(id: ClassJobId) -> impl IntoView {
     view! { <i class=format!("icon xiv-class_job_{:03}", id.0)></i> }
 }
-
