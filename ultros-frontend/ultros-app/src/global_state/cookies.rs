@@ -168,4 +168,3 @@ pub(crate) fn get_cookies() -> Option<CookieJar> {
     }
     Some(cookie_jar)
 }
-

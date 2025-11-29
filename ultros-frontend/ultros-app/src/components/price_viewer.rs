@@ -48,4 +48,3 @@ pub fn PriceViewer(quantity: i32, hq: Option<bool>, listings: Vec<ActiveListing>
     }
     .into_any()
 }
-

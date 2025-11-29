@@ -87,4 +87,3 @@ pub(crate) async fn live_sales(
     }
     Ok(())
 }
-
