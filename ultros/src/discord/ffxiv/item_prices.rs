@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 use itertools::Itertools;
-use poise::serenity_prelude::AttachmentType;
+use poise::serenity_prelude::CreateAttachment;
 use ultros_db::world_cache::AnySelector;
 use xiv_gen::ItemId;
 
@@ -18,15 +18,15 @@ pub(crate) async fn prices(_ctx: Context<'_>) -> Result<(), Error> {
 async fn autocomplete_item<'a>(
     _ctx: Context<'_>,
     partial: &'a str,
-) -> impl Iterator<Item = poise::AutocompleteChoice<i32>> + 'a {
+) -> impl Iterator<Item = poise::serenity_prelude::AutocompleteChoice> + 'a {
     let items = xiv_gen_db::data().items.values();
     let partial = partial.to_lowercase();
     items
         .filter(move |item| item.name.to_lowercase().contains(&partial))
-        .map(|item| poise::AutocompleteChoice {
-            name: item.name.to_string(),
-            value: item.key_id.0,
-        })
+        .map(|item| poise::serenity_prelude::AutocompleteChoice::new(
+            item.name.to_string(),
+            item.key_id.0,
+        ))
         .take(99)
 }
 
@@ -85,14 +85,14 @@ async fn current(
             ))
         })
         .to_string();
-    ctx.send(|msg| {
-        msg.embed(|e| {
-            e.title(&item_data.name).description(format!(
+    ctx.send(poise::CreateReply::default().embed(
+        poise::serenity_prelude::CreateEmbed::new()
+            .title(&item_data.name)
+            .description(format!(
                 "```\n{:<10} {:3} {:<7} {}\n{}\n```",
                 "price", "hq", "quantity", "world", listings,
             ))
-        })
-    })
+    ))
     .await?;
     Ok(())
 }
@@ -119,18 +119,13 @@ async fn history(
         .lookup_world_by_name(&world)
         .ok_or(anyhow!("Unable to find world"))?;
     let png = generate_image(&data.db, &data.world_helper, item, &world).await?;
-    let attachment = AttachmentType::Bytes {
-        data: png.into(),
-        filename: "chart.png".to_string(),
-    };
-    ctx.send(|r| {
-        r.embed(|e| {
-            e.title([&item.name, " - ", world.get_name()].concat())
-                .color(ULTROS_COLOR)
-                .image("attachment://chart.png")
-        })
-        .attachment(attachment)
-    })
+    let attachment = CreateAttachment::bytes(png, "chart.png");
+    ctx.send(poise::CreateReply::default().embed(
+        poise::serenity_prelude::CreateEmbed::new()
+            .title([&item.name, " - ", world.get_name()].concat())
+            .color(ULTROS_COLOR)
+            .image("attachment://chart.png")
+    ).attachment(attachment))
     .await?;
     Ok(())
 }

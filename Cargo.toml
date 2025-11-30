@@ -40,15 +40,15 @@ chrono = "0.4.23"
 itertools = "0.14.0"
 image = "0.25.6"
 plotters = "0.3"
-sea-orm = { version = "0.12.15", features = [
+sea-orm = { version = "^1.1.0", features = [
     "sqlx-postgres",
     "runtime-tokio-rustls",
 ] }
-sea-orm-migration = { version = "0.12.15", features = [
+sea-orm-migration = { version = "^1.1.0", features = [
     "sqlx-postgres",
     "runtime-tokio-rustls",
 ] }
-sea-query = "0.30.0"
+sea-query = "^0.32.0"
 yoke = "0.7.1"
 xiv-gen = { path = "./xiv-gen", features = [
     "item",
