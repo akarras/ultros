@@ -22,7 +22,8 @@ jobs:
         with:
           submodules: recursive
       - name: Install system packages
-        run: sudo apt update && sudo apt upgrade -y && sudo apt install -y libfreetype6 libfreetype6-dev cmake build-essential curl sudo pkg-config libssl-dev
+        # normally i do an apt upgrade here, but we install snap and firefox??
+        run: sudo apt update && sudo apt install -y libfreetype6 libfreetype6-dev cmake build-essential curl sudo pkg-config libssl-dev
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
       - name: Install rustfmt and clippy
@@ -50,8 +51,8 @@ jobs:
           cargo binstall --no-confirm cargo-pants
       # giving up on this fmt check for now
       # - run: cargo fmt --version
-      # - name: Check formatting
-      #  run: cargo fmt --all -- --check
+      - name: Check formatting
+        run: cargo fmt --all -- --check
 
       - name: Run Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
