@@ -23,7 +23,7 @@ jobs:
                   submodules: recursive
             - name: Install system packages
               # normally i do an apt upgrade here, but we install snap and firefox??
-              run: sudo apt update && sudo apt install -y libfreetype6 libfreetype6-dev cmake build-essential curl sudo pkg-config libssl-dev font-config
+              run: sudo apt update && sudo apt install -y libfreetype6 libfreetype6-dev cmake build-essential curl sudo pkg-config libssl-dev fontconfig
             - name: Install Rust toolchain
               uses: dtolnay/rust-toolchain@nightly
             - name: Install rustfmt and clippy
