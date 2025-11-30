@@ -33,7 +33,7 @@ jobs:
               uses: swatinem/rust-cache@v2
 
             - name: Install mdbook-svgbob
-              run: cargo install mdbook-svgbob
+              run: cargo install mdbook-svgbob2
 
             - name: Build book
               run: |

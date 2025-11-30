@@ -3,4 +3,4 @@ authors = ["akarras"]
 language = "en"
 src = "src"
 title = "ultros user guide"
-[preprocessor.svgbob]
+[preprocessor.svgbob2]
