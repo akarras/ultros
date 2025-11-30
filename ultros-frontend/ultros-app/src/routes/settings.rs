@@ -244,7 +244,7 @@ fn AdChoice() -> impl IntoView {
                             info!("{cookie:?}");
                             cookie.unwrap_or_default()
                         })
-                        set_checked=(move |checked: bool| set_cookie(checked.then(|| true)))
+                        set_checked=(move |checked: bool| set_cookie(checked.then_some(true)))
                             .into_signal_setter()
                         checked_label="Ads Disabled"
                         unchecked_label="Ads Enabled"

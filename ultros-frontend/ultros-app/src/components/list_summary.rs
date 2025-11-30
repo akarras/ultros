@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
 use leptos::prelude::*;
-use ultros_api_types::{list::ListItem, ActiveListing};
+use ultros_api_types::{ActiveListing, list::ListItem};
 use xiv_gen::ItemId;
 
 use super::gil::*;
 use crate::global_state::LocalWorldData;
-use ultros_api_types::world_helper::{AnySelector, AnyResult};
+use ultros_api_types::world_helper::{AnyResult, AnySelector};
 
 /// Represents the total price for items from a specific world
 #[derive(Clone, Debug)]
@@ -69,17 +69,20 @@ fn calculate_list_totals(
                 })
                 .or_insert_with(|| {
                     // Look up world and datacenter information
-                    let world_result = world_data.lookup_selector(AnySelector::World(listing.world_id));
-                    let (world_name, datacenter_id, datacenter_name) = if let Some(AnyResult::World(world)) = world_result {
-                        let dc_result = world_data.lookup_selector(AnySelector::Datacenter(world.datacenter_id));
-                        let datacenter_name = dc_result
-                            .and_then(|dc| dc.as_datacenter())
-                            .map(|dc| dc.name.clone())
-                            .unwrap_or_else(|| "Unknown".to_string());
-                        (world.name.clone(), world.datacenter_id, datacenter_name)
-                    } else {
-                        ("Unknown".to_string(), 0, "Unknown".to_string())
-                    };
+                    let world_result =
+                        world_data.lookup_selector(AnySelector::World(listing.world_id));
+                    let (world_name, datacenter_id, datacenter_name) =
+                        if let Some(AnyResult::World(world)) = world_result {
+                            let dc_result = world_data
+                                .lookup_selector(AnySelector::Datacenter(world.datacenter_id));
+                            let datacenter_name = dc_result
+                                .and_then(|dc| dc.as_datacenter())
+                                .map(|dc| dc.name.clone())
+                                .unwrap_or_else(|| "Unknown".to_string());
+                            (world.name.clone(), world.datacenter_id, datacenter_name)
+                        } else {
+                            ("Unknown".to_string(), 0, "Unknown".to_string())
+                        };
 
                     WorldPrice {
                         world_name,
@@ -161,11 +164,9 @@ pub fn ListSummary(items: Vec<(ListItem, Vec<ActiveListing>)>) -> impl IntoView 
 
     // Sort worlds within each datacenter: by item count (descending), then alphabetically
     for worlds in datacenter_groups.values_mut() {
-        worlds.sort_by(|a, b| {
-            match b.item_count.cmp(&a.item_count) {
-                std::cmp::Ordering::Equal => a.world_name.cmp(&b.world_name),
-                other => other,
-            }
+        worlds.sort_by(|a, b| match b.item_count.cmp(&a.item_count) {
+            std::cmp::Ordering::Equal => a.world_name.cmp(&b.world_name),
+            other => other,
         });
     }
 
@@ -174,13 +175,11 @@ pub fn ListSummary(items: Vec<(ListItem, Vec<ActiveListing>)>) -> impl IntoView 
 
     // Create a signal to track which datacenters are expanded
     // Initially expand all if single datacenter, or collapse all if multiple
-    let (expanded_datacenters, set_expanded_datacenters) = signal(
-        if has_multiple_datacenters {
-            std::collections::HashSet::<i32>::new()
-        } else {
-            sorted_datacenters.iter().map(|(dc_id, _)| *dc_id).collect()
-        }
-    );
+    let (expanded_datacenters, set_expanded_datacenters) = signal(if has_multiple_datacenters {
+        std::collections::HashSet::<i32>::new()
+    } else {
+        sorted_datacenters.iter().map(|(dc_id, _)| *dc_id).collect()
+    });
 
     view! {
         <div class="panel p-4 rounded-xl mt-4 border-2 border-[color:var(--brand-border)]">
@@ -281,4 +280,3 @@ pub fn ListSummary(items: Vec<(ListItem, Vec<ActiveListing>)>) -> impl IntoView 
     }
     .into_any()
 }
-

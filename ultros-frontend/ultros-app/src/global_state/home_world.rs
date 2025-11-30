@@ -1,4 +1,4 @@
-use cookie::{time::Duration, Cookie, SameSite};
+use cookie::{Cookie, SameSite, time::Duration};
 use leptos::{
     prelude::*,
     reactive::wrappers::write::{IntoSignalSetter, SignalSetter},
@@ -9,8 +9,8 @@ use ultros_api_types::{
 };
 
 use super::{
-    cookies::{get_now, Cookies},
     LocalWorldData,
+    cookies::{Cookies, get_now},
 };
 
 const HOMEWORLD_COOKIE_NAME: &str = "HOME_WORLD";
@@ -105,4 +105,3 @@ pub fn get_price_zone() -> (
     };
     (world.into(), set_world.into_signal_setter())
 }
-

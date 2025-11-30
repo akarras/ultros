@@ -114,7 +114,7 @@ impl WorldFilter {
 
 impl Display for WorldFilter {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{{world={}}}", self.0 .0)
+        write!(f, "{{world={}}}", self.0.0)
     }
 }
 

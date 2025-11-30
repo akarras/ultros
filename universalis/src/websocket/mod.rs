@@ -1,10 +1,10 @@
 pub mod event_types;
 
+use crate::WorldId;
 use crate::websocket::event_types::{
     Channel, EventChannel, SubscribeMode, WSMessage, WebSocketSubscriptionUpdate, WorldFilter,
 };
-use crate::WorldId;
-use async_tungstenite::tokio::{connect_async, ConnectStream};
+use async_tungstenite::tokio::{ConnectStream, connect_async};
 use async_tungstenite::tungstenite::Message;
 
 use bson::Document;
@@ -19,7 +19,7 @@ use std::collections::HashSet;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::mpsc::{Receiver, Sender, channel};
 
 /// Internal SocketTx. Enables the user to communicate with the worker task.
 #[derive(Debug)]
@@ -60,9 +60,9 @@ impl WebsocketClient {
     ///
     /// #[tokio::main]
     /// async fn main() {
-    ///     let socket_client = WebsocketClient::new();
-    ///     socket_client.update_subscription(SubscribeMode::Subscribe, EventChannel::SalesAdd).await;
-    ///     
+    ///     let socket_client = WebsocketClient::connect().await;
+    ///     socket_client.update_subscription(SubscribeMode::Subscribe, EventChannel::SalesAdd, None).await;
+    ///
     /// }
     /// ```
     pub async fn update_subscription(
@@ -231,8 +231,8 @@ impl WebsocketClient {
                         match message {
                             Message::Text(t) => {
                                 info!(
-                                "Received text {t}, unexpected only BSON messages were expected."
-                            );
+                                    "Received text {t}, unexpected only BSON messages were expected."
+                                );
                             }
                             Message::Binary(b) => {
                                 let sender = listing_sender.clone();

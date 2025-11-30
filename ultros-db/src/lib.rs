@@ -14,10 +14,11 @@ pub mod try_update_value;
 pub mod world_cache;
 mod worlds;
 
-pub use sea_orm::error::DbErr as SeaDbErr;
 pub use sea_orm::ActiveValue;
+pub use sea_orm::error::DbErr as SeaDbErr;
 
 use anyhow::Result;
+use dotenvy::dotenv;
 use futures::future::try_join_all;
 use migration::{Migrator, MigratorTrait};
 
@@ -42,6 +43,7 @@ pub struct UltrosDb {
 impl UltrosDb {
     #[instrument]
     pub async fn connect() -> Result<Self> {
+        let _ = dotenv();
         let url = std::env::var("DATABASE_URL").expect("Missing DATABASE_URL environment variable");
         let mut opt = ConnectOptions::new(url);
         let max_connections = std::env::var("POSTGRES_MAX_CONNECTIONS")
@@ -142,7 +144,7 @@ impl UltrosDb {
             .collect();
 
         let val = retainer::Entity::find()
-            .filter(retainer::Column::Name.like(&format!("{retainer_name}%")))
+            .filter(retainer::Column::Name.like(format!("{retainer_name}%")))
             .limit(10)
             .all(&self.db)
             .await?;

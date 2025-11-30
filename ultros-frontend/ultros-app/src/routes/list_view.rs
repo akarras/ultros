@@ -50,7 +50,7 @@ pub fn ListView() -> impl IntoView {
         let items: Vec<_> = ingredients
             .map(|(id, amount)| {
                 let item = game_items.get(&id);
-                let amount = craft_count * amount as i32;
+                let amount = craft_count * amount;
                 let can_be_hq = item.map(|i| i.can_be_hq).unwrap_or(true);
                 ListItem {
                     id: 0,
@@ -164,7 +164,6 @@ pub fn ListView() -> impl IntoView {
                                     score
                                         .into_iter()
                                         .filter(|(_, _, ma)| ma.score() > 0)
-                                        .map(|(id, item, ma)| (id, item, ma))
                                         .take(100)
                                         .collect::<Vec<_>>()
                                 })
@@ -281,7 +280,6 @@ pub fn ListView() -> impl IntoView {
                                     score
                                         .into_iter()
                                         .filter(|(_, _, _, ma)| ma.score() > 0)
-                                        .map(|(id, ri, item, ma)| (id, ri, item, ma))
                                         .take(100)
                                         .collect::<Vec<_>>()
                                 })
@@ -301,7 +299,7 @@ pub fn ListView() -> impl IntoView {
                             {move || {
                                 result.get()
                                     .map(|v| match v {
-                                        Ok(()) => format!("Success").into_view(),
+                                        Ok(()) => "Success".to_string().into_view(),
                                         Err(e) => format!("{e:?}").into_view(),
                                     })
                             }}

@@ -10,4 +10,3 @@ pub fn PrivacyPolicy() -> impl IntoView {
         </div>
     }
 }
-

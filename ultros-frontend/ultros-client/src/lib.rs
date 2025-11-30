@@ -1,10 +1,10 @@
 #![recursion_limit = "256"]
 use any_spawner::Executor;
-use anyhow::{anyhow, Result};
-use futures::{future::join, Future};
+use anyhow::{Result, anyhow};
+use futures::{Future, future::join};
 use gloo_net::http::Request;
 use leptos::{prelude::*, task::spawn_local};
-use log::{error, info, Level};
+use log::{Level, error, info};
 use rexie::{ObjectStore, Rexie, Store, Transaction, TransactionMode};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -56,7 +56,7 @@ async fn init_data() -> anyhow::Result<Vec<u8>> {
     Ok(response)
 }
 
-async fn try_populate_xiv_gen_data<'a>(rexie: &Rexie) -> anyhow::Result<()> {
+async fn try_populate_xiv_gen_data(rexie: &Rexie) -> anyhow::Result<()> {
     // load local storage data for the current game version, if we don't have it get it from the server, store it, and init db
     let version = xiv_gen::data_version();
     {
@@ -126,7 +126,7 @@ async fn try_build_db() -> Result<Rexie> {
         .map_err(|e| anyhow!("failed to build db {e}"))
 }
 
-async fn populate_xiv_gen_data<'a>() -> anyhow::Result<()> {
+async fn populate_xiv_gen_data() -> anyhow::Result<()> {
     if let Ok(rexie) = try_build_db().await {
         if let Err(_e) = retry(|| try_populate_xiv_gen_data(&rexie), 3).await {
             let _ = init_data().await?;
@@ -167,7 +167,7 @@ async fn get_region() -> String {
 pub fn hydrate() {
     console_error_panic_hook::set_once();
     // tracing_wasm::set_as_global_default();
-    console_log::init_with_level(Level::Info);
+    console_log::init_with_level(Level::Info).unwrap();
     // check that we have the right client version data
     let _ = Executor::init_wasm_bindgen();
     log::info!("hydrate mode - hydrating");
@@ -189,4 +189,3 @@ pub fn hydrate() {
         });
     });
 }
-

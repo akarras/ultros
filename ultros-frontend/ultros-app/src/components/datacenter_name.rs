@@ -29,4 +29,3 @@ pub(crate) fn DatacenterName(world_id: i32) -> impl IntoView {
     }
     .into_any()
 }
-

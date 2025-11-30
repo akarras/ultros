@@ -3,7 +3,7 @@ use super::relative_time::*;
 use crate::components::{datacenter_name::*, world_name::*};
 use leptos::prelude::*;
 use leptos_router::components::A;
-use ultros_api_types::{retainer::Retainer, world_helper::AnySelector, ActiveListing};
+use ultros_api_types::{ActiveListing, retainer::Retainer, world_helper::AnySelector};
 
 #[component]
 pub fn ListingsTable(

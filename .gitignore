@@ -4,3 +4,4 @@ target/
 executables/
 integration/node_modules/
 integration/artifacts/
+context.md

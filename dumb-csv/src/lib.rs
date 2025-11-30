@@ -2,12 +2,12 @@ use std::str::FromStr;
 
 pub use dumb_csv_macros::DumbCsvDeserialize;
 
-pub trait FromBool {
-    fn from_bool(&self) -> bool;
+pub trait ParseBool {
+    fn parse_bool(&self) -> bool;
 }
 
-impl FromBool for &str {
-    fn from_bool(&self) -> bool {
+impl ParseBool for &str {
+    fn parse_bool(&self) -> bool {
         bool_from_str(self).unwrap_or_default()
     }
 }

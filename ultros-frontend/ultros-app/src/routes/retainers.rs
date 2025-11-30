@@ -1,5 +1,5 @@
 use crate::api::{
-    get_retainer_listings, get_retainer_undercuts, get_user_retainer_listings, UndercutData,
+    UndercutData, get_retainer_listings, get_retainer_undercuts, get_user_retainer_listings,
 };
 use crate::components::ad::Ad;
 use crate::components::clipboard::Clipboard;
@@ -7,14 +7,14 @@ use crate::components::gil::*;
 use crate::components::skeleton::BoxSkeleton;
 use crate::components::{item_icon::*, loading::*, meta::*, world_name::*};
 use crate::global_state::LocalWorldData;
-use components::{Outlet, A};
+use components::{A, Outlet};
 use hooks::use_params_map;
 use icondata as i;
 use leptos::either::Either;
 use leptos::prelude::*;
 use leptos_icons::*;
 use leptos_router::*;
-use ultros_api_types::{world_helper::AnySelector, ActiveListing, FfxivCharacter, Retainer};
+use ultros_api_types::{ActiveListing, FfxivCharacter, Retainer, world_helper::AnySelector};
 use xiv_gen::ItemId;
 
 #[derive(PartialOrd, Ord, Eq, PartialEq, Debug)]

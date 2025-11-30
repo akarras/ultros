@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
 
+use crate::UltrosDb;
 use crate::entity::*;
 use crate::partial_diff_iterator::PartialDiffIterator;
-use crate::UltrosDb;
 use anyhow::Result;
 use itertools::Itertools;
 use sea_orm::{ActiveValue, EntityTrait, Set};
@@ -145,7 +145,7 @@ impl UltrosDb {
                             datacenter_id: Set(datacenter
                                 .0
                                 .iter()
-                                .find(|d| d.worlds.iter().any(|w| *w == left.id))
+                                .find(|d| d.worlds.iter().contains(&left.id))
                                 .and_then(|m| {
                                     datacenters
                                         .iter()

@@ -1,12 +1,11 @@
-use std::iter;
+use std::{fmt::Display, iter};
 
-use async_trait::async_trait;
 use axum::{
-    extract::{OptionalFromRequestParts},
-    http::{request::Parts, HeaderName, HeaderValue},
+    extract::OptionalFromRequestParts,
+    http::{HeaderName, HeaderValue, request::Parts},
     response::IntoResponse,
 };
-use axum_extra::{headers::Header, typed_header::TypedHeaderRejection, TypedHeader};
+use axum_extra::{TypedHeader, headers::Header, typed_header::TypedHeaderRejection};
 use isocountry::CountryCode;
 
 #[derive(Debug, Copy, Clone)]
@@ -60,10 +59,14 @@ impl Header for CloudflareCountryCode {
 // #[async_trait]
 impl<S: Sized + Send + Sync> OptionalFromRequestParts<S> for Region {
     type Rejection = TypedHeaderRejection;
-    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Option<Self>, Self::Rejection> {
-        let result = TypedHeader::<CloudflareCountryCode>::from_request_parts(parts, state).await?.map(|typed_header| typed_header.0.0.into());
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &S,
+    ) -> Result<Option<Self>, Self::Rejection> {
+        let result = TypedHeader::<CloudflareCountryCode>::from_request_parts(parts, state)
+            .await?
+            .map(|typed_header| typed_header.0.0.into());
         Ok(result)
-        
     }
 }
 
@@ -86,9 +89,9 @@ impl AsRef<str> for Region {
     }
 }
 
-impl ToString for Region {
-    fn to_string(&self) -> String {
-        self.as_str().to_string()
+impl Display for Region {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 

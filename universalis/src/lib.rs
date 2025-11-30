@@ -10,7 +10,7 @@ use log::info;
 use reqwest::{Client, Method, Request, Url};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use serde_with::{formats::Flexible, serde_as, TimestampMilliSeconds, TimestampSeconds};
+use serde_with::{TimestampMilliSeconds, TimestampSeconds, formats::Flexible, serde_as};
 use std::collections::{BTreeMap, HashMap};
 use thiserror::Error;
 
@@ -30,11 +30,17 @@ pub enum Error {
     #[error("Error serializing bson {0}")]
     BsonSerializeError(#[from] bson::ser::Error),
     #[error("Websocket error {0}")]
-    TungsteniteError(#[from] async_tungstenite::tungstenite::Error),
+    TungsteniteError(#[from] Box<async_tungstenite::tungstenite::Error>),
     #[error("Bad ID, listing returned id {0}")]
     BadId(u32),
     #[error("No items were suggested")]
     NoItems,
+}
+
+impl From<async_tungstenite::tungstenite::Error> for Error {
+    fn from(value: async_tungstenite::tungstenite::Error) -> Self {
+        Self::TungsteniteError(Box::new(value))
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

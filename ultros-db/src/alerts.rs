@@ -1,5 +1,5 @@
-use crate::entity::*;
 use crate::UltrosDb;
+use crate::entity::*;
 use anyhow::Result;
 use futures::future::try_join_all;
 use sea_orm::*;

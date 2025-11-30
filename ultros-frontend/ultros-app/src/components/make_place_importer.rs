@@ -128,7 +128,7 @@ where
 
 #[cfg(test)]
 mod test {
-    use super::{parse_list, MakePlaceItemData};
+    use super::{MakePlaceItemData, parse_list};
 
     #[test]
     fn test_parse() {
@@ -143,7 +143,7 @@ mod test {
         }))
     }
 
-    const TEST_DATA: &'static str = r#"     Furniture
+    const TEST_DATA: &str = r#"     Furniture
     =====================
     Eastern Indoor Pond: 2
     Out on a Limb Machine: 1

@@ -2,14 +2,13 @@ use std::ops::RangeInclusive;
 
 use super::{datacenter_name::*, gil::*, relative_time::*, world_name::*};
 use chrono::{Duration, NaiveDateTime, TimeDelta, Utc};
-use humantime::format_duration;
 use icondata as i;
 use itertools::Itertools;
 use leptos::prelude::*;
 use leptos_icons::*;
 use linregress::{FormulaRegressionBuilder, RegressionDataBuilder};
 use log::{error, info};
-use ultros_api_types::{world_helper::AnySelector, SaleHistory};
+use ultros_api_types::{SaleHistory, world_helper::AnySelector};
 
 #[component]
 pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
@@ -244,7 +243,6 @@ fn WindowStats(#[prop(into)] sales: Signal<SalesWindow>) -> impl IntoView {
     let guessed_next_sale_price =
         Memo::new(move |_| sales.with(|s| s.guessed_next_sale_price.round() as i32));
     let time_between_sales = Memo::new(move |_| sales.with(|s| s.time_between_sales));
-    let p_value = Memo::new(move |_| sales.with(|s| s.p_value));
     let hq_percent = Memo::new(move |_| sales.with(|s| s.hq_percent));
     view! {
         <div class="flex flex-wrap gap-2">
@@ -310,7 +308,7 @@ fn WindowStats(#[prop(into)] sales: Signal<SalesWindow>) -> impl IntoView {
 
 #[component]
 pub fn SalesInsights(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
-    let sales = Memo::new(move |_| sales.with(|sales| SalesSummaryData::new(&sales)));
+    let sales = Memo::new(move |_| sales.with(|sales| SalesSummaryData::new(sales)));
     let day_sales = Memo::new(move |_| sales.with(|s| s.past_day.clone()).unwrap_or_default());
     let month_sales = Memo::new(move |_| sales.with(|s| s.month.clone()).unwrap_or_default());
     view! {

@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{
-    mpsc::{self, Receiver},
     RwLock,
+    mpsc::{self, Receiver},
 };
 use ultros_api_types::{ActiveListing, Retainer};
 use ultros_db::world_cache::AnySelector;

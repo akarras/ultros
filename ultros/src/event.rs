@@ -36,6 +36,7 @@ impl<T> EventType<Arc<T>> {
         EventType::Add(Arc::new(data))
     }
 
+    #[allow(unused)]
     pub(crate) fn updated(data: T) -> Self {
         EventType::Update(Arc::new(data))
     }

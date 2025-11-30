@@ -7,11 +7,11 @@ pub(crate) mod routes;
 pub(crate) mod ws;
 
 use crate::components::recently_viewed::RecentItems;
+pub use crate::global_state::{LocalWorldData, home_world::GuessedRegion};
 use crate::global_state::{
     cheapest_prices::CheapestPrices, clipboard_text::GlobalLastCopiedText, cookies::Cookies,
     theme::provide_theme_settings,
 };
-pub use crate::global_state::{home_world::GuessedRegion, LocalWorldData};
 use crate::{
     components::{ad::Ad, apps_menu::*, patreon::*, search_box::*, theme_picker::*, tooltip::*},
     routes::{
@@ -38,7 +38,7 @@ use leptos_hotkeys::{provide_hotkeys_context, scopes};
 // use leptos_hotkeys::{provide_hotkeys_context, scopes};
 use leptos_icons::*;
 use leptos_meta::*;
-use leptos_router::components::{ParentRoute, Route, Router, Routes, A};
+use leptos_router::components::{A, ParentRoute, Route, Router, Routes};
 use leptos_router::path;
 use log::info;
 
@@ -251,14 +251,14 @@ pub fn App() -> impl IntoView {
                             <Route path=path!("flip-finder") view=Analyzer />
                             <Route path=path!("analyzer") view=move || {
                                 let nav = leptos_router::hooks::use_navigate();
-                                create_effect(move |_| { nav("/flip-finder", Default::default()); });
+                                Effect::new(move |_| { nav("/flip-finder", Default::default()); });
                                 view! { <div /> }
                             } />
                             <Route path=path!("flip-finder/:world") view=AnalyzerWorldView />
                             <Route path=path!("analyzer/:world") view=move || {
                                 let nav = leptos_router::hooks::use_navigate();
                                 let params = leptos_router::hooks::use_params_map();
-                                create_effect(move |_| {
+                                Effect::new(move |_| {
                                     let w = params.with_untracked(|p| p.get("world").clone().unwrap_or_default());
                                     let to = format!("/flip-finder/{}", w);
                                     nav(&to, Default::default());

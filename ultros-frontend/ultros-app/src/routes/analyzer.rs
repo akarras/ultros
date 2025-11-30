@@ -15,12 +15,12 @@ use leptos::{either::Either, prelude::*, reactive::wrappers::write::SignalSetter
 use leptos_icons::*;
 use leptos_meta::Title;
 use leptos_router::{
-    hooks::{query_signal, use_navigate, use_params_map, use_query_map},
     NavigateOptions,
+    hooks::{query_signal, use_navigate, use_params_map, use_query_map},
 };
 use std::{
     cmp::Reverse,
-    collections::{hash_map::Entry, HashMap},
+    collections::{HashMap, hash_map::Entry},
     str::FromStr,
     sync::Arc,
 };
@@ -134,12 +134,13 @@ impl FromStr for SortMode {
     }
 }
 
-impl ToString for SortMode {
-    fn to_string(&self) -> String {
-        match self {
-            SortMode::Roi => "roi".to_string(),
-            SortMode::Profit => "profit".to_string(),
-        }
+impl std::fmt::Display for SortMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let val = match self {
+            SortMode::Roi => "roi",
+            SortMode::Profit => "profit",
+        };
+        f.write_str(val)
     }
 }
 
@@ -152,9 +153,7 @@ impl ProfitTable {
     ) -> Self {
         let mut region_cheapest = listings_to_map(global_cheapest_listings);
         let world_cheapest = listings_to_map(world_cheapest_listings);
-        let cross_region = cross_region
-            .into_iter()
-            .map(|region| listings_to_map(region));
+        let cross_region = cross_region.into_iter().map(listings_to_map);
 
         // merge cross regions into region cheapest
         for cross_region in cross_region {
@@ -299,7 +298,6 @@ fn AnalyzerTable(
         let mut sorted_data = profits
             .0
             .iter()
-            .cloned()
             .filter(move |data| {
                 minimum_profit()
                     .map(|min| data.profit > min)
@@ -331,6 +329,7 @@ fn AnalyzerTable(
                         .and_then(|w| w.as_world_id())
                         .unwrap_or_default()
             })
+            .cloned()
             .collect::<Vec<_>>();
 
         match sort_mode().unwrap_or(SortMode::Roi) {
@@ -642,9 +641,9 @@ fn AnalyzerTable(
                                 <div class=classes role="row-group">
                                     <div role="cell" class="px-2 py-2 w-[40px] flex items-center justify-center">
                                         {if data.sale_summary.hq {
-                                            Either::Left(view! { <span class="px-2 py-0.5 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)]">"HQ"</span> })
+                                            Some(view! { <span class="px-2 py-0.5 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)]">"HQ"</span> })
                                         } else {
-                                            Either::Right(view! { <></> })
+                                            None
                                         }}
                                     </div>
                                     <div role="cell" class="px-4 py-2 flex flex-row w-84 items-center gap-2">
@@ -693,7 +692,7 @@ fn AnalyzerTable(
                                         })>
                                             <QueryButton
                                                 key="world"
-                                                value=world.clone()
+                                                value=world
                                                 class="!text-brand-300 hover:text-brand-200"
                                                 active_classes="!text-neutral-300 hover:text-neutral-200"
                                                 remove_queries=&["datacenter"]
@@ -708,7 +707,7 @@ fn AnalyzerTable(
                                         })>
                                             <QueryButton
                                                 key="datacenter"
-                                                value=datacenter.clone()
+                                                value=datacenter
                                                 class="!text-brand-300 hover:text-brand-200"
                                                 active_classes="!text-neutral-300 hover:text-neutral-200"
                                                 remove_queries=&["world"]
@@ -783,10 +782,9 @@ pub fn AnalyzerWorldView() -> impl IntoView {
         Result::<_, AppError>::Ok(region)
     });
 
-    let global_cheapest_listings = Resource::new(
-        move || region(),
-        move |region| async move { get_cheapest_listings(region?.as_str()).await },
-    );
+    let global_cheapest_listings = Resource::new(region, move |region| async move {
+        get_cheapest_listings(region?.as_str()).await
+    });
 
     let (cross_region_enabled, set_cross_region_enabled) = query_signal::<bool>("cross");
     let connected_regions = &["Europe", "Japan", "North-America", "Oceania"];
@@ -795,7 +793,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     let enabled_regions = move || {
         let map = query();
         connected_regions
-            .into_iter()
+            .iter()
             .filter(|region| map.get(region).map(|value| value == "true").unwrap_or(true))
             .collect::<Vec<_>>()
     };
@@ -807,7 +805,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
             if enabled.unwrap_or_default() && connected_regions.contains(&region.as_str()) {
                 Ok(futures::future::join_all(
                     connected_regions
-                        .into_iter()
+                        .iter()
                         .filter(|r| **r != region.as_str())
                         .filter(|r| enabled_regions.contains(r))
                         .map(|region| get_cheapest_listings(region)),
@@ -850,7 +848,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                             cross_region_enabled().unwrap_or_default()
                                         })
                                         set_checked=SignalSetter::map(move |val: bool| set_cross_region_enabled(
-                                            val.then(|| true),
+                                            val.then_some(true),
                                         ))
                                         checked_label=Oco::Borrowed("Cross region enabled")
                                         unchecked_label=Oco::Borrowed("Cross region disabled")
@@ -866,7 +864,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                             region()
                                                 .map(|region| move || {
                                                     connected_regions
-                                                        .into_iter()
+                                                        .iter()
                                                         .filter(|r| **r != region.as_str())
                                                         .map(|region| {
                                                             let (enabled, set_enabled) = query_signal::<

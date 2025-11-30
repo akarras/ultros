@@ -1,8 +1,8 @@
 use leptos::prelude::*;
 use std::hash::Hash;
-use web_sys::wasm_bindgen::closure::Closure;
 use web_sys::wasm_bindgen::JsCast;
-use web_sys::{window, HtmlDivElement};
+use web_sys::wasm_bindgen::closure::Closure;
+use web_sys::{HtmlDivElement, window};
 
 struct Fenwick {
     n: usize,
@@ -101,7 +101,7 @@ where
     // use memo here so our signals only retrigger if the value actually changed.
     let child_start = Memo::new(move |_| {
         let len = children_len();
-        let _ = each.with(|_| ());
+        each.with(|_| ());
         if len == 0 {
             return 0u32;
         }
@@ -161,9 +161,9 @@ where
                 last_scroll.set(div.scroll_top());
                 if !raf_pending.get_untracked() {
                     raf_pending.set(true);
-                    let last_scroll = last_scroll.clone();
-                    let set_scroll_offset = set_scroll_offset.clone();
-                    let raf_pending = raf_pending.clone();
+                    let last_scroll = last_scroll;
+                    let set_scroll_offset = set_scroll_offset;
+                    let raf_pending = raf_pending;
                     if let Some(w) = window() {
                         let cb = Closure::wrap(Box::new(move |_: f64| {
                             set_scroll_offset(last_scroll.get_untracked());
@@ -214,9 +214,9 @@ where
                         key=move |(_, t): &(usize, T)| key(t)
                         children=move |(idx, child)| {
                             let row = NodeRef::<leptos::html::Div>::new();
-                            let set_height_deltas = set_height_deltas.clone();
-                            let height_deltas = height_deltas.clone();
-                            let fenwick = fenwick.clone();
+                            let set_height_deltas = set_height_deltas;
+                            let height_deltas = height_deltas;
+                            let fenwick = fenwick;
                             if variable_height {
                                 Effect::new(move |_| {
                                     if let Some(el) = row.get() {

@@ -5,8 +5,8 @@ use poise::serenity_prelude;
 use tracing::error;
 use ultros_api_types::{user::OwnedRetainer, websocket::ListingEventData};
 use ultros_db::{
-    entity::{alert, alert_retainer_undercut},
     UltrosDb,
+    entity::{alert, alert_retainer_undercut},
 };
 
 use crate::event::{EventBus, EventType};

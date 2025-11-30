@@ -1,21 +1,21 @@
 use anyhow::Result;
-use futures::{future::try_join_all, Stream};
+use futures::{Stream, future::try_join_all};
 use itertools::Itertools;
 use metrics::{counter, histogram};
 use migration::DbErr;
 use sea_orm::{ColumnTrait, DbBackend, EntityTrait, FromQueryResult, QueryFilter, Statement};
 use std::{
-    collections::{hash_map::Entry, HashMap, HashSet},
+    collections::{HashMap, HashSet, hash_map::Entry},
     time::Instant,
 };
 use tracing::instrument;
-use ultros_api_types::{retainer::Retainer, ActiveListing};
+use ultros_api_types::{ActiveListing, retainer::Retainer};
 use universalis::{ItemId, ListingView, WorldId};
 
 use crate::{
+    UltrosDb,
     entity::{active_listing, retainer},
     partial_diff_iterator::PartialDiffIterator,
-    UltrosDb,
 };
 
 impl PartialEq<ListingView> for ListingData {

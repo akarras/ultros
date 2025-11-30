@@ -5,17 +5,12 @@ use std::str::FromStr;
 use crate::global_state::cookies::Cookies;
 
 /// The visual theme mode of the application.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum ThemeMode {
     System,
+    #[default]
     Dark,
     Light,
-}
-
-impl Default for ThemeMode {
-    fn default() -> Self {
-        ThemeMode::Dark
-    }
 }
 
 impl ThemeMode {
@@ -34,14 +29,16 @@ impl FromStr for ThemeMode {
         Ok(match s.to_ascii_lowercase().as_str() {
             "system" => ThemeMode::System,
             "light" => ThemeMode::Light,
-            "dark" | _ => ThemeMode::Dark,
+            "dark" => ThemeMode::Dark,
+            _ => ThemeMode::Dark,
         })
     }
 }
 
 /// The brand color palette used throughout the UI.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum ThemePalette {
+    #[default]
     Violet,
     Teal,
     Emerald,
@@ -60,12 +57,6 @@ pub enum ThemePalette {
     Uldah,
     Limsa,
     Garlemald,
-}
-
-impl Default for ThemePalette {
-    fn default() -> Self {
-        ThemePalette::Violet
-    }
 }
 
 impl ThemePalette {
@@ -114,7 +105,8 @@ impl FromStr for ThemePalette {
             "uldah" => ThemePalette::Uldah,
             "limsa" => ThemePalette::Limsa,
             "garlemald" => ThemePalette::Garlemald,
-            "violet" | _ => ThemePalette::Violet,
+            "violet" => ThemePalette::Violet,
+            _ => ThemePalette::Violet,
         })
     }
 }
@@ -146,7 +138,6 @@ impl ThemeSettings {
 
         // React to changes: apply to DOM and persist
         Effect::new({
-            let settings = settings.clone();
             move |_| {
                 let m = settings.mode.get();
                 let p = settings.palette.get();
@@ -156,14 +147,6 @@ impl ThemeSettings {
         });
 
         settings
-    }
-
-    pub fn set_mode(&self, mode: ThemeMode) {
-        self.mode.set(mode);
-    }
-
-    pub fn set_palette(&self, palette: ThemePalette) {
-        self.palette.set(palette);
     }
 }
 
@@ -189,11 +172,11 @@ fn persist_all(settings: ThemeSettings) {
     // localStorage
     #[cfg(feature = "hydrate")]
     {
-        if let Some(win) = web_sys::window() {
-            if let Ok(Some(storage)) = win.local_storage() {
-                let _ = storage.set_item("theme.mode", &mode_str);
-                let _ = storage.set_item("theme.palette", &palette_str);
-            }
+        if let Some(win) = web_sys::window()
+            && let Ok(Some(storage)) = win.local_storage()
+        {
+            let _ = storage.set_item("theme.mode", &mode_str);
+            let _ = storage.set_item("theme.palette", &palette_str);
         }
     }
 
@@ -210,23 +193,21 @@ fn load_mode_from_storage() -> Option<ThemeMode> {
     // Priority: localStorage -> cookie -> None
     #[cfg(feature = "hydrate")]
     {
-        if let Some(win) = web_sys::window() {
-            if let Ok(Some(storage)) = win.local_storage() {
-                if let Ok(Some(value)) = storage.get_item("theme.mode") {
-                    if let Ok(mode) = ThemeMode::from_str(&value) {
-                        return Some(mode);
-                    }
-                }
-            }
+        if let Some(win) = web_sys::window()
+            && let Ok(Some(storage)) = win.local_storage()
+            && let Ok(Some(value)) = storage.get_item("theme.mode")
+            && let Ok(mode) = ThemeMode::from_str(&value)
+        {
+            return Some(mode);
         }
     }
 
     if let Some(cookies) = use_context::<Cookies>() {
         let (sig, _setter) = cookies.use_cookie_typed::<_, String>("theme_mode");
-        if let Some(val) = sig.get_untracked() {
-            if let Ok(mode) = ThemeMode::from_str(&val) {
-                return Some(mode);
-            }
+        if let Some(val) = sig.get_untracked()
+            && let Ok(mode) = ThemeMode::from_str(&val)
+        {
+            return Some(mode);
         }
     }
 
@@ -237,23 +218,21 @@ fn load_palette_from_storage() -> Option<ThemePalette> {
     // Priority: localStorage -> cookie -> None
     #[cfg(feature = "hydrate")]
     {
-        if let Some(win) = web_sys::window() {
-            if let Ok(Some(storage)) = win.local_storage() {
-                if let Ok(Some(value)) = storage.get_item("theme.palette") {
-                    if let Ok(palette) = ThemePalette::from_str(&value) {
-                        return Some(palette);
-                    }
-                }
-            }
+        if let Some(win) = web_sys::window()
+            && let Ok(Some(storage)) = win.local_storage()
+            && let Ok(Some(value)) = storage.get_item("theme.palette")
+            && let Ok(palette) = ThemePalette::from_str(&value)
+        {
+            return Some(palette);
         }
     }
 
     if let Some(cookies) = use_context::<Cookies>() {
         let (sig, _setter) = cookies.use_cookie_typed::<_, String>("theme_palette");
-        if let Some(val) = sig.get_untracked() {
-            if let Ok(palette) = ThemePalette::from_str(&val) {
-                return Some(palette);
-            }
+        if let Some(val) = sig.get_untracked()
+            && let Ok(palette) = ThemePalette::from_str(&val)
+        {
+            return Some(palette);
         }
     }
 
@@ -264,64 +243,61 @@ fn apply_to_dom(mode: ThemeMode, palette: ThemePalette) {
     #[cfg(feature = "hydrate")]
     {
         use wasm_bindgen::JsCast;
-        if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
-            if let Some(el) = doc.document_element() {
-                // Resolve system to light/dark
-                let resolved = match mode {
-                    ThemeMode::Light => "light",
-                    ThemeMode::Dark => "dark",
-                    ThemeMode::System => {
-                        match web_sys::window()
-                            .and_then(|w| w.match_media("(prefers-color-scheme: dark)").ok())
-                            .flatten()
-                            .and_then(|mq| {
-                                js_sys::Reflect::get(
-                                    mq.as_ref(),
-                                    &wasm_bindgen::JsValue::from_str("matches"),
-                                )
-                                .ok()
-                                .and_then(|v| v.as_bool())
-                            }) {
-                            Some(true) => "dark",
-                            _ => "light",
-                        }
+        if let Some(doc) = web_sys::window().and_then(|w| w.document())
+            && let Some(el) = doc.document_element()
+        {
+            // Resolve system to light/dark
+            let resolved = match mode {
+                ThemeMode::Light => "light",
+                ThemeMode::Dark => "dark",
+                ThemeMode::System => {
+                    match web_sys::window()
+                        .and_then(|w| w.match_media("(prefers-color-scheme: dark)").ok())
+                        .flatten()
+                        .and_then(|mq| {
+                            js_sys::Reflect::get(
+                                mq.as_ref(),
+                                &wasm_bindgen::JsValue::from_str("matches"),
+                            )
+                            .ok()
+                            .and_then(|v| v.as_bool())
+                        }) {
+                        Some(true) => "dark",
+                        _ => "light",
                     }
+                }
+            };
+            if let Err(e) = el.set_attribute("data-theme", resolved) {
+                warn!("failed to set data-theme: {:?}", e.as_string());
+            }
+            if let Err(e) = el.set_attribute("data-palette", palette.as_str()) {
+                warn!("failed to set data-palette: {:?}", e.as_string());
+            }
+
+            // For debugging in dev
+            debug!(
+                "applied theme to DOM => mode: {:?} (resolved: {}), palette: {}",
+                mode,
+                resolved,
+                palette.as_str()
+            );
+
+            // Also update a <meta name="theme-color"> if present for PWA feel
+            if let Some(meta_list) = doc
+                .get_elements_by_name("theme-color")
+                .dyn_into::<web_sys::NodeList>()
+                .ok()
+                && meta_list.length() > 0
+                && let Some(node) = meta_list.item(0)
+                && let Some(meta) = node.dyn_ref::<web_sys::HtmlMetaElement>()
+            {
+                // heuristic background based on mode
+                let color = if resolved == "light" {
+                    "#f8fafc"
+                } else {
+                    "#0f0710"
                 };
-                if let Err(e) = el.set_attribute("data-theme", resolved) {
-                    warn!("failed to set data-theme: {:?}", e.as_string());
-                }
-                if let Err(e) = el.set_attribute("data-palette", palette.as_str()) {
-                    warn!("failed to set data-palette: {:?}", e.as_string());
-                }
-
-                // For debugging in dev
-                debug!(
-                    "applied theme to DOM => mode: {:?} (resolved: {}), palette: {}",
-                    mode,
-                    resolved,
-                    palette.as_str()
-                );
-
-                // Also update a <meta name="theme-color"> if present for PWA feel
-                if let Some(meta_list) = doc
-                    .get_elements_by_name("theme-color")
-                    .dyn_into::<web_sys::NodeList>()
-                    .ok()
-                {
-                    if meta_list.length() > 0 {
-                        if let Some(node) = meta_list.item(0) {
-                            if let Some(meta) = node.dyn_ref::<web_sys::HtmlMetaElement>() {
-                                // heuristic background based on mode
-                                let color = if resolved == "light" {
-                                    "#f8fafc"
-                                } else {
-                                    "#0f0710"
-                                };
-                                meta.set_content(color);
-                            }
-                        }
-                    }
-                }
+                meta.set_content(color);
             }
         }
     }

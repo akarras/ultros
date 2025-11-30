@@ -1,4 +1,4 @@
-use crate::{entity::discord_user, UltrosDb};
+use crate::{UltrosDb, entity::discord_user};
 use anyhow::Result;
 use migration::OnConflict;
 use sea_orm::{EntityTrait, Set};

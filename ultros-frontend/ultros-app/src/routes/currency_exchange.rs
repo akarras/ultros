@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::hash::Hasher;
 
+use crate::Ad;
+use crate::Tooltip;
 use crate::api::get_cheapest_listings;
 use crate::api::get_recent_sales_for_world;
 use crate::components::add_to_list::AddToList;
@@ -16,20 +18,18 @@ use crate::components::number_input::ParseableInputBox;
 use crate::components::query_button::QueryButton;
 use crate::error::AppError;
 use crate::global_state::home_world::use_home_world;
-use crate::Ad;
-use crate::Tooltip;
 use chrono::TimeDelta;
 use chrono::Utc;
-use field_iterator::field_iter;
 use field_iterator::FieldLabels;
 use field_iterator::SortableVec;
+use field_iterator::field_iter;
 use itertools::Itertools;
 use leptos::either::Either;
 use leptos::prelude::*;
 use leptos::reactive::wrappers::write::SignalSetter;
 use leptos_icons::Icon;
-use leptos_router::components::Outlet;
 use leptos_router::components::A;
+use leptos_router::components::Outlet;
 use leptos_router::hooks::*;
 
 use leptos_router::params::ParamsMap;
@@ -55,11 +55,7 @@ impl Hash for ItemAmount {
 
 impl PartialOrd for ItemAmount {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        match self.item.name.partial_cmp(&other.item.name) {
-            Some(core::cmp::Ordering::Equal) => {}
-            ord => return ord,
-        }
-        self.amount.partial_cmp(&other.amount)
+        Some(self.cmp(other))
     }
 }
 
@@ -200,15 +196,15 @@ fn FilterModal(filter_name: &'static str) -> impl IntoView {
                                     <div class="flex items-center justify-between">
                                         <span class="text-[color:var(--color-text)]">"Max"</span>
                                         <ParseableInputBox
-                                            input=Signal::derive(move || { max() })
-                                            set_value=SignalSetter::map(move |value| set_max(value))
+                                            input=Signal::derive(max)
+                                            set_value=SignalSetter::map(set_max)
                                         />
                                     </div>
                                     <div class="flex items-center justify-between">
                                         <span class="text-[color:var(--color-text)]">"Min"</span>
                                         <ParseableInputBox
-                                            input=Signal::derive(move || { min() })
-                                            set_value=SignalSetter::map(move |value| set_min(value))
+                                            input=Signal::derive(min)
+                                            set_value=SignalSetter::map(set_min)
                                         />
                                     </div>
                                 </div>
@@ -423,13 +419,13 @@ pub fn ExchangeItem() -> impl IntoView {
                             let (max, set_max) = query_signal::<i32>("price_per_item_max");
                             view! {
                                 <ParseableInputBox
-                                    input=Signal::derive(move || min())
-                                    set_value=SignalSetter::map(move |v| set_min(v))
+                                    input=Signal::derive(min)
+                                    set_value=SignalSetter::map(set_min)
                                 />
                                 <span class="text-[color:var(--color-text-muted)]">"–"</span>
                                 <ParseableInputBox
-                                    input=Signal::derive(move || max())
-                                    set_value=SignalSetter::map(move |v| set_max(v))
+                                    input=Signal::derive(max)
+                                    set_value=SignalSetter::map(set_max)
                                 />
                                 <FilterModal filter_name="price_per_item" />
                             }
@@ -443,13 +439,13 @@ pub fn ExchangeItem() -> impl IntoView {
                             let (max, set_max) = query_signal::<i32>("number_received_max");
                             view! {
                                 <ParseableInputBox
-                                    input=Signal::derive(move || min())
-                                    set_value=SignalSetter::map(move |v| set_min(v))
+                                    input=Signal::derive(min)
+                                    set_value=SignalSetter::map(set_min)
                                 />
                                 <span class="text-[color:var(--color-text-muted)]">"–"</span>
                                 <ParseableInputBox
-                                    input=Signal::derive(move || max())
-                                    set_value=SignalSetter::map(move |v| set_max(v))
+                                    input=Signal::derive(max)
+                                    set_value=SignalSetter::map(set_max)
                                 />
                                 <FilterModal filter_name="number_received" />
                             }
@@ -463,13 +459,13 @@ pub fn ExchangeItem() -> impl IntoView {
                             let (max, set_max) = query_signal::<i32>("total_profit_max");
                             view! {
                                 <ParseableInputBox
-                                    input=Signal::derive(move || min())
-                                    set_value=SignalSetter::map(move |v| set_min(v))
+                                    input=Signal::derive(min)
+                                    set_value=SignalSetter::map(set_min)
                                 />
                                 <span class="text-[color:var(--color-text-muted)]">"–"</span>
                                 <ParseableInputBox
-                                    input=Signal::derive(move || max())
-                                    set_value=SignalSetter::map(move |v| set_max(v))
+                                    input=Signal::derive(max)
+                                    set_value=SignalSetter::map(set_max)
                                 />
                                 <FilterModal filter_name="total_profit" />
                             }
@@ -483,13 +479,13 @@ pub fn ExchangeItem() -> impl IntoView {
                             let (max, set_max) = query_signal::<i32>("hours_between_sales_max");
                             view! {
                                 <ParseableInputBox
-                                    input=Signal::derive(move || min())
-                                    set_value=SignalSetter::map(move |v| set_min(v))
+                                    input=Signal::derive(min)
+                                    set_value=SignalSetter::map(set_min)
                                 />
                                 <span class="text-[color:var(--color-text-muted)]">"–"</span>
                                 <ParseableInputBox
-                                    input=Signal::derive(move || max())
-                                    set_value=SignalSetter::map(move |v| set_max(v))
+                                    input=Signal::derive(max)
+                                    set_value=SignalSetter::map(set_max)
                                 />
                                 <FilterModal filter_name="hours_between_sales" />
                             }
@@ -615,7 +611,7 @@ pub fn ExchangeItem() -> impl IntoView {
                                                     </div>
                                                     <div class="flex items-center justify-between">
                                                         <div class="flex items-center gap-2">
-                                                            <ItemAmount item_amount=t.receive_item.clone() />
+                                                            <ItemAmount item_amount=t.receive_item />
                                                         </div>
                                                         <div class="text-right">
                                                             <div class="text-xs text-[color:var(--color-text-muted)]">"profit"</div>
@@ -647,12 +643,12 @@ pub fn ExchangeItem() -> impl IntoView {
                                                     .filter(|currency| {
                                                         let query = &query;
                                                         is_in_range(
-                                                            currency.price_per_item as i32,
+                                                            currency.price_per_item,
                                                             "price_per_item",
                                                             query,
                                                         )
                                                             && is_in_range(
-                                                                currency.number_received as i32,
+                                                                currency.number_received,
                                                                 "number_received",
                                                                 query,
                                                             )
@@ -714,7 +710,7 @@ pub fn ExchangeItem() -> impl IntoView {
                                                     <thead class="text-xs uppercase">
                                                         <tr>
                                                             {labels
-                                                                .into_iter()
+                                                                .iter()
                                                                 .enumerate()
                                                                 .filter(|(i, _)| *i <= 6)
                                                                 .map(|(i, l)| {

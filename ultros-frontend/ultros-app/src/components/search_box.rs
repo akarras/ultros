@@ -8,7 +8,7 @@ use leptos::{html::Input, prelude::*, task::spawn_local};
 use leptos_hotkeys::use_hotkeys;
 // use leptos_hotkeys::use_hotkeys;
 use leptos_icons::*;
-use leptos_router::{hooks::use_navigate, NavigateOptions};
+use leptos_router::{NavigateOptions, hooks::use_navigate};
 use std::cmp::Reverse;
 use sublime_fuzzy::{FuzzySearch, Match, Scoring};
 use web_sys::KeyboardEvent;
@@ -69,7 +69,6 @@ pub fn SearchBox() -> impl IntoView {
                     .iter()
                     .filter(|(_, i)| i.item_search_category.0 > 0)
                     .filter(|(_, i)| i.name.to_lowercase().contains(&ql))
-                    .map(|(id, item)| (id, item))
                     .collect::<Vec<_>>();
                 results.sort_by_key(|(_, i)| {
                     (Reverse(i.level_item.0), i.name.as_str().to_lowercase())
@@ -114,23 +113,23 @@ pub fn SearchBox() -> impl IntoView {
             } else {
                 set_search("".to_string());
             }
-        } else if key == "Enter" {
-            if let Some((id, _)) = item_search().first() {
-                let (zone, _) = get_price_zone();
-                let id = id.0;
-                let zone = zone.get_untracked();
-                let price_zone = zone
-                    .as_ref()
-                    .map(|z| z.get_name())
-                    .unwrap_or("North-America");
+        } else if key == "Enter"
+            && let Some((id, _)) = item_search().first()
+        {
+            let (zone, _) = get_price_zone();
+            let id = id.0;
+            let zone = zone.get_untracked();
+            let price_zone = zone
+                .as_ref()
+                .map(|z| z.get_name())
+                .unwrap_or("North-America");
 
-                navigate(
-                    &format!("/item/{price_zone}/{id}"),
-                    NavigateOptions::default(),
-                );
-                set_search("".to_string());
-                text_input.get().unwrap().blur().unwrap();
-            }
+            navigate(
+                &format!("/item/{price_zone}/{id}"),
+                NavigateOptions::default(),
+            );
+            set_search("".to_string());
+            text_input.get().unwrap().blur().unwrap();
         }
     };
     view! {

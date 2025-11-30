@@ -5,7 +5,7 @@ use tracing::instrument;
 
 use super::UltrosDb;
 use crate::entity::*;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use sea_orm::ActiveModelTrait;
 use sea_orm::ColumnTrait;
 use sea_orm::QueryFilter;

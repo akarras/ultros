@@ -1,14 +1,14 @@
 use std::{sync::Arc, time::Duration};
 
-use futures::{stream, StreamExt};
+use futures::{StreamExt, stream};
 use tokio::time::Instant;
 use tracing::{info, instrument};
 use ultros_api_types::websocket::{ListingEventData, SaleEventData};
 use ultros_db::{
+    UltrosDb,
     entity::{listing_last_updated::Model, world},
     partial_diff_iterator::PartialDiffIterator,
     world_cache::WorldCache,
-    UltrosDb,
 };
 use universalis::{UniversalisClient, WorldId, WorldItemRecencyView};
 
@@ -16,7 +16,6 @@ use crate::event::{EventProducer, EventType};
 
 /// Item update service attempts to keep ultros' data in sync with Universalis' data.
 /// It does this primarily by comparing the recently updated items on Universalis with recently updated items on ultros
-
 pub(crate) struct UpdateService {
     pub(crate) db: UltrosDb,
     pub(crate) world_cache: Arc<WorldCache>,

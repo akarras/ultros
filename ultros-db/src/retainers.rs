@@ -17,8 +17,8 @@ use ultros_api_types::user::OwnedRetainer;
 use universalis::ItemId;
 use universalis::WorldId;
 
-use crate::entity::*;
 use crate::UltrosDb;
+use crate::entity::*;
 use anyhow::Result;
 
 pub type FullRetainersList = Vec<(

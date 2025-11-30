@@ -15,6 +15,7 @@ where
 mod test {
     use super::SortableVec;
 
+    #[allow(dead_code)]
     struct SomeType {
         value: i32,
         other_value: String,

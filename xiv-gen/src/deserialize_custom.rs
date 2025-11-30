@@ -20,8 +20,6 @@ pub fn deserialize_bool_from_anything_custom<'de, D>(deserializer: D) -> Result<
 where
     D: Deserializer<'de>,
 {
-    use std::f64::EPSILON;
-
     #[derive(Deserialize)]
     #[serde(untagged)]
     enum AnythingOrBool {
@@ -41,7 +39,7 @@ where
             ))),
         },
         AnythingOrBool::Float(f) => {
-            if (f - 1.0f64).abs() < EPSILON {
+            if (f - 1.0f64).abs() < f64::EPSILON {
                 Ok(true)
             } else if f == 0.0f64 {
                 Ok(false)

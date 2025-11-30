@@ -1,4 +1,4 @@
-use serde::{de, Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de};
 use std::collections::HashMap;
 use std::fmt;
 
@@ -117,17 +117,11 @@ impl CheapestListingsMap {
     pub fn find_matching_listings(&self, item_id: i32) -> PriceSummary {
         let hq = self
             .map
-            .get(&CheapestListingMapKey {
-                hq: true,
-                item_id: item_id,
-            })
+            .get(&CheapestListingMapKey { hq: true, item_id })
             .copied();
         let lq = self
             .map
-            .get(&CheapestListingMapKey {
-                hq: false,
-                item_id: item_id,
-            })
+            .get(&CheapestListingMapKey { hq: false, item_id })
             .copied();
         PriceSummary { lq, hq }
     }

@@ -1,7 +1,7 @@
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
-use super::{error::WebError, WebState};
-use anyhow::{anyhow, Result};
+use super::{WebState, error::WebError};
+use anyhow::{Result, anyhow};
 use axum::{
     body::Body,
     extract::{Path, State},
@@ -11,21 +11,21 @@ use hyper::header;
 use plotters_svg::SVGBackend;
 use resvg::{
     tiny_skia,
-    usvg::{self, fontdb, Options, TreeParsing, TreeTextToPath},
+    usvg::{self, Options, TreeParsing, TreeTextToPath, fontdb},
 };
 use ultros_api_types::{
-    world_helper::{AnyResult, WorldHelper},
     SaleHistory,
+    world_helper::{AnyResult, WorldHelper},
 };
 use ultros_charts::ChartOptions;
 use ultros_db::UltrosDb;
 use xiv_gen::{Item, ItemId};
 
-pub(crate) async fn generate_image<'a>(
+pub(crate) async fn generate_image(
     db: &UltrosDb,
     world_helper: &WorldHelper,
     item: &'static Item,
-    world: &'a AnyResult<'_>,
+    world: &AnyResult<'_>,
 ) -> Result<Vec<u8>> {
     let world_ids: Vec<_> = world.all_worlds().map(|w| w.id).collect();
     let sales: Vec<SaleHistory> = db

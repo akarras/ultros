@@ -1,10 +1,10 @@
-use flate2::{write::GzEncoder, Compression};
-use futures::{stream, StreamExt};
-use image::{imageops::FilterType, io::Reader as ImageReader, ImageFormat};
+use flate2::{Compression, write::GzEncoder};
+use futures::{StreamExt, stream};
+use image::{ImageFormat, ImageReader, imageops::FilterType};
 use std::{
     env,
     ffi::OsStr,
-    fs::{read_dir, DirEntry},
+    fs::{DirEntry, read_dir},
     io::{Cursor, Write},
     path::{Path, PathBuf},
     time::Instant,
@@ -135,4 +135,3 @@ async fn main() {
         Instant::now().duration_since(instant).as_millis()
     );
 }
-

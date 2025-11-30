@@ -75,7 +75,7 @@ async fn current(
             f(&format_args!(
                 "{:<10} {:3} {:<7} {}",
                 l.price_per_unit,
-                l.hq.then_some("✅").unwrap_or_default(),
+                if l.hq { "✅" } else { "" },
                 l.quantity,
                 worlds
                     .lookup_selector(&AnySelector::World(l.world_id))
@@ -125,7 +125,7 @@ async fn history(
     };
     ctx.send(|r| {
         r.embed(|e| {
-            e.title(&[&item.name, " - ", world.get_name()].concat())
+            e.title([&item.name, " - ", world.get_name()].concat())
                 .color(ULTROS_COLOR)
                 .image("attachment://chart.png")
         })

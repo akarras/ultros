@@ -3,7 +3,7 @@ use crate::{
     global_state::home_world::get_price_zone,
 };
 use leptos::{either::Either, prelude::*};
-use sublime_fuzzy::{best_match, Match};
+use sublime_fuzzy::{Match, best_match};
 use xiv_gen::ItemId;
 
 /// Leptos version of sublime_fuzzy::format_simple

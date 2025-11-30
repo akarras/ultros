@@ -1,10 +1,10 @@
 use std::{
     cmp::Reverse,
-    collections::{hash_map::Entry, BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, hash_map::Entry},
     fmt::Display,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
 };
 
@@ -14,10 +14,10 @@ use itertools::Itertools;
 use poise::serenity_prelude::Timestamp;
 use serde::{Deserialize, Serialize};
 use tracing::log::info;
-use ultros_api_types::{websocket::ListingEventData, ActiveListing, Retainer};
+use ultros_api_types::{ActiveListing, Retainer, websocket::ListingEventData};
 use ultros_db::{
-    entity::{active_listing, sale_history},
     UltrosDb,
+    entity::{active_listing, sale_history},
 };
 use universalis::{ItemId, WorldId};
 
