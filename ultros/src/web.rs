@@ -873,7 +873,10 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/realtime/events", get(real_time_data))
         .route("/api/v1/cheapest/{world}", get(cheapest_per_world))
         .route("/api/v1/recentSales/{world}", get(recent_sales))
-        .route("/api/v1/listings/{world}/{itemid}", get(world_item_listings))
+        .route(
+            "/api/v1/listings/{world}/{itemid}",
+            get(world_item_listings),
+        )
         .route(
             "/api/v1/bulkListings/{world}/{itemids}",
             get(bulk_item_listings),
@@ -937,9 +940,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/sitemap.xml", get(sitemap_index))
         .route("/sitemap/pages.xml", get(generic_pages_sitemap))
         .route("/listings/{world}/{item}", get(listings_redirect))
-        .merge(
-            create_leptos_app(state.world_helper.clone()).await.unwrap(),
-        )
+        .merge(create_leptos_app(state.world_helper.clone()).await.unwrap())
         .fallback(leptos_axum::file_and_error_handler_with_context::<
             WebState,
             _,

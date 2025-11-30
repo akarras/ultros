@@ -135,4 +135,3 @@ async fn main() {
         Instant::now().duration_since(instant).as_millis()
     );
 }
-

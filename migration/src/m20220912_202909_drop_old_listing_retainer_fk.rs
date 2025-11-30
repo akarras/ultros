@@ -7,6 +7,9 @@ pub struct Migration;
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        if manager.get_database_backend() == sea_orm_migration::sea_orm::DbBackend::Sqlite {
+            return Ok(());
+        }
         manager
             .drop_foreign_key(
                 ForeignKeyDropStatement::new()
@@ -18,6 +21,9 @@ impl MigrationTrait for Migration {
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        if manager.get_database_backend() == sea_orm_migration::sea_orm::DbBackend::Sqlite {
+            return Ok(());
+        }
         manager
             .create_foreign_key(
                 ForeignKeyCreateStatement::new()

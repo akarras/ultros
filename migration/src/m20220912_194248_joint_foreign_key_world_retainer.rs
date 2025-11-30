@@ -8,6 +8,9 @@ pub struct Migration;
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        let is_sqlite =
+            manager.get_database_backend() == sea_orm_migration::sea_orm::DbBackend::Sqlite;
+
         manager
             .create_index(
                 IndexCreateStatement::new()
@@ -32,21 +35,27 @@ impl MigrationTrait for Migration {
                     .to_owned(),
             )
             .await?;
-        manager
-            .create_foreign_key(
-                ForeignKeyCreateStatement::new()
-                    .name("active_listing_retainer_world_id_fkey")
-                    .from(
-                        ActiveListing::Table,
-                        (ActiveListing::WorldId, ActiveListing::RetainerId),
-                    )
-                    .to(Retainer::Table, (Retainer::WorldId, Retainer::Id))
-                    .to_owned(),
-            )
-            .await
+        if !is_sqlite {
+            manager
+                .create_foreign_key(
+                    ForeignKeyCreateStatement::new()
+                        .name("active_listing_retainer_world_id_fkey")
+                        .from(
+                            ActiveListing::Table,
+                            (ActiveListing::WorldId, ActiveListing::RetainerId),
+                        )
+                        .to(Retainer::Table, (Retainer::WorldId, Retainer::Id))
+                        .to_owned(),
+                )
+                .await?;
+        }
+        Ok(())
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        let is_sqlite =
+            manager.get_database_backend() == sea_orm_migration::sea_orm::DbBackend::Sqlite;
+
         manager
             .drop_index(
                 IndexDropStatement::new()
@@ -55,14 +64,16 @@ impl MigrationTrait for Migration {
                     .to_owned(),
             )
             .await?;
-        manager
-            .drop_foreign_key(
-                ForeignKeyDropStatement::new()
-                    .table(ActiveListing::Table)
-                    .name("active_listing_retainer_world_id_fkey")
-                    .to_owned(),
-            )
-            .await?;
+        if !is_sqlite {
+            manager
+                .drop_foreign_key(
+                    ForeignKeyDropStatement::new()
+                        .table(ActiveListing::Table)
+                        .name("active_listing_retainer_world_id_fkey")
+                        .to_owned(),
+                )
+                .await?;
+        }
         manager
             .drop_index(
                 IndexDropStatement::new()
