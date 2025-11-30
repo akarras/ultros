@@ -8,9 +8,6 @@ pub struct Migration;
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        if manager.get_database_backend() == sea_orm_migration::sea_orm::DbBackend::Sqlite {
-            return Ok(());
-        }
         // alter table sale_history
         // drop constraint sale_history_pkey;
 

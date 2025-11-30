@@ -1,19 +1,13 @@
 [package]
 name = "migration"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 publish = false
 
 [lib]
 name = "migration"
 path = "src/lib.rs"
 
-
 [dependencies]
-
-sea-orm-migration = { version = "0.12.15", default-features = false, features = [
-    "sqlx-postgres",
-    "sqlx-sqlite",
-    "runtime-tokio-rustls",
-] }
+sea-orm-migration.workspace = true
 tokio = { version = "1", features = ["full"] }

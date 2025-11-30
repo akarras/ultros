@@ -42,12 +42,10 @@ image = "0.25.6"
 plotters = "0.3"
 sea-orm = { version = "0.12.15", features = [
     "sqlx-postgres",
-    "sqlx-sqlite",
     "runtime-tokio-rustls",
 ] }
 sea-orm-migration = { version = "0.12.15", features = [
     "sqlx-postgres",
-    "sqlx-sqlite",
     "runtime-tokio-rustls",
 ] }
 sea-query = "0.30.0"

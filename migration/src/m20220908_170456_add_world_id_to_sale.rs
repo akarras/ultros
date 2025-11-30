@@ -6,8 +6,6 @@ pub struct Migration;
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        let is_sqlite =
-            manager.get_database_backend() == sea_orm_migration::sea_orm::DbBackend::Sqlite;
         manager
             .alter_table(
                 TableAlterStatement::new()
@@ -21,16 +19,14 @@ impl MigrationTrait for Migration {
                     .to_owned(),
             )
             .await?;
-        if !is_sqlite {
-            manager
-                .create_foreign_key(
-                    ForeignKeyCreateStatement::new()
-                        .from(SaleHistory::Table, SaleHistory::WorldId)
-                        .to(World::Table, World::Id)
-                        .to_owned(),
-                )
-                .await?;
-        }
+        manager
+            .create_foreign_key(
+                ForeignKeyCreateStatement::new()
+                    .from(SaleHistory::Table, SaleHistory::WorldId)
+                    .to(World::Table, World::Id)
+                    .to_owned(),
+            )
+            .await?;
         Ok(())
     }
 

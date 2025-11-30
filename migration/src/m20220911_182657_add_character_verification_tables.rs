@@ -8,9 +8,6 @@ pub struct Migration;
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        let is_sqlite =
-            manager.get_database_backend() == sea_orm_migration::sea_orm::DbBackend::Sqlite;
-
         manager
             .create_table(
                 Table::create()
@@ -41,23 +38,19 @@ impl MigrationTrait for Migration {
                     .to_owned(),
             )
             .await?;
-
-        if !is_sqlite {
-            manager
-                .create_foreign_key(
-                    ForeignKeyCreateStatement::new()
-                        .from(
-                            FfxivCharacterVerification::Table,
-                            FfxivCharacterVerification::DiscordUserId,
-                        )
-                        .to(DiscordUser::Table, DiscordUser::Id)
-                        .on_update(ForeignKeyAction::Cascade)
-                        .on_delete(ForeignKeyAction::Cascade)
-                        .to_owned(),
-                )
-                .await?;
-        }
-
+        manager
+            .create_foreign_key(
+                ForeignKeyCreateStatement::new()
+                    .from(
+                        FfxivCharacterVerification::Table,
+                        FfxivCharacterVerification::DiscordUserId,
+                    )
+                    .to(DiscordUser::Table, DiscordUser::Id)
+                    .on_update(ForeignKeyAction::Cascade)
+                    .on_delete(ForeignKeyAction::Cascade)
+                    .to_owned(),
+            )
+            .await?;
         manager
             .create_table(
                 Table::create()
@@ -76,39 +69,32 @@ impl MigrationTrait for Migration {
                     .to_owned(),
             )
             .await?;
-
-        if !is_sqlite {
-            manager
-                .create_foreign_key(
-                    ForeignKeyCreateStatement::new()
-                        .from(
-                            OwnedFfxivCharacter::Table,
-                            OwnedFfxivCharacter::DiscordUserId,
-                        )
-                        .to(DiscordUser::Table, DiscordUser::Id)
-                        .on_delete(ForeignKeyAction::Cascade)
-                        .on_update(ForeignKeyAction::Cascade)
-                        .to_owned(),
-                )
-                .await?;
-        }
-
-        if !is_sqlite {
-            manager
-                .create_foreign_key(
-                    ForeignKeyCreateStatement::new()
-                        .from(
-                            OwnedFfxivCharacter::Table,
-                            OwnedFfxivCharacter::FfxivCharacterId,
-                        )
-                        .to(FinalFantasyCharacter::Table, FinalFantasyCharacter::Id)
-                        .on_update(ForeignKeyAction::Cascade)
-                        .on_delete(ForeignKeyAction::Cascade)
-                        .to_owned(),
-                )
-                .await?;
-        }
-
+        manager
+            .create_foreign_key(
+                ForeignKeyCreateStatement::new()
+                    .from(
+                        OwnedFfxivCharacter::Table,
+                        OwnedFfxivCharacter::DiscordUserId,
+                    )
+                    .to(DiscordUser::Table, DiscordUser::Id)
+                    .on_delete(ForeignKeyAction::Cascade)
+                    .on_update(ForeignKeyAction::Cascade)
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .create_foreign_key(
+                ForeignKeyCreateStatement::new()
+                    .from(
+                        OwnedFfxivCharacter::Table,
+                        OwnedFfxivCharacter::FfxivCharacterId,
+                    )
+                    .to(FinalFantasyCharacter::Table, FinalFantasyCharacter::Id)
+                    .on_update(ForeignKeyAction::Cascade)
+                    .on_delete(ForeignKeyAction::Cascade)
+                    .to_owned(),
+            )
+            .await?;
         Ok(())
     }
 

@@ -8,7 +8,15 @@ Currently hosted with hetzner via https://ultros.app
 
 A userguide is available [here](https://book.ultros.app)
 
-### Development
+
+## Ads
+
+Currently am experimenting with running ads on the site to see how much revenue can be generated. Ideally, I'd like to get the site hosting expenses
+covered without trying to coerce community members into donating. The ads are entirely opt out via the settings page, and adblocks will continue working.
+
+## Contributing
+
+Contributions are appreciated, this project is messy because I just sort of threw everything together. Feel free to open an issue, submit a PR, or contact me directly with feedback and changes requested.
 
 Ultros requires a nightly rust toolchain which can be acquired with `rustup`. Check (rustup.rs)[https://rustup.rs] for more details.
 
@@ -17,13 +25,7 @@ This project utilizes git submodules to bring in assets. Since I'm not smart eno
 The project can be run with `cargo-leptos`, assuming a Rust toolchain is installed you can install it with `cargo install cargo-leptos --locked`. Then use `cargo leptos serve` or `cargo leptos watch`. Add `--release` to enable optimizations.
 
 
-The application also requires a database and a Discord application token. In production Postgres is recommended, but Sqlite is supported for local development.
-
-
-### Ads
-
-Currently am experimenting with running ads on the site to see how much revenue can be generated. Ideally, I'd like to get the site hosting expenses
-covered without trying to coerce community members into donating. The ads are entirely opt out via the settings page, and adblocks will continue working.
+The application also requires a postgres database and a Discord application token.
 
 
 ### Environment Variables
@@ -42,18 +44,28 @@ KEY=some-long-random-secret
 PORT=8080
 ```
 
+I recommend starting a docker container for the postgres database, and using the `DATABASE_URL` environment variable to connect to it. For example:
+
+```bash
+docker run --name ultros-dev -e POSTGRES_PASSWORD=ultros-dev-password -p 5432:5432 -d postgres
+# in your .env file
+DATABASE_URL=postgres://ultros-dev:ultros@localhost:5432/ultros
+```
+
+When you run the app using `cargo leptos serve`, it will automatically apply database migrations, and start to load data from universalis. On first boot, it will fetch all worlds, and regions, and will require a onetime restart to function properly after that.
+
+After that, the app will continually load data from universalis over the websocket.
+There is no way to backfill data from an extended period of time.
+If you contribute data to universalis, you should see it reflected locally in real time.
+
+### Configuration
+
 Required variables:
-
 * `DISCORD_TOKEN` - A discord bot token
-
-* `DATABASE_URL` - Database connection string (Postgres or Sqlite supported)
-
+* `DATABASE_URL` - Database connection string
 * `DISCORD_CLIENT_ID` - ID of your Discord application
-
 * `DISCORD_CLIENT_SECRET` - Client secret of your Discord application
-
 * `HOSTNAME` - Address that your app is hosted at. Necessary to get OAuth to work.
-
 * `KEY` - A secret hash used to encrypt cookies
 
 Optional variables:
@@ -62,20 +74,6 @@ Optional variables:
 * `POSTGRES_MAX_CONNECTIONS` - Maximum connections for the Postgres pool (defaults to `300`)
 * `UNIVERSALIS_WEBSOCKET_COOLDOWN_SECS` - Cooldown between Universalis websocket reconnect attempts (defaults to `2` seconds)
 * `RUST_LOG` - Log level to log at. ex: `RUST_LOG=ultros=info,warn`
-
-
-
-### Using Sqlite for local development
-
-For local testing you can point `DATABASE_URL` at a Sqlite database file instead of Postgres. For example:
-
-`DATABASE_URL=sqlite:///./ultros-dev.db`
-
-You can also use an in-memory database for quick experiments:
-
-`DATABASE_URL=sqlite::memory:`
-
-SeaORM will automatically detect the backend from the URL; no other configuration changes are required.
 
 ### Contributing
 

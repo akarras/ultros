@@ -54,23 +54,3 @@ impl MigratorTrait for Migrator {
         ]
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::Migrator;
-    use sea_orm_migration::MigratorTrait;
-    use sea_orm_migration::sea_orm::Database;
-
-    #[tokio::test]
-    async fn sqlite_in_memory_migrations_apply_and_rollback() {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("failed to connect to in-memory sqlite");
-        Migrator::up(&db, None)
-            .await
-            .expect("sqlite migrations should apply successfully");
-        Migrator::down(&db, None)
-            .await
-            .expect("sqlite migrations should rollback successfully");
-    }
-}

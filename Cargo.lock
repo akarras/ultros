@@ -2126,6 +2126,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aa4f63cc0cd93d91bcc11b46f61db771bc36c405d96043506ae40facd87b31f7"
 
 [[package]]
+name = "glob"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
+
+[[package]]
 name = "gloo"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5773,6 +5779,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "sea-orm-cli"
+version = "0.12.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "620bc560062ae251b1366bde43b3f1508445cab5c2c8cbdb397034638ab1b357"
+dependencies = [
+ "chrono",
+ "clap",
+ "dotenvy",
+ "glob",
+ "regex",
+ "sea-schema",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
 name = "sea-orm-macros"
 version = "0.12.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5793,8 +5816,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee8269bc6ff71afd6b78aa4333ac237a69eebd2cdb439036291e64fb4b8db23c"
 dependencies = [
  "async-trait",
+ "clap",
+ "dotenvy",
  "futures",
  "sea-orm",
+ "sea-orm-cli",
  "sea-schema",
  "tracing",
  "tracing-subscriber",
