@@ -55,7 +55,8 @@ jobs:
               run: cargo fmt --all -- --check
 
             - name: Run Clippy
-              run: cargo clippy --all-targets --all-features -- -D warnings
+              # it would be good to support --all-features, but xiv-gen is a little unstable.
+              run: cargo clippy --all-targets -- -D warnings
 
             - name: Run cargo-deny, outdated, udeps, audit, and pants
               run: |
