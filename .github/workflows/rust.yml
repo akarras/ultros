@@ -23,11 +23,9 @@ jobs:
           submodules: recursive
 
       - name: Install Rust toolchain
-
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
           components: rustfmt, clippy
-          toolchain: nightly
 
       - name: Cache cargo registry and build artifacts
         uses: actions/cache@v4
@@ -40,13 +38,16 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@main
+
       - name: Install cargo tools
         run: |
-          cargo install --locked cargo-deny || true
-          cargo install --locked cargo-outdated || true
-          cargo install --locked cargo-udeps || true
-          cargo install --locked cargo-audit || true
-          cargo install --locked cargo-pants || true
+          cargo binstall --no-confirm cargo-deny
+          cargo binstall --no-confirm cargo-outdated
+          cargo binstall --no-confirm cargo-udeps
+          cargo binstall --no-confirm cargo-audit
+          cargo binstall --no-confirm cargo-pants
 
       - name: Check formatting
         run: cargo fmt --all -- --check
