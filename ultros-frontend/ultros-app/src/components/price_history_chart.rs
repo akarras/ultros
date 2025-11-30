@@ -8,8 +8,8 @@ use leptos_use::use_element_size;
 use plotters_canvas::CanvasBackend;
 use ultros_api_types::SaleHistory;
 
-use ultros_charts::draw_sale_history_scatter_plot;
 use ultros_charts::ChartOptions;
+use ultros_charts::draw_sale_history_scatter_plot;
 
 use crate::components::skeleton::BoxSkeleton;
 use crate::global_state::theme::use_theme_settings;
@@ -43,16 +43,16 @@ pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl 
             let backend = CanvasBackend::with_canvas_object(canvas.clone()).unwrap();
             // if there's an error drawing, we should hide the canvas
 
-            #[cfg(all(feature = "hydrate"))]
+            #[cfg(feature = "hydrate")]
             fn __parse_css_rgb(value: &str) -> Option<(u8, u8, u8)> {
                 let v = value.trim();
-                if let Some(hex) = v.strip_prefix('#') {
-                    if hex.len() == 6 {
-                        let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-                        let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-                        let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-                        return Some((r, g, b));
-                    }
+                if let Some(hex) = v.strip_prefix('#')
+                    && hex.len() == 6
+                {
+                    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+                    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+                    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+                    return Some((r, g, b));
                 }
                 let v = v
                     .trim_start_matches("rgb(")
@@ -68,24 +68,23 @@ pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl 
                 None
             }
 
-            #[cfg(all(feature = "hydrate"))]
+            #[cfg(feature = "hydrate")]
             let (text_rgb, grid_rgb) = {
                 let mut text_rgb = None;
                 let mut grid_rgb = None;
-                if let Some(window) = web_sys::window() {
-                    if let Some(document) = window.document() {
-                        if let Some(root) = document.document_element() {
-                            if let Ok(Some(style)) = window.get_computed_style(&root) {
-                                if let Ok(val) = style.get_property_value("--color-text") {
-                                    text_rgb = __parse_css_rgb(&val);
-                                }
-                                if let Ok(val) = style.get_property_value("--color-outline") {
-                                    grid_rgb = __parse_css_rgb(&val);
-                                }
-                            }
-                        }
+                if let Some(window) = web_sys::window()
+                    && let Some(document) = window.document()
+                    && let Some(root) = document.document_element()
+                    && let Ok(Some(style)) = window.get_computed_style(&root)
+                {
+                    if let Ok(val) = style.get_property_value("--color-text") {
+                        text_rgb = __parse_css_rgb(&val);
+                    }
+                    if let Ok(val) = style.get_property_value("--color-outline") {
+                        grid_rgb = __parse_css_rgb(&val);
                     }
                 }
+
                 (text_rgb, grid_rgb)
             };
 

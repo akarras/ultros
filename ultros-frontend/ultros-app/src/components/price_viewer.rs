@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 
 use super::{datacenter_name::*, gil::*, world_name::*};
-use ultros_api_types::{world_helper::AnySelector, ActiveListing};
+use ultros_api_types::{ActiveListing, world_helper::AnySelector};
 
 fn get_cheapest_listing(
     mut listings: Vec<ActiveListing>,

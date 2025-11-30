@@ -1,7 +1,7 @@
 use clap::Parser;
 use log::info;
-use universalis::websocket::event_types::{EventChannel, SubscribeMode};
 use universalis::websocket::SocketRx;
+use universalis::websocket::event_types::{EventChannel, SubscribeMode};
 use universalis::{ItemId, UniversalisClient, WebsocketClient};
 
 #[derive(Parser)]
@@ -43,29 +43,22 @@ async fn main() {
         .await;
     ws.update_subscription(SubscribeMode::Subscribe, EventChannel::SalesRemove, world)
         .await;
-    loop {
-        if let Some(next) = ws.get_receiver().recv().await {
-            match next {
-                SocketRx::Event(Ok(e)) => {
-                    let item_id = ItemId::from(&e);
+    while let Some(next) = ws.get_receiver().recv().await {
+        if let SocketRx::Event(Ok(e)) = next {
+            let item_id = ItemId::from(&e);
 
-                    if args.item_ids.is_some() {
-                        if args
-                            .item_ids
-                            .as_ref()
-                            .map(|i| i.contains(&item_id.0))
-                            .unwrap_or(true)
-                        {
-                            info!("Received event {e:?}");
-                        }
-                    } else {
-                        info!("Received event {e:?}");
-                    }
+            if args.item_ids.is_some() {
+                if args
+                    .item_ids
+                    .as_ref()
+                    .map(|i| i.contains(&item_id.0))
+                    .unwrap_or(true)
+                {
+                    info!("Received event {e:?}");
                 }
-                _ => {}
+            } else {
+                info!("Received event {e:?}");
             }
-        } else {
-            break;
         }
     }
 }

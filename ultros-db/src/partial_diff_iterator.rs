@@ -141,7 +141,7 @@ mod test {
 
     impl PartialOrd<TestB> for TestA {
         fn partial_cmp(&self, other: &TestB) -> Option<std::cmp::Ordering> {
-            Some(self.name.cmp(&other.name))
+            Some(self.name.cmp(other.name))
         }
     }
 

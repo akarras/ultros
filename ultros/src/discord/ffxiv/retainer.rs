@@ -45,7 +45,9 @@ async fn list(ctx: Context<'_>) -> Result<(), Error> {
     let embed_text = retainers.into_iter().format_with("\n", |(_r, d, l), f| {
         f(&format_args!("{} - {} listings", d.name, l.len()))
     });
-    let embed_text = format!("Use `/ffxiv retainer add ` to add more retainers to your list. Or check your undercuts with `/ffxiv retainer undercuts`\n\n```\n{embed_text}\n```");
+    let embed_text = format!(
+        "Use `/ffxiv retainer add ` to add more retainers to your list. Or check your undercuts with `/ffxiv retainer undercuts`\n\n```\n{embed_text}\n```"
+    );
     ctx.send(|reply| reply.embed(|e| e.title("Retainers").description(embed_text)))
         .await?;
     Ok(())

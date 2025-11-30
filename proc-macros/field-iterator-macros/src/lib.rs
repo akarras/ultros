@@ -1,10 +1,10 @@
 use darling::{
-    ast::{self, NestedMeta},
     Error, FromDeriveInput, FromField, FromMeta,
+    ast::{self, NestedMeta},
 };
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote, ToTokens};
-use syn::{parse_macro_input, DeriveInput, FnArg, ItemFn};
+use quote::{ToTokens, format_ident, quote};
+use syn::{DeriveInput, FnArg, ItemFn, parse_macro_input};
 
 #[derive(Debug, FromDeriveInput)]
 #[darling(attributes(label_iterator), supports(struct_any))]
@@ -175,7 +175,6 @@ pub fn field_iter(
     };
 
     let fields: proc_macro2::TokenStream = (0..count)
-        .into_iter()
         .map(|i| {
             let ident = if let Some(postfix) = &field_postfix {
                 format_ident!("{field_prefix}{i}{postfix}")
@@ -199,7 +198,7 @@ pub fn field_iter(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    // use super::*;
 
     // struct SomeStruct {
     //     pub val_1_0: u32,

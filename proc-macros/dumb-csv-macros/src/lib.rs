@@ -1,9 +1,9 @@
 use std::str::FromStr;
 
-use darling::{ast, FromDeriveInput, FromField};
+use darling::{FromDeriveInput, FromField, ast};
 use proc_macro2::TokenStream;
-use quote::{quote, ToTokens};
-use syn::{parse_macro_input, DeriveInput};
+use quote::{ToTokens, quote};
+use syn::{DeriveInput, parse_macro_input};
 
 #[proc_macro_derive(DumbCsvDeserialize, attributes(dumb_csv))]
 pub fn dumb_deserialize(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -69,7 +69,7 @@ impl ToTokens for DumbCsvDeserializeReceiver {
                 let dummy: DummyType = d.as_str().into();
                 let parse_body = match dummy {
                     DummyType::String => quote! {},
-                    DummyType::Bool => quote! { .from_bool() },
+                    DummyType::Bool => quote! { .parse_bool() },
                     DummyType::Other(val) => {
                         let ty= TokenStream::from_str(val).unwrap();
                         // let ty = Type::from(val);
@@ -101,7 +101,7 @@ impl ToTokens for DumbCsvDeserializeReceiver {
                         }
                         }, DummyType::Bool => {
                             quote! {
-                                list.next().expect("There to be a value").from_bool()
+                                list.next().expect("There to be a value").parse_bool()
                             }
                         }, DummyType::Other(val) => {
                             if val.starts_with("i") || val.starts_with("u") || val.ends_with("Id") {
@@ -166,7 +166,7 @@ struct DumbFieldReceiver {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    // use super::*;
 
     // struct SomeStruct {
     //     pub val_1_0: u32,

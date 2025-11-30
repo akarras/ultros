@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{retainer::Retainer, ActiveListing, FfxivCharacter};
+use crate::{ActiveListing, FfxivCharacter, retainer::Retainer};
 
 #[derive(Serialize, Deserialize, Default, Debug, PartialEq, PartialOrd, Eq, Ord, Clone)]
 pub struct OwnedRetainer {

@@ -4,19 +4,19 @@ use std::{
 };
 
 use crate::{
+    UltrosDb,
     common_type_conversions::SaleHistoryReturn,
     entity::{sale_history, unknown_final_fantasy_character},
-    UltrosDb,
 };
 use anyhow::Result;
 use chrono::{Duration, NaiveDateTime, Utc};
 
-use futures::{future::try_join_all, Stream};
+use futures::{Stream, future::try_join_all};
 use itertools::Itertools;
 use metrics::histogram;
 use migration::{
-    sea_orm::{ColumnTrait, EntityTrait, QueryFilter, Set},
     DbErr,
+    sea_orm::{ColumnTrait, EntityTrait, QueryFilter, Set},
 };
 use sea_orm::{
     ActiveModelTrait, ActiveValue, DbBackend, FromQueryResult, QueryOrder, QuerySelect, Statement,

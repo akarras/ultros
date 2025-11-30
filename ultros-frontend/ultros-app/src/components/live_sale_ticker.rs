@@ -41,10 +41,6 @@ pub fn LiveSaleTicker() -> impl IntoView {
     let retrigger = RwSignal::new(false);
     // auto-trigger initial load and refresh on homeworld changes
     Effect::new({
-        let sales = sales;
-        let set_done_loading = set_done_loading;
-        let retrigger = retrigger;
-        let homeworld = homeworld;
         move |_| {
             let hw = homeworld();
             if hw.is_some() {
@@ -99,7 +95,7 @@ pub fn LiveSaleTicker() -> impl IntoView {
             }
             set_done_loading(true);
         });
-        let _retrigger = retrigger.set(false);
+        retrigger.set(false);
     });
 
     view! {

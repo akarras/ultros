@@ -7,12 +7,12 @@ use crate::{
 };
 use thiserror::Error;
 use ultros_api_types::{
+    ActiveListing, FfxivCharacter, SaleHistory, UnknownCharacter,
     list::{List, ListItem},
     retainer::Retainer,
     user::OwnedRetainer,
     world::{Datacenter, Region, World, WorldData},
     world_helper::AnySelector,
-    ActiveListing, FfxivCharacter, SaleHistory, UnknownCharacter,
 };
 
 #[derive(Debug, Error)]

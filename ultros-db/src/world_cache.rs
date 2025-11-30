@@ -1,8 +1,8 @@
 use std::{borrow::Borrow, collections::HashMap, mem};
 
 use crate::{
-    entity::{datacenter, region, world},
     UltrosDb,
+    entity::{datacenter, region, world},
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -140,7 +140,7 @@ unsafe impl<'a> Yokeable<'a> for VirtualData<'static> {
     }
     #[inline]
     unsafe fn make(from: VirtualData<'a>) -> Self {
-        let ret = mem::transmute_copy(&from);
+        let ret = unsafe { mem::transmute_copy(&from) };
         mem::forget(from);
         ret
     }
@@ -149,7 +149,7 @@ unsafe impl<'a> Yokeable<'a> for VirtualData<'static> {
     where
         F: 'static + FnOnce(&'a mut Self::Output),
     {
-        unsafe { f(mem::transmute(self)) }
+        unsafe { f(mem::transmute::<&mut VirtualData<'_>, &mut VirtualData<'_>>(self)) }
     }
 }
 
@@ -259,7 +259,10 @@ impl WorldCache {
         }
     }
 
-    pub fn lookup_selector(&self, selector: &AnySelector) -> Result<AnyResult, WorldCacheError> {
+    pub fn lookup_selector(
+        &self,
+        selector: &AnySelector,
+    ) -> Result<AnyResult<'_>, WorldCacheError> {
         let cart = self.yoke.backing_cart();
         let RawData {
             worlds,
@@ -283,7 +286,7 @@ impl WorldCache {
         }
     }
 
-    pub fn lookup_value_by_name(&self, name: &str) -> Result<AnyResult, WorldCacheError> {
+    pub fn lookup_value_by_name(&self, name: &str) -> Result<AnyResult<'_>, WorldCacheError> {
         let name = name.to_lowercase();
         self.name_map
             .get(&name)
@@ -347,11 +350,11 @@ impl WorldCache {
         regions.values().collect()
     }
 
-    pub fn get_inner_data(&self) -> &AllWorldsAndRegions {
+    pub fn get_inner_data(&self) -> &AllWorldsAndRegions<'_> {
         &self.yoke.get().all
     }
 
-    pub fn get_all_results(&self) -> impl Iterator<Item = AnyResult> {
+    pub fn get_all_results(&self) -> impl Iterator<Item = AnyResult<'_>> {
         self.get_inner_data().iter().flat_map(|(r, d)| {
             [AnyResult::Region(r)]
                 .into_iter()

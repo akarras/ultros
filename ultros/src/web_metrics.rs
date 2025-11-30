@@ -1,8 +1,8 @@
 use std::{future::ready, net::SocketAddr, time::Instant};
 
 use axum::{
-    extract::MatchedPath, extract::Request, middleware::Next, response::IntoResponse, routing::get,
-    Router,
+    Router, extract::MatchedPath, extract::Request, middleware::Next, response::IntoResponse,
+    routing::get,
 };
 use hyper::header::USER_AGENT;
 use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};

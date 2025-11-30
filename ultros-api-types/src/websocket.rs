@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    ActiveListing, SaleHistory, UnknownCharacter,
     retainer::Retainer,
     world_helper::{AnySelector, WorldHelper},
-    ActiveListing, SaleHistory, UnknownCharacter,
 };
 
 pub trait PredicateDataSources {

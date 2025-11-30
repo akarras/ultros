@@ -2,16 +2,16 @@ use std::{error::Error, sync::Arc};
 
 use axum::{
     extract::{
-        ws::{Message, WebSocket},
         State, WebSocketUpgrade,
+        ws::{Message, WebSocket},
     },
     response::Response,
 };
 
 use futures::{
-    future::{select, Either},
-    stream::{BoxStream, SelectAll},
     SinkExt, StreamExt,
+    future::{Either, select},
+    stream::{BoxStream, SelectAll},
 };
 
 use tokio_stream::wrappers::BroadcastStream;

@@ -1,17 +1,17 @@
 use std::{num::ParseIntError, sync::Arc};
 
 use axum::{
-    response::{IntoResponse, Response},
     Json,
+    response::{IntoResponse, Response},
 };
 use axum_extra::extract::{
-    cookie::{Cookie, Key},
     PrivateCookieJar,
+    cookie::{Cookie, Key},
 };
 use hyper::StatusCode;
 use oauth2::{
-    basic::BasicErrorResponseType, ConfigurationError, RequestTokenError,
-    RevocationErrorResponseType, StandardErrorResponse,
+    ConfigurationError, RequestTokenError, RevocationErrorResponseType, StandardErrorResponse,
+    basic::BasicErrorResponseType,
 };
 use sitemap_rs::{sitemap_index_error::SitemapIndexError, url_set_error::UrlSetError};
 use thiserror::Error;
@@ -19,7 +19,7 @@ use tokio::{sync::broadcast::error::SendError, time::error::Elapsed};
 use tracing::{error, info};
 use ultros_api_types::result::JsonErrorWrapper;
 use ultros_db::{
-    common_type_conversions::ApiConversionError, world_cache::WorldCacheError, SeaDbErr,
+    SeaDbErr, common_type_conversions::ApiConversionError, world_cache::WorldCacheError,
 };
 
 use crate::{analyzer_service::AnalyzerError, event};

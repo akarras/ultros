@@ -10,18 +10,3 @@ pub fn Loading() -> impl IntoView {
     }
     .into_any()
 }
-
-#[component]
-pub fn LargeLoading(#[prop(into)] pending: Signal<bool>) -> impl IntoView {
-    view! {
-        <div
-            class:opacity-50=pending
-            class:opacity-0=move || !pending()
-            class="bg-[color:color-mix(in_srgb,_var(--brand-ring)_22%,_var(--color-background))] absolute left-0 right-0 z-40 transition ease-in-out delay-250"
-        >
-            <div class="flex items-center justify-center py-6">
-                <Loading />
-            </div>
-        </div>
-    }
-}

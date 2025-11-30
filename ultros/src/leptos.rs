@@ -8,26 +8,24 @@ use axum::http::HeaderValue;
 /// you should be able to build and serve leptos with one install step.
 ///
 use axum::{
+    Router,
     body::Body,
     extract::State,
     http::Request,
     response::{IntoResponse, Response},
-    routing::get,
-    Extension, Router,
 };
 use git_const::git_short_hash;
 #[cfg(not(debug_assertions))]
 use hyper::header;
 use leptos::prelude::*;
-use leptos_axum::{generate_route_list, LeptosRoutes};
-use leptos_router::RouteListing;
+use leptos_axum::{LeptosRoutes, generate_route_list};
 #[cfg(not(debug_assertions))]
 use tower_http::set_header::SetResponseHeader;
 use tracing::{info, instrument};
 use ultros_api_types::world_helper::WorldHelper;
 use ultros_app::*;
 
-use crate::web::{country_code_decoder::Region, WebState};
+use crate::web::{WebState, country_code_decoder::Region};
 
 #[instrument(skip(worlds, options, req))]
 #[axum::debug_handler(state = WebState)]
@@ -54,7 +52,6 @@ async fn custom_handler(
 pub(crate) async fn create_leptos_app(
     worlds: Arc<WorldHelper>,
 ) -> Result<Router<WebState>, Box<dyn Error>> {
-    use axum::http::StatusCode;
     use tower_http::services::ServeDir;
 
     let conf = get_configuration(None)?;
@@ -63,7 +60,7 @@ pub(crate) async fn create_leptos_app(
     let pkg_dir = &leptos_options.site_pkg_dir;
 
     // The URL path of the generated JS/WASM bundle from cargo-leptos
-    let bundle_path = format!("/{site_root}/{pkg_dir}");
+    // let bundle_path = format!("/{site_root}/{pkg_dir}");
     // The filesystem path of the generated JS/WASM bundle from cargo-leptos
     let bundle_filepath = format!("./{site_root}/{pkg_dir}");
     let addr = leptos_options.site_addr;
@@ -87,10 +84,6 @@ pub(crate) async fn create_leptos_app(
         HeaderValue::from_static("public, max-age=86400, immutable"),
     );
     tracing::info!("Serving pkg dir: {bundle_filepath}");
-    /// Convert the Errors from ServeDir to a type that implements IntoResponse
-    async fn handle_file_error(err: std::io::Error) -> (StatusCode, String) {
-        (StatusCode::NOT_FOUND, format!("File Not Found: {}", err))
-    }
     let worlds = Ok(worlds);
     let routes = generate_route_list(move || {
         let worlds = worlds.clone();

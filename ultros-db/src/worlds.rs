@@ -1,6 +1,6 @@
 use crate::{
-    entity::{datacenter, region, world},
     UltrosDb,
+    entity::{datacenter, region, world},
 };
 use anyhow::Result;
 use sea_orm::{EntityTrait, ModelTrait};

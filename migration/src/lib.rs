@@ -58,8 +58,8 @@ impl MigratorTrait for Migrator {
 #[cfg(test)]
 mod tests {
     use super::Migrator;
-    use sea_orm_migration::sea_orm::Database;
     use sea_orm_migration::MigratorTrait;
+    use sea_orm_migration::sea_orm::Database;
 
     #[tokio::test]
     async fn sqlite_in_memory_migrations_apply_and_rollback() {

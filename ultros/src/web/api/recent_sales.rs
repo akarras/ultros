@@ -1,9 +1,9 @@
 use std::{sync::Arc, time::Duration};
 
 use axum::{
+    Json,
     extract::{Path, State},
     response::IntoResponse,
-    Json,
 };
 use axum_extra::headers::{CacheControl, HeaderMapExt};
 use ultros_api_types::recent_sales::{RecentSales, SaleData, Sales};

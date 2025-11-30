@@ -13,14 +13,14 @@ use axum::extract::{FromRef, Path, Query, State};
 use axum::http::{HeaderValue, Response, StatusCode};
 use axum::response::{IntoResponse, Redirect};
 use axum::routing::{delete, get, post};
-use axum::{body, middleware, Json, Router};
-use axum_extra::extract::cookie::{Cookie, Key};
-use axum_extra::extract::CookieJar;
-use axum_extra::headers::{CacheControl, ContentType, HeaderMapExt};
+use axum::{Json, Router, body, middleware};
 use axum_extra::TypedHeader;
+use axum_extra::extract::CookieJar;
+use axum_extra::extract::cookie::{Cookie, Key};
+use axum_extra::headers::{CacheControl, ContentType, HeaderMapExt};
 use futures::future::{try_join, try_join_all};
 use futures::stream::TryStreamExt;
-use futures::{stream, StreamExt};
+use futures::{StreamExt, stream};
 use hyper::header;
 use itertools::Itertools;
 use leptos::config::LeptosOptions;
@@ -46,11 +46,11 @@ use ultros_api_types::world_helper::WorldHelper;
 use ultros_api_types::{
     ActiveListing, CurrentlyShownItem, FfxivCharacter, FfxivCharacterVerification, Retainer,
 };
-use ultros_app::{shell, GuessedRegion, LocalWorldData};
+use ultros_app::{LocalWorldData, shell};
+use ultros_db::ActiveValue;
 use ultros_db::common_type_conversions::ApiConversionError;
 use ultros_db::world_cache::AnySelector;
-use ultros_db::ActiveValue;
-use ultros_db::{world_cache::WorldCache, UltrosDb};
+use ultros_db::{UltrosDb, world_cache::WorldCache};
 use ultros_xiv_icons::get_item_image;
 use universalis::{ItemId, ListingView, UniversalisClient, WorldId};
 
@@ -142,7 +142,7 @@ async fn refresh_world_item_listings(
             universalis::MarketView::MultiView(_) => {
                 return Result::<_, anyhow::Error>::Err(anyhow::Error::msg(
                     "multiple listings returned?",
-                ))
+                ));
             }
         };
 
@@ -297,7 +297,7 @@ fn get_static_file(path: &str) -> Option<Vec<u8>> {
     Some(vec)
 }
 
-async fn get_file(path: &str) -> Result<impl IntoResponse, WebError> {
+async fn get_file(path: &str) -> Result<impl IntoResponse + use<>, WebError> {
     let mime_type = mime_guess::from_path(path).first_or_text_plain();
     match get_static_file(path) {
         None => Ok(Response::builder()
@@ -359,7 +359,9 @@ async fn get_item_icon(
 
 pub(crate) async fn invite() -> Redirect {
     let client_id = std::env::var("DISCORD_CLIENT_ID").expect("Unable to get DISCORD_CLIENT_ID");
-    Redirect::to(&format!("https://discord.com/oauth2/authorize?client_id={client_id}&scope=bot&permissions=2147483648"))
+    Redirect::to(&format!(
+        "https://discord.com/oauth2/authorize?client_id={client_id}&scope=bot&permissions=2147483648"
+    ))
 }
 
 pub(crate) async fn world_data(State(world_cache): State<Arc<WorldCache>>) -> impl IntoResponse {
@@ -368,7 +370,7 @@ pub(crate) async fn world_data(State(world_cache): State<Arc<WorldCache>>) -> im
     let mut response = Json(world_data).into_response();
     response
         .headers_mut()
-        .typed_insert(CacheControl::new().with_max_age(Duration::from_secs(60 * 60 * 24 * 1)));
+        .typed_insert(CacheControl::new().with_max_age(Duration::from_secs(60 * 60 * 24)));
     response
 }
 

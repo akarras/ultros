@@ -1,6 +1,6 @@
 use std::{error, fmt::Display, sync::Arc};
 
-use serde::{de::Visitor, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::Visitor};
 use thiserror::Error;
 use ultros_api_types::result::ApiError;
 

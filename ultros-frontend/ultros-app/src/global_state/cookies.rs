@@ -135,7 +135,7 @@ pub(crate) fn set_cookies(_cookies: CookieJar) {
 pub(crate) fn get_cookies() -> Option<CookieJar> {
     // use gloo::utils::document;
     use wasm_bindgen::JsCast;
-    use web_sys::{window, HtmlDocument};
+    use web_sys::{HtmlDocument, window};
     let mut cookie_jar = CookieJar::new();
     let cookie = window()?
         .document()?

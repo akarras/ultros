@@ -41,7 +41,7 @@ pub fn decompress_data(bytes: &[u8]) -> anyhow::Result<xiv_gen::Data> {
 
 #[cfg(all(test, feature = "embed"))]
 mod test {
-    use crate::{data, XIV_DATA};
+    use crate::data;
 
     #[test]
     fn test_embed() {

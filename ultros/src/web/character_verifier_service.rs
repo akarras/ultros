@@ -1,17 +1,17 @@
 use std::sync::Arc;
 
 use base64::{
-    engine::{GeneralPurpose, GeneralPurposeConfig},
     Engine,
+    engine::{GeneralPurpose, GeneralPurposeConfig},
 };
-use lodestone::{model::profile::Profile, LodestoneError};
+use lodestone::{LodestoneError, model::profile::Profile};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tracing::log::warn;
 use ultros_db::{
+    UltrosDb,
     entity::ffxiv_character_verification,
     world_cache::{self, WorldCacheError},
-    UltrosDb,
 };
 
 #[derive(Debug, Clone)]

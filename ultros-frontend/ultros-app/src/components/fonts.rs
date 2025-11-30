@@ -22,7 +22,7 @@ pub fn ItemSearchCategoryIcon(id: ItemSearchCategoryId) -> impl IntoView {
                 // plural armoury
                 42 | 39 => format!(
                     "icon xiv-Armoury_{}",
-                    category.name.remove_last().replace(' ', "_").to_string()
+                    category.name.remove_last().replace(' ', "_")
                 )
                 .into(),
                 55 => "icon xiv-ItemCategory_Part".into(),
@@ -40,7 +40,7 @@ pub fn ItemSearchCategoryIcon(id: ItemSearchCategoryId) -> impl IntoView {
                 // Removes the last character from the item character
                 17 | 44..=51 | 53..=55 | 58..=59 | 72 | 75..=78 | 82 => format!(
                     "icon xiv-ItemCategory_{}",
-                    category.name.remove_last().replace(' ', "_").to_string()
+                    category.name.remove_last().replace(' ', "_")
                 )
                 .into(),
                 79 => "icon xiv-ItemCategory_Airship".into(),
@@ -48,11 +48,7 @@ pub fn ItemSearchCategoryIcon(id: ItemSearchCategoryId) -> impl IntoView {
                 // removes the other Items- from the thing?
                 81 => format!(
                     "icon xiv-ItemCategory_{}",
-                    category
-                        .name
-                        .replace(" Items", "")
-                        .replace('-', "")
-                        .to_string()
+                    category.name.replace(" Items", "").replace('-', "")
                 )
                 .into(),
                 90 => {

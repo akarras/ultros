@@ -1,18 +1,17 @@
 use futures::future::join_all;
 use itertools::Itertools;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::collections::HashMap;
 use tracing::error;
 use tracing::instrument;
 use ultros_api_types::{
+    ActiveListing, CurrentlyShownItem, FfxivCharacter, FfxivCharacterVerification,
     cheapest_listings::CheapestListings,
     list::{CreateList, List, ListItem},
     recent_sales::RecentSales,
     result::JsonErrorWrapper,
     retainer::{Retainer, RetainerListings},
     user::{OwnedRetainer, UserData, UserRetainerListings, UserRetainers},
-    world::WorldData,
-    ActiveListing, CurrentlyShownItem, FfxivCharacter, FfxivCharacterVerification,
 };
 
 use crate::error::{AppError, AppResult};
@@ -33,11 +32,6 @@ pub(crate) async fn get_bulk_listings(
     }
     let ids = item_ids.format(",");
     fetch_api(&format!("/api/v1/bulkListings/{world}/{ids}")).await
-}
-
-#[instrument]
-pub(crate) async fn get_worlds() -> AppResult<WorldData> {
-    fetch_api("/api/v1/world_data").await
 }
 
 /// This is okay because the client will send our login cookie
@@ -182,12 +176,12 @@ pub(crate) async fn unclaim_retainer(owned_retainer_id: i32) -> AppResult<()> {
 
 /// Gets the characters for this user
 pub(crate) async fn get_characters() -> AppResult<Vec<FfxivCharacter>> {
-    fetch_api(&format!("/api/v1/characters")).await
+    fetch_api("/api/v1/characters").await
 }
 
 /// Gets pending character verifications for this user
 pub(crate) async fn get_character_verifications() -> AppResult<Vec<FfxivCharacterVerification>> {
-    fetch_api(&format!("/api/v1/characters/verifications")).await
+    fetch_api("/api/v1/characters/verifications").await
 }
 
 pub(crate) async fn check_character_verification(character_id: i32) -> AppResult<bool> {
@@ -209,7 +203,7 @@ pub(crate) async fn search_characters(character: String) -> AppResult<Vec<FfxivC
 }
 
 pub(crate) async fn get_lists() -> AppResult<Vec<List>> {
-    fetch_api(&format!("/api/v1/list")).await
+    fetch_api("/api/v1/list").await
 }
 
 pub(crate) async fn get_list_items_with_listings(
@@ -226,11 +220,11 @@ pub(crate) async fn delete_list(list_id: i32) -> AppResult<()> {
 }
 
 pub(crate) async fn create_list(list: CreateList) -> AppResult<()> {
-    post_api(&format!("/api/v1/list/create"), list).await
+    post_api("/api/v1/list/create", list).await
 }
 
 pub(crate) async fn edit_list(list: List) -> AppResult<()> {
-    post_api(&format!("/api/v1/list/edit"), list).await
+    post_api("/api/v1/list/edit", list).await
 }
 
 pub(crate) async fn bulk_add_item_to_list(
@@ -245,7 +239,7 @@ pub(crate) async fn add_item_to_list(list_id: i32, list_item: ListItem) -> AppRe
 }
 
 pub(crate) async fn edit_list_item(list_item: ListItem) -> AppResult<()> {
-    post_api(&format!("/api/v1/list/item/edit"), list_item).await
+    post_api("/api/v1/list/item/edit", list_item).await
 }
 
 pub(crate) async fn delete_list_item(list_id: i32) -> AppResult<()> {
@@ -253,11 +247,11 @@ pub(crate) async fn delete_list_item(list_id: i32) -> AppResult<()> {
 }
 
 pub(crate) async fn delete_list_items(list_items: Vec<i32>) -> AppResult<()> {
-    post_api(&format!("/api/v1/list/item/delete"), list_items).await
+    post_api("/api/v1/list/item/delete", list_items).await
 }
 
 pub(crate) async fn update_retainer_order(retainers: Vec<OwnedRetainer>) -> AppResult<()> {
-    post_api(&format!("/api/v1/retainer/reorder"), retainers).await
+    post_api("/api/v1/retainer/reorder", retainers).await
 }
 
 /// Return the T, or try and return an AppError
@@ -268,21 +262,19 @@ where
 {
     let data = serde_json::from_str(json);
     match data {
-        Ok(d) => return Ok(d),
+        Ok(d) => Ok(d),
         // try to deserialize as SystemError, if that fails then return this error
         Err(e) => {
             if let Ok(d) = serde_json::from_str::<JsonErrorWrapper>(json) {
                 match d {
-                    JsonErrorWrapper::ApiError(api) => {
-                        return Err(api.into());
-                    }
+                    JsonErrorWrapper::ApiError(api) => Err(api.into()),
                 }
             } else if let Ok(d) = serde_json::from_str::<JsonErrorWrapper>(json) {
-                return Err(match d {
+                Err(match d {
                     JsonErrorWrapper::ApiError(api) => AppError::ApiError(api),
-                });
+                })
             } else {
-                return Err(AppError::Json(e.to_string()));
+                Err(AppError::Json(e.to_string()))
             }
         }
     }
@@ -392,7 +384,7 @@ where
                 Ok(json)
             };
             let result = inner_impl().await;
-            let _ = tx.send(result);
+            tx.send(result);
         }
     });
     let json = rx
@@ -463,7 +455,6 @@ where
     let path = path.to_string();
     log::info!("making post request: {path}");
     let (tx, rx) = flume::unbounded::<AppResult<String>>();
-    let path = path.to_string();
     spawn_local(async move {
         let inner_impl = async move || -> AppResult<String> {
             tracing::info!("{}", &path);

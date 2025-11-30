@@ -84,7 +84,7 @@ impl<'a> Iterator for IngredientsIter<'a> {
             };
             self.1 += 1;
             // check if this is a valid id
-            if id.0 .0 != 0 {
+            if id.0.0 != 0 {
                 let id = (id.0, id.1 as i32);
                 return Some(id);
             }
@@ -140,7 +140,7 @@ fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
                                         .map
                                         .get(&pref_key)
                                         .or_else(|| prices.map.get(&fallback_key))
-                                        .map(|d| d.price * quantity as i32)
+                                        .map(|d| d.price * quantity)
                                 })
                                 .sum()
                         };
@@ -246,24 +246,24 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
                                             hq: false,
                                         };
                                         data.map
-                                            .get(&pref_key)
-                                            .or_else(|| data.map.get(&fallback_key))
-                                            .map(|d| d.price * quantity as i32)
-                                    })
-                                    .sum()
-                            };
-                            let hq_cost = sum_for(true);
-                            let lq_cost = sum_for(false);
+                                                    .get(&pref_key)
+                                                    .or_else(|| data.map.get(&fallback_key))
+                                                    .map(|d| d.price * quantity)
+                                            })
+                                            .sum()
+                                    };
+                                    let hq_cost = sum_for(true);
+                                    let lq_cost = sum_for(false);
 
                             let lq_sell = data
                                 .map
                                 .get(&CheapestListingMapKey { item_id: target_item.key_id.0, hq: false })
-                                .map(|d| d.price as i32);
+                                .map(|d| d.price);
                             let hq_sell = if target_item.can_be_hq {
                                 data.map
                                     .get(&CheapestListingMapKey { item_id: target_item.key_id.0, hq: true })
                                     .or_else(|| data.map.get(&CheapestListingMapKey { item_id: target_item.key_id.0, hq: false }))
-                                    .map(|d| d.price as i32)
+                                    .map(|d| d.price)
                             } else {
                                 None
                             };
@@ -302,7 +302,7 @@ fn npc_rows(npc: &ENpcBase) -> impl Iterator<Item = u32> + '_ {
     npc.e_npc_data.iter().map(|row| row.0)
 }
 
-fn gil_shop_to_npc(gil_shops: &Vec<GilShopId>) -> Vec<(GilShopId, &'static ENpcBase)> {
+fn gil_shop_to_npc(gil_shops: &[GilShopId]) -> Vec<(GilShopId, &'static ENpcBase)> {
     let data = xiv_gen_db::data();
 
     data.e_npc_bases

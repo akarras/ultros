@@ -170,7 +170,7 @@ impl WorldHelper {
     }
 
     /// Ignores case and looks up the world name
-    pub fn lookup_world_by_name(&self, name: &str) -> Option<AnyResult> {
+    pub fn lookup_world_by_name(&self, name: &str) -> Option<AnyResult<'_>> {
         let mut worlds = self.world_data.regions.iter().flat_map(|region| {
             [AnyResult::Region(region)]
                 .into_iter()
@@ -253,9 +253,9 @@ impl<'a> WorldHelper {
             [AnyResult::Region(r)]
                 .into_iter()
                 .chain(r.datacenters.iter().flat_map(|d| {
-                    [AnyResult::Datacenter(&d)]
+                    [AnyResult::Datacenter(d)]
                         .into_iter()
-                        .chain(d.worlds.iter().map(|w| AnyResult::World(w)))
+                        .chain(d.worlds.iter().map(AnyResult::World))
                 }))
         })
     }

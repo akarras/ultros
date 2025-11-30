@@ -329,7 +329,7 @@ fn create_struct(
 
                 if line_one == "key_id" {
                     let mut key = Struct::new(&key_name);
-                    apply_derives(&mut key).derive("FromStr").derive("Default").derive("Hash").derive("Eq").derive("Copy").vis("pub").tuple_field(&sample_data.field_type(&csv_name)).vis("pub");
+                    apply_derives(&mut key).derive("FromStr").derive("Default").derive("Hash").derive("Eq").derive("Copy").vis("pub").tuple_field(sample_data.field_type(csv_name)).vis("pub");
                     scope.push_struct(key);
 
                     line_two = key_name.clone();
@@ -388,7 +388,7 @@ fn create_struct(
                     {
                         local_data.requested_structs.push(RequestedStructData {
                             requested_struct: local_key_name.clone(),
-                            sample_data: sample_data.field_type(&csv_name),
+                            sample_data: sample_data.field_type(csv_name),
                         });
                     }
                     (line_one, local_key_name)
@@ -412,7 +412,7 @@ fn create_struct(
                 static ref DOUBLE: Regex = Regex::new(r#"([A-z_])+([0-9]+)_([0-9]+)"#).unwrap();
                 static ref SINGLE: Regex = Regex::new(r#"([A-z_])+([0-9]+)"#).unwrap();
             }
-            if let Some(captures) = DOUBLE.captures(&key) {
+            if let Some(captures) = DOUBLE.captures(key) {
                 let key_1 = captures.get(2).unwrap();
                 let key_2 = captures.get(3).unwrap();
                 // let root = captures.get(0).unwrap();
@@ -425,7 +425,7 @@ fn create_struct(
                 } else {
                     root_names.push((root, (key, value), 0));
                 }
-            } else if let Some(captures) = SINGLE.captures(&key) {
+            } else if let Some(captures) = SINGLE.captures(key) {
                 let key_1 = captures.get(2).unwrap();
                 let root = &key[..key_1.start() - 1];
                 if root == "unknown" {
@@ -447,12 +447,12 @@ fn create_struct(
         for (name, (multi, datatype), skip) in root_names.iter() {
             match multi {
                 KeyType::Normal => {
-                    let mut field = Field::new(&name, datatype.as_str());
+                    let mut field = Field::new(name, datatype.as_str());
                     field.vis("pub");
                     s.push_field(field);
                 }
                 KeyType::Single(count) => {
-                    let mut field = Field::new(&name, format!("Vec<{datatype}>"));
+                    let mut field = Field::new(name, format!("Vec<{datatype}>"));
                     let count = *count + 1;
                     let skip = *skip;
                     field
@@ -466,7 +466,9 @@ fn create_struct(
         }
         s.derive("DumbCsvDeserialize");
         let pk = pk.unwrap();
-        parse_this_function = Some(format!("{pk}: read_dumb_csv::<{csv_name}>(r#\"{path}\"#).into_iter().map(|m| (m.key_id, m)).collect(),"))
+        parse_this_function = Some(format!(
+            "{pk}: read_dumb_csv::<{csv_name}>(r#\"{path}\"#).into_iter().map(|m| (m.key_id, m)).collect(),"
+        ))
         // panic!("{root_names:?}");
     } else {
         for (field_name, field_value) in fields.iter() {
@@ -550,25 +552,24 @@ fn read_dir<T: Container>(path: PathBuf, mut scope: T, args: &mut Args) -> T {
                 let module = Module::new(file_name);
                 let module = read_dir(file.path(), module, args);
                 scope.push_module(module);
-            } else if ft.is_file() {
-                if let Some(ext) = file.path().extension() {
-                    if ext == "csv" {
-                        let file_name = file.file_name();
-                        let mut file_name = file_name.to_str().unwrap().split('.');
-                        let file_name = file_name.next().unwrap().to_string();
-                        if !args.list_filter.contains(&file_name) {
-                            continue;
-                        }
-                        let path = file.path();
-                        create_struct(
-                            &file_name,
-                            path.to_str().unwrap(),
-                            args,
-                            &mut scope,
-                            &mut local_data,
-                        );
-                    }
+            } else if ft.is_file()
+                && let Some(ext) = file.path().extension()
+                && ext == "csv"
+            {
+                let file_name = file.file_name();
+                let mut file_name = file_name.to_str().unwrap().split('.');
+                let file_name = file_name.next().unwrap().to_string();
+                if !args.list_filter.contains(&file_name) {
+                    continue;
                 }
+                let path = file.path();
+                create_struct(
+                    &file_name,
+                    path.to_str().unwrap(),
+                    args,
+                    &mut scope,
+                    &mut local_data,
+                );
             }
         }
     }
@@ -685,7 +686,7 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     // note: add error checking yourself.
     let output = Command::new("git")
-        .args(&["rev-parse", "HEAD"])
+        .args(["rev-parse", "HEAD"])
         .output()
         .unwrap();
     let git_hash = String::from_utf8(output.stdout).unwrap();

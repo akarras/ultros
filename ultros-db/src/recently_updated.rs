@@ -4,7 +4,7 @@ use sea_orm::{
 };
 use universalis::{ItemId, WorldId};
 
-use crate::{entity::listing_last_updated, UltrosDb};
+use crate::{UltrosDb, entity::listing_last_updated};
 
 impl UltrosDb {
     pub(crate) async fn set_last_updated(

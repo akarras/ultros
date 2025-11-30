@@ -774,6 +774,8 @@ pub(crate) enum Region {
     Name,
 }
 
+// don't want to chagne this without changing the underlying database.
+#[allow(clippy::enum_variant_names)]
 #[derive(Iden)]
 pub(crate) enum Retainer {
     Table,

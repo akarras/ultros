@@ -1,6 +1,8 @@
 use std::borrow::Cow;
+use std::fmt::Display;
 use std::{collections::HashSet, str::FromStr};
 
+use crate::CheapestPrices;
 use crate::components::ad::Ad;
 use crate::components::clipboard::Clipboard;
 use crate::components::query_button::QueryButton;
@@ -8,7 +10,6 @@ use crate::components::toggle::Toggle;
 use crate::components::{
     add_to_list::*, cheapest_price::*, fonts::*, meta::*, small_item_display::*,
 };
-use crate::CheapestPrices;
 use icondata as i;
 use itertools::Itertools;
 use leptos::either::Either;
@@ -16,8 +17,8 @@ use leptos::prelude::*;
 use leptos::reactive::wrappers::write::SignalSetter;
 use leptos::text_prop::TextProp;
 use leptos_icons::*;
-use leptos_router::components::Outlet;
 use leptos_router::components::A;
+use leptos_router::components::Outlet;
 use leptos_router::hooks::{query_signal, use_location, use_params_map};
 use leptos_router::location::Url;
 use paginate::Pages;
@@ -217,15 +218,13 @@ pub fn CategoryItems() -> impl IntoView {
             .and_then(|cat| {
                 data.item_search_categorys
                     .iter()
-                    .find(|(_id, category)| &category.name == &cat)
+                    .find(|(_id, category)| category.name == cat)
             })
             .map(|(id, _)| {
-                let items = data
-                    .items
+                data.items
                     .iter()
                     .filter(|(_, item)| item.item_search_category == *id)
-                    .collect::<Vec<_>>();
-                items
+                    .collect::<Vec<_>>()
             });
         cat.unwrap_or_default()
     });
@@ -362,15 +361,15 @@ impl FromStr for ItemSortOption {
     }
 }
 
-impl ToString for ItemSortOption {
-    fn to_string(&self) -> String {
-        match self {
+impl Display for ItemSortOption {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let val = match self {
             ItemSortOption::ItemLevel => "ilvl",
             ItemSortOption::Price => "price",
             ItemSortOption::Name => "name",
             ItemSortOption::Key => "key",
-        }
-        .to_string()
+        };
+        f.write_str(val)
     }
 }
 
@@ -392,13 +391,13 @@ impl FromStr for SortDirection {
     }
 }
 
-impl ToString for SortDirection {
-    fn to_string(&self) -> String {
-        match self {
+impl Display for SortDirection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let val = match self {
             SortDirection::Asc => "asc",
             SortDirection::Desc => "desc",
-        }
-        .to_string()
+        };
+        f.write_str(val)
     }
 }
 
@@ -430,7 +429,7 @@ where
         path.with(|path| &Url::escape(&link_path) == path)
     });
     view! {
-        <a aria-current=move || is_active.get().then(|| "page") href=url>
+        <a aria-current=move || is_active.get().then_some("page") href=url>
             {children.into_inner()().into_view()}
         </a>
     }
@@ -523,7 +522,6 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
             <div class="flex flex-row flex-wrap gap-1">
                 {move || {
                     pages()
-                        .into_iter()
                         .map(|page| {
                             view! {
                                 <QueryButton

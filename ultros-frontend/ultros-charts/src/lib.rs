@@ -10,15 +10,12 @@ use anyhow::anyhow;
 use chrono::DateTime;
 use chrono::Local;
 use itertools::Itertools;
-use plotters::{
-    prelude::*,
-    style::full_palette::{ORANGE, PURPLE, PURPLE_A400, TEAL},
-};
+use plotters::{prelude::*, style::full_palette::PURPLE_A400};
 #[cfg(feature = "image")]
 use ultros_api_types::icon_size::IconSize;
 use ultros_api_types::{
-    world_helper::{AnySelector, WorldHelper},
     SaleHistory,
+    world_helper::{AnySelector, WorldHelper},
 };
 #[cfg(feature = "image")]
 use ultros_xiv_icons::get_item_image;
@@ -48,7 +45,7 @@ fn get_iqr_filter(sales: &[SaleHistory]) -> Option<(i32, i32)> {
         return None;
     }
     let sales_prices = sales
-        .into_iter()
+        .iter()
         .map(|sales| sales.price_per_item)
         .sorted()
         .collect::<Vec<_>>();
@@ -68,7 +65,7 @@ fn filter_outliers<'a>(sales: &'a [SaleHistory]) -> Cow<'a, [SaleHistory]> {
         let range = min..=max;
         Cow::Owned(
             sales
-                .into_iter()
+                .iter()
                 .filter(|sales| range.contains(&sales.price_per_item))
                 .cloned()
                 .collect(),
@@ -284,16 +281,14 @@ where
     };
 
     // Optional IQR band to visualize the "typical" price region (based on current sales set)
-    if show_iqr_band {
-        if let Some((iqr_min, iqr_max)) = get_iqr_filter(sales.as_ref()) {
-            let band_color = grid_base.mix(0.12);
-            // draw translucent band between iqr_min..iqr_max across the full time range
-            let _ = chart.draw_series(AreaSeries::new(
-                vec![(*first_sale, iqr_max), (*last_sale, iqr_max)],
-                iqr_min,
-                &band_color,
-            ));
-        }
+    if show_iqr_band && let Some((iqr_min, iqr_max)) = get_iqr_filter(sales.as_ref()) {
+        let band_color = grid_base.mix(0.12);
+        // draw translucent band between iqr_min..iqr_max across the full time range
+        let _ = chart.draw_series(AreaSeries::new(
+            vec![(*first_sale, iqr_max), (*last_sale, iqr_max)],
+            iqr_min,
+            band_color,
+        ));
     }
 
     // Optional global trendline across all points (least-squares fit)
@@ -354,16 +349,14 @@ where
         .draw()?;
 
     #[cfg(feature = "image")]
-    if draw_icon {
-        if let Some(image) = get_item_image(icon_item_id, IconSize::Medium) {
-            let image = image::load_from_memory_with_format(image, image::ImageFormat::WebP)?;
-            let width = image.width();
-            let height = image.height();
-            let buffer = image.into_rgb8();
-            backend
-                .borrow_mut()
-                .blit_bitmap((25, 5), (width, height), buffer.as_bytes())?;
-        }
+    if draw_icon && let Some(image) = get_item_image(icon_item_id, IconSize::Medium) {
+        let image = image::load_from_memory_with_format(image, image::ImageFormat::WebP)?;
+        let width = image.width();
+        let height = image.height();
+        let buffer = image.into_rgb8();
+        backend
+            .borrow_mut()
+            .blit_bitmap((25, 5), (width, height), buffer.as_bytes())?;
     }
 
     // To avoid the IO failure being ignored silently, we manually call the present function

@@ -5,8 +5,8 @@ use leptos::{
     reactive::wrappers::write::SignalSetter,
 };
 use leptos_use::use_element_hover;
-use web_sys::wasm_bindgen::JsCast;
 use web_sys::KeyboardEvent;
+use web_sys::wasm_bindgen::JsCast;
 
 use crate::components::search_result::MatchFormatter;
 
@@ -35,14 +35,8 @@ where
     let dropdown = NodeRef::<Div>::new();
     let input = NodeRef::<Input>::new();
     let hovered = use_element_hover(dropdown);
-    let labels = Memo::new(move |_| {
-        items.with(|i| {
-            i.iter()
-                .map(|i| as_label(i))
-                .enumerate()
-                .collect::<Vec<_>>()
-        })
-    });
+    let labels =
+        Memo::new(move |_| items.with(|i| i.iter().map(as_label).enumerate().collect::<Vec<_>>()));
     let search_results = Memo::new(move |_| {
         current_input.with(|input| {
             let mut results = labels.with(|s| {
@@ -68,22 +62,21 @@ where
         }
     });
     let keydown = move |e: KeyboardEvent| {
-        if e.key() == "Enter" {
-            if let Some(id) = search_results.with_untracked(|s| s.first().map(|(i, _)| *i)) {
-                if let Some(item) = items.with(|i| i.get(id).cloned()) {
-                    set_choice(Some(item));
-                    set_current_input("".to_string());
-                    if let Some(element) = document()
-                        .active_element()
-                        .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
-                    {
-                        element.blur().unwrap();
-                    }
-                    let input = input.get_untracked().unwrap();
-                    input.focus().unwrap();
-                    input.blur().unwrap();
-                }
+        if e.key() == "Enter"
+            && let Some(id) = search_results.with_untracked(|s| s.first().map(|(i, _)| *i))
+            && let Some(item) = items.with(|i| i.get(id).cloned())
+        {
+            set_choice(Some(item));
+            set_current_input("".to_string());
+            if let Some(element) = document()
+                .active_element()
+                .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
+            {
+                element.blur().unwrap();
             }
+            let input = input.get_untracked().unwrap();
+            input.focus().unwrap();
+            input.blur().unwrap();
         }
     };
 

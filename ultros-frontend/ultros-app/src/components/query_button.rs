@@ -35,7 +35,7 @@ where
             let name = key_1.as_str();
             let query_val = q.get_str(name);
             value.with(|val| val.as_str() == query_val.unwrap_or_default())
-                || (default == true && query_val.is_none())
+                || (default && query_val.is_none())
         })
     });
     view! {
@@ -48,7 +48,7 @@ where
                 }
                 // replace any existing value for this key instead of appending
                 query.remove(key.as_str());
-                let _ = query.insert(key.to_string(), value.get());
+                query.insert(key.to_string(), value.get());
                 format!("{}{}", pathname(), query.to_query_string())
             }
         >

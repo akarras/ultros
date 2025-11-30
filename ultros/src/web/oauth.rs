@@ -1,18 +1,17 @@
-use async_trait::async_trait;
 use axum::{
     extract::{FromRef, FromRequestParts, Query, State},
     http::request::Parts,
     response::Redirect,
 };
 use axum_extra::extract::{
-    cookie::{Cookie, Key, SameSite},
     PrivateCookieJar,
+    cookie::{Cookie, Key, SameSite},
 };
 use cookie::CookieBuilder;
 use oauth2::{
-    basic::BasicClient, AccessToken, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken,
-    PkceCodeChallenge, RedirectUrl, RevocationUrl, Scope, StandardRevocableToken, TokenResponse,
-    TokenUrl,
+    AccessToken, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, PkceCodeChallenge,
+    RedirectUrl, RevocationUrl, Scope, StandardRevocableToken, TokenResponse, TokenUrl,
+    basic::BasicClient,
 };
 use poise::serenity_prelude::Http;
 use serde::{Deserialize, Serialize};

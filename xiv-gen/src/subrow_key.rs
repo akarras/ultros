@@ -1,8 +1,8 @@
 use bincode::{Decode, Encode};
 use core::str::FromStr;
-use serde::de::Error;
 use serde::Deserialize;
 use serde::Serialize;
+use serde::de::Error;
 use std::fmt::Debug;
 
 #[derive(Serialize, Hash, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Decode, Encode)]

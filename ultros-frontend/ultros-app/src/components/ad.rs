@@ -3,7 +3,7 @@ use std::ops::Deref;
 use crate::Cookies;
 use leptos::{html::Ins, prelude::*};
 use leptos_router::components::A;
-use leptos_use::{use_mutation_observer_with_options, UseMutationObserverOptions};
+use leptos_use::{UseMutationObserverOptions, use_mutation_observer_with_options};
 use log::info;
 
 #[component]

@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 use crate::components::live_sale_ticker::SaleView;
 use crate::error::AppError;
 use futures::{SinkExt, StreamExt};
-use gloo_net::websocket::{futures::WebSocket, Message};
+use gloo_net::websocket::{Message, futures::WebSocket};
 use itertools::Itertools;
 use leptos::prelude::{RwSignal, Update};
 use log::error;

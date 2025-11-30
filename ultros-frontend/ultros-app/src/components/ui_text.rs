@@ -88,7 +88,7 @@ impl<'a> TextSpan<'a> {
         clone
     }
 
-    fn to_view(&self) -> Option<impl IntoView> {
+    fn to_view(&self) -> Option<impl IntoView + use<>> {
         let Self { text, .. } = self;
         if text.is_empty() {
             return None;
@@ -127,7 +127,7 @@ fn RawText<'a>(#[prop(into)] text: Oco<'a, str>) -> impl IntoView {
         text_parts.push(Either::Left(line.to_owned().into_view()));
         text_parts.push(Either::Right(br()));
     }
-    let _ = text_parts.pop();
+    text_parts.pop();
     text_parts
 }
 
@@ -148,10 +148,10 @@ fn TextParts(text: String) -> impl IntoView {
             let span = next_span.next_span(rest);
             match span {
                 Ok((o, span, end)) => {
-                    if let Some(o) = o {
-                        if let Some(view) = o.to_view() {
-                            text_parts.push(Either::Right(view));
-                        }
+                    if let Some(o) = o
+                        && let Some(view) = o.to_view()
+                    {
+                        text_parts.push(Either::Right(view));
                     }
                     if let Some(o) = span.to_view() {
                         text_parts.push(Either::Right(o));

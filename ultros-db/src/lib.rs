@@ -14,8 +14,8 @@ pub mod try_update_value;
 pub mod world_cache;
 mod worlds;
 
-pub use sea_orm::error::DbErr as SeaDbErr;
 pub use sea_orm::ActiveValue;
+pub use sea_orm::error::DbErr as SeaDbErr;
 
 use anyhow::Result;
 use dotenvy::dotenv;
@@ -144,7 +144,7 @@ impl UltrosDb {
             .collect();
 
         let val = retainer::Entity::find()
-            .filter(retainer::Column::Name.like(&format!("{retainer_name}%")))
+            .filter(retainer::Column::Name.like(format!("{retainer_name}%")))
             .limit(10)
             .all(&self.db)
             .await?;

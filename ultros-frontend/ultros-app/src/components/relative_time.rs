@@ -1,7 +1,7 @@
 use chrono::{NaiveDateTime, Utc};
 use leptos::prelude::*;
 #[cfg(feature = "hydrate")]
-use leptos_use::{use_interval, UseIntervalReturn};
+use leptos_use::{UseIntervalReturn, use_interval};
 use timeago::Formatter;
 
 #[component]

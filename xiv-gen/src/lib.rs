@@ -4,9 +4,9 @@ pub mod csv_to_bincode;
 mod deserialize_custom;
 pub mod subrow_key;
 
-use bincode::{config::Config, Decode, Encode};
+use bincode::{Decode, Encode, config::Config};
 use deserialize_custom::*;
-use dumb_csv::FromBool;
+use dumb_csv::ParseBool;
 use serde::{Deserialize, Deserializer, Serialize};
 
 include!(concat!(env!("OUT_DIR"), "/types.rs"));

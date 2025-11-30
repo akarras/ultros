@@ -24,10 +24,7 @@ impl CheapestPrices {
                         .unwrap_or("North-America"),
                 )
                 .await
-                .map(|cheapest_prices| {
-                    let map = CheapestListingsMap::from(cheapest_prices.clone());
-                    map
-                })
+                .map(|cheapest_prices| CheapestListingsMap::from(cheapest_prices.clone()))
             },
         );
 

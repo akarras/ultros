@@ -1,8 +1,8 @@
 use leptos::either::Either;
 use leptos::prelude::*;
+use ultros_api_types::Retainer;
 use ultros_api_types::user::OwnedRetainer;
 use ultros_api_types::world_helper::AnySelector;
-use ultros_api_types::Retainer;
 
 use crate::api::{
     claim_retainer, get_retainers, search_retainers, unclaim_retainer, update_retainer_order,

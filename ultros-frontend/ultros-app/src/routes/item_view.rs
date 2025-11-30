@@ -6,8 +6,8 @@ use crate::components::{
     stats_display::*, toggle::Toggle, ui_text::*,
 };
 use crate::error::AppError;
-use crate::global_state::home_world::{get_price_zone, use_home_world};
 use crate::global_state::LocalWorldData;
+use crate::global_state::home_world::{get_price_zone, use_home_world};
 use chrono::{TimeDelta, Utc};
 use leptos::either::{Either, EitherOf3};
 use leptos::prelude::*;
@@ -16,8 +16,8 @@ use leptos_meta::{Link, Meta};
 use leptos_router::components::A;
 use leptos_router::hooks::use_params_map;
 use leptos_router::location::Url;
-use ultros_api_types::world_helper::{AnyResult, OwnedResult};
 use ultros_api_types::CurrentlyShownItem;
+use ultros_api_types::world_helper::{AnyResult, OwnedResult};
 use xiv_gen::ItemId;
 
 #[component]
@@ -33,7 +33,7 @@ fn WorldButton(
     let is_home_world = Signal::derive({
         move || {
             home_world
-                .with(|w| w.as_ref().map(|w| &w.name == &world_2))
+                .with(|w| w.as_ref().map(|w| w.name == world_2))
                 .unwrap_or_default()
         }
     });
@@ -443,8 +443,8 @@ fn HighQualityTable(
                                             .map(|l| {
                                                 l.listings
                                                     .iter()
-                                                    .cloned()
                                                     .filter(|(l, _)| l.hq)
+                                                    .cloned()
                                                     .collect::<Vec<_>>()
                                             })
                                     })
@@ -489,8 +489,8 @@ fn LowQualityTable(
                                             .map(|l| {
                                                 l.listings
                                                     .iter()
-                                                    .cloned()
                                                     .filter(|(l, _)| !l.hq)
+                                                    .cloned()
                                                     .collect::<Vec<_>>()
                                             })
                                     })

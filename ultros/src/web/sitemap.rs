@@ -42,8 +42,8 @@ impl IntoResponse for Xml {
     }
 }
 
-pub(crate) async fn sitemap_index(// State(world_cache): State<Arc<WorldCache>>,
-) -> Result<Xml, WebError> {
+// State(world_cache): State<Arc<WorldCache>>,)
+pub(crate) async fn sitemap_index() -> Result<Xml, WebError> {
     // Get all the worlds from the world cache and then populate the listings sitemap to point to all the world subsitemaps
     // let mut sitemap_list: Vec<_> = world_cache
     //     .get_inner_data()
@@ -178,11 +178,7 @@ pub(crate) async fn item_sitemap(
             let first = value.first().map(|f| f.sale_date);
             let median = {
                 let len = value.len();
-                if len < 2 {
-                    None
-                } else {
-                    value.get(len / 2)
-                }
+                if len < 2 { None } else { value.get(len / 2) }
             };
             if let Some(median) = median {
                 (
