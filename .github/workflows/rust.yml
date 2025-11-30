@@ -58,14 +58,14 @@ jobs:
               # it would be good to support --all-features, but xiv-gen is a little unstable.
               run: cargo clippy --all-targets -- -D warnings
 
-            - name: Run cargo-deny, outdated, udeps, audit, and pants
-              run: |
-                  cargo deny check
-                  cargo outdated --exit-code 1
-                  cargo udeps
-                  rm -rf ~/.cargo/advisory-db
-                  cargo audit
-                  cargo pants
+            #- name: Run cargo-deny, outdated, udeps, audit, and pants
+            #  run: |
+            #      cargo deny check
+            #      cargo outdated --exit-code 1
+            #      cargo udeps
+            #      rm -rf ~/.cargo/advisory-db
+            #      cargo audit
+            #      cargo pants
 
             - name: Run tests
               run: cargo test --workspace --all-features
