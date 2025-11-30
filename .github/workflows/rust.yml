@@ -23,9 +23,7 @@ jobs:
           submodules: recursive
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          components: rustfmt, clippy
+        uses: dtolnay/rust-toolchain@nightly
 
       - name: Cache cargo registry and build artifacts
         uses: actions/cache@v4
