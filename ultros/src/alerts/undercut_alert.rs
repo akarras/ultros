@@ -64,17 +64,23 @@ async fn send_discord_alerts(
 ) -> Result<()> {
     let destinations = ultros_db.get_alert_discord_destinations(alert_id).await?;
     for destination in &destinations {
-        let channel_id = serenity_prelude::ChannelId(destination.channel_id as u64);
+        let channel_id = serenity_prelude::ChannelId::new(destination.channel_id as u64);
         let _ = channel_id
-            .send_message(ctx, |msg| {
-                msg.embed(|e| {
-                    e.color(Color::from_rgb(255, 0, 0))
-                        .title("🔔😔 Undercut Alert")
-                        .description(undercut_msg)
-                })
-                .allowed_mentions(|mentions| mentions.users([UserId(discord_user_id)]))
-                .content(format!("<@{discord_user_id}>"))
-            })
+            .send_message(
+                ctx,
+                serenity_prelude::CreateMessage::new()
+                    .embed(
+                        serenity_prelude::CreateEmbed::new()
+                            .color(Color::from_rgb(255, 0, 0))
+                            .title("🔔😔 Undercut Alert")
+                            .description(undercut_msg),
+                    )
+                    .allowed_mentions(
+                        serenity_prelude::CreateAllowedMentions::new()
+                            .users([UserId::new(discord_user_id)]),
+                    )
+                    .content(format!("<@{discord_user_id}>")),
+            )
             .await?;
     }
     Ok(())

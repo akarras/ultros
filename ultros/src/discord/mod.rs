@@ -80,14 +80,12 @@ pub(crate) async fn start_discord(
     update_service: Arc<UpdateService>,
     discord_token: String,
 ) {
-    let framework = poise::Framework::builder()
+    let framework: poise::Framework<Data, Error> = poise::Framework::builder()
         .options(poise::FrameworkOptions {
             commands: vec![age(), register(), ping(), ffxiv::ffxiv()],
             ..Default::default()
         })
-        .token(discord_token)
-        .intents(serenity::GatewayIntents::non_privileged())
-        .setup(move |ctx, _ready, framework| {
+        .setup(move |ctx: &serenity::Context, _ready, framework| {
             Box::pin(async move {
                 // start the alert monitor
                 poise::builtins::register_globally(ctx, &framework.options().commands).await?;
@@ -117,6 +115,14 @@ pub(crate) async fn start_discord(
                     update_service,
                 })
             })
-        });
-    framework.run().await.unwrap();
+        })
+        .build();
+
+    let mut client =
+        serenity::Client::builder(discord_token, serenity::GatewayIntents::non_privileged())
+            .framework(framework)
+            .await
+            .unwrap();
+
+    client.start().await.unwrap();
 }

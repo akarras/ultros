@@ -40,7 +40,7 @@ async fn list(ctx: Context<'_>) -> Result<(), Error> {
     let retainers = ctx
         .data()
         .db
-        .get_retainer_listings_for_discord_user(ctx.author().id.0)
+        .get_retainer_listings_for_discord_user(ctx.author().id.get())
         .await?;
     let embed_text = retainers.into_iter().format_with("\n", |(_r, d, l), f| {
         f(&format_args!("{} - {} listings", d.name, l.len()))
@@ -48,15 +48,21 @@ async fn list(ctx: Context<'_>) -> Result<(), Error> {
     let embed_text = format!(
         "Use `/ffxiv retainer add ` to add more retainers to your list. Or check your undercuts with `/ffxiv retainer undercuts`\n\n```\n{embed_text}\n```"
     );
-    ctx.send(|reply| reply.embed(|e| e.title("Retainers").description(embed_text)))
-        .await?;
+    ctx.send(
+        poise::CreateReply::default().embed(
+            poise::serenity_prelude::CreateEmbed::new()
+                .title("Retainers")
+                .description(embed_text),
+        ),
+    )
+    .await?;
     Ok(())
 }
 
 async fn autocomplete_retainer_id(
     ctx: Context<'_>,
     partial: &str,
-) -> impl Iterator<Item = poise::AutocompleteChoice<i32>> {
+) -> impl Iterator<Item = poise::serenity_prelude::AutocompleteChoice> {
     let world_cache = ctx.data().world_cache.clone();
     ctx.data()
         .db
@@ -65,8 +71,8 @@ async fn autocomplete_retainer_id(
         .unwrap_or_default()
         .into_iter()
         .flat_map(move |retainer| {
-            Some(poise::AutocompleteChoice {
-                name: format!(
+            Some(poise::serenity_prelude::AutocompleteChoice::new(
+                format!(
                     "{} - {}",
                     retainer.name,
                     world_cache
@@ -74,8 +80,8 @@ async fn autocomplete_retainer_id(
                         .ok()?
                         .get_name()
                 ),
-                value: retainer.id,
-            })
+                retainer.id,
+            ))
         })
 }
 
@@ -90,8 +96,8 @@ async fn add_undercut_alert(
         .data()
         .db
         .add_discord_retainer_alert(
-            ctx.channel_id().0 as i64,
-            ctx.author().id.0 as i64,
+            ctx.channel_id().get() as i64,
+            ctx.author().id.get() as i64,
             margin_percent,
         )
         .await?;
@@ -112,7 +118,7 @@ async fn remove_undercut_alert(ctx: Context<'_>) -> Result<(), Error> {
     let (alert, undercuts) = ctx
         .data()
         .db
-        .delete_discord_alert(channel_id.0 as i64, discord_id.0 as i64)
+        .delete_discord_alert(channel_id.get() as i64, discord_id.get() as i64)
         .await?;
     ctx.data()
         .event_senders
@@ -131,48 +137,58 @@ async fn remove_undercut_alert(ctx: Context<'_>) -> Result<(), Error> {
 #[poise::command(slash_command)]
 async fn check_undercuts(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
-    let user_id = ctx.author().id.0;
+    let user_id = ctx.author().id.get();
     let under_cut_items = ctx.data().db.get_retainer_undercut_items(user_id).await?;
     let data = xiv_gen_db::data();
     let item_db = &data.items;
-    ctx.send(|r| {
-        for (_, retainer, items) in &under_cut_items {
-            if !items.is_empty() {
-                r.embed(|e| {
-                    let item = items.iter().fold(
-                        format!(
-                            "```{:>30}{:>10}->{:<10}{}\n",
-                            "name", "price", "target price", "behind"
-                        ),
-                        |mut s, (listing, undercut)| {
-                            let item_id = ItemId(listing.item_id);
-                            let item_name = item_db
-                                .get(&item_id)
-                                .map(|i| i.name.as_str())
-                                .unwrap_or_default();
-                            let _ = writeln!(
-                                s,
-                                "{:>30} {:>10}->{:>10} {:>5}",
-                                item_name,
-                                listing.price_per_unit,
-                                undercut.price_to_beat - 1,
-                                undercut.number_behind
-                            );
-                            s
-                        },
-                    ) + "```";
-                    e.title(&retainer.name)
-                        .description(item)
-                        .color(Color::from_rgb(123, 0, 123))
-                });
-            }
+    let mut embeds = Vec::new();
+    for (_, retainer, items) in &under_cut_items {
+        if !items.is_empty() {
+            let item = items.iter().fold(
+                format!(
+                    "```{:>30}{:>10}->{:<10}{}\n",
+                    "name", "price", "target price", "behind"
+                ),
+                |mut s, (listing, undercut)| {
+                    let item_id = ItemId(listing.item_id);
+                    let item_name = item_db
+                        .get(&item_id)
+                        .map(|i| i.name.as_str())
+                        .unwrap_or_default();
+                    let _ = writeln!(
+                        s,
+                        "{:>30} {:>10}->{:>10} {:>5}",
+                        item_name,
+                        listing.price_per_unit,
+                        undercut.price_to_beat - 1,
+                        undercut.number_behind
+                    );
+                    s
+                },
+            ) + "```";
+            embeds.push(
+                poise::serenity_prelude::CreateEmbed::new()
+                    .title(&retainer.name)
+                    .description(item)
+                    .color(Color::from_rgb(123, 0, 123)),
+            );
         }
-        if r.embeds.is_empty() {
-            r.content("No undercuts found!");
-        }
-        r
-    })
-    .await?;
+    }
+
+    let _content = if embeds.is_empty() {
+        "No undercuts found!"
+    } else {
+        ""
+    };
+    let mut reply = poise::CreateReply::default().content(if under_cut_items.is_empty() {
+        "No undercuts found!"
+    } else {
+        ""
+    });
+    for embed in embeds {
+        reply = reply.embed(embed);
+    }
+    ctx.send(reply).await?;
     Ok(())
 }
 
@@ -183,15 +199,16 @@ async fn check_listings(ctx: Context<'_>) -> Result<(), Error> {
     let retainers = ctx
         .data()
         .db
-        .get_retainer_listings_for_discord_user(ctx.author().id.0)
+        .get_retainer_listings_for_discord_user(ctx.author().id.get())
         .await?;
     if retainers.is_empty() {
         ctx.say("No retainers found :(").await?;
     }
     let data = xiv_gen_db::data();
     let items = &data.items;
-    ctx.send(|r| {
-        for (_, retainer, listings) in retainers {
+    let embeds = retainers
+        .into_iter()
+        .map(|(_, retainer, listings)| {
             let mut msg_contents = String::new();
             msg_contents += "```";
             writeln!(
@@ -220,15 +237,18 @@ async fn check_listings(ctx: Context<'_>) -> Result<(), Error> {
             }
             msg_contents += "```";
 
-            r.embed(|e| {
-                e.title(retainer.name)
-                    .description(msg_contents)
-                    .color(Color::from_rgb(123, 0, 123))
-            });
-        }
-        r
-    })
-    .await?;
+            poise::serenity_prelude::CreateEmbed::new()
+                .title(retainer.name)
+                .description(msg_contents)
+                .color(Color::from_rgb(123, 0, 123))
+        })
+        .collect::<Vec<_>>();
+
+    let mut reply = poise::CreateReply::default();
+    for embed in embeds {
+        reply = reply.embed(embed);
+    }
+    ctx.send(reply).await?;
     Ok(())
 }
 
@@ -244,15 +264,20 @@ async fn add(
     let _register_retainer = ctx
         .data()
         .db
-        .register_retainer(retainer_id, ctx.author().id.0, ctx.author().name.clone())
+        .register_retainer(
+            retainer_id,
+            ctx.author().id.get(),
+            ctx.author().name.clone(),
+        )
         .await?;
-    ctx.send(|r| {
-        r.embed(|e| {
-            e.title("Added retainer")
+    ctx.send(
+        poise::CreateReply::default().embed(
+            poise::serenity_prelude::CreateEmbed::new()
+                .title("Added retainer")
                 .description("added retainer!")
-                .color(Color::from_rgb(123, 0, 123))
-        })
-    })
+                .color(Color::from_rgb(123, 0, 123)),
+        ),
+    )
     .await?;
     Ok(())
 }
@@ -260,11 +285,11 @@ async fn add(
 async fn owned_retainer_auto_complete(
     ctx: Context<'_>,
     partial: &str,
-) -> impl Iterator<Item = poise::AutocompleteChoice<i32>> {
+) -> impl Iterator<Item = poise::serenity_prelude::AutocompleteChoice> {
     let partial = partial.to_string();
     ctx.data()
         .db
-        .get_owned_retainers(ctx.author().id.0, ctx.author().name.clone())
+        .get_owned_retainers(ctx.author().id.get(), ctx.author().name.clone())
         .await
         .unwrap_or_default()
         .into_iter()
@@ -280,10 +305,10 @@ async fn owned_retainer_auto_complete(
         })
         .flat_map(|(owned, retainer)| {
             let retainer = retainer?;
-            Some(poise::AutocompleteChoice {
-                name: retainer.name,
-                value: owned.id,
-            })
+            Some(poise::serenity_prelude::AutocompleteChoice::new(
+                retainer.name,
+                owned.id,
+            ))
         })
 }
 
@@ -299,7 +324,7 @@ async fn remove(
     let removed = ctx
         .data()
         .db
-        .remove_owned_retainer(ctx.author().id.0, owned_retainer_id)
+        .remove_owned_retainer(ctx.author().id.get(), owned_retainer_id)
         .await?;
     ctx.say("Removed retainer successfully!").await?;
     let _ = ctx

@@ -45,26 +45,27 @@ pub(crate) async fn profit(
         .get_best_resale(world_id, region_id, resale, &ctx.data().world_cache)
         .await
         .ok_or(anyhow::anyhow!("Unable to get resale results"))?;
-    ctx.send(|reply| {
-        reply.embed(|e| {
-            let mut content = format!("`{:<40} |  roi  | profit`\n", "item name");
-            for sale in sales {
-                let item_name = items
-                    .get(&ItemId(sale.item_id))
-                    .map(|i| i.name.as_str())
-                    .unwrap_or_default();
-                writeln!(
-                    &mut content,
-                    "`{item_name:<40} | {:7.2}% | {:<10}` [url](https://universalis.app/market/{})",
-                    sale.return_on_investment, sale.profit, sale.item_id
-                )
-                .unwrap();
-            }
-            e.title("Flip Finder")
-                .color(Color::from_rgb(123, 0, 123))
-                .description(content)
-        })
-    })
+    ctx.send(poise::CreateReply::default().embed(
+        poise::serenity_prelude::CreateEmbed::new()
+            .title("Flip Finder")
+            .color(Color::from_rgb(123, 0, 123))
+            .description({
+                let mut content = format!("`{:<40} |  roi  | profit`\n", "item name");
+                for sale in sales {
+                    let item_name = items
+                        .get(&ItemId(sale.item_id))
+                        .map(|i| i.name.as_str())
+                        .unwrap_or_default();
+                    writeln!(
+                        &mut content,
+                        "`{item_name:<40} | {:7.2}% | {:<10}` [url](https://universalis.app/market/{})",
+                        sale.return_on_investment, sale.profit, sale.item_id
+                    )
+                    .unwrap();
+                }
+                content
+            })
+    ))
     .await?;
 
     Ok(())

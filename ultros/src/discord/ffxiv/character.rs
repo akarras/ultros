@@ -22,28 +22,25 @@ pub(crate) async fn register(
         search = search.server(world);
     }
     let profiles = search.send_async(&ctx.data().lodestone_client).await?;
-    let msg = ctx
-        .send(|reply| {
-            reply.components(|components| {
-                components.create_action_row(|row| {
-                    row.create_select_menu(|select| {
-                        select.custom_id("RegisterCharacterSelect").options(|o| {
-                            for search_result in profiles {
-                                o.create_option(|o| {
-                                    o.description("test")
-                                        .label(format!(
-                                            "{}\n{}",
-                                            search_result.name, search_result.world
-                                        ))
-                                        .value(search_result.user_id)
-                                });
-                            }
-                            o
-                        })
-                    })
-                })
-            })
+    let options = profiles
+        .into_iter()
+        .map(|search_result| {
+            poise::serenity_prelude::CreateSelectMenuOption::new(
+                format!("{}\n{}", search_result.name, search_result.world),
+                search_result.user_id.to_string(),
+            )
+            .description("test")
         })
+        .collect();
+
+    let select_menu = poise::serenity_prelude::CreateSelectMenu::new(
+        "RegisterCharacterSelect",
+        poise::serenity_prelude::CreateSelectMenuKind::String { options },
+    );
+    let action_row = poise::serenity_prelude::CreateActionRow::SelectMenu(select_menu);
+
+    let msg = ctx
+        .send(poise::CreateReply::default().components(vec![action_row]))
         .await?;
     if let Some(msg) = msg
         .message()
@@ -52,8 +49,12 @@ pub(crate) async fn register(
         .timeout(Duration::from_secs(5 * 60))
         .await
     {
-        ctx.say(format!("selected {}", msg.data.values[0])).await?;
-        // TODO lookup what value was selected from the list of interactions
+        if let poise::serenity_prelude::ComponentInteractionDataKind::StringSelect { values } =
+            &msg.data.kind
+        {
+            ctx.say(format!("selected {}", values[0])).await?;
+            // TODO lookup what value was selected from the list of interactions
+        }
     } else {
         ctx.say("No choice selected").await?;
         return Ok(());

@@ -254,8 +254,8 @@ where
             .static_avatar_url()
             .unwrap_or_else(|| user.default_avatar_url());
         let user = AuthDiscordUser {
-            id: user.id.0,
-            name: user.name,
+            id: user.id.get(),
+            name: user.name.clone(),
             avatar_url,
         };
         ultros
