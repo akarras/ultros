@@ -1,0 +1,30 @@
+name: Book Check
+
+on:
+    pull_request:
+
+permissions:
+    contents: read
+
+jobs:
+    check:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+
+            - name: Install latest mdBook
+              run: |
+                  set -euo pipefail
+                  tag=$(curl -sSL 'https://api.github.com/repos/rust-lang/mdbook/releases/latest' | jq -r '.tag_name')
+                  url="https://github.com/rust-lang/mdbook/releases/download/${tag}/mdbook-${tag}-x86_64-unknown-linux-gnu.tar.gz"
+                  mkdir -p "$HOME/mdbook-bin"
+                  curl -sSL "$url" | tar -xz --directory="$HOME/mdbook-bin"
+                  echo "$HOME/mdbook-bin" >> "$GITHUB_PATH"
+
+            - name: Build book
+              run: |
+                  cd userguide
+                  mdbook build
