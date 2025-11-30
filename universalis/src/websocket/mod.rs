@@ -60,9 +60,9 @@ impl WebsocketClient {
     ///
     /// #[tokio::main]
     /// async fn main() {
-    ///     let socket_client = WebsocketClient::new();
-    ///     socket_client.update_subscription(SubscribeMode::Subscribe, EventChannel::SalesAdd).await;
-    ///     
+    ///     let socket_client = WebsocketClient::connect().await;
+    ///     socket_client.update_subscription(SubscribeMode::Subscribe, EventChannel::SalesAdd, None).await;
+    ///
     /// }
     /// ```
     pub async fn update_subscription(

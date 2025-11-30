@@ -384,7 +384,7 @@ where
                 Ok(json)
             };
             let result = inner_impl().await;
-            tx.send(result);
+            let _ = tx.send(result);
         }
     });
     let json = rx
