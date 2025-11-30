@@ -48,8 +48,14 @@ async fn list(ctx: Context<'_>) -> Result<(), Error> {
     let embed_text = format!(
         "Use `/ffxiv retainer add ` to add more retainers to your list. Or check your undercuts with `/ffxiv retainer undercuts`\n\n```\n{embed_text}\n```"
     );
-    ctx.send(poise::CreateReply::default().embed(poise::serenity_prelude::CreateEmbed::new().title("Retainers").description(embed_text)))
-        .await?;
+    ctx.send(
+        poise::CreateReply::default().embed(
+            poise::serenity_prelude::CreateEmbed::new()
+                .title("Retainers")
+                .description(embed_text),
+        ),
+    )
+    .await?;
     Ok(())
 }
 
@@ -164,13 +170,21 @@ async fn check_undercuts(ctx: Context<'_>) -> Result<(), Error> {
                 poise::serenity_prelude::CreateEmbed::new()
                     .title(&retainer.name)
                     .description(item)
-                    .color(Color::from_rgb(123, 0, 123))
+                    .color(Color::from_rgb(123, 0, 123)),
             );
         }
     }
-    
-    let _content = if embeds.is_empty() { "No undercuts found!" } else { "" };
-    let mut reply = poise::CreateReply::default().content(if under_cut_items.is_empty() { "No undercuts found!" } else { "" });
+
+    let _content = if embeds.is_empty() {
+        "No undercuts found!"
+    } else {
+        ""
+    };
+    let mut reply = poise::CreateReply::default().content(if under_cut_items.is_empty() {
+        "No undercuts found!"
+    } else {
+        ""
+    });
     for embed in embeds {
         reply = reply.embed(embed);
     }
@@ -192,40 +206,43 @@ async fn check_listings(ctx: Context<'_>) -> Result<(), Error> {
     }
     let data = xiv_gen_db::data();
     let items = &data.items;
-    let embeds = retainers.into_iter().map(|(_, retainer, listings)| {
-        let mut msg_contents = String::new();
-        msg_contents += "```";
-        writeln!(
-            msg_contents,
-            "{:<30} {:>9} {:>4} {:>1}",
-            "Item name", "price per item", "Qty.", "hq"
-        )
-        .unwrap();
-        for listing in listings {
-            let item_name = items
-                .get(&ItemId(listing.item_id))
-                .map(|i| i.name.as_str())
-                .unwrap_or_default();
-            let active_listing::Model {
-                price_per_unit,
-                quantity,
-                hq,
-                ..
-            } = &listing;
-            let hq = if *hq { '✅' } else { ' ' };
+    let embeds = retainers
+        .into_iter()
+        .map(|(_, retainer, listings)| {
+            let mut msg_contents = String::new();
+            msg_contents += "```";
             writeln!(
                 msg_contents,
-                "{item_name:<30} {price_per_unit:>9} {quantity:<4} {hq}"
+                "{:<30} {:>9} {:>4} {:>1}",
+                "Item name", "price per item", "Qty.", "hq"
             )
             .unwrap();
-        }
-        msg_contents += "```";
+            for listing in listings {
+                let item_name = items
+                    .get(&ItemId(listing.item_id))
+                    .map(|i| i.name.as_str())
+                    .unwrap_or_default();
+                let active_listing::Model {
+                    price_per_unit,
+                    quantity,
+                    hq,
+                    ..
+                } = &listing;
+                let hq = if *hq { '✅' } else { ' ' };
+                writeln!(
+                    msg_contents,
+                    "{item_name:<30} {price_per_unit:>9} {quantity:<4} {hq}"
+                )
+                .unwrap();
+            }
+            msg_contents += "```";
 
-        poise::serenity_prelude::CreateEmbed::new()
-            .title(retainer.name)
-            .description(msg_contents)
-            .color(Color::from_rgb(123, 0, 123))
-    }).collect::<Vec<_>>();
+            poise::serenity_prelude::CreateEmbed::new()
+                .title(retainer.name)
+                .description(msg_contents)
+                .color(Color::from_rgb(123, 0, 123))
+        })
+        .collect::<Vec<_>>();
 
     let mut reply = poise::CreateReply::default();
     for embed in embeds {
@@ -247,14 +264,20 @@ async fn add(
     let _register_retainer = ctx
         .data()
         .db
-        .register_retainer(retainer_id, ctx.author().id.get(), ctx.author().name.clone())
+        .register_retainer(
+            retainer_id,
+            ctx.author().id.get(),
+            ctx.author().name.clone(),
+        )
         .await?;
-    ctx.send(poise::CreateReply::default().embed(
-        poise::serenity_prelude::CreateEmbed::new()
-            .title("Added retainer")
-            .description("added retainer!")
-            .color(Color::from_rgb(123, 0, 123))
-    ))
+    ctx.send(
+        poise::CreateReply::default().embed(
+            poise::serenity_prelude::CreateEmbed::new()
+                .title("Added retainer")
+                .description("added retainer!")
+                .color(Color::from_rgb(123, 0, 123)),
+        ),
+    )
     .await?;
     Ok(())
 }
