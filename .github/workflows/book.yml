@@ -36,16 +36,6 @@ jobs:
                   curl -sSL "$url" | tar -xz --directory="$HOME/mdbook-bin"
                   echo "$HOME/mdbook-bin" >> "$GITHUB_PATH"
 
-            - name: Install Rust toolchain
-              uses: dtolnay/rust-toolchain@master
-              with:
-                  toolchain: stable
-
-            - name: Cache cargo
-              uses: swatinem/rust-cache@v2
-
-            - name: Install mdbook-svgbob
-              run: cargo install mdbook-svgbob2
 
             - name: Build book
               run: |
