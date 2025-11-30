@@ -22,7 +22,7 @@ jobs:
         with:
           submodules: recursive
       - name: Install system packages
-        run: RUN sudo apt update && sudo apt upgrade -y && sudo apt install -y libfreetype6 libfreetype6-dev cmake build-essential curl sudo pkg-config libssl-dev
+        run: sudo apt update && sudo apt upgrade -y && sudo apt install -y libfreetype6 libfreetype6-dev cmake build-essential curl sudo pkg-config libssl-dev
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
       - name: Install rustfmt and clippy
