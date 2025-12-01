@@ -10,6 +10,7 @@ pub mod profiling;
 pub(crate) mod utils;
 mod web;
 mod web_metrics;
+pub(crate) mod search_service;
 
 use crate::item_update_service::UpdateService;
 #[cfg(feature = "profiling")]
@@ -38,6 +39,7 @@ use universalis::websocket::event_types::{EventChannel, SubscribeMode, WSMessage
 use universalis::{DataCentersView, UniversalisClient, WebsocketClient, WorldId, WorldsView};
 use web::character_verifier_service::CharacterVerifierService;
 use web::oauth::{AuthUserCache, DiscordAuthConfig, OAuthScope};
+use crate::search_service::SearchService;
 #[cfg(all(not(target_env = "msvc"), feature = "jemalloc"))]
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
@@ -256,6 +258,7 @@ async fn main() -> Result<()> {
         db: db.clone(),
         world_cache: world_cache.clone(),
     };
+    let search_service = SearchService::new()?;
     let conf = get_configuration(Some("Cargo.toml")).unwrap();
     let mut leptos_options = conf.leptos_options;
     let git_hash = git_const::git_short_hash!();
@@ -278,6 +281,7 @@ async fn main() -> Result<()> {
         world_cache,
         world_helper,
         leptos_options,
+        search_service,
     };
     web::start_web(web_state).await;
     Ok(())

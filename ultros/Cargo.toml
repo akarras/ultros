@@ -72,6 +72,7 @@ tikv-jemallocator = { version = "0.5.4", features = [
     "unprefixed_malloc_on_supported_platforms",
 ], optional = true }
 jemalloc_pprof = { version = "0.1.0", optional = true }
+tantivy = "0.25.0"
 
 [features]
 profiling = ["dep:tikv-jemallocator", "dep:jemalloc_pprof"]

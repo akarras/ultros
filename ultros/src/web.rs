@@ -61,6 +61,7 @@ use self::oauth::{AuthDiscordUser, AuthUserCache, DiscordAuthConfig};
 use crate::analyzer_service::AnalyzerService;
 use crate::event::{EventReceivers, EventSenders, EventType};
 use crate::leptos::create_leptos_app;
+use crate::search_service::SearchService;
 use crate::web::api::real_time_data::real_time_data;
 use crate::web::api::{cheapest_per_world, recent_sales};
 use crate::web::sitemap::{generic_pages_sitemap, item_sitemap, sitemap_index, world_sitemap};
@@ -207,6 +208,7 @@ pub(crate) struct WebState {
     pub(crate) analyzer_service: AnalyzerService,
     pub(crate) character_verification: CharacterVerifierService,
     pub(crate) leptos_options: LeptosOptions,
+    pub(crate) search_service: SearchService,
 }
 
 impl FromRef<WebState> for UltrosDb {
@@ -272,6 +274,12 @@ impl FromRef<WebState> for CharacterVerifierService {
 impl FromRef<WebState> for LeptosOptions {
     fn from_ref(input: &WebState) -> Self {
         input.leptos_options.clone()
+    }
+}
+
+impl FromRef<WebState> for SearchService {
+    fn from_ref(input: &WebState) -> Self {
+        input.search_service.clone()
     }
 }
 
@@ -799,6 +807,18 @@ async fn claim_character(
     Ok(Json(result))
 }
 
+#[derive(Deserialize)]
+struct SearchQuery {
+    q: String,
+}
+
+async fn search(
+    State(service): State<SearchService>,
+    Query(query): Query<SearchQuery>,
+) -> Json<Vec<ultros_api_types::search::SearchResult>> {
+    Json(service.search(&query.q))
+}
+
 // #[debug_handler(state = WebState)]
 async fn unclaim_character(
     user: AuthDiscordUser,
@@ -872,6 +892,7 @@ pub(crate) async fn start_web(state: WebState) {
     let worlds = state.world_helper.clone();
     let app = Router::new()
         .route("/alerts/websocket", get(connect_websocket))
+        .route("/api/v1/search", get(search))
         .route("/api/v1/realtime/events", get(real_time_data))
         .route("/api/v1/cheapest/{world}", get(cheapest_per_world))
         .route("/api/v1/recentSales/{world}", get(recent_sales))

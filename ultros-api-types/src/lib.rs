@@ -11,6 +11,7 @@ pub mod user;
 pub mod websocket;
 pub mod world;
 pub mod world_helper;
+pub mod search;
 
 pub use ffxiv_character::*;
 pub use listings::ActiveListing;
