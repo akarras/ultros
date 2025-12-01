@@ -1,9 +1,9 @@
 use std::sync::Arc;
 use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
-use tantivy::schema::{Schema, TextOptions, STORED, Value};
+use tantivy::schema::{STORED, Schema, TextOptions, Value};
 use tantivy::{Index, IndexReader, ReloadPolicy, doc};
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 use ultros_api_types::search::SearchResult;
 
 #[derive(Clone)]
@@ -20,14 +20,16 @@ pub struct SearchService {
 impl SearchService {
     pub fn new() -> anyhow::Result<Self> {
         let mut schema_builder = Schema::builder();
-        
+
         // Use a tokenizer that handles apostrophes better if possible, or just standard English
         // For now, we'll stick to standard but rely on fuzzy search to help with "Samurai's" vs "Samurai"
-        let title_options = TextOptions::default().set_indexing_options(
-            tantivy::schema::TextFieldIndexing::default()
-                .set_tokenizer("en_stem")
-                .set_index_option(tantivy::schema::IndexRecordOption::WithFreqsAndPositions),
-        ).set_stored();
+        let title_options = TextOptions::default()
+            .set_indexing_options(
+                tantivy::schema::TextFieldIndexing::default()
+                    .set_tokenizer("en_stem")
+                    .set_index_option(tantivy::schema::IndexRecordOption::WithFreqsAndPositions),
+            )
+            .set_stored();
 
         let title_field = schema_builder.add_text_field("title", title_options.clone());
         let type_field = schema_builder.add_text_field("type", STORED);
@@ -35,7 +37,7 @@ impl SearchService {
         let icon_id_field = schema_builder.add_i64_field("icon_id", STORED);
         // Category field uses same options as title for searchability
         let category_field = schema_builder.add_text_field("category", title_options);
-        
+
         let schema = schema_builder.build();
 
         let index = Index::create_in_ram(schema.clone());
@@ -46,7 +48,8 @@ impl SearchService {
         // Index Items
         for (id, item) in &data.items {
             if item.item_search_category.0 > 0 {
-                let category_name = data.item_search_categorys
+                let category_name = data
+                    .item_search_categorys
                     .get(&item.item_search_category)
                     .map(|c| c.name.as_str())
                     .unwrap_or("");
@@ -63,12 +66,12 @@ impl SearchService {
 
         // Index Categories
         for cat in data.item_search_categorys.values() {
-             index_writer.add_document(doc!(
+            index_writer.add_document(doc!(
                 title_field => cat.name.as_str(),
                 type_field => "category",
                 url_field => format!("/items/category/{}", cat.name),
                 // Categories don't have a direct icon, maybe use a default or 0
-                icon_id_field => 0i64, 
+                icon_id_field => 0i64,
                 category_field => "",
             ))?;
         }
@@ -105,28 +108,31 @@ impl SearchService {
             .collect::<Vec<_>>();
 
         let mut currency_ids = std::collections::HashSet::new();
-        
+
         // Helper to extract cost items from special shop
         for shop in data.special_shops.values() {
-             let mut has_marketable_reward = false;
-             for item_id in shop.item_receive_0.iter().chain(shop.item_receive_1.iter()) {
-                 if let Some(item) = data.items.get(item_id)
-                     && item.item_search_category.0 > 0 {
-                         has_marketable_reward = true;
-                         break;
-                     }
-             }
+            let mut has_marketable_reward = false;
+            for item_id in shop.item_receive_0.iter().chain(shop.item_receive_1.iter()) {
+                if let Some(item) = data.items.get(item_id)
+                    && item.item_search_category.0 > 0
+                {
+                    has_marketable_reward = true;
+                    break;
+                }
+            }
 
-             if has_marketable_reward {
-                 for item_id in shop.item_cost_0.iter()
+            if has_marketable_reward {
+                for item_id in shop
+                    .item_cost_0
+                    .iter()
                     .chain(shop.item_cost_1.iter())
-                    .chain(shop.item_cost_2.iter()) 
-                 {
-                     if item_id.0 != 0 {
+                    .chain(shop.item_cost_2.iter())
+                {
+                    if item_id.0 != 0 {
                         currency_ids.insert(item_id);
-                     }
-                 }
-             }
+                    }
+                }
+            }
         }
 
         for item in data.items.values() {
@@ -137,15 +143,18 @@ impl SearchService {
 
         for id in currency_ids {
             if let Some(item) = data.items.get(id)
-                 && (allowed_item_ui_categories.contains(&item.item_ui_category) || item.name == "Gil" || item.name == "MGP") {
-                    index_writer.add_document(doc!(
-                        title_field => item.name.as_str(),
-                        type_field => "currency",
-                        url_field => format!("/currency-exchange/{}", id.0),
-                        icon_id_field => id.0 as i64, // Use Item ID for image lookup
-                        category_field => "",
-                    ))?;
-                 }
+                && (allowed_item_ui_categories.contains(&item.item_ui_category)
+                    || item.name == "Gil"
+                    || item.name == "MGP")
+            {
+                index_writer.add_document(doc!(
+                    title_field => item.name.as_str(),
+                    type_field => "currency",
+                    url_field => format!("/currency-exchange/{}", id.0),
+                    icon_id_field => id.0 as i64, // Use Item ID for image lookup
+                    category_field => "",
+                ))?;
+            }
         }
 
         index_writer.commit()?;
@@ -169,11 +178,12 @@ impl SearchService {
 
     pub fn search(&self, query_str: &str) -> Vec<SearchResult> {
         let searcher = self.reader.searcher();
-        let mut query_parser = QueryParser::for_index(&self.index, vec![self.title_field, self.category_field]);
+        let mut query_parser =
+            QueryParser::for_index(&self.index, vec![self.title_field, self.category_field]);
         // Boost title field to be more important than category
         query_parser.set_field_boost(self.title_field, 2.0);
         query_parser.set_field_boost(self.category_field, 0.5);
-        
+
         query_parser.set_field_fuzzy(self.title_field, false, 2, true);
         query_parser.set_field_fuzzy(self.category_field, false, 2, true);
 
@@ -181,15 +191,18 @@ impl SearchService {
             Ok(q) => q,
             Err(e) => {
                 // If fuzzy parsing fails (e.g. query too short), try raw query
-                warn!("SearchService: Fuzzy query '{}' failed: {}, falling back to raw", query_str, e);
-                 match query_parser.parse_query(query_str) {
+                warn!(
+                    "SearchService: Fuzzy query '{}' failed: {}, falling back to raw",
+                    query_str, e
+                );
+                match query_parser.parse_query(query_str) {
                     Ok(q) => q,
                     Err(e) => {
                         warn!("SearchService: Invalid query '{}': {}", query_str, e);
                         return vec![];
                     }
-                 }
-            }, 
+                }
+            }
         };
 
         let top_docs = match searcher.search(&query, &TopDocs::with_limit(10)) {
@@ -197,19 +210,38 @@ impl SearchService {
             Err(e) => {
                 error!("SearchService: Search execution failed: {}", e);
                 return vec![];
-            },
+            }
         };
-        
+
         top_docs
             .into_iter()
             .map(|(score, doc_address)| {
-                let retrieved_doc: tantivy::schema::TantivyDocument = searcher.doc(doc_address).unwrap();
-                let title = retrieved_doc.get_first(self.title_field).and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let result_type = retrieved_doc.get_first(self.type_field).and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let url = retrieved_doc.get_first(self.url_field).and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let icon_id = retrieved_doc.get_first(self.icon_id_field).and_then(|v| v.as_i64()).map(|v| v as i32);
-                let category = retrieved_doc.get_first(self.category_field).and_then(|v| v.as_str()).map(|s| s.to_string());
-                
+                let retrieved_doc: tantivy::schema::TantivyDocument =
+                    searcher.doc(doc_address).unwrap();
+                let title = retrieved_doc
+                    .get_first(self.title_field)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let result_type = retrieved_doc
+                    .get_first(self.type_field)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let url = retrieved_doc
+                    .get_first(self.url_field)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let icon_id = retrieved_doc
+                    .get_first(self.icon_id_field)
+                    .and_then(|v| v.as_i64())
+                    .map(|v| v as i32);
+                let category = retrieved_doc
+                    .get_first(self.category_field)
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
                 SearchResult {
                     score,
                     title,

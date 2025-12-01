@@ -7,14 +7,15 @@ mod item_update_service;
 pub mod leptos;
 #[cfg(feature = "profiling")]
 pub mod profiling;
+pub(crate) mod search_service;
 pub(crate) mod utils;
 mod web;
 mod web_metrics;
-pub(crate) mod search_service;
 
 use crate::item_update_service::UpdateService;
 #[cfg(feature = "profiling")]
 use crate::profiling::start_profiling_server;
+use crate::search_service::SearchService;
 use crate::web::WebState;
 use ::leptos::config::get_configuration;
 use analyzer_service::AnalyzerService;
@@ -39,7 +40,6 @@ use universalis::websocket::event_types::{EventChannel, SubscribeMode, WSMessage
 use universalis::{DataCentersView, UniversalisClient, WebsocketClient, WorldId, WorldsView};
 use web::character_verifier_service::CharacterVerifierService;
 use web::oauth::{AuthUserCache, DiscordAuthConfig, OAuthScope};
-use crate::search_service::SearchService;
 #[cfg(all(not(target_env = "msvc"), feature = "jemalloc"))]
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;

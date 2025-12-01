@@ -9,9 +9,9 @@ use leptos_hotkeys::use_hotkeys;
 use leptos_icons::*;
 use leptos_router::{NavigateOptions, hooks::use_navigate};
 use std::sync::Arc;
-use web_sys::KeyboardEvent;
-use ultros_api_types::search::SearchResult;
 use sublime_fuzzy::{FuzzySearch, Match, Scoring};
+use ultros_api_types::search::SearchResult;
+use web_sys::KeyboardEvent;
 
 pub(crate) fn fuzzy_search(query: &str, target: &str) -> Option<Match> {
     let scoring = Scoring::default();
@@ -28,7 +28,7 @@ pub fn SearchBox() -> impl IntoView {
     let navigate = use_navigate();
     let (active, set_active) = signal(false);
 
-use crate::api::search as api_search;
+    use crate::api::search as api_search;
 
     // Use a signal for results to avoid hydration issues with Resources
     let (search_results, set_search_results) = signal(Vec::new());
@@ -109,13 +109,13 @@ use crate::api::search as api_search;
                 set_search("".to_string());
             }
         } else if key == "Enter" {
-             if let Some(first) = item_search().first() {
+            if let Some(first) = item_search().first() {
                 navigate_keydown(&first.url, NavigateOptions::default());
                 set_search("".to_string());
                 if let Some(input) = text_input.get() {
                     let _ = input.blur();
                 }
-             }
+            }
         }
     };
     view! {

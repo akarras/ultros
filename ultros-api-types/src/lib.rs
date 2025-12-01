@@ -7,11 +7,11 @@ pub mod recent_sales;
 pub mod result;
 pub mod retainer;
 mod sale_history;
+pub mod search;
 pub mod user;
 pub mod websocket;
 pub mod world;
 pub mod world_helper;
-pub mod search;
 
 pub use ffxiv_character::*;
 pub use listings::ActiveListing;

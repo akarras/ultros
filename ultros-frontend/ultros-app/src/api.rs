@@ -11,12 +11,12 @@ use ultros_api_types::{
     recent_sales::RecentSales,
     result::JsonErrorWrapper,
     retainer::{Retainer, RetainerListings},
-    user::{OwnedRetainer, UserData, UserRetainerListings, UserRetainers},
     search::SearchResult,
+    user::{OwnedRetainer, UserData, UserRetainerListings, UserRetainers},
 };
 
 use crate::error::{AppError, AppResult};
-use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
+use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 
 pub(crate) async fn search(query: &str) -> AppResult<Vec<SearchResult>> {
     let encoded_query = utf8_percent_encode(query, NON_ALPHANUMERIC).to_string();
