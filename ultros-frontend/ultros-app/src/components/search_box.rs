@@ -32,21 +32,39 @@ use crate::api::search as api_search;
 
     // Use a signal for results to avoid hydration issues with Resources
     let (search_results, set_search_results) = signal(Vec::new());
+    // Serial ID for cancellation
+    let (search_id, set_search_id) = signal(0usize);
 
     Effect::new(move |_| {
         let s = search.get();
+        // Increment ID on every change
+        set_search_id.update(|n| *n += 1);
+        let current_id = search_id.get_untracked();
+
         spawn_local(async move {
+            // Debounce
+            TimeoutFuture::new(300).await;
+            // Check if cancelled
+            if search_id.get_untracked() != current_id {
+                return;
+            }
+
             if s.trim().is_empty() {
                 set_search_results.set(vec![]);
                 return;
             }
             match api_search(&s).await {
                 Ok(results) => {
-                    set_search_results.set(results);
+                    // Check if cancelled again before setting results
+                    if search_id.get_untracked() == current_id {
+                        set_search_results.set(results);
+                    }
                 }
                 Err(e) => {
-                    log::error!("Search failed: {}", e);
-                    set_search_results.set(vec![]);
+                    if search_id.get_untracked() == current_id {
+                        log::error!("Search failed: {}", e);
+                        set_search_results.set(vec![]);
+                    }
                 }
             }
         });
@@ -173,7 +191,23 @@ use crate::api::search as api_search;
                                     }
                                     <div class="flex flex-col">
                                         <span class="font-medium">{result.title}</span>
-                                        <span class="text-xs text-[color:var(--color-text-muted)]">{result.result_type}</span>
+                                        <span class="text-xs text-[color:var(--color-text-muted)]">
+                                            {
+                                                let category = result.category.clone();
+                                                let result_type = result.result_type.clone();
+                                                move || {
+                                                    if let Some(cat) = &category {
+                                                        if !cat.is_empty() {
+                                                            format!("{} - {}", result_type, cat)
+                                                        } else {
+                                                            result_type.clone()
+                                                        }
+                                                    } else {
+                                                        result_type.clone()
+                                                    }
+                                                }
+                                            }
+                                        </span>
                                     </div>
                                 </div>
                             }

@@ -7,4 +7,5 @@ pub struct SearchResult {
     pub result_type: String,
     pub url: String,
     pub icon_id: Option<i32>,
+    pub category: Option<String>,
 }

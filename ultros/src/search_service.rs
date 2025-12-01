@@ -14,6 +14,7 @@ pub struct SearchService {
     type_field: tantivy::schema::Field,
     url_field: tantivy::schema::Field,
     icon_id_field: tantivy::schema::Field,
+    category_field: tantivy::schema::Field,
 }
 
 impl SearchService {
@@ -28,10 +29,12 @@ impl SearchService {
                 .set_index_option(tantivy::schema::IndexRecordOption::WithFreqsAndPositions),
         ).set_stored();
 
-        let title_field = schema_builder.add_text_field("title", TEXT | STORED);
+        let title_field = schema_builder.add_text_field("title", title_options.clone());
         let type_field = schema_builder.add_text_field("type", STORED);
         let url_field = schema_builder.add_text_field("url", STORED);
         let icon_id_field = schema_builder.add_i64_field("icon_id", STORED);
+        // Category field uses same options as title for searchability
+        let category_field = schema_builder.add_text_field("category", title_options);
         
         let schema = schema_builder.build();
 
@@ -43,11 +46,17 @@ impl SearchService {
         // Index Items
         for (id, item) in &data.items {
             if item.item_search_category.0 > 0 {
+                let category_name = data.item_search_categorys
+                    .get(&item.item_search_category)
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("");
+
                 index_writer.add_document(doc!(
                     title_field => item.name.as_str(),
                     type_field => "item",
                     url_field => format!("/item/{}", id.0),
                     icon_id_field => id.0 as i64, // Use Item ID for image lookup
+                    category_field => category_name,
                 ))?;
             }
         }
@@ -60,6 +69,7 @@ impl SearchService {
                 url_field => format!("/items/category/{}", cat.name),
                 // Categories don't have a direct icon, maybe use a default or 0
                 icon_id_field => 0i64, 
+                category_field => "",
             ))?;
         }
 
@@ -76,6 +86,7 @@ impl SearchService {
                     type_field => "job equipment", // Renamed from "job"
                     url_field => format!("/items/jobset/{}", name),
                     icon_id_field => 0i64, // Jobs don't have a simple icon ID in this context easily accessible or needed?
+                    category_field => "",
                 ))?;
             }
         }
@@ -133,6 +144,7 @@ impl SearchService {
                         type_field => "currency",
                         url_field => format!("/currency-exchange/{}", id.0),
                         icon_id_field => id.0 as i64, // Use Item ID for image lookup
+                        category_field => "",
                     ))?;
                  }
             }
@@ -153,13 +165,20 @@ impl SearchService {
             type_field,
             url_field,
             icon_id_field,
+            category_field,
         })
     }
 
     pub fn search(&self, query_str: &str) -> Vec<SearchResult> {
         let searcher = self.reader.searcher();
-        let mut query_parser = QueryParser::for_index(&self.index, vec![self.title_field]);
-        query_parser.set_field_fuzzy(tantivy::schema::Field::from(self.title_field), false, 2, true);
+        let mut query_parser = QueryParser::for_index(&self.index, vec![self.title_field, self.category_field]);
+        // Boost title field to be more important than category
+        query_parser.set_field_boost(self.title_field, 2.0);
+        query_parser.set_field_boost(self.category_field, 0.5);
+        
+        query_parser.set_field_fuzzy(self.title_field, false, 2, true);
+        query_parser.set_field_fuzzy(self.category_field, false, 2, true);
+
         let query = match query_parser.parse_query(&query_str) {
             Ok(q) => q,
             Err(e) => {
@@ -191,6 +210,7 @@ impl SearchService {
                 let result_type = retrieved_doc.get_first(self.type_field).and_then(|v| v.as_str()).unwrap_or("").to_string();
                 let url = retrieved_doc.get_first(self.url_field).and_then(|v| v.as_str()).unwrap_or("").to_string();
                 let icon_id = retrieved_doc.get_first(self.icon_id_field).and_then(|v| v.as_i64()).map(|v| v as i32);
+                let category = retrieved_doc.get_first(self.category_field).and_then(|v| v.as_str()).map(|s| s.to_string());
                 
                 SearchResult {
                     score,
@@ -198,6 +218,7 @@ impl SearchService {
                     result_type,
                     url,
                     icon_id,
+                    category,
                 }
             })
             .collect()
