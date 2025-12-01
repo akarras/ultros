@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
-use tantivy::schema::{Schema, TextOptions, TEXT, STORED, Value};
+use tantivy::schema::{Schema, TextOptions, STORED, Value};
 use tantivy::{Index, IndexReader, ReloadPolicy, doc};
 use tracing::{info, warn, error};
 use ultros_api_types::search::SearchResult;
@@ -62,7 +62,7 @@ impl SearchService {
         }
 
         // Index Categories
-        for (_, cat) in &data.item_search_categorys {
+        for cat in data.item_search_categorys.values() {
              index_writer.add_document(doc!(
                 title_field => cat.name.as_str(),
                 type_field => "category",
@@ -74,7 +74,7 @@ impl SearchService {
         }
 
         // Index Jobs
-        for (_, job) in &data.class_jobs {
+        for job in data.class_jobs.values() {
             if job.class_job_parent.0 != 0 {
                 let name = if job.abbreviation.is_empty() {
                     job.name.as_str()
@@ -110,12 +110,11 @@ impl SearchService {
         for shop in data.special_shops.values() {
              let mut has_marketable_reward = false;
              for item_id in shop.item_receive_0.iter().chain(shop.item_receive_1.iter()) {
-                 if let Some(item) = data.items.get(item_id) {
-                     if item.item_search_category.0 > 0 {
+                 if let Some(item) = data.items.get(item_id)
+                     && item.item_search_category.0 > 0 {
                          has_marketable_reward = true;
                          break;
                      }
-                 }
              }
 
              if has_marketable_reward {
@@ -130,15 +129,15 @@ impl SearchService {
              }
         }
 
-        for (_, item) in &data.items {
+        for item in data.items.values() {
             if item.name == "Gil" || item.name == "MGP" {
                 currency_ids.insert(&item.key_id);
             }
         }
 
         for id in currency_ids {
-            if let Some(item) = data.items.get(id) {
-                 if allowed_item_ui_categories.contains(&item.item_ui_category) || item.name == "Gil" || item.name == "MGP" {
+            if let Some(item) = data.items.get(id)
+                 && (allowed_item_ui_categories.contains(&item.item_ui_category) || item.name == "Gil" || item.name == "MGP") {
                     index_writer.add_document(doc!(
                         title_field => item.name.as_str(),
                         type_field => "currency",
@@ -147,7 +146,6 @@ impl SearchService {
                         category_field => "",
                     ))?;
                  }
-            }
         }
 
         index_writer.commit()?;
@@ -179,7 +177,7 @@ impl SearchService {
         query_parser.set_field_fuzzy(self.title_field, false, 2, true);
         query_parser.set_field_fuzzy(self.category_field, false, 2, true);
 
-        let query = match query_parser.parse_query(&query_str) {
+        let query = match query_parser.parse_query(query_str) {
             Ok(q) => q,
             Err(e) => {
                 // If fuzzy parsing fails (e.g. query too short), try raw query
