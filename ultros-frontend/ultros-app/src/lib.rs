@@ -16,7 +16,6 @@ use crate::{
     components::{ad::Ad, apps_menu::*, patreon::*, search_box::*, theme_picker::*, tooltip::*},
     routes::{
         analyzer::*,
-        crafting_analyzer::*,
         currency_exchange::{CurrencyExchange, CurrencySelection, ExchangeItem},
         edit_retainers::*,
         history::*,
@@ -26,6 +25,7 @@ use crate::{
         legal::{cookie_policy::CookiePolicy, privacy_policy::PrivacyPolicy},
         list_view::*,
         lists::*,
+        recipe_analyzer::*,
         retainers::*,
         settings::*,
     },
@@ -256,7 +256,7 @@ pub fn App() -> impl IntoView {
                                 view! { <div /> }
                             } />
                             <Route path=path!("flip-finder/:world") view=AnalyzerWorldView />
-                            <Route path=path!("crafting-analyzer") view=CraftingAnalyzer />
+                            <Route path=path!("recipe-analyzer") view=RecipeAnalyzer />
                             <Route path=path!("analyzer/:world") view=move || {
                                 let nav = leptos_router::hooks::use_navigate();
                                 let params = leptos_router::hooks::use_params_map();

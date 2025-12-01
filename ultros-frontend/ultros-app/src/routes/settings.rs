@@ -6,10 +6,10 @@ use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::components::{ad::*, loading::*, toggle::Toggle, world_name::*, world_picker::*};
 use crate::error::AppResult;
 use crate::global_state::cookies::Cookies;
+use crate::global_state::crafter_levels::CrafterLevels;
 use crate::global_state::home_world::{
     get_price_zone, result_to_selector_read, selector_to_setter_signal, use_home_world,
 };
-use crate::global_state::crafter_levels::CrafterLevels;
 use leptos::either::{Either, EitherOf3};
 use leptos::prelude::*;
 use leptos::reactive::wrappers::write::IntoSignalSetter;
@@ -371,7 +371,7 @@ fn CrafterSettings() -> impl IntoView {
                     .collect::<Vec<_>>()}
             </div>
             <p class="mt-4 text-sm text-gray-400">
-                "Set your crafter levels to filter recipes in the Crafting Analyzer."
+                "Set your crafter levels to filter recipes in the Recipe Analyzer."
             </p>
         </div>
     }

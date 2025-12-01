@@ -1,6 +1,5 @@
 pub mod alerts;
 pub mod analyzer;
-pub mod crafting_analyzer;
 pub mod currency_exchange;
 pub mod edit_retainers;
 pub mod history;
@@ -10,5 +9,6 @@ pub mod item_view;
 pub mod legal;
 pub mod list_view;
 pub mod lists;
+pub mod recipe_analyzer;
 pub mod retainers;
 pub mod settings;

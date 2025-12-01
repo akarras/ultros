@@ -61,13 +61,13 @@ pub fn AppsMenu() -> impl IntoView {
 
                         <A
                             href=homeworld()
-                                .map(|w| format!("/crafting-analyzer?world={}", w.name))
-                                .unwrap_or("/crafting-analyzer".to_string())
+                                .map(|w| format!("/recipe-analyzer?world={}", w.name))
+                                .unwrap_or("/recipe-analyzer".to_string())
                             attr:class="nav-link w-full justify-start"
                             on:click=move |_| set_has_focus(false)
                         >
                             <Icon height="1.1em" width="1.1em" icon=i::FaHammerSolid />
-                            <span class="ml-2">"Crafting Analyzer"</span>
+                            <span class="ml-2">"Recipe Analyzer"</span>
                         </A>
 
                         <A
