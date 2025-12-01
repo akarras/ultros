@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
+use std::{fmt::Display, str::FromStr};
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CrafterLevels {
     pub carpenter: i32,
     pub blacksmith: i32,
@@ -13,24 +13,9 @@ pub struct CrafterLevels {
     pub culinarian: i32,
 }
 
-impl Default for CrafterLevels {
-    fn default() -> Self {
-        Self {
-            carpenter: 0,
-            blacksmith: 0,
-            armorer: 0,
-            goldsmith: 0,
-            leatherworker: 0,
-            weaver: 0,
-            alchemist: 0,
-            culinarian: 0,
-        }
-    }
-}
-
-impl ToString for CrafterLevels {
-    fn to_string(&self) -> String {
-        serde_json::to_string(self).unwrap_or_default()
+impl Display for CrafterLevels {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", serde_json::to_string(self).unwrap_or_default())
     }
 }
 

@@ -323,8 +323,8 @@ fn CrafterSettings() -> impl IntoView {
         }
         set_levels(Some(current));
     };
-
-    let jobs: [(&str, &str, fn(&CrafterLevels) -> i32); 8] = [
+    type CrafterCallback = fn(&CrafterLevels) -> i32;
+    let jobs: [(&str, &str, CrafterCallback); 8] = [
         ("CRP", "Carpenter", |l: &CrafterLevels| l.carpenter),
         ("BSM", "Blacksmith", |l: &CrafterLevels| l.blacksmith),
         ("ARM", "Armorer", |l: &CrafterLevels| l.armorer),

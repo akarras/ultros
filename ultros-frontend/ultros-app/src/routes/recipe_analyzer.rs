@@ -1,10 +1,9 @@
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
-        add_to_list::AddToList, clipboard::*, gil::*, item_icon::*, meta::*,
-        query_button::QueryButton, skeleton::BoxSkeleton, virtual_scroller::*, world_picker::*,
+        gil::*, item_icon::*, meta::*, query_button::QueryButton, skeleton::BoxSkeleton,
+        virtual_scroller::*,
     },
-    error::AppError,
     global_state::{
         LocalWorldData, cookies::Cookies, crafter_levels::CrafterLevels, home_world::use_home_world,
     },
@@ -12,15 +11,14 @@ use crate::{
 use chrono::Utc;
 use humantime::{format_duration, parse_duration};
 use icondata as i;
-use leptos::{either::Either, prelude::*, reactive::wrappers::write::SignalSetter};
+use leptos::{either::Either, prelude::*};
 use leptos_icons::*;
-use leptos_meta::Title;
 use leptos_router::hooks::{query_signal, use_params_map};
-use std::{cmp::Reverse, collections::HashMap, str::FromStr, sync::Arc};
+use std::{cmp::Reverse, collections::HashMap, fmt::Display, str::FromStr};
 use ultros_api_types::{
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     recent_sales::{RecentSales, SaleData},
-    world_helper::{AnyResult, WorldHelper},
+    world_helper::AnyResult,
 };
 use xiv_gen::{ItemId, Recipe};
 
@@ -57,19 +55,19 @@ impl FromStr for SortMode {
     }
 }
 
-impl ToString for SortMode {
-    fn to_string(&self) -> String {
-        match self {
-            SortMode::Roi => "roi".to_string(),
-            SortMode::Profit => "profit".to_string(),
-        }
+impl Display for SortMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let val = match self {
+            SortMode::Roi => "roi",
+            SortMode::Profit => "profit",
+        };
+        f.write_str(val)
     }
 }
 
 fn calculate_crafting_cost(
     recipe: &'static Recipe,
     prices: &CheapestListingsMap,
-    items: &HashMap<ItemId, xiv_gen::Item>,
     recipes_by_output: &HashMap<ItemId, Vec<&'static Recipe>>,
     depth: i32,
     max_depth: i32,
@@ -103,40 +101,30 @@ fn calculate_crafting_cost(
         let mut item_cost = market_price;
         let mut best_sub_count = 0;
 
-        if use_subcrafts && depth < max_depth {
-            if let Some(sub_recipes) = recipes_by_output.get(&item_id) {
-                // Find cheapest way to craft this ingredient
-                for sub_recipe in sub_recipes {
-                    let (craft_cost, sub_count) = calculate_crafting_cost(
-                        sub_recipe,
-                        prices,
-                        items,
-                        recipes_by_output,
-                        depth + 1,
-                        max_depth,
-                        use_subcrafts,
-                    );
-                    let craft_cost = craft_cost as i64;
-                    if craft_cost < item_cost {
-                        item_cost = craft_cost;
-                        best_sub_count = sub_count + 1; // +1 for this sub-craft
-                    }
+        if use_subcrafts
+            && depth < max_depth
+            && let Some(sub_recipes) = recipes_by_output.get(&item_id)
+        {
+            // Find cheapest way to craft this ingredient
+            for sub_recipe in sub_recipes {
+                let (craft_cost, sub_count) = calculate_crafting_cost(
+                    sub_recipe,
+                    prices,
+                    recipes_by_output,
+                    depth + 1,
+                    max_depth,
+                    use_subcrafts,
+                );
+                let craft_cost = craft_cost as i64;
+                if craft_cost < item_cost {
+                    item_cost = craft_cost;
+                    best_sub_count = sub_count + 1; // +1 for this sub-craft
                 }
             }
         }
 
         if item_cost < market_price {
             total_sub_crafts += best_sub_count;
-        }
-
-        // Check if item can be bought from vendor (simple check, ideally check shop data)
-        if let Some(item) = items.get(&item_id) {
-            if item.price_mid > 0 {
-                // This is sell price, not buy price.
-                // Ideally we check gil_shop_items but that's complex here.
-                // For now rely on market board data which should reflect vendor price if people are smart,
-                // or add a basic check if we had vendor data easily accessible.
-            }
         }
 
         let amount = amount as i64;
@@ -193,7 +181,7 @@ where
 fn RecipeAnalyzerTable(
     global_cheapest_listings: CheapestListings,
     recent_sales: Option<RecentSales>,
-    worlds: Arc<WorldHelper>,
+
     world: Signal<String>,
 ) -> impl IntoView {
     let prices = CheapestListingsMap::from(global_cheapest_listings);
@@ -295,10 +283,10 @@ fn RecipeAnalyzerTable(
                 _ => (0, ""),
             };
 
-            if let Some(filter) = job_filter() {
-                if filter != job_code {
-                    continue;
-                }
+            if let Some(filter) = job_filter()
+                && filter != job_code
+            {
+                continue;
             }
 
             // Check if the user can realistically craft this recipe.
@@ -332,7 +320,6 @@ fn RecipeAnalyzerTable(
             let (craft_cost, sub_craft_count) = calculate_crafting_cost(
                 recipe,
                 &prices,
-                items,
                 &recipes_by_output,
                 0,
                 if use_sub { 2 } else { 0 }, // Limit recursion depth
@@ -381,7 +368,7 @@ fn RecipeAnalyzerTable(
             let limit_secs = limit.as_secs();
             results.retain(|d| {
                 d.avg_sale_interval_secs
-                    .map(|avg| avg as u64 <= limit_secs)
+                    .map(|avg| avg <= limit_secs)
                     .unwrap_or(false)
             });
         }
@@ -697,27 +684,22 @@ pub fn RecipeAnalyzer() -> impl IntoView {
             .or_else(|| home_world.get().map(|w| w.name))
             .unwrap_or_else(|| "North-America".to_string());
 
-        let region = worlds
+        worlds
             .lookup_world_by_name(&world_name)
             .map(|world| {
                 let region = worlds.get_region(world);
                 AnyResult::Region(region).get_name().to_string()
             })
-            .unwrap_or_else(|| "North-America".to_string());
-        region
+            .unwrap_or_else(|| "North-America".to_string())
     });
 
-    let global_cheapest_listings = Resource::new(
-        move || region(),
-        move |region| async move { get_cheapest_listings(region.as_str()).await },
-    );
+    let global_cheapest_listings = Resource::new(region, move |region| async move {
+        get_cheapest_listings(region.as_str()).await
+    });
 
-    let recent_sales = Resource::new(
-        move || region(),
-        move |region| async move { get_recent_sales_for_world(region.as_str()).await },
-    );
-
-    let worlds = use_context::<LocalWorldData>().unwrap().0.unwrap();
+    let recent_sales = Resource::new(region, move |region| async move {
+        get_recent_sales_for_world(region.as_str()).await
+    });
 
     view! {
          <div class="main-content p-6">
@@ -738,8 +720,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                                     <RecipeAnalyzerTable
                                         global_cheapest_listings=listings
                                         recent_sales=Some(sales)
-                                        worlds=worlds.clone()
-                                        world=Signal::derive(move || region())
+                                        world=Signal::derive(region)
                                     />
                                 }.into_any()
                             }
@@ -748,8 +729,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                                     <RecipeAnalyzerTable
                                         global_cheapest_listings=listings
                                         recent_sales=None
-                                        worlds=worlds.clone()
-                                        world=Signal::derive(move || region())
+                                        world=Signal::derive(region)
                                     />
                                 }.into_any()
                             }
