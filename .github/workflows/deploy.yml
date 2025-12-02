@@ -1,0 +1,45 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: ["Docker"]
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: 'Commit SHA to deploy (defaults to latest if empty)'
+        required: false
+        type: string
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main') }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # We checkout the default branch (latest scripts) to run the deployment logic
+
+      - name: Determine Target SHA
+        id: target
+        run: |
+          if [ -n "${{ inputs.commit_sha }}" ]; then
+            echo "sha=${{ inputs.commit_sha }}" >> $GITHUB_OUTPUT
+          elif [ -n "${{ github.event.workflow_run.head_sha }}" ]; then
+            echo "sha=${{ github.event.workflow_run.head_sha }}" >> $GITHUB_OUTPUT
+          else
+            echo "sha=${{ github.sha }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Get Short SHA
+        id: vars
+        run: echo "sha_short=$(git rev-parse --short ${{ steps.target.outputs.sha }})" >> $GITHUB_OUTPUT
+
+      - name: Pull and Retag Image
+        run: ./scripts/pull-docker-hash.sh ${{ steps.vars.outputs.sha_short }}
+
+      - name: Restart Compose
+        run: ./scripts/restart-compose.sh
