@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use tantivy::collector::TopDocs;
-use tantivy::query::QueryParser;
+use tantivy::query::{BooleanQuery, Query, QueryParser};
 use tantivy::schema::{STORED, Schema, TextOptions, Value};
 use tantivy::{Index, IndexReader, ReloadPolicy, doc};
 use tracing::{error, info, warn};
@@ -178,30 +178,30 @@ impl SearchService {
 
     pub fn search(&self, query_str: &str) -> Vec<SearchResult> {
         let searcher = self.reader.searcher();
-        let mut query_parser =
+        // Exact match parser (High boost)
+        let mut exact_parser =
             QueryParser::for_index(&self.index, vec![self.title_field, self.category_field]);
-        // Boost title field to be more important than category
-        query_parser.set_field_boost(self.title_field, 2.0);
-        query_parser.set_field_boost(self.category_field, 0.5);
+        exact_parser.set_field_boost(self.title_field, 5.0);
+        exact_parser.set_field_boost(self.category_field, 1.0);
 
-        query_parser.set_field_fuzzy(self.title_field, false, 2, true);
-        query_parser.set_field_fuzzy(self.category_field, false, 2, true);
+        // Fuzzy match parser (Low boost)
+        let mut fuzzy_parser =
+            QueryParser::for_index(&self.index, vec![self.title_field, self.category_field]);
+        fuzzy_parser.set_field_boost(self.title_field, 0.5);
+        fuzzy_parser.set_field_boost(self.category_field, 0.1);
+        fuzzy_parser.set_field_fuzzy(self.title_field, false, 2, true);
+        fuzzy_parser.set_field_fuzzy(self.category_field, false, 1, true);
 
-        let query = match query_parser.parse_query(query_str) {
-            Ok(q) => q,
-            Err(e) => {
-                // If fuzzy parsing fails (e.g. query too short), try raw query
-                warn!(
-                    "SearchService: Fuzzy query '{}' failed: {}, falling back to raw",
-                    query_str, e
-                );
-                match query_parser.parse_query(query_str) {
-                    Ok(q) => q,
-                    Err(e) => {
-                        warn!("SearchService: Invalid query '{}': {}", query_str, e);
-                        return vec![];
-                    }
-                }
+        let exact_query = exact_parser.parse_query(query_str);
+        let fuzzy_query = fuzzy_parser.parse_query(query_str);
+
+        let query = match (exact_query, fuzzy_query) {
+            (Ok(eq), Ok(fq)) => Box::new(BooleanQuery::union(vec![eq, fq])) as Box<dyn Query>,
+            (Ok(eq), Err(_)) => eq,
+            (Err(_), Ok(fq)) => fq,
+            (Err(e), Err(_)) => {
+                warn!("SearchService: Invalid query '{}': {}", query_str, e);
+                return vec![];
             }
         };
 

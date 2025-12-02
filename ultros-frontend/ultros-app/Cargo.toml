@@ -14,7 +14,6 @@ axum = { workspace = true, optional = true }
 leptos-use = { workspace = true }
 xiv-gen-db = { path = "../../xiv-gen-db" }
 xiv-gen.workspace = true
-sublime_fuzzy = "0.7"
 uuid = { version = "1.18.1", features = ["v4", "js"] }
 
 gloo-net = { workspace = true, optional = true }

@@ -1,25 +1,12 @@
-use crate::{
-    components::{search_result::*, virtual_scroller::*},
-    global_state::home_world::get_price_zone,
-};
+use crate::components::virtual_scroller::*;
 use gloo_timers::future::TimeoutFuture;
 use icondata as i;
 use leptos::{html::Input, prelude::*, task::spawn_local};
 use leptos_hotkeys::use_hotkeys;
 use leptos_icons::*;
 use leptos_router::{NavigateOptions, hooks::use_navigate};
-use std::sync::Arc;
-use sublime_fuzzy::{FuzzySearch, Match, Scoring};
 use ultros_api_types::search::SearchResult;
 use web_sys::KeyboardEvent;
-
-pub(crate) fn fuzzy_search(query: &str, target: &str) -> Option<Match> {
-    let scoring = Scoring::default();
-    let search = FuzzySearch::new(query, target)
-        .case_insensitive()
-        .score_with(&scoring);
-    search.best_match()
-}
 
 #[component]
 pub fn SearchBox() -> impl IntoView {
@@ -108,13 +95,13 @@ pub fn SearchBox() -> impl IntoView {
             } else {
                 set_search("".to_string());
             }
-        } else if key == "Enter" {
-            if let Some(first) = item_search().first() {
-                navigate_keydown(&first.url, NavigateOptions::default());
-                set_search("".to_string());
-                if let Some(input) = text_input.get() {
-                    let _ = input.blur();
-                }
+        } else if key == "Enter"
+            && let Some(first) = item_search().first()
+        {
+            navigate_keydown(&first.url, NavigateOptions::default());
+            set_search("".to_string());
+            if let Some(input) = text_input.get() {
+                let _ = input.blur();
             }
         }
     };

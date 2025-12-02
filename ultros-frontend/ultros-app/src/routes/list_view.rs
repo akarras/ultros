@@ -148,22 +148,25 @@ pub fn ListView() -> impl IntoView {
                         let item_search = move || {
                             search
                                 .with(|s| {
+                                    let s_lower = s.to_lowercase();
                                     let mut score = items
                                         .iter()
                                         .filter(|(_, i)| i.item_search_category.0 > 0)
                                         .filter(|_| !s.is_empty())
-                                        .flat_map(|(id, i)| {
-                                            sublime_fuzzy::best_match(s, &i.name).map(|m| (id, i, m))
+                                        .filter_map(|(id, i)| {
+                                            if i.name.to_lowercase().contains(&s_lower) {
+                                                Some((id, i))
+                                            } else {
+                                                None
+                                            }
                                         })
                                         .collect::<Vec<_>>();
                                     score
-                                        .sort_by_key(|(_, i, m)| (
-                                            Reverse(m.score()),
+                                        .sort_by_key(|(_, i)| (
                                             Reverse(i.level_item.0),
                                         ));
                                     score
                                         .into_iter()
-                                        .filter(|(_, _, ma)| ma.score() > 0)
                                         .take(100)
                                         .collect::<Vec<_>>()
                                 })
@@ -192,7 +195,7 @@ pub fn ListView() -> impl IntoView {
                                     {move || {
                                         item_search()
                                             .into_iter()
-                                            .map(move |(id, item, _)| {
+                                            .map(move |(id, item)| {
                                                 let (quantity, set_quantity) = signal(1);
                                                 let read_input_quantity = move |input| {
                                                     if let Ok(quantity) = event_target_value(&input).parse() {
@@ -263,23 +266,25 @@ pub fn ListView() -> impl IntoView {
                         let item_search = move || {
                             recipe
                                 .with(|r| {
+                                    let r_lower = r.to_lowercase();
                                     let mut score = recipe_data
                                         .clone()
                                         .into_iter()
                                         .filter(|_| !r.is_empty())
-                                        .flat_map(|(i, recipe)| {
-                                            sublime_fuzzy::best_match(r, &i.name)
-                                                .map(|m| (i.key_id, recipe, i, m))
+                                        .filter_map(|(i, recipe)| {
+                                            if i.name.to_lowercase().contains(&r_lower) {
+                                                Some((i.key_id, recipe, i))
+                                            } else {
+                                                None
+                                            }
                                         })
                                         .collect::<Vec<_>>();
                                     score
-                                        .sort_by_key(|(_, _, i, m)| (
-                                            Reverse(m.score()),
+                                        .sort_by_key(|(_, _, i)| (
                                             Reverse(i.level_item.0),
                                         ));
                                     score
                                         .into_iter()
-                                        .filter(|(_, _, _, ma)| ma.score() > 0)
                                         .take(100)
                                         .collect::<Vec<_>>()
                                 })
@@ -308,7 +313,7 @@ pub fn ListView() -> impl IntoView {
                                 {move || {
                                     item_search()
                                         .into_iter()
-                                        .map(|(_id, ri, item, _ma)| {
+                                        .map(|(_id, ri, item)| {
                                             let (quantity, set_quantity) = signal(1);
                                             let hq = RwSignal::new(false);
                                             let crystals = RwSignal::new(false);
