@@ -1,33 +1,62 @@
-use crate::{
-    components::{search_result::*, virtual_scroller::*},
-    global_state::home_world::get_price_zone,
-};
+use crate::components::virtual_scroller::*;
 use gloo_timers::future::TimeoutFuture;
 use icondata as i;
 use leptos::{html::Input, prelude::*, task::spawn_local};
 use leptos_hotkeys::use_hotkeys;
-// use leptos_hotkeys::use_hotkeys;
 use leptos_icons::*;
 use leptos_router::{NavigateOptions, hooks::use_navigate};
-use std::cmp::Reverse;
-use sublime_fuzzy::{FuzzySearch, Match, Scoring};
+use ultros_api_types::search::SearchResult;
 use web_sys::KeyboardEvent;
 
-pub(crate) fn fuzzy_search(query: &str, target: &str) -> Option<Match> {
-    let scoring = Scoring::default();
-    let search = FuzzySearch::new(query, target)
-        .case_insensitive()
-        .score_with(&scoring);
-    search.best_match()
-}
-
-/// SearchBox primarily searches through item names- there might be better ways to filter the views down the line.
 #[component]
 pub fn SearchBox() -> impl IntoView {
     let text_input = NodeRef::<Input>::new();
     let (search, set_search) = signal(String::new());
     let navigate = use_navigate();
     let (active, set_active) = signal(false);
+
+    use crate::api::search as api_search;
+
+    // Use a signal for results to avoid hydration issues with Resources
+    let (search_results, set_search_results) = signal(Vec::new());
+    // Serial ID for cancellation
+    let (search_id, set_search_id) = signal(0usize);
+
+    Effect::new(move |_| {
+        let s = search.get();
+        // Increment ID on every change
+        set_search_id.update(|n| *n += 1);
+        let current_id = search_id.get_untracked();
+
+        spawn_local(async move {
+            // Debounce
+            TimeoutFuture::new(300).await;
+            // Check if cancelled
+            if search_id.get_untracked() != current_id {
+                return;
+            }
+
+            if s.trim().is_empty() {
+                set_search_results.set(vec![]);
+                return;
+            }
+            match api_search(&s).await {
+                Ok(results) => {
+                    // Check if cancelled again before setting results
+                    if search_id.get_untracked() == current_id {
+                        set_search_results.set(results);
+                    }
+                }
+                Err(e) => {
+                    if search_id.get_untracked() == current_id {
+                        log::error!("Search failed: {}", e);
+                        set_search_results.set(vec![]);
+                    }
+                }
+            }
+        });
+    });
+
     use_hotkeys!(("MetaLeft+KeyK,ControlLeft+KeyK", "*") => move |_| {
         set_active(true);
         if let Some(input) = text_input.get() {
@@ -51,57 +80,10 @@ pub fn SearchBox() -> impl IntoView {
             set_active(false);
         })
     };
-    let items = &xiv_gen_db::data().items;
-    let item_search = move || {
-        search.with(|s| {
-            if s.is_empty() {
-                return vec![];
-            }
-            let q = s.trim();
-            if q.is_empty() {
-                return vec![];
-            }
-            let ql = q.to_lowercase();
 
-            // very short queries: cheap substring match, limit output
-            if ql.len() < 2 {
-                let mut results = items
-                    .iter()
-                    .filter(|(_, i)| i.item_search_category.0 > 0)
-                    .filter(|(_, i)| i.name.to_lowercase().contains(&ql))
-                    .collect::<Vec<_>>();
-                results.sort_by_key(|(_, i)| {
-                    (Reverse(i.level_item.0), i.name.as_str().to_lowercase())
-                });
-                results.truncate(100);
-                return results;
-            }
+    let item_search = move || search_results.get();
 
-            // prefilter candidates by substring to reduce fuzzy workload
-            let candidates = items
-                .iter()
-                .filter(|(_, i)| i.item_search_category.0 > 0)
-                .filter(|(_, i)| {
-                    let name = i.name.as_str().to_lowercase();
-                    if ql.len() < 3 {
-                        true
-                    } else {
-                        name.contains(&ql)
-                    }
-                });
-
-            let mut scored = candidates
-                .flat_map(|(id, i)| fuzzy_search(q, &i.name).map(|m| (id, i, m)))
-                .collect::<Vec<_>>();
-
-            scored.sort_by_key(|(_, i, m)| (Reverse(m.score()), Reverse(i.level_item.0)));
-            scored
-                .into_iter()
-                .map(|(id, item, _)| (id, item))
-                .take(100)
-                .collect::<Vec<_>>()
-        })
-    };
+    let navigate_keydown = navigate.clone();
     let keydown = move |e: KeyboardEvent| {
         let key = e.key();
         if key == "Escape" {
@@ -114,22 +96,13 @@ pub fn SearchBox() -> impl IntoView {
                 set_search("".to_string());
             }
         } else if key == "Enter"
-            && let Some((id, _)) = item_search().first()
+            && let Some(first) = item_search().first()
         {
-            let (zone, _) = get_price_zone();
-            let id = id.0;
-            let zone = zone.get_untracked();
-            let price_zone = zone
-                .as_ref()
-                .map(|z| z.get_name())
-                .unwrap_or("North-America");
-
-            navigate(
-                &format!("/item/{price_zone}/{id}"),
-                NavigateOptions::default(),
-            );
+            navigate_keydown(&first.url, NavigateOptions::default());
             set_search("".to_string());
-            text_input.get().unwrap().blur().unwrap();
+            if let Some(input) = text_input.get() {
+                let _ = input.blur();
+            }
         }
     };
     view! {
@@ -141,7 +114,7 @@ pub fn SearchBox() -> impl IntoView {
                     on:input=on_input
                     on:focusin=focus_in
                     on:focusout=focus_out
-                    placeholder="Search items... (⌘K / CTRL K)"
+                    placeholder="Search items, currencies, categories... (⌘K / CTRL K)"
                     class="input w-full pl-10"
 
                     type="text"
@@ -160,10 +133,71 @@ pub fn SearchBox() -> impl IntoView {
                 <div class="scroll-panel content-auto contain-layout contain-paint will-change-scroll forced-layer cis-42">
                     <VirtualScroller
                         each=Signal::derive(item_search)
-                        key=move |(id, _item): &(&xiv_gen::ItemId, &xiv_gen::Item)| id.0
-                        view=move |(id, _): (&xiv_gen::ItemId, &xiv_gen::Item)| {
-                            let item_id = id.0;
-                            view! { <ItemSearchResult item_id set_search search /> }
+                        key=move |result: &SearchResult| result.url.clone()
+                        view=move |result: SearchResult| {
+                            let url = result.url.clone();
+                            let navigate = navigate.clone();
+                            view! {
+                                <div class="p-2 hover:bg-[color:var(--color-background-elevated)] cursor-pointer flex items-center gap-2"
+                                     on:click=move |_| {
+                                         navigate(&url, NavigateOptions::default());
+                                         set_search("".to_string());
+                                     }
+                                >
+                                    // Icon based on type or icon_id
+                                    {
+                                        if let Some(icon_id) = result.icon_id {
+                                            if icon_id > 0 {
+                                                view! {
+                                                    <div class="w-8 h-8 flex-shrink-0">
+                                                        <img
+                                                            src=format!("/static/itemicon/{}?size=Small", icon_id)
+                                                            class="w-full h-full object-contain"
+                                                            loading="lazy"
+                                                        />
+                                                    </div>
+                                                }.into_any()
+                                            } else {
+                                                match result.result_type.as_str() {
+                                                    "item" => view! { <Icon icon=i::FaBoxOpenSolid /> }.into_any(),
+                                                    "currency" => view! { <Icon icon=i::FaCoinsSolid /> }.into_any(),
+                                                    "category" => view! { <Icon icon=i::FaListSolid /> }.into_any(),
+                                                    "job equipment" => view! { <Icon icon=i::FaUserSolid /> }.into_any(),
+                                                    _ => view! { <Icon icon=i::AiSearchOutlined /> }.into_any(),
+                                                }
+                                            }
+                                        } else {
+                                            match result.result_type.as_str() {
+                                                "item" => view! { <Icon icon=i::FaBoxOpenSolid /> }.into_any(),
+                                                "currency" => view! { <Icon icon=i::FaCoinsSolid /> }.into_any(),
+                                                "category" => view! { <Icon icon=i::FaListSolid /> }.into_any(),
+                                                "job equipment" => view! { <Icon icon=i::FaUserSolid /> }.into_any(),
+                                                _ => view! { <Icon icon=i::AiSearchOutlined /> }.into_any(),
+                                            }
+                                        }
+                                    }
+                                    <div class="flex flex-col">
+                                        <span class="font-medium">{result.title}</span>
+                                        <span class="text-xs text-[color:var(--color-text-muted)]">
+                                            {
+                                                let category = result.category.clone();
+                                                let result_type = result.result_type.clone();
+                                                move || {
+                                                    if let Some(cat) = &category {
+                                                        if !cat.is_empty() {
+                                                            format!("{} - {}", result_type, cat)
+                                                        } else {
+                                                            result_type.clone()
+                                                        }
+                                                    } else {
+                                                        result_type.clone()
+                                                    }
+                                                }
+                                            }
+                                        </span>
+                                    </div>
+                                </div>
+                            }
                         }
                         viewport_height=528.0
                         row_height=60.0
