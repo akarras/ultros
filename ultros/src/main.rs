@@ -7,6 +7,7 @@ mod item_update_service;
 pub mod leptos;
 #[cfg(feature = "profiling")]
 pub mod profiling;
+pub(crate) mod search_service;
 pub(crate) mod utils;
 mod web;
 mod web_metrics;
@@ -14,6 +15,7 @@ mod web_metrics;
 use crate::item_update_service::UpdateService;
 #[cfg(feature = "profiling")]
 use crate::profiling::start_profiling_server;
+use crate::search_service::SearchService;
 use crate::web::WebState;
 use ::leptos::config::get_configuration;
 use analyzer_service::AnalyzerService;
@@ -256,6 +258,7 @@ async fn main() -> Result<()> {
         db: db.clone(),
         world_cache: world_cache.clone(),
     };
+    let search_service = SearchService::new()?;
     let conf = get_configuration(Some("Cargo.toml")).unwrap();
     let mut leptos_options = conf.leptos_options;
     let git_hash = git_const::git_short_hash!();
@@ -278,6 +281,7 @@ async fn main() -> Result<()> {
         world_cache,
         world_helper,
         leptos_options,
+        search_service,
     };
     web::start_web(web_state).await;
     Ok(())

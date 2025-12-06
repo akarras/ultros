@@ -1,5 +1,4 @@
 use leptos::{
-    either::Either,
     html::{Div, Input},
     prelude::*,
     reactive::wrappers::write::SignalSetter,
@@ -7,10 +6,6 @@ use leptos::{
 use leptos_use::use_element_hover;
 use web_sys::KeyboardEvent;
 use web_sys::wasm_bindgen::JsCast;
-
-use crate::components::search_result::MatchFormatter;
-
-use super::search_box::fuzzy_search;
 
 #[component]
 pub fn Select<T, EF, L, ViewOut>(
@@ -39,18 +34,18 @@ where
         Memo::new(move |_| items.with(|i| i.iter().map(as_label).enumerate().collect::<Vec<_>>()));
     let search_results = Memo::new(move |_| {
         current_input.with(|input| {
-            let mut results = labels.with(|s| {
+            let input_lower = input.to_lowercase();
+            labels.with(|s| {
                 s.iter()
                     .filter_map(|(i, label)| {
-                        fuzzy_search(input, label).map(|m| (*i, label.clone(), m))
+                        if label.to_lowercase().contains(&input_lower) {
+                            Some((*i, label.clone()))
+                        } else {
+                            None
+                        }
                     })
                     .collect::<Vec<_>>()
-            });
-            results.sort_by_key(|(_, _, l)| l.score());
-            results
-                .into_iter()
-                .map(|(i, l, _)| (i, l))
-                .collect::<Vec<_>>()
+            })
         })
     });
     let final_result = Memo::new(move |_| {
@@ -159,12 +154,7 @@ where
                                 .map(|c| children(
                                     c,
                                     {
-                                        if let Some(m) = fuzzy_search(&current_input(), &data.1) {
-                                            let target = data.1.clone();
-                                            Either::Left(view! { <MatchFormatter m=m target=target /> })
-                                        } else {
-                                            Either::Right(view! { <div>{data.1.to_string()}</div> })
-                                        }.into_any()
+                                        view! { <div>{data.1.to_string()}</div> }.into_any()
                                     }
                                 ))}
                         </div>

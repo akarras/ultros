@@ -6,3 +6,4 @@ mod local_world_data;
 pub mod theme;
 pub mod user;
 pub use local_world_data::LocalWorldData;
+pub mod crafter_levels;
