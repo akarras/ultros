@@ -36,9 +36,9 @@ async-trait = '0.1'
 serde_json = "1.0.85"
 thiserror = "1.0.36"
 dotenvy = { workspace = true }
-metrics = "0.22.0"
+metrics = "0.24.3"
 envy = "0.4"
-metrics-exporter-prometheus = { version = "0.13.0", default-features = false }
+metrics-exporter-prometheus = { version = "0.18.0", default-features = false }
 serde_with = "3.0.0"
 tower-http = { version = "0.6.6", features = ["full"] }
 sha2 = "0.10.6"
@@ -49,7 +49,7 @@ smallvec = { version = "1.10.0", features = [
     "union",
 ] }
 itertools = "0.14.0"
-sitemap-rs = "0.2.0"
+sitemap-rs = "0.4.0"
 ultros-api-types = { path = "../ultros-api-types" }
 ultros-xiv-icons = { path = "../ultros-frontend/ultros-xiv-icons" }
 leptos = { workspace = true, features = ["ssr", "nightly"] }
@@ -68,11 +68,11 @@ isocountry = "0.3.2"
 git-const.workspace = true
 http-body-util = "0.1.0"
 arrayvec = "0.7.4"
-tikv-jemallocator = { version = "0.5.4", features = [
+tikv-jemallocator = { version = "0.6.1", features = [
     "profiling",
     "unprefixed_malloc_on_supported_platforms",
 ], optional = true }
-jemalloc_pprof = { version = "0.1.0", optional = true }
+jemalloc_pprof = { version = "0.8.1", optional = true }
 tantivy = "0.25.0"
 
 [features]
