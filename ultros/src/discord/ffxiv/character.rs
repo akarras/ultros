@@ -49,9 +49,11 @@ pub(crate) async fn register(
         .timeout(Duration::from_secs(5 * 60))
         .await
     {
-        if let poise::serenity_prelude::ComponentInteractionDataKind::StringSelect { values } = &msg.data.kind {
-             ctx.say(format!("selected {}", values[0])).await?;
-             // TODO lookup what value was selected from the list of interactions
+        if let poise::serenity_prelude::ComponentInteractionDataKind::StringSelect { values } =
+            &msg.data.kind
+        {
+            ctx.say(format!("selected {}", values[0])).await?;
+            // TODO lookup what value was selected from the list of interactions
         }
     } else {
         ctx.say("No choice selected").await?;

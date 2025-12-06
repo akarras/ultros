@@ -118,10 +118,11 @@ pub(crate) async fn start_discord(
         })
         .build();
 
-    let mut client = serenity::Client::builder(discord_token, serenity::GatewayIntents::non_privileged())
-        .framework(framework)
-        .await
-        .unwrap();
+    let mut client =
+        serenity::Client::builder(discord_token, serenity::GatewayIntents::non_privileged())
+            .framework(framework)
+            .await
+            .unwrap();
 
     client.start().await.unwrap();
 }
