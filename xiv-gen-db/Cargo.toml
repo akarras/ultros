@@ -3,6 +3,7 @@ name = "xiv-gen-db"
 description = "Generates a database from xiv-gen's csv tables & provides a static entry point that compresses/decompresses the database"
 version = "0.1.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
