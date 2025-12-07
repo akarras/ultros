@@ -3,6 +3,7 @@ pub mod add_to_list;
 pub mod apps_menu;
 pub mod cheapest_price;
 pub mod clipboard;
+pub mod crafter_settings;
 pub mod datacenter_name;
 pub mod fonts;
 pub mod gil;
