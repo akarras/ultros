@@ -1,8 +1,9 @@
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
-        gil::*, item_icon::*, query_button::QueryButton, skeleton::BoxSkeleton,
-        virtual_scroller::*, crafter_settings::CrafterSettings, tooltip::Tooltip, world_picker::WorldOnlyPicker,
+        crafter_settings::CrafterSettings, gil::*, item_icon::*, query_button::QueryButton,
+        skeleton::BoxSkeleton, tooltip::Tooltip, virtual_scroller::*,
+        world_picker::WorldOnlyPicker,
     },
     global_state::{
         LocalWorldData, cookies::Cookies, crafter_levels::CrafterLevels, home_world::use_home_world,
@@ -13,15 +14,14 @@ use humantime::{format_duration, parse_duration};
 use icondata as i;
 use leptos::{either::Either, prelude::*};
 use leptos_icons::*;
+use leptos_meta::{Meta, Title};
 use leptos_router::hooks::{query_signal, use_params_map};
 use std::{cmp::Reverse, collections::HashMap, fmt::Display, str::FromStr};
 use ultros_api_types::{
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     recent_sales::{RecentSales, SaleData},
     world_helper::AnyResult,
-    world::World,
 };
-use leptos_meta::{Meta, Title};
 use xiv_gen::{ItemId, Recipe};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -754,10 +754,8 @@ pub fn RecipeAnalyzer() -> impl IntoView {
 
     let (selected_world, set_selected_world) = signal(home_world.get_untracked());
     Effect::new(move |_| {
-        if let Some(home) = home_world.get() {
-            if selected_world.get_untracked().is_none() {
-                set_selected_world(Some(home));
-            }
+        if let Some(home) = home_world.get() && selected_world.get_untracked().is_none() {
+            set_selected_world(Some(home));
         }
     });
 

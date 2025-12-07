@@ -3,7 +3,10 @@ use crate::api::{
     get_characters, search_characters, unclaim_character,
 };
 use crate::components::meta::{MetaDescription, MetaTitle};
-use crate::components::{ad::*, crafter_settings::CrafterSettings, loading::*, toggle::Toggle, world_name::*, world_picker::*};
+use crate::components::{
+    ad::*, crafter_settings::CrafterSettings, loading::*, toggle::Toggle, world_name::*,
+    world_picker::*,
+};
 use crate::error::AppResult;
 use crate::global_state::cookies::Cookies;
 
@@ -302,7 +305,6 @@ fn DeleteUser() -> impl IntoView {
     }
     .into_any()
 }
-
 
 #[component]
 pub fn Settings() -> impl IntoView {
