@@ -1,8 +1,8 @@
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
-        gil::*, item_icon::*, meta::*, query_button::QueryButton, skeleton::BoxSkeleton,
-        virtual_scroller::*,
+        gil::*, item_icon::*, query_button::QueryButton, skeleton::BoxSkeleton,
+        virtual_scroller::*, crafter_settings::CrafterSettings, tooltip::Tooltip, world_picker::WorldOnlyPicker,
     },
     global_state::{
         LocalWorldData, cookies::Cookies, crafter_levels::CrafterLevels, home_world::use_home_world,
@@ -19,8 +19,17 @@ use ultros_api_types::{
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     recent_sales::{RecentSales, SaleData},
     world_helper::AnyResult,
+    world::World,
 };
+use leptos_meta::{Meta, Title};
 use xiv_gen::{ItemId, Recipe};
+
+#[derive(Clone, Debug, PartialEq)]
+struct SubcraftInfo {
+    item_id: ItemId,
+    amount: i32,
+    unit_cost: i32,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 struct RecipeProfitData {
@@ -31,7 +40,7 @@ struct RecipeProfitData {
     market_price: i32,
     cheapest_world_id: i32,
     ingredients_cost: Vec<(ItemId, i32)>, // ItemId, Cost
-    sub_craft_count: i32,
+    sub_crafts: Vec<SubcraftInfo>,
     avg_sale_interval_secs: Option<u64>,
     num_sold: usize,
     required_level: i32,
@@ -72,10 +81,10 @@ fn calculate_crafting_cost(
     depth: i32,
     max_depth: i32,
     use_subcrafts: bool,
-) -> (i32, i32) {
+) -> (i32, Vec<SubcraftInfo>) {
     // Use 64-bit intermediates with saturating math to avoid overflow in debug builds.
     let mut cost: i64 = 0;
-    let mut total_sub_crafts = 0;
+    let mut sub_crafts = Vec::new();
     // Helper to iterate ingredients
     let ingredients = [
         (recipe.item_ingredient_0, recipe.amount_ingredient_0),
@@ -99,7 +108,7 @@ fn calculate_crafting_cost(
             .unwrap_or(999_999_999) as i64; // High cost if not found
 
         let mut item_cost = market_price;
-        let mut best_sub_count = 0;
+        let mut best_sub_crafts = Vec::new();
 
         if use_subcrafts
             && depth < max_depth
@@ -107,7 +116,7 @@ fn calculate_crafting_cost(
         {
             // Find cheapest way to craft this ingredient
             for sub_recipe in sub_recipes {
-                let (craft_cost, sub_count) = calculate_crafting_cost(
+                let (craft_cost, sub_details) = calculate_crafting_cost(
                     sub_recipe,
                     prices,
                     recipes_by_output,
@@ -118,13 +127,23 @@ fn calculate_crafting_cost(
                 let craft_cost = craft_cost as i64;
                 if craft_cost < item_cost {
                     item_cost = craft_cost;
-                    best_sub_count = sub_count + 1; // +1 for this sub-craft
+                    best_sub_crafts = sub_details;
+                    // Add the direct subcraft itself
+                    best_sub_crafts.push(SubcraftInfo {
+                        item_id,
+                        amount: 1, // Will be scaled by 'amount' later
+                        unit_cost: craft_cost as i32,
+                    });
                 }
             }
         }
 
         if item_cost < market_price {
-            total_sub_crafts += best_sub_count;
+            // Scale subcrafts by the amount needed
+            for mut sub in best_sub_crafts {
+                sub.amount *= amount as i32;
+                sub_crafts.push(sub);
+            }
         }
 
         let amount = amount as i64;
@@ -138,7 +157,7 @@ fn calculate_crafting_cost(
         cost as i32
     };
 
-    (clamped_cost, total_sub_crafts)
+    (clamped_cost, sub_crafts)
 }
 
 fn compute_avg_interval_secs(sale: &SaleData) -> (usize, Option<u64>) {
@@ -317,7 +336,7 @@ fn RecipeAnalyzerTable(
                 .or(market_price_summary.hq.map(|d| d.world_id))
                 .unwrap_or(0);
 
-            let (craft_cost, sub_craft_count) = calculate_crafting_cost(
+            let (craft_cost, sub_crafts) = calculate_crafting_cost(
                 recipe,
                 &prices,
                 &recipes_by_output,
@@ -350,7 +369,7 @@ fn RecipeAnalyzerTable(
                 market_price,
                 cheapest_world_id,
                 ingredients_cost: vec![], // Populate if needed for tooltip
-                sub_craft_count,
+                sub_crafts,
                 avg_sale_interval_secs: avg_interval_secs,
                 num_sold,
                 required_level,
@@ -474,17 +493,10 @@ fn RecipeAnalyzerTable(
                 >
                      <div class="flex flex-col gap-4">
                 <Show when=move || !has_levels()>
-                    <div class="alert alert-warning">
-                        <Icon icon=i::AiWarningOutlined width="2em" height="2em" />
-                        <div>
-                            <h3 class="font-bold">"No Crafter Levels Set"</h3>
-                            <div class="text-sm">
-                                "Please configure your crafter levels in "
-                                <a href="/settings" class="link">"Settings"</a>
-                                " to see profitable recipes."
-                            </div>
-                        </div>
-                    </div>
+                    <div class="text-center p-8 text-brand-300 bg-brand-900/20 rounded-lg border border-brand-800">
+                    <h3 class="text-xl font-bold mb-2">"No Crafter Levels Configured"</h3>
+                    <p>"Please configure your crafter levels above to see profitable recipes."</p>
+                </div>
                 </Show>
 
                 <div class="flex flex-row gap-4 flex-wrap">
@@ -496,6 +508,9 @@ fn RecipeAnalyzerTable(
                                 on:change=move |ev| set_use_subcrafts(Some(event_target_checked(&ev)))
                             />
                             <label for="subcrafts">"Include Sub-crafts"</label>
+                            <div class="text-brand-300 cursor-help" title="If enabled, the analyzer will check if it's cheaper to craft intermediate ingredients rather than buying them from the market board.">
+                                <Icon icon=i::AiQuestionCircleOutlined />
+                            </div>
                         </div>
                         <select
                             class="input"
@@ -582,7 +597,7 @@ fn RecipeAnalyzerTable(
                             _ => "",
                         };
 
-                        let sub_craft_count = data.sub_craft_count;
+
 
                         let (avg_label, avg_title) = if let Some(secs) = data.avg_sale_interval_secs {
                             let days = secs / 86_400;
@@ -644,12 +659,40 @@ fn RecipeAnalyzerTable(
                                 </div>
                                 <div role="cell" class="px-4 py-2 w-30 text-right">
                                     <Gil amount=data.cost />
-                                    <Show when=move || { sub_craft_count > 0 }>
-                                        <div class="text-xs text-brand-300 flex items-center justify-end gap-1" title="Includes sub-crafts">
-                                            <Icon icon=i::FaHammerSolid width="0.8em" height="0.8em" />
-                                            <span>{sub_craft_count} " sub"</span>
-                                        </div>
-                                    </Show>
+                                    {
+                                        let has_sub_crafts = !data.sub_crafts.is_empty();
+                                        let sub_crafts = data.sub_crafts.clone();
+                                        view! {
+                                            <Show when=move || has_sub_crafts>
+                                                {
+                                                    let sub_crafts_for_text = sub_crafts.clone();
+                                                    let count = sub_crafts.len();
+                                                    view! {
+                                                        <Tooltip
+                                                            tooltip_text={
+                                                                let sub_crafts_details: Vec<(String, i32, i32)> = sub_crafts_for_text.iter().map(|sub| {
+                                                                    let name = items.get(&sub.item_id).map(|i| i.name.to_string()).unwrap_or("Unknown".to_string());
+                                                                    (name, sub.amount, sub.unit_cost)
+                                                                }).collect();
+                                                                Signal::derive(move || {
+                                                                    let mut tooltip = String::from("Includes sub-crafts:\n");
+                                                                    for (name, amount, cost) in &sub_crafts_details {
+                                                                        tooltip.push_str(&format!("• {}x {} ({} gil)\n", amount, name, cost));
+                                                                    }
+                                                                    tooltip
+                                                                })
+                                                            }
+                                                        >
+                                                            <div class="text-xs text-brand-300 flex items-center justify-end gap-1 cursor-help">
+                                                                <Icon icon=i::FaHammerSolid width="0.8em" height="0.8em" />
+                                                                <span>{count} " sub"</span>
+                                                            </div>
+                                                        </Tooltip>
+                                                    }
+                                                }
+                                            </Show>
+                                        }
+                                    }
                                 </div>
                                 <div role="cell" class="px-4 py-2 w-30 text-right">
                                     <Gil amount=data.market_price />
@@ -665,6 +708,18 @@ fn RecipeAnalyzerTable(
                 />
              </div>
         </div>
+    }
+}
+
+#[component]
+fn CollapseIcon(collapsed: Signal<bool>) -> impl IntoView {
+    view! {
+        <Show
+            when=collapsed
+            fallback=|| view! { <div class="ml-auto"><Icon icon=i::BiChevronDownRegular /></div> }
+        >
+            <div class="ml-auto"><Icon icon=i::BiChevronUpRegular /></div>
+        </Show>
     }
 }
 
@@ -693,22 +748,89 @@ pub fn RecipeAnalyzer() -> impl IntoView {
             .unwrap_or_else(|| "North-America".to_string())
     });
 
-    let global_cheapest_listings = Resource::new(region, move |region| async move {
-        get_cheapest_listings(region.as_str()).await
+    let global_cheapest_listings = Resource::new(region, move |region: String| async move {
+        get_cheapest_listings(&region).await
     });
 
-    let recent_sales = Resource::new(region, move |region| async move {
-        get_recent_sales_for_world(region.as_str()).await
+    let (selected_world, set_selected_world) = signal(home_world.get_untracked());
+    Effect::new(move |_| {
+        if let Some(home) = home_world.get() {
+            if selected_world.get_untracked().is_none() {
+                set_selected_world(Some(home));
+            }
+        }
+    });
+
+    let recent_sales = Resource::new(selected_world, move |world| async move {
+        if let Some(world) = world {
+            leptos::logging::log!("Fetching sales for world: {}", &world.name);
+            let res = get_recent_sales_for_world(&world.name).await;
+            match &res {
+                Ok(sales) => leptos::logging::log!("Sales result: {} items", sales.sales.len()),
+                Err(e) => leptos::logging::log!("Sales error: {}", e),
+            }
+            res
+        } else {
+            leptos::logging::log!("No world selected for sales");
+            Ok(RecentSales { sales: vec![] })
+        }
     });
 
     view! {
-         <div class="main-content p-6">
-            <MetaTitle title="Recipe Analyzer" />
-            <div class="container mx-auto max-w-7xl space-y-6">
-                <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">"Recipe Analyzer"</h1>
-                <p class="text-[color:var(--color-text-muted)]">
-                    "Find profitable crafting recipes based on current market prices. Set your crafter levels in settings to see relevant recipes."
-                </p>
+        <div class="flex flex-col gap-4 h-full">
+            <Title text="Recipe Analyzer - Ultros" />
+            <Meta name="description" content="Analyze crafting recipes for profitability" />
+
+            <div class="flex flex-col gap-4 p-4 bg-brand-900/50 rounded-lg border border-brand-800">
+                <div class="flex flex-row justify-between items-center">
+                    <h1 class="text-2xl font-bold text-brand-100">"Recipe Analyzer"</h1>
+                    <div class="flex flex-row gap-2 items-center">
+                        <Show when=move || recent_sales.get().is_none()>
+                            <div class="text-brand-300 text-sm animate-pulse">"Loading sales data..."</div>
+                        </Show>
+                        <Show when=move || recent_sales.get().and_then(|r| r.err()).is_some()>
+                            <div class="text-red-400 text-sm">"Error loading sales data"</div>
+                        </Show>
+                        <WorldOnlyPicker
+                            current_world=selected_world.into()
+                            set_current_world=set_selected_world.into()
+                        />
+                    </div>
+                </div>
+                {
+                    let (show_settings, set_show_settings) = signal(false);
+                    view! {
+                        <div class="panel p-4 rounded-xl bg-brand-900/20 border border-white/10">
+                            <button
+                                class="flex items-center gap-2 text-brand-300 hover:text-brand-200 transition-colors font-medium w-full"
+                                on:click=move |_| set_show_settings.update(|v| *v = !*v)
+                            >
+                                <Icon icon=i::AiSettingOutlined />
+                                "Adjust Crafter Levels"
+                                <CollapseIcon collapsed=show_settings.into() />
+                            </button>
+                            <div class=move || {
+                                if show_settings() {
+                                    "mt-4 block animate-in fade-in slide-in-from-top-2 duration-200"
+                                } else {
+                                    "hidden"
+                                }
+                            }>
+                                <CrafterSettings />
+                            </div>
+                        </div>
+                    }
+                }
+
+                <div class="flex flex-col md:flex-row items-center gap-2">
+                    <label class="text-[color:var(--brand-fg)] font-semibold">"Select World for Sales Data:"</label>
+                    <div class="w-full md:w-auto">
+                        <WorldOnlyPicker
+                            current_world=selected_world.into()
+                            set_current_world=set_selected_world.into()
+                        />
+                    </div>
+                </div>
 
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>
                     {move || {

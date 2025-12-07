@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::{fmt::Display, str::FromStr};
 
-#[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CrafterLevels {
     pub carpenter: i32,
     pub blacksmith: i32,
@@ -11,6 +11,21 @@ pub struct CrafterLevels {
     pub weaver: i32,
     pub alchemist: i32,
     pub culinarian: i32,
+}
+
+impl Default for CrafterLevels {
+    fn default() -> Self {
+        Self {
+            carpenter: 100,
+            blacksmith: 100,
+            armorer: 100,
+            goldsmith: 100,
+            leatherworker: 100,
+            weaver: 100,
+            alchemist: 100,
+            culinarian: 100,
+        }
+    }
 }
 
 impl Display for CrafterLevels {
