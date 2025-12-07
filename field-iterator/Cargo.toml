@@ -2,6 +2,7 @@
 name = "field-iterator"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
 
 [dependencies]
 field-iterator-macros = {path = "../proc-macros/field-iterator-macros"}

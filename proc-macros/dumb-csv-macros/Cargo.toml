@@ -2,6 +2,7 @@
 name = "dumb_csv_macros"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
 
 [lib]
 proc-macro = true
