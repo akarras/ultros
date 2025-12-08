@@ -1,5 +1,9 @@
 use crate::api::get_listings;
 use crate::components::price_history_chart::PriceHistoryChart;
+use crate::components::gil::Gil;
+use crate::components::datacenter_name::DatacenterName;
+use crate::components::world_name::WorldName;
+use ultros_api_types::world_helper::AnySelector;
 use crate::components::{
     ad::Ad, add_to_list::AddToList, clipboard::*, item_icon::*, listings_table::*, meta::*,
     recently_viewed::RecentItems, related_items::*, sale_history_table::*, skeleton::BoxSkeleton,
@@ -273,6 +277,148 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
 }
 
 #[component]
+fn SummaryCards(
+    listing_resource: Resource<Result<CurrentlyShownItem, AppError>>,
+) -> impl IntoView {
+    view! {
+        <Transition fallback=move || view! { <BoxSkeleton /> }>
+            {move || {
+                let data_ref = listing_resource.get();
+                if let Some(Ok(data)) = data_ref.as_ref() {
+                    let cheapest_nq = data.listings
+                        .iter()
+                        .filter(|(l, _)| !l.hq)
+                        .min_by_key(|(l, _)| l.price_per_unit)
+                        .cloned();
+
+                    let cheapest_hq = data.listings
+                        .iter()
+                        .filter(|(l, _)| l.hq)
+                        .min_by_key(|(l, _)| l.price_per_unit)
+                        .cloned();
+
+                    let recent_sales = &data.sales;
+                    let avg_price = if !recent_sales.is_empty() {
+                        recent_sales.iter().map(|s| s.price_per_item as i64).sum::<i64>() / recent_sales.len() as i64
+                    } else {
+                        0
+                    };
+                    
+                    let listings_count = data.listings.len();
+                    
+                    let has_nq = cheapest_nq.is_some();
+
+                    view! {
+                         <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                            // Card 1: Cheapest Found
+                             <a href="#listings" class="panel p-4 border-l-4 border-l-brand-500 hover:scale-[1.02] transition-all cursor-pointer group bg-gradient-to-br from-brand-900/50 to-transparent">
+                                 <div class="flex justify-between items-start">
+                                     <div>
+                                         <div class="text-xs font-bold text-brand-300 uppercase tracking-wider mb-2">"Cheapest Found"</div>
+                                         <div class="flex flex-col gap-3">
+                                             // NQ Display
+                                             {if let Some((listing, retainer)) = cheapest_nq {
+                                                 view! {
+                                                     <div>
+                                                         <div class="flex items-baseline gap-2">
+                                                             <span class="text-xs font-bold text-brand-400 bg-brand-900/50 px-1.5 py-0.5 rounded border border-brand-700/50">"NQ"</span>
+                                                             <div class="text-xl font-bold text-white">
+                                                                 <Gil amount=listing.price_per_unit />
+                                                             </div>
+                                                         </div>
+                                                         <div class="text-xs text-brand-200 mt-0.5 flex items-center gap-1 opacity-80">
+                                                             <Icon icon=icondata::FaGlobeSolid attr:class="text-[10px]" />
+                                                             <WorldName id=AnySelector::World(listing.world_id) />
+                                                         </div>
+                                                     </div>
+                                                 }.into_any()
+                                             } else {
+                                                 // Don't show "No NQ" if HQ exists to avoid clutter, or maybe small text?
+                                                 // If ONLY HQ exists, it will pop.
+                                                 match cheapest_hq {
+                                                    None => view! { <div class="text-lg text-gray-400 italic">"No listings"</div> }.into_any(),
+                                                    _ => ().into_any()
+                                                 }
+                                             }}
+
+                                             // HQ Display
+                                             {if let Some((listing, retainer)) = cheapest_hq {
+                                                 view! {
+                                                     <div class="relative">
+                                                         // Add a separator if NQ also exists
+                                                         <Show when=move || has_nq>
+                                                             <div class="absolute -top-1.5 left-0 w-8 border-t border-brand-700/30"></div>
+                                                         </Show>
+                                                         <div class="flex items-baseline gap-2">
+                                                             <span class="text-xs font-bold text-[#95c521] bg-[#95c521]/10 px-1.5 py-0.5 rounded border border-[#95c521]/20 flex items-center gap-1">
+                                                                 <Icon icon=icondata::FaStarSolid attr:class="text-[9px]" />
+                                                                 "HQ"
+                                                             </span>
+                                                             <div class="text-xl font-bold text-white">
+                                                                 <Gil amount=listing.price_per_unit />
+                                                             </div>
+                                                         </div>
+                                                         <div class="text-xs text-brand-200 mt-0.5 flex items-center gap-1 opacity-80">
+                                                             <Icon icon=icondata::FaGlobeSolid attr:class="text-[10px]" />
+                                                             <WorldName id=AnySelector::World(listing.world_id) />
+                                                         </div>
+                                                     </div>
+                                                 }.into_any()
+                                             } else {
+                                                 ().into_any()
+                                             }}
+                                         </div>
+                                     </div>
+                                     <Icon icon=icondata::FaCoinsSolid attr:class="text-3xl text-brand-500/20 group-hover:text-brand-500/40 transition-colors" />
+                                 </div>
+                             </a>
+
+                            // Card 2: Recent History
+                            <a href="#history" class="panel p-4 border-l-4 border-l-blue-500 hover:scale-[1.02] transition-all cursor-pointer group bg-gradient-to-br from-blue-900/20 to-transparent">
+                                 <div class="flex justify-between items-start">
+                                     <div>
+                                         <div class="text-xs font-bold text-blue-300 uppercase tracking-wider mb-1">"Recent Average"</div>
+                                         <div class="text-2xl font-bold text-white">
+                                            {if avg_price > 0 {
+                                                view! { <Gil amount=avg_price as i32 /> }.into_any()
+                                            } else {
+                                                view! { <span class="text-gray-400">"No Data"</span> }.into_any()
+                                            }}
+                                         </div>
+                                         <div class="text-sm text-blue-200 mt-1">
+                                             {format!("Based on {} sales", recent_sales.len())}
+                                         </div>
+                                     </div>
+                                     <Icon icon=icondata::FaChartLineSolid attr:class="text-3xl text-blue-500/20 group-hover:text-blue-500/40 transition-colors" />
+                                 </div>
+                            </a>
+
+                            // Card 3: Active Listings
+                            <a href="#listings" class="panel p-4 border-l-4 border-l-emerald-500 hover:scale-[1.02] transition-all cursor-pointer group bg-gradient-to-br from-emerald-900/20 to-transparent">
+                                 <div class="flex justify-between items-start">
+                                     <div>
+                                         <div class="text-xs font-bold text-emerald-300 uppercase tracking-wider mb-1">"Active Listings"</div>
+                                         <div class="text-2xl font-bold text-white">
+                                             {listings_count}
+                                         </div>
+                                         <div class="text-sm text-emerald-200 mt-1">
+                                             "Available now"
+                                         </div>
+                                     </div>
+                                     <Icon icon=icondata::FaListSolid attr:class="text-3xl text-emerald-500/20 group-hover:text-emerald-500/40 transition-colors" />
+                                 </div>
+                            </a>
+                         </div>
+                    }.into_any()
+                } else {
+                    ().into_any()
+                }
+            }}
+        </Transition>
+    }.into_any()
+}
+
+#[component]
 pub fn ChartWrapper(
     listing_resource: Resource<Result<CurrentlyShownItem, AppError>>,
     item_id: Memo<i32>,
@@ -381,7 +527,7 @@ pub fn ChartWrapper(
                                     </div>
                                     <a
                                         class="btn-primary"
-
+                                        target="_blank"
                                         href=move || format!("/itemcard/{}/{}", world(), item_id())
                                     >
                                         "Download PNG"
@@ -519,37 +665,36 @@ fn LowQualityTable(
 #[component]
 fn SalesDetails(listing_resource: Resource<Result<CurrentlyShownItem, AppError>>) -> impl IntoView {
     view! {
-        <div class="mt-8 space-y-6">
-            <Transition fallback=move || {
-                view! { <BoxSkeleton /> }
-            }>
-                {move || {
-                    let sales = Memo::new(move |_| {
-                        listing_resource
-                            .with(|l| {
-                                l.as_ref().and_then(|l| l.as_ref().map(|l| l.sales.clone()).ok())
-                            })
-                            .unwrap_or_default()
-                    });
+        // Removed mt-8 and space-y-6 wrapper to let grid control layout
+        <Transition fallback=move || {
+            view! { <BoxSkeleton /> }
+        }>
+            {move || {
+                let sales = Memo::new(move |_| {
+                    listing_resource
+                        .with(|l| {
+                            l.as_ref().and_then(|l| l.as_ref().map(|l| l.sales.clone()).ok())
+                        })
+                        .unwrap_or_default()
+                });
 
-                    view! {
-                        <div class="space-y-6">
-                            <div class="panel p-6">
-                                <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
-                                    "Sale History"
-                                </h2>
-                                <SaleHistoryTable sales=sales.into() />
-                            </div>
-
-                            <div class="panel p-6">
-                                <SalesInsights sales=sales.into() />
-                            </div>
+                view! {
+                    <div class="flex flex-col gap-6 h-full"> // Use flex col to stack table and insights
+                        <div class="panel p-6 flex-1">
+                            <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
+                                "Sale History"
+                            </h2>
+                            <SaleHistoryTable sales=sales.into() />
                         </div>
-                    }
-                        .into_any()
-                }}
-            </Transition>
-        </div>
+
+                        <div class="panel p-6">
+                            <SalesInsights sales=sales.into() />
+                        </div>
+                    </div>
+                }
+                    .into_any()
+            }}
+        </Transition>
     }
     .into_any()
 }
@@ -569,13 +714,20 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
         tracing::info!(?val, "Listings updated");
     });
     view! {
-        <div class="container mx-auto px-4 py-8">
-            <div class="grid grid-cols-1 gap-6">
-                <ChartWrapper listing_resource item_id world />
+        <div class="w-full py-8 text-[color:var(--color-text)]">
+            <SummaryCards listing_resource />
+
+            <div id="listings" class="grid grid-cols-1 gap-6">
                 <HighQualityTable listing_resource />
                 <LowQualityTable listing_resource />
             </div>
-            <SalesDetails listing_resource />
+            
+            <div id="history" class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
+                 <div class="lg:sticky lg:top-24 h-fit"> // Make chart sticky? Or just normal col.
+                     <ChartWrapper listing_resource item_id world />
+                 </div>
+                 <SalesDetails listing_resource />
+            </div>
 
             <div class="mt-6 mx-auto">
                 <Ad class="h-[336px] w-[280px] rounded-xl overflow-hidden" />
@@ -666,80 +818,84 @@ pub fn ItemView() -> impl IntoView {
         />
         <Link rel="canonical" prop:href=move || format!("https://ultros.app/item/{}", item_id()) />
         <div class="min-h-screen">
-            <div class="container mx-auto px-4 py-6">
-                <div class="flex flex-col md:flex-row items-start gap-4 p-4 panel">
-                    <div class="flex items-center gap-4">
-                        <ItemIcon item_id icon_size=IconSize::Large />
-                        <div class="flex flex-col">
-                            <h1 class="text-3xl font-bold text-[color:var(--color-text)] flex items-center gap-2">
-                                {item_name}
-                                <Clipboard clipboard_text=Signal::derive(move || {
-                                    item_name().to_string()
-                                }) />
-                            </h1>
-                            <div class="text-brand-300 text-lg">
-                                {move || {
-                                    item_category()
-                                        .and_then(|c| item_search_category().map(|s| (c, s)))
-                                        .map(|(c, s)| {
-                                            view! {
-                                                <a
-                                                    class="text-brand-300 hover:text-brand-200 transition-colors"
-                                                    href=["/items/category/", &s.name.replace("/", "%2F")]
-                                                        .concat()
-                                                >
-                                                    {c.name.as_str()}
-                                                </a>
-                                            }
-                                        })
-                                }}
+            <div class="w-full px-4 py-6">
+                <div class="flex flex-col gap-6 p-6 panel">
+                    <div class="flex flex-col md:flex-row items-start gap-4">
+                        <div class="flex items-center gap-4 flex-1">
+                            <ItemIcon item_id icon_size=IconSize::Large />
+                            <div class="flex flex-col">
+                                <h1 class="text-3xl font-bold text-[color:var(--color-text)] flex items-center gap-2">
+                                    {item_name}
+                                    <Clipboard clipboard_text=Signal::derive(move || {
+                                        item_name().to_string()
+                                    }) />
+                                </h1>
+                                <div class="text-brand-300 text-lg">
+                                    {move || {
+                                        item_category()
+                                            .and_then(|c| item_search_category().map(|s| (c, s)))
+                                            .map(|(c, s)| {
+                                                view! {
+                                                    <a
+                                                        class="text-brand-300 hover:text-brand-200 transition-colors"
+                                                        href=["/items/category/", &s.name.replace("/", "%2F")]
+                                                            .concat()
+                                                    >
+                                                        {c.name.as_str()}
+                                                    </a>
+                                                }
+                                            })
+                                    }}
+                                </div>
                             </div>
+                        </div>
+
+                        <div class="flex flex-wrap gap-2 items-center">
+                            <div class="cursor-pointer"><AddToList item_id /></div>
+                            <a
+                                class="btn-primary"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                aria-label="Open Universalis market page in a new tab"
+                                href=move || format!("https://universalis.app/market/{}", item_id())
+                            >
+                                "Universalis"
+                            </a>
+                            <a
+                                class="btn-primary"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                aria-label="Open Garlandtools item page in a new tab"
+                                href=move || format!("https://garlandtools.org/db/#item/{}", item_id())
+                            >
+                                "Garlandtools"
+                            </a>
                         </div>
                     </div>
 
-                    <div class="md:ml-auto flex flex-wrap gap-2 items-center">
-                        <div class="cursor-pointer"><AddToList item_id /></div>
-                        <a
-                            class="btn-primary"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            aria-label="Open Universalis market page in a new tab"
-                            href=move || format!("https://universalis.app/market/{}", item_id())
+                    // Moved Description and Item Level here
+                    <div class="space-y-3 pt-4 border-t border-[color:var(--color-outline)] text-[color:var(--color-text)]/90">
+                        <div class="flex items-center gap-2">
+                            <span class="text-brand-300 font-medium tracking-wide text-sm uppercase">Item Level</span>
+                            <span class="bg-brand-900/40 text-brand-100 px-2 py-0.5 rounded text-sm font-bold border border-brand-700/50">
+                                {move || item().map(|item| item.level_item.0).unwrap_or_default()}
+                            </span>
+                            <div class="flex-grow"></div>
+                             <div>{move || view! { <ItemStats item_id=ItemId(item_id()) /> }}</div>
+                        </div>
+                        <div
+                            class=""
+                            class:hidden=move || { item_description().is_empty() }
                         >
-                            "Universalis"
-                        </a>
-                        <a
-                            class="btn-primary"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            aria-label="Open Garlandtools item page in a new tab"
-                            href=move || format!("https://garlandtools.org/db/#item/{}", item_id())
-                        >
-                            "Garlandtools"
-                        </a>
+                            {move || view! { <UIText text=item_description().to_string() /> }}
+                        </div>
                     </div>
-                </div>
-
-                <div class="mt-4 space-y-3 text-[color:var(--color-text)]/90">
-                    <div class="flex items-center gap-2">
-                        <span class="text-brand-300">Item Level:</span>
-                        <span class="bg-brand-900/30 px-2 py-1 rounded">
-                            {move || item().map(|item| item.level_item.0).unwrap_or_default()}
-                        </span>
-                    </div>
-                    <div
-                        class="panel p-4 "
-                        class:hidden=move || { item_description().is_empty() }
-                    >
-                        {move || view! { <UIText text=item_description().to_string() /> }}
-                    </div>
-                    <div>{move || view! { <ItemStats item_id=ItemId(item_id()) /> }}</div>
                 </div>
             </div>
 
             <WorldMenu world_name=world item_id />
 
-            <div class="main-content">
+            <div class="main-content px-4">
                 <ListingsContent item_id world />
                 <div class="mt-6 panel p-3">
                     <RelatedItems item_id=Signal::from(item_id) />

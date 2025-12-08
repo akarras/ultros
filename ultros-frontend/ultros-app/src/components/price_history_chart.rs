@@ -40,6 +40,16 @@ pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl 
         let _ = theme.mode.get();
         let _ = theme.palette.get();
         if let Some(canvas) = canvas.get() {
+            #[cfg(feature = "hydrate")]
+            {
+                use wasm_bindgen::JsCast;
+                if let Ok(Some(ctx)) = canvas
+                    .get_context("2d")
+                    .map(|c| c.and_then(|c| c.dyn_into::<web_sys::CanvasRenderingContext2d>().ok()))
+                {
+                    ctx.clear_rect(0.0, 0.0, width.get_untracked(), height.get_untracked());
+                }
+            }
             let backend = CanvasBackend::with_canvas_object(canvas.clone()).unwrap();
             // if there's an error drawing, we should hide the canvas
 
