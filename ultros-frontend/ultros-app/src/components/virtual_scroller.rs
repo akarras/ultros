@@ -53,28 +53,17 @@ impl Fenwick {
 /// You can provide a header and header_height; the header will render sticky inside the scroll container,
 /// and virtualization will account for the header height.
 #[component]
-
 pub fn VirtualScroller<T, D, V, KF, K>(
     each: Signal<Vec<T>>,
-
     key: KF,
-
     view: D,
-
     viewport_height: f64,
-
     row_height: f64,
-
     #[prop(optional, into)] header: Option<AnyView>,
-
     #[prop(optional)] header_height: f64,
-
     #[prop(optional)] overscan: u32,
-
     #[prop(optional)] variable_height: bool,
-
     #[prop(optional, into)] scroll_to_index: Option<Signal<Option<usize>>>,
-
     #[prop(optional)] scroller_ref: Option<NodeRef<leptos::html::Div>>,
 ) -> impl IntoView
 where
@@ -265,17 +254,9 @@ where
                     }
                 }
             }
-
-
-
-
             node_ref=scroller
-
-
             class="overflow-y-auto overflow-x-visible w-full will-change-scroll contain-paint forced-layer"
-
             style=format!("height: {}px;", viewport_height.ceil() as u32)
-
         >
             {header_opt.map(|h| view! { <div class="sticky top-0 z-10 content-visible contain-content">{h}</div> })}
             <div
