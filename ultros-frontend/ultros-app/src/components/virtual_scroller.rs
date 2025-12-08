@@ -157,69 +157,68 @@ where
 
     // Scroll target into view when requested (moved after layout signals are defined)
     if let Some(scroll_sig) = scroll_to_index {
-        let scroller = scroller.clone();
         Effect::new(move |_| {
-            if let Some(target) = scroll_sig.get() {
-                if let Some(div) = scroller.get() {
-                    // approximate top of target row using measured prefix sums
-                    let row_top = target as f64 * row_height + fenwick.with(|f| f.sum(target));
-                    let current = div.scroll_top() as f64;
-                    let visible_top = current + header_h;
-                    let visible_bottom = current + header_h + effective_viewport;
-                    let row_bottom = row_top + avg_row_height();
-                    let bottom_pad = 16.0;
-                    // decide desired scrollTop
-                    let desired = if row_top < visible_top - 1.0 {
-                        (row_top - header_h).max(0.0)
-                    } else if row_bottom > visible_bottom + 1.0 {
-                        (row_bottom - (header_h + effective_viewport) + bottom_pad).max(0.0)
-                    } else {
-                        current
-                    };
-                    // smooth scroll when we actually need to move
-                    if (desired - current).abs() > 0.5 {
-                        if let Some(w) = window() {
-                            let start_time = Rc::new(RefCell::new(None::<f64>));
-                            let from = current;
-                            let to = desired;
-                            let dur = 200.0; // ms
-                            let cb_ref: Rc<RefCell<Option<Closure<dyn FnMut(f64)>>>> =
-                                Rc::new(RefCell::new(None));
-                            let cb_ref_clone = cb_ref.clone();
-                            let start_time_clone = start_time.clone();
-                            let div_clone = div.clone();
-                            *cb_ref.borrow_mut() = Some(Closure::wrap(Box::new(move |ts: f64| {
-                                let mut st = start_time_clone.borrow_mut();
-                                let s = st.get_or_insert(ts);
-                                let t = ((ts - *s) / dur).min(1.0).max(0.0);
-                                // easeOutCubic
-                                let ease = 1.0 - (1.0 - t) * (1.0 - t) * (1.0 - t);
-                                let val = from + (to - from) * ease;
-                                div_clone.set_scroll_top(val.round() as i32);
-                                if t < 1.0 {
-                                    if let Some(w) = window() {
-                                        let _ = w.request_animation_frame(
-                                            cb_ref_clone
-                                                .borrow()
-                                                .as_ref()
-                                                .unwrap()
-                                                .as_ref()
-                                                .unchecked_ref(),
-                                        );
-                                    }
-                                } else {
-                                    // drop the closure to avoid leaks
-                                    cb_ref_clone.borrow_mut().take();
+            if let Some(target) = scroll_sig.get()
+                && let Some(div) = scroller.get()
+            {
+                // approximate top of target row using measured prefix sums
+                let row_top = target as f64 * row_height + fenwick.with(|f| f.sum(target));
+                let current = div.scroll_top() as f64;
+                let visible_top = current + header_h;
+                let visible_bottom = current + header_h + effective_viewport;
+                let row_bottom = row_top + avg_row_height();
+                let bottom_pad = 16.0;
+                // decide desired scrollTop
+                let desired = if row_top < visible_top - 1.0 {
+                    (row_top - header_h).max(0.0)
+                } else if row_bottom > visible_bottom + 1.0 {
+                    (row_bottom - (header_h + effective_viewport) + bottom_pad).max(0.0)
+                } else {
+                    current
+                };
+                // smooth scroll when we actually need to move
+                if (desired - current).abs() > 0.5 {
+                    if let Some(w) = window() {
+                        let start_time = Rc::new(RefCell::new(None::<f64>));
+                        let from = current;
+                        let to = desired;
+                        let dur = 200.0; // ms
+                        type Callback = Closure<dyn FnMut(f64)>;
+                        let cb_ref: Rc<RefCell<Option<Callback>>> = Rc::new(RefCell::new(None));
+                        let cb_ref_clone = cb_ref.clone();
+                        let start_time_clone = start_time.clone();
+                        let div_clone = div.clone();
+                        *cb_ref.borrow_mut() = Some(Closure::wrap(Box::new(move |ts: f64| {
+                            let mut st = start_time_clone.borrow_mut();
+                            let s = st.get_or_insert(ts);
+                            let t = ((ts - *s) / dur).clamp(0.0, 1.0);
+                            // easeOutCubic
+                            let ease = 1.0 - (1.0 - t) * (1.0 - t) * (1.0 - t);
+                            let val = from + (to - from) * ease;
+                            div_clone.set_scroll_top(val.round() as i32);
+                            if t < 1.0 {
+                                if let Some(w) = window() {
+                                    let _ = w.request_animation_frame(
+                                        cb_ref_clone
+                                            .borrow()
+                                            .as_ref()
+                                            .unwrap()
+                                            .as_ref()
+                                            .unchecked_ref(),
+                                    );
                                 }
-                            })
-                                as Box<dyn FnMut(f64)>));
-                            let _ = w.request_animation_frame(
-                                cb_ref.borrow().as_ref().unwrap().as_ref().unchecked_ref(),
-                            );
-                        } else {
-                            // fallback without rAF
-                            div.set_scroll_top(desired.round() as i32);
-                        }
+                            } else {
+                                // drop the closure to avoid leaks
+                                cb_ref_clone.borrow_mut().take();
+                            }
+                        })
+                            as Box<dyn FnMut(f64)>));
+                        let _ = w.request_animation_frame(
+                            cb_ref.borrow().as_ref().unwrap().as_ref().unchecked_ref(),
+                        );
+                    } else {
+                        // fallback without rAF
+                        div.set_scroll_top(desired.round() as i32);
                     }
                 }
             }
