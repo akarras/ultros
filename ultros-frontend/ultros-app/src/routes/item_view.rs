@@ -1,9 +1,7 @@
 use crate::api::get_listings;
-use crate::components::price_history_chart::PriceHistoryChart;
 use crate::components::gil::Gil;
-use crate::components::datacenter_name::DatacenterName;
+use crate::components::price_history_chart::PriceHistoryChart;
 use crate::components::world_name::WorldName;
-use ultros_api_types::world_helper::AnySelector;
 use crate::components::{
     ad::Ad, add_to_list::AddToList, clipboard::*, item_icon::*, listings_table::*, meta::*,
     recently_viewed::RecentItems, related_items::*, sale_history_table::*, skeleton::BoxSkeleton,
@@ -21,6 +19,7 @@ use leptos_router::components::A;
 use leptos_router::hooks::use_params_map;
 use leptos_router::location::Url;
 use ultros_api_types::CurrentlyShownItem;
+use ultros_api_types::world_helper::AnySelector;
 use ultros_api_types::world_helper::{AnyResult, OwnedResult};
 use xiv_gen::ItemId;
 
@@ -277,9 +276,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
 }
 
 #[component]
-fn SummaryCards(
-    listing_resource: Resource<Result<CurrentlyShownItem, AppError>>,
-) -> impl IntoView {
+fn SummaryCards(listing_resource: Resource<Result<CurrentlyShownItem, AppError>>) -> impl IntoView {
     view! {
         <Transition fallback=move || view! { <BoxSkeleton /> }>
             {move || {
@@ -303,9 +300,7 @@ fn SummaryCards(
                     } else {
                         0
                     };
-                    
                     let listings_count = data.listings.len();
-                    
                     let has_nq = cheapest_nq.is_some();
 
                     view! {
@@ -317,7 +312,7 @@ fn SummaryCards(
                                          <div class="text-xs font-bold text-brand-300 uppercase tracking-wider mb-2">"Cheapest Found"</div>
                                          <div class="flex flex-col gap-3">
                                              // NQ Display
-                                             {if let Some((listing, retainer)) = cheapest_nq {
+                                             {if let Some((listing, _retainer)) = cheapest_nq {
                                                  view! {
                                                      <div>
                                                          <div class="flex items-baseline gap-2">
@@ -342,7 +337,7 @@ fn SummaryCards(
                                              }}
 
                                              // HQ Display
-                                             {if let Some((listing, retainer)) = cheapest_hq {
+                                             {if let Some((listing, _retainer)) = cheapest_hq {
                                                  view! {
                                                      <div class="relative">
                                                          // Add a separator if NQ also exists
@@ -721,7 +716,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
                 <HighQualityTable listing_resource />
                 <LowQualityTable listing_resource />
             </div>
-            
+
             <div id="history" class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
                  <div class="lg:sticky lg:top-24 h-fit"> // Make chart sticky? Or just normal col.
                      <ChartWrapper listing_resource item_id world />
