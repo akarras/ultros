@@ -17,21 +17,40 @@ pub fn SearchBox() -> impl IntoView {
 
     use crate::api::search as api_search;
 
-    // Use a signal for results to avoid hydration issues with Resources
-    let (search_results, set_search_results) = signal(Vec::new());
-    // Serial ID for cancellation
+    // Search results and request tracking
+    let (search_results, set_search_results) = signal::<Vec<SearchResult>>(Vec::new());
     let (search_id, set_search_id) = signal(0usize);
 
+    // Keyboard navigation focus handling
+    let (focused_index, set_focused_index) = signal::<Option<usize>>(None);
+
+    // Currently-focused result's URL for highlight/selection
+    let focused_url: Signal<Option<String>> = Signal::derive(move || {
+        focused_index.get().and_then(|idx| {
+            search_results
+                .with(|v: &Vec<SearchResult>| v.get(idx).map(|r: &SearchResult| r.url.clone()))
+        })
+    });
+
+    // When results change, reset the focused index to the first item (if any)
+    Effect::new(move |_| {
+        let len = search_results.with(|v: &Vec<SearchResult>| v.len());
+        if len > 0 {
+            set_focused_index.set(Some(0));
+        } else {
+            set_focused_index.set(None);
+        }
+    });
+
+    // Debounced search effect with cancellation via serial search_id
     Effect::new(move |_| {
         let s = search.get();
-        // Increment ID on every change
         set_search_id.update(|n| *n += 1);
         let current_id = search_id.get_untracked();
 
         spawn_local(async move {
-            // Debounce
             TimeoutFuture::new(300).await;
-            // Check if cancelled
+
             if search_id.get_untracked() != current_id {
                 return;
             }
@@ -40,9 +59,9 @@ pub fn SearchBox() -> impl IntoView {
                 set_search_results.set(vec![]);
                 return;
             }
+
             match api_search(&s).await {
                 Ok(results) => {
-                    // Check if cancelled again before setting results
                     if search_id.get_untracked() == current_id {
                         set_search_results.set(results);
                     }
@@ -57,6 +76,7 @@ pub fn SearchBox() -> impl IntoView {
         });
     });
 
+    // Hotkey to focus search (Cmd+K / Ctrl+K)
     use_hotkeys!(("MetaLeft+KeyK,ControlLeft+KeyK", "*") => move |_| {
         set_active(true);
         if let Some(input) = text_input.get() {
@@ -64,12 +84,14 @@ pub fn SearchBox() -> impl IntoView {
         }
     });
 
+    // Escape binding on the input (kept as-is)
     leptos_hotkeys::use_hotkeys_ref(
         text_input,
         "Escape".to_string(),
         Callback::new(move |_| {}),
         vec!["*".to_string()],
     );
+
     let on_input = move |ev| {
         set_search(event_target_value(&ev));
     };
@@ -84,8 +106,11 @@ pub fn SearchBox() -> impl IntoView {
     let item_search = move || search_results.get();
 
     let navigate_keydown = navigate.clone();
+
+    // Keyboard navigation for Up/Down; Enter uses focused item
     let keydown = move |e: KeyboardEvent| {
         let key = e.key();
+
         if key == "Escape" {
             if search.get_untracked().is_empty() {
                 if let Some(input) = text_input.get() {
@@ -95,16 +120,44 @@ pub fn SearchBox() -> impl IntoView {
             } else {
                 set_search("".to_string());
             }
-        } else if key == "Enter"
-            && let Some(first) = item_search().first()
-        {
-            navigate_keydown(&first.url, NavigateOptions::default());
-            set_search("".to_string());
-            if let Some(input) = text_input.get() {
-                let _ = input.blur();
+        } else if key == "ArrowDown" {
+            e.prevent_default();
+            let len = search_results.with(|v: &Vec<SearchResult>| v.len());
+            if len > 0 {
+                let next = focused_index
+                    .get_untracked()
+                    .unwrap_or(0)
+                    .saturating_add(1)
+                    .min(len.saturating_sub(1));
+                set_focused_index.set(Some(next));
+            }
+        } else if key == "ArrowUp" {
+            e.prevent_default();
+            let len = search_results.with(|v: &Vec<SearchResult>| v.len());
+            if len > 0 {
+                let current = focused_index.get_untracked().unwrap_or(0);
+                let next = current.saturating_sub(1);
+                set_focused_index.set(Some(next));
+            }
+        } else if key == "Enter" {
+            if let Some(url) = focused_url.get_untracked() {
+                navigate_keydown(&url, NavigateOptions::default());
+                set_search("".to_string());
+                set_active(false);
+                if let Some(input) = text_input.get() {
+                    let _ = input.blur();
+                }
+            } else if let Some(first) = item_search().first() {
+                navigate_keydown(&first.url, NavigateOptions::default());
+                set_search("".to_string());
+                set_active(false);
+                if let Some(input) = text_input.get() {
+                    let _ = input.blur();
+                }
             }
         }
     };
+
     view! {
         <div class="relative md:w-full sm:w-[424px]">
             <div class="relative">
@@ -116,7 +169,6 @@ pub fn SearchBox() -> impl IntoView {
                     on:focusout=focus_out
                     placeholder="Search items, currencies, categories... (⌘K / CTRL K)"
                     class="input w-full pl-10"
-
                     type="text"
                     prop:value=search
                 />
@@ -137,14 +189,29 @@ pub fn SearchBox() -> impl IntoView {
                         view=move |result: SearchResult| {
                             let url = result.url.clone();
                             let navigate = navigate.clone();
+
+                            // Clone URL for different closures to satisfy borrow checker
+                            let url_for_class = url.clone();
+                            let url_for_click = url.clone();
+
                             view! {
-                                <div class="p-2 hover:bg-[color:var(--color-background-elevated)] cursor-pointer flex items-center gap-2"
-                                     on:click=move |_| {
-                                         navigate(&url, NavigateOptions::default());
-                                         set_search("".to_string());
-                                     }
+                                <div
+                                    class=move || {
+                                        let hl = match focused_url.get() {
+                                            Some(f) if f == url_for_class => " bg-[color:var(--color-background-elevated)]",
+                                            _ => "",
+                                        };
+                                        format!("p-2 hover:bg-[color:var(--color-background-elevated)] cursor-pointer flex items-center gap-2{}", hl)
+                                    }
+                                    on:click=move |_| {
+                                        navigate(&url_for_click, NavigateOptions::default());
+                                        set_search("".to_string());
+                                        set_active(false);
+                                        if let Some(input) = text_input.get() {
+                                            let _ = input.blur();
+                                        }
+                                    }
                                 >
-                                    // Icon based on type or icon_id
                                     {
                                         if let Some(icon_id) = result.icon_id {
                                             if icon_id > 0 {
@@ -204,6 +271,7 @@ pub fn SearchBox() -> impl IntoView {
                         overscan=10
                         header_height=0.0
                         variable_height=false
+                        scroll_to_index=Signal::derive(move || focused_index.get())
 
                     />
                 </div>
