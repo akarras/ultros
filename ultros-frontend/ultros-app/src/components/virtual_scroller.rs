@@ -1,5 +1,6 @@
 use leptos::prelude::*;
 use std::hash::Hash;
+use std::{cell::RefCell, rc::Rc};
 use web_sys::wasm_bindgen::JsCast;
 use web_sys::wasm_bindgen::closure::Closure;
 use web_sys::{HtmlDivElement, window};
@@ -62,6 +63,8 @@ pub fn VirtualScroller<T, D, V, KF, K>(
     #[prop(optional)] header_height: f64,
     #[prop(optional)] overscan: u32,
     #[prop(optional)] variable_height: bool,
+    #[prop(optional, into)] scroll_to_index: Option<Signal<Option<usize>>>,
+    #[prop(optional)] scroller_ref: Option<NodeRef<leptos::html::Div>>,
 ) -> impl IntoView
 where
     D: Fn(T) -> V + 'static + Clone + Send,
@@ -97,6 +100,10 @@ where
     });
 
     // dataset reset handled by length change effect
+    let scroller: NodeRef<leptos::html::Div> = match scroller_ref {
+        Some(r) => r,
+        None => NodeRef::<leptos::html::Div>::new(),
+    };
 
     // use memo here so our signals only retrigger if the value actually changed.
     let child_start = Memo::new(move |_| {
@@ -137,6 +144,75 @@ where
     let children_shown =
         ((effective_viewport / avg_row_height()).ceil() as u32).max(1) + render_ahead;
 
+    // Scroll target into view when requested (moved after layout signals are defined)
+    if let Some(scroll_sig) = scroll_to_index {
+        Effect::new(move |_| {
+            if let Some(target) = scroll_sig.get()
+                && let Some(div) = scroller.get()
+            {
+                // approximate top of target row using measured prefix sums
+                let row_top = target as f64 * row_height + fenwick.with(|f| f.sum(target));
+                let current = div.scroll_top() as f64;
+                let visible_top = current + header_h;
+                let visible_bottom = current + header_h + effective_viewport;
+                let row_bottom = row_top + avg_row_height();
+                let bottom_pad = 16.0;
+                // decide desired scrollTop
+                let desired = if row_top < visible_top - 1.0 {
+                    (row_top - header_h).max(0.0)
+                } else if row_bottom > visible_bottom + 1.0 {
+                    (row_bottom - (header_h + effective_viewport) + bottom_pad).max(0.0)
+                } else {
+                    current
+                };
+                // smooth scroll when we actually need to move
+                if (desired - current).abs() > 0.5 {
+                    if let Some(w) = window() {
+                        let start_time = Rc::new(RefCell::new(None::<f64>));
+                        let from = current;
+                        let to = desired;
+                        let dur = 200.0; // ms
+                        type Callback = Closure<dyn FnMut(f64)>;
+                        let cb_ref: Rc<RefCell<Option<Callback>>> = Rc::new(RefCell::new(None));
+                        let cb_ref_clone = cb_ref.clone();
+                        let start_time_clone = start_time.clone();
+                        let div_clone = div.clone();
+                        *cb_ref.borrow_mut() = Some(Closure::wrap(Box::new(move |ts: f64| {
+                            let mut st = start_time_clone.borrow_mut();
+                            let s = st.get_or_insert(ts);
+                            let t = ((ts - *s) / dur).clamp(0.0, 1.0);
+                            // easeOutCubic
+                            let ease = 1.0 - (1.0 - t) * (1.0 - t) * (1.0 - t);
+                            let val = from + (to - from) * ease;
+                            div_clone.set_scroll_top(val.round() as i32);
+                            if t < 1.0 {
+                                if let Some(w) = window() {
+                                    let _ = w.request_animation_frame(
+                                        cb_ref_clone
+                                            .borrow()
+                                            .as_ref()
+                                            .unwrap()
+                                            .as_ref()
+                                            .unchecked_ref(),
+                                    );
+                                }
+                            } else {
+                                // drop the closure to avoid leaks
+                                cb_ref_clone.borrow_mut().take();
+                            }
+                        })
+                            as Box<dyn FnMut(f64)>));
+                        let _ = w.request_animation_frame(
+                            cb_ref.borrow().as_ref().unwrap().as_ref().unchecked_ref(),
+                        );
+                    } else {
+                        // fallback without rAF
+                        div.set_scroll_top(desired.round() as i32);
+                    }
+                }
+            }
+        });
+    }
     let virtual_children = Memo::new(move |_| {
         each.with(|children| {
             let array_size = children.len();
@@ -178,7 +254,7 @@ where
                     }
                 }
             }
-
+            node_ref=scroller
             class="overflow-y-auto overflow-x-visible w-full will-change-scroll contain-paint forced-layer"
             style=format!("height: {}px;", viewport_height.ceil() as u32)
         >
@@ -191,7 +267,8 @@ where
                         {
                             let base = each.with(|children| children.len() as f64) * row_height;
                             let delta_total = fenwick.with(|f| f.sum(children_len()));
-                            (base + delta_total).ceil() as u32
+                            let bottom_pad = 16.0;
+                            (base + delta_total + bottom_pad).ceil() as u32
                         },
                     )
                 }>
