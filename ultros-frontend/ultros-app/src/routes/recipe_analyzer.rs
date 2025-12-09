@@ -772,12 +772,12 @@ pub fn RecipeAnalyzer() -> impl IntoView {
         get_cheapest_listings(&region).await
     });
 
-    let (selected_world, set_selected_world) = signal(home_world.get_untracked());
+    let (selected_world, set_selected_world) = signal(None);
     Effect::new(move |_| {
-        if let Some(home) = home_world.get()
-            && selected_world.get_untracked().is_none()
-        {
-            set_selected_world(Some(home));
+        if selected_world.get_untracked().is_none() {
+            if let Some(home) = home_world.get() {
+                set_selected_world(Some(home));
+            }
         }
     });
 
@@ -811,10 +811,6 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                         <Show when=move || recent_sales.get().and_then(|r| r.err()).is_some()>
                             <div class="text-red-400 text-sm">"Error loading sales data"</div>
                         </Show>
-                        <WorldOnlyPicker
-                            current_world=selected_world.into()
-                            set_current_world=set_selected_world.into()
-                        />
                     </div>
                 </div>
                 {
@@ -842,15 +838,17 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                     }
                 }
 
-                <div class="flex flex-col md:flex-row items-center gap-2">
-                    <label class="text-[color:var(--brand-fg)] font-semibold">"Select World for Sales Data:"</label>
-                    <div class="w-full md:w-auto">
-                        <WorldOnlyPicker
-                            current_world=selected_world.into()
-                            set_current_world=set_selected_world.into()
-                        />
+                <Show when=move || selected_world.get().is_some()>
+                    <div class="flex flex-col md:flex-row items-center gap-2">
+                        <label class="text-[color:var(--brand-fg)] font-semibold">"Select World for Sales Data:"</label>
+                        <div class="w-full md:w-auto">
+                            <WorldOnlyPicker
+                                current_world=selected_world.into()
+                                set_current_world=set_selected_world.into()
+                            />
+                        </div>
                     </div>
-                </div>
+                </Show>
 
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>
                     {move || {
