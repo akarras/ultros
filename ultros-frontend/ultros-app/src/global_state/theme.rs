@@ -166,8 +166,8 @@ pub fn use_theme_settings() -> ThemeSettings {
 }
 
 fn persist_all(settings: ThemeSettings) {
-    let mode_str = settings.mode.get().as_str().to_string();
-    let palette_str = settings.palette.get().as_str().to_string();
+    let mode_str = settings.mode.get_untracked().as_str().to_string();
+    let palette_str = settings.palette.get_untracked().as_str().to_string();
 
     // localStorage
     #[cfg(feature = "hydrate")]

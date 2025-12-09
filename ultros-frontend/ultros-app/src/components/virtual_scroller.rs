@@ -141,8 +141,9 @@ where
             row_height + total_delta / len as f64
         }
     });
-    let children_shown =
-        ((effective_viewport / avg_row_height()).ceil() as u32).max(1) + render_ahead;
+    let children_shown = Memo::new(move |_| {
+        ((effective_viewport / avg_row_height()).ceil() as u32).max(1) + render_ahead
+    });
 
     // Scroll target into view when requested (moved after layout signals are defined)
     if let Some(scroll_sig) = scroll_to_index {
@@ -221,7 +222,7 @@ where
             }
             // make sure start + end doesn't go over the length of the vector, and render at least one row
             let start = (child_start() as usize).min(array_size.saturating_sub(1));
-            let end = (start + children_shown as usize).min(array_size);
+            let end = (start + children_shown() as usize).min(array_size);
             children[start..end]
                 .iter()
                 .cloned()
