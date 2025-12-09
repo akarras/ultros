@@ -313,14 +313,14 @@ fn SummaryCards(listing_resource: Resource<Result<CurrentlyShownItem, AppError>>
                                          <div class="flex flex-col gap-3">
                                              // NQ Display
                                              {if let Some((listing, _retainer)) = cheapest_nq {
-                                                 view! {
-                                                     <div>
-                                                         <div class="flex items-baseline gap-2">
-                                                             <span class="text-xs font-bold text-brand-400 bg-brand-900/50 px-1.5 py-0.5 rounded border border-brand-700/50">"NQ"</span>
-                                                             <div class="text-xl font-bold text-white">
-                                                                 <Gil amount=listing.price_per_unit />
+                                                     view! {
+                                                         <div>
+                                                             <div class="flex items-center gap-2">
+                                                                 <span class="text-xs font-bold text-brand-400 bg-brand-900/50 px-1.5 py-0.5 rounded border border-brand-700/50">"NQ"</span>
+                                                                 <div class="text-xl font-bold text-white">
+                                                                     <Gil amount=listing.price_per_unit />
+                                                                 </div>
                                                              </div>
-                                                         </div>
                                                          <div class="text-xs text-brand-200 mt-0.5 flex items-center gap-1 opacity-80">
                                                              <Icon icon=icondata::FaGlobeSolid attr:class="text-[10px]" />
                                                              <WorldName id=AnySelector::World(listing.world_id) />
@@ -344,7 +344,7 @@ fn SummaryCards(listing_resource: Resource<Result<CurrentlyShownItem, AppError>>
                                                          <Show when=move || has_nq>
                                                              <div class="absolute -top-1.5 left-0 w-8 border-t border-brand-700/30"></div>
                                                          </Show>
-                                                         <div class="flex items-baseline gap-2">
+                                                         <div class="flex items-center gap-2">
                                                              <span class="text-xs font-bold text-[#95c521] bg-[#95c521]/10 px-1.5 py-0.5 rounded border border-[#95c521]/20 flex items-center gap-1">
                                                                  <Icon icon=icondata::FaStarSolid attr:class="text-[9px]" />
                                                                  "HQ"
@@ -382,6 +382,33 @@ fn SummaryCards(listing_resource: Resource<Result<CurrentlyShownItem, AppError>>
                                          </div>
                                          <div class="text-sm text-blue-200 mt-1">
                                              {format!("Based on {} sales", recent_sales.len())}
+                                         </div>
+                                         <div class="text-sm text-blue-200 mt-1">
+                                             {
+                                                 if recent_sales.len() > 1 {
+                                                     let newest = recent_sales.first().unwrap().sold_date;
+                                                     let oldest = recent_sales.last().unwrap().sold_date;
+                                                     let seconds = (newest - oldest).num_seconds().abs();
+                                                     let count = recent_sales.len() - 1;
+
+                                                     if seconds > 0 {
+                                                         let seconds_per_sale = seconds as f64 / count as f64;
+                                                         if seconds_per_sale < 60.0 {
+                                                             format!("Sells ~{:.1} times per minute", 60.0 / seconds_per_sale)
+                                                         } else if seconds_per_sale < 3600.0 {
+                                                             format!("Sells ~{:.1} times per hour", 3600.0 / seconds_per_sale)
+                                                         } else if seconds_per_sale < 86400.0 {
+                                                             format!("Sells ~{:.1} times per day", 86400.0 / seconds_per_sale)
+                                                         } else {
+                                                             format!("Sells ~1 every {:.1} days", seconds_per_sale / 86400.0)
+                                                         }
+                                                     } else {
+                                                         "Very high frequency".to_string()
+                                                     }
+                                                 } else {
+                                                     "Not enough data".to_string()
+                                                 }
+                                             }
                                          </div>
                                      </div>
                                      <Icon icon=icondata::FaChartLineSolid attr:class="text-3xl text-blue-500/20 group-hover:text-blue-500/40 transition-colors" />

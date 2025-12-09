@@ -4,7 +4,7 @@ use thousands::Separable;
 #[component]
 pub fn Gil(#[prop(into)] amount: Signal<i32>) -> impl IntoView {
     view! {
-        <div class="flex flex-row">
+        <div class="flex flex-row items-center">
             <div class="h-7 w-7 -m-1 aspect-square p-1">
                 <img alt="gil" src="/static/images/gil.webp" />
             </div>
@@ -19,7 +19,7 @@ where
     T: Separable + 'static + Copy + Send + Sync,
 {
     view! {
-        <div class="flex flex-row">
+        <div class="flex flex-row items-center">
             <div class="h-7 w-7 -m-1 aspect-square p-1">
                 <img alt="gil" src="/static/images/gil.webp" />
             </div>
