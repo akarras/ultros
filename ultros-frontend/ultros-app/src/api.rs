@@ -30,6 +30,7 @@ pub(crate) async fn get_listings(item_id: i32, world: &str) -> AppResult<Current
     fetch_api(&format!("/api/v1/listings/{world}/{item_id}")).await
 }
 
+#[allow(dead_code)]
 pub(crate) async fn get_bulk_listings(
     world: &str,
     item_ids: impl Iterator<Item = i32>,
@@ -89,10 +90,7 @@ pub(crate) async fn get_retainer_undercuts() -> AppResult<Undercuts> {
     let worlds: Vec<i32> = retainer_data
         .retainers
         .iter()
-        .flat_map(|(_, r)| {
-            r.iter()
-                .flat_map(|(_, l)| l.iter().map(|l| l.world_id))
-        })
+        .flat_map(|(_, r)| r.iter().flat_map(|(_, l)| l.iter().map(|l| l.world_id)))
         .unique()
         .collect();
     // todo: once the api calls use a result type, swap this to a try_join all

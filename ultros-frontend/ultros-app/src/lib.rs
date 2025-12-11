@@ -34,9 +34,9 @@ use git_const::git_short_hash;
 use icondata as i;
 use leptos::html::Div;
 use leptos::prelude::*;
+#[allow(unused_imports)]
 use leptos_hotkeys::{provide_hotkeys_context, scopes};
 // use leptos_animation::AnimationContext;
-// use leptos_hotkeys::{provide_hotkeys_context, scopes};
 use leptos_icons::*;
 use leptos_meta::*;
 use leptos_router::components::{A, ParentRoute, Route, Router, Routes};

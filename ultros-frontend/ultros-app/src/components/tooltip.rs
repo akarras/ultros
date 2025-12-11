@@ -1,3 +1,4 @@
+#![allow(unused_imports, unused_variables, dead_code)]
 use cfg_if::cfg_if;
 use leptos::{ev::resize, html::Div, portal::Portal, prelude::*};
 use leptos_use::{
