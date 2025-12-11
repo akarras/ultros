@@ -774,10 +774,10 @@ pub fn RecipeAnalyzer() -> impl IntoView {
 
     let (selected_world, set_selected_world) = signal(None);
     Effect::new(move |_| {
-        if selected_world.get_untracked().is_none() {
-            if let Some(home) = home_world.get() {
-                set_selected_world(Some(home));
-            }
+        if selected_world.get_untracked().is_none()
+            && let Some(home) = home_world.get()
+        {
+            set_selected_world(Some(home));
         }
     });
 
