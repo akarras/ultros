@@ -4,16 +4,21 @@ pub fn deserialize_i64_from_u8_array<'de, D>(deserializer: D) -> Result<i64, D::
 where
     D: Deserializer<'de>,
 {
-    // #[derive(Deserialize)]
-    // struct I64Slice([u16; 4]);
-    let _ = String::deserialize(deserializer);
-    // let slice = I64Slice::deserialize(deserializer)?;
-    // let bytes : Vec<_> = slice.0.into_iter().map(|m| m.to_le_bytes()).flatten().collect();
-    //let bytes : [i8; 8] = bytes.as_slice();
-    // TODO, no idea if this is little-endian or big-endian. Might need better conversions
-    //let i64 = i64::from_be_bytes(slice);
-    // TODO properly implement
-    Ok(0)
+    // Try to deserialize as a String first to see what we get
+    let s = String::deserialize(deserializer)?;
+
+    if s.is_empty() {
+        return Ok(0);
+    }
+
+    // Attempt to parse as standard i64
+    match s.parse::<i64>() {
+        Ok(val) => Ok(val),
+        Err(_) => Err(serde::de::Error::custom(format!(
+            "Could not parse i64 from string: '{}'",
+            s
+        ))),
+    }
 }
 
 pub fn deserialize_bool_from_anything_custom<'de, D>(deserializer: D) -> Result<bool, D::Error>
@@ -78,6 +83,42 @@ where
                     string
                 )))
             }
+        }
+    }
+}
+
+#[cfg(all(test, feature = "csv"))]
+mod tests {
+    use super::*;
+    use serde::Deserialize;
+
+    #[test]
+    fn test_deserialize_i64() {
+        #[derive(Deserialize, Debug, PartialEq)]
+        struct Test {
+            #[serde(deserialize_with = "deserialize_i64_from_u8_array")]
+            val: i64,
+        }
+
+        let csv_data = "val\n12345";
+        let mut reader = csv::Reader::from_reader(csv_data.as_bytes());
+        for result in reader.deserialize() {
+            let record: Test = result.unwrap();
+            assert_eq!(record.val, 12345);
+        }
+
+        let csv_data = "val\n-999";
+        let mut reader = csv::Reader::from_reader(csv_data.as_bytes());
+        for result in reader.deserialize() {
+            let record: Test = result.unwrap();
+            assert_eq!(record.val, -999);
+        }
+
+        let csv_data = "val\n";
+        let mut reader = csv::Reader::from_reader(csv_data.as_bytes());
+        for result in reader.deserialize() {
+            let record: Test = result.unwrap();
+            assert_eq!(record.val, 0);
         }
     }
 }
