@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+#[cfg(feature = "hydrate")]
 use log::{debug, warn};
 use std::str::FromStr;
 

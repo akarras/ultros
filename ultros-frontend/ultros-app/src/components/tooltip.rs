@@ -1,10 +1,14 @@
 use cfg_if::cfg_if;
-use leptos::{ev::resize, html::Div, portal::Portal, prelude::*};
+use leptos::{html::Div, prelude::*};
+#[cfg(feature = "hydrate")]
+use leptos::{ev::resize, portal::Portal};
+#[cfg(feature = "hydrate")]
 use leptos_use::{
-    UseElementBoundingReturn, UseElementSizeReturn, UseEventListenerOptions, use_element_bounding,
-    use_element_size, use_event_listener_with_options, use_window, use_window_scroll,
+    use_element_bounding, use_element_size, use_event_listener_with_options, use_window,
+    use_window_scroll, UseElementBoundingReturn, UseElementSizeReturn, UseEventListenerOptions,
 };
 
+#[cfg(feature = "hydrate")]
 fn use_window_size() -> (Signal<f64>, Signal<f64>) {
     cfg_if! { if #[cfg(feature = "ssr")] {
         let initial_x = 0.0;

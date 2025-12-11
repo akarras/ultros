@@ -34,6 +34,7 @@ use git_const::git_short_hash;
 use icondata as i;
 use leptos::html::Div;
 use leptos::prelude::*;
+#[cfg(feature = "hydrate")]
 use leptos_hotkeys::{provide_hotkeys_context, scopes};
 // use leptos_animation::AnimationContext;
 // use leptos_hotkeys::{provide_hotkeys_context, scopes};

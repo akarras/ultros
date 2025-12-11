@@ -667,7 +667,7 @@ pub fn ListView() -> impl IntoView {
                                                 .into_any()
                                         }
                                         ViewState::Buying => {
-                                            view! { <ListBuyingView items=items.clone() edit_item=edit_item.clone() /> }
+                                            view! { <ListBuyingView items=items edit_item=edit_item /> }
                                                 .into_any()
                                         }
                                     },
