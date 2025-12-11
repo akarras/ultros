@@ -511,7 +511,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                         key="sort"
                         value="ilvl"
                         class="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors text-[color:var(--color-text-muted)] hover:bg-white/5"
-                        active_classes="!bg-brand-500/20 !text-brand-300 ring-1 ring-brand-500/50"
+                        active_classes="px-3 py-1.5 rounded-lg text-sm font-medium !bg-brand-500/20 !text-brand-300 ring-1 ring-brand-500/50"
                         default=true
                     >
                         "iLvl"
@@ -520,7 +520,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                         key="sort"
                         value="price"
                         class="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors text-[color:var(--color-text-muted)] hover:bg-white/5"
-                        active_classes="!bg-brand-500/20 !text-brand-300 ring-1 ring-brand-500/50"
+                        active_classes="px-3 py-1.5 rounded-lg text-sm font-medium !bg-brand-500/20 !text-brand-300 ring-1 ring-brand-500/50"
                     >
                         "Price"
                     </QueryButton>
@@ -528,7 +528,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                         key="sort"
                         value="name"
                         class="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors text-[color:var(--color-text-muted)] hover:bg-white/5"
-                        active_classes="!bg-brand-500/20 !text-brand-300 ring-1 ring-brand-500/50"
+                        active_classes="px-3 py-1.5 rounded-lg text-sm font-medium !bg-brand-500/20 !text-brand-300 ring-1 ring-brand-500/50"
                     >
                         "Name"
                     </QueryButton>
@@ -536,7 +536,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                         key="sort"
                         value="key"
                         class="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors text-[color:var(--color-text-muted)] hover:bg-white/5"
-                        active_classes="!bg-brand-500/20 !text-brand-300 ring-1 ring-brand-500/50"
+                        active_classes="px-3 py-1.5 rounded-lg text-sm font-medium !bg-brand-500/20 !text-brand-300 ring-1 ring-brand-500/50"
                     >
                         "Added"
                     </QueryButton>
@@ -546,7 +546,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                         key="dir"
                         value="asc"
                         class="p-1.5 rounded text-[color:var(--color-text-muted)] hover:text-brand-200 transition-colors"
-                        active_classes="bg-white/10 !text-brand-300 shadow-sm"
+                        active_classes="p-1.5 rounded bg-white/10 !text-brand-300 shadow-sm"
                     >
                         <Icon icon=i::BiSortUpRegular width="20" height="20" />
                     </QueryButton>
@@ -554,7 +554,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                         key="dir"
                         value="desc"
                         class="p-1.5 rounded text-[color:var(--color-text-muted)] hover:text-brand-200 transition-colors"
-                        active_classes="bg-white/10 !text-brand-300 shadow-sm"
+                        active_classes="p-1.5 rounded bg-white/10 !text-brand-300 shadow-sm"
                         default=true
                     >
                         <Icon icon=i::BiSortDownRegular width="20" height="20" />
@@ -610,17 +610,11 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                 </div>
                                 <div class="flex-1" />
                                 <div class="flex flex-col gap-3 mt-2 pt-3 border-t border-white/5">
-                                    <div class="grid grid-cols-2 gap-2 text-sm">
-                                        <div class="flex flex-col">
-                                            <span class="text-xs text-[color:var(--color-text-muted)] uppercase tracking-wider mb-0.5">"NQ"</span>
-                                            <CheapestPrice item_id=*id show_hq=false />
-                                        </div>
+                                    <div class="flex flex-col gap-2 text-sm">
+                                        <CheapestPrice item_id=*id show_hq=false label="NQ" />
                                         {if item.can_be_hq {
                                             view! {
-                                                <div class="flex flex-col">
-                                                    <span class="text-xs text-[color:var(--color-text-muted)] uppercase tracking-wider mb-0.5">"HQ"</span>
-                                                    <CheapestPrice item_id=*id show_hq=true />
-                                                </div>
+                                                <CheapestPrice item_id=*id show_hq=true label="HQ" />
                                             }.into_any()
                                         } else {
                                             view! { <div/> }.into_any()
@@ -628,7 +622,10 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                     </div>
                                     <div class="flex items-center gap-2 mt-1">
                                         <div class="flex-1">
-                                            <AddToList item_id=id.0 />
+                                            <AddToList
+                                                item_id=id.0
+                                                class="w-full flex items-center justify-center p-2 rounded hover:bg-white/10 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] transition-colors"
+                                            />
                                         </div>
                                         <div class="p-1 rounded hover:bg-white/10 text-[color:var(--color-text-muted)] cursor-pointer" title="Copy Name">
                                              <Clipboard clipboard_text=item.name.clone() />
@@ -654,7 +651,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                         value=(page.offset + 1).to_string()
                                         class="w-10 h-10 flex items-center justify-center rounded-lg text-sm font-medium transition-all
                                                text-[color:var(--color-text-muted)] hover:bg-white/10 hover:text-brand-200"
-                                        active_classes="!bg-brand-500 !text-white shadow-lg shadow-brand-500/20 scale-105"
+                                        active_classes="w-10 h-10 flex items-center justify-center rounded-lg text-sm font-medium transition-all !bg-brand-500 !text-white shadow-lg shadow-brand-500/20 scale-105"
                                         default=page.offset == 0
                                     >
                                         {page.offset + 1}
@@ -786,5 +783,33 @@ pub fn ItemExplorer() -> impl IntoView {
                 </main>
             </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_job_filtering() {
+        let data = xiv_gen_db::data();
+        let jobs = &data.class_jobs;
+        let visible_jobs: Vec<_> = jobs
+            .iter()
+            .filter(|(_id, job)| {
+                let visible = job.class_job_parent.0 != 0;
+                if !visible {
+                    println!("Filtered out: {} (Parent: {})", job.name, job.class_job_parent.0);
+                }
+                visible
+            })
+            .collect();
+        
+        println!("Visible jobs count: {}", visible_jobs.len());
+        for (_, job) in &visible_jobs {
+            println!("Visible: {}", job.name);
+        }
+
+        assert!(!visible_jobs.is_empty(), "No jobs are visible! Filtering logic might be wrong.");
     }
 }
