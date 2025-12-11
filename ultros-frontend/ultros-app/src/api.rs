@@ -1,4 +1,4 @@
-use futures::future::join_all;
+use futures::future::try_join_all;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::collections::HashMap;
@@ -97,16 +97,15 @@ pub(crate) async fn get_retainer_undercuts() -> AppResult<Undercuts> {
             acc.entry(world).or_default().push(item_id);
             acc
         });
-    // todo: once the api calls use a result type, swap this to a try_join all
-    let listings = join_all(world_items.into_iter().map(|(world, items)| async move {
+    let listings = try_join_all(world_items.into_iter().map(|(world, items)| async move {
         get_bulk_listings(&world.to_string(), items.into_iter())
             .await
             // include the world id in the returned value
             .map(|listings| (world, listings))
     }))
-    .await;
+    .await?;
     // flatten the listings down so it's more usable
-    let listings_map = listings.into_iter().flatten().fold(
+    let listings_map = listings.into_iter().fold(
         HashMap::new(),
         |mut world_map, (world_id, item_data)| {
             if world_map.insert(world_id, item_data).is_some() {
