@@ -1,9 +1,9 @@
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
-        crafter_settings::CrafterSettings, gil::*, item_icon::*, query_button::QueryButton,
-        skeleton::BoxSkeleton, tooltip::Tooltip, virtual_scroller::*,
-        world_picker::WorldOnlyPicker,
+        add_recipe_to_list::AddRecipeToList, crafter_settings::CrafterSettings, gil::*,
+        item_icon::*, query_button::QueryButton, skeleton::BoxSkeleton, tooltip::Tooltip,
+        virtual_scroller::*, world_picker::WorldOnlyPicker,
     },
     global_state::{
         LocalWorldData, cookies::Cookies, crafter_levels::CrafterLevels, home_world::use_home_world,
@@ -591,6 +591,7 @@ fn RecipeAnalyzerTable(
                              <div role="columnheader" class="w-30 p-4">"Cost / unit"</div>
                              <div role="columnheader" class="w-30 p-4">"Price"</div>
                              <div role="columnheader" class="w-40 p-4 hidden md:block">"Avg sale"</div>
+                             <div role="columnheader" class="w-20 p-4">"Actions"</div>
                         </div>
                     }.into_any()
                     each=computed_data.into()
@@ -722,6 +723,9 @@ fn RecipeAnalyzerTable(
                                         {avg_label}
                                     </span>
                                 </div>
+                                 <div role="cell" class="px-4 py-2 w-20">
+                                     <AddRecipeToList recipe=data.recipe />
+                                 </div>
                             </div>
                         }.into_any()
                     }

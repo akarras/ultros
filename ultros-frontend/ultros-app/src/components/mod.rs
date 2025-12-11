@@ -1,5 +1,6 @@
 pub mod ad;
 pub mod add_to_list;
+pub mod add_recipe_to_list;
 pub mod apps_menu;
 pub mod cheapest_price;
 pub mod clipboard;
