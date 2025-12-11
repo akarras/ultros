@@ -15,13 +15,45 @@ pub enum ParseListError {
     ItemIdNotFound(String),
 }
 
-fn lookup_item_by_name(name: &str) -> Result<ItemId, ParseListError> {
+fn lookup_item_id_exact(name: &str) -> Option<ItemId> {
     let items = &xiv_gen_db::data().items;
     items
         .iter()
         .find(|(_, item)| item.name == name.trim())
         .map(|(i, _)| *i)
-        .ok_or_else(|| ParseListError::ItemIdNotFound(name.to_string()))
+}
+
+fn find_best_match_item(name: &str) -> Result<ItemId, ParseListError> {
+    let items = &xiv_gen_db::data().items;
+
+    let is_marketable = |id: ItemId| -> bool {
+        items
+            .get(&id)
+            .map(|i| i.item_search_category.0 > 1)
+            .unwrap_or(false)
+    };
+
+    let candidates = [name.to_string(), format!("{} Dye", name.trim())];
+
+    for candidate in &candidates {
+        if let Some(id) = lookup_item_id_exact(candidate) {
+            if is_marketable(id) {
+                return Ok(id);
+            }
+
+            let gp_name = format!("General-purpose {}", candidate.trim());
+            if let Some(gp_id) = lookup_item_id_exact(&gp_name) {
+                if is_marketable(gp_id) {
+                    return Ok(gp_id);
+                }
+            }
+
+            // Fallback to the unmarketable item found
+            return Ok(id);
+        }
+    }
+
+    Err(ParseListError::ItemIdNotFound(name.to_string()))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -44,11 +76,7 @@ fn parse_list(list: &str) -> Result<Vec<MakePlaceItemData>, ParseListError> {
         .map(|(item_name, quantity)| {
             println!("{item_name}: {quantity}");
             let quantity = quantity.trim().parse::<i32>()?;
-            // TODO: There are some dyes that have unmarketable variants such as Pure White Dye -> General Purpose Pure White Dye
-            // We should be able to automatically find the general-purpose version in the future
-            let item_id = lookup_item_by_name(item_name)
-                .or_else(|_| lookup_item_by_name(&format!("{} Dye", item_name.trim())))?
-                .0;
+            let item_id = find_best_match_item(item_name)?.0;
             Ok(MakePlaceItemData { item_id, quantity })
         })
         .collect()
