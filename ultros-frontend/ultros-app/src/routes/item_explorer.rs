@@ -799,17 +799,23 @@ mod tests {
             .filter(|(_id, job)| {
                 let visible = job.class_job_parent.0 != 0;
                 if !visible {
-                    println!("Filtered out: {} (Parent: {})", job.name, job.class_job_parent.0);
+                    println!(
+                        "Filtered out: {} (Parent: {})",
+                        job.name, job.class_job_parent.0
+                    );
                 }
                 visible
             })
             .collect();
-        
+
         println!("Visible jobs count: {}", visible_jobs.len());
         for (_, job) in &visible_jobs {
             println!("Visible: {}", job.name);
         }
 
-        assert!(!visible_jobs.is_empty(), "No jobs are visible! Filtering logic might be wrong.");
+        assert!(
+            !visible_jobs.is_empty(),
+            "No jobs are visible! Filtering logic might be wrong."
+        );
     }
 }
