@@ -1,5 +1,5 @@
-use serde::{Deserialize, Deserializer};
 use serde::de::{self, SeqAccess, Visitor};
+use serde::{Deserialize, Deserializer};
 use std::fmt;
 
 pub fn deserialize_i64_from_u8_array<'de, D>(deserializer: D) -> Result<i64, D::Error>
@@ -12,7 +12,8 @@ where
         type Value = i64;
 
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("an integer, a string containing an integer, or a sequence of 4 u16s")
+            formatter
+                .write_str("an integer, a string containing an integer, or a sequence of 4 u16s")
         }
 
         fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
@@ -45,8 +46,9 @@ where
         {
             // Try to read 4 u16s
             let mut parts = [0u16; 4];
-            for i in 0..4 {
-                parts[i] = seq.next_element()?
+            for (i, part) in parts.iter_mut().enumerate() {
+                *part = seq
+                    .next_element()?
                     .ok_or_else(|| de::Error::invalid_length(i, &self))?;
             }
 
