@@ -757,11 +757,12 @@ pub fn AnalyzerWorldView() -> impl IntoView {
         },
     );
 
+    let filter = use_context::<RwSignal<crate::global_state::world_filter::WorldFilter>>().unwrap();
     let world_cheapest_listings = Resource::new(
-        move || params.with(|p| p.get("world").clone()),
-        move |world| async move {
+        move || (params.with(|p| p.get("world").clone()), filter.get()),
+        move |(world, filter)| async move {
             let world = world.ok_or(AppError::ParamMissing)?;
-            get_cheapest_listings(&world).await
+            get_cheapest_listings(&world, &filter).await
         },
     );
 
@@ -782,9 +783,10 @@ pub fn AnalyzerWorldView() -> impl IntoView {
         Result::<_, AppError>::Ok(region)
     });
 
-    let global_cheapest_listings = Resource::new(region, move |region| async move {
-        get_cheapest_listings(region?.as_str()).await
-    });
+    let global_cheapest_listings = Resource::new(
+        move || (region(), filter.get()),
+        move |(region, filter)| async move { get_cheapest_listings(region?.as_str(), &filter).await },
+    );
 
     let (cross_region_enabled, set_cross_region_enabled) = query_signal::<bool>("cross");
     let connected_regions = &["Europe", "Japan", "North-America", "Oceania"];
@@ -799,8 +801,8 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     };
 
     let cross_region = Resource::new(
-        move || (cross_region_enabled(), region(), enabled_regions()),
-        move |(enabled, region, enabled_regions)| async move {
+        move || (cross_region_enabled(), region(), enabled_regions(), filter.get()),
+        move |(enabled, region, enabled_regions, filter)| async move {
             let region = region?;
             if enabled.unwrap_or_default() && connected_regions.contains(&region.as_str()) {
                 Ok(futures::future::join_all(
@@ -808,7 +810,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                         .iter()
                         .filter(|r| **r != region.as_str())
                         .filter(|r| enabled_regions.contains(r))
-                        .map(|region| get_cheapest_listings(region)),
+                        .map(|region| get_cheapest_listings(region, &filter)),
                 )
                 .await
                 .into_iter()

@@ -10,7 +10,7 @@ use crate::components::recently_viewed::RecentItems;
 pub use crate::global_state::{LocalWorldData, home_world::GuessedRegion};
 use crate::global_state::{
     cheapest_prices::CheapestPrices, clipboard_text::GlobalLastCopiedText, cookies::Cookies,
-    theme::provide_theme_settings,
+    theme::provide_theme_settings, world_filter::provide_world_filter_context,
 };
 use crate::{
     components::{ad::Ad, apps_menu::*, patreon::*, search_box::*, theme_picker::*, tooltip::*},
@@ -203,6 +203,7 @@ pub fn App() -> impl IntoView {
     provide_context(CheapestPrices::new());
     provide_context(GlobalLastCopiedText(RwSignal::new(None)));
     provide_context(RecentItems::new());
+    provide_world_filter_context();
     provide_theme_settings();
     // AnimationContext::provide();
     let root_node_ref = NodeRef::<Div>::new();

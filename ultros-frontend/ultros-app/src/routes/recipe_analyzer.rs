@@ -748,9 +748,11 @@ pub fn RecipeAnalyzer() -> impl IntoView {
             .unwrap_or_else(|| "North-America".to_string())
     });
 
-    let global_cheapest_listings = Resource::new(region, move |region: String| async move {
-        get_cheapest_listings(&region).await
-    });
+    let filter = use_context::<RwSignal<crate::global_state::world_filter::WorldFilter>>().unwrap();
+    let global_cheapest_listings = Resource::new(
+        move || (region(), filter.get()),
+        move |(region, filter)| async move { get_cheapest_listings(&region, &filter).await },
+    );
 
     let (selected_world, set_selected_world) = signal(home_world.get_untracked());
     Effect::new(move |_| {

@@ -11,17 +11,21 @@ pub(crate) struct CheapestPrices {
     pub read_listings: Resource<Result<CheapestListingsMap, crate::error::AppError>>,
 }
 
+use super::world_filter::WorldFilter;
+
 impl CheapestPrices {
     pub fn new() -> Self {
         let (read, _) = get_price_zone();
+        let filter = use_context::<RwSignal<WorldFilter>>().unwrap();
         let read_listings = Resource::new(
-            move || read.get(),
-            move |world| async move {
+            move || (read.get(), filter.get()),
+            move |(world, filter)| async move {
                 get_cheapest_listings(
                     world
                         .as_ref()
                         .map(|w| w.get_name())
                         .unwrap_or("North-America"),
+                    &filter,
                 )
                 .await
                 .map(|cheapest_prices| CheapestListingsMap::from(cheapest_prices.clone()))

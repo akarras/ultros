@@ -50,9 +50,18 @@ pub(crate) async fn delete_user() -> AppResult<()> {
     delete_api("/api/v1/current_user").await
 }
 
+use crate::global_state::world_filter::WorldFilter;
+
 /// Get analyzer data
-pub(crate) async fn get_cheapest_listings(world_name: &str) -> AppResult<CheapestListings> {
-    fetch_api(&format!("/api/v1/cheapest/{}", world_name)).await
+pub(crate) async fn get_cheapest_listings(
+    world_name: &str,
+    filter: &WorldFilter,
+) -> AppResult<CheapestListings> {
+    let mut query = String::new();
+    for selector in &filter.0 {
+        query.push_str(&format!("exclude={:?}", selector));
+    }
+    fetch_api(&format!("/api/v1/cheapest/{}?{}", world_name, query)).await
 }
 
 /// Get most expensive

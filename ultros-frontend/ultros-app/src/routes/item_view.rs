@@ -5,7 +5,7 @@ use crate::components::world_name::WorldName;
 use crate::components::{
     ad::Ad, add_to_list::AddToList, clipboard::*, item_icon::*, listings_table::*, meta::*,
     recently_viewed::RecentItems, related_items::*, sale_history_table::*, skeleton::BoxSkeleton,
-    stats_display::*, toggle::Toggle, ui_text::*,
+    stats_display::*, toggle::Toggle, ui_text::*, world_filter::WorldFilterComponent,
 };
 use crate::error::AppError;
 use crate::global_state::LocalWorldData;
@@ -269,6 +269,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                         }
                     }}
                 </div>
+                <WorldFilterComponent />
             </div>
             </div>
         </div>
@@ -721,11 +722,14 @@ fn SalesDetails(listing_resource: Resource<Result<CurrentlyShownItem, AppError>>
     .into_any()
 }
 
+use crate::global_state::world_filter::WorldFilter;
+
 #[component]
 fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
+    let filter = use_context::<RwSignal<WorldFilter>>().unwrap();
     let listing_resource = Resource::new(
-        move || (item_id(), world()),
-        |(item_id, world)| async move {
+        move || (item_id(), world(), filter.get()),
+        |(item_id, world, filter)| async move {
             get_listings(item_id, world.as_str())
                 .await
                 .inspect_err(|e| tracing::error!(error = ?e, "Error getting value"))
