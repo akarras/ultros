@@ -97,7 +97,6 @@ async fn handle_upgrade(
                                 }
                             }
                             Message::Ping(ping) => {
-                                // todo figure out how to ping
                                 debug!("received ping {ping:?}");
                                 AlertsRx::Ping(ping.to_vec())
                             }
