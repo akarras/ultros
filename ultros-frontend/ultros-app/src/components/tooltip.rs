@@ -1,11 +1,11 @@
 use cfg_if::cfg_if;
-use leptos::{html::Div, prelude::*};
 #[cfg(feature = "hydrate")]
 use leptos::{ev::resize, portal::Portal};
+use leptos::{html::Div, prelude::*};
 #[cfg(feature = "hydrate")]
 use leptos_use::{
-    use_element_bounding, use_element_size, use_event_listener_with_options, use_window,
-    use_window_scroll, UseElementBoundingReturn, UseElementSizeReturn, UseEventListenerOptions,
+    UseElementBoundingReturn, UseElementSizeReturn, UseEventListenerOptions, use_element_bounding,
+    use_element_size, use_event_listener_with_options, use_window, use_window_scroll,
 };
 
 #[cfg(feature = "hydrate")]
