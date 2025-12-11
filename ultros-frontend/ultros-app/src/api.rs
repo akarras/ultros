@@ -90,10 +90,7 @@ pub(crate) async fn get_retainer_undercuts() -> AppResult<Undercuts> {
     let worlds: Vec<i32> = retainer_data
         .retainers
         .iter()
-        .flat_map(|(_, r)| {
-            r.iter()
-                .flat_map(|(_, l)| l.iter().map(|l| l.world_id))
-        })
+        .flat_map(|(_, r)| r.iter().flat_map(|(_, l)| l.iter().map(|l| l.world_id)))
         .unique()
         .collect();
     // todo: once the api calls use a result type, swap this to a try_join all
@@ -107,7 +104,10 @@ pub(crate) async fn get_retainer_undercuts() -> AppResult<Undercuts> {
     // flatten the listings down so it's more usable
     let listings_map: HashMap<i32, CheapestListingsMap> = listings
         .into_iter()
-        .filter_map(|r| r.inspect_err(|e| error!("Error fetching listings {e}")).ok())
+        .filter_map(|r| {
+            r.inspect_err(|e| error!("Error fetching listings {e}"))
+                .ok()
+        })
         .fold(HashMap::new(), |mut world_map, (world_id, item_data)| {
             if world_map.insert(world_id, item_data.into()).is_some() {
                 unreachable!("Should only be one world id from the set above.");
