@@ -4,7 +4,6 @@ use std::rc::Rc;
 use cfg_if::cfg_if;
 use leptos::html::Div;
 use leptos::{html::Canvas, prelude::*};
-use leptos_use::use_element_size;
 use plotters_canvas::CanvasBackend;
 use ultros_api_types::SaleHistory;
 

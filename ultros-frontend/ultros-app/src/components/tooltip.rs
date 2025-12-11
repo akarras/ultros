@@ -1,57 +1,14 @@
 use cfg_if::cfg_if;
-use leptos::{ev::resize, html::Div, portal::Portal, prelude::*};
+use leptos::{html::Div, portal::Portal, prelude::*};
+#[cfg(feature = "hydrate")]
 use leptos_use::{
-    UseElementBoundingReturn, UseElementSizeReturn, UseEventListenerOptions, use_element_bounding,
-    use_element_size, use_event_listener_with_options, use_window, use_window_scroll,
+    use_element_bounding, use_element_size, use_event_listener_with_options, use_window,
+    use_window_scroll, UseElementBoundingReturn, UseElementSizeReturn, UseEventListenerOptions,
 };
 
-fn use_window_size() -> (Signal<f64>, Signal<f64>) {
-    cfg_if! { if #[cfg(feature = "ssr")] {
-        let initial_x = 0.0;
-        let initial_y = 0.0;
-    } else {
-        let initial_x = window().inner_width().unwrap_or_default().as_f64().unwrap_or_default();
-        let initial_y = window().inner_height().unwrap_or_default().as_f64().unwrap_or_default();
-    }}
-    let (x, set_x) = signal(initial_x);
-    let (y, set_y) = signal(initial_y);
-
-    cfg_if! {
-        if #[cfg(feature = "hydrate")] {
-            let _ = use_event_listener_with_options(
-                use_window(),
-                resize,
-                move |_| {
-                    set_x.set(
-                        window()
-                            .inner_width()
-                            .unwrap_or_default()
-                            .as_f64()
-                            .unwrap_or_default(),
-                    );
-                    set_y.set(
-                        window()
-                            .inner_height()
-                            .unwrap_or_default()
-                            .as_f64()
-                            .unwrap_or_default(),
-                    );
-                },
-                UseEventListenerOptions::default()
-                    .capture(false)
-                    .passive(true),
-            );
-        }
-    }
-
-    (x.into(), y.into())
-}
 
 #[component]
-pub fn Tooltip<T>(
-    #[prop(into)] tooltip_text: Signal<String>,
-    children: TypedChildrenFn<T>,
-) -> impl IntoView
+pub fn Tooltip<T>(tooltip_text: Signal<String>, children: TypedChildrenFn<T>) -> impl IntoView
 where
     T: Sized + Render + RenderHtml + Send,
 {
@@ -72,6 +29,47 @@ where
 
                 move || {
                     (tooltip_text.with(|t| !t.is_empty()) && is_hover.get()).then(move || {
+                        fn use_window_size() -> (Signal<f64>, Signal<f64>) {
+                            cfg_if! { if #[cfg(feature = "ssr")] {
+                                let initial_x = 0.0;
+                                let initial_y = 0.0;
+                            } else {
+                                let initial_x = window().inner_width().unwrap_or_default().as_f64().unwrap_or_default();
+                                let initial_y = window().inner_height().unwrap_or_default().as_f64().unwrap_or_default();
+                            }}
+                            let (x, set_x) = signal(initial_x);
+                            let (y, set_y) = signal(initial_y);
+
+                            cfg_if! {
+                                if #[cfg(feature = "hydrate")] {
+                                    let _ = use_event_listener_with_options(
+                                        use_window(),
+                                        leptos::ev::resize,
+                                        move |_| {
+                                            set_x.set(
+                                                window()
+                                                    .inner_width()
+                                                    .unwrap_or_default()
+                                                    .as_f64()
+                                                    .unwrap_or_default(),
+                                            );
+                                            set_y.set(
+                                                window()
+                                                    .inner_height()
+                                                    .unwrap_or_default()
+                                                    .as_f64()
+                                                    .unwrap_or_default(),
+                                            );
+                                        },
+                                        UseEventListenerOptions::default()
+                                            .capture(false)
+                                            .passive(true),
+                                    );
+                                }
+                            }
+
+                            (x.into(), y.into())
+                        }
                         let (screen_width, screen_height) = use_window_size();
                         let (scroll_x, scroll_y) = use_window_scroll();
                         let node_ref = NodeRef::<Div>::new();

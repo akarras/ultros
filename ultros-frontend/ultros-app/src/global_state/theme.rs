@@ -1,5 +1,4 @@
 use leptos::prelude::*;
-use log::{debug, warn};
 use std::str::FromStr;
 
 use crate::global_state::cookies::Cookies;
@@ -242,6 +241,7 @@ fn load_palette_from_storage() -> Option<ThemePalette> {
 fn apply_to_dom(mode: ThemeMode, palette: ThemePalette) {
     #[cfg(feature = "hydrate")]
     {
+        use log::{debug, warn};
         use wasm_bindgen::JsCast;
         if let Some(doc) = web_sys::window().and_then(|w| w.document())
             && let Some(el) = doc.document_element()
