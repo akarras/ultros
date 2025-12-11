@@ -51,10 +51,10 @@ pub static malloc_conf: &[u8] = b"prof:true,prof_active:true,lg_prof_sample:19\0
 #[derive(Debug, serde::Deserialize, Clone)]
 struct Config {
     hostname: String,
-    discord_client_id: String,
-    discord_client_secret: String,
+    discord_client_id: Option<String>,
+    discord_client_secret: Option<String>,
     key: String,
-    discord_token: String,
+    discord_token: Option<String>,
 }
 
 async fn run_socket_listener(
@@ -241,17 +241,18 @@ async fn main() -> Result<()> {
         key,
         discord_token,
     } = config;
-
-    tokio::spawn(start_discord(
-        db.clone(),
-        senders.clone(),
-        receivers.clone(),
-        analyzer_service.clone(),
-        world_cache.clone(),
-        world_helper.clone(),
-        update_service,
-        discord_token,
-    ));
+    if let Some(discord_token) = discord_token {
+        tokio::spawn(start_discord(
+            db.clone(),
+            senders.clone(),
+            receivers.clone(),
+            analyzer_service.clone(),
+            world_cache.clone(),
+            world_helper.clone(),
+            update_service,
+            discord_token,
+        ));
+    }
 
     let character_verification = CharacterVerifierService {
         client: reqwest::Client::new(),

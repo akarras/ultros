@@ -187,12 +187,15 @@ pub enum WebError {
     InvalidItemId(i32),
     #[error("World not found {0}")]
     WorldNotFound(String),
+    #[error("Not Found")]
+    NotFound,
 }
 
 impl WebError {
     fn as_status_code(&self) -> StatusCode {
         match self {
             WebError::NotAuthenticated => StatusCode::UNAUTHORIZED,
+            WebError::NotFound => StatusCode::NOT_FOUND,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }

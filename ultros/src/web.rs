@@ -68,7 +68,7 @@ use crate::web::sitemap::{generic_pages_sitemap, item_sitemap, sitemap_index, wo
 use crate::web::{
     alerts_websocket::connect_websocket,
     item_card::item_card,
-    oauth::{begin_login, logout},
+    oauth::{begin_login, dev_login, logout},
 };
 use crate::web_metrics::{start_metrics_server, track_metrics};
 
@@ -952,6 +952,7 @@ pub(crate) async fn start_web(state: WebState) {
         )
         .route("/redirect", get(self::oauth::redirect))
         .route("/login", get(begin_login))
+        .route("/dev_login", get(dev_login))
         .route("/logout", get(logout))
         .route("/api/v1/current_user", delete(delete_user))
         .route("/invitebot", get(invite))
