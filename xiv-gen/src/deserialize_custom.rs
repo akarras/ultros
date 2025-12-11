@@ -1,19 +1,67 @@
 use serde::{Deserialize, Deserializer};
+use serde::de::{self, SeqAccess, Visitor};
+use std::fmt;
 
 pub fn deserialize_i64_from_u8_array<'de, D>(deserializer: D) -> Result<i64, D::Error>
 where
     D: Deserializer<'de>,
 {
-    // #[derive(Deserialize)]
-    // struct I64Slice([u16; 4]);
-    let _ = String::deserialize(deserializer);
-    // let slice = I64Slice::deserialize(deserializer)?;
-    // let bytes : Vec<_> = slice.0.into_iter().map(|m| m.to_le_bytes()).flatten().collect();
-    //let bytes : [i8; 8] = bytes.as_slice();
-    // TODO, no idea if this is little-endian or big-endian. Might need better conversions
-    //let i64 = i64::from_be_bytes(slice);
-    // TODO properly implement
-    Ok(0)
+    struct I64Visitor;
+
+    impl<'de> Visitor<'de> for I64Visitor {
+        type Value = i64;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("an integer, a string containing an integer, or a sequence of 4 u16s")
+        }
+
+        fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(value)
+        }
+
+        fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(value as i64)
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            if value.is_empty() {
+                return Ok(0);
+            }
+            value.parse::<i64>().map_err(de::Error::custom)
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            // Try to read 4 u16s
+            let mut parts = [0u16; 4];
+            for i in 0..4 {
+                parts[i] = seq.next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(i, &self))?;
+            }
+
+            let w0 = parts[0] as u64;
+            let w1 = parts[1] as u64;
+            let w2 = parts[2] as u64;
+            let w3 = parts[3] as u64;
+
+            // FFXIV is usually LE.
+            let res = w0 | (w1 << 16) | (w2 << 32) | (w3 << 48);
+            Ok(res as i64)
+        }
+    }
+
+    deserializer.deserialize_any(I64Visitor)
 }
 
 pub fn deserialize_bool_from_anything_custom<'de, D>(deserializer: D) -> Result<bool, D::Error>
