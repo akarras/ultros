@@ -105,15 +105,15 @@ pub(crate) async fn get_retainer_undercuts() -> AppResult<Undercuts> {
     }))
     .await?;
     // flatten the listings down so it's more usable
-    let listings_map = listings.into_iter().fold(
-        HashMap::new(),
-        |mut world_map, (world_id, item_data)| {
-            if world_map.insert(world_id, item_data).is_some() {
-                unreachable!("Should only be one world id from the set above.");
-            }
-            world_map
-        },
-    );
+    let listings_map =
+        listings
+            .into_iter()
+            .fold(HashMap::new(), |mut world_map, (world_id, item_data)| {
+                if world_map.insert(world_id, item_data).is_some() {
+                    unreachable!("Should only be one world id from the set above.");
+                }
+                world_map
+            });
     // Now remove every listing from the user retainer listings that is already the cheapest listing per world
     let retainer_data = retainer_data
         .retainers
