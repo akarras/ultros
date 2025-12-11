@@ -7,6 +7,8 @@ use leptos::html;
 use leptos::prelude::*;
 use leptos_icons::*;
 use leptos_router::components::A;
+#[cfg(feature = "hydrate")]
+use leptos_use::use_element_hover;
 
 /// An overflow menu for primary app destinations (Flip Finder, Explorer, Exchange).
 #[component]

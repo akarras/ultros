@@ -240,7 +240,8 @@ fn load_palette_from_storage() -> Option<ThemePalette> {
     None
 }
 
-fn apply_to_dom(_mode: ThemeMode, _palette: ThemePalette) {
+#[allow(unused_variables)]
+fn apply_to_dom(mode: ThemeMode, palette: ThemePalette) {
     #[cfg(feature = "hydrate")]
     {
         use wasm_bindgen::JsCast;
