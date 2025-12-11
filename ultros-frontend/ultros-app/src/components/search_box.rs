@@ -103,7 +103,7 @@ pub fn SearchBox() -> impl IntoView {
         })
     };
 
-    let item_search = move || search_results.get();
+    let item_search = move || search_results.get_untracked();
 
     let navigate_keydown = navigate.clone();
 
