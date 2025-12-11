@@ -129,7 +129,7 @@ impl From<&ultros_api_types::SaleHistory> for SaleSummary {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Serialize)]
 pub(crate) struct SaleHistory {
     pub(crate) item_map: HashMap<ItemKey, arrayvec::ArrayVec<SaleSummary, SALE_HISTORY_SIZE>>,
 }

@@ -7,10 +7,10 @@ pub(crate) mod item_card;
 pub(crate) mod oauth;
 pub(crate) mod sitemap;
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use aide::{
-    axum::{routing::get, ApiRouter, IntoApiResponse},
+    axum::{ApiRouter, IntoApiResponse, routing::get},
     openapi::{Info, OpenApi},
 };
 use anyhow::Error;
@@ -19,9 +19,8 @@ use axum::extract::{FromRef, Path, Query, State};
 use axum::http::{HeaderValue, Response, StatusCode};
 use axum::response::{IntoResponse, Redirect};
 use axum::routing::{delete, post};
-use axum::{body, middleware, Json, Extension};
+use axum::{Extension, Json, body, middleware};
 use axum_extra::TypedHeader;
-use axum_extra::extract::cookie::Cookie;
 use axum_extra::extract::CookieJar;
 use axum_extra::extract::cookie::{Cookie, Key};
 use axum_extra::headers::{CacheControl, ContentType, HeaderMapExt};
@@ -35,7 +34,6 @@ use leptos::prelude::provide_context;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
-use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::time::timeout;
@@ -916,7 +914,10 @@ pub(crate) async fn start_web(state: WebState) {
     let app = ApiRouter::new()
         .route("/alerts/websocket", axum::routing::get(connect_websocket))
         .route("/api/v1/search", axum::routing::get(search))
-        .route("/api/v1/realtime/events", axum::routing::get(real_time_data))
+        .route(
+            "/api/v1/realtime/events",
+            axum::routing::get(real_time_data),
+        )
         .api_route(
             "/api/v1/cheapest/{world}",
             get(cheapest_per_world::cheapest_per_world),
@@ -938,7 +939,10 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/list/edit", post(edit_list))
         .route("/api/v1/list/item/edit", post(edit_list_item))
         .route("/api/v1/list/{id}", axum::routing::get(get_list))
-        .route("/api/v1/list/{id}/listings", axum::routing::get(get_list_with_listings))
+        .route(
+            "/api/v1/list/{id}/listings",
+            axum::routing::get(get_list_with_listings),
+        )
         .route("/api/v1/list/{id}/add/item", post(post_item_to_list))
         .route("/api/v1/list/{id}/add/items", post(post_items_to_list))
         .route("/api/v1/list/{id}/delete", delete(delete_list))
@@ -952,18 +956,42 @@ pub(crate) async fn start_web(state: WebState) {
             "/api/v1/user/retainer/listings",
             axum::routing::get(user_retainer_listings),
         )
-        .route("/api/v1/retainer/search/{query}", axum::routing::get(retainer_search))
-        .route("/api/v1/retainer/claim/{id}", axum::routing::get(claim_retainer))
-        .route("/api/v1/retainer/unclaim/{id}", axum::routing::get(unclaim_retainer))
+        .route(
+            "/api/v1/retainer/search/{query}",
+            axum::routing::get(retainer_search),
+        )
+        .route(
+            "/api/v1/retainer/claim/{id}",
+            axum::routing::get(claim_retainer),
+        )
+        .route(
+            "/api/v1/retainer/unclaim/{id}",
+            axum::routing::get(unclaim_retainer),
+        )
         .route(
             "/item/refresh/{worldid}/{itemid}",
             axum::routing::get(refresh_world_item_listings),
         )
-        .route("/api/v1/retainer/listings/{id}", axum::routing::get(retainer_listings))
-        .route("/api/v1/characters/search/{name}", axum::routing::get(character_search))
-        .route("/api/v1/characters/claim/{id}", axum::routing::get(claim_character))
-        .route("/api/v1/characters/unclaim/{id}", axum::routing::get(unclaim_character))
-        .route("/api/v1/characters/verify/{id}", axum::routing::get(verify_character))
+        .route(
+            "/api/v1/retainer/listings/{id}",
+            axum::routing::get(retainer_listings),
+        )
+        .route(
+            "/api/v1/characters/search/{name}",
+            axum::routing::get(character_search),
+        )
+        .route(
+            "/api/v1/characters/claim/{id}",
+            axum::routing::get(claim_character),
+        )
+        .route(
+            "/api/v1/characters/unclaim/{id}",
+            axum::routing::get(unclaim_character),
+        )
+        .route(
+            "/api/v1/characters/verify/{id}",
+            axum::routing::get(verify_character),
+        )
         .route("/api/v1/characters", axum::routing::get(user_characters))
         .route(
             "/api/v1/characters/verifications",
@@ -971,9 +999,15 @@ pub(crate) async fn start_web(state: WebState) {
         )
         .route("/api/v1/detectregion", axum::routing::get(detect_region))
         .route("/retainers/add/{id}", axum::routing::get(add_retainer))
-        .route("/retainers/remove/{id}", axum::routing::get(remove_owned_retainer))
+        .route(
+            "/retainers/remove/{id}",
+            axum::routing::get(remove_owned_retainer),
+        )
         .route("/static/{*path}", axum::routing::get(static_path))
-        .route("/static/itemicon/fallback", axum::routing::get(fallback_item_icon))
+        .route(
+            "/static/itemicon/fallback",
+            axum::routing::get(fallback_item_icon),
+        )
         .route("/static/itemicon/{path}", axum::routing::get(get_item_icon))
         .route(
             &["/static/data/", xiv_gen::data_version(), ".bincode"].concat(),
@@ -990,8 +1024,14 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/sitemap/world/{s}", axum::routing::get(world_sitemap))
         .route("/sitemap/items.xml", axum::routing::get(item_sitemap))
         .route("/sitemap.xml", axum::routing::get(sitemap_index))
-        .route("/sitemap/pages.xml", axum::routing::get(generic_pages_sitemap))
-        .route("/listings/{world}/{item}", axum::routing::get(listings_redirect))
+        .route(
+            "/sitemap/pages.xml",
+            axum::routing::get(generic_pages_sitemap),
+        )
+        .route(
+            "/listings/{world}/{item}",
+            axum::routing::get(listings_redirect),
+        )
         .route("/api.json", get(serve_api))
         .finish_api(&mut api)
         .merge(create_leptos_app(state.world_helper.clone()).await.unwrap())
