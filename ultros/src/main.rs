@@ -179,7 +179,7 @@ async fn init_db(
     Ok(())
 }
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main]
 async fn main() -> Result<()> {
     // Load environment variables from `.env` file, if present
     dotenv().ok();

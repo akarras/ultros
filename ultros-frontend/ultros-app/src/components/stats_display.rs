@@ -83,7 +83,7 @@ fn get_param_data_for_item(item: ItemId) -> Option<Vec<ParamData>> {
 fn ParamView(data: ParamData) -> impl IntoView {
     view! {
         <div>
-            <Tooltip tooltip_text=data.base_param.description.as_str()>
+            <Tooltip tooltip_text=data.base_param.description.as_str().into()>
                 <span class="w-48">{data.base_param.name.as_str()}</span>
                 "  "
                 {data.normal_value}

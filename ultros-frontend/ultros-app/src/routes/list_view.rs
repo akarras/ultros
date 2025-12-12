@@ -89,7 +89,7 @@ pub fn ListView() -> impl IntoView {
 
     view! {
         <div class="flex-row">
-            <Tooltip tooltip_text="Add an item to the list">
+            <Tooltip tooltip_text="Add an item to the list".into()>
                 <button
                     class="btn-primary"
                     class:active=move || menu() == MenuState::Item
@@ -107,7 +107,7 @@ pub fn ListView() -> impl IntoView {
                     <span>"Add Item"</span>
                 </button>
             </Tooltip>
-            <Tooltip tooltip_text="Add a recipe's ingredients to the list">
+            <Tooltip tooltip_text="Add a recipe's ingredients to the list".into()>
                 <button
                     class="btn-secondary"
                     class:active=move || menu() == MenuState::Recipe
@@ -122,7 +122,7 @@ pub fn ListView() -> impl IntoView {
                     "Add Recipe"
                 </button>
             </Tooltip>
-            <Tooltip tooltip_text="Import an item">
+            <Tooltip tooltip_text="Import an item".into()>
                 <button
                     class="btn-secondary"
                     class:active=move || menu() == MenuState::MakePlace
@@ -513,7 +513,7 @@ pub fn ListView() -> impl IntoView {
                                                                                             .then(move || {
                                                                                                 view! {
                                                                                                     <div>
-                                                                                                        <Tooltip tooltip_text="This item is not available on the market board">
+                                                                                                        <Tooltip tooltip_text="This item is not available on the market board".into()>
                                                                                                             <Icon icon=i::BiTrashSolid />
                                                                                                         </Tooltip>
                                                                                                     </div>
@@ -568,7 +568,7 @@ pub fn ListView() -> impl IntoView {
                                                                                             .then(move || {
                                                                                                 view! {
                                                                                                     <div>
-                                                                                                        <Tooltip tooltip_text="This item is not available on the market board">
+                                                                                                        <Tooltip tooltip_text="This item is not available on the market board".into()>
                                                                                                             <Icon icon=i::AiExclamationOutlined />
                                                                                                         </Tooltip>
                                                                                                     </div>
