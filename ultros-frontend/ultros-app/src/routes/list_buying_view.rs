@@ -1,12 +1,15 @@
+use crate::components::clipboard::Clipboard;
+use crate::components::gil::Gil;
 use crate::components::item_icon::ItemIcon;
 use crate::components::world_name::WorldName;
 use crate::error::AppError;
-use icondata as i;
 use leptos::prelude::*;
-use leptos_icons::Icon;
 use std::collections::HashMap;
-use ultros_api_types::{icon_size::IconSize, list::ListItem, listings::ActiveListing, world_helper::AnySelector};
-use xiv_gen::{ItemId, WorldDcGroupTypeId, WorldId};
+use ultros_api_types::{
+    icon_size::IconSize, list::ListItem, listings::ActiveListing,
+    user::UserRetainers, world_helper::AnySelector,
+};
+use xiv_gen::{WorldDcGroupTypeId, ItemId, WorldId};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct DatacenterView {
@@ -18,6 +21,7 @@ struct DatacenterView {
 pub fn ListBuyingView(
     items: StoredValue<Vec<(ListItem, Vec<ActiveListing>)>>,
     edit_item: Action<ListItem, Result<(), AppError>>,
+    retainers: Resource<(), Result<UserRetainers, AppError>>,
 ) -> impl IntoView {
     let datacenters = Signal::derive(move || {
         let mut worlds: HashMap<i32, Vec<(ListItem, ActiveListing)>> = HashMap::new();
@@ -98,6 +102,18 @@ pub fn ListBuyingView(
 
     let data = xiv_gen_db::data();
     let game_items = &data.items;
+    let retainer_map = Memo::new(move |_| {
+        retainers
+            .get()
+            .and_then(|r| r.ok())
+            .map(|r| {
+                r.retainers
+                    .into_iter()
+                    .flat_map(|(_, r)| r.into_iter().map(|(r, _)| (r.id, r)))
+                    .collect::<HashMap<_, _>>()
+            })
+            .unwrap_or_default()
+    });
 
     view! {
         <div class="panel p-4 rounded-xl">
@@ -124,23 +140,21 @@ pub fn ListBuyingView(
                                                                     .map(|i| i.name.to_string())
                                                                     .unwrap_or_default();
                                                                 let quantity_needed = item.quantity.unwrap_or(1);
+                                                                let retainer_name = retainer_map()
+                                                                    .get(&listing.retainer_id)
+                                                                    .map(|r| r.name.clone())
+                                                                    .unwrap_or_default();
                                                                 view! {
                                                                     <tr>
+                                                                        <td class="w-12"><ItemIcon item_id=item.item_id icon_size=IconSize::Small /></td>
                                                                         <td>
                                                                             <div class="flex flex-row items-center gap-2">
-                                                                                <ItemIcon item_id=item.item_id icon_size=IconSize::Small />
-                                                                                <span>
-                                                                                    {format!(
-                                                                                        "{} {} @ {} ",
-                                                                                        quantity_needed,
-                                                                                        item_name,
-                                                                                        listing.price_per_unit,
-                                                                                    )}
-                                                                                    <Icon icon=i::BiCoinRegular />
-                                                                                    " gil each"
-                                                                                </span>
+                                                                                <span>{format!("{} {}", quantity_needed, item_name)}</span>
+                                                                                <Clipboard clipboard_text=item_name.clone() />
                                                                             </div>
                                                                         </td>
+                                                                        <td><Gil amount=listing.price_per_unit /></td>
+                                                                        <td>{retainer_name}</td>
                                                                         <td>
                                                                             <button
                                                                                 class="btn-primary"

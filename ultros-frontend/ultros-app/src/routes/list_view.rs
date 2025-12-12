@@ -11,7 +11,7 @@ use xiv_gen::{Item, ItemId, Recipe};
 
 use crate::api::{
     add_item_to_list, bulk_add_item_to_list, delete_list_item, delete_list_items, edit_list_item,
-    get_list_items_with_listings,
+    get_list_items_with_listings, get_retainers,
 };
 use crate::components::related_items::IngredientsIter;
 use crate::components::{
@@ -94,6 +94,7 @@ pub fn ListView() -> impl IntoView {
     let (view_state, set_view_state) = signal(ViewState::List);
     let edit_list_mode = RwSignal::new(false);
     let selected_items = RwSignal::new(HashSet::new());
+    let retainers = create_resource(|| (), |_| get_retainers());
 
     view! {
         <div class="flex-row">
@@ -437,7 +438,6 @@ pub fn ListView() -> impl IntoView {
                                                                         })
                                                                 }
                                                             >
-
                                                                 "bulk edit"
                                                             </button>
                                                             <div class:hidden=move || !edit_list_mode()>
@@ -450,7 +450,6 @@ pub fn ListView() -> impl IntoView {
                                                                         delete_items.dispatch(items);
                                                                     }
                                                                 >
-
                                                                     "DELETE"
                                                                 </button>
                                                             </div>
@@ -465,7 +464,6 @@ pub fn ListView() -> impl IntoView {
                                                                         })
                                                                 }
                                                             >
-
                                                                 "SELECT ALL"
                                                             </button>
                                                             <button
@@ -474,7 +472,6 @@ pub fn ListView() -> impl IntoView {
                                                                     selected_items.update(|i| i.clear());
                                                                 }
                                                             >
-
                                                                 "DESLECT ALL"
                                                             </button>
                                                         </div>
@@ -518,7 +515,6 @@ pub fn ListView() -> impl IntoView {
                                                                                                             })
                                                                                                     }
                                                                                                 />
-
                                                                                             </td>
                                                                                             <td>{item.hq.and_then(|hq| hq.then_some("✅"))}</td>
                                                                                             <td>
@@ -544,7 +540,6 @@ pub fn ListView() -> impl IntoView {
                                                                                                                 </div>
                                                                                                             }
                                                                                                         })}
-
                                                                                                 </div>
                                                                                             </td>
                                                                                             <td>{item.quantity}</td>
@@ -558,7 +553,6 @@ pub fn ListView() -> impl IntoView {
                                                                                                         />
                                                                                                     }
                                                                                                 }}
-
                                                                                             </td>
                                                                                         },
                                                                                     )
@@ -574,7 +568,6 @@ pub fn ListView() -> impl IntoView {
                                                                                                         temp_item.update(|w| w.hq = Some(!w.hq.unwrap_or_default()))
                                                                                                     }
                                                                                                 />
-
                                                                                             </td>
                                                                                             <td>
                                                                                                 <div class="flex-row">
@@ -599,7 +592,6 @@ pub fn ListView() -> impl IntoView {
                                                                                                                 </div>
                                                                                                             }
                                                                                                         })}
-
                                                                                                 </div>
                                                                                             </td>
                                                                                             <td>
@@ -614,7 +606,6 @@ pub fn ListView() -> impl IntoView {
                                                                                                         }
                                                                                                     }
                                                                                                 />
-
                                                                                             </td>
                                                                                             <td>
                                                                                                 {move || {
@@ -626,7 +617,6 @@ pub fn ListView() -> impl IntoView {
                                                                                                         />
                                                                                                     }
                                                                                                 }}
-
                                                                                             </td>
                                                                                         },
                                                                                     )
@@ -667,7 +657,7 @@ pub fn ListView() -> impl IntoView {
                                                 .into_any()
                                         }
                                         ViewState::Buying => {
-                                            view! { <ListBuyingView items=items edit_item=edit_item /> }
+                                            view! { <ListBuyingView items=items edit_item=edit_item retainers=retainers /> }
                                                 .into_any()
                                         }
                                     },
