@@ -1,14 +1,78 @@
 use cfg_if::cfg_if;
+<<<<<<< HEAD
 use leptos::{html::Div, portal::Portal, prelude::*};
+=======
+#[cfg(feature = "hydrate")]
+use leptos::{ev::resize, portal::Portal};
+use leptos::{html::Div, prelude::*};
+>>>>>>> main
 #[cfg(feature = "hydrate")]
 use leptos_use::{
     use_element_bounding, use_element_size, use_event_listener_with_options, use_window,
     use_window_scroll, UseElementBoundingReturn, UseElementSizeReturn, UseEventListenerOptions,
 };
 
+<<<<<<< HEAD
 
 #[component]
 pub fn Tooltip<T>(tooltip_text: Signal<String>, children: TypedChildrenFn<T>) -> impl IntoView
+=======
+#[cfg_attr(not(feature = "hydrate"), allow(dead_code))]
+fn use_window_size() -> (Signal<f64>, Signal<f64>) {
+    cfg_if! { if #[cfg(feature = "ssr")] {
+        let initial_x = 0.0;
+        let initial_y = 0.0;
+    } else {
+        let initial_x = window().inner_width().unwrap_or_default().as_f64().unwrap_or_default();
+        let initial_y = window().inner_height().unwrap_or_default().as_f64().unwrap_or_default();
+    }}
+    let (x, set_x) = signal(initial_x);
+    let (y, set_y) = signal(initial_y);
+    #[cfg(not(feature = "hydrate"))]
+    {
+        let _ = set_x;
+        let _ = set_y;
+    }
+
+    cfg_if! {
+        if #[cfg(feature = "hydrate")] {
+            let _ = use_event_listener_with_options(
+                use_window(),
+                resize,
+                move |_| {
+                    set_x.set(
+                        window()
+                            .inner_width()
+                            .unwrap_or_default()
+                            .as_f64()
+                            .unwrap_or_default(),
+                    );
+                    set_y.set(
+                        window()
+                            .inner_height()
+                            .unwrap_or_default()
+                            .as_f64()
+                            .unwrap_or_default(),
+                    );
+                },
+                UseEventListenerOptions::default()
+                    .capture(false)
+                    .passive(true),
+            );
+        }
+    }
+
+    (x.into(), y.into())
+}
+
+#[component]
+pub fn Tooltip<T>(
+    #[prop(into)]
+    #[allow(unused_variables)]
+    tooltip_text: Signal<String>,
+    children: TypedChildrenFn<T>,
+) -> impl IntoView
+>>>>>>> main
 where
     T: Sized + Render + RenderHtml + Send,
 {

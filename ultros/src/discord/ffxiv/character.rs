@@ -23,7 +23,7 @@ pub(crate) async fn register(
     }
     let profiles = search.send_async(&ctx.data().lodestone_client).await?;
     let options = profiles
-        .into_iter()
+        .iter()
         .map(|search_result| {
             poise::serenity_prelude::CreateSelectMenuOption::new(
                 format!("{}\n{}", search_result.name, search_result.world),
@@ -52,8 +52,17 @@ pub(crate) async fn register(
         if let poise::serenity_prelude::ComponentInteractionDataKind::StringSelect { values } =
             &msg.data.kind
         {
-            ctx.say(format!("selected {}", values[0])).await?;
-            // TODO lookup what value was selected from the list of interactions
+            let selected_user_id = values[0].parse::<u32>()?;
+            let selected_profile = profiles
+                .iter()
+                .find(|p| p.user_id == selected_user_id)
+                .ok_or_else(|| anyhow::anyhow!("Selected profile not found"))?;
+
+            ctx.say(format!(
+                "Selected {} from {}",
+                selected_profile.name, selected_profile.world
+            ))
+            .await?;
         }
     } else {
         ctx.say("No choice selected").await?;

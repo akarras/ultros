@@ -1,4 +1,9 @@
 use leptos::prelude::*;
+<<<<<<< HEAD
+=======
+#[cfg(feature = "hydrate")]
+use log::{debug, warn};
+>>>>>>> main
 use std::str::FromStr;
 
 use crate::global_state::cookies::Cookies;
@@ -238,7 +243,10 @@ fn load_palette_from_storage() -> Option<ThemePalette> {
     None
 }
 
-fn apply_to_dom(mode: ThemeMode, palette: ThemePalette) {
+fn apply_to_dom(
+    #[allow(unused_variables)] mode: ThemeMode,
+    #[allow(unused_variables)] palette: ThemePalette,
+) {
     #[cfg(feature = "hydrate")]
     {
         use log::{debug, warn};
