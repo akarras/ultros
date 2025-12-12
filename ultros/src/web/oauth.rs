@@ -111,6 +111,9 @@ pub async fn begin_login(
     cookies: PrivateCookieJar,
     State(config): State<DiscordAuthConfig>,
 ) -> (PrivateCookieJar, Redirect) {
+    if config.inner.is_dev {
+        return (cookies, Redirect::to("/dev_login"));
+    }
     let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
 
     let cookies = cookies.add(
@@ -131,6 +134,21 @@ pub async fn begin_login(
     let (url, _token) = request.url();
 
     (cookies, Redirect::to(url.as_str()))
+}
+
+pub async fn dev_login(
+    mut cookies: PrivateCookieJar,
+    State(config): State<DiscordAuthConfig>,
+) -> Result<(PrivateCookieJar, Redirect), WebError> {
+    if !config.inner.is_dev {
+        return Err(WebError::NotFound);
+    }
+    let mut cookie = Cookie::new("discord_auth", "dev");
+    cookie.set_secure(true);
+    cookie.set_same_site(SameSite::Lax);
+    cookie.make_permanent();
+    cookies = cookies.add(cookie);
+    Ok((cookies, Redirect::to("/")))
 }
 
 #[derive(Deserialize)]
@@ -235,6 +253,7 @@ where
     axum_extra::extract::cookie::Key: FromRef<S>,
     UltrosDb: FromRef<S>,
     AuthUserCache: FromRef<S>,
+    DiscordAuthConfig: FromRef<S>,
 {
     type Rejection = ApiError;
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
@@ -250,6 +269,26 @@ where
             State::from_request_parts(parts, state).await.unwrap();
 
         if let Some(user) = user_cache.get_user(discord_auth.value()).await {
+            return Ok(user);
+        }
+
+        let State(config): State<DiscordAuthConfig> =
+            State::from_request_parts(parts, state).await.unwrap();
+        if discord_auth.value() == "dev" {
+            if !config.inner.is_dev {
+                return Err(ApiError::NoAuthCookie);
+            }
+            let user = AuthDiscordUser {
+                id: 1,
+                name: "dev".to_string(),
+                avatar_url: "".to_string(),
+            };
+            ultros
+                .get_or_create_discord_user(user.id, user.name.clone())
+                .await?;
+            user_cache
+                .store_user(discord_auth.value(), user.clone())
+                .await;
             return Ok(user);
         }
 
@@ -286,18 +325,20 @@ pub struct DiscordAuthConfig {
 struct DiscordAuthConfigImpl {
     pub scopes: HashSet<OAuthScope>,
     pub client: BasicClient,
+    pub is_dev: bool,
 }
 
 impl DiscordAuthConfig {
     pub fn new(
-        client_id: String,
-        client_secret: String,
+        client_id: Option<String>,
+        client_secret: Option<String>,
         redirect_url: String,
         scopes: HashSet<OAuthScope>,
     ) -> Self {
+        let is_dev = client_id.is_none();
         let client = BasicClient::new(
-            ClientId::new(client_id),
-            Some(ClientSecret::new(client_secret)),
+            ClientId::new(client_id.unwrap_or_default()),
+            Some(ClientSecret::new(client_secret.unwrap_or_default())),
             AuthUrl::new("https://discord.com/api/oauth2/authorize".to_string())
                 .expect("Failed to parse url"),
             Some(
@@ -314,7 +355,11 @@ impl DiscordAuthConfig {
                 .expect("Failed to parse revoke URL"),
         );
         Self {
-            inner: Arc::new(DiscordAuthConfigImpl { scopes, client }),
+            inner: Arc::new(DiscordAuthConfigImpl {
+                scopes,
+                client,
+                is_dev,
+            }),
         }
     }
 }
