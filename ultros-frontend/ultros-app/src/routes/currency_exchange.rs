@@ -245,10 +245,14 @@ pub fn ExchangeItem() -> impl IntoView {
         get_recent_sales_for_world(&world.name).await
     });
 
-    let world_cheapest_listings = Resource::new(home_world, move |world| async move {
-        let world = world.ok_or(AppError::NoHomeWorld)?;
-        get_cheapest_listings(&world.name).await
-    });
+    let filter = use_context::<RwSignal<crate::global_state::world_filter::WorldFilter>>().unwrap();
+    let world_cheapest_listings = Resource::new(
+        move || (home_world(), filter.get()),
+        move |(world, filter)| async move {
+            let world = world.ok_or(AppError::NoHomeWorld)?;
+            get_cheapest_listings(&world.name, &filter).await
+        },
+    );
     let data = xiv_gen_db::data();
     let item_id = move || {
         ItemId(
