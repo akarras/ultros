@@ -569,7 +569,6 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                     key=|(id, item)| (id.0, item.name.clone())
                     children=move |(id, item)| {
                         view! {
-<<<<<<< HEAD
                             <div class="group relative flex flex-col p-4 rounded-xl panel
                                         border border-white/5 hover:border-brand-500/30
                                         hover:shadow-lg hover:shadow-brand-500/5
@@ -577,15 +576,6 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                 <div class="flex flex-row items-start gap-4 mb-4">
                                     <div class="shrink-0 relative">
                                          <A href=move || format!("/item/{}/{}",
-=======
-                            <div class="group relative flex flex-col p-4 rounded-xl panel 
-                                        border border-white/5 hover:border-brand-500/30 
-                                        hover:shadow-lg hover:shadow-brand-500/5 
-                                        transition-all duration-300">
-                                <div class="flex flex-row items-start gap-4 mb-4">
-                                    <div class="shrink-0 relative">
-                                         <A href=move || format!("/item/{}/{}", 
->>>>>>> main
                                             price_zone.get().as_ref().map(|z| z.get_name()).unwrap_or("North-America"),
                                             item.key_id.0)
                                          >
@@ -593,11 +583,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                          </A>
                                     </div>
                                     <div class="flex flex-col min-w-0 pt-0.5">
-<<<<<<< HEAD
                                         <div class="flex items-center gap-2 mb-1.5 flex-wrap">
-=======
-                                        <div class="flex items-center gap-2 mb-1.5 flex-wrap"> 
->>>>>>> main
                                             <span class="text-xs font-bold px-1.5 py-0.5 rounded bg-white/10 text-[color:var(--color-text-muted)] whitespace-nowrap">
                                                 "iLvl "{item.level_item.0}
                                             </span>
@@ -611,11 +597,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                                 view! { <span/> }.into_any()
                                             }}
                                         </div>
-<<<<<<< HEAD
                                         <A href=move || format!("/item/{}/{}",
-=======
-                                        <A href=move || format!("/item/{}/{}", 
->>>>>>> main
                                             price_zone.get().as_ref().map(|z| z.get_name()).unwrap_or("North-America"),
                                             item.key_id.0)
                                             attr:class="font-bold text-base leading-snug text-[color:var(--color-text)] \
@@ -716,13 +698,8 @@ fn CategorySection(
 ) -> impl IntoView {
     view! {
         <details class="group/section" open>
-<<<<<<< HEAD
             <summary class="flex items-center justify-between w-full px-2 py-2 cursor-pointer
                            text-xs font-bold uppercase tracking-wider text-[color:var(--color-text-muted)]
-=======
-            <summary class="flex items-center justify-between w-full px-2 py-2 cursor-pointer 
-                           text-xs font-bold uppercase tracking-wider text-[color:var(--color-text-muted)] 
->>>>>>> main
                            hover:text-[color:var(--color-text)] transition-colors select-none list-none">
                 <span>{title}</span>
                 <Icon icon=i::BiChevronDownRegular attr:class="transition-transform group-open/section:rotate-180" />
