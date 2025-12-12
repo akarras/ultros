@@ -18,7 +18,7 @@ axum-macros = "0.5.0"
 cookie = "0.18"
 xiv-gen-db = { path = "../xiv-gen-db", features = ["embed"] }
 poise = { version = "0.6.1" }
-chrono = "0.4.23"
+chrono = "0.4.42"
 lodestone = { git = "https://github.com/akarras/lodestone.git", branch = 'async', default-features = false, features = [
     "rustls-tls",
 ] }
@@ -40,9 +40,9 @@ thiserror = "1.0.36"
 dotenvy = { workspace = true }
 metrics = "0.24.3"
 envy = "0.4"
-metrics-exporter-prometheus = { version = "0.18.0", default-features = false }
+metrics-exporter-prometheus = { version = "0.18.1", default-features = false }
 serde_with = "3.0.0"
-tower-http = { version = "0.6.6", features = ["full"] }
+tower-http = { version = "0.6.8", features = ["full"] }
 sha2 = "0.10.6"
 base64 = "0.21.0"
 smallvec = { version = "1.10.0", features = [

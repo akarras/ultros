@@ -35,11 +35,11 @@ leptos_router = { version = "0.8", default-features = false, features = [
     "nightly",
 ] }
 leptos_meta = { version = "0.8", default-features = false, features = [] }
-leptos-use = { version = "0.16.2", features = [] }
-chrono = "0.4.23"
+leptos-use = { version = "0.16.3", features = [] }
+chrono = "0.4.42"
 itertools = "0.14.0"
-image = "0.25.6"
-plotters = "0.3"
+image = "0.25.9"
+plotters = "0.3.7"
 sea-orm = { version = "^1.1.0", features = [
     "sqlx-postgres",
     "runtime-tokio-rustls",
