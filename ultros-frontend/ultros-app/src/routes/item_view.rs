@@ -27,7 +27,7 @@ use xiv_gen::ItemId;
 fn WorldButton(
     current_world: Memo<String>,
     #[prop(into)] world: OwnedResult,
-    item_id: i32,
+    item_name: String,
 ) -> impl IntoView {
     let (home_world, _) = use_home_world();
     let world_name = world.get_name().to_string();
@@ -58,7 +58,7 @@ fn WorldButton(
                     ]
                         .join(" ")
                 }
-                href=format!("/item/{}/{item_id}", Url::escape(&world_name))
+                href=format!("/item/{}/{}", Url::escape(&world_name), item_name)
             >
                 {move || {
                     is_home_world
@@ -77,18 +77,15 @@ fn WorldButton(
 }
 
 #[component]
-fn HomeWorldButton(current_world: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
+fn HomeWorldButton(current_world: Memo<String>, item_name: Memo<String>) -> impl IntoView {
     let (home_world, _) = use_home_world();
-    home_world
-        .get_untracked()
-        .map(move |world| {
-            view! { <WorldButton current_world world=AnyResult::World(&world) item_id=item_id() /> }
-        })
-        .into_any()
+    home_world.get_untracked().map(move |world| {
+        view! { <WorldButton current_world world=AnyResult::World(&world) item_name=item_name() /> }
+    })
 }
 
 #[component]
-fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
+fn WorldMenu(world_name: Memo<String>, item_name: Memo<String>) -> impl IntoView {
     let current_world = world_name;
     let world_data = use_context::<LocalWorldData>().unwrap().0.unwrap();
     let (home_world, _) = use_home_world();
@@ -120,7 +117,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                                             )
                                             .map(move |world| {
                                                 view! {
-                                                    <WorldButton current_world world item_id=item_id() />
+                                                    <WorldButton current_world world item_name=item_name() />
                                                 }
                                             })
                                             .collect_view();
@@ -133,7 +130,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                                             .into_iter()
                                             .map(|w| Either::Left(
                                                 view! {
-                                                    <WorldButton current_world world=w item_id=item_id() />
+                                                    <WorldButton current_world world=w item_name=item_name() />
                                                 },
                                             ))
                                             .chain([Either::Right(view! { <div class="w-2"></div> })])
@@ -146,7 +143,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                                                             <WorldButton
                                                                 current_world
                                                                 world=AnyResult::Datacenter(dc)
-                                                                item_id=item_id()
+                                                                item_name=item_name()
                                                             />
                                                         },
                                                     )),
@@ -161,7 +158,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                                                             <WorldButton
                                                                 current_world
                                                                 world=AnyResult::World(w)
-                                                                item_id=item_id()
+                                                                item_name=item_name()
                                                             />
                                                         },
                                                     )),
@@ -185,7 +182,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                                                 <div class="w-2"></div>
                                                 {should_show_homeworld
                                                     .then(|| {
-                                                        view! { <HomeWorldButton current_world item_id /> }
+                                                        view! { <HomeWorldButton current_world item_name /> }
                                                     })}
                                             },
                                         )
@@ -201,7 +198,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                                                         <WorldButton
                                                             current_world
                                                             world=AnyResult::Region(r)
-                                                            item_id=item_id()
+                                                            item_name=item_name()
                                                         />
                                                     },
                                                 )
@@ -218,7 +215,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                                                             <WorldButton
                                                                 current_world
                                                                 world=AnyResult::Datacenter(dc)
-                                                                item_id=item_id()
+                                                                item_name=item_name()
                                                             />
                                                         },
                                                     )),
@@ -228,7 +225,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                                             view! {
                                                 {views}
                                                 <div class="w-2"></div>
-                                                <HomeWorldButton current_world item_id />
+                                                <HomeWorldButton current_world item_name />
                                             },
                                         )
                                     }
@@ -244,7 +241,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                                         <WorldButton
                                             current_world
                                             world=AnyResult::Region(r)
-                                            item_id=item_id()
+                                            item_name=item_name()
                                         />
                                     }
                                 });
@@ -259,7 +256,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                                                 <WorldButton
                                                     current_world
                                                     world=AnyResult::Datacenter(dc)
-                                                    item_id=item_id()
+                                                    item_name=item_name()
                                                 />
                                             }
                                         }),
@@ -762,11 +759,15 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
 #[component]
 pub fn ItemView() -> impl IntoView {
     let params = use_params_map();
+    let data = xiv_gen_db::data();
     let item_id = Memo::new(move |_| {
-        params()
-            .get("id")
-            .and_then(|id| id.parse::<i32>().ok())
-            .unwrap_or_default()
+        let id = params
+            .with(|p| p.get("id").as_ref().cloned())
+            .unwrap_or_default();
+        data.item_name_to_id
+            .get(&id)
+            .map(|id| id.0)
+            .unwrap_or_else(|| id.parse::<i32>().unwrap_or_default())
     });
 
     let recently_viewed = use_context::<RecentItems>().unwrap();
@@ -791,12 +792,12 @@ pub fn ItemView() -> impl IntoView {
         })
     });
 
-    let item_name = move || {
+    let item_name = Memo::new(move |_| {
         items
             .get(&ItemId(item_id()))
-            .map(|item| item.name.as_str())
+            .map(|item| item.name.as_str().to_string())
             .unwrap_or_default()
-    };
+    });
 
     let item = move || items.get(&ItemId(item_id()));
 
@@ -838,7 +839,7 @@ pub fn ItemView() -> impl IntoView {
             property="thumbnail"
             content=move || format!("https://ultros.app/static/itemicon/{}?size=Large", item_id())
         />
-        <Link rel="canonical" prop:href=move || format!("https://ultros.app/item/{}", item_id()) />
+        <Link rel="canonical" prop:href=move || format!("https://ultros.app/item/{}", item_name().to_lowercase().replace(' ', "-")) />
         <div class="min-h-screen">
             <div class="w-full px-4 py-6">
                 <div class="flex flex-col gap-6 p-6 panel">
@@ -915,7 +916,7 @@ pub fn ItemView() -> impl IntoView {
                 </div>
             </div>
 
-            <WorldMenu world_name=world item_id />
+            <WorldMenu world_name=world item_name=item_name />
 
             <div class="main-content px-4">
                 <ListingsContent item_id world />

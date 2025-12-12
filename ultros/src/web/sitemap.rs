@@ -210,10 +210,13 @@ pub(crate) async fn item_sitemap(
             .items
             .iter()
             .filter(|(_, item)| item.item_search_category.0 > 0)
-            .map(|(key, _)| key.0)
-            .sorted()
-            .map(|id| {
-                let mut builder = Url::builder(format!("https://ultros.app/item/{id}"));
+            .map(|(key, item)| (key.0, item))
+            .sorted_by_key(|(id, _)| *id)
+            .map(|(id, item)| {
+                let mut builder = Url::builder(format!(
+                    "https://ultros.app/item/{}",
+                    item.name.to_lowercase().replace(' ', "-")
+                ));
                 if let Some((last_modified, change)) = frequency_map.get(&id) {
                     if let Some(modified) = last_modified {
                         builder.last_modified(modified.and_utc().fixed_offset());
