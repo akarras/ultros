@@ -58,7 +58,7 @@ impl Cookies {
                 if let Some(cookie) = value {
                     cookies.add(cookie.clone());
                 } else {
-                    cookies.remove(Cookie::named(cookie_name.as_ref().to_string()));
+                    cookies.remove(Cookie::from(cookie_name.as_ref().to_string()));
                 }
             },
         )
