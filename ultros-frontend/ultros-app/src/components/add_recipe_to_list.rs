@@ -51,12 +51,10 @@ fn AddRecipeToListModal(
     let (hq, set_hq) = signal(false);
     let (quantity, set_quantity) = signal(1);
     let (ignore_crystals, set_ignore_crystals) = signal(false);
-    let add_bulk_action = Action::new(
-        move |(list_id, items): &(i32, Vec<ListItem>)| {
-            let items = items.clone();
-            bulk_add_item_to_list(*list_id, items)
-        },
-    );
+    let add_bulk_action = Action::new(move |(list_id, items): &(i32, Vec<ListItem>)| {
+        let items = items.clone();
+        bulk_add_item_to_list(*list_id, items)
+    });
 
     Effect::new(move |_| {
         if let Some(Ok(_)) = add_bulk_action.value().get() {
