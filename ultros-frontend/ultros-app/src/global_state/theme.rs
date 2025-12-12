@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+#[cfg(feature = "hydrate")]
 use log::{debug, warn};
 use std::str::FromStr;
 
@@ -239,7 +240,10 @@ fn load_palette_from_storage() -> Option<ThemePalette> {
     None
 }
 
-fn apply_to_dom(mode: ThemeMode, palette: ThemePalette) {
+fn apply_to_dom(
+    #[allow(unused_variables)] mode: ThemeMode,
+    #[allow(unused_variables)] palette: ThemePalette,
+) {
     #[cfg(feature = "hydrate")]
     {
         use wasm_bindgen::JsCast;
