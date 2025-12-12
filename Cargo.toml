@@ -65,6 +65,8 @@ xiv-gen = { path = "./xiv-gen", features = [
     "e_npc_base",
     "e_npc_resident",
     "special_shop",
+    "world",
+    "world_dc_group_type",
 ] }
 icondata = "0.6"
 leptos_icons = "0.7"

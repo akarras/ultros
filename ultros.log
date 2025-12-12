@@ -1,0 +1,41 @@
+   Compiling xiv-gen v0.1.0 (/app/xiv-gen)
+   Compiling ultros-api-types v0.1.0 (/app/ultros-api-types)
+   Compiling ultros-db v0.1.0 (/app/ultros-db)
+   Compiling ultros-xiv-icons v0.1.0 (/app/ultros-frontend/ultros-xiv-icons)
+   Compiling xiv-gen-db v0.1.0 (/app/xiv-gen-db)
+   Compiling ultros-charts v0.1.0 (/app/ultros-frontend/ultros-charts)
+   Compiling ultros-app v0.1.0 (/app/ultros-frontend/ultros-app)
+warning: unused variable: `tooltip_text`
+  --> ultros-frontend/ultros-app/src/components/tooltip.rs:56:19
+   |
+56 |     #[prop(into)] tooltip_text: Signal<String>,
+   |                   ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_tooltip_text`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `mode`
+   --> ultros-frontend/ultros-app/src/global_state/theme.rs:243:17
+    |
+243 | fn apply_to_dom(mode: ThemeMode, palette: ThemePalette) {
+    |                 ^^^^ help: if this is intentional, prefix it with an underscore: `_mode`
+
+warning: unused variable: `palette`
+   --> ultros-frontend/ultros-app/src/global_state/theme.rs:243:34
+    |
+243 | fn apply_to_dom(mode: ThemeMode, palette: ThemePalette) {
+    |                                  ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_palette`
+
+warning: `ultros-app` (lib) generated 3 warnings (run `cargo fix --lib -p ultros-app` to apply 3 suggestions)
+   Compiling ultros v0.1.0 (/app/ultros)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 16m 16s
+     Running `target/debug/ultros`
+  [2m2025-12-12T00:45:02.881237Z[0m [32m INFO[0m [1;32multros[0m[32m: [32mUltros starting![0m
+    [2;3mat[0m ultros/src/main.rs:198
+
+  [2m2025-12-12T00:45:02.881474Z[0m [32m INFO[0m [1;32multros[0m[32m: [32mConnecting DB[0m
+    [2;3mat[0m ultros/src/main.rs:199
+
+
+thread 'main' (95874) panicked at /app/ultros-db/src/lib.rs:47:49:
+Missing DATABASE_URL environment variable: NotPresent
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
