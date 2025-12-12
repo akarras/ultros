@@ -6,7 +6,7 @@ use tracing::error;
 use tracing::instrument;
 use ultros_api_types::{
     ActiveListing, CurrentlyShownItem, FfxivCharacter, FfxivCharacterVerification,
-    cheapest_listings::CheapestListings,
+    cheapest_listings::{CheapestListings, CheapestListingsMap},
     list::{CreateList, List, ListItem},
     recent_sales::RecentSales,
     result::JsonErrorWrapper,
@@ -30,6 +30,7 @@ pub(crate) async fn get_listings(item_id: i32, world: &str) -> AppResult<Current
     fetch_api(&format!("/api/v1/listings/{world}/{item_id}")).await
 }
 
+#[allow(dead_code)]
 pub(crate) async fn get_bulk_listings(
     world: &str,
     item_ids: impl Iterator<Item = i32>,
@@ -85,31 +86,26 @@ pub(crate) async fn get_retainer_undercuts() -> AppResult<Undercuts> {
     // get our retainer data
     let retainer_data = get_user_retainer_listings().await?;
     // build a unique list of worlds and item ids so we can fetch additional info about them
-    // todo: couldn't I just use cheapest listings for each world & avoid looking up literally every retainer?
-    let world_items: HashMap<i32, Vec<i32>> = retainer_data
+    // optimized: use cheapest listings for each world & avoid looking up literally every retainer
+    let worlds: Vec<i32> = retainer_data
         .retainers
         .iter()
-        .flat_map(|(_, r)| {
-            r.iter()
-                .flat_map(|(_, l)| l.iter().map(|l| (l.world_id, l.item_id)))
-        })
-        .fold(HashMap::new(), |mut acc, (world, item_id)| {
-            acc.entry(world).or_default().push(item_id);
-            acc
-        });
+        .flat_map(|(_, r)| r.iter().flat_map(|(_, l)| l.iter().map(|l| l.world_id)))
+        .unique()
+        .collect();
     // todo: once the api calls use a result type, swap this to a try_join all
-    let listings = join_all(world_items.into_iter().map(|(world, items)| async move {
-        get_bulk_listings(&world.to_string(), items.into_iter())
+    let listings = join_all(worlds.into_iter().map(|world| async move {
+        get_cheapest_listings(&world.to_string())
             .await
             // include the world id in the returned value
             .map(|listings| (world, listings))
     }))
     .await;
     // flatten the listings down so it's more usable
-    let listings_map = listings.into_iter().flatten().fold(
+    let listings_map: HashMap<i32, CheapestListingsMap> = listings.into_iter().flatten().fold(
         HashMap::new(),
         |mut world_map, (world_id, item_data)| {
-            if world_map.insert(world_id, item_data).is_some() {
+            if world_map.insert(world_id, item_data.into()).is_some() {
                 unreachable!("Should only be one world id from the set above.");
             }
             world_map
@@ -131,19 +127,14 @@ pub(crate) async fn get_retainer_undercuts() -> AppResult<Undercuts> {
                                 // use the world/item_id as keys to lookup the rest of the listings that match this retainer
                                 listings_map
                                     .get(&listing.world_id)
-                                    .and_then(|world_map| world_map.get(&listing.item_id))
-                                    .and_then(|listings| {
-                                        listings
-                                            .iter()
-                                            .filter(|(cheapest, _)| {
-                                                if listing.hq {
-                                                    listing.hq == cheapest.hq
-                                                } else {
-                                                    true
-                                                }
-                                            })
-                                            .map(|(l, _)| l.price_per_unit)
-                                            .min()
+                                    .and_then(|world_map| {
+                                        let summary =
+                                            world_map.find_matching_listings(listing.item_id);
+                                        if listing.hq {
+                                            summary.hq.map(|l| l.price)
+                                        } else {
+                                            summary.lowest_gil()
+                                        }
                                     })
                                     .and_then(|cheapest| {
                                         (listing.price_per_unit > cheapest).then(|| UndercutData {

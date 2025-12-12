@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+#[allow(unused_imports)]
 use log::{debug, warn};
 use std::str::FromStr;
 
@@ -239,6 +240,7 @@ fn load_palette_from_storage() -> Option<ThemePalette> {
     None
 }
 
+#[allow(unused_variables)]
 fn apply_to_dom(mode: ThemeMode, palette: ThemePalette) {
     #[cfg(feature = "hydrate")]
     {
