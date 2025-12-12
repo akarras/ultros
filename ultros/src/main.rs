@@ -179,7 +179,8 @@ async fn init_db(
     Ok(())
 }
 
-#[tokio::main(flavor = "current_thread")]
+// Bolt: Switched to multi-threaded runtime for better performance on multi-core systems
+#[tokio::main]
 async fn main() -> Result<()> {
     // Load environment variables from `.env` file, if present
     dotenv().ok();
