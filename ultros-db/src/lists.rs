@@ -182,6 +182,41 @@ impl UltrosDb {
         }
     }
 
+    pub async fn update_many_list_items<T>(
+        &self,
+        item_ids: Vec<i32>,
+        discord_user: i64,
+        update: T,
+    ) -> Result<()>
+    where
+        T: Fn(&mut list_item::ActiveModel) + Send + Sync,
+    {
+        let items = list_item::Entity::find()
+            .filter(list_item::Column::Id.is_in(item_ids))
+            .all(&self.db)
+            .await?;
+        let lists = items
+            .iter()
+            .map(|i| i.list_id)
+            .collect::<std::collections::HashSet<_>>();
+        let lists = try_join_all(
+            lists
+                .into_iter()
+                .map(|list_id| self.get_list(list_id, discord_user)),
+        )
+        .await?;
+        if lists.is_empty() && !items.is_empty() {
+            return Err(anyhow!("No lists found for items"));
+        }
+        try_join_all(items.into_iter().map(|item| {
+            let mut active_item = item.into_active_model();
+            update(&mut active_item);
+            active_item.update(&self.db)
+        }))
+        .await?;
+        Ok(())
+    }
+
     /// Update list item
     #[instrument(skip(self))]
     pub async fn update_list_item(

@@ -29,3 +29,9 @@ pub struct ListItem {
     pub quantity: Option<i32>,
     pub acquired: Option<i32>,
 }
+
+#[derive(Debug, Deserialize, Serialize, Clone, Default, Eq, PartialEq, PartialOrd, Ord)]
+pub struct BulkEdit {
+    pub ids: Vec<i32>,
+    pub hq: Option<bool>,
+}

@@ -37,7 +37,7 @@ use tower_http::compression::{CompressionLayer, Predicate};
 use tower_http::trace::TraceLayer;
 use tracing::{debug, warn};
 use ultros_api_types::icon_size::IconSize;
-use ultros_api_types::list::{CreateList, List, ListItem};
+use ultros_api_types::list::{BulkEdit, CreateList, List, ListItem};
 use ultros_api_types::retainer::RetainerListings;
 use ultros_api_types::user::{OwnedRetainer, UserData, UserRetainerListings, UserRetainers};
 use ultros_api_types::websocket::ListingEventData;
@@ -680,6 +680,20 @@ pub(crate) async fn delete_multiple_list_items(
     Ok(Json(()))
 }
 
+pub(crate) async fn bulk_edit_list_items(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Json(bulk_edit): Json<BulkEdit>,
+) -> Result<Json<()>, ApiError> {
+    db.update_many_list_items(bulk_edit.ids, user.id as i64, |item| {
+        if let Some(hq) = bulk_edit.hq {
+            item.hq = ActiveValue::Set(Some(hq));
+        }
+    })
+    .await?;
+    Ok(Json(()))
+}
+
 /// Does a bulk lookup of item listings. Will not preserve order.
 pub(crate) async fn bulk_item_listings(
     State(db): State<UltrosDb>,
@@ -915,6 +929,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/list/{id}/delete", delete(delete_list))
         .route("/api/v1/list/item/{id}/delete", delete(delete_list_item))
         .route("/api/v1/list/item/delete", post(delete_multiple_list_items))
+        .route("/api/v1/list/item/bulk_edit", post(bulk_edit_list_items))
         .route("/api/v1/world_data", get(world_data))
         .route("/api/v1/current_user", get(current_user))
         .route("/api/v1/user/retainer", get(user_retainers))

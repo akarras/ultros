@@ -7,7 +7,7 @@ use tracing::instrument;
 use ultros_api_types::{
     ActiveListing, CurrentlyShownItem, FfxivCharacter, FfxivCharacterVerification,
     cheapest_listings::CheapestListings,
-    list::{CreateList, List, ListItem},
+    list::{BulkEdit, CreateList, List, ListItem},
     recent_sales::RecentSales,
     result::JsonErrorWrapper,
     retainer::{Retainer, RetainerListings},
@@ -255,6 +255,10 @@ pub(crate) async fn delete_list_item(list_id: i32) -> AppResult<()> {
 
 pub(crate) async fn delete_list_items(list_items: Vec<i32>) -> AppResult<()> {
     post_api("/api/v1/list/item/delete", list_items).await
+}
+
+pub(crate) async fn bulk_edit_list_items(list_items: BulkEdit) -> AppResult<()> {
+    post_api("/api/v1/list/item/bulk_edit", list_items).await
 }
 
 pub(crate) async fn update_retainer_order(retainers: Vec<OwnedRetainer>) -> AppResult<()> {
