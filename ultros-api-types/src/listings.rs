@@ -2,7 +2,7 @@ use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 /// This mostly matches with the ultros-db/entity type, but doesn't include the sea-orm specifics
 /// See [ultros-db::active_listing::Entity]
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ActiveListing {
     pub id: i32,
     pub world_id: i32,

@@ -6,9 +6,9 @@ use leptos::prelude::*;
 use leptos_icons::Icon;
 use std::collections::HashMap;
 use ultros_api_types::{icon_size::IconSize, list::ListItem, listings::ActiveListing, world_helper::AnySelector};
-use xiv_gen::{ItemId, WorldDcGroupTypeId, WorldId};
+use xiv_gen::{DataCenterId, ItemId};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct DatacenterView {
     pub name: String,
     pub worlds: Vec<(i32, Vec<(ListItem, ActiveListing)>)>,
@@ -54,11 +54,11 @@ pub fn ListBuyingView(
 
         let data = xiv_gen_db::data();
         let game_items = &data.items;
-        let mut worlds_by_dc: HashMap<WorldDcGroupTypeId, Vec<(i32, Vec<(ListItem, ActiveListing)>)>> =
+        let mut worlds_by_dc: HashMap<DataCenterId, Vec<(i32, Vec<(ListItem, ActiveListing)>)>> =
             HashMap::new();
 
         for (world_id, listings) in worlds {
-            if let Some(world) = data.worlds.get(&WorldId(world_id)) {
+            if let Some(world) = data.worlds.get(&xiv_gen::WorldId(world_id)) {
                 let dc_worlds = worlds_by_dc.entry(world.data_center).or_default();
                 dc_worlds.push((world_id, listings));
             }
@@ -66,31 +66,26 @@ pub fn ListBuyingView(
 
         let mut datacenters: Vec<DatacenterView> = worlds_by_dc
             .into_iter()
-            .map(
-                |(dc_id, mut worlds): (
-                    WorldDcGroupTypeId,
-                    Vec<(i32, Vec<(ListItem, ActiveListing)>)>,
-                )| {
-                    let dc_name = data
-                        .world_dc_group_types
-                        .get(&dc_id)
-                        .map(|dc| dc.name.clone())
-                        .unwrap_or_default();
-                    worlds.sort_by_key(|(world_id, _)| *world_id);
-                    for (_, listings) in &mut worlds {
-                        listings.sort_by_key(|(item, _): &(ListItem, ActiveListing)| {
-                            game_items
-                                .get(&ItemId(item.item_id))
-                                .map(|i| i.name.clone())
-                                .unwrap_or_default()
-                        });
-                    }
-                    DatacenterView {
-                        name: dc_name,
-                        worlds,
-                    }
-                },
-            )
+            .map(|(dc_id, mut worlds)| {
+                let dc_name = data
+                    .world_dc_group_types
+                    .get(&dc_id)
+                    .map(|dc| dc.name.clone())
+                    .unwrap_or_default();
+                worlds.sort_by_key(|(world_id, _)| *world_id);
+                for (_, listings) in &mut worlds {
+                    listings.sort_by_key(|(item, _)| {
+                        game_items
+                            .get(&ItemId(item.item_id))
+                            .map(|i| i.name.clone())
+                            .unwrap_or_default()
+                    });
+                }
+                DatacenterView {
+                    name: dc_name,
+                    worlds,
+                }
+            })
             .collect();
         datacenters.sort_by(|a, b| a.name.cmp(&b.name));
         datacenters
@@ -110,7 +105,7 @@ pub fn ListBuyingView(
                                 <h2 class="text-2xl font-bold">{dc.name}</h2>
                                 {dc.worlds
                                     .into_iter()
-                                    .map(|(world_id, listings): (i32, Vec<(ListItem, ActiveListing)>)| {
+                                    .map(|(world_id, listings)| {
                                         view! {
                                             <div class="mb-4">
                                                 <h3 class="text-xl font-bold"><WorldName id=AnySelector::World(world_id) /></h3>

@@ -19,7 +19,7 @@ once_cell = "1"
 anyhow.workspace = true
 
 [build-dependencies]
-xiv-gen = {workspace = true, features = ["csv_to_bincode"]}
+xiv-gen = {workspace = true, features = ["csv_to_bincode", "world", "world_dc_group_type"]}
 serde = {version = "1.0.143", features = ["derive"]}
 bincode = {version = "2.0.0-rc.3"}
 flate2 = "1.0.24"
