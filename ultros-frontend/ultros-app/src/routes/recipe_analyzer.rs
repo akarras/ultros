@@ -85,6 +85,7 @@ fn calculate_crafting_cost(
     depth: i32,
     max_depth: i32,
     use_subcrafts: bool,
+    require_hq: bool,
 ) -> (i32, Vec<SubcraftInfo>) {
     // Use 64-bit intermediates with saturating math to avoid overflow in debug builds.
     let mut cost: i64 = 0;
@@ -106,10 +107,12 @@ fn calculate_crafting_cost(
             continue;
         }
 
-        let market_price = prices
-            .find_matching_listings(item_id.0)
-            .lowest_gil()
-            .unwrap_or(999_999_999) as i64; // High cost if not found
+        let price_summary = prices.find_matching_listings(item_id.0);
+        let market_price = if require_hq {
+            price_summary.price_preferring_hq().unwrap_or(999_999_999) as i64
+        } else {
+            price_summary.lowest_gil().unwrap_or(999_999_999) as i64
+        };
 
         let mut item_cost = market_price;
         let mut best_sub_crafts = Vec::new();
@@ -127,6 +130,7 @@ fn calculate_crafting_cost(
                     depth + 1,
                     max_depth,
                     use_subcrafts,
+                    require_hq,
                 );
                 let craft_cost = craft_cost as i64;
                 if craft_cost < item_cost {
@@ -228,6 +232,7 @@ fn RecipeAnalyzerTable(
     let (job_filter, set_job_filter) = query_signal::<String>("job");
     let (use_subcrafts, set_use_subcrafts) = query_signal::<bool>("subcrafts");
     let (max_sale_interval, set_max_sale_interval) = query_signal::<String>("next-sale");
+    let (require_hq, set_require_hq) = query_signal::<bool>("require-hq");
 
     let sale_interval_limit =
         Memo::new(move |_| max_sale_interval().and_then(|d| parse_duration(d.as_str()).ok()));
@@ -256,6 +261,7 @@ fn RecipeAnalyzerTable(
         let recipes_by_output = recipes_by_output();
         let levels = crafter_levels.get().unwrap_or_default();
         let use_sub = use_subcrafts().unwrap_or(false);
+        let require_hq_flag = require_hq().unwrap_or(false);
 
         let sale_index: HashMap<i32, (usize, Option<u64>)> = if let Some(ref sales) = recent_sales {
             let mut idx = HashMap::new();
@@ -347,6 +353,7 @@ fn RecipeAnalyzerTable(
                 0,
                 if use_sub { 2 } else { 0 }, // Limit recursion depth
                 use_sub,
+                require_hq_flag,
             );
 
             // craft_cost represents the cost to perform the recipe once.
@@ -504,18 +511,31 @@ fn RecipeAnalyzerTable(
                 </Show>
 
                 <div class="flex flex-row gap-4 flex-wrap">
-                            <input
-                                type="checkbox"
-                                id="subcrafts"
-                                class="checkbox"
-                                prop:checked=move || use_subcrafts().unwrap_or(false)
-                                on:change=move |ev| set_use_subcrafts(Some(event_target_checked(&ev)))
-                            />
-                            <label for="subcrafts">"Include Sub-crafts"</label>
-                            <div class="text-brand-300 cursor-help" title="If enabled, the analyzer will check if it's cheaper to craft intermediate ingredients rather than buying them from the market board.">
-                                <Icon icon=i::AiQuestionCircleOutlined />
-                            </div>
-                        </div>
+                    <input
+                        type="checkbox"
+                        id="subcrafts"
+                        class="checkbox"
+                        prop:checked=move || use_subcrafts().unwrap_or(false)
+                        on:change=move |ev| set_use_subcrafts(Some(event_target_checked(&ev)))
+                    />
+                    <label for="subcrafts">"Include Sub-crafts"</label>
+                    <div class="text-brand-300 cursor-help" title="If enabled, the analyzer will check if it's cheaper to craft intermediate ingredients rather than buying them from the market board.">
+                        <Icon icon=i::AiQuestionCircleOutlined />
+                    </div>
+                </div>
+                <div class="flex flex-row gap-4 flex-wrap">
+                    <input
+                        type="checkbox"
+                        id="require-hq"
+                        class="checkbox"
+                        prop:checked=move || require_hq().unwrap_or(false)
+                        on:change=move |ev| set_require_hq(Some(event_target_checked(&ev)))
+                    />
+                    <label for="require-hq">"Require HQ Ingredients"</label>
+                    <div class="text-brand-300 cursor-help" title="If enabled, ingredient costs will prefer HQ listings when available. Falls back to LQ if no HQ listing exists.">
+                        <Icon icon=i::AiQuestionCircleOutlined />
+                    </div>
+                </div>
                         <select
                             class="input"
                             on:change=move |ev| {
@@ -767,6 +787,18 @@ pub fn RecipeAnalyzer() -> impl IntoView {
         get_cheapest_listings(&region).await
     });
 
+<<<<<<< HEAD
+=======
+    let (selected_world, set_selected_world) = signal(None);
+    Effect::new(move |_| {
+        if selected_world.get_untracked().is_none()
+            && let Some(home) = home_world.get()
+        {
+            set_selected_world(Some(home));
+        }
+    });
+
+>>>>>>> main
     let recent_sales = Resource::new(selected_world, move |world| async move {
         if let Some(world) = world {
             leptos::logging::log!("Fetching sales for world: {}", &world.name);
@@ -804,10 +836,13 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                         <Show when=move || recent_sales.get().and_then(|r| r.err()).is_some()>
                             <div class="text-red-400 text-sm">"Error loading sales data"</div>
                         </Show>
+<<<<<<< HEAD
                         <WorldOnlyPicker
                             current_world=selected_world
                             set_current_world=set_selected_world
                         />
+=======
+>>>>>>> main
                     </div>
                 </div>
                 {
@@ -835,6 +870,21 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                     }
                 }
 
+<<<<<<< HEAD
+=======
+                <Show when=move || selected_world.get().is_some()>
+                    <div class="flex flex-col md:flex-row items-center gap-2">
+                        <label class="text-[color:var(--brand-fg)] font-semibold">"Select World for Sales Data:"</label>
+                        <div class="w-full md:w-auto">
+                            <WorldOnlyPicker
+                                current_world=selected_world.into()
+                                set_current_world=set_selected_world.into()
+                            />
+                        </div>
+                    </div>
+                </Show>
+
+>>>>>>> main
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>
                     {move || {
                         let listings = global_cheapest_listings.get();

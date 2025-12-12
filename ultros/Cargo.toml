@@ -10,6 +10,8 @@ license = "MIT or Apache-2.0"
 universalis = { path = "../universalis", features = ["websocket"] }
 ultros-db = { path = "../ultros-db" }
 anyhow = { workspace = true }
+aide = { version = "0.15", features = ["macros", "axum", "axum-json"] }
+schemars = { version = "0.8.16", features = ["derive"] }
 axum.workspace = true
 axum-extra.workspace = true
 axum-macros = "0.5.0"
@@ -50,7 +52,7 @@ smallvec = { version = "1.10.0", features = [
 ] }
 itertools = "0.14.0"
 sitemap-rs = "0.4.0"
-ultros-api-types = { path = "../ultros-api-types" }
+ultros-api-types = { path = "../ultros-api-types", features = ["aide"] }
 ultros-xiv-icons = { path = "../ultros-frontend/ultros-xiv-icons" }
 leptos = { workspace = true, features = ["ssr", "nightly"] }
 leptos_axum.workspace = true
