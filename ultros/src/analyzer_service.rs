@@ -96,7 +96,7 @@ impl From<&ultros_db::listings::ListingSummary> for ItemKey {
     }
 }
 
-#[derive(Debug, PartialEq, PartialOrd, Eq, Ord, Clone, Copy, Serialize)]
+#[derive(Debug, PartialEq, PartialOrd, Eq, Ord, Clone, Copy)]
 pub(crate) struct SaleSummary {
     pub(crate) price_per_item: i32,
     pub(crate) sale_date: NaiveDateTime,
@@ -129,7 +129,7 @@ impl From<&ultros_api_types::SaleHistory> for SaleSummary {
     }
 }
 
-#[derive(Debug, Default, Clone, Serialize)]
+#[derive(Debug, Default, Clone)]
 pub(crate) struct SaleHistory {
     pub(crate) item_map: HashMap<ItemKey, arrayvec::ArrayVec<SaleSummary, SALE_HISTORY_SIZE>>,
 }

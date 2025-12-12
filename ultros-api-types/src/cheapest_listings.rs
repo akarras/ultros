@@ -4,7 +4,6 @@ use std::fmt;
 
 /// "item_id":6605,"hq":false,"cheapest_price":6999999,"world_id":99
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "aide", derive(schemars::JsonSchema))]
 pub struct CheapestListingItem {
     pub item_id: i32,
     pub hq: bool,
@@ -13,13 +12,11 @@ pub struct CheapestListingItem {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[cfg_attr(feature = "aide", derive(schemars::JsonSchema))]
 pub struct CheapestListings {
     pub cheapest_listings: Vec<CheapestListingItem>,
 }
 
 #[derive(Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
-#[cfg_attr(feature = "aide", derive(schemars::JsonSchema))]
 pub struct CheapestListingMapKey {
     pub item_id: i32,
     pub hq: bool,
@@ -82,14 +79,12 @@ impl<'de> Deserialize<'de> for CheapestListingMapKey {
 }
 
 #[derive(Deserialize, Serialize, Clone, Copy, PartialEq, PartialOrd)]
-#[cfg_attr(feature = "aide", derive(schemars::JsonSchema))]
 pub struct CheapestListingData {
     pub price: i32,
     pub world_id: i32,
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
-#[cfg_attr(feature = "aide", derive(schemars::JsonSchema))]
 pub struct CheapestListingsMap {
     pub map: HashMap<CheapestListingMapKey, CheapestListingData>,
 }

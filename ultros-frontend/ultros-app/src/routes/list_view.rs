@@ -10,10 +10,11 @@ use ultros_api_types::list::ListItem;
 use xiv_gen::{Item, ItemId, Recipe};
 
 use crate::api::{
-    add_item_to_list, bulk_add_item_to_list, delete_list_item, delete_list_items, edit_list_item,
-    get_list_items_with_listings,
+    add_item_to_list, bulk_add_item_to_list, bulk_edit_list_items, delete_list_item,
+    delete_list_items, edit_list_item, get_list_items_with_listings,
 };
 use crate::components::related_items::IngredientsIter;
+use ultros_api_types::list::BulkEdit;
 use crate::components::{
     clipboard::*, item_icon::*, list_summary::*, loading::*, make_place_importer::*,
     price_viewer::*, small_item_display::*, tooltip::*,
@@ -67,6 +68,7 @@ pub fn ListView() -> impl IntoView {
     });
     let edit_item = Action::new(move |item: &ListItem| edit_list_item(item.clone()));
     let delete_items = Action::new(move |items: &Vec<i32>| delete_list_items(items.clone()));
+    let bulk_edit_items = Action::new(move |items: &BulkEdit| bulk_edit_list_items(items.clone()));
     let list_view = Resource::new(
         move || {
             (
@@ -77,6 +79,7 @@ pub fn ListView() -> impl IntoView {
                     recipe_add.version().get(),
                     edit_item.version().get(),
                     delete_items.version().get(),
+                    bulk_edit_items.version().get(),
                 ),
             )
         },
@@ -427,6 +430,38 @@ pub fn ListView() -> impl IntoView {
                                                     >
 
                                                         "DELETE"
+                                                    </button>
+                                                    <button
+                                                        class="btn"
+                                                        on:click=move |_| {
+                                                            let items = selected_items
+                                                                .with_untracked(|s| {
+                                                                    BulkEdit {
+                                                                        ids: s.iter().copied().collect(),
+                                                                        hq: Some(true),
+                                                                    }
+                                                                });
+                                                            bulk_edit_items.dispatch(items);
+                                                        }
+                                                    >
+
+                                                        "HQ"
+                                                    </button>
+                                                    <button
+                                                        class="btn"
+                                                        on:click=move |_| {
+                                                            let items = selected_items
+                                                                .with_untracked(|s| {
+                                                                    BulkEdit {
+                                                                        ids: s.iter().copied().collect(),
+                                                                        hq: Some(false),
+                                                                    }
+                                                                });
+                                                            bulk_edit_items.dispatch(items);
+                                                        }
+                                                    >
+
+                                                        "Remove HQ"
                                                     </button>
                                                 </div>
                                                 <button

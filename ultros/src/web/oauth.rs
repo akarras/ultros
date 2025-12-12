@@ -10,8 +10,8 @@ use axum_extra::extract::{
 use cookie::CookieBuilder;
 use oauth2::{
     AccessToken, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, PkceCodeChallenge,
-    PkceCodeVerifier, RedirectUrl, RevocationUrl, Scope, StandardRevocableToken, TokenResponse,
-    TokenUrl, basic::BasicClient,
+    RedirectUrl, RevocationUrl, Scope, StandardRevocableToken, TokenResponse, TokenUrl,
+    basic::BasicClient,
 };
 use poise::serenity_prelude::Http;
 use serde::{Deserialize, Serialize};
@@ -112,6 +112,7 @@ pub async fn begin_login(
     State(config): State<DiscordAuthConfig>,
 ) -> (PrivateCookieJar, Redirect) {
     let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
+    // todo: send redirect handler for discord
 
     let cookies = cookies.add(
         CookieBuilder::new("pkce_challenge", pkce_challenge.as_str().to_string())
@@ -120,11 +121,7 @@ pub async fn begin_login(
     );
     let cookies = cookies.add(Cookie::new("pkce_verifier", pkce_verifier.secret().clone()));
 
-    let mut request = config
-        .inner
-        .client
-        .authorize_url(CsrfToken::new_random)
-        .set_pkce_challenge(pkce_challenge);
+    let mut request = config.inner.client.authorize_url(CsrfToken::new_random);
     for r in &config.inner.scopes {
         request = request.add_scope(Scope::new(r.to_string()));
     }
@@ -149,18 +146,13 @@ pub async fn redirect(
     if let Some(pkce_challenge) = cookies.get("pkce_challenge") {
         cookies = cookies.remove(pkce_challenge);
     }
-    let pkce_verifier = if let Some(pkce_verifier) = cookies.get("pkce_verifier") {
-        let secret = pkce_verifier.value().to_string();
+    if let Some(pkce_verifier) = cookies.get("pkce_verifier") {
         cookies = cookies.remove(pkce_verifier);
-        Some(secret)
-    } else {
-        None
-    };
-    let mut request = config.inner.client.exchange_code(code);
-    if let Some(pkce_verifier) = pkce_verifier {
-        request = request.set_pkce_verifier(PkceCodeVerifier::new(pkce_verifier));
     }
-    let token = request
+    let token = config
+        .inner
+        .client
+        .exchange_code(code)
         .request_async(oauth2::reqwest::async_http_client)
         .await?
         .access_token()
