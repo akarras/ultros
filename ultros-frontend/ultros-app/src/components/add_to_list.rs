@@ -21,7 +21,7 @@ use crate::components::{item_icon::ItemIcon, loading::Loading, modal::Modal};
 pub fn AddToList(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     let (modal_visible, set_modal_visible) = signal(false);
     view! {
-        <Tooltip tooltip_text="Add to list">
+        <Tooltip tooltip_text="Add to list".into()>
             <button
                 class="btn-primary"
                 attr:aria-label="Add this item to one of your lists"

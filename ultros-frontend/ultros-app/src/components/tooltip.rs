@@ -1,5 +1,5 @@
 use cfg_if::cfg_if;
-use leptos::{html::Div, portal::Portal, prelude::*};
+use leptos::{html::Div, prelude::*};
 #[cfg(feature = "hydrate")]
 use leptos_use::{
     UseElementBoundingReturn, UseElementSizeReturn, UseEventListenerOptions, use_element_bounding,
@@ -7,7 +7,7 @@ use leptos_use::{
 };
 
 #[component]
-pub fn Tooltip<T>(tooltip_text: Signal<String>, children: TypedChildrenFn<T>) -> impl IntoView
+pub fn Tooltip<T>(_tooltip_text: Signal<String>, children: TypedChildrenFn<T>) -> impl IntoView
 where
     T: Sized + Render + RenderHtml + Send,
 {
