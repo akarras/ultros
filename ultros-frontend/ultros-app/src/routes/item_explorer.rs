@@ -188,7 +188,7 @@ fn JobsList() -> impl IntoView {
         <div class="flex flex-col text-xl">
             {jobs
                 .into_iter()
-                .filter(|(_id, job)| job.job_index > 0)
+                .filter(|(_id, job)| !job.name.is_empty())
                 .map(|(_id, job)| {
                     let seg = if job.abbreviation.is_empty() { job.name.as_str() } else { job.abbreviation.as_str() };
                     let href = ["/items/jobset/", &seg.replace("/", "%2F")].concat();
@@ -796,12 +796,9 @@ mod tests {
         let visible_jobs: Vec<_> = jobs
             .iter()
             .filter(|(_id, job)| {
-                let visible = job.job_index > 0;
+                let visible = !job.name.is_empty();
                 if !visible {
-                    println!(
-                        "Filtered out: {} (Parent: {})",
-                        job.name, job.class_job_parent.0
-                    );
+                    println!("Filtered out job with empty name");
                 }
                 visible
             })
@@ -812,9 +809,11 @@ mod tests {
             println!("Visible: {}", job.name);
         }
 
+        // Assert that we have a reasonable number of jobs.
+        // There are currently 42 jobs, so we'll check for more than 40.
         assert!(
-            !visible_jobs.is_empty(),
-            "No jobs are visible! Filtering logic might be wrong."
+            visible_jobs.len() > 40,
+            "There should be more than 40 jobs visible."
         );
     }
 }
