@@ -180,26 +180,44 @@ fn job_category_lookup(class_job_category: &ClassJobCategory, job_acronym: &str)
 }
 
 #[component]
-fn JobsList() -> impl IntoView {
+fn JobsList(search: Memo<Option<String>>) -> impl IntoView {
     let jobs = &xiv_gen_db::data().class_jobs;
     let mut jobs: Vec<_> = jobs.iter().collect();
     jobs.sort_by_key(|(_, job)| job.ui_priority);
+    let filtered_jobs = Memo::new(move |_| {
+        let search = search.get().unwrap_or_default().to_lowercase();
+        jobs.iter()
+            .filter(|(_id, job)| job.job_index > 0)
+            .filter(|(_id, job)| {
+                search.is_empty()
+                    || job.name.to_lowercase().contains(&search)
+                    || job.abbreviation.to_lowercase().contains(&search)
+            })
+            .map(|job| job.clone())
+            .collect::<Vec<_>>()
+    });
     view! {
         <div class="flex flex-col text-xl">
-            {jobs
-                .into_iter()
-                .filter(|(_id, job)| job.class_job_parent.0 != 0)
-                .map(|(_id, job)| {
-                    let seg = if job.abbreviation.is_empty() { job.name.as_str() } else { job.abbreviation.as_str() };
-                    let href = ["/items/jobset/", &seg.replace("/", "%2F")].concat();
-                    view! {
-                        <SideMenuButton href=href>
-                            <ClassJobIcon id=job.key_id />
-                            {seg}
-                        </SideMenuButton>
-                    }
-                })
-                .collect::<Vec<_>>()}
+            {move || {
+                filtered_jobs
+                    .get()
+                    .into_iter()
+                    .map(|(_id, job)| {
+                        let seg = if job.abbreviation.is_empty() {
+                            job.name.as_str()
+                        } else {
+                            job.abbreviation.as_str()
+                        };
+                        let href = ["/items/jobset/", &seg.replace("/", "%2F")].concat();
+                        view! {
+                            <SideMenuButton href=href>
+                                <ClassJobIcon id=job.key_id />
+                                {seg}
+                            </SideMenuButton>
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            }}
         </div>
     }
 }
@@ -717,6 +735,7 @@ fn CategorySection(
 pub fn ItemExplorer() -> impl IntoView {
     let (menu_open, set_open) = query_signal("menu-open");
     let menu_open = Memo::new(move |_| menu_open().unwrap_or(false));
+    let (search, set_search) = query_signal("s");
 
     view! {
         <div class="flex flex-col min-h-[calc(100vh-64px)]">
@@ -755,7 +774,20 @@ pub fn ItemExplorer() -> impl IntoView {
                             <CategorySection title="Items" category=3 />
                             <CategorySection title="Housing" category=4 />
                             <CategorySection title="Job Sets">
-                                <JobsList />
+                                <input
+                                    class="w-full px-4 py-2 text-sm rounded-lg bg-white/5 border border-white/10"
+                                    placeholder="Search Jobs..."
+                                    on:input=move |ev| {
+                                        let value = event_target_value(&ev);
+                                        if value.is_empty() {
+                                            set_search(None);
+                                        } else {
+                                            set_search(Some(value));
+                                        }
+                                    }
+                                    prop:value=move || search().unwrap_or_default()
+                                />
+                                <JobsList search={search} />
                             </CategorySection>
                         </div>
                     </div>
@@ -796,7 +828,7 @@ mod tests {
         let visible_jobs: Vec<_> = jobs
             .iter()
             .filter(|(_id, job)| {
-                let visible = job.class_job_parent.0 != 0;
+                let visible = job.job_index > 0;
                 if !visible {
                     println!(
                         "Filtered out: {} (Parent: {})",
