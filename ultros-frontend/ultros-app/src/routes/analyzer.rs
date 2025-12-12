@@ -801,7 +801,14 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     };
 
     let cross_region = Resource::new(
-        move || (cross_region_enabled(), region(), enabled_regions(), filter.get()),
+        move || {
+            (
+                cross_region_enabled(),
+                region(),
+                enabled_regions(),
+                filter.get(),
+            )
+        },
         move |(enabled, region, enabled_regions, filter)| async move {
             let region = region?;
             if enabled.unwrap_or_default() && connected_regions.contains(&region.as_str()) {

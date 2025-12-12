@@ -1,9 +1,9 @@
 use std::{sync::Arc, time::Duration};
 
 use axum::{
+    Json,
     extract::{Path, Query, State},
     response::IntoResponse,
-    Json,
 };
 use axum_extra::headers::{CacheControl, HeaderMapExt};
 use serde::{Deserialize, Serialize};

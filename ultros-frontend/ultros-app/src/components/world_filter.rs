@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use leptos::prelude::*;
 use ultros_api_types::world_helper::AnySelector;
 
-use crate::global_state::{world_filter::WorldFilter, LocalWorldData};
+use crate::global_state::{LocalWorldData, world_filter::WorldFilter};
 
 #[component]
 pub(crate) fn WorldFilterComponent() -> impl IntoView {

@@ -729,7 +729,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
     let filter = use_context::<RwSignal<WorldFilter>>().unwrap();
     let listing_resource = Resource::new(
         move || (item_id(), world(), filter.get()),
-        |(item_id, world, filter)| async move {
+        |(item_id, world, _filter)| async move {
             get_listings(item_id, world.as_str())
                 .await
                 .inspect_err(|e| tracing::error!(error = ?e, "Error getting value"))
