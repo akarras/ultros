@@ -2,14 +2,12 @@ use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "aide", derive(schemars::JsonSchema))]
 pub struct Sales {
     pub price_per_unit: i32,
     pub sale_date: NaiveDateTime,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "aide", derive(schemars::JsonSchema))]
 pub struct SaleData {
     pub item_id: i32,
     pub hq: bool,
@@ -17,7 +15,6 @@ pub struct SaleData {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "aide", derive(schemars::JsonSchema))]
 pub struct RecentSales {
     pub sales: Vec<SaleData>,
 }
