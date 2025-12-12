@@ -3,13 +3,16 @@ use std::fmt::Display;
 use std::{collections::HashSet, str::FromStr};
 
 use crate::CheapestPrices;
+use crate::components::ad::Ad;
 use crate::components::clipboard::Clipboard;
 use crate::components::query_button::QueryButton;
 use crate::components::toggle::Toggle;
-use crate::components::{add_to_list::*, cheapest_price::*, fonts::*, item_icon::*, meta::*};
-use crate::global_state::home_world::get_price_zone;
+use crate::components::{
+    add_to_list::*, cheapest_price::*, fonts::*, meta::*, small_item_display::*,
+};
 use icondata as i;
 use itertools::Itertools;
+use leptos::either::Either;
 use leptos::prelude::*;
 use leptos::reactive::wrappers::write::SignalSetter;
 use leptos::text_prop::TextProp;
@@ -30,13 +33,13 @@ where
     let children = children.into_inner();
     view! {
         <APersistQuery href remove_values=&["page", "menu-open"]>
-            <div class="flex items-center gap-3 px-3 py-2 rounded-md
-            transition-all duration-200
-            text-sm font-medium
-            text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]
-            hover:bg-white/5
-            aria-[current]:text-brand-300 aria-[current]:bg-brand-500/10
-            group">
+            <div class="flex items-center gap-1 px-1 py-1 rounded-lg
+            transition-colors duration-200
+            panel font-medium
+            text-[color:var(--color-text)] hover:text-[color:var(--brand-fg)]
+            relative group">
+
+
                 {children()}
             </div>
         </APersistQuery>
@@ -439,253 +442,249 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
     let (sort, _set_sort) = query_signal::<ItemSortOption>("sort");
 
     let cheapest_prices = use_context::<CheapestPrices>().unwrap();
-    let listings_resource = cheapest_prices.read_listings;
-    let (price_zone, _) = get_price_zone();
 
-    let sorted_items = Memo::new(move |_| {
-        let direction = direction().unwrap_or(SortDirection::Desc);
-        let item_property = sort().unwrap_or(ItemSortOption::ItemLevel);
-        let price_map = listings_resource.get().and_then(|r| r.ok());
-        items()
-            .into_iter()
-            .filter(|(id, _)| {
-                if ItemSortOption::Price == item_property {
-                    if let Some(map) = &price_map {
-                        map.find_matching_listings(id.0).lowest_gil().is_some()
-                    } else {
-                        true
-                    }
-                } else {
-                    true
-                }
-            })
-            .sorted_by(|a, b| {
-                let ((_, item_a), (_, item_b)) = match direction {
-                    SortDirection::Asc => (a, b),
-                    SortDirection::Desc => (b, a),
-                };
-                match item_property {
-                    ItemSortOption::ItemLevel => item_a.level_item.0.cmp(&item_b.level_item.0),
-                    ItemSortOption::Name => item_a.name.cmp(&item_b.name),
-                    ItemSortOption::Price => {
-                        if let Some(price_map) = &price_map {
-                            let price_a = price_map
-                                .find_matching_listings(item_a.key_id.0)
-                                .lowest_gil();
-                            let price_b = price_map
-                                .find_matching_listings(item_b.key_id.0)
-                                .lowest_gil();
-                            price_a.cmp(&price_b)
-                        } else {
-                            item_a.level_item.0.cmp(&item_b.level_item.0)
-                        }
-                    }
-                    ItemSortOption::Key => item_a.key_id.0.cmp(&item_b.key_id.0),
-                }
-            })
-            .collect::<Vec<_>>()
-    });
-
-    let items_len = Memo::new(move |_| sorted_items.with(|i| i.len()));
-    let pages = Memo::new(move |_| Pages::new(items_len(), 50));
-
-    let filtered_items = Memo::new(move |_| {
-        let page = pages
-            .get()
-            .with_offset((page().unwrap_or_default() - 1).try_into().unwrap_or(0));
-        sorted_items.with(|items| {
-            items
-                .get(page.start..=page.end)
-                .unwrap_or_default()
-                .to_vec()
-        })
-    });
+    let items_len = Memo::new(move |_| items.with(|i| i.len()));
+    let pages = move || Pages::new(items_len(), 50);
 
     view! {
-        <div class="flex flex-col gap-6">
-            // Sort and Direction Controls - Floating / Sticky Bar
-            <div class="flex flex-col sm:flex-row justify-between gap-4 p-4 rounded-xl panel items-center sticky top-[72px] lg:top-4 z-20 backdrop-blur-md bg-[color:var(--bg-panel)]/90 border border-white/5 shadow-lg">
-                <div class="flex flex-row flex-wrap gap-2 items-center">
-                    <span class="text-xs font-bold uppercase tracking-wider text-[color:var(--color-text-muted)] mr-2">"Sort By"</span>
+        <div class="flex flex-col gap-4">
+            // Sort and Direction Controls
+            <div class="flex flex-col sm:flex-row justify-between gap-2">
+                <div class="flex flex-row flex-wrap gap-1">
                     <QueryButton
                         key="sort"
-                        value="ilvl"
-                        class="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors text-[color:var(--color-text-muted)] hover:bg-white/5"
-                        active_classes="px-3 py-1.5 rounded-lg text-sm font-medium !bg-brand-500/20 !text-brand-300 ring-1 ring-brand-500/50"
-                        default=true
+                        value="key"
+                        class="p-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--brand-fg)]"
+                        active_classes="p-1 text-[color:var(--brand-fg)] underline"
                     >
-                        "iLvl"
+                        <div class="flex flex-row items-center gap-1">
+                            <Icon icon=i::BiCalendarAltRegular />
+                            <span class="hidden sm:inline">"ADDED"</span>
+                        </div>
                     </QueryButton>
                     <QueryButton
                         key="sort"
                         value="price"
-                        class="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors text-[color:var(--color-text-muted)] hover:bg-white/5"
-                        active_classes="px-3 py-1.5 rounded-lg text-sm font-medium !bg-brand-500/20 !text-brand-300 ring-1 ring-brand-500/50"
+                        class="p-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--brand-fg)]"
+                        active_classes="p-1 text-[color:var(--brand-fg)] underline"
                     >
-                        "Price"
+                        <div class="flex flex-row items-center gap-1">
+                            <Icon icon=i::ImPriceTag />
+                            <span class="hidden sm:inline">"PRICE"</span>
+                        </div>
                     </QueryButton>
                     <QueryButton
                         key="sort"
                         value="name"
-                        class="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors text-[color:var(--color-text-muted)] hover:bg-white/5"
-                        active_classes="px-3 py-1.5 rounded-lg text-sm font-medium !bg-brand-500/20 !text-brand-300 ring-1 ring-brand-500/50"
+                        class="p-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--brand-fg)]"
+                        active_classes="p-1 text-[color:var(--brand-fg)] underline"
                     >
-                        "Name"
+                        "NAME"
                     </QueryButton>
                     <QueryButton
                         key="sort"
-                        value="key"
-                        class="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors text-[color:var(--color-text-muted)] hover:bg-white/5"
-                        active_classes="px-3 py-1.5 rounded-lg text-sm font-medium !bg-brand-500/20 !text-brand-300 ring-1 ring-brand-500/50"
-                    >
-                        "Added"
-                    </QueryButton>
-                </div>
-                <div class="flex flex-row gap-2 bg-black/20 p-1 rounded-lg">
-                     <QueryButton
-                        key="dir"
-                        value="asc"
-                        class="p-1.5 rounded text-[color:var(--color-text-muted)] hover:text-brand-200 transition-colors"
-                        active_classes="p-1.5 rounded bg-white/10 !text-brand-300 shadow-sm"
-                    >
-                        <Icon icon=i::BiSortUpRegular width="20" height="20" />
-                    </QueryButton>
-                     <QueryButton
-                        key="dir"
-                        value="desc"
-                        class="p-1.5 rounded text-[color:var(--color-text-muted)] hover:text-brand-200 transition-colors"
-                        active_classes="p-1.5 rounded bg-white/10 !text-brand-300 shadow-sm"
+                        value="ilvl"
+                        class="p-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--brand-fg)]"
+                        active_classes="p-1 !text-brand-300"
                         default=true
                     >
-                        <Icon icon=i::BiSortDownRegular width="20" height="20" />
+                        "ILVL"
                     </QueryButton>
                 </div>
-            </div>
-
-            // Item Grid
-            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4">
-                <For
-                    each=move || filtered_items.get()
-                    key=|(id, item)| (id.0, item.name.clone())
-                    children=move |(id, item)| {
-                        view! {
-                            <div class="group relative flex flex-col p-4 rounded-xl panel 
-                                        border border-white/5 hover:border-brand-500/30 
-                                        hover:shadow-lg hover:shadow-brand-500/5 
-                                        transition-all duration-300">
-                                <div class="flex flex-row items-start gap-4 mb-4">
-                                    <div class="shrink-0 relative">
-                                         <A href=move || format!("/item/{}/{}", 
-                                            price_zone.get().as_ref().map(|z| z.get_name()).unwrap_or("North-America"),
-                                            item.key_id.0)
-                                         >
-                                            <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
-                                         </A>
-                                    </div>
-                                    <div class="flex flex-col min-w-0 pt-0.5">
-                                        <div class="flex items-center gap-2 mb-1.5 flex-wrap"> 
-                                            <span class="text-xs font-bold px-1.5 py-0.5 rounded bg-white/10 text-[color:var(--color-text-muted)] whitespace-nowrap">
-                                                "iLvl "{item.level_item.0}
-                                            </span>
-                                             {if item.level_equip > 1 {
-                                                view! {
-                                                    <span class="text-xs px-1.5 py-0.5 rounded bg-white/5 text-[color:var(--color-text-muted)] whitespace-nowrap">
-                                                        "Lv "{item.level_equip}
-                                                    </span>
-                                                }.into_any()
-                                            } else {
-                                                view! { <span/> }.into_any()
-                                            }}
-                                        </div>
-                                        <A href=move || format!("/item/{}/{}", 
-                                            price_zone.get().as_ref().map(|z| z.get_name()).unwrap_or("North-America"),
-                                            item.key_id.0)
-                                            attr:class="font-bold text-base leading-snug text-[color:var(--color-text)] \
-                                                       group-hover:text-brand-300 transition-colors line-clamp-2 \
-                                                       hover:underline decoration-brand-300/30 underline-offset-4"
-                                         >
-                                            {item.name.as_str()}
-                                        </A>
-                                    </div>
-                                </div>
-                                <div class="flex-1" />
-                                <div class="flex flex-col gap-3 mt-2 pt-3 border-t border-white/5">
-                                    <div class="flex flex-col gap-2 text-sm">
-                                        <CheapestPrice item_id=*id show_hq=false label="NQ" />
-                                        {if item.can_be_hq {
-                                            view! {
-                                                <CheapestPrice item_id=*id show_hq=true label="HQ" />
-                                            }.into_any()
-                                        } else {
-                                            view! { <div/> }.into_any()
-                                        }}
-                                    </div>
-                                    <div class="flex items-center gap-2 mt-1">
-                                        <div class="flex-1">
-                                            <AddToList
-                                                item_id=id.0
-                                                class="w-full flex items-center justify-center p-2 rounded hover:bg-white/10 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] transition-colors"
-                                            />
-                                        </div>
-                                        <div class="p-1 rounded hover:bg-white/10 text-[color:var(--color-text-muted)] cursor-pointer" title="Copy Name">
-                                             <Clipboard clipboard_text=item.name.clone() />
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        }
-                        .into_any()
-                    }
-                />
+                <div class="flex flex-row gap-1">
+                    <QueryButton
+                        key="dir"
+                        value="asc"
+                        class="p-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--brand-fg)]"
+                        active_classes="p-1 text-[color:var(--brand-fg)] underline"
+                    >
+                        <div class="flex flex-row items-center gap-1">
+                            <Icon icon=i::BiSortUpRegular />
+                            <span class="hidden sm:inline">"ASC"</span>
+                        </div>
+                    </QueryButton>
+                    <QueryButton
+                        key="dir"
+                        value="desc"
+                        class="p-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--brand-fg)]"
+                        active_classes="p-1 text-[color:var(--brand-fg)] underline"
+                        default=true
+                    >
+                        <div class="flex flex-row items-center gap-1">
+                            <Icon icon=i::BiSortDownRegular />
+                            <span class="hidden sm:inline">"DESC"</span>
+                        </div>
+                    </QueryButton>
+                </div>
             </div>
 
             // Pagination
-             <div class="flex justify-center mt-6">
-                 <div class="flex flex-wrap justify-center gap-2 p-2 rounded-xl bg-[color:var(--bg-panel)]/50 border border-white/5">
-                    {move || {
-                        pages.get()
-                            .map(|page| {
-                                view! {
-                                    <QueryButton
-                                        key="page"
-                                        value=(page.offset + 1).to_string()
-                                        class="w-10 h-10 flex items-center justify-center rounded-lg text-sm font-medium transition-all
-                                               text-[color:var(--color-text-muted)] hover:bg-white/10 hover:text-brand-200"
-                                        active_classes="w-10 h-10 flex items-center justify-center rounded-lg text-sm font-medium transition-all !bg-brand-500 !text-white shadow-lg shadow-brand-500/20 scale-105"
-                                        default=page.offset == 0
-                                    >
-                                        {page.offset + 1}
-                                    </QueryButton>
-                                }
-                            })
-                            .collect::<Vec<_>>()
-                    }}
-                </div>
+            <div class="flex flex-row flex-wrap gap-1">
+                {move || {
+                    pages()
+                        .map(|page| {
+                            view! {
+                                <QueryButton
+                                    key="page"
+                                    value=(page.offset + 1).to_string()
+                                    class="p-1 min-w-[2rem] text-center !text-brand-200 hover:text-brand-300"
+                                    active_classes="p-1 text-[color:var(--brand-fg)] underline"
+                                    default=page.offset == 0
+                                >
+                                    {page.offset + 1}
+                                </QueryButton>
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                }}
             </div>
-            // Next Page Big Button (if applicable)
-             <QueryButton
+
+            // Item List
+            <div class="flex flex-col gap-2">
+                <Suspense>
+                    {move || {
+                        let items = Memo::new(move |_| {
+                            let direction = direction().unwrap_or(SortDirection::Desc);
+                            let item_property = sort().unwrap_or(ItemSortOption::ItemLevel);
+                            let price_map = cheapest_prices
+                                .read_listings
+                                .get()
+                                .and_then(|r| r.ok());
+                            items()
+                                .into_iter()
+                                .filter(|(id, _)| {
+                                    if ItemSortOption::Price == item_property {
+                                        if let Some(map) = &price_map {
+                                            map.find_matching_listings(id.0).lowest_gil().is_some()
+                                        } else {
+                                            true
+                                        }
+                                    } else {
+                                        true
+                                    }
+                                })
+                                .sorted_by(|a, b| {
+                                    let ((_, item_a), (_, item_b)) = match direction {
+                                        SortDirection::Asc => (a, b),
+                                        SortDirection::Desc => (b, a),
+                                    };
+                                    match item_property {
+                                        ItemSortOption::ItemLevel => {
+                                            item_a.level_item.0.cmp(&item_b.level_item.0)
+                                        }
+                                        ItemSortOption::Name => item_a.name.cmp(&item_b.name),
+                                        ItemSortOption::Price => {
+                                            if let Some(price_map) = &price_map {
+                                                let price_a = price_map
+                                                    .find_matching_listings(item_a.key_id.0)
+                                                    .lowest_gil();
+                                                let price_b = price_map
+                                                    .find_matching_listings(item_b.key_id.0)
+                                                    .lowest_gil();
+                                                price_a.cmp(&price_b)
+                                            } else {
+                                                item_a.level_item.0.cmp(&item_b.level_item.0)
+                                            }
+                                        }
+                                        ItemSortOption::Key => item_a.key_id.0.cmp(&item_b.key_id.0),
+                                    }
+                                })
+                                .collect::<Vec<_>>()
+                        });
+                        let items = move || {
+                            let page = pages()
+                                .with_offset(
+                                    (page().unwrap_or_default() - 1).try_into().unwrap_or(0),
+                                );
+                            items
+                                .with(|items| {
+                                    items.get(page.start..=page.end).unwrap_or_default().to_vec()
+                                })
+                        };
+                        // filter items without a price if we're sorting by price
+                        // TODO lookup price data for this case
+                        // now take a subslice of the items
+                        view! {
+                            <For
+                                each=items
+                                key=|(id, item)| (id.0, &item.name)
+                                children=|(id, item)| {
+                                    view! {
+                                        <div class="grid grid-cols-1 md:grid-cols-12 gap-3 p-4 rounded-xl
+                                        panel
+                                        transition-colors duration-200
+                                        items-start md:items-center text-base md:text-lg">
+                                            // Item Info Section
+                                            <div class="md:col-span-8 flex flex-row items-center gap-2 min-w-0 w-full">
+                                                // Added container with min-w-0
+                                                <div class="flex-1 min-w-0 flex flex-row items-center gap-3">
+                                                    <SmallItemDisplay item=item />
+                                                    <span class="hidden md:inline text-[color:var(--color-text-muted)] whitespace-nowrap">
+                                                        "min level: "{item.level_equip}
+                                                    </span>
+                                                    <Clipboard clipboard_text=item.name.clone() />
+                                                </div>
+                                            </div>
+                                            // Prevent shrinking of add button
+                                            <div class="md:col-span-2 shrink-0 flex justify-start md:justify-center w-full">
+                                                <AddToList item_id=id.0 />
+                                            </div>
+
+
+                                            // Normal Quality Price
+                                            <div class="md:col-span-2 flex flex-col md:flex-row justify-between md:justify-end items-start md:items-center gap-2 md:gap-4 w-full">
+                                                <div class="flex flex-row items-center gap-2 whitespace-nowrap">
+                                                    <span class="text-[color:var(--color-text-muted)] md:hidden">"NQ: "</span>
+                                                    <CheapestPrice item_id=*id show_hq=false />
+                                                </div>
+                                                {move || {
+                                                    if item.can_be_hq {
+                                                        Either::Left(
+                                                            view! {
+                                                                <div class="flex flex-row items-center gap-2 whitespace-nowrap">
+                                                                    <span class="text-[color:var(--color-text-muted)] md:hidden">"HQ: "</span>
+                                                                    <CheapestPrice item_id=*id show_hq=true />
+                                                                </div>
+                                                            },
+                                                        )
+                                                    } else {
+                                                        Either::Right(view! { <div /> })
+                                                    }
+                                                }}
+                                            </div>
+                                        </div>
+                                    }
+                                        .into_any()
+                                }
+                            />
+                        }
+                    }}
+                </Suspense>
+            </div>
+            // Next Page Button
+            <QueryButton
                 key="page"
                 value=Signal::derive(move || (page().unwrap_or(1) + 1).to_string())
                 class=Signal::derive(move || {
-                    let pages = pages.get();
+                    let pages = pages();
                     let page = page();
                     if pages.page_count() > page.unwrap_or(1).try_into().unwrap_or(1) {
-                        "w-full py-4 rounded-xl text-center font-bold
+                        "px-4 py-2 rounded-lg text-center
                              bg-brand-900/40 border border-brand-400/20
-                             hover:bg-brand-800/60 hover:border-brand-400/50 hover:shadow-lg hover:translate-y-[-2px]
-                             text-brand-300 transition-all duration-300 group"
+                             hover:bg-brand-800/40 hover:border-brand-400/30
+                             text-brand-300 transition-all duration-200"
                     } else {
                         "hidden"
                     }
                 })
-                active_classes=""
+                active_classes="p-1 !text-brand-500"
             >
                 <div class="flex items-center justify-center gap-2">
-                    <span>"Load Next Page"</span>
-                    <Icon icon=i::BiChevronRightRegular attr:class="group-hover:translate-x-1 transition-transform" />
+                    <span>"Next Page:"</span>
+                    <span class="font-bold">{page().unwrap_or(1) + 1}</span>
+                    <Icon icon=i::BiChevronRightRegular />
                 </div>
             </QueryButton>
-            <div class="h-8" /> // Bottom spacing
         </div>
     }.into_any()
 }
@@ -697,18 +696,11 @@ fn CategorySection(
     #[prop(optional)] children: Option<Children>,
 ) -> impl IntoView {
     view! {
-        <details class="group/section" open>
-            <summary class="flex items-center justify-between w-full px-2 py-2 cursor-pointer 
-                           text-xs font-bold uppercase tracking-wider text-[color:var(--color-text-muted)] 
-                           hover:text-[color:var(--color-text)] transition-colors select-none list-none">
-                <span>{title}</span>
-                <Icon icon=i::BiChevronDownRegular attr:class="transition-transform group-open/section:rotate-180" />
-            </summary>
-            <div class="pl-2 space-y-0.5 mt-1 border-l border-white/5 ml-2">
-                {category.map(|cat| view! { <CategoryView category=cat /> })}
-                {children.map(|c| c())}
-            </div>
-        </details>
+        <div class="p-4 space-y-4">
+            <h2 class="text-xl font-bold text-brand-200">{title}</h2>
+            {category.map(|cat| view! { <CategoryView category=cat /> })}
+            {children.map(|c| c())}
+        </div>
     }
     .into_any()
 }
@@ -717,104 +709,113 @@ fn CategorySection(
 pub fn ItemExplorer() -> impl IntoView {
     let (menu_open, set_open) = query_signal("menu-open");
     let menu_open = Memo::new(move |_| menu_open().unwrap_or(false));
-
+    const BASE_CLASSES: &str =
+        "btn-secondary flex items-center gap-1 text-xs sm:text-sm font-medium";
+    const OPEN_CLASSES: &str = "bg-[color:color-mix(in_srgb,var(--brand-ring)_22%,transparent)]";
+    const CLOSED_CLASSES: &str = "";
+    let button_classes = move || {
+        if menu_open() {
+            [BASE_CLASSES, OPEN_CLASSES].concat()
+        } else {
+            [BASE_CLASSES, CLOSED_CLASSES].concat()
+        }
+    };
+    let menu_closed = Signal::derive(move || !menu_open());
     view! {
-        <div class="flex flex-col min-h-[calc(100vh-64px)]">
-            // Mobile Header / Toggle
-            <div class="lg:hidden p-4 border-b border-white/5 bg-[color:var(--bg-panel)] sticky top-0 z-30 flex items-center justify-between">
-                <span class="font-bold text-lg">"Item Explorer"</span>
+        <div class="main-content p-3 md:p-6">
+            <div class="container mx-auto max-w-7xl">
+                // Toggle Button
                 <A
+                    attr:class=button_classes
                     href=move || if menu_open() { "?" } else { "?menu-open=true" }.to_string()
-                    attr:class="btn-secondary !p-2"
                 >
-                    <Icon icon=i::BiMenuRegular width="24" height="24" />
+                    <div class="relative w-6 h-6 items-center">
+                        <div
+                            class="absolute inset-0 transition-all duration-300
+                            text-[color:var(--color-text)] hover:text-[color:var(--brand-fg)] aria-current:text-[color:var(--brand-fg)]"
+                            class=(["opacity-0", "rotate-90", "scale-0"], menu_closed)
+                        >
+                            <Icon icon=i::BiXRegular />
+                        </div>
+                        <div
+                            class="absolute inset-0 transition-all duration-300"
+                            class=(["opacity-100", "rotate-0", "scale-100"], menu_open)
+                        >
+                            <Icon icon=i::BiMenuRegular />
+                        </div>
+                    </div>
+                    <span class="font-extrabold">
+                        {move || if menu_open() { "Close Categories" } else { "Browse Categories" }}
+                    </span>
                 </A>
-            </div>
 
-            <div class="flex flex-row grow relative">
-                // Sidebar (Desktop Sticky / Mobile Drawer)
-                <aside
-                    class="fixed inset-y-0 left-0 z-40 bg-[color:var(--bg-panel)] border-r border-white/5
-                           lg:static lg:block lg:z-auto w-[280px] shrink-0
-                           transition-transform duration-300 ease-in-out"
-                    class=("translate-x-0", move || menu_open())
-                    class=("-translate-x-full", move || !menu_open())
-                    class=("lg:translate-x-0", true)
-                >
-                    <div class="h-full overflow-y-auto scrollbar-thin p-4 space-y-6">
-                        <div class="flex items-center justify-between lg:hidden mb-6">
-                            <span class="font-bold text-xl">"Categories"</span>
-                            <A href="?" attr:class="btn-ghost p-1">
-                                <Icon icon=i::BiXRegular width="24" height="24" />
-                            </A>
+                <div class="relative mt-4">
+                    // Mobile Overlay
+                    {move || {
+                        if menu_open() {
+                            Either::Left(
+                                view! {
+                                    <div
+                                        class="fixed inset-0 z-40 md:hidden bg-[color:color-mix(in_srgb,var(--color-text)_30%,transparent)]"
+                                        on:click=move |_| set_open.set(Some(false))
+                                    />
+                                },
+                            )
+                        } else {
+                            Either::Right(view! { <div /> })
+                        }
+                    }} // Sidebar
+                    <div
+                        class="fixed md:absolute top-0 bottom-0 left-0 z-50
+                        w-[92vw] sm:w-[85vw] md:w-80 transition-all duration-300 ease-in-out
+                        panel
+                        min-h-screen"
+                        class=("translate-x-0", move || menu_open())
+                        class=("-translate-x-[105%]", move || !menu_open())
+                        class=("opacity-0", move || !menu_open())
+                        class=("opacity-100", move || menu_open())
+                    >
+
+
+                        // Content container with fade edges
+                        <div class="relative h-full">
+
+
+                            // Main scrollable content
+                            <div class="h-full overflow-y-auto overflow-x-hidden
+                            scrollbar-thin">
+                                <div class="space-y-1 p-2">
+                                    <CategorySection title="Weapons" category=1 />
+                                    <CategorySection title="Armor" category=2 />
+                                    <CategorySection title="Items" category=3 />
+                                    <CategorySection title="Housing" category=4 />
+                                    <CategorySection title="Job Sets">
+                                        <JobsList />
+                                    </CategorySection>
+                                </div>
+                            </div>
+
+
                         </div>
-
-                        <div class="space-y-1">
-                            <CategorySection title="Weapons" category=1 />
-                            <CategorySection title="Armor" category=2 />
-                            <CategorySection title="Items" category=3 />
-                            <CategorySection title="Housing" category=4 />
-                            <CategorySection title="Job Sets">
-                                <JobsList />
-                            </CategorySection>
+                    </div> // Main Content Area
+                    <div
+                        class="transition-all duration-300"
+                        class=("md:ml-[21rem]", move || menu_open())
+                    >
+                        <div class="space-y-6">
+                            <Ad class="w-full h-24 rounded-xl overflow-hidden" />
+                            <div class="p-6 rounded-xl panel">
+                                <h1 class="text-2xl font-bold text-brand-200 mb-4">
+                                    "Item Explorer"
+                                </h1>
+                                <Outlet />
+                            </div>
+                            <Ad class="w-full max-h-72 rounded-xl overflow-hidden" />
                         </div>
                     </div>
-                </aside>
-
-                // Mobile Backend Backdrop
-                {move || {
-                    if menu_open() {
-                        view! {
-                            <div
-                                class="fixed inset-0 bg-black/50 backdrop-blur-sm z-30 lg:hidden"
-                                on:click=move |_| set_open.set(Some(false))
-                            />
-                        }.into_any()
-                    } else {
-                        view! { <div class="hidden" /> }.into_any()
-                    }
-                }}
-
-                // Main Content Area
-                <main class="flex-1 min-w-0 bg-[color:var(--bg-body)]">
-                    <div class="p-4 lg:p-8 max-w-[1600px] mx-auto">
-                        <Outlet />
-                    </div>
-                </main>
+                </div>
             </div>
         </div>
     }
-}
-
-#[cfg(test)]
-mod tests {
-
-    #[test]
-    fn test_job_filtering() {
-        let data = xiv_gen_db::data();
-        let jobs = &data.class_jobs;
-        let visible_jobs: Vec<_> = jobs
-            .iter()
-            .filter(|(_id, job)| {
-                let visible = job.class_job_parent.0 != 0;
-                if !visible {
-                    println!(
-                        "Filtered out: {} (Parent: {})",
-                        job.name, job.class_job_parent.0
-                    );
-                }
-                visible
-            })
-            .collect();
-
-        println!("Visible jobs count: {}", visible_jobs.len());
-        for (_, job) in &visible_jobs {
-            println!("Visible: {}", job.name);
-        }
-
-        assert!(
-            !visible_jobs.is_empty(),
-            "No jobs are visible! Filtering logic might be wrong."
-        );
-    }
+    .into_any()
 }

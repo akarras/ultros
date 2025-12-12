@@ -30,7 +30,7 @@ pub fn EditRetainers() -> impl IntoView {
             (
                 claim.version().get(),
                 remove_retainer.version().get(),
-                // update_retainers.version().get(),
+                update_retainers.version().get(),
             )
         },
         move |key| {

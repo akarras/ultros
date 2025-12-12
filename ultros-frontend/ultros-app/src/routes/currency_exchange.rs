@@ -741,7 +741,7 @@ pub fn ExchangeItem() -> impl IntoView {
                                                                                             <Tooltip tooltip_text=format!(
                                                                                                 "Filter {}",
                                                                                                 l.replace("_", " "),
-                                                                                            )>
+                                                                                            ).into()>
                                                                                                 <FilterModal filter_name=l />
                                                                                             </Tooltip>
                                                                                         }

@@ -36,7 +36,7 @@ pub fn EditLists() -> impl IntoView {
         </div>
         <div class="flex items-center gap-2">
             <span class="text-3xl font-bold text-[color:var(--brand-fg)]">"Edit Lists"</span>
-            <Tooltip tooltip_text="Create list">
+            <Tooltip tooltip_text="Create list".into()>
                 <button class="btn-primary" on:click=move |_| set_creating(!creating())>
                     <Icon icon=i::BiPlusRegular />
                 </button>
@@ -158,7 +158,7 @@ pub fn EditLists() -> impl IntoView {
                                                                                 if is_edit() {
                                                                                     Either::Left(
                                                                                         view! {
-                                                                                            <Tooltip tooltip_text="Save changes to this list">
+                                                                                            <Tooltip tooltip_text="Save changes to this list".into()>
                                                                                                 <button
                                                                                                     class="btn-primary"
                                                                                                     on:click=move |_| {
@@ -174,7 +174,7 @@ pub fn EditLists() -> impl IntoView {
                                                                                                     <Icon icon=i::BiSaveSolid />
                                                                                                 </button>
                                                                                             </Tooltip>
-                                                                                            <Tooltip tooltip_text="Delete this list">
+                                                                                             <Tooltip tooltip_text="Delete this list".into()>
                                                                                                 <button
                                                                                                     class="btn-danger"
                                                                                                     on:click=move |_| {
@@ -189,7 +189,7 @@ pub fn EditLists() -> impl IntoView {
                                                                                 } else {
                                                                                     Either::Right(
                                                                                         view! {
-                                                                                            <Tooltip tooltip_text="Edit this list">
+                                                                                             <Tooltip tooltip_text="Edit this list".into()>
                                                                                                 <button class="btn-secondary" on:click=move |_| set_is_edit(true)>
                                                                                                     <Icon icon=i::BsPencilFill />
                                                                                                 </button>
