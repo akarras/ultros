@@ -23,7 +23,6 @@ web-sys = { version = "0.3", optional = true, features = [
     "AbortController",
     "Clipboard",
     "Window",
-    "Location",
     "Navigator",
     "HtmlCanvasElement",
     "HtmlDivElement",

@@ -103,16 +103,15 @@ pub fn ListBuyingView(
     let data = xiv_gen_db::data();
     let game_items = &data.items;
     let retainer_map = Memo::new(move |_| {
-        retainers
-            .get()
-            .and_then(|r| r.ok())
-            .map(|r| {
-                r.retainers
+        match retainers.get() {
+            Some(Ok(retainers_data)) => {
+                retainers_data.retainers
                     .into_iter()
                     .flat_map(|(_, r)| r.into_iter().map(|(r, _)| (r.id, r)))
                     .collect::<HashMap<_, _>>()
-            })
-            .unwrap_or_default()
+            }
+            _ => HashMap::new(),
+        }
     });
 
     view! {

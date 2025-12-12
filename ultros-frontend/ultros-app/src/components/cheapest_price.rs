@@ -9,11 +9,7 @@ use ultros_api_types::world_helper::AnySelector;
 
 /// Always shows the lowest price
 #[component]
-pub fn CheapestPrice(
-    item_id: ItemId,
-    #[prop(optional)] show_hq: Option<bool>,
-    #[prop(optional, into)] label: Option<String>,
-) -> impl IntoView {
+pub fn CheapestPrice(item_id: ItemId, #[prop(optional)] show_hq: Option<bool>) -> impl IntoView {
     let cheapest = use_context::<CheapestPrices>().unwrap().read_listings;
     view! {
         <Suspense fallback=move || {
@@ -35,28 +31,14 @@ pub fn CheapestPrice(
                                             Some(false) => lq,
                                             None => hq.or(lq),
                                         };
-                                        data.map(|(internal_label, listing)| {
-                                            if let Some(label) = label.clone() {
-                                                view! {
-                                                    <div class="flex flex-col">
-                                                         <span class="text-xs text-[color:var(--color-text-muted)] uppercase tracking-wider mb-0.5">{label}</span>
-                                                         <div class="flex flex-row items-center gap-1.5">
-                                                            <Gil amount=listing.price />
-                                                            <span>
-                                                                <WorldName id=AnySelector::World(listing.world_id) />
-                                                            </span>
-                                                        </div>
-                                                    </div>
-                                                }.into_any()
-                                            } else {
-                                                view! {
-                                                    <div class="flex flex-row items-center gap-1.5">
-                                                        {internal_label} <Gil amount=listing.price />
-                                                        <span>
-                                                            <WorldName id=AnySelector::World(listing.world_id) />
-                                                        </span>
-                                                    </div>
-                                                }.into_any()
+                                        data.map(|(label, listing)| {
+                                            view! {
+                                                <div class="flex flex-row items-center gap-1.5">
+                                                    {label} <Gil amount=listing.price />
+                                                    <span>
+                                                        <WorldName id=AnySelector::World(listing.world_id) />
+                                                    </span>
+                                                </div>
                                             }
                                         })
                                     })

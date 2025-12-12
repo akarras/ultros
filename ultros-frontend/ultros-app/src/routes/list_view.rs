@@ -2,6 +2,7 @@ use std::cmp::Reverse;
 use std::collections::HashSet;
 
 use icondata as i;
+use leptos::create_resource;
 use leptos::either::{Either, EitherOf3};
 use leptos::prelude::*;
 use leptos_icons::*;
@@ -74,7 +75,7 @@ pub fn ListView() -> impl IntoView {
     });
     let edit_item = Action::new(move |item: &ListItem| edit_list_item(item.clone()));
     let delete_items = Action::new(move |items: &Vec<i32>| delete_list_items(items.clone()));
-    let list_view = Resource::new(
+    let list_view = create_resource(
         move || {
             (
                 list_id(),
