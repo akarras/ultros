@@ -96,7 +96,7 @@ impl From<&ultros_db::listings::ListingSummary> for ItemKey {
     }
 }
 
-#[derive(Debug, PartialEq, PartialOrd, Eq, Ord, Clone, Copy)]
+#[derive(Debug, PartialEq, PartialOrd, Eq, Ord, Clone, Copy, Serialize)]
 pub(crate) struct SaleSummary {
     pub(crate) price_per_item: i32,
     pub(crate) sale_date: NaiveDateTime,

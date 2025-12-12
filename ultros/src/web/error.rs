@@ -1,6 +1,6 @@
 use std::{num::ParseIntError, sync::Arc};
 
-use aide::OperationOutput;
+use aide::{OperationOutput, generate::GenContext};
 use axum::{
     Json,
     response::{IntoResponse, Response},
@@ -115,7 +115,7 @@ impl OperationOutput for ApiError {
     type Inner = Json<JsonErrorWrapper>;
 
     fn operation_response(
-        _ctx: &mut aide::gen::GenContext,
+        _ctx: &mut GenContext,
         _operation: &mut aide::openapi::Operation,
     ) -> Option<aide::openapi::Response> {
         // You can use the `ctx` to get access to the type stores, etc.
@@ -129,7 +129,7 @@ impl OperationOutput for ApiError {
     }
 
     fn inferred_responses(
-        _ctx: &mut aide::gen::GenContext,
+        _ctx: &mut GenContext,
         _operation: &mut aide::openapi::Operation,
     ) -> Vec<(Option<u16>, aide::openapi::Response)> {
         // You can also use this to let aide infer the responses.

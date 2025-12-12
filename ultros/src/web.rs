@@ -11,6 +11,7 @@ use std::sync::{Arc, OnceLock};
 
 use aide::{
     axum::{ApiRouter, IntoApiResponse, routing::get},
+    generate::{extract_schemas, on_error},
     openapi::{Info, OpenApi},
 };
 use anyhow::Error;
@@ -897,10 +898,10 @@ async fn serve_api(Extension(api): Extension<Arc<OpenApi>>) -> impl IntoApiRespo
 }
 
 pub(crate) async fn start_web(state: WebState) {
-    aide::gen::on_error(|error| {
+    on_error(|error| {
         tracing::error!("aide error: {}", error);
     });
-    aide::gen::extract_schemas(true);
+    extract_schemas(true);
     let mut api = OpenApi {
         info: Info {
             title: "Ultros API".into(),
