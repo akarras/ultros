@@ -18,16 +18,12 @@ use crate::components::tooltip::Tooltip;
 use crate::components::{item_icon::ItemIcon, loading::Loading, modal::Modal};
 
 #[component]
-pub fn AddToList(
-    #[prop(into)] item_id: Signal<i32>,
-    #[prop(optional, into)] class: Option<String>,
-) -> impl IntoView {
+pub fn AddToList(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     let (modal_visible, set_modal_visible) = signal(false);
-    let class = class.unwrap_or("btn-primary".to_string());
     view! {
         <Tooltip tooltip_text="Add to list">
             <button
-                class=class.clone()
+                class="btn-primary"
                 attr:aria-label="Add this item to one of your lists"
                 on:click=move |_| {
                     set_modal_visible(!modal_visible());

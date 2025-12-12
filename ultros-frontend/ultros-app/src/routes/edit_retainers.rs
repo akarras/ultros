@@ -192,13 +192,11 @@ pub fn EditRetainers() -> impl IntoView {
 
             </Transition>
         </div>
-        <div class="retainer-search flex flex-col gap-2">
-            <span class="content-title">"Add Retainer"</span>
+        <div class="retainer-search">
+            <span class="content-title">"Search:"</span>
             <input
-                class="input"
                 prop:value=retainer_search
                 on:input=move |input| set_retainer_search(event_target_value(&input))
-                placeholder="Search for a retainer to add"
             />
             <div class="retainer-results">
                 <Suspense fallback=move || {
@@ -219,20 +217,19 @@ pub fn EditRetainers() -> impl IntoView {
                                                         children=move |retainer| {
                                                             let world = AnySelector::World(retainer.world_id);
                                                             view! {
-                                                                <div class="card flex-row gap-2 p-2 items-center rounded-xl">
-                                                                    <div class="flex w-full md:w-[300px] gap-2">
-                                                                        <span class="w-full md:w-[200px] truncate font-bold">{retainer.name}</span>
+                                                                <div class="card flex-row">
+                                                                    <div class="flex w-full md:w-[300px]">
+                                                                        <span class="w-full md:w-[200px] truncate">{retainer.name}</span>
                                                                         <WorldName id=world />
                                                                     </div>
                                                                     <button
-                                                                        class:btn-disabled=move || is_retainer_owned(retainer.id)
-                                                                        class="btn btn-primary grow"
+                                                                        class="btn"
                                                                         on:click=move |_| {
                                                                             let _ = claim.dispatch(retainer.id);
                                                                         }
                                                                     >
                                                                         {move || match is_retainer_owned(retainer.id) {
-                                                                            true => "Owned",
+                                                                            true => "Claimed",
                                                                             false => "Claim",
                                                                         }}
 

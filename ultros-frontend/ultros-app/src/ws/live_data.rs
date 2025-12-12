@@ -16,14 +16,12 @@ pub(crate) async fn live_sales(
     signal: RwSignal<VecDeque<SaleView>>,
     price_zone: AnySelector,
 ) -> Result<(), AppError> {
-    let window = web_sys::window().unwrap();
-    let location = window.location();
-    let protocol = location.protocol().unwrap();
-    let host = location.host().unwrap();
-    let ws_protocol = if protocol == "https:" { "wss" } else { "ws" };
-    let url = format!("{}://{}/api/v1/realtime/events", ws_protocol, host);
-
-    let socket = WebSocket::open(&url).unwrap();
+    // TODO - better way to switch to wss
+    #[cfg(debug_assertions)]
+    let url = "ws://localhost:8080/api/v1/realtime/events";
+    #[cfg(not(debug_assertions))]
+    let url = "wss://ultros.app/api/v1/realtime/events";
+    let socket = WebSocket::open(url).unwrap();
     let (mut write, mut read) = socket.split();
     let client = ClientMessage::AddSubscribe {
         filter: FilterPredicate::World(price_zone),
