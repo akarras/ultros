@@ -7,20 +7,13 @@ pub(crate) mod item_card;
 pub(crate) mod oauth;
 pub(crate) mod sitemap;
 
-use std::sync::{Arc, OnceLock};
-
-use aide::{
-    axum::{ApiRouter, IntoApiResponse, routing::get},
-    generate::{extract_schemas, on_error},
-    openapi::{Info, OpenApi},
-};
 use anyhow::Error;
 use axum::body::Body;
 use axum::extract::{FromRef, Path, Query, State};
 use axum::http::{HeaderValue, Response, StatusCode};
 use axum::response::{IntoResponse, Redirect};
-use axum::routing::{delete, post};
-use axum::{Extension, Json, body, middleware};
+use axum::routing::{delete, get, post};
+use axum::{Json, Router, body, middleware};
 use axum_extra::TypedHeader;
 use axum_extra::extract::CookieJar;
 use axum_extra::extract::cookie::{Cookie, Key};
@@ -35,6 +28,7 @@ use leptos::prelude::provide_context;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::time::timeout;
@@ -893,148 +887,82 @@ async fn listings_redirect(Path((world, id)): Path<(String, i32)>) -> Redirect {
     Redirect::permanent(&format!("/item/{world}/{id}"))
 }
 
-async fn serve_api(Extension(api): Extension<Arc<OpenApi>>) -> impl IntoApiResponse {
-    Json(api)
-}
-
 pub(crate) async fn start_web(state: WebState) {
-    on_error(|error| {
-        tracing::error!("aide error: {}", error);
-    });
-    extract_schemas(true);
-    let mut api = OpenApi {
-        info: Info {
-            title: "Ultros API".into(),
-            ..Info::default()
-        },
-        ..OpenApi::default()
-    };
-
     // build our application with a route
     let worlds = state.world_helper.clone();
-    let app = ApiRouter::new()
-        .route("/alerts/websocket", axum::routing::get(connect_websocket))
-        .route("/api/v1/search", axum::routing::get(search))
-        .route(
-            "/api/v1/realtime/events",
-            axum::routing::get(real_time_data),
-        )
-        .api_route(
-            "/api/v1/cheapest/{world}",
-            get(cheapest_per_world::cheapest_per_world),
-        )
-        .api_route(
-            "/api/v1/recentSales/{world}",
-            get(recent_sales::recent_sales),
-        )
+    let app = Router::new()
+        .route("/alerts/websocket", get(connect_websocket))
+        .route("/api/v1/search", get(search))
+        .route("/api/v1/realtime/events", get(real_time_data))
+        .route("/api/v1/cheapest/{world}", get(cheapest_per_world))
+        .route("/api/v1/recentSales/{world}", get(recent_sales))
         .route(
             "/api/v1/listings/{world}/{itemid}",
-            axum::routing::get(world_item_listings),
+            get(world_item_listings),
         )
         .route(
             "/api/v1/bulkListings/{world}/{itemids}",
-            axum::routing::get(bulk_item_listings),
+            get(bulk_item_listings),
         )
-        .route("/api/v1/list", axum::routing::get(get_lists))
+        .route("/api/v1/list", get(get_lists))
         .route("/api/v1/list/create", post(create_list))
         .route("/api/v1/list/edit", post(edit_list))
         .route("/api/v1/list/item/edit", post(edit_list_item))
-        .route("/api/v1/list/{id}", axum::routing::get(get_list))
-        .route(
-            "/api/v1/list/{id}/listings",
-            axum::routing::get(get_list_with_listings),
-        )
+        .route("/api/v1/list/{id}", get(get_list))
+        .route("/api/v1/list/{id}/listings", get(get_list_with_listings))
         .route("/api/v1/list/{id}/add/item", post(post_item_to_list))
         .route("/api/v1/list/{id}/add/items", post(post_items_to_list))
         .route("/api/v1/list/{id}/delete", delete(delete_list))
         .route("/api/v1/list/item/{id}/delete", delete(delete_list_item))
         .route("/api/v1/list/item/delete", post(delete_multiple_list_items))
-        .route("/api/v1/world_data", axum::routing::get(world_data))
-        .route("/api/v1/current_user", axum::routing::get(current_user))
-        .route("/api/v1/user/retainer", axum::routing::get(user_retainers))
+        .route("/api/v1/world_data", get(world_data))
+        .route("/api/v1/current_user", get(current_user))
+        .route("/api/v1/user/retainer", get(user_retainers))
         .route("/api/v1/retainer/reorder", post(reorder_retainer))
         .route(
             "/api/v1/user/retainer/listings",
-            axum::routing::get(user_retainer_listings),
+            get(user_retainer_listings),
         )
-        .route(
-            "/api/v1/retainer/search/{query}",
-            axum::routing::get(retainer_search),
-        )
-        .route(
-            "/api/v1/retainer/claim/{id}",
-            axum::routing::get(claim_retainer),
-        )
-        .route(
-            "/api/v1/retainer/unclaim/{id}",
-            axum::routing::get(unclaim_retainer),
-        )
+        .route("/api/v1/retainer/search/{query}", get(retainer_search))
+        .route("/api/v1/retainer/claim/{id}", get(claim_retainer))
+        .route("/api/v1/retainer/unclaim/{id}", get(unclaim_retainer))
         .route(
             "/item/refresh/{worldid}/{itemid}",
-            axum::routing::get(refresh_world_item_listings),
+            get(refresh_world_item_listings),
         )
-        .route(
-            "/api/v1/retainer/listings/{id}",
-            axum::routing::get(retainer_listings),
-        )
-        .route(
-            "/api/v1/characters/search/{name}",
-            axum::routing::get(character_search),
-        )
-        .route(
-            "/api/v1/characters/claim/{id}",
-            axum::routing::get(claim_character),
-        )
-        .route(
-            "/api/v1/characters/unclaim/{id}",
-            axum::routing::get(unclaim_character),
-        )
-        .route(
-            "/api/v1/characters/verify/{id}",
-            axum::routing::get(verify_character),
-        )
-        .route("/api/v1/characters", axum::routing::get(user_characters))
+        .route("/api/v1/retainer/listings/{id}", get(retainer_listings))
+        .route("/api/v1/characters/search/{name}", get(character_search))
+        .route("/api/v1/characters/claim/{id}", get(claim_character))
+        .route("/api/v1/characters/unclaim/{id}", get(unclaim_character))
+        .route("/api/v1/characters/verify/{id}", get(verify_character))
+        .route("/api/v1/characters", get(user_characters))
         .route(
             "/api/v1/characters/verifications",
-            axum::routing::get(pending_verifications),
+            get(pending_verifications),
         )
-        .route("/api/v1/detectregion", axum::routing::get(detect_region))
-        .route("/retainers/add/{id}", axum::routing::get(add_retainer))
-        .route(
-            "/retainers/remove/{id}",
-            axum::routing::get(remove_owned_retainer),
-        )
-        .route("/static/{*path}", axum::routing::get(static_path))
-        .route(
-            "/static/itemicon/fallback",
-            axum::routing::get(fallback_item_icon),
-        )
-        .route("/static/itemicon/{path}", axum::routing::get(get_item_icon))
+        .route("/api/v1/detectregion", get(detect_region))
+        .route("/retainers/add/{id}", get(add_retainer))
+        .route("/retainers/remove/{id}", get(remove_owned_retainer))
+        .route("/static/{*path}", get(static_path))
+        .route("/static/itemicon/fallback", get(fallback_item_icon))
+        .route("/static/itemicon/{path}", get(get_item_icon))
         .route(
             &["/static/data/", xiv_gen::data_version(), ".bincode"].concat(),
-            axum::routing::get(get_bincode),
+            get(get_bincode),
         )
-        .route("/redirect", axum::routing::get(self::oauth::redirect))
-        .route("/login", axum::routing::get(begin_login))
-        .route("/logout", axum::routing::get(logout))
+        .route("/redirect", get(self::oauth::redirect))
+        .route("/login", get(begin_login))
+        .route("/logout", get(logout))
         .route("/api/v1/current_user", delete(delete_user))
-        .route("/invitebot", axum::routing::get(invite))
-        .route("/favicon.ico", axum::routing::get(favicon))
-        .route("/robots.txt", axum::routing::get(robots))
-        .route("/itemcard/{world}/{id}", axum::routing::get(item_card))
-        .route("/sitemap/world/{s}", axum::routing::get(world_sitemap))
-        .route("/sitemap/items.xml", axum::routing::get(item_sitemap))
-        .route("/sitemap.xml", axum::routing::get(sitemap_index))
-        .route(
-            "/sitemap/pages.xml",
-            axum::routing::get(generic_pages_sitemap),
-        )
-        .route(
-            "/listings/{world}/{item}",
-            axum::routing::get(listings_redirect),
-        )
-        .route("/api.json", get(serve_api))
-        .finish_api(&mut api)
+        .route("/invitebot", get(invite))
+        .route("/favicon.ico", get(favicon))
+        .route("/robots.txt", get(robots))
+        .route("/itemcard/{world}/{id}", get(item_card))
+        .route("/sitemap/world/{s}", get(world_sitemap))
+        .route("/sitemap/items.xml", get(item_sitemap))
+        .route("/sitemap.xml", get(sitemap_index))
+        .route("/sitemap/pages.xml", get(generic_pages_sitemap))
+        .route("/listings/{world}/{item}", get(listings_redirect))
         .merge(create_leptos_app(state.world_helper.clone()).await.unwrap())
         .fallback(leptos_axum::file_and_error_handler_with_context::<
             WebState,
@@ -1046,7 +974,6 @@ pub(crate) async fn start_web(state: WebState) {
             shell,
         ))
         .with_state(state)
-        .layer(Extension(Arc::new(api)))
         .route_layer(middleware::from_fn(track_metrics))
         .layer(TraceLayer::new_for_http())
         .layer(
