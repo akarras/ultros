@@ -93,7 +93,12 @@ pub(crate) async fn get_retainer_undercuts() -> AppResult<Undercuts> {
         .flat_map(|(_, r)| r.iter().flat_map(|(_, l)| l.iter().map(|l| l.world_id)))
         .unique()
         .collect();
+<<<<<<< HEAD
     let listings = try_join_all(worlds.into_iter().map(|world| async move {
+=======
+    // todo: once the api calls use a result type, swap this to a try_join all
+    let listings = join_all(worlds.into_iter().map(|world| async move {
+>>>>>>> main
         get_cheapest_listings(&world.to_string())
             .await
             // include the world id in the returned value
@@ -101,6 +106,7 @@ pub(crate) async fn get_retainer_undercuts() -> AppResult<Undercuts> {
     }))
     .await?;
     // flatten the listings down so it's more usable
+<<<<<<< HEAD
     let listings_map: HashMap<i32, CheapestListingsMap> =
         listings
             .into_iter()
@@ -110,6 +116,20 @@ pub(crate) async fn get_retainer_undercuts() -> AppResult<Undercuts> {
                 }
                 world_map
             });
+=======
+    let listings_map: HashMap<i32, CheapestListingsMap> = listings
+        .into_iter()
+        .filter_map(|r| {
+            r.inspect_err(|e| error!("Error fetching listings {e}"))
+                .ok()
+        })
+        .fold(HashMap::new(), |mut world_map, (world_id, item_data)| {
+            if world_map.insert(world_id, item_data.into()).is_some() {
+                unreachable!("Should only be one world id from the set above.");
+            }
+            world_map
+        });
+>>>>>>> main
     // Now remove every listing from the user retainer listings that is already the cheapest listing per world
     let retainer_data = retainer_data
         .retainers
