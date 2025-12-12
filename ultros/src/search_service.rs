@@ -80,14 +80,14 @@ impl SearchService {
         for job in data.class_jobs.values() {
             if job.job_index > 0 {
                 let name = if job.abbreviation.is_empty() {
-                    job.name.as_str()
+                    job.name.to_string()
                 } else {
-                    job.abbreviation.as_str()
+                    format!("{} ({})", job.name, job.abbreviation)
                 };
                 index_writer.add_document(doc!(
                     title_field => name,
                     type_field => "job equipment", // Renamed from "job"
-                    url_field => format!("/items/jobset/{}", name),
+                    url_field => format!("/items/jobset/{}", job.name),
                     icon_id_field => 0i64, // Jobs don't have a simple icon ID in this context easily accessible or needed?
                     category_field => "",
                 ))?;
