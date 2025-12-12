@@ -15,11 +15,15 @@ use icondata as i;
 use leptos::{either::Either, prelude::*};
 use leptos_icons::*;
 use leptos_meta::{Meta, Title};
-use leptos_router::hooks::{query_signal, use_params_map};
+use leptos_router::{
+    hooks::{query_signal, use_query_map},
+    use_navigate,
+};
 use std::{cmp::Reverse, collections::HashMap, fmt::Display, str::FromStr};
 use ultros_api_types::{
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     recent_sales::{RecentSales, SaleData},
+    world::World,
     world_helper::AnyResult,
 };
 use xiv_gen::{ItemId, Recipe};
@@ -725,24 +729,35 @@ fn CollapseIcon(collapsed: Signal<bool>) -> impl IntoView {
 
 #[component]
 pub fn RecipeAnalyzer() -> impl IntoView {
-    let params = use_params_map();
+    let query = use_query_map();
     let (home_world, _) = use_home_world();
+    let navigate = use_navigate();
+
+    let selected_world = Memo::new(move |_| {
+        let worlds = use_context::<LocalWorldData>()
+            .expect("Worlds should always be populated here")
+            .0
+            .unwrap();
+        query
+            .with(|p| p.get("world").cloned())
+            .and_then(|name| worlds.lookup_world_by_name(&name))
+            .and_then(|any_result| match any_result {
+                AnyResult::World(w) => Some(w.clone()),
+                _ => None,
+            })
+            .or_else(|| home_world.get())
+    });
 
     let region = Memo::new(move |_| {
         let worlds = use_context::<LocalWorldData>()
             .expect("Worlds should always be populated here")
             .0
             .unwrap();
-        // Default to home world region or North-America
-        let world_name = params
-            .with(|p| p.get("world").clone())
-            .or_else(|| home_world.get().map(|w| w.name))
-            .unwrap_or_else(|| "North-America".to_string());
-
-        worlds
-            .lookup_world_by_name(&world_name)
+        selected_world
+            .get()
+            .as_ref()
             .map(|world| {
-                let region = worlds.get_region(world);
+                let region = worlds.get_region(AnyResult::World(world));
                 AnyResult::Region(region).get_name().to_string()
             })
             .unwrap_or_else(|| "North-America".to_string())
@@ -750,15 +765,6 @@ pub fn RecipeAnalyzer() -> impl IntoView {
 
     let global_cheapest_listings = Resource::new(region, move |region: String| async move {
         get_cheapest_listings(&region).await
-    });
-
-    let (selected_world, set_selected_world) = signal(home_world.get_untracked());
-    Effect::new(move |_| {
-        if let Some(home) = home_world.get()
-            && selected_world.get_untracked().is_none()
-        {
-            set_selected_world(Some(home));
-        }
     });
 
     let recent_sales = Resource::new(selected_world, move |world| async move {
@@ -773,6 +779,13 @@ pub fn RecipeAnalyzer() -> impl IntoView {
         } else {
             leptos::logging::log!("No world selected for sales");
             Ok(RecentSales { sales: vec![] })
+        }
+    });
+
+    let set_selected_world = Callback::new(move |world: Option<World>| {
+        if let Some(world) = world {
+            let query = format!("?world={}", world.name);
+            let _ = navigate(&query, Default::default());
         }
     });
 
@@ -792,8 +805,8 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                             <div class="text-red-400 text-sm">"Error loading sales data"</div>
                         </Show>
                         <WorldOnlyPicker
-                            current_world=selected_world.into()
-                            set_current_world=set_selected_world.into()
+                            current_world=selected_world
+                            set_current_world=set_selected_world
                         />
                     </div>
                 </div>
@@ -822,16 +835,6 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                     }
                 }
 
-                <div class="flex flex-col md:flex-row items-center gap-2">
-                    <label class="text-[color:var(--brand-fg)] font-semibold">"Select World for Sales Data:"</label>
-                    <div class="w-full md:w-auto">
-                        <WorldOnlyPicker
-                            current_world=selected_world.into()
-                            set_current_world=set_selected_world.into()
-                        />
-                    </div>
-                </div>
-
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>
                     {move || {
                         let listings = global_cheapest_listings.get();
@@ -842,7 +845,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                                     <RecipeAnalyzerTable
                                         global_cheapest_listings=listings
                                         recent_sales=Some(sales)
-                                        world=Signal::derive(region)
+                                        world=Signal::derive(move || selected_world.get().map(|w| w.name.clone()).unwrap_or_default())
                                     />
                                 }.into_any()
                             }
@@ -851,7 +854,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                                     <RecipeAnalyzerTable
                                         global_cheapest_listings=listings
                                         recent_sales=None
-                                        world=Signal::derive(region)
+                                        world=Signal::derive(move || selected_world.get().map(|w| w.name.clone()).unwrap_or_default())
                                     />
                                 }.into_any()
                             }
