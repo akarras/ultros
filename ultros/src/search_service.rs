@@ -78,7 +78,7 @@ impl SearchService {
 
         // Index Jobs
         for job in data.class_jobs.values() {
-            if job.class_job_parent.0 != 0 {
+            if job.job_index > 0 {
                 let name = if job.abbreviation.is_empty() {
                     job.name.as_str()
                 } else {

@@ -188,7 +188,7 @@ fn JobsList() -> impl IntoView {
         <div class="flex flex-col text-xl">
             {jobs
                 .into_iter()
-                .filter(|(_id, job)| job.class_job_parent.0 != 0)
+                .filter(|(_id, job)| job.job_index > 0)
                 .map(|(_id, job)| {
                     let seg = if job.abbreviation.is_empty() { job.name.as_str() } else { job.abbreviation.as_str() };
                     let href = ["/items/jobset/", &seg.replace("/", "%2F")].concat();
@@ -796,7 +796,7 @@ mod tests {
         let visible_jobs: Vec<_> = jobs
             .iter()
             .filter(|(_id, job)| {
-                let visible = job.class_job_parent.0 != 0;
+                let visible = job.job_index > 0;
                 if !visible {
                     println!(
                         "Filtered out: {} (Parent: {})",
