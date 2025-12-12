@@ -31,14 +31,31 @@ pub fn CheapestPrice(item_id: ItemId, #[prop(optional)] show_hq: Option<bool>) -
                                             Some(false) => lq,
                                             None => hq.or(lq),
                                         };
-                                        data.map(|(label, listing)| {
-                                            view! {
-                                                <div class="flex flex-row items-center gap-1.5">
-                                                    {label} <Gil amount=listing.price />
-                                                    <span>
-                                                        <WorldName id=AnySelector::World(listing.world_id) />
-                                                    </span>
-                                                </div>
+                                        data.map(|(internal_label, listing)| {
+                                            if let Some(label) = label.clone() {
+                                                view! {
+                                                    <div class="flex flex-col">
+                                                        <div class="flex flex-row items-center gap-1.5">
+                                                            {label}
+                                                            <Gil amount=listing.price />
+                                                            <span>
+                                                                <WorldName id=AnySelector::World(listing.world_id) />
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                }
+                                                    .into_any()
+                                            } else {
+                                                view! {
+                                                    <div class="flex flex-row items-center gap-1.5">
+                                                        {internal_label}
+                                                        <Gil amount=listing.price />
+                                                        <span>
+                                                            <WorldName id=AnySelector::World(listing.world_id) />
+                                                        </span>
+                                                    </div>
+                                                }
+                                                    .into_any()
                                             }
                                         })
                                     })
