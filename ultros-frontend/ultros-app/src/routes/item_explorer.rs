@@ -188,7 +188,7 @@ fn JobsList() -> impl IntoView {
         <div class="flex flex-col text-xl">
             {jobs
                 .into_iter()
-                .filter(|(_id, job)| !job.name.is_empty())
+                .filter(|(_, job)| job.job_index > 0 || job.doh_dol_job_index >= 0)
                 .map(|(_id, job)| {
                     let seg = if job.abbreviation.is_empty() { job.name.as_str() } else { job.abbreviation.as_str() };
                     let href = ["/items/jobset/", &seg.replace("/", "%2F")].concat();
@@ -795,13 +795,7 @@ mod tests {
         let jobs = &data.class_jobs;
         let visible_jobs: Vec<_> = jobs
             .iter()
-            .filter(|(_id, job)| {
-                let visible = !job.name.is_empty();
-                if !visible {
-                    println!("Filtered out job with empty name");
-                }
-                visible
-            })
+            .filter(|(_, job)| job.job_index > 0 || job.doh_dol_job_index >= 0)
             .collect();
 
         println!("Visible jobs count: {}", visible_jobs.len());
@@ -809,11 +803,17 @@ mod tests {
             println!("Visible: {}", job.name);
         }
 
-        // Assert that we have a reasonable number of jobs.
-        // There are currently 42 jobs, so we'll check for more than 40.
         assert!(
-            visible_jobs.len() > 40,
-            "There should be more than 40 jobs visible."
+            visible_jobs.iter().any(|(_, j)| j.name == "samurai"),
+            "Samurai should be visible."
+        );
+        assert!(
+            visible_jobs.iter().any(|(_, j)| j.name == "carpenter"),
+            "Carpenter should be visible."
+        );
+        assert!(
+            !visible_jobs.iter().any(|(_, j)| j.name == "marauder"),
+            "Marauder should not be visible."
         );
     }
 }
