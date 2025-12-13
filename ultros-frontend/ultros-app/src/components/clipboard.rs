@@ -21,10 +21,28 @@ pub fn Clipboard(#[prop(into)] clipboard_text: Signal<String>) -> impl IntoView 
             i::BsClipboard2CheckFill
         }
     });
+
+    let tooltip_text = Signal::derive(move || {
+        if !copied() {
+            format!("Copy '{}' to clipboard", clipboard_text())
+        } else {
+            "Text copied!".to_string()
+        }
+    });
+
     view! {
-        <div
-            class="clipboard cursor-pointer"
-            on:click=move |_| {
+        <button
+            type="button"
+            class="clipboard cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ring)] rounded"
+            aria-label=move || {
+                if !copied() {
+                    format!("Copy {} to clipboard", clipboard_text())
+                } else {
+                    format!("Copied {} to clipboard", clipboard_text())
+                }
+            }
+            on:click=move |e| {
+                e.prevent_default();
                 #[cfg(all(feature = "hydrate"))]
                 {
                     if let Some(window) = web_sys::window() {
@@ -37,17 +55,10 @@ pub fn Clipboard(#[prop(into)] clipboard_text: Signal<String>) -> impl IntoView 
                 }
             }
         >
-
-            <Tooltip tooltip_text=Signal::derive(move || {
-                if !copied() {
-                    format!("Copy '{}' to clipboard", clipboard_text())
-                } else {
-                    "Text copied!".to_string()
-                }
-            })>
+            <Tooltip tooltip_text=tooltip_text>
                 <Icon icon />
             </Tooltip>
-        </div>
+        </button>
     }
     .into_any()
 }
