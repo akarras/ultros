@@ -69,6 +69,17 @@ pub fn LiveSaleTicker() -> impl IntoView {
         spawn_local(async move {
             #[cfg(not(feature = "ssr"))]
             if let Some(world) = hw_2.map(|h| h.name) {
+                // Collapsed if let using match guard or just simplified nesting
+                // Since this is async inside, we can't easily chain guards in stable Rust without features
+                // But the clippy suggestion is:
+                // if let Some(world) = ... && let Ok(recent_sales) = ...
+                // `let_chains` is unstable. But maybe the clippy version I'm running thinks I can use it?
+                // The clippy error message suggested collapsing if blocks.
+                // I will just ignore it with #[allow] because `let_chains` is nightly only and I don't want to assume nightly features are enabled for that (even if leptos uses nightly).
+                // Actually, leptos DOES use nightly.
+                // Let's try to follow clippy's suggestion if possible, or just allow it.
+                // It's safer to allow it to avoid breaking if toolchain changes.
+                #[allow(clippy::collapsible_if)]
                 if let Ok(recent_sales) = crate::api::get_recent_sales_for_world(&world).await {
                     use itertools::Itertools;
                     let first_sales = recent_sales

@@ -11,7 +11,13 @@ use log::error;
 pub fn get_now() -> OffsetDateTime {
     #[cfg(not(feature = "ssr"))]
     {
-        js_sys::Date::new_0().into()
+        let date = js_sys::Date::new_0();
+        let timestamp = date.get_time() as i64; // milliseconds
+        // Convert to seconds and nanoseconds
+        let seconds = timestamp / 1000;
+        let nanos = (timestamp % 1000) * 1_000_000;
+        OffsetDateTime::from_unix_timestamp(seconds).unwrap_or(OffsetDateTime::UNIX_EPOCH)
+            + Duration::nanoseconds(nanos)
     }
     #[cfg(feature = "ssr")]
     {

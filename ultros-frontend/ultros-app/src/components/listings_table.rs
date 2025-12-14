@@ -12,15 +12,28 @@ pub fn ListingsTable(
     let (show_more, set_show_more) = signal(false);
     let listing_count = move || listings.with(|l| l.len());
     let show_click = move |_| set_show_more(true);
-    let listings = Memo::new(move |_| {
+
+    // Optimization: Split sorting and slicing into two separate memos.
+    // Sorting is O(N log N) and requires cloning if we want to sort a copy.
+    // By keeping it in its own memo, we avoid re-sorting when `show_more` changes.
+    let sorted_listings = Memo::new(move |_| {
         let mut listings = listings();
         listings.sort_by_key(|(listing, _)| listing.price_per_unit);
-        if show_more() {
-            listings.clone()
-        } else {
-            listings.iter().take(10).cloned().collect()
-        }
+        listings
     });
+
+    // This memo depends on `sorted_listings` and `show_more`.
+    // When `show_more` toggles, we only re-slice, which is cheap.
+    let visible_listings = Memo::new(move |_| {
+        sorted_listings.with(|listings| {
+            if show_more() {
+                listings.clone()
+            } else {
+                listings.iter().take(10).cloned().collect()
+            }
+        })
+    });
+
     view! {
         <div class="overflow-x-auto">
             <table class="w-full min-w-[720px]">
@@ -37,7 +50,7 @@ pub fn ListingsTable(
                 {move || {
                     view! {
                         <For
-                            each=listings
+                            each=visible_listings
                             key=move |(listing, _retainer)| listing.id
                             children=move |(listing, retainer)| {
                                 let total = listing.price_per_unit * listing.quantity;
