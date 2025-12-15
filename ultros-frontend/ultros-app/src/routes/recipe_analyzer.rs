@@ -16,7 +16,7 @@ use leptos::{either::Either, prelude::*};
 use leptos_icons::*;
 use leptos_meta::{Meta, Title};
 use leptos_router::hooks::{query_signal, use_params_map};
-use std::{cmp::Reverse, collections::HashMap, fmt::Display, str::FromStr};
+use std::{cmp::Reverse, collections::HashMap, fmt::Display, str::FromStr, sync::Arc};
 use ultros_api_types::{
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     recent_sales::{RecentSales, SaleData},
@@ -408,6 +408,7 @@ fn RecipeAnalyzerTable(
         results
             .into_iter()
             .take(100)
+            .map(Arc::new)
             .enumerate()
             .collect::<Vec<_>>()
     });
@@ -595,8 +596,10 @@ fn RecipeAnalyzerTable(
                         </div>
                     }.into_any()
                     each=computed_data.into()
-                    key=move |(index, data): &(usize, RecipeProfitData)| (*index, data.recipe.key_id)
-                    view=move |(index, data): (usize, RecipeProfitData)| {
+                    key=move |(index, data): &(usize, Arc<RecipeProfitData>)| (*index, data.recipe.key_id)
+                    view=move |(index, data): (usize, Arc<RecipeProfitData>)| {
+                        // Clone data for use in closures to avoid moving the Arc
+                        let data_clone = data.clone();
                         let item_id = data.recipe.item_result;
                         let item = items.get(&item_id).map(|i| i.name.as_str()).unwrap_or("Unknown");
                         let item_level = items.get(&item_id).map(|i| i.level_item.0).unwrap_or(0);
@@ -670,10 +673,13 @@ fn RecipeAnalyzerTable(
                                     <Gil amount=data.profit />
                                 </div>
                                 <div role="cell" class="px-4 py-2 w-30 text-right">
-                                     <span class=move || {
-                                        let roi = data.return_on_investment;
-                                        let tint = if roi >= 500 { "24%" } else if roi >= 200 { "20%" } else if roi >= 100 { "16%" } else if roi >= 50 { "12%" } else { "10%" };
-                                        format!("inline-flex items-center justify-end px-2 py-1 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_{tint},transparent)]")
+                                     <span class={
+                                        let data = data_clone.clone();
+                                        move || {
+                                            let roi = data.return_on_investment;
+                                            let tint = if roi >= 500 { "24%" } else if roi >= 200 { "20%" } else if roi >= 100 { "16%" } else if roi >= 50 { "12%" } else { "10%" };
+                                            format!("inline-flex items-center justify-end px-2 py-1 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_{tint},transparent)]")
+                                        }
                                     }>
                                         {format!("{}%", data.return_on_investment)}
                                     </span>
