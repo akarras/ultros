@@ -11,7 +11,11 @@ use log::error;
 pub fn get_now() -> OffsetDateTime {
     #[cfg(not(feature = "ssr"))]
     {
-        js_sys::Date::new_0().into()
+        let date = js_sys::Date::new_0();
+        let millis = date.get_time();
+        // convert to i128 to prevent overflow before multiplying by 1,000,000 (ns)
+        let nanos = (millis as i128) * 1_000_000;
+        OffsetDateTime::from_unix_timestamp_nanos(nanos).unwrap()
     }
     #[cfg(feature = "ssr")]
     {

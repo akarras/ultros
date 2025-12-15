@@ -1,7 +1,10 @@
 use cfg_if::cfg_if;
 #[cfg(feature = "hydrate")]
 use leptos::{ev::resize, portal::Portal};
-use leptos::{html::Div, prelude::*};
+use leptos::{
+    html::{Div, Span},
+    prelude::*,
+};
 #[cfg(feature = "hydrate")]
 use leptos_use::{
     UseElementBoundingReturn, UseElementSizeReturn, UseEventListenerOptions, use_element_bounding,
@@ -67,7 +70,7 @@ where
     T: Sized + Render + RenderHtml + Send,
 {
     let is_hover = RwSignal::new(false);
-    let target = NodeRef::<Div>::new();
+    let target = NodeRef::<Span>::new();
 
     let children = children.into_inner();
     let tooltip = {
@@ -138,7 +141,7 @@ where
     };
 
     view! {
-        <div
+        <span
             class="inline-block"
             on:mouseenter=move |_| is_hover.set(true)
             on:mouseleave=move |_| is_hover.set(false)
@@ -146,6 +149,6 @@ where
         >
             {children()}
             {tooltip}
-        </div>
+        </span>
     }
 }
