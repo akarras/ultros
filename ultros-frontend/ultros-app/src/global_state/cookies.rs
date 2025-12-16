@@ -11,7 +11,12 @@ use log::error;
 pub fn get_now() -> OffsetDateTime {
     #[cfg(not(feature = "ssr"))]
     {
-        js_sys::Date::new_0().into()
+        // Manual conversion because `time` crate lacks wasm-bindgen feature configuration
+        // for direct conversion from js_sys::Date
+        let date = js_sys::Date::new_0();
+        let millis = date.get_time() as i128;
+        let nanos = millis * 1_000_000;
+        OffsetDateTime::from_unix_timestamp_nanos(nanos).unwrap()
     }
     #[cfg(feature = "ssr")]
     {
