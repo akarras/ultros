@@ -22,8 +22,10 @@ pub fn Clipboard(#[prop(into)] clipboard_text: Signal<String>) -> impl IntoView 
         }
     });
     view! {
-        <div
+        <button
+            type="button"
             class="clipboard cursor-pointer"
+            aria-label=move || format!("Copy {} to clipboard", clipboard_text.get())
             on:click=move |_| {
                 #[cfg(all(feature = "hydrate"))]
                 {
@@ -47,7 +49,7 @@ pub fn Clipboard(#[prop(into)] clipboard_text: Signal<String>) -> impl IntoView 
             })>
                 <Icon icon />
             </Tooltip>
-        </div>
+        </button>
     }
     .into_any()
 }
