@@ -1,3 +1,4 @@
+use crate::components::loading::Loading;
 use crate::components::virtual_scroller::*;
 use gloo_timers::future::TimeoutFuture;
 use icondata as i;
@@ -14,6 +15,7 @@ pub fn SearchBox() -> impl IntoView {
     let (search, set_search) = signal(String::new());
     let navigate = use_navigate();
     let (active, set_active) = signal(false);
+    let (loading, set_loading) = signal(false);
 
     use crate::api::search as api_search;
 
@@ -60,16 +62,19 @@ pub fn SearchBox() -> impl IntoView {
                 return;
             }
 
+            set_loading.set(true);
             match api_search(&s).await {
                 Ok(results) => {
                     if search_id.get_untracked() == current_id {
                         set_search_results.set(results);
+                        set_loading.set(false);
                     }
                 }
                 Err(e) => {
                     if search_id.get_untracked() == current_id {
                         log::error!("Search failed: {}", e);
                         set_search_results.set(vec![]);
+                        set_loading.set(false);
                     }
                 }
             }
@@ -168,17 +173,30 @@ pub fn SearchBox() -> impl IntoView {
                     on:focusin=focus_in
                     on:focusout=focus_out
                     placeholder="Search items, currencies, categories... (⌘K / CTRL K)"
-                    class="input w-full pl-10"
+                    class="input w-full pl-10 pr-10"
                     type="text"
                     prop:value=search
+                    aria-label="Search items"
+                    aria-busy=move || loading().to_string()
+                    aria-controls="search-results"
+                    aria-expanded=move || active().to_string()
+                    role="combobox"
+                    aria-autocomplete="list"
                 />
                 <div class="absolute left-3 top-1/2 -translate-y-1/2 text-[color:var(--color-text-muted)]">
                     <Icon icon=i::AiSearchOutlined />
+                </div>
+                <div class="absolute right-3 top-1/2 -translate-y-1/2">
+                    <Show when=loading fallback=|| ()>
+                        <Loading />
+                    </Show>
                 </div>
             </div>
 
             // Search Results
             <div
+                id="search-results"
+                role="listbox"
                 class="absolute w-full mt-2 z-50 content-visible contain-content forced-layer"
                 class:hidden=move || !active() || search().is_empty()
             >
