@@ -18,9 +18,9 @@ use crate::components::{
     clipboard::*, item_icon::*, list_summary::*, loading::*, make_place_importer::*,
     price_viewer::*, small_item_display::*, tooltip::*,
 };
+use crate::error::AppError;
 use crate::routes::purchasing_view::PurchasingView;
 use ultros_api_types::listings::ActiveListing;
-use crate::error::AppError;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum ViewState {
