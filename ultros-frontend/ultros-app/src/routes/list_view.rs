@@ -18,6 +18,15 @@ use crate::components::{
     clipboard::*, item_icon::*, list_summary::*, loading::*, make_place_importer::*,
     price_viewer::*, small_item_display::*, tooltip::*,
 };
+use crate::routes::purchasing_view::PurchasingView;
+use ultros_api_types::listings::ActiveListing;
+use crate::error::AppError;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum ViewState {
+    List,
+    Purchasing,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum MenuState {
@@ -84,11 +93,14 @@ pub fn ListView() -> impl IntoView {
     );
 
     let (menu, set_menu) = signal(MenuState::None);
+    let (view_state, set_view_state) = signal(ViewState::List);
     let edit_list_mode = RwSignal::new(false);
     let selected_items = RwSignal::new(HashSet::new());
 
     view! {
         <div class="flex-row">
+            <button class="btn" on:click=move |_| set_view_state(ViewState::List)>"List"</button>
+            <button class="btn" on:click=move |_| set_view_state(ViewState::Purchasing)>"Purchasing"</button>
             <Tooltip tooltip_text="Add an item to the list">
                 <button
                     class="btn-primary"
@@ -397,12 +409,114 @@ pub fn ListView() -> impl IntoView {
                             let items = StoredValue::new(items);
                             Either::Left(
                                 view! {
-                                    <table></table>
-                                    <div class="content-well">
-                                        <div class="sticky top-0 flex-row justify-between">
-                                            <span class="content-title">{list.name}</span>
-                                            <div class="flex flex-row">
-                                                <button
+                                    {move || match view_state() {
+                                        ViewState::List => {
+                                            view! {
+                                                <table></table>
+                                                <div class="content-well">
+                                                    <div class="sticky top-0 flex-row justify-between">
+                                                        <span class="content-title">{list.name.clone()}</span>
+                                                        <div class="flex flex-row">
+                                                            <button
+                                                                class="btn"
+                                                                class:bg-brand-950=edit_list_mode
+                                                                on:click=move |_| {
+                                                                    edit_list_mode
+                                                                        .update(|u| {
+                                                                            *u = !*u;
+                                                                        })
+                                                                }
+                                                            >
+                                                                "bulk edit"
+                                                            </button>
+                                                            <div class:hidden=move || !edit_list_mode()>
+                                                                <button
+                                                                    class="btn"
+                                                                    on:click=move |_| {
+                                                                        let items = selected_items
+                                                                            .with_untracked(|s| s.iter().copied().collect::<Vec<_>>());
+                                                                        selected_items.update(|i| i.clear());
+                                                                        delete_items.dispatch(items);
+                                                                    }
+                                                                >
+                                                                    "DELETE"
+                                                                </button>
+                                                            </div>
+                                                            <button
+                                                                class="btn"
+                                                                on:click=move |_| {
+                                                                    selected_items
+                                                                        .update(|i| {
+                                                                            for (item, _) in items.get_value() {
+                                                                                i.insert(item.id);
+                                                                            }
+                                                                        })
+                                                                }
+                                                            >
+                                                                "SELECT ALL"
+                                                            </button>
+                                                            <button
+                                                                class="btn"
+                                                                on:click=move |_| {
+                                                                    selected_items.update(|i| i.clear());
+                                                                }
+                                                            >
+                                                                "DESLECT ALL"
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                    <table class="w-full">
+                                                        <tbody>
+                                                            <tr>
+                                                                <th class:hidden=move || !edit_list_mode()>"✅"</th>
+                                                                <th>"HQ"</th>
+                                                                <th>"Item"</th>
+                                                                <th>"Quantity"</th>
+                                                                <th>"Price"</th>
+                                                                <th class:hidden=edit_list_mode>"Options"</th>
+                                                            </tr>
+                                                            <For
+                                                                each=move || items.get_value()
+                                                                key=|(item, _)| item.id
+                                                                children=move |(item, listings): (ListItem, Vec<ActiveListing>)| {
+                                                                    let (edit, set_edit) = signal(false);
+                                                                    let item = RwSignal::new(item);
+                                                                    let temp_item = RwSignal::new(item());
+                                                                    let listings = RwSignal::new(listings);
+                                                                    view! {
+                                                                        <ListRow
+                                                                            edit=edit
+                                                                            edit_list_mode=edit_list_mode
+                                                                            item=item
+                                                                            listings=listings
+                                                                            temp_item=temp_item
+                                                                            set_edit=set_edit
+                                                                            selected_items=selected_items
+                                                                            delete_item=delete_item
+                                                                            edit_item=edit_item
+                                                                        />
+                                                                    }
+                                                                        .into_any()
+                                                                }
+                                                            />
+                                                        </tbody>
+                                                    </table>
+                                                    <ListSummary items=items.get_value() />
+                                                </div>
+                                            }
+                                                .into_any()
+                                        }
+                                        ViewState::Purchasing => {
+                                            view! { <PurchasingView items=items edit_item=edit_item/> }
+                                                .into_any()
+                                        }
+                                    }}
+                                },
+                            )
+                        }
+                        Err(e) => {
+                            Either::Right(
+                                view! {
                                                     class="btn"
                                                     class:bg-brand-950=edit_list_mode
                                                     on:click=move |_| {
@@ -644,12 +758,6 @@ pub fn ListView() -> impl IntoView {
                         Err(e) => {
                             Either::Right(
                                 view! {
-                                    // TODO full table?
-                                    // let price_view = items.iter().flat_map(|(list, listings): &(ListItem, Vec<ActiveListing>)| listings.iter().map(|listing| {
-                                    // ShoppingListRow { item_id: ItemKey(ItemId(list.item_id)), amount: listing.quantity, lowest_price: listing.price_per_unit, lowest_price_world: listing.world_id.to_string(), lowest_price_datacenter: "TODO".to_string() }
-                                    // })).collect::<Vec<_>>();
-                                    // <TableContent rows=price_view on_change=move |_| {} />
-
                                     <div>{format!("Failed to get items\n{e}")}</div>
                                 },
                             )
@@ -659,4 +767,135 @@ pub fn ListView() -> impl IntoView {
 
         </Transition>
     }.into_any()
+}
+
+#[component]
+fn ListRow(
+    edit: ReadSignal<bool>,
+    edit_list_mode: RwSignal<bool>,
+    item: RwSignal<ListItem>,
+    listings: RwSignal<Vec<ActiveListing>>,
+    temp_item: RwSignal<ListItem>,
+    set_edit: WriteSignal<bool>,
+    selected_items: RwSignal<HashSet<i32>>,
+    delete_item: Action<i32, Result<(), AppError>>,
+    edit_item: Action<ListItem, Result<(), AppError>>,
+) -> impl IntoView {
+    let game_items = &xiv_gen_db::data().items;
+    view! {
+        <tr>
+            {move || {
+                if !edit() || edit_list_mode() {
+                    let item = item();
+                    Either::Left(
+                        view! {
+                            <td class:hidden=move || !edit_list_mode()><input type="checkbox" on:click=move |_| {
+                                selected_items.update(|u| {
+                                    if u.contains(&item.id) {
+                                        u.remove(&item.id);
+                                    } else {
+                                        u.insert(item.id);
+                                    }
+                                })
+                            }/></td>
+                            <td>{item.hq.and_then(|hq| hq.then_some("✅"))}</td>
+                            <td>
+                                <div class="flex-row">
+                                    <ItemIcon item_id=item.item_id icon_size=IconSize::Small />
+                                    {game_items.get(&ItemId(item.item_id)).map(|item| item.name.as_str())}
+                                    <Clipboard clipboard_text=game_items
+                                        .get(&ItemId(item.item_id))
+                                        .map(|item| item.name.to_string())
+                                        .unwrap_or_default() />
+                                    {game_items
+                                        .get(&ItemId(item.item_id))
+                                        .map(|item| item.item_search_category.0 <= 1)
+                                        .unwrap_or_default()
+                                        .then(move || {
+                                            view! {
+                                                <div>
+                                                    <Tooltip tooltip_text="This item is not available on the market board">
+                                                        <Icon icon=i::BiTrashSolid />
+                                                    </Tooltip>
+                                                </div>
+                                            }
+                                        })}
+                                </div>
+                            </td>
+                            <td>{item.quantity}</td>
+                            <td>
+                                {move || {
+                                    view! {
+                                        <PriceViewer
+                                            quantity=item.quantity.unwrap_or(1)
+                                            hq=item.hq
+                                            listings=listings()
+                                        />
+                                    }
+                                }}
+                            </td>
+                        },
+                    )
+                } else {
+                    let item = item();
+                    Either::Right(
+                        view! {
+                            <td><input type="checkbox" prop:checked=move || temp_item.with(|i| i.hq) on:click=move |_| {
+                                temp_item.update(|w| w.hq = Some(!w.hq.unwrap_or_default()))
+                            }/></td>
+                            <td>
+                                <div class="flex-row">
+                                    <ItemIcon item_id=item.item_id icon_size=IconSize::Small />
+                                    {game_items.get(&ItemId(item.item_id)).map(|item| item.name.as_str())}
+                                    <Clipboard clipboard_text=game_items
+                                        .get(&ItemId(item.item_id))
+                                        .map(|item| item.name.to_string())
+                                        .unwrap_or_default() />
+                                    {game_items
+                                        .get(&ItemId(item.item_id))
+                                        .map(|item| item.item_search_category.0 <= 1)
+                                        .unwrap_or_default()
+                                        .then(move || {
+                                            view! {
+                                                <div>
+                                                    <Tooltip tooltip_text="This item is not available on the market board">
+                                                        <Icon icon=i::AiExclamationOutlined />
+                                                    </Tooltip>
+                                                </div>
+                                            }
+                                        })}
+                                </div>
+                            </td>
+                            <td><input prop:value=move || temp_item.with(|i| i.quantity) on:input=move |e| {
+                                if let Ok(value) = event_target_value(&e).parse::<i32>() {
+                                    temp_item.update(|i| {
+                                        i.quantity = Some(value);
+                                    })
+                                }
+                            }/></td>
+                            <td>
+                                {move || {
+                                    view! {
+                                        <PriceViewer
+                                            quantity=item.quantity.unwrap_or(1)
+                                            hq=item.hq
+                                            listings=listings()
+                                        />
+                                    }
+                                }}
+                            </td>
+                        },
+                    )
+                }
+            }} <td class:hidden=edit_list_mode><button class="btn" on:click=move |_| {
+                let _ = delete_item.dispatch(item().id);
+            }><Icon icon=i::BiTrashSolid /></button>
+            <button class="btn" on:click=move |_| {
+                if temp_item() != item() {
+                    let _ = edit_item.dispatch(temp_item());
+                }
+                set_edit(!edit())
+            }><Icon icon=Signal::derive(move || if edit() { i::BsCheck } else { i::BsPencilFill }) /></button></td>
+        </tr>
+    }
 }

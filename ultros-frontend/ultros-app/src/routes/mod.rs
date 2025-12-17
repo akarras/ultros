@@ -9,6 +9,7 @@ pub mod item_view;
 pub mod legal;
 pub mod list_view;
 pub mod lists;
+pub mod purchasing_view;
 pub mod recipe_analyzer;
 pub mod retainers;
 pub mod settings;
