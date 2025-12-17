@@ -332,7 +332,11 @@ impl AnalyzerService {
     ) {
         // on startup we should try to read through the database to get the spiciest of item listings
         info!("worker starting");
-        let listings = ultros_db.cheapest_listings().await;
+        let (listings, sale_data) = futures::future::join(
+            ultros_db.cheapest_listings(),
+            ultros_db.last_n_sales(SALE_HISTORY_SIZE as i32),
+        )
+        .await;
         info!("starting item listings");
         match listings {
             Ok(mut listings) => {
@@ -357,7 +361,6 @@ impl AnalyzerService {
             }
         }
         info!("starting sale data");
-        let sale_data = ultros_db.last_n_sales(SALE_HISTORY_SIZE as i32).await;
         match sale_data {
             Ok(mut history_stream) => {
                 while let Some(Ok(value)) = history_stream.next().await {
