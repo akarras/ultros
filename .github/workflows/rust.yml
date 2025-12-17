@@ -25,7 +25,7 @@ jobs:
               # normally i do an apt upgrade here, but we install snap and firefox??
               run: sudo apt update && sudo apt install -y libfreetype6 libfreetype6-dev cmake build-essential curl sudo pkg-config libssl-dev fontconfig libfontconfig1-dev
             - name: Install Rust toolchain
-              uses: dtolnay/rust-toolchain@nightly
+              uses: dtolnay/rust-toolchain@stable
             - name: Install rustfmt and clippy
               run: rustup component add rustfmt clippy
             - name: Cache cargo registry and build artifacts
@@ -80,3 +80,54 @@ jobs:
             # --all-features makes sense, but breaks xiv-gen oops.
             # some broken tests that i can't figure out right now.
             # run: cargo test --workspace
+
+    e2e:
+        name: End-to-end tests
+        runs-on: ubuntu-latest
+        needs: check
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+              with:
+                  submodules: recursive
+
+            - name: Install system packages
+              run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.0-dev libgtk-3-dev
+
+            - name: Install Rust toolchain
+              uses: dtolnay/rust-toolchain@stable
+
+            - name: Cache cargo registry and build artifacts
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cargo/bin
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                      target
+                  key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+                  restore-keys: ${{ runner.os }}-cargo-
+
+            - name: Use Node.js 18
+              uses: actions/setup-node@v3
+              with:
+                  node-version: 18
+
+            - name: Install cargo-binstall
+              uses: cargo-bins/cargo-binstall@main
+
+            - name: Install cargo-leptos
+              run: cargo binstall --no-confirm cargo-leptos
+
+            - name: Install npm dependencies
+              run: npm ci
+              working-directory: ./ultros-frontend/ultros-app/end2end
+
+            - name: Install Playwright Browsers
+              run: npx playwright install --with-deps
+              working-directory: ./ultros-frontend/ultros-app/end2end
+
+            - name: Run Playwright tests
+              run: npx playwright test
+              working-directory: ./ultros-frontend/ultros-app/end2end
