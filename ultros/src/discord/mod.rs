@@ -3,6 +3,7 @@ pub(crate) mod ffxiv;
 use chrono::Local;
 use poise::{builtins::HelpConfiguration, serenity_prelude as serenity};
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 use ultros_api_types::world_helper::WorldHelper;
 use ultros_db::{UltrosDb, world_cache::WorldCache};
 
@@ -79,6 +80,7 @@ pub(crate) async fn start_discord(
     world_helper: Arc<WorldHelper>,
     update_service: Arc<UpdateService>,
     discord_token: String,
+    token: CancellationToken,
 ) {
     let framework: poise::Framework<Data, Error> = poise::Framework::builder()
         .options(poise::FrameworkOptions {
@@ -99,11 +101,13 @@ pub(crate) async fn start_discord(
                         event_receivers.retainer_undercut.resubscribe(),
                     ),
                 );
+                let alert_token = token.clone();
                 tokio::spawn(AlertManager::start_manager(
                     db.clone(),
                     item_events,
                     alert_events,
                     ctx.clone(),
+                    alert_token,
                 ));
                 Ok(Data {
                     db,
@@ -123,6 +127,11 @@ pub(crate) async fn start_discord(
             .framework(framework)
             .await
             .unwrap();
+    let shard_manager = client.shard_manager.clone();
+    tokio::spawn(async move {
+        token.cancelled().await;
+        shard_manager.shutdown_all().await;
+    });
 
     client.start().await.unwrap();
 }

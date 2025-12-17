@@ -24,6 +24,7 @@ use universalis::{ItemId, WorldId};
 use crate::event::EventReceivers;
 use thiserror::Error;
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 use tracing::log::error;
 use ultros_db::world_cache::{AnySelector, WorldCache};
 
@@ -288,6 +289,7 @@ impl AnalyzerService {
         ultros_db: UltrosDb,
         event_receivers: EventReceivers,
         world_cache: Arc<WorldCache>,
+        token: CancellationToken,
     ) -> Self {
         let cheapest_items: HashMap<AnySelector, RwLock<CheapestListings>> = world_cache
             .get_inner_data()
@@ -318,7 +320,7 @@ impl AnalyzerService {
         let task_self = temp.clone();
         tokio::spawn(async move {
             task_self
-                .run_worker(ultros_db, event_receivers, world_cache)
+                .run_worker(ultros_db, event_receivers, world_cache, token)
                 .await;
         });
         temp
@@ -329,6 +331,7 @@ impl AnalyzerService {
         ultros_db: UltrosDb,
         mut event_receivers: EventReceivers,
         world_cache: Arc<WorldCache>,
+        token: CancellationToken,
     ) {
         // on startup we should try to read through the database to get the spiciest of item listings
         info!("worker starting");
@@ -375,47 +378,62 @@ impl AnalyzerService {
         self.initiated.store(true, Ordering::Relaxed);
         info!("worker primed, now using live data");
         let second_worker_instance = self.clone();
+        let history_token = token.clone();
         tokio::spawn(async move {
             loop {
-                if let Ok(history) = event_receivers.history.recv().await {
-                    match history {
-                        crate::event::EventType::Remove(_) => {}
-                        crate::event::EventType::Add(sales) => {
-                            for (sale, _) in sales.sales.iter() {
-                                second_worker_instance.add_sale(sale).await;
+                tokio::select! {
+                    _ = history_token.cancelled() => {
+                        break;
+                    }
+                    history = event_receivers.history.recv() => {
+                        if let Ok(history) = history {
+                            match history {
+                                crate::event::EventType::Remove(_) => {}
+                                crate::event::EventType::Add(sales) => {
+                                    for (sale, _) in sales.sales.iter() {
+                                        second_worker_instance.add_sale(sale).await;
+                                    }
+                                }
+                                crate::event::EventType::Update(_) => {}
                             }
                         }
-                        crate::event::EventType::Update(_) => {}
                     }
                 }
             }
         });
         loop {
-            if let Ok(listings) = event_receivers.listings.recv().await {
-                match listings {
-                    crate::event::EventType::Remove(remove) => {
-                        let region = if let Some(region) = remove
-                            .listings
-                            .iter()
-                            .flat_map(|(w, _)| {
-                                world_cache
-                                    .lookup_selector(&AnySelector::World(w.world_id))
-                                    .map(|w| world_cache.get_region(&w))
-                            })
-                            .flatten()
-                            .next()
-                        {
-                            region.id
-                        } else {
-                            continue;
-                        };
-                        self.remove_listings(region, remove, &world_cache, &ultros_db)
-                            .await;
+            tokio::select! {
+                _ = token.cancelled() => {
+                    break;
+                }
+                listings = event_receivers.listings.recv() => {
+                    if let Ok(listings) = listings {
+                        match listings {
+                            crate::event::EventType::Remove(remove) => {
+                                let region = if let Some(region) = remove
+                                    .listings
+                                    .iter()
+                                    .flat_map(|(w, _)| {
+                                        world_cache
+                                            .lookup_selector(&AnySelector::World(w.world_id))
+                                            .map(|w| world_cache.get_region(&w))
+                                    })
+                                    .flatten()
+                                    .next()
+                                {
+                                    region.id
+                                } else {
+                                    continue;
+                                };
+                                self.remove_listings(region, remove, &world_cache, &ultros_db)
+                                    .await;
+                            }
+                            crate::event::EventType::Add(add) => {
+                                self.add_listings(&add.listings, &world_cache).await;
+                            }
+                            crate::event::EventType::Update(_) => todo!(),
+                        }
                     }
-                    crate::event::EventType::Add(add) => {
-                        self.add_listings(&add.listings, &world_cache).await;
-                    }
-                    crate::event::EventType::Update(_) => todo!(),
                 }
             }
         }

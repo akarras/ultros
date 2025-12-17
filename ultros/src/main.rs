@@ -28,6 +28,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 #[cfg(all(not(target_env = "msvc"), feature = "jemalloc"))]
 use tikv_jemallocator::Jemalloc;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 use ultros_api_types::websocket::{ListingEventData, SaleEventData};
@@ -61,6 +62,7 @@ async fn run_socket_listener(
     db: UltrosDb,
     listings_tx: EventProducer<ListingEventData>,
     sales_tx: EventProducer<SaleEventData>,
+    token: CancellationToken,
 ) {
     let mut socket = WebsocketClient::connect().await;
     socket
@@ -74,9 +76,15 @@ async fn run_socket_listener(
         .await;
     let receiver = socket.get_receiver();
     loop {
-        if let Some(msg) = receiver.recv().await {
-            // create a new task for each message
-            let db = db.clone();
+        tokio::select! {
+            _ = token.cancelled() => {
+                info!("socket listener cancelled");
+                break;
+            }
+            msg = receiver.recv() => {
+                if let Some(msg) = msg {
+                    // create a new task for each message
+                    let db = db.clone();
             // hopefully this is cheap to clone
             let listings_tx = listings_tx.clone();
             let sales_tx = sales_tx.clone();
@@ -158,6 +166,8 @@ async fn run_socket_listener(
                     }
                 }
             });
+                }
+            }
         }
     }
 }
@@ -216,14 +226,20 @@ async fn main() -> Result<()> {
             .await
             .expect("Unable to populate worlds datacenters- is universalis down?");
         info!("starting websocket");
-        run_socket_listener(init, listings_sender, history_sender).await;
+        run_socket_listener(init, listings_sender, history_sender, token.clone()).await;
     });
     // on first run, the world cache may be empty
     let world_cache = Arc::new(WorldCache::new(&db).await);
     let world_helper = Arc::new(WorldHelper::new(WorldData::from(world_cache.as_ref())));
 
-    let analyzer_service =
-        AnalyzerService::start_analyzer(db.clone(), receivers.clone(), world_cache.clone()).await;
+    let token = CancellationToken::new();
+    let analyzer_service = AnalyzerService::start_analyzer(
+        db.clone(),
+        receivers.clone(),
+        world_cache.clone(),
+        token.clone(),
+    )
+    .await;
     let update_service = Arc::new(UpdateService {
         db: db.clone(),
         world_cache: world_cache.clone(),
@@ -231,7 +247,7 @@ async fn main() -> Result<()> {
         listings: senders.listings.clone(),
         sales: senders.history.clone(),
     });
-    UpdateService::start_service(update_service.clone());
+    UpdateService::start_service(update_service.clone(), token.clone());
     // begin listening to universalis events
     // load configuration from environment
     let config = envy::from_env::<Config>()?;
@@ -252,6 +268,7 @@ async fn main() -> Result<()> {
         world_helper.clone(),
         update_service,
         discord_token,
+        token.clone(),
     ));
 
     let character_verification = CharacterVerifierService {
@@ -264,7 +281,6 @@ async fn main() -> Result<()> {
     let mut leptos_options = conf.leptos_options;
     let git_hash = git_const::git_short_hash!();
     leptos_options.site_pkg_dir = Arc::from(["pkg/", git_hash].concat());
-    // let addr = leptos_options.site_addr;
     let web_state = WebState {
         analyzer_service,
         db,
@@ -283,7 +299,18 @@ async fn main() -> Result<()> {
         world_helper,
         leptos_options,
         search_service,
+        token: token.clone(),
     };
-    web::start_web(web_state).await;
+    let web_task = tokio::spawn(web::start_web(web_state));
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
+            info!("ctrl-c received");
+        }
+        _ = web_task => {
+            info!("web task finished");
+        }
+    }
+    token.cancel();
+    info!("Exiting");
     Ok(())
 }

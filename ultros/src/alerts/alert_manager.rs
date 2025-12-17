@@ -4,6 +4,7 @@ use futures::future::{self, Either};
 use poise::serenity_prelude;
 use tracing::error;
 use ultros_api_types::{user::OwnedRetainer, websocket::ListingEventData};
+use tokio_util::sync::CancellationToken;
 use ultros_db::{
     UltrosDb,
     entity::{alert, alert_retainer_undercut},
@@ -27,6 +28,7 @@ impl AlertManager {
             EventBus<alert_retainer_undercut::Model>,
         ),
         ctx: serenity_prelude::Context,
+        token: CancellationToken,
     ) {
         // start all alerts we know about from the db, then use the alert busses to monitor for new alerts being spawned
         let mut manager = AlertManager {
@@ -56,33 +58,38 @@ impl AlertManager {
             Err(e) => error!("Error creating all alerts {e:?}"),
         }
         loop {
-            let alerts = Box::pin(alerts.recv());
-            let retainer_alert_events = Box::pin(undercuts.recv());
-            match future::select(alerts, retainer_alert_events).await {
-                Either::Left(_alert) => {
-                    /*if let Ok(alert) = alert {
-                        manager.remove_retainer_alert(alert);
-                    }*/
+            tokio::select! {
+                _ = token.cancelled() => {
+                    break;
                 }
-                Either::Right((retainer_alert_create, _)) => {
-                    if let Ok(retainer) = &retainer_alert_create {
-                        match retainer {
-                            EventType::Remove(removed) => {
-                                manager.remove_retainer_alert(removed).await;
-                            }
-                            EventType::Add(retainer_alert) => {
-                                manager
-                                    .create_retainer_alert_listener(
-                                        retainer_alert,
-                                        &ultros_db,
-                                        &ctx,
-                                        listings.resubscribe(),
-                                        retainers.resubscribe(),
-                                    )
-                                    .await;
-                            }
-                            EventType::Update(m) => {
-                                manager.update_alert(m, m.margin_percent).await;
+                either = future::select(Box::pin(alerts.recv()), Box::pin(undercuts.recv())) => {
+                    match either {
+                        Either::Left(_alert) => {
+                            /*if let Ok(alert) = alert {
+                                manager.remove_retainer_alert(alert);
+                            }*/
+                        }
+                        Either::Right((retainer_alert_create, _)) => {
+                            if let Ok(retainer) = &retainer_alert_create {
+                                match retainer {
+                                    EventType::Remove(removed) => {
+                                        manager.remove_retainer_alert(removed).await;
+                                    }
+                                    EventType::Add(retainer_alert) => {
+                                        manager
+                                            .create_retainer_alert_listener(
+                                                retainer_alert,
+                                                &ultros_db,
+                                                &ctx,
+                                                listings.resubscribe(),
+                                                retainers.resubscribe(),
+                                            )
+                                            .await;
+                                    }
+                                    EventType::Update(m) => {
+                                        manager.update_alert(m, m.margin_percent).await;
+                                    }
+                                }
                             }
                         }
                     }
