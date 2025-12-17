@@ -338,8 +338,9 @@ fn AnalyzerTable(
         }
         sorted_data
             .into_iter()
+            .map(Arc::new)
             .enumerate()
-            .collect::<Vec<(usize, ProfitData)>>()
+            .collect::<Vec<(usize, Arc<ProfitData>)>>()
     });
     view! {
         <div class="flex flex-col gap-6">
@@ -602,13 +603,14 @@ fn AnalyzerTable(
                             </div>
                         }.into_any()
                         each=sorted_data.into()
-                        key=move |(index, data): &(usize, ProfitData)| (
+                        key=move |(index, data): &(usize, Arc<ProfitData>)| (
                             *index,
                             data.sale_summary.item_id,
                             data.cheapest_world_id,
                             data.sale_summary.hq,
                         )
-                        view=move |(index, data): (usize, ProfitData)| {
+                        view=move |(index, data): (usize, Arc<ProfitData>)| {
+                            let data_clone = data.clone();
                             let world = worlds
                                 .lookup_selector(AnySelector::World(data.cheapest_world_id));
                             let datacenter = world
@@ -663,22 +665,25 @@ fn AnalyzerTable(
                                         <Gil amount=data.profit />
                                     </div>
                                     <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
-                                        <span class=move || {
-                                            let roi = data.return_on_investment;
-                                            let tint = if roi >= 500 {
-                                                "24%"
-                                            } else if roi >= 200 {
-                                                "20%"
-                                            } else if roi >= 100 {
-                                                "16%"
-                                            } else if roi >= 50 {
-                                                "12%"
-                                            } else {
-                                                "10%"
-                                            };
-                                            format!(
-                                                "inline-flex items-center justify-end px-2 py-1 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_{tint},transparent)]"
-                                            )
+                                        <span class={
+                                            let data = data_clone.clone();
+                                            move || {
+                                                let roi = data.return_on_investment;
+                                                let tint = if roi >= 500 {
+                                                    "24%"
+                                                } else if roi >= 200 {
+                                                    "20%"
+                                                } else if roi >= 100 {
+                                                    "16%"
+                                                } else if roi >= 50 {
+                                                    "12%"
+                                                } else {
+                                                    "10%"
+                                                };
+                                                format!(
+                                                    "inline-flex items-center justify-end px-2 py-1 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_{tint},transparent)]"
+                                                )
+                                            }
                                         }>
                                             {format!("{}%", data.return_on_investment)}
                                         </span>
