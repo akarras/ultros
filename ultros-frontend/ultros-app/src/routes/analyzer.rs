@@ -67,7 +67,7 @@ enum SortMode {
 }
 
 #[derive(Clone, Debug)]
-struct ProfitTable(Vec<ProfitData>);
+struct ProfitTable(Vec<Arc<ProfitData>>);
 
 fn listings_to_map(listings: CheapestListings) -> HashMap<ProfitKey, (i32, i32)> {
     listings
@@ -198,7 +198,7 @@ impl ProfitTable {
                         summary.min_price
                     };
 
-                Some(ProfitData {
+                Some(Arc::new(ProfitData {
                     profit: estimated_sale_price - cheapest_price,
                     return_on_investment: ((estimated_sale_price - cheapest_price) as f32
                         / cheapest_price as f32
@@ -206,7 +206,7 @@ impl ProfitTable {
                     sale_summary: summary,
                     cheapest_world_id,
                     cheapest_price,
-                })
+                }))
             })
             .collect();
 
@@ -330,7 +330,7 @@ fn AnalyzerTable(
                         .unwrap_or_default()
             })
             .cloned()
-            .collect::<Vec<_>>();
+            .collect::<Vec<Arc<ProfitData>>>();
 
         match sort_mode().unwrap_or(SortMode::Roi) {
             SortMode::Roi => sorted_data.sort_by_key(|data| Reverse(data.return_on_investment)),
@@ -338,7 +338,6 @@ fn AnalyzerTable(
         }
         sorted_data
             .into_iter()
-            .map(Arc::new)
             .enumerate()
             .collect::<Vec<(usize, Arc<ProfitData>)>>()
     });

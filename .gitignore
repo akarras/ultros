@@ -6,3 +6,4 @@ integration/node_modules/
 integration/artifacts/
 context.md
 docker-compose.yml
+*.log
