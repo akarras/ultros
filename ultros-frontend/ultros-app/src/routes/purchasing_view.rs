@@ -2,12 +2,11 @@ use std::collections::HashMap;
 
 use crate::{
     error::AppError,
-    global_state::{home_world::use_home_world, world_state::use_world_state},
+    global_state::{home_world::use_home_world, LocalWorldData},
 };
 use leptos::prelude::*;
-use leptos_icons::Icon;
 use ultros_api_types::{list::ListItem, listings::ActiveListing, world_helper::AnySelector};
-use xiv_gen::{Item, ItemId};
+use xiv_gen::ItemId;
 
 use crate::components::{item_icon::*, world_name::*};
 
@@ -29,13 +28,13 @@ pub(crate) fn PurchasingView(
             }
         });
         let (home_world, _) = use_home_world();
-        let world_helper = use_world_state();
+        let world_helper = use_context::<LocalWorldData>().unwrap().0.unwrap();
         let mut sorted: Vec<_> = map.into_iter().collect();
         sorted.sort_by_key(|(world_id, _)| {
             home_world
                 .get()
                 .and_then(|w| Some(w.id))
-                .zip(world_helper.get())
+                .zip(Some(world_helper.clone()))
                 .map(|(home_world, world_helper)| {
                     distance_logic::get_teleport_cost(&world_helper, home_world, *world_id)
                 })

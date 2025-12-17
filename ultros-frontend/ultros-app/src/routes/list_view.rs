@@ -507,8 +507,7 @@ pub fn ListView() -> impl IntoView {
                                                 .into_any()
                                         }
                                         ViewState::Purchasing => {
-                                            view! { <PurchasingView items=items edit_item=edit_item/> }
-                                                .into_any()
+                                            view! { <PurchasingView items=items edit_item=edit_item/> }.into_any()
                                         }
                                     }}
                                 },
@@ -758,6 +757,12 @@ pub fn ListView() -> impl IntoView {
                         Err(e) => {
                             Either::Right(
                                 view! {
+                                    // TODO full table?
+                                    // let price_view = items.iter().flat_map(|(list, listings): &(ListItem, Vec<ActiveListing>)| listings.iter().map(|listing| {
+                                    // ShoppingListRow { item_id: ItemKey(ItemId(list.item_id)), amount: listing.quantity, lowest_price: listing.price_per_unit, lowest_price_world: listing.world_id.to_string(), lowest_price_datacenter: "TODO".to_string() }
+                                    // })).collect::<Vec<_>>();
+                                    // <TableContent rows=price_view on_change=move |_| {} />
+
                                     <div>{format!("Failed to get items\n{e}")}</div>
                                 },
                             )
