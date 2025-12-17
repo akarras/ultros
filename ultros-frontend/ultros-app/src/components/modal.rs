@@ -36,7 +36,8 @@ where
                     backdrop-blur-md
                     p-6 z-50
                     animate-slide-in"
-
+                    role="dialog"
+                    aria-modal="true"
                     on:click=move |e| {
                         e.stop_propagation();
                     }
@@ -48,7 +49,6 @@ where
                             transition-colors duration-200
                             focus:outline-none focus:ring-2 focus:ring-[color:var(--brand-ring)]"
                             on:click=move |_| set_visible(false)
-                            on:focusout=move |_| set_visible(false)
                             aria-label="Close modal"
                         >
                             <Icon icon=i::CgClose width="1.5em" height="1.5em" />
