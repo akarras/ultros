@@ -12,14 +12,23 @@ pub fn ListingsTable(
     let (show_more, set_show_more) = signal(false);
     let listing_count = move || listings.with(|l| l.len());
     let show_click = move |_| set_show_more(true);
-    let listings = Memo::new(move |_| {
+    // Optimization: Split sorting from slicing.
+    // This memo handles the expensive sorting operation and only updates when the source `listings` signal changes.
+    let sorted_listings = Memo::new(move |_| {
         let mut listings = listings();
         listings.sort_by_key(|(listing, _)| listing.price_per_unit);
-        if show_more() {
-            listings.clone()
-        } else {
-            listings.iter().take(10).cloned().collect()
-        }
+        listings
+    });
+    // This memo handles the cheap slicing/view logic.
+    // When `show_more` toggles, we re-slice the already sorted list instead of re-sorting everything.
+    let listings = Memo::new(move |_| {
+        sorted_listings.with(|listings| {
+            if show_more() {
+                listings.clone()
+            } else {
+                listings.iter().take(10).cloned().collect()
+            }
+        })
     });
     view! {
         <div class="overflow-x-auto">
