@@ -125,6 +125,10 @@ jobs:
               run: npx playwright install --with-deps
               working-directory: ./ultros-frontend/ultros-app/end2end
 
+            - name: Build Leptos app
+              working-directory: ./ultros-frontend/ultros-app
+              run: cargo leptos build --release
+
             - name: Run Playwright tests
               run: npx playwright test
               working-directory: ./ultros-frontend/ultros-app/end2end
