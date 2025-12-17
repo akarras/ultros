@@ -15,11 +15,12 @@ use icondata as i;
 use leptos::{either::Either, prelude::*};
 use leptos_icons::*;
 use leptos_meta::{Meta, Title};
-use leptos_router::hooks::{query_signal, use_params_map};
+use leptos_router::hooks::query_signal;
 use std::{cmp::Reverse, collections::HashMap, fmt::Display, str::FromStr, sync::Arc};
 use ultros_api_types::{
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     recent_sales::{RecentSales, SaleData},
+    world::World,
     world_helper::AnyResult,
 };
 use xiv_gen::{ItemId, Recipe};
@@ -755,53 +756,77 @@ fn CollapseIcon(collapsed: Signal<bool>) -> impl IntoView {
 
 #[component]
 pub fn RecipeAnalyzer() -> impl IntoView {
-    let params = use_params_map();
     let (home_world, _) = use_home_world();
+    let worlds = use_context::<LocalWorldData>()
+        .expect("Worlds should always be populated here")
+        .0
+        .unwrap();
 
+    let (world_query, set_world_query) = query_signal::<String>("world");
+
+    // This is our single source of truth for the selected world.
+    let worlds_for_selected = worlds.clone();
+    let selected_world = Memo::new(move |_| {
+        let world_name = world_query.get();
+        world_name.as_ref().and_then(|name| {
+            worlds_for_selected
+                .lookup_world_by_name(name)
+                .and_then(|any_result| match any_result {
+                    AnyResult::World(w) => Some(w.clone()),
+                    _ => None,
+                })
+        })
+    });
+
+    // We need a separate signal for the picker because it works with `RwSignal`.
+    let (picker_world, set_picker_world) = signal(selected_world.get_untracked());
+
+    // Effect to synchronize from URL (`selected_world`) to the picker (`picker_world`).
+    Effect::new(move |_| {
+        let world_from_url = selected_world.get();
+        set_picker_world.set(world_from_url);
+    });
+
+    // Effect to synchronize from the picker (`picker_world`) to the URL (`set_world_query`).
+    Effect::new(move |_| {
+        let picked = picker_world.get();
+        let query_val = world_query.get_untracked();
+        let picked_name = picked.as_ref().map(|w| w.name.to_string());
+        if query_val != picked_name {
+            set_world_query(picked_name);
+        }
+    });
+
+    // Effect to set the initial world from home_world if not in the query.
+    Effect::new(move |_| {
+        if world_query.get_untracked().is_none() {
+            if let Some(home) = home_world.get() {
+                set_world_query(Some(home.name.to_string()));
+            }
+        }
+    });
+
+    let worlds_for_region = worlds.clone();
     let region = Memo::new(move |_| {
-        let worlds = use_context::<LocalWorldData>()
-            .expect("Worlds should always be populated here")
-            .0
-            .unwrap();
-        // Default to home world region or North-America
-        let world_name = params
-            .with(|p| p.get("world").clone())
-            .or_else(|| home_world.get().map(|w| w.name))
-            .unwrap_or_else(|| "North-America".to_string());
-
-        worlds
-            .lookup_world_by_name(&world_name)
-            .map(|world| {
-                let region = worlds.get_region(world);
-                AnyResult::Region(region).get_name().to_string()
-            })
-            .unwrap_or_else(|| "North-America".to_string())
+        selected_world.with(|world_opt| {
+            world_opt
+                .as_ref()
+                .map(|world| {
+                    let region = worlds_for_region.get_region(AnyResult::World(world));
+                    AnyResult::Region(region).get_name().to_string()
+                })
+                .unwrap_or_else(|| "North-America".to_string())
+        })
     });
 
     let global_cheapest_listings = Resource::new(region, move |region: String| async move {
         get_cheapest_listings(&region).await
     });
 
-    let (selected_world, set_selected_world) = signal(None);
-    Effect::new(move |_| {
-        if selected_world.get_untracked().is_none()
-            && let Some(home) = home_world.get()
-        {
-            set_selected_world(Some(home));
-        }
-    });
-
-    let recent_sales = Resource::new(selected_world, move |world| async move {
+    let recent_sales = Resource::new(selected_world, move |world: Option<World>| async move {
         if let Some(world) = world {
-            leptos::logging::log!("Fetching sales for world: {}", &world.name);
-            let res = get_recent_sales_for_world(&world.name).await;
-            match &res {
-                Ok(sales) => leptos::logging::log!("Sales result: {} items", sales.sales.len()),
-                Err(e) => leptos::logging::log!("Sales error: {}", e),
-            }
-            res
+            get_recent_sales_for_world(&world.name).await
         } else {
-            leptos::logging::log!("No world selected for sales");
             Ok(RecentSales { sales: vec![] })
         }
     });
@@ -814,9 +839,9 @@ pub fn RecipeAnalyzer() -> impl IntoView {
             <div class="flex flex-col gap-4 p-4 bg-brand-900/50 rounded-lg border border-brand-800">
                 <div class="flex flex-row justify-between items-center">
                     <h1 class="text-2xl font-bold text-brand-100">"Recipe Analyzer"</h1>
-                    <div class="flex flex-row gap-2 items-center">
-                        <Show when=move || recent_sales.get().is_none()>
-                            <div class="text-brand-300 text-sm animate-pulse">"Loading sales data..."</div>
+                     <div class="flex flex-row gap-2 items-center">
+                        <Show when=move || global_cheapest_listings.get().is_none() || (recent_sales.get().is_none() && selected_world.get().is_some())>
+                            <div class="text-brand-300 text-sm animate-pulse">"Loading market data..."</div>
                         </Show>
                         <Show when=move || recent_sales.get().and_then(|r| r.err()).is_some()>
                             <div class="text-red-400 text-sm">"Error loading sales data"</div>
@@ -848,38 +873,45 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                     }
                 }
 
-                <Show when=move || selected_world.get().is_some()>
-                    <div class="flex flex-col md:flex-row items-center gap-2">
-                        <label class="text-[color:var(--brand-fg)] font-semibold">"Select World for Sales Data:"</label>
-                        <div class="w-full md:w-auto">
-                            <WorldOnlyPicker
-                                current_world=selected_world.into()
-                                set_current_world=set_selected_world.into()
-                            />
-                        </div>
+                 <div class="flex flex-col md:flex-row items-center gap-2">
+                    <label class="text-[color:var(--brand-fg)] font-semibold">"Select World for Sales Data:"</label>
+                    <div class="w-full md:w-auto">
+                        <WorldOnlyPicker
+                            current_world=picker_world.into()
+                            set_current_world=set_picker_world.into()
+                        />
                     </div>
-                </Show>
+                </div>
 
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>
                     {move || {
                         let listings = global_cheapest_listings.get();
                         let sales = recent_sales.get();
+
+                        if world_query.with(|q| q.is_none()) {
+                             return view! {
+                                <div class="panel p-8 text-center text-brand-300">
+                                    "Please select a world to begin."
+                                </div>
+                            }.into_any();
+                        }
+
                         match (listings, sales) {
                             (Some(Ok(listings)), Some(Ok(sales))) => {
                                 view! {
                                     <RecipeAnalyzerTable
                                         global_cheapest_listings=listings
                                         recent_sales=Some(sales)
-                                        world=Signal::derive(region)
+                                        world=Signal::derive(move || selected_world.with(|w| w.as_ref().map(|w| w.name.clone()).unwrap_or_default()))
                                     />
                                 }.into_any()
                             }
                             (Some(Ok(listings)), _) => {
                                 view! {
-                                    <RecipeAnalyzerTable
+                                     <RecipeAnalyzerTable
                                         global_cheapest_listings=listings
                                         recent_sales=None
-                                        world=Signal::derive(region)
+                                        world=Signal::derive(move || selected_world.with(|w| w.as_ref().map(|w| w.name.clone()).unwrap_or_default()))
                                     />
                                 }.into_any()
                             }
