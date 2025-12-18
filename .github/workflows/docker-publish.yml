@@ -58,11 +58,7 @@ jobs:
                   cache-to: type=gha,mode=max
 
             - name: Install cosign
-              uses: sigstore/cosign-installer@v3
-              with:
-                  # Pin to a stable cosign release
-                  cosign-release: "v3.0.3"
-
+              uses: sigstore/cosign-installer@v4
             - name: Sign published Docker image
               env:
                   TAGS: ${{ steps.meta.outputs.tags }}
