@@ -82,6 +82,7 @@ pub(crate) async fn start_discord(
     discord_token: String,
     token: CancellationToken,
 ) {
+    let setup_token = token.clone();
     let framework: poise::Framework<Data, Error> = poise::Framework::builder()
         .options(poise::FrameworkOptions {
             commands: vec![age(), register(), ping(), ffxiv::ffxiv()],
@@ -101,13 +102,12 @@ pub(crate) async fn start_discord(
                         event_receivers.retainer_undercut.resubscribe(),
                     ),
                 );
-                let alert_token = token.clone();
                 tokio::spawn(AlertManager::start_manager(
                     db.clone(),
                     item_events,
                     alert_events,
                     ctx.clone(),
-                    alert_token,
+                    setup_token,
                 ));
                 Ok(Data {
                     db,

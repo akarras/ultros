@@ -892,6 +892,7 @@ async fn listings_redirect(Path((world, id)): Path<(String, i32)>) -> Redirect {
 pub(crate) async fn start_web(state: WebState) {
     // build our application with a route
     let worlds = state.world_helper.clone();
+    let token = state.token.clone();
     let app = Router::new()
         .route("/alerts/websocket", get(connect_websocket))
         .route("/api/v1/search", get(search))
@@ -1000,7 +1001,7 @@ pub(crate) async fn start_web(state: WebState) {
             let listener = TcpListener::bind(addr).await.unwrap();
             axum::serve(listener, app)
                 .with_graceful_shutdown(async move {
-                    state.token.cancelled().await;
+                    token.cancelled().await;
                 })
                 .await
                 .unwrap();

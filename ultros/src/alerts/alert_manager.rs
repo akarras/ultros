@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 use futures::future::{self, Either};
 use poise::serenity_prelude;
+use tokio_util::sync::CancellationToken;
 use tracing::error;
 use ultros_api_types::{user::OwnedRetainer, websocket::ListingEventData};
-use tokio_util::sync::CancellationToken;
 use ultros_db::{
     UltrosDb,
     entity::{alert, alert_retainer_undercut},

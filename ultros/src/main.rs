@@ -215,6 +215,8 @@ async fn main() -> Result<()> {
     let (senders, receivers) = create_event_busses();
     let listings_sender = senders.listings.clone();
     let history_sender = senders.history.clone();
+    let token = CancellationToken::new();
+    let socket_token = token.clone();
     tokio::spawn(async move {
         let (datacenters, worlds) = futures::future::join(
             universalis_client.get_data_centers(),
@@ -226,13 +228,11 @@ async fn main() -> Result<()> {
             .await
             .expect("Unable to populate worlds datacenters- is universalis down?");
         info!("starting websocket");
-        run_socket_listener(init, listings_sender, history_sender, token.clone()).await;
+        run_socket_listener(init, listings_sender, history_sender, socket_token).await;
     });
     // on first run, the world cache may be empty
     let world_cache = Arc::new(WorldCache::new(&db).await);
     let world_helper = Arc::new(WorldHelper::new(WorldData::from(world_cache.as_ref())));
-
-    let token = CancellationToken::new();
     let analyzer_service = AnalyzerService::start_analyzer(
         db.clone(),
         receivers.clone(),
