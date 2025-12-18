@@ -2,6 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use futures::{StreamExt, stream};
 use tokio::time::Instant;
+use tokio_util::sync::CancellationToken;
 use tracing::{info, instrument};
 use ultros_api_types::websocket::{ListingEventData, SaleEventData};
 use ultros_db::{
@@ -39,9 +40,14 @@ impl PartialEq<WorldItemRecencyView> for CmpListing {
 }
 
 impl UpdateService {
-    pub(crate) fn start_service(service: Arc<Self>) {
+    pub(crate) fn start_service(service: Arc<Self>, token: CancellationToken) {
         tokio::spawn(async move {
             loop {
+                tokio::select! {
+                    _ = token.cancelled() => {
+                        break;
+                    }
+                    _ = async {
                 // check all worlds
                 info!("Checking all worlds");
                 // Create this 5 minute duration check now so that our refresh interval includes the time we spent checking
@@ -54,6 +60,8 @@ impl UpdateService {
                     }
                 }
                 tokio::time::sleep_until(next_interval).await;
+                    } => {}
+                }
             }
         });
     }

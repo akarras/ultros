@@ -32,6 +32,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::time::timeout;
+use tokio_util::sync::CancellationToken;
 use tower_http::compression::predicate::{NotForContentType, SizeAbove};
 use tower_http::compression::{CompressionLayer, Predicate};
 use tower_http::trace::TraceLayer;
@@ -209,6 +210,7 @@ pub(crate) struct WebState {
     pub(crate) character_verification: CharacterVerifierService,
     pub(crate) leptos_options: LeptosOptions,
     pub(crate) search_service: SearchService,
+    pub(crate) token: CancellationToken,
 }
 
 impl FromRef<WebState> for UltrosDb {
@@ -890,6 +892,7 @@ async fn listings_redirect(Path((world, id)): Path<(String, i32)>) -> Redirect {
 pub(crate) async fn start_web(state: WebState) {
     // build our application with a route
     let worlds = state.world_helper.clone();
+    let token = state.token.clone();
     let app = Router::new()
         .route("/alerts/websocket", get(connect_websocket))
         .route("/api/v1/search", get(search))
@@ -996,7 +999,12 @@ pub(crate) async fn start_web(state: WebState) {
             let addr = SocketAddr::from(([0, 0, 0, 0], port));
             tracing::info!("listening on {}", addr);
             let listener = TcpListener::bind(addr).await.unwrap();
-            axum::serve(listener, app).await.unwrap();
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    token.cancelled().await;
+                })
+                .await
+                .unwrap();
         },
         start_metrics_server(),
     )
