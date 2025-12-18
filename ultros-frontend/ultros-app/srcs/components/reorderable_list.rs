@@ -17,16 +17,16 @@ where
     let (original_y, set_original_y) = signal(0);
     let list_ref = NodeRef::<Div>::new();
 
-    let (_move_handle, set_move_handle) = signal::<Option<WindowListenerHandle>>(None);
-    let (_up_handle, set_up_handle) = signal::<Option<WindowListenerHandle>>(None);
+    let move_handle = StoredValue::<Option<WindowListenerHandle>>::new(None);
+    let up_handle = StoredValue::<Option<WindowListenerHandle>>::new(None);
 
-    let on_pointer_move = move |e: PointerEvent| {
+    let on_pointer_move = Callback::new(move |e: PointerEvent| {
         if dragging.get_untracked().is_some() {
             set_drag_y(e.y());
         }
-    };
+    });
 
-    let stop_dragging = move |_e: PointerEvent| {
+    let stop_dragging = Callback::new(move |_e: PointerEvent| {
         if let (Some(drag_index), Some(drop_index)) =
             (dragging.get_untracked(), hovered_index.get_untracked())
             && drag_index != drop_index
@@ -39,17 +39,17 @@ where
         set_dragging(None);
         set_hovered_index(None);
 
-        set_move_handle.update(|handle| {
-            if let Some(h) = handle.take() {
-                h.remove();
+        move_handle.with_value(|handle| {
+            if let Some(handle) = handle.take() {
+                handle.remove();
             }
         });
-        set_up_handle.update(|handle| {
-            if let Some(h) = handle.take() {
-                h.remove();
+        up_handle.with_value(|handle| {
+            if let Some(handle) = handle.take() {
+                handle.remove();
             }
         });
-    };
+    });
 
     let start_dragging = move |id: usize, e: PointerEvent| {
         if let Some(target) = e
@@ -65,8 +65,14 @@ where
         set_original_y(e.y());
         set_drag_y(e.y());
 
-        set_move_handle(Some(window_event_listener(pointermove, on_pointer_move)));
-        set_up_handle(Some(window_event_listener(pointerup, stop_dragging)));
+        let move_cb = on_pointer_move;
+        let up_cb = stop_dragging;
+        move_handle.set_value(Some(window_event_listener(pointermove, move |e| {
+            move_cb(e);
+        })));
+        up_handle.set_value(Some(window_event_listener(pointerup, move |e| {
+            up_cb(e);
+        })));
     };
 
     view! {

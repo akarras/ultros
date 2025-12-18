@@ -57,6 +57,73 @@ pub fn EditRetainers() -> impl IntoView {
     };
 
     view! {
+        <div class="page-background content-well">
+        <div class="retainer-search flex flex-col gap-2">
+            <span class="content-title">"Add Retainer"</span>
+            <input
+                class="input"
+                prop:value=retainer_search
+                on:input=move |input| set_retainer_search(event_target_value(&input))
+                placeholder="Search for a retainer to add"
+            />
+            <div class="retainer-results">
+                <Suspense fallback=move || {
+                    view! { <Loading /> }
+                }>
+                    {move || {
+                        search_results
+                            .get()
+                            .map(|retainers| {
+                                match retainers {
+                                    Ok(retainers) => {
+                                        Either::Left(
+                                            view! {
+                                                <div class="content-well flex-column">
+                                                    <For
+                                                        each=move || retainers.clone()
+                                                        key=move |retainer| retainer.id
+                                                        children=move |retainer| {
+                                                            let world = AnySelector::World(retainer.world_id);
+                                                            view! {
+                                                                <div class="card flex-row gap-2 p-2 items-center rounded-xl">
+                                                                    <div class="flex w-full md:w-[300px] gap-2">
+                                                                        <span class="w-full md:w-[200px] truncate font-bold">{retainer.name}</span>
+                                                                        <WorldName id=world />
+                                                                    </div>
+                                                                    <button
+                                                                        class:btn-disabled=move || is_retainer_owned(retainer.id)
+                                                                        class="btn btn-primary grow"
+                                                                        on:click=move |_| {
+                                                                            let _ = claim.dispatch(retainer.id);
+                                                                        }
+                                                                    >
+                                                                        {move || match is_retainer_owned(retainer.id) {
+                                                                            true => "Owned",
+                                                                            false => "Claim",
+                                                                        }}
+
+                                                                    </button>
+                                                                </div>
+                                                            }
+                                                        }
+                                                    />
+
+                                                </div>
+                                            },
+                                        )
+                                    }
+                                    Err(e) => {
+                                        Either::Right(
+                                            view! { <div>{format!("No retainers found\n{e}")}</div> },
+                                        )
+                                    }
+                                }
+                            })
+                    }}
+
+                </Suspense>
+            </div>
+        </div>
         <div class="retainer-list flex-column w-full max-w-lg">
             <MetaTitle title="Edit Retainers" />
             <span class="content-title">"Retainers"</span>
@@ -151,7 +218,7 @@ pub fn EditRetainers() -> impl IntoView {
                                                                                 </span>
                                                                             </div>
                                                                             <button
-                                                                                class="btn"
+                                                                                class="btn btn-primary"
                                                                                 on:click=move |_| {
                                                                                     let _ = remove_retainer.dispatch(owned_id);
                                                                                 }
@@ -189,74 +256,8 @@ pub fn EditRetainers() -> impl IntoView {
                             }
                         })
                 }}
-
             </Transition>
         </div>
-        <div class="retainer-search flex flex-col gap-2">
-            <span class="content-title">"Add Retainer"</span>
-            <input
-                class="input"
-                prop:value=retainer_search
-                on:input=move |input| set_retainer_search(event_target_value(&input))
-                placeholder="Search for a retainer to add"
-            />
-            <div class="retainer-results">
-                <Suspense fallback=move || {
-                    view! { <Loading /> }
-                }>
-                    {move || {
-                        search_results
-                            .get()
-                            .map(|retainers| {
-                                match retainers {
-                                    Ok(retainers) => {
-                                        Either::Left(
-                                            view! {
-                                                <div class="content-well flex-column">
-                                                    <For
-                                                        each=move || retainers.clone()
-                                                        key=move |retainer| retainer.id
-                                                        children=move |retainer| {
-                                                            let world = AnySelector::World(retainer.world_id);
-                                                            view! {
-                                                                <div class="card flex-row gap-2 p-2 items-center rounded-xl">
-                                                                    <div class="flex w-full md:w-[300px] gap-2">
-                                                                        <span class="w-full md:w-[200px] truncate font-bold">{retainer.name}</span>
-                                                                        <WorldName id=world />
-                                                                    </div>
-                                                                    <button
-                                                                        class:btn-disabled=move || is_retainer_owned(retainer.id)
-                                                                        class="btn btn-primary grow"
-                                                                        on:click=move |_| {
-                                                                            let _ = claim.dispatch(retainer.id);
-                                                                        }
-                                                                    >
-                                                                        {move || match is_retainer_owned(retainer.id) {
-                                                                            true => "Owned",
-                                                                            false => "Claim",
-                                                                        }}
-
-                                                                    </button>
-                                                                </div>
-                                                            }
-                                                        }
-                                                    />
-
-                                                </div>
-                                            },
-                                        )
-                                    }
-                                    Err(e) => {
-                                        Either::Right(
-                                            view! { <div>{format!("No retainers found\n{e}")}</div> },
-                                        )
-                                    }
-                                }
-                            })
-                    }}
-
-                </Suspense>
-            </div>
         </div>
     }.into_any()
 }

@@ -1,0 +1,23 @@
+   Compiling ultros-app v0.1.0 (/app/ultros-frontend/ultros-app)
+   Compiling ultros-client v0.1.0 (/app/ultros-frontend/ultros-client)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 32s
+[38;5;77m       Cargo[0m finished [38;5;241mcargo build --package=ultros-client --lib --target-dir=/app/target/front --target=wasm32-unknown-unknown --no-default-features[0m
+[38;5;77m       Front[0m generating JS/WASM with wasm-bindgen
+[38;5;77m       Using[0m wasm-bindgen version 0.2.106 detected in project
+[38;5;77m    Finished[0m generating JS/WASM for front in 21.025524081s
+[38;5;77m    Tailwind[0m finished [38;5;241mtailwindcss --input style/tailwind.css --output /app/target/tmp/tailwind.css[0m
+   Compiling ultros-app v0.1.0 (/app/ultros-frontend/ultros-app)
+   Compiling ultros v0.1.0 (/app/ultros)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2m 57s
+[38;5;77m       Cargo[0m finished [38;5;241mcargo build --package=ultros --bin=ultros --no-default-features[0m
+[38;5;77m     Serving[0m at http://127.0.0.1:8080
+  [2m2025-12-18T04:01:45.400095Z[0m [32m INFO[0m [1;32multros[0m[32m: [32mUltros starting![0m
+    [2;3mat[0m ultros/src/main.rs:199
+
+  [2m2025-12-18T04:01:45.400542Z[0m [32m INFO[0m [1;32multros[0m[32m: [32mConnecting DB[0m
+    [2;3mat[0m ultros/src/main.rs:200
+
+
+thread 'main' (130125) panicked at /app/ultros-db/src/lib.rs:47:49:
+Missing DATABASE_URL environment variable: NotPresent
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
