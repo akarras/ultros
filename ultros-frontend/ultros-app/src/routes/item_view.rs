@@ -18,6 +18,7 @@ use leptos_meta::{Link, Meta};
 use leptos_router::components::A;
 use leptos_router::hooks::use_params_map;
 use leptos_router::location::Url;
+use std::sync::Arc;
 use ultros_api_types::CurrentlyShownItem;
 use ultros_api_types::world_helper::AnySelector;
 use ultros_api_types::world_helper::{AnyResult, OwnedResult};
@@ -612,7 +613,7 @@ fn HighQualityTable(
                                                 l.listings
                                                     .iter()
                                                     .filter(|(l, _)| l.hq)
-                                                    .cloned()
+                                                    .map(|(l, r)| (l.clone(), Arc::new(r.clone())))
                                                     .collect::<Vec<_>>()
                                             })
                                     })
@@ -658,7 +659,7 @@ fn LowQualityTable(
                                                 l.listings
                                                     .iter()
                                                     .filter(|(l, _)| !l.hq)
-                                                    .cloned()
+                                                    .map(|(l, r)| (l.clone(), Arc::new(r.clone())))
                                                     .collect::<Vec<_>>()
                                             })
                                     })

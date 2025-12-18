@@ -3,17 +3,19 @@ use super::relative_time::*;
 use crate::components::{datacenter_name::*, world_name::*};
 use leptos::prelude::*;
 use leptos_router::components::A;
+use std::sync::Arc;
 use ultros_api_types::{ActiveListing, retainer::Retainer, world_helper::AnySelector};
 
 #[component]
 pub fn ListingsTable(
-    #[prop(into)] listings: Signal<Vec<(ActiveListing, Retainer)>>,
+    #[prop(into)] listings: Signal<Vec<(ActiveListing, Arc<Retainer>)>>,
 ) -> impl IntoView {
     let (show_more, set_show_more) = signal(false);
     let listing_count = move || listings.with(|l| l.len());
     let show_click = move |_| set_show_more(true);
     // Optimization: Split sorting from slicing.
     // This memo handles the expensive sorting operation and only updates when the source `listings` signal changes.
+    // Note: We use Arc<Retainer> to make cloning cheap (pointer copy vs string copy).
     let sorted_listings = Memo::new(move |_| {
         let mut listings = listings();
         listings.sort_by_key(|(listing, _)| listing.price_per_unit);
@@ -63,7 +65,7 @@ pub fn ListingsTable(
                                             <A href=format!(
                                                 "/retainers/listings/{}",
                                                 retainer.id,
-                                            )>{retainer.name}</A>
+                                            )>{retainer.name.clone()}</A>
                                         </td>
                                         <td>
                                             <WorldName id=AnySelector::World(listing.world_id) />
