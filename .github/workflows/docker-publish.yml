@@ -61,7 +61,7 @@ jobs:
               uses: sigstore/cosign-installer@v3
               with:
                   # Pin to a stable cosign release
-                  cosign-release: "v2.1.1"
+                  cosign-release: "v3.0.3"
 
             - name: Sign published Docker image
               env:
