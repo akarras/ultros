@@ -13,7 +13,7 @@ use crate::global_state::home_world::{get_price_zone, use_home_world};
 use chrono::{TimeDelta, Utc};
 use leptos::either::{Either, EitherOf3};
 use leptos::prelude::*;
-use leptos_icons::Icon;
+use crate::components::icon::Icon;
 use leptos_meta::{Link, Meta};
 use leptos_router::components::A;
 use leptos_router::hooks::use_params_map;

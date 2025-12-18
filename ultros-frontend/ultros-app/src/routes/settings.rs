@@ -17,7 +17,7 @@ use leptos::either::{Either, EitherOf3};
 use leptos::prelude::*;
 use leptos::reactive::wrappers::write::IntoSignalSetter;
 use leptos::task::spawn_local;
-use leptos_icons::Icon;
+use crate::components::icon::Icon;
 
 use icondata as i;
 use log::info;

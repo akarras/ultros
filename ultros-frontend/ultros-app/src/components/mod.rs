@@ -8,6 +8,7 @@ pub mod crafter_settings;
 pub mod datacenter_name;
 pub mod fonts;
 pub mod gil;
+pub mod icon;
 pub mod item_icon;
 pub mod list_summary;
 pub mod listings_table;

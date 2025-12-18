@@ -27,7 +27,7 @@ use itertools::Itertools;
 use leptos::either::Either;
 use leptos::prelude::*;
 use leptos::reactive::wrappers::write::SignalSetter;
-use leptos_icons::Icon;
+use crate::components::icon::Icon;
 use leptos_router::components::A;
 use leptos_router::components::Outlet;
 use leptos_router::hooks::*;
