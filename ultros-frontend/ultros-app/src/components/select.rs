@@ -85,6 +85,20 @@ where
             .map(|c| children(c.clone(), as_label(&c).into_any()))
             .into_any()
     };
+    // Optimization: Calculate the selected index once and use a Selector.
+    // This avoids O(N) signal checks where every row listens to `choice`.
+    // Instead, we only notify the row that matches the index.
+    let selected_index_memo = Memo::new(move |_| {
+        choice.with(|c| {
+            if let Some(c) = c {
+                items.with(|items| items.iter().position(|i| i == c))
+            } else {
+                None
+            }
+        })
+    });
+    let is_selected_selector = Selector::new(move || selected_index_memo.get());
+
     // class="invisible" thank you tailwind.
     view! {
         <div class="relative">
@@ -117,6 +131,9 @@ where
                 class:hidden=move || !has_focus() && !hovered()
             >
                 <For each=final_result key=move |(l, _)| *l let:data>
+                    {
+                        let is_selected_selector = is_selected_selector.clone();
+                        view! {
                     <button
                         class="w-full text-left"
                         on:click=move |_| {
@@ -134,15 +151,7 @@ where
                         }
                     >
                         <div class=move || {
-                            let is_selected = choice
-                                .with(|choice| {
-                                    choice
-                                        .as_ref()
-                                        .and_then(|choice| {
-                                            items.with(|i| i.get(data.0).map(|item| item == choice))
-                                        })
-                                })
-                                .unwrap_or_default();
+                            let is_selected = is_selected_selector.selected(&Some(data.0));
                             if is_selected {
                                 "flex items-center rounded-lg p-2 transition-colors duration-200 bg-[color:color-mix(in_srgb,var(--brand-ring)_18%,transparent)]"
                             } else {
@@ -159,6 +168,8 @@ where
                                 ))}
                         </div>
                     </button>
+                        }
+                    }
                 </For>
             </div>
         </div>
