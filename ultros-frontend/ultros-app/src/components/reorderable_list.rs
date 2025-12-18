@@ -22,7 +22,9 @@ where
             .and_then(|t| t.dyn_into::<web_sys::HtmlElement>().ok())
         {
             e.prevent_default();
-            target.set_pointer_capture(e.pointer_id());
+            if let Err(e) = target.set_pointer_capture(e.pointer_id()) {
+                log::warn!("Failed to set pointer capture: {:?}", e);
+            }
         }
         set_dragging(Some(id));
         set_original_y(e.y());
@@ -31,7 +33,7 @@ where
 
     let stop_dragging = move |_e: PointerEvent| {
         if let (Some(drag_index), Some(drop_index)) = (dragging.get_untracked(), hovered_index.get_untracked())
-            if drag_index != drop_index {
+            && drag_index != drop_index {
             items.update(|items| {
                 let item = items.remove(drag_index);
                 items.insert(drop_index, item);
