@@ -1,8 +1,8 @@
 use icondata as i;
 use leptos::{portal::Portal, prelude::*, reactive::wrappers::write::SignalSetter};
 // use leptos_animation::*;
+use crate::components::icon::Icon;
 use leptos_hotkeys::use_hotkeys;
-use leptos_icons::*;
 #[cfg(feature = "hydrate")]
 use leptos_use::use_window_scroll;
 

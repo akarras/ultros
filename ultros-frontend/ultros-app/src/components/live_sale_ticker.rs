@@ -1,11 +1,11 @@
 use super::gil::*;
 use super::item_icon::*;
 use super::relative_time::RelativeToNow;
+use crate::components::icon::Icon;
 use chrono::NaiveDateTime;
 use icondata as i;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
-use crate::components::icon::Icon;
 use leptos_router::components::A;
 use std::collections::VecDeque;
 use xiv_gen::ItemId;

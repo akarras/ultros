@@ -1,11 +1,11 @@
 use crate::api::get_login;
+use crate::components::icon::Icon;
 use crate::components::theme_picker::QuickThemeToggle;
 use crate::global_state::home_world::use_home_world;
 use cfg_if::cfg_if;
 use icondata as i;
 use leptos::html;
 use leptos::prelude::*;
-use leptos_icons::*;
 use leptos_router::components::A;
 #[cfg(feature = "hydrate")]
 use leptos_use::use_element_hover;

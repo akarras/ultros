@@ -1,11 +1,11 @@
 use std::ops::RangeInclusive;
 
 use super::{datacenter_name::*, gil::*, relative_time::*, world_name::*};
+use crate::components::icon::Icon;
 use chrono::{Duration, NaiveDateTime, TimeDelta, Utc};
 use icondata as i;
 use itertools::Itertools;
 use leptos::prelude::*;
-use leptos_icons::*;
 use linregress::{FormulaRegressionBuilder, RegressionDataBuilder};
 use log::{error, info};
 use ultros_api_types::{SaleHistory, world_helper::AnySelector};

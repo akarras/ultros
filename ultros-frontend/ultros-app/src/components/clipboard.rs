@@ -1,9 +1,9 @@
 use crate::global_state::clipboard_text::GlobalLastCopiedText;
 
 use super::tooltip::*;
+use crate::components::icon::Icon;
 use icondata as i;
 use leptos::prelude::*;
-use leptos_icons::*;
 
 #[component]
 pub fn Clipboard(#[prop(into)] clipboard_text: Signal<String>) -> impl IntoView {

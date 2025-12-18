@@ -7963,6 +7963,7 @@ dependencies = [
  "gloo-timers",
  "humantime",
  "icondata",
+ "icondata_core",
  "itertools",
  "js-sys",
  "leptos",

@@ -1,5 +1,4 @@
-use leptos::*;
-use leptos_meta::Signal;
+use leptos::prelude::*;
 use leptos::svg;
 
 #[component]

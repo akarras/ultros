@@ -1,7 +1,7 @@
+use crate::components::icon::Icon;
 use icondata as i;
 use leptos::either::Either;
 use leptos::prelude::*;
-use leptos_icons::*;
 use leptos_router::components::{A, Outlet};
 
 use crate::api::{create_list, delete_list, edit_list, get_lists};

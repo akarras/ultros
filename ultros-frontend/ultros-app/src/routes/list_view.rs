@@ -1,10 +1,10 @@
 use std::cmp::Reverse;
 use std::collections::HashSet;
 
+use crate::components::icon::Icon;
 use icondata as i;
 use leptos::either::{Either, EitherOf3};
 use leptos::prelude::*;
-use leptos_icons::*;
 use leptos_router::hooks::use_params_map;
 use ultros_api_types::list::ListItem;
 use xiv_gen::{Item, ItemId, Recipe};

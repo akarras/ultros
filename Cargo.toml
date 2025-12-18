@@ -67,6 +67,7 @@ xiv-gen = { path = "./xiv-gen", features = [
     "special_shop",
 ] }
 icondata = "0.6"
+icondata_core = "0.1"
 leptos_icons = "0.7"
 cfg-if = "1.0.0"
 git-const = "1.1.0"

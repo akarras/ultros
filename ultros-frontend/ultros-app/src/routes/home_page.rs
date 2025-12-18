@@ -1,6 +1,6 @@
+use crate::components::icon::Icon;
 use icondata as i;
 use leptos::prelude::*;
-use leptos_icons::*;
 use leptos_meta::*;
 use leptos_router::components::A;
 
