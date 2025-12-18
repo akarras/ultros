@@ -1,6 +1,6 @@
+use leptos::ev::PointerEvent;
 use leptos::html::Div;
 use leptos::prelude::*;
-use leptos::ev::PointerEvent;
 use leptos::wasm_bindgen::JsCast;
 
 #[component]
@@ -32,8 +32,10 @@ where
     };
 
     let stop_dragging = move |_e: PointerEvent| {
-        if let (Some(drag_index), Some(drop_index)) = (dragging.get_untracked(), hovered_index.get_untracked())
-            && drag_index != drop_index {
+        if let (Some(drag_index), Some(drop_index)) =
+            (dragging.get_untracked(), hovered_index.get_untracked())
+            && drag_index != drop_index
+        {
             items.update(|items| {
                 let item = items.remove(drag_index);
                 items.insert(drop_index, item);
