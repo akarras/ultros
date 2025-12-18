@@ -93,11 +93,7 @@ fn HomeWorldButton(current_world: Memo<String>, item_id: Memo<i32>) -> impl Into
 }
 
 #[component]
-fn WorldGrouping(
-    region: OwnedResult,
-    current_world: Memo<String>,
-    item_id: i32,
-) -> impl IntoView {
+fn WorldGrouping(region: OwnedResult, current_world: Memo<String>, item_id: i32) -> impl IntoView {
     let world_data = use_context::<LocalWorldData>().unwrap().0.unwrap();
     let datacenters = world_data.get_datacenters(&region.as_ref());
     view! {
