@@ -11,7 +11,6 @@ use crate::error::AppError;
 use crate::global_state::LocalWorldData;
 use crate::global_state::home_world::{get_price_zone, use_home_world};
 use chrono::{TimeDelta, Utc};
-use leptos::either::{Either, EitherOf3};
 use leptos::prelude::*;
 use leptos_icons::Icon;
 use leptos_meta::{Link, Meta};
@@ -41,24 +40,30 @@ fn WorldButton(
                 .unwrap_or_default()
         }
     });
-    let bg_color = match world {
-        OwnedResult::Region(_) => "bg-brand-600/15 hover:bg-brand-600/25",
-        OwnedResult::Datacenter(_) => "bg-brand-600/15 hover:bg-brand-600/25",
-        OwnedResult::World(_) => "bg-brand-600/15 hover:bg-brand-600/25",
+    let (bg_color, other_styles) = match world {
+        OwnedResult::Region(_) => (
+            "bg-brand-500/10",
+            "text-lg font-bold text-brand-200 px-4 py-2",
+        ),
+        OwnedResult::Datacenter(_) => (
+            "bg-brand-500/15",
+            "text-base font-semibold text-brand-300 px-3 py-1.5",
+        ),
+        OwnedResult::World(_) => ("bg-transparent", "text-sm px-2 py-1"),
     };
     let is_selected = move || current_world.with(|w| w == world_3.as_str());
     view! {
-        <div>
-            <A
-                attr:class=move || {
-                    [
-                        "rounded-md text-sm px-4 py-2 text-[color:var(--color-text)] mx-1 flex items-center gap-2 transition-all duration-200",
-                        bg_color,
-                        "hover:scale-105 hover:shadow-lg shadow-brand-900/20",
-                        if is_selected() { "font-bold" } else { "" },
-                    ]
-                        .join(" ")
-                }
+        <A
+            attr:class=move || {
+                [
+                    "rounded-md text-[color:var(--color-text)] flex items-center gap-2 transition-all duration-200",
+                    bg_color,
+                    other_styles,
+                    "hover:scale-105 hover:shadow-lg shadow-brand-900/20",
+                    if is_selected() { "bg-brand-500/25 font-bold" } else { "" },
+                ]
+                    .join(" ")
+            }
                 href=format!("/item/{}/{item_id}", Url::escape(&world_name))
             >
                 {move || {
@@ -73,7 +78,6 @@ fn WorldButton(
                 }}
                 {world_name}
             </A>
-        </div>
     }.into_any()
 }
 
@@ -89,6 +93,55 @@ fn HomeWorldButton(current_world: Memo<String>, item_id: Memo<i32>) -> impl Into
 }
 
 #[component]
+fn WorldGrouping(
+    region: OwnedResult,
+    current_world: Memo<String>,
+    item_id: i32,
+) -> impl IntoView {
+    let world_data = use_context::<LocalWorldData>().unwrap().0.unwrap();
+    let datacenters = world_data.get_datacenters(&region.as_ref());
+    view! {
+        <div class="flex flex-col gap-2 rounded-lg bg-brand-900/20 p-2">
+            <h2 class="text-lg font-bold text-brand-200 px-2 py-1">
+                "Datacenter"
+            </h2>
+            <div class="flex flex-wrap gap-1">
+                {datacenters
+                    .iter()
+                    .map(|dc| {
+                        view! {
+                            <WorldButton
+                                current_world=current_world
+                                world=AnyResult::Datacenter(dc)
+                                item_id=item_id
+                            />
+                        }
+                    })
+                    .collect_view()}
+            </div>
+            <h2 class="text-lg font-bold text-brand-200 px-2 py-1">
+                "Worlds"
+            </h2>
+            <div class="flex flex-wrap gap-1">
+                {datacenters
+                    .iter()
+                    .flat_map(|dc| &dc.worlds)
+                    .map(|w| {
+                        view! {
+                            <WorldButton
+                                current_world=current_world
+                                world=AnyResult::World(w)
+                                item_id=item_id
+                            />
+                        }
+                    })
+                    .collect_view()}
+            </div>
+        </div>
+    }
+}
+
+#[component]
 fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
     let current_world = world_name;
     let world_data = use_context::<LocalWorldData>().unwrap().0.unwrap();
@@ -98,182 +151,64 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
         <div class="sticky top-0 z-10">
             <div class="container mx-auto px-4">
                 <div class="panel">
-                <div class="flex flex-wrap gap-2 py-3">
-                    {move || {
-                        let world = world_name();
-                        let world_name = Url::unescape(&world);
-                        if let Some(world) = world_data.lookup_world_by_name(&world_name) {
-                            Either::Left(
-                                match world {
-                                    AnyResult::World(world) => {
-                                        let region = world_data.get_region(AnyResult::World(world));
-                                        let datacenters = world_data
-                                            .get_datacenters(&AnyResult::World(world));
-                                        let views = [AnyResult::Region(region)]
-                                            .into_iter()
-                                            .chain(
-                                                datacenters.iter().map(|dc| AnyResult::Datacenter(dc)),
-                                            )
-                                            .chain(
-                                                datacenters
-                                                    .iter()
-                                                    .flat_map(|dc| dc.worlds.iter().map(AnyResult::World)),
-                                            )
-                                            .map(move |world| {
-                                                view! {
-                                                    <WorldButton current_world world item_id=item_id() />
-                                                }
-                                            })
-                                            .collect_view();
-                                        EitherOf3::A(views)
-                                    }
-                                    AnyResult::Datacenter(dc) => {
-                                        let region = world_data
-                                            .get_region(AnyResult::Datacenter(dc));
-                                        let views = [AnyResult::Region(region)]
-                                            .into_iter()
-                                            .map(|w| Either::Left(
-                                                view! {
-                                                    <WorldButton current_world world=w item_id=item_id() />
-                                                },
-                                            ))
-                                            .chain([Either::Right(view! { <div class="w-2"></div> })])
-                                            .chain(
-                                                region
-                                                    .datacenters
-                                                    .iter()
-                                                    .map(|dc| Either::Left(
-                                                        view! {
-                                                            <WorldButton
-                                                                current_world
-                                                                world=AnyResult::Datacenter(dc)
-                                                                item_id=item_id()
-                                                            />
-                                                        },
-                                                    )),
-                                            )
-                                            .chain([Either::Right(view! { <div class="w-2"></div> })])
-                                            .chain(
-                                                dc
-                                                    .worlds
-                                                    .iter()
-                                                    .map(|w| Either::Left(
-                                                        view! {
-                                                            <WorldButton
-                                                                current_world
-                                                                world=AnyResult::World(w)
-                                                                item_id=item_id()
-                                                            />
-                                                        },
-                                                    )),
-                                            )
-                                            .collect_view();
-                                        let should_show_homeworld = !dc
-                                            .worlds
-                                            .iter()
-                                            .any(|w| {
-                                                home_world
-                                                    .with_untracked(|world| {
-                                                        world
-                                                            .as_ref()
-                                                            .map(|world| world.name == w.name)
-                                                            .unwrap_or_default()
-                                                    })
-                                            });
-                                        EitherOf3::B(
-                                            view! {
-                                                {views}
-                                                <div class="w-2"></div>
-                                                {should_show_homeworld
-                                                    .then(|| {
-                                                        view! { <HomeWorldButton current_world item_id /> }
-                                                    })}
-                                            },
-                                        )
-                                    }
-                                    AnyResult::Region(region) => {
-                                        let regions = world_data
-                                            .get_inner_data()
-                                            .regions
-                                            .iter()
-                                            .map(|r| {
-                                                Either::Left(
-                                                    view! {
-                                                        <WorldButton
-                                                            current_world
-                                                            world=AnyResult::Region(r)
-                                                            item_id=item_id()
-                                                        />
-                                                    },
-                                                )
-                                            });
-                                        let datacenters = world_data
-                                            .get_datacenters(&AnyResult::Region(region));
-                                        let views = regions
-                                            .chain([Either::Right(view! { <div class="w-2"></div> })])
-                                            .chain(
-                                                datacenters
-                                                    .iter()
-                                                    .map(|dc| Either::Left(
-                                                        view! {
-                                                            <WorldButton
-                                                                current_world
-                                                                world=AnyResult::Datacenter(dc)
-                                                                item_id=item_id()
-                                                            />
-                                                        },
-                                                    )),
-                                            )
-                                            .collect_view();
-                                        EitherOf3::C(
-                                            view! {
-                                                {views}
-                                                <div class="w-2"></div>
-                                                <HomeWorldButton current_world item_id />
-                                            },
-                                        )
-                                    }
-                                },
-                            )
-                        } else {
-                            let regions = world_data
-                                .get_inner_data()
-                                .regions
-                                .iter()
-                                .map(|r| {
-                                    view! {
-                                        <WorldButton
-                                            current_world
-                                            world=AnyResult::Region(r)
-                                            item_id=item_id()
-                                        />
-                                    }
+                    <div class="flex flex-col gap-2 py-3">
+                        {move || {
+                            let world = world_name();
+                            let world_name = Url::unescape(&world);
+                            let all_regions = world_data.get_inner_data().regions.iter().map(|r| {
+                                view! {
+                                    <WorldButton
+                                        current_world=current_world
+                                        world=AnyResult::Region(r)
+                                        item_id=item_id()
+                                    />
+                                }
+                            });
+                            let region =
+                                if let Some(world) = world_data.lookup_world_by_name(&world_name) {
+                                    world_data.get_region(world)
+                                } else {
+                                    let region_result = world_data
+                                        .lookup_world_by_name("North-America")
+                                        .unwrap();
+                                    world_data.get_region(region_result)
+                                };
+
+                            let home_world_in_region = home_world
+                                .with_untracked(|home| {
+                                    home
+                                        .as_ref()
+                                        .map(|home| {
+                                            region
+                                                .datacenters
+                                                .iter()
+                                                .any(|dc| dc.worlds.iter().any(|w| w.id == home.id))
+                                        })
+                                        .unwrap_or(true)
                                 });
-                            let region = world_data.lookup_world_by_name("North-America").unwrap();
-                            let datacenters = world_data.get_datacenters(&region);
-                            let views = regions
-                                .chain(
-                                    datacenters
-                                        .iter()
-                                        .map(|dc| {
-                                            view! {
-                                                <WorldButton
-                                                    current_world
-                                                    world=AnyResult::Datacenter(dc)
-                                                    item_id=item_id()
-                                                />
-                                            }
-                                        }),
-                                )
-                                .collect_view();
-                            Either::Right(views)
-                        }
-                    }}
+
+                            view! {
+                                <div class="flex flex-wrap items-center gap-1">
+                                    {all_regions.collect_view()}
+                                    {(!home_world_in_region)
+                                        .then(|| {
+                                            view! { <HomeWorldButton current_world item_id /> }
+                                        })}
+                                </div>
+                                <div class="w-full h-px bg-brand-700/50 my-1"></div>
+                                <WorldGrouping
+                                    region=OwnedResult::Region(region.clone())
+                                    current_world
+                                    item_id=item_id()
+                                />
+                            }
+                        }}
+                    </div>
                 </div>
             </div>
-            </div>
         </div>
-    }.into_any()
+    }
+    .into_any()
 }
 
 #[component]
