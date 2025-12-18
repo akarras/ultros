@@ -799,10 +799,8 @@ pub fn RecipeAnalyzer() -> impl IntoView {
 
     // Effect to set the initial world from home_world if not in the query.
     Effect::new(move |_| {
-        if world_query.get_untracked().is_none() {
-            if let Some(home) = home_world.get() {
-                set_world_query(Some(home.name.to_string()));
-            }
+        if world_query.get_untracked().is_none() && let Some(home) = home_world.get() {
+            set_world_query(Some(home.name.to_string()));
         }
     });
 
