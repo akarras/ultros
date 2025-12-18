@@ -52,6 +52,15 @@ fn WorldButton(
         OwnedResult::World(_) => ("bg-transparent", "text-sm px-2 py-1"),
     };
     let is_selected = move || current_world.with(|w| w == world_3.as_str());
+    let home_world_emphasis = move || {
+        is_home_world.with(|w| {
+            if *w {
+                "border-2 border-brand-400 shadow-lg"
+            } else {
+                ""
+            }
+        })
+    };
     view! {
         <A
             attr:class=move || {
@@ -61,6 +70,7 @@ fn WorldButton(
                     other_styles,
                     "hover:scale-105 hover:shadow-lg shadow-brand-900/20",
                     if is_selected() { "bg-brand-500/25 font-bold" } else { "" },
+                    home_world_emphasis(),
                 ]
                     .join(" ")
             }
@@ -93,7 +103,12 @@ fn HomeWorldButton(current_world: Memo<String>, item_id: Memo<i32>) -> impl Into
 }
 
 #[component]
-fn WorldGrouping(region: OwnedResult, current_world: Memo<String>, item_id: i32) -> impl IntoView {
+fn WorldGrouping(
+    region: OwnedResult,
+    active_datacenter: Option<ultros_api_types::world::Datacenter>,
+    current_world: Memo<String>,
+    item_id: i32,
+) -> impl IntoView {
     let world_data = use_context::<LocalWorldData>().unwrap().0.unwrap();
     let datacenters = world_data.get_datacenters(&region.as_ref());
     view! {
@@ -115,24 +130,29 @@ fn WorldGrouping(region: OwnedResult, current_world: Memo<String>, item_id: i32)
                     })
                     .collect_view()}
             </div>
-            <h2 class="text-lg font-bold text-brand-200 px-2 py-1">
-                "Worlds"
-            </h2>
-            <div class="flex flex-wrap gap-1">
-                {datacenters
-                    .iter()
-                    .flat_map(|dc| &dc.worlds)
-                    .map(|w| {
-                        view! {
-                            <WorldButton
-                                current_world=current_world
-                                world=AnyResult::World(w)
-                                item_id=item_id
-                            />
-                        }
-                    })
-                    .collect_view()}
-            </div>
+            {active_datacenter
+                .map(|dc| {
+                    view! {
+                        <h2 class="text-lg font-bold text-brand-200 px-2 py-1">
+                            "Worlds"
+                        </h2>
+                        <div class="flex flex-wrap gap-1">
+                            {dc
+                                .worlds
+                                .iter()
+                                .map(|w| {
+                                    view! {
+                                        <WorldButton
+                                            current_world=current_world
+                                            world=AnyResult::World(w)
+                                            item_id=item_id
+                                        />
+                                    }
+                                })
+                                .collect_view()}
+                        </div>
+                    }
+                })}
         </div>
     }
 }
@@ -160,15 +180,28 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                                     />
                                 }
                             });
-                            let region =
-                                if let Some(world) = world_data.lookup_world_by_name(&world_name) {
-                                    world_data.get_region(world)
-                                } else {
-                                    let region_result = world_data
-                                        .lookup_world_by_name("North-America")
-                                        .unwrap();
-                                    world_data.get_region(region_result)
-                                };
+                            let selected_any_result = world_data.lookup_world_by_name(&world_name);
+                            let region = if let Some(world) = selected_any_result {
+                                world_data.get_region(world)
+                            } else {
+                                let region_result = world_data
+                                    .lookup_world_by_name("North-America")
+                                    .unwrap();
+                                world_data.get_region(region_result)
+                            };
+
+                            let active_datacenter = if let Some(any_result) = selected_any_result {
+                                match any_result {
+                                    AnyResult::World(world) => world_data
+                                        .get_datacenters(&AnyResult::World(world))
+                                        .first()
+                                        .map(|dc| (*dc).clone()),
+                                    AnyResult::Datacenter(dc) => Some((*dc).clone()),
+                                    AnyResult::Region(_) => None,
+                                }
+                            } else {
+                                None
+                            };
 
                             let home_world_in_region = home_world
                                 .with_untracked(|home| {
@@ -194,6 +227,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                                 <div class="w-full h-px bg-brand-700/50 my-1"></div>
                                 <WorldGrouping
                                     region=OwnedResult::Region(region.clone())
+                                    active_datacenter
                                     current_world
                                     item_id=item_id()
                                 />
