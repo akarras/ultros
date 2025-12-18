@@ -10,6 +10,7 @@ use crate::components::{
 use crate::error::AppResult;
 use crate::global_state::cookies::Cookies;
 
+use crate::components::icon::Icon;
 use crate::global_state::home_world::{
     get_price_zone, result_to_selector_read, selector_to_setter_signal, use_home_world,
 };
@@ -17,7 +18,6 @@ use leptos::either::{Either, EitherOf3};
 use leptos::prelude::*;
 use leptos::reactive::wrappers::write::IntoSignalSetter;
 use leptos::task::spawn_local;
-use leptos_icons::Icon;
 
 use icondata as i;
 use log::info;

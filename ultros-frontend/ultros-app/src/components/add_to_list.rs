@@ -1,3 +1,4 @@
+use crate::components::icon::Icon;
 use icondata as i;
 use icondata::RiPlayListAddMediaLine;
 use leptos::component;
@@ -6,7 +7,6 @@ use leptos::either::EitherOf3;
 use leptos::prelude::*;
 use leptos::reactive::wrappers::write::SignalSetter;
 use leptos::task::spawn_local;
-use leptos_icons::*;
 use ultros_api_types::icon_size::IconSize;
 use ultros_api_types::list::ListItem;
 use xiv_gen::ItemId;

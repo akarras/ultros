@@ -1,6 +1,6 @@
+use crate::components::icon::Icon;
 use icondata as i;
 use leptos::prelude::*;
-use leptos_icons::Icon;
 
 use crate::global_state::theme::{ThemeMode, ThemePalette, provide_theme_settings};
 

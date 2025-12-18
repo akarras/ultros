@@ -1,10 +1,10 @@
+use crate::components::icon::Icon;
 use crate::components::loading::Loading;
 use crate::components::virtual_scroller::*;
 use gloo_timers::future::TimeoutFuture;
 use icondata as i;
 use leptos::{html::Input, prelude::*, task::spawn_local};
 use leptos_hotkeys::use_hotkeys;
-use leptos_icons::*;
 use leptos_router::{NavigateOptions, hooks::use_navigate};
 use ultros_api_types::search::SearchResult;
 use web_sys::KeyboardEvent;

@@ -1,7 +1,7 @@
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
-        add_recipe_to_list::AddRecipeToList, crafter_settings::CrafterSettings, gil::*,
+        add_recipe_to_list::AddRecipeToList, crafter_settings::CrafterSettings, gil::*, icon::Icon,
         item_icon::*, query_button::QueryButton, skeleton::BoxSkeleton, tooltip::Tooltip,
         virtual_scroller::*, world_picker::WorldOnlyPicker,
     },
@@ -13,7 +13,6 @@ use chrono::Utc;
 use humantime::{format_duration, parse_duration};
 use icondata as i;
 use leptos::{either::Either, prelude::*};
-use leptos_icons::*;
 use leptos_meta::{Meta, Title};
 use leptos_router::hooks::{query_signal, use_params_map};
 use std::{cmp::Reverse, collections::HashMap, fmt::Display, str::FromStr, sync::Arc};

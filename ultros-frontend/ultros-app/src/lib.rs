@@ -38,7 +38,7 @@ use leptos::prelude::*;
 use leptos_hotkeys::{provide_hotkeys_context, scopes};
 // use leptos_animation::AnimationContext;
 // use leptos_hotkeys::{provide_hotkeys_context, scopes};
-use leptos_icons::*;
+use crate::components::icon::Icon;
 use leptos_meta::*;
 use leptos_router::components::{A, ParentRoute, Route, Router, Routes};
 use leptos_router::path;

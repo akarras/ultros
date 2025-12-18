@@ -1,4 +1,5 @@
 use crate::api::{bulk_add_item_to_list, get_lists};
+use crate::components::icon::Icon;
 use crate::components::related_items::IngredientsIter;
 use crate::components::{
     item_icon::*, loading::Loading, modal::Modal, small_item_display::SmallItemDisplay,
@@ -8,7 +9,6 @@ use icondata::RiPlayListAddMediaLine;
 use leptos::either::Either;
 use leptos::prelude::*;
 use leptos::reactive::wrappers::write::SignalSetter;
-use leptos_icons::*;
 use ultros_api_types::list::ListItem;
 use xiv_gen::{Item, ItemId, Recipe};
 

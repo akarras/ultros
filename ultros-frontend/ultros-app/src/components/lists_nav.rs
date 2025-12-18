@@ -1,5 +1,5 @@
+use crate::components::icon::Icon;
 use leptos::prelude::*;
-use leptos_icons::*;
 use leptos_router::*;
 
 #[component]

@@ -1,7 +1,7 @@
+use crate::components::icon::Icon;
 use crate::{api::get_login, components::loading::Loading};
 use icondata as i;
 use leptos::{either::Either, prelude::*};
-use leptos_icons::*;
 use leptos_router::components::*;
 
 #[component]

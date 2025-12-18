@@ -4,6 +4,7 @@ use std::{collections::HashSet, str::FromStr};
 
 use crate::CheapestPrices;
 use crate::components::clipboard::Clipboard;
+use crate::components::icon::Icon;
 use crate::components::query_button::QueryButton;
 use crate::components::toggle::Toggle;
 use crate::components::{add_to_list::*, cheapest_price::*, fonts::*, item_icon::*, meta::*};
@@ -13,7 +14,6 @@ use itertools::Itertools;
 use leptos::prelude::*;
 use leptos::reactive::wrappers::write::SignalSetter;
 use leptos::text_prop::TextProp;
-use leptos_icons::*;
 use leptos_router::components::A;
 use leptos_router::components::Outlet;
 use leptos_router::hooks::{query_signal, use_location, use_params_map};

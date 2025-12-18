@@ -1,7 +1,7 @@
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
-        add_to_list::AddToList, clipboard::*, gil::*, item_icon::*, meta::*,
+        add_to_list::AddToList, clipboard::*, gil::*, icon::Icon, item_icon::*, meta::*,
         query_button::QueryButton, skeleton::BoxSkeleton, toggle::Toggle, tooltip::*,
         virtual_scroller::*, world_picker::*,
     },
@@ -12,7 +12,6 @@ use chrono::{Duration, Utc};
 use humantime::{format_duration, parse_duration};
 use icondata as i;
 use leptos::{either::Either, prelude::*, reactive::wrappers::write::SignalSetter};
-use leptos_icons::*;
 use leptos_meta::Title;
 use leptos_router::{
     NavigateOptions,
@@ -755,14 +754,14 @@ fn AnalyzerTable(
 pub fn AnalyzerWorldView() -> impl IntoView {
     let params = use_params_map();
     let world = Memo::new(move |_| params.with(|p| p.get("world").clone()).unwrap_or_default());
-    let sales = Resource::new(
+    let sales = ArcResource::new(
         move || params.with(|p| p.get("world").clone()),
         move |world| async move {
             get_recent_sales_for_world(&world.ok_or(AppError::ParamMissing)?).await
         },
     );
 
-    let world_cheapest_listings = Resource::new(
+    let world_cheapest_listings = ArcResource::new(
         move || params.with(|p| p.get("world").clone()),
         move |world| async move {
             let world = world.ok_or(AppError::ParamMissing)?;
@@ -787,7 +786,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
         Result::<_, AppError>::Ok(region)
     });
 
-    let global_cheapest_listings = Resource::new(region, move |region| async move {
+    let global_cheapest_listings = ArcResource::new(region, move |region| async move {
         get_cheapest_listings(region?.as_str()).await
     });
 

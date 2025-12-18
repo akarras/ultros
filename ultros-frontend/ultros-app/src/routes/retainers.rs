@@ -4,6 +4,7 @@ use crate::api::{
 use crate::components::ad::Ad;
 use crate::components::clipboard::Clipboard;
 use crate::components::gil::*;
+use crate::components::icon::Icon;
 use crate::components::skeleton::BoxSkeleton;
 use crate::components::{item_icon::*, loading::*, meta::*, world_name::*};
 use crate::global_state::LocalWorldData;
@@ -12,7 +13,6 @@ use hooks::use_params_map;
 use icondata as i;
 use leptos::either::Either;
 use leptos::prelude::*;
-use leptos_icons::*;
 use leptos_router::*;
 use ultros_api_types::{ActiveListing, FfxivCharacter, Retainer, world_helper::AnySelector};
 use xiv_gen::ItemId;
