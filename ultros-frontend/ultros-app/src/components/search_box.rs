@@ -6,6 +6,7 @@ use icondata as i;
 use leptos::{html::Input, prelude::*, task::spawn_local};
 use leptos_hotkeys::use_hotkeys;
 use leptos_router::{NavigateOptions, hooks::use_navigate};
+use std::sync::Arc;
 use ultros_api_types::search::SearchResult;
 use web_sys::KeyboardEvent;
 
@@ -20,7 +21,7 @@ pub fn SearchBox() -> impl IntoView {
     use crate::api::search as api_search;
 
     // Search results and request tracking
-    let (search_results, set_search_results) = signal::<Vec<SearchResult>>(Vec::new());
+    let (search_results, set_search_results) = signal::<Vec<Arc<SearchResult>>>(Vec::new());
     let (search_id, set_search_id) = signal(0usize);
 
     // Keyboard navigation focus handling
@@ -29,14 +30,15 @@ pub fn SearchBox() -> impl IntoView {
     // Currently-focused result's URL for highlight/selection
     let focused_url: Signal<Option<String>> = Signal::derive(move || {
         focused_index.get().and_then(|idx| {
-            search_results
-                .with(|v: &Vec<SearchResult>| v.get(idx).map(|r: &SearchResult| r.url.clone()))
+            search_results.with(|v: &Vec<Arc<SearchResult>>| {
+                v.get(idx).map(|r: &Arc<SearchResult>| r.url.clone())
+            })
         })
     });
 
     // When results change, reset the focused index to the first item (if any)
     Effect::new(move |_| {
-        let len = search_results.with(|v: &Vec<SearchResult>| v.len());
+        let len = search_results.with(|v: &Vec<Arc<SearchResult>>| v.len());
         if len > 0 {
             set_focused_index.set(Some(0));
         } else {
@@ -66,6 +68,7 @@ pub fn SearchBox() -> impl IntoView {
             match api_search(&s).await {
                 Ok(results) => {
                     if search_id.get_untracked() == current_id {
+                        let results = results.into_iter().map(Arc::new).collect();
                         set_search_results.set(results);
                         set_loading.set(false);
                     }
@@ -127,7 +130,7 @@ pub fn SearchBox() -> impl IntoView {
             }
         } else if key == "ArrowDown" {
             e.prevent_default();
-            let len = search_results.with(|v: &Vec<SearchResult>| v.len());
+            let len = search_results.with(|v: &Vec<Arc<SearchResult>>| v.len());
             if len > 0 {
                 let next = focused_index
                     .get_untracked()
@@ -138,7 +141,7 @@ pub fn SearchBox() -> impl IntoView {
             }
         } else if key == "ArrowUp" {
             e.prevent_default();
-            let len = search_results.with(|v: &Vec<SearchResult>| v.len());
+            let len = search_results.with(|v: &Vec<Arc<SearchResult>>| v.len());
             if len > 0 {
                 let current = focused_index.get_untracked().unwrap_or(0);
                 let next = current.saturating_sub(1);
@@ -203,8 +206,8 @@ pub fn SearchBox() -> impl IntoView {
                 <div class="scroll-panel content-auto contain-layout contain-paint will-change-scroll forced-layer cis-42">
                     <VirtualScroller
                         each=Signal::derive(item_search)
-                        key=move |result: &SearchResult| result.url.clone()
-                        view=move |result: SearchResult| {
+                        key={move |result: &Arc<SearchResult>| result.url.clone()}
+                        view={move |result: Arc<SearchResult>| {
                             let url = result.url.clone();
                             let navigate = navigate.clone();
 
@@ -262,7 +265,7 @@ pub fn SearchBox() -> impl IntoView {
                                         }
                                     }
                                     <div class="flex flex-col">
-                                        <span class="font-medium">{result.title}</span>
+                                        <span class="font-medium">{result.title.clone()}</span>
                                         <span class="text-xs text-[color:var(--color-text-muted)]">
                                             {
                                                 let category = result.category.clone();
@@ -283,7 +286,7 @@ pub fn SearchBox() -> impl IntoView {
                                     </div>
                                 </div>
                             }
-                        }
+                        }}
                         viewport_height=528.0
                         row_height=60.0
                         overscan=10
