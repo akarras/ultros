@@ -210,10 +210,18 @@ pub fn SearchBox() -> impl IntoView {
 
                             // Clone URL for different closures to satisfy borrow checker
                             let url_for_class = url.clone();
+                            let url_for_aria = url.clone();
                             let url_for_click = url.clone();
 
                             view! {
                                 <div
+                                    role="option"
+                                    aria-selected=move || {
+                                        match focused_url.get() {
+                                            Some(f) if f == url_for_aria => "true",
+                                            _ => "false",
+                                        }
+                                    }
                                     class=move || {
                                         let hl = match focused_url.get() {
                                             Some(f) if f == url_for_class => " bg-[color:var(--color-background-elevated)]",
