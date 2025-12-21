@@ -6,6 +6,7 @@ use leptos::{
 use leptos_use::use_element_hover;
 use web_sys::KeyboardEvent;
 use web_sys::wasm_bindgen::JsCast;
+use uuid::Uuid;
 
 #[component]
 pub fn Select<T, EF, L, ViewOut>(
@@ -16,6 +17,7 @@ pub fn Select<T, EF, L, ViewOut>(
     children: EF,
     #[prop(optional)] class: Option<&'static str>,
     #[prop(optional)] dropdown_class: Option<&'static str>,
+    #[prop(optional)] id: Option<String>,
     // _view_out: PhantomData<ViewOut>,
 ) -> impl IntoView
 where
@@ -30,6 +32,15 @@ where
     let dropdown = NodeRef::<Div>::new();
     let input = NodeRef::<Input>::new();
     let hovered = use_element_hover(dropdown);
+
+    // ID Handling
+    let (listbox_id, set_listbox_id) = signal(id.clone().unwrap_or_default());
+    Effect::new(move |_| {
+        if listbox_id.get_untracked().is_empty() {
+             set_listbox_id.set(Uuid::new_v4().to_string());
+        }
+    });
+
     let labels =
         Memo::new(move |_| items.with(|i| i.iter().map(as_label).enumerate().collect::<Vec<_>>()));
     let search_results = Memo::new(move |_| {
@@ -85,6 +96,7 @@ where
             .map(|c| children(c.clone(), as_label(&c).into_any()))
             .into_any()
     };
+
     // class="invisible" thank you tailwind.
     view! {
         <div class="relative">
@@ -99,6 +111,10 @@ where
                 }
                 on:keydown=keydown
                 prop:value=current_input
+                role="combobox"
+                aria-autocomplete="list"
+                aria-expanded=move || (has_focus() || hovered()).to_string()
+                aria-controls=move || listbox_id.get()
             />
             <div
                 class="absolute top-1 left-1 select-none cursor flex items-center"
@@ -112,13 +128,24 @@ where
                 {current_choice_view}
             </div>
             <div
+                id=move || listbox_id.get()
+                role="listbox"
                 node_ref=dropdown
                 class=move || format!("{} {}", default_dropdown_class, dropdown_class.unwrap_or(""))
                 class:hidden=move || !has_focus() && !hovered()
             >
                 <For each=final_result key=move |(l, _)| *l let:data>
                     <button
+                        role="option"
                         class="w-full text-left"
+                        aria-selected=move || {
+                             let is_selected = choice.with(|choice| {
+                                choice.as_ref().and_then(|choice| {
+                                    items.with(|i| i.get(data.0).map(|item| item == choice))
+                                })
+                            }).unwrap_or_default();
+                            is_selected.to_string()
+                        }
                         on:click=move |_| {
                             if let Some(item) = items.with(|i| i.get(data.0).cloned()) {
                                 set_choice(Some(item));

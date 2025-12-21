@@ -39,9 +39,9 @@ pub(crate) async fn live_sales(
                 Message::Text(o) => {
                     if let Ok(val) = serde_json::from_str::<ServerClient>(&o) {
                         match val {
-                            ServerClient::Sales(sig) => match sig {
-                                EventType::Added(add) => {
-                                    if signal
+                            ServerClient::Sales(sig) => {
+                                if let EventType::Added(add) = sig
+                                    && signal
                                         .try_update(|sales| {
                                             for (sale, _) in add.sales {
                                                 sales.push_front(SaleView {
@@ -62,12 +62,10 @@ pub(crate) async fn live_sales(
                                                 .collect();
                                         })
                                         .is_none()
-                                    {
-                                        return Ok(());
-                                    }
+                                {
+                                    return Ok(());
                                 }
-                                _ => {}
-                            },
+                            }
                             ServerClient::Listings(_l) => {}
                             ServerClient::SubscriptionCreated => {
                                 log::info!("Subscription created");

@@ -68,30 +68,30 @@ pub fn LiveSaleTicker() -> impl IntoView {
         });
         spawn_local(async move {
             #[cfg(not(feature = "ssr"))]
-            if let Some(world) = hw_2.map(|h| h.name) {
-                if let Ok(recent_sales) = crate::api::get_recent_sales_for_world(&world).await {
-                    use itertools::Itertools;
-                    let first_sales = recent_sales
-                        .sales
-                        .into_iter()
-                        .flat_map(|sale| {
-                            sale.sales.first().map(|sale_data| SaleView {
-                                item_id: sale.item_id,
-                                price: sale_data.price_per_unit,
-                                sold_date: sale_data.sale_date,
-                                hq: sale.hq,
-                            })
+            if let Some(world) = hw_2.map(|h| h.name)
+                && let Ok(recent_sales) = crate::api::get_recent_sales_for_world(&world).await
+            {
+                use itertools::Itertools;
+                let first_sales = recent_sales
+                    .sales
+                    .into_iter()
+                    .flat_map(|sale| {
+                        sale.sales.first().map(|sale_data| SaleView {
+                            item_id: sale.item_id,
+                            price: sale_data.price_per_unit,
+                            sold_date: sale_data.sale_date,
+                            hq: sale.hq,
                         })
-                        .sorted_by_key(|s| std::cmp::Reverse(s.sold_date))
-                        .take(8);
+                    })
+                    .sorted_by_key(|s| std::cmp::Reverse(s.sold_date))
+                    .take(8);
 
-                    sales.update(|s| {
-                        for sale in first_sales {
-                            s.push_back(sale);
-                        }
-                    });
-                    set_done_loading(true);
-                }
+                sales.update(|s| {
+                    for sale in first_sales {
+                        s.push_back(sale);
+                    }
+                });
+                set_done_loading(true);
             }
             set_done_loading(true);
         });
