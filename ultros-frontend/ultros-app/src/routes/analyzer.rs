@@ -66,7 +66,7 @@ enum SortMode {
 }
 
 #[derive(Clone, Debug)]
-struct ProfitTable(Vec<ProfitData>);
+struct ProfitTable(Vec<Arc<ProfitData>>);
 
 fn listings_to_map(listings: CheapestListings) -> HashMap<ProfitKey, (i32, i32)> {
     listings
@@ -207,6 +207,7 @@ impl ProfitTable {
                     cheapest_price,
                 })
             })
+            .map(Arc::new)
             .collect();
 
         ProfitTable(table)
@@ -337,7 +338,6 @@ fn AnalyzerTable(
         }
         sorted_data
             .into_iter()
-            .map(Arc::new)
             .enumerate()
             .collect::<Vec<(usize, Arc<ProfitData>)>>()
     });
