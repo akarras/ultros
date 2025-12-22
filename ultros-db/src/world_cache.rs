@@ -13,6 +13,11 @@ pub type AllWorldsAndRegions<'a> = Vec<(
     Vec<(&'a datacenter::Model, Vec<&'a world::Model>)>,
 )>;
 
+#[cfg_attr(
+    feature = "rkyv",
+    derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)
+)]
+#[cfg_attr(feature = "rkyv", archive(check_bytes))]
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash)]
 pub enum AnySelector {
     World(i32),

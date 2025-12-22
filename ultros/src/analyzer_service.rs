@@ -1,6 +1,8 @@
+use anyhow::Result;
+use hashbrown::{hash_map::Entry, HashMap};
 use std::{
     cmp::Reverse,
-    collections::{BTreeMap, HashMap, hash_map::Entry},
+    collections::BTreeMap,
     fmt::Display,
     sync::{
         Arc,
@@ -12,7 +14,13 @@ use chrono::{Duration, NaiveDateTime, Utc};
 use futures::StreamExt;
 use itertools::Itertools;
 use poise::serenity_prelude::Timestamp;
+use rkyv::{
+    de, ser,
+    ser::{serializers::AllocSerializer, Serializer},
+    AlignedVec, Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize,
+};
 use serde::{Deserialize, Serialize};
+use tokio::fs;
 use tracing::log::info;
 use ultros_api_types::{ActiveListing, Retainer, websocket::ListingEventData};
 use ultros_db::{
@@ -38,7 +46,10 @@ pub enum AnalyzerError {
     DatacenterNotAvailable,
 }
 
-#[derive(Hash, Eq, PartialEq, PartialOrd, Ord, Debug, Copy, Clone, Serialize)]
+#[derive(
+    Hash, Eq, PartialEq, PartialOrd, Ord, Debug, Copy, Clone, Serialize, Archive, RkyvDeserialize, RkyvSerialize,
+)]
+#[archive(check_bytes)]
 pub(crate) struct ItemKey {
     pub(crate) item_id: i32,
     pub(crate) hq: bool,
@@ -97,7 +108,8 @@ impl From<&ultros_db::listings::ListingSummary> for ItemKey {
     }
 }
 
-#[derive(Debug, PartialEq, PartialOrd, Eq, Ord, Clone, Copy)]
+#[derive(Debug, PartialEq, PartialOrd, Eq, Ord, Clone, Copy, Archive, RkyvDeserialize, RkyvSerialize)]
+#[archive(check_bytes)]
 pub(crate) struct SaleSummary {
     pub(crate) price_per_item: i32,
     pub(crate) sale_date: NaiveDateTime,
@@ -130,7 +142,8 @@ impl From<&ultros_api_types::SaleHistory> for SaleSummary {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Archive, RkyvDeserialize, RkyvSerialize)]
+#[archive(check_bytes)]
 pub(crate) struct SaleHistory {
     pub(crate) item_map: HashMap<ItemKey, arrayvec::ArrayVec<SaleSummary, SALE_HISTORY_SIZE>>,
 }
@@ -155,7 +168,10 @@ impl SaleHistory {
     }
 }
 
-#[derive(Debug, Copy, Clone, Eq, Serialize)]
+#[derive(
+    Debug, Copy, Clone, Eq, Serialize, Archive, RkyvDeserialize, RkyvSerialize,
+)]
+#[archive(check_bytes)]
 pub(crate) struct CheapestListingValue {
     pub(crate) price: i32,
     pub(crate) world_id: i32,
@@ -212,7 +228,8 @@ impl Ord for CheapestListingValue {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Archive, RkyvDeserialize, RkyvSerialize, Clone)]
+#[archive(check_bytes)]
 pub(crate) struct CheapestListings {
     pub(crate) item_map: HashMap<ItemKey, CheapestListingValue>,
 }
@@ -272,6 +289,13 @@ impl CheapestListings {
     }
 }
 
+#[derive(Archive, RkyvDeserialize, RkyvSerialize)]
+#[archive(check_bytes)]
+struct AnalyzerState {
+    recent_sale_history: HashMap<i32, SaleHistory>,
+    cheapest_items: HashMap<AnySelector, CheapestListings>,
+}
+
 /// Build a short list of all the items in the game that we think would sell well.
 /// Implemented as an easily cloneable Arc monster
 #[derive(Debug, Clone)]
@@ -291,6 +315,9 @@ impl AnalyzerService {
         world_cache: Arc<WorldCache>,
         token: CancellationToken,
     ) -> Self {
+        tokio::fs::create_dir_all("analyzer-data")
+            .await
+            .expect("Unable to create directory for analyzer");
         let cheapest_items: HashMap<AnySelector, RwLock<CheapestListings>> = world_cache
             .get_inner_data()
             .iter()
@@ -318,12 +345,119 @@ impl AnalyzerService {
         };
 
         let task_self = temp.clone();
+        let serialize_token = token.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(15 * 60));
+            loop {
+                tokio::select! {
+                    _ = serialize_token.cancelled() => {
+                        break;
+                    }
+                    _ = interval.tick() => {
+                        if let Err(e) = task_self.serialize_state(false).await {
+                            error!("Error serializing state {e:?}");
+                        }
+                    }
+                }
+            }
+        });
+        let task_self = temp.clone();
         tokio::spawn(async move {
             task_self
                 .run_worker(ultros_db, event_receivers, world_cache, token)
                 .await;
         });
         temp
+    }
+
+    async fn serialize_state(&self, is_shutdown: bool) -> Result<()> {
+        let state = self.get_analyzer_state().await;
+        let bytes = rkyv::to_bytes::<_, 256>(&state)?;
+        let timestamp = Utc::now().timestamp();
+        let filename = format!("analyzer-data/snapshot-{}.bin", timestamp);
+        fs::write(&filename, &bytes).await?;
+        info!("Wrote snapshot to {}", filename);
+        if !is_shutdown {
+            let mut dir = fs::read_dir("analyzer-data").await?;
+            let mut entries = vec![];
+            while let Ok(Some(entry)) = dir.next_entry().await {
+                entries.push(entry);
+            }
+            if entries.len() > 4 {
+                entries.sort_by_key(|x| x.file_name());
+                for entry in entries.iter().take(entries.len() - 4) {
+                    fs::remove_file(entry.path()).await?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn get_analyzer_state(&self) -> AnalyzerState {
+        let mut cheapest_items = HashMap::new();
+        for (key, value) in self.cheapest_items.iter() {
+            let value = value.read().await;
+            cheapest_items.insert(*key, value.clone());
+        }
+        let mut recent_sale_history = HashMap::new();
+        for (key, value) in self.recent_sale_history.iter() {
+            let value = value.read().await;
+            recent_sale_history.insert(*key, value.clone());
+        }
+        AnalyzerState {
+            cheapest_items,
+            recent_sale_history,
+        }
+    }
+
+    async fn try_restore_from_snapshot(&self) -> bool {
+        let mut dir = match fs::read_dir("analyzer-data").await {
+            Ok(dir) => dir,
+            Err(_) => return false,
+        };
+        let mut entries = vec![];
+        while let Ok(Some(entry)) = dir.next_entry().await {
+            entries.push(entry);
+        }
+        entries.sort_by_key(|x| x.file_name());
+        for entry in entries.iter().rev() {
+            let file = match fs::read(entry.path()).await {
+                Ok(f) => f,
+                Err(e) => {
+                    error!("Error reading file {e:?}");
+                    continue;
+                }
+            };
+            let mut aligned_vec = AlignedVec::with_capacity(file.len());
+            aligned_vec.extend_from_slice(&file);
+            let archived = match rkyv::check_archived_root::<AnalyzerState>(&aligned_vec) {
+                Ok(a) => a,
+                Err(e) => {
+                    error!("Error checking archive {e:?}");
+                    continue;
+                }
+            };
+            let mut deserializer = de::deserializers::SharedDeserializeMap::new();
+            let state: AnalyzerState = match archived.deserialize(&mut deserializer) {
+                Ok(s) => s,
+                Err(e) => {
+                    error!("Error deserializing state {e:?}");
+                    continue;
+                }
+            };
+            for (key, value) in state.cheapest_items {
+                let lock = self.cheapest_items.get(&key).unwrap();
+                let mut write = lock.write().await;
+                *write = value;
+            }
+            for (key, value) in state.recent_sale_history {
+                let lock = self.recent_sale_history.get(&key).unwrap();
+                let mut write = lock.write().await;
+                *write = value;
+            }
+            return true;
+        }
+        false
     }
 
     async fn run_worker(

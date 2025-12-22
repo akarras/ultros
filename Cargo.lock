@@ -894,6 +894,7 @@ dependencies = [
  "iana-time-zone",
  "js-sys",
  "num-traits",
+ "rkyv",
  "serde",
  "wasm-bindgen",
  "windows-link",
@@ -5604,6 +5605,7 @@ version = "0.7.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9008cd6385b9e161d8229e1f6549dd23c3d022f132a2ea37ac3a10ac4935779b"
 dependencies = [
+ "arrayvec",
  "bitvec",
  "bytecheck",
  "bytes",
@@ -7909,6 +7911,7 @@ dependencies = [
  "poise",
  "reqwest 0.11.27",
  "resvg",
+ "rkyv",
  "serde",
  "serde_json",
  "serde_with",
@@ -7939,6 +7942,7 @@ name = "ultros-api-types"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "rkyv",
  "serde",
  "thiserror 1.0.69",
 ]
@@ -8051,6 +8055,7 @@ dependencies = [
  "itertools",
  "metrics",
  "migration",
+ "rkyv",
  "sea-orm",
  "sea-query",
  "serde",

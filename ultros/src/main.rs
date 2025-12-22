@@ -1,3 +1,4 @@
+#![feature(trivial_bounds)]
 #![recursion_limit = "256"]
 pub(crate) mod alerts;
 pub(crate) mod analyzer_service;
