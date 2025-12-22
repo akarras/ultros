@@ -37,12 +37,8 @@ pub fn SearchBox() -> impl IntoView {
     });
 
     // Helper to generate a safe DOM ID from a URL
-    let get_id_from_url = |url: &str| {
-        format!(
-            "search-result-{}",
-            url.replace('/', "-").replace(':', "-").replace('.', "-")
-        )
-    };
+    let get_id_from_url =
+        |url: &str| format!("search-result-{}", url.replace(['/', ':', '.'], "-"));
 
     // When results change, reset the focused index to the first item (if any)
     Effect::new(move |_| {
