@@ -13,12 +13,17 @@ use ultros_api_types::{SaleHistory, world_helper::AnySelector};
 #[component]
 pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
     let (show_more, set_show_more) = signal(false);
+    // Optimization: Avoid cloning the entire sales vector when we only need a slice.
+    // Using `sales.with` allows us to inspect the vector without cloning it.
+    // If show_more is false, we only clone the first 10 items.
     let sale_history = Memo::new(move |_| {
-        let mut sales = sales();
-        if !show_more() {
-            sales.truncate(10);
-        }
-        sales
+        sales.with(|sales| {
+            if show_more() {
+                sales.clone()
+            } else {
+                sales.iter().take(10).cloned().collect()
+            }
+        })
     });
     view! {
         <div class="overflow-x-auto max-h-[60vh] overflow-y-auto rounded-lg">
