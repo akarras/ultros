@@ -765,14 +765,16 @@ impl From<&SoldWithin> for Duration {
     }
 }
 
-impl<'a> FromIterator<&'a SaleSummary> for SoldWithin {
-    fn from_iter<T: IntoIterator<Item = &'a SaleSummary>>(iter: T) -> Self {
+impl SoldWithin {
+    fn calculate<'a>(
+        iter: impl IntoIterator<Item = &'a SaleSummary>,
+        now: NaiveDateTime,
+    ) -> Self {
         let mut iter = iter.into_iter().peekable();
         let first_sale = match iter.peek() {
             Some(s) => s,
             None => return SoldWithin::NoSales,
         };
-        let now = Timestamp::now().naive_utc();
         let duration_since = now.signed_duration_since(first_sale.sale_date);
         enum SaleMarker {
             Today,
@@ -799,7 +801,7 @@ impl<'a> FromIterator<&'a SaleSummary> for SoldWithin {
             let years = duration_since.num_weeks() / 52;
             (
                 SaleMarker::YearsAgo(years),
-                now.checked_sub_signed(Duration::weeks(years * 52)),
+                now.checked_sub_signed(Duration::weeks((years + 1) * 52)),
             )
         };
         let end_date = match end_date {
@@ -815,6 +817,12 @@ impl<'a> FromIterator<&'a SaleSummary> for SoldWithin {
             SaleMarker::Year => SoldWithin::Year(sold_amount),
             SaleMarker::YearsAgo(year) => SoldWithin::YearsAgo(year as u8, sold_amount),
         }
+    }
+}
+
+impl<'a> FromIterator<&'a SaleSummary> for SoldWithin {
+    fn from_iter<T: IntoIterator<Item = &'a SaleSummary>>(iter: T) -> Self {
+        SoldWithin::calculate(iter, Timestamp::now().naive_utc())
     }
 }
 
@@ -842,7 +850,7 @@ mod test {
 
     use crate::analyzer_service::ItemKey;
 
-    use super::SaleHistory;
+    use super::{SaleHistory, SaleSummary, SoldAmount, SoldWithin};
 
     #[test]
     fn test_sale_history_sort() {
@@ -868,5 +876,143 @@ mod test {
             .unwrap();
         assert_eq!(map[0].price_per_item, 9);
         assert_eq!(map[1].price_per_item, 8);
+    }
+
+    #[test]
+    fn test_sold_within_calculation() {
+        let now = Utc::now().naive_utc();
+
+        // Helper to create a SaleSummary
+        let make_sale = |offset_duration: Duration| -> SaleSummary {
+            SaleSummary {
+                price_per_item: 100,
+                sale_date: now + offset_duration,
+            }
+        };
+
+        // Case 1: No sales
+        let sales: Vec<SaleSummary> = vec![];
+        assert_eq!(
+            SoldWithin::calculate(&sales, now),
+            SoldWithin::NoSales,
+            "Empty sales should result in NoSales"
+        );
+
+        // Case 2: Sold Today
+        // Sale just happened (0 seconds ago)
+        let sales = vec![make_sale(Duration::seconds(0))];
+        assert_eq!(
+            SoldWithin::calculate(&sales, now),
+            SoldWithin::Today(SoldAmount(1)),
+            "Sale at now should be SoldWithin::Today"
+        );
+
+        // Sale 23 hours ago is still "Today" if we consider < 24h as logic (which num_days() < 1 implies, wait check impl)
+        // logic: duration_since.num_days() < 1. duration_since is now - first_sale.
+        // if first_sale is 23h ago, duration_since is 23h. num_days() is 0. So it is Today.
+        let sales = vec![make_sale(-Duration::hours(23))];
+        assert_eq!(
+            SoldWithin::calculate(&sales, now),
+            SoldWithin::Today(SoldAmount(1)),
+            "Sale 23 hours ago should be SoldWithin::Today"
+        );
+
+        // Case 3: Sold This Week
+        // Sale 25 hours ago. num_days() is 1. num_weeks() is 0. So Week.
+        let sales = vec![make_sale(-Duration::hours(25))];
+        assert_eq!(
+            SoldWithin::calculate(&sales, now),
+            SoldWithin::Week(SoldAmount(1)),
+            "Sale 25 hours ago should be SoldWithin::Week"
+        );
+
+        // Sale 6 days ago. num_days() is 6. num_weeks() is 0. So Week.
+        let sales = vec![make_sale(-Duration::days(6))];
+        assert_eq!(
+            SoldWithin::calculate(&sales, now),
+            SoldWithin::Week(SoldAmount(1)),
+            "Sale 6 days ago should be SoldWithin::Week"
+        );
+
+        // Case 4: Sold This Month
+        // Sale 8 days ago. num_weeks() is 1. So Month. (logic: < 4 weeks is Month)
+        let sales = vec![make_sale(-Duration::days(8))];
+        assert_eq!(
+            SoldWithin::calculate(&sales, now),
+            SoldWithin::Month(SoldAmount(1)),
+            "Sale 8 days ago should be SoldWithin::Month"
+        );
+
+        // Sale 3 weeks ago. num_weeks() is 3. So Month.
+        let sales = vec![make_sale(-Duration::weeks(3))];
+        assert_eq!(
+            SoldWithin::calculate(&sales, now),
+            SoldWithin::Month(SoldAmount(1)),
+            "Sale 3 weeks ago should be SoldWithin::Month"
+        );
+
+        // Case 5: Sold This Year
+        // Sale 5 weeks ago. num_weeks() is 5. So Year. (logic: < 52 weeks is Year)
+        let sales = vec![make_sale(-Duration::weeks(5))];
+        assert_eq!(
+            SoldWithin::calculate(&sales, now),
+            SoldWithin::Year(SoldAmount(1)),
+            "Sale 5 weeks ago should be SoldWithin::Year"
+        );
+
+        // Case 6: Sold Years Ago
+        // Sale 53 weeks ago. num_weeks() is 53. 53/52 = 1. So YearsAgo(1).
+        let sales = vec![make_sale(-Duration::weeks(53))];
+        assert_eq!(
+            SoldWithin::calculate(&sales, now),
+            SoldWithin::YearsAgo(1, SoldAmount(1)),
+            "Sale 53 weeks ago should be SoldWithin::YearsAgo(1)"
+        );
+
+        // Case 7: Multiple sales count
+        // 3 sales today
+        let sales = vec![
+            make_sale(-Duration::hours(1)),
+            make_sale(-Duration::hours(2)),
+            make_sale(-Duration::hours(3)),
+        ];
+        // The logic uses the first sale (from peek) to determine the "marker".
+        // The list is usually sorted by date desc?
+        // Wait, SaleHistory.add_sale sorts by date desc (Reverse).
+        // Let's assume input is sorted desc (newest first).
+        // But `FromIterator` impl takes an iterator. It peeks the first one.
+        // In `SoldWithin::calculate`, `iter` is just an iterator.
+        // It peeks to find the *most recent* sale to determine the "bucket" (Today/Week/etc).
+        // Then it counts how many sales fit in that bucket.
+        //
+        // Logic detail:
+        // marker determined by `now - first_sale`.
+        // end_date determined by marker.
+        // sold_amount = iter.filter(|sale| sale.sale_date.gt(&end_date)).count()
+        //
+        // If sales are sorted desc:
+        // 1h ago, 2h ago, 3h ago.
+        // first = 1h ago. Marker = Today. end_date = now - 1 day.
+        // All 3 are > end_date. Count should be 3.
+        assert_eq!(
+            SoldWithin::calculate(&sales, now),
+            SoldWithin::Today(SoldAmount(3)),
+            "3 sales today should be counted correctly"
+        );
+
+        // Case 8: Mixed sales
+        // 1 sale today, 1 sale yesterday (Week bucket).
+        // If sorted desc: first is Today. Marker = Today. end_date = now - 1 day.
+        // Today sale > end_date. Yesterday sale (say 25h ago) < end_date.
+        // Count should be 1.
+        let sales = vec![
+            make_sale(-Duration::hours(1)),
+            make_sale(-Duration::hours(25)),
+        ];
+        assert_eq!(
+            SoldWithin::calculate(&sales, now),
+            SoldWithin::Today(SoldAmount(1)),
+            "Should only count sales within the 'Today' window"
+        );
     }
 }
