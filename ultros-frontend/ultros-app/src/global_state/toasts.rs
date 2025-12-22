@@ -3,6 +3,7 @@ use leptos::prelude::*;
 use uuid::Uuid;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[allow(dead_code)]
 pub enum ToastLevel {
     Info,
     Success,
@@ -62,6 +63,7 @@ impl Toasts {
         });
     }
 
+    #[allow(dead_code)]
     pub fn info(&self, message: impl Into<String>) {
         self.add(message, ToastLevel::Info, Some(3000));
     }
@@ -70,6 +72,7 @@ impl Toasts {
         self.add(message, ToastLevel::Success, Some(3000));
     }
 
+    #[allow(dead_code)]
     pub fn warning(&self, message: impl Into<String>) {
         self.add(message, ToastLevel::Warning, Some(5000));
     }
