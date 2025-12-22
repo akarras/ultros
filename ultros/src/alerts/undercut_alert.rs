@@ -339,7 +339,7 @@ impl RetainerAlertListener {
                                             .join(", ");
                                         let item_name = &item.name;
                                         let undercut_msg = format!(
-                                            "Your retainers {retainer_names} have been undercut on {item_name}"
+                                            "Your retainers {retainer_names} have been undercut on {item_name}\n\nhttps://ultros.app/retainers/undercuts"
                                         );
                                         if let Err(e) = send_discord_alerts(
                                             alert_id,
