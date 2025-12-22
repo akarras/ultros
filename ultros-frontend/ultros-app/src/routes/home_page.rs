@@ -53,34 +53,34 @@ pub fn HomePage() -> impl IntoView {
                 <div class="flex flex-col grow gap-8">
                     <div class="panel p-6 sm:p-8 overflow-hidden relative">
                         <div class="flex flex-col md:flex-row items-center gap-6 md:gap-10">
-                            <div class="flex-1 space-y-4">
-                                <h1 class="text-4xl sm:text-5xl font-extrabold leading-tight">
-                                    <span class="bg-clip-text text-transparent bg-gradient-to-r from-brand-200 to-brand-100">"Ultros"</span>
-                                    <span class="block text-[color:var(--color-text)] text-2xl sm:text-3xl mt-2 font-semibold">"market board analytics for final fantasy xiv"</span>
+                            <div class="flex-1 space-y-4 z-10">
+                                <h1 class="text-6xl sm:text-8xl font-extrabold leading-none tracking-tighter drop-shadow-2xl">
+                                    <span class="bg-clip-text text-transparent bg-gradient-to-br from-brand-100 via-brand-300 to-brand-500 filter drop-shadow-sm">"Ultros"</span>
+                                    <span class="block text-brand-100 text-xl sm:text-2xl mt-4 font-medium tracking-normal opacity-90">"market board analytics for final fantasy xiv"</span>
                                 </h1>
-                                <p class="text-lg text-[color:var(--color-text)] max-w-prose">
+                                <p class="text-lg text-[color:var(--color-text-muted)] max-w-prose leading-relaxed">
                                     "buy low, sell high, and track your retainers with a fast, modern ui."
                                 </p>
-                                <div class="flex flex-wrap items-center gap-3 pt-2">
+                                <div class="flex flex-wrap items-center gap-3 pt-4">
                                     <a
                                         rel="external"
                                         href="https://book.ultros.app"
-                                        class="btn-primary"
+                                        class="btn-primary py-3 px-6 text-lg"
                                     >
                                         "get started"
                                     </a>
+                                    <A href="/flip-finder" attr:class="btn-primary py-3 px-6 text-lg">
+                                        <Icon icon=i::FaMoneyBillTrendUpSolid width="1.25em" height="1.25em" />
+                                        <span>"open flip finder"</span>
+                                    </A>
                                     <a
                                         rel="external"
                                         href="/invitebot"
-                                        class="btn-secondary"
+                                        class="btn-secondary py-3 px-6 text-lg"
                                     >
                                         <Icon icon=i::BsDiscord width="1.25em" height="1.25em" />
                                         <span>"invite bot"</span>
                                     </a>
-                                    <A href="/flip-finder" attr:class="btn-primary">
-                                        <Icon icon=i::FaMoneyBillTrendUpSolid width="1.25em" height="1.25em" />
-                                        <span>"open flip finder"</span>
-                                    </A>
                                 </div>
                             </div>
                             <div class="w-full md:w-72 lg:w-80 aspect-square rounded-2xl elevated surface-blur flex items-center justify-center">
