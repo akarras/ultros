@@ -23,6 +23,7 @@ use crate::{
         item_explorer::*,
         item_view::*,
         legal::{cookie_policy::CookiePolicy, privacy_policy::PrivacyPolicy},
+        leve_analyzer::*,
         list_view::*,
         lists::*,
         recipe_analyzer::*,
@@ -258,6 +259,7 @@ pub fn App() -> impl IntoView {
                             } />
                             <Route path=path!("flip-finder/:world") view=AnalyzerWorldView />
                             <Route path=path!("recipe-analyzer") view=RecipeAnalyzer />
+                            <Route path=path!("leve-analyzer") view=LeveAnalyzer />
                             <Route path=path!("analyzer/:world") view=move || {
                                 let nav = leptos_router::hooks::use_navigate();
                                 let params = leptos_router::hooks::use_params_map();

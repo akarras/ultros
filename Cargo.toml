@@ -65,6 +65,10 @@ xiv-gen = { path = "./xiv-gen", features = [
     "e_npc_base",
     "e_npc_resident",
     "special_shop",
+    "leve",
+    "craft_leve",
+    "leve_reward_item",
+    "leve_reward_item_group",
 ] }
 icondata = "0.6"
 icondata_core = "0.1"
