@@ -573,8 +573,8 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                         border border-white/5 hover:border-brand-500/30
                                         hover:shadow-lg hover:shadow-brand-500/5
                                         transition-all duration-300">
-                                <div class="flex flex-row items-start gap-4 mb-4">
-                                    <div class="shrink-0 relative">
+                                <div class="flex flex-row items-center gap-4 mb-3">
+                                    <div class="shrink-0">
                                          <A href=move || format!("/item/{}/{}",
                                             price_zone.get().as_ref().map(|z| z.get_name()).unwrap_or("North-America"),
                                             item.key_id.0)
@@ -582,31 +582,101 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                             <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
                                          </A>
                                     </div>
-                                    <div class="flex flex-col min-w-0 pt-0.5">
-                                        <div class="flex items-center gap-2 mb-1.5 flex-wrap">
-                                            <span class="text-xs font-bold px-1.5 py-0.5 rounded bg-white/10 text-[color:var(--color-text-muted)] whitespace-nowrap">
-                                                "iLvl "{item.level_item.0}
-                                            </span>
-                                             {if item.level_equip > 1 {
+                                    <div class="flex flex-wrap items-center gap-1.5 min-w-0 flex-1 pt-0.5">
+                                        <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-white/10 text-[color:var(--color-text-muted)] whitespace-nowrap">
+                                            "iLvl "{item.level_item.0}
+                                        </span>
+                                        {if item.level_equip > 1 {
+                                            view! {
+                                                <span class="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-[color:var(--color-text-muted)] whitespace-nowrap">
+                                                    "Lv "{item.level_equip}
+                                                </span>
+                                            }.into_any()
+                                        } else {
+                                            view! { <span/> }.into_any()
+                                        }}
+                                        {move || {
+                                            let data = xiv_gen_db::data();
+                                            data.item_search_categorys.get(&item.item_search_category).map(|category| {
                                                 view! {
-                                                    <span class="text-xs px-1.5 py-0.5 rounded bg-white/5 text-[color:var(--color-text-muted)] whitespace-nowrap">
-                                                        "Lv "{item.level_equip}
-                                                    </span>
-                                                }.into_any()
-                                            } else {
-                                                view! { <span/> }.into_any()
-                                            }}
-                                        </div>
-                                        <A href=move || format!("/item/{}/{}",
-                                            price_zone.get().as_ref().map(|z| z.get_name()).unwrap_or("North-America"),
-                                            item.key_id.0)
-                                            attr:class="font-bold text-base leading-snug text-[color:var(--color-text)] \
-                                                       group-hover:text-brand-300 transition-colors line-clamp-2 \
-                                                       hover:underline decoration-brand-300/30 underline-offset-4"
-                                         >
-                                            {item.name.as_str()}
-                                        </A>
+                                                    <A href=move || format!("/items/category/{}", category.name.replace("/", "%2F"))>
+                                                        <span class="text-[10px] px-1.5 py-0.5 rounded bg-brand-500/10 text-brand-300 border border-brand-500/20 whitespace-nowrap hover:bg-brand-500/20 transition-colors">
+                                                            {category.name.as_str()}
+                                                        </span>
+                                                    </A>
+                                                }
+                                            })
+                                        }}
+                                        {move || {
+                                            let data = xiv_gen_db::data();
+                                            if let Some(category) = data.class_job_categorys.get(&item.class_job_category) {
+                                                if category.key_id.0 == 1 {
+                                                    return view! {
+                                                        <span class="text-[10px] uppercase font-bold text-[color:var(--color-text-muted)] px-1.5 py-0.5 rounded bg-white/5 whitespace-nowrap">
+                                                            "All Classes"
+                                                        </span>
+                                                    }.into_any();
+                                                }
+                                                let jobs_count = data.class_jobs.values()
+                                                    .filter(|job| job_category_lookup(category, &job.abbreviation))
+                                                    .count();
+                                                
+                                                if jobs_count > 10 {
+                                                    return view! {
+                                                        <span class="text-[10px] uppercase font-bold text-[color:var(--color-text-muted)] px-1.5 py-0.5 rounded bg-white/5 whitespace-nowrap">
+                                                            {category.name.as_str()}
+                                                        </span>
+                                                    }.into_any();
+                                                }
+                                            }
+                                            view! { <div/> }.into_any()
+                                        }}
                                     </div>
+                                </div>
+                                <A href=move || format!("/item/{}/{}",
+                                    price_zone.get().as_ref().map(|z| z.get_name()).unwrap_or("North-America"),
+                                    item.key_id.0)
+                                 >
+                                    <span class="block font-bold text-sm leading-tight text-[color:var(--color-text)] \
+                                               group-hover:text-brand-300 transition-colors line-clamp-3 \
+                                               hover:underline decoration-brand-300/30 underline-offset-4">
+                                        {item.name.as_str()}
+                                    </span>
+                                </A>
+                                <div class="flex flex-row flex-wrap gap-1 mt-2 min-h-6">
+                                    {move || {
+                                        let data = xiv_gen_db::data();
+                                        if let Some(category) = data.class_job_categorys.get(&item.class_job_category) {
+                                            if category.key_id.0 != 1 {
+                                                let icons = data.class_jobs.values()
+                                                    .filter(|job| {
+                                                        job_category_lookup(category, &job.abbreviation)
+                                                    })
+                                                    .sorted_by_key(|job| job.ui_priority)
+                                                    .collect::<Vec<_>>();
+                                                
+                                                if icons.len() <= 10 {
+                                                    return view! {
+                                                        <For
+                                                            each=move || icons.clone()
+                                                            key=|job| job.key_id.0
+                                                            children=move |job| {
+                                                                view! {
+                                                                    <A href=move || format!("/items/jobset/{}", job.abbreviation)
+                                                                    >
+                                                                        <span title=job.name.clone() class="block opacity-70 hover:opacity-100 transition-opacity hover:scale-110">
+                                                                            <ClassJobIcon id=job.key_id />
+                                                                        </span>
+                                                                    </A>
+                                                                }
+                                                            }
+                                                        />
+                                                    }.into_any();
+                                                }
+                                            }
+                                        }
+                                        view! { <div/> }.into_any()
+                                    }}
                                 </div>
                                 <div class="flex-1" />
                                 <div class="flex flex-col gap-3 mt-2 pt-3 border-t border-white/5">
