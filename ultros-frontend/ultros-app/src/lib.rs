@@ -81,36 +81,36 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
 pub fn Footer() -> impl IntoView {
     let git_hash = git_short_hash!();
     view! {
-        <footer class="bg-[color:var(--color-background-elevated)] border-t border-[color:var(--color-outline)]">
-            <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-10 space-y-6">
-                <div class="flex flex-wrap justify-center items-center gap-x-8 gap-y-3">
+        <footer class="bg-black/20 backdrop-blur-md border-t border-[color:var(--color-outline)] mt-12">
+            <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-12 space-y-8">
+                <div class="flex flex-wrap justify-center items-center gap-x-8 gap-y-4">
                     <a
                         href="https://discord.gg/pgdq9nGUP2"
-                        class="btn-ghost"
+                        class="btn-ghost opacity-80 hover:opacity-100"
                     >
-                        <Icon icon=i::BsDiscord width="1.1em" height="1.1em" /><span>"Discord"</span>
+                        <Icon icon=i::BsDiscord width="1.2em" height="1.2em" /><span>"Discord"</span>
                     </a>
                     <a
                         href="https://github.com/akarras/ultros"
-                        class="btn-ghost"
+                        class="btn-ghost opacity-80 hover:opacity-100"
                     >
-                        <Icon icon=i::IoLogoGithub width="1.1em" height="1.1em" /><span>"GitHub"</span>
+                        <Icon icon=i::IoLogoGithub width="1.2em" height="1.2em" /><span>"GitHub"</span>
                     </a>
                     <PatreonWrapper>
                         // nobody can tell it's not real.
-                        <a class="btn-ghost cursor-pointer">
+                        <a class="btn-ghost cursor-pointer opacity-80 hover:opacity-100">
                             <span>"Patreon"</span>
                         </a>
                     </PatreonWrapper>
                     <a
                         href="https://book.ultros.app"
-                        class="btn-ghost"
+                        class="btn-ghost opacity-80 hover:opacity-100"
                     >
-                        <Icon icon=i::BsBook width="1.1em" height="1.1em" /><span>"Book"</span>
+                        <Icon icon=i::BsBook width="1.2em" height="1.2em" /><span>"Book"</span>
                     </a>
                 </div>
-                <div class="divider"></div>
-                <div class="text-center space-y-2 muted text-sm max-w-3xl mx-auto">
+                <div class="divider opacity-50"></div>
+                <div class="text-center space-y-3 muted text-sm max-w-3xl mx-auto opacity-75 hover:opacity-100 transition-opacity">
                     <p>
                         "Ultros is still under constant development. If you have suggestions or feedback,
                             feel free to leave suggestions in the discord."
@@ -119,7 +119,7 @@ pub fn Footer() -> impl IntoView {
                         "Made using "
                         <a
                             href="https://universalis.app/"
-                            class="text-brand-300 hover:text-[color:var(--brand-fg)] transition-colors"
+                            class="text-brand-300 hover:text-[color:var(--brand-fg)] transition-colors underline decoration-dotted underline-offset-4"
                         >
                             "universalis"
                         </a>
@@ -129,12 +129,12 @@ pub fn Footer() -> impl IntoView {
                         "Version: "
                         <a
                             href=format!("https://github.com/akarras/ultros/commit/{git_hash}")
-                            class="text-brand-300 hover:text-[color:var(--brand-fg)] transition-colors"
+                            class="text-brand-300 hover:text-[color:var(--brand-fg)] transition-colors font-mono"
                         >
                             {git_hash}
                         </a>
                     </p>
-                    <p class="text-xs">
+                    <p class="text-xs pt-4 opacity-50">
                         "FINAL FANTASY XIV © 2010 - 2020 SQUARE ENIX CO., LTD. All Rights Reserved."
                     </p>
                 </div>
