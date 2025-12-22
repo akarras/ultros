@@ -27,7 +27,7 @@ fn spawn_gil_party(x: f64, y: f64) {
         let el_clone = el.clone();
 
         // Destination calculation
-        let angle = js_sys::Math::random() * 6.28;
+        let angle = js_sys::Math::random() * std::f64::consts::TAU;
         // Explode outwards
         let dist = 60.0 + js_sys::Math::random() * 100.0;
         let dx = angle.cos() * dist;
