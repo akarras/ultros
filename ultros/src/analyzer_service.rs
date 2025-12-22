@@ -766,10 +766,7 @@ impl From<&SoldWithin> for Duration {
 }
 
 impl SoldWithin {
-    fn calculate<'a>(
-        iter: impl IntoIterator<Item = &'a SaleSummary>,
-        now: NaiveDateTime,
-    ) -> Self {
+    fn calculate<'a>(iter: impl IntoIterator<Item = &'a SaleSummary>, now: NaiveDateTime) -> Self {
         let mut iter = iter.into_iter().peekable();
         let first_sale = match iter.peek() {
             Some(s) => s,
