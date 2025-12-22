@@ -26,6 +26,24 @@ pub fn EditLists() -> impl IntoView {
         move |_| get_lists(),
     );
     let (creating, set_creating) = signal(false);
+    let (filter, set_filter) = signal(String::new());
+
+    let filtered_lists = Signal::derive(move || {
+        let filter_text = filter.get().to_lowercase();
+        lists.get().map(|res| {
+            res.map(|lists| {
+                if filter_text.is_empty() {
+                    lists
+                } else {
+                    lists
+                        .into_iter()
+                        .filter(|l| l.name.to_lowercase().contains(&filter_text))
+                        .collect()
+                }
+            })
+        })
+    });
+
     view! {
         <div class="flex items-center gap-2 md:gap-3 mb-3">
             <A exact=true attr:class="nav-link" href="/list">
@@ -34,13 +52,21 @@ pub fn EditLists() -> impl IntoView {
             </A>
 
         </div>
-        <div class="flex items-center gap-2">
+        <div class="flex items-center gap-2 mb-3">
             <span class="text-3xl font-bold text-[color:var(--brand-fg)]">"Edit Lists"</span>
             <Tooltip tooltip_text="Create list">
                 <button class="btn-primary" on:click=move |_| set_creating(!creating())>
                     <Icon icon=i::BiPlusRegular />
                 </button>
             </Tooltip>
+        </div>
+        <div class="mb-3">
+            <input
+                class="input w-full md:w-64"
+                placeholder="Filter lists..."
+                prop:value=filter
+                on:input=move |ev| set_filter(event_target_value(&ev))
+            />
         </div>
         {move || {
             creating()
@@ -95,7 +121,7 @@ pub fn EditLists() -> impl IntoView {
             <Suspense fallback=move || view! { <Loading /> }>
                 <>
                     {move || {
-                        lists
+                        filtered_lists
                             .get()
                             .map(|lists| {
                                 match lists {
@@ -106,8 +132,8 @@ pub fn EditLists() -> impl IntoView {
                                                 <table class="w-full">
                                                     <tbody>
                                                         <tr>
-                                                            <td>"List Name"</td>
-                                                            <td>"World"</td>
+                                                            <th class="text-left">"List Name"</th>
+                                                            <th class="text-left">"World"</th>
                                                         </tr>
                                                         <For
                                                             each=move || lists.clone()
