@@ -1,8 +1,8 @@
+use crate::components::icon::Icon;
 use crate::global_state::toasts::{Toast, ToastLevel, use_toast};
 use icondata as i;
-use leptos::prelude::*;
-use crate::components::icon::Icon;
 use leptos::leptos_dom::helpers::set_timeout;
+use leptos::prelude::*;
 
 #[component]
 pub fn ToastItem(toast: Toast) -> impl IntoView {
@@ -11,7 +11,9 @@ pub fn ToastItem(toast: Toast) -> impl IntoView {
 
     let base_class = "flex items-center gap-3 w-full max-w-sm p-4 rounded-lg shadow-lg border text-sm animate-in slide-in-from-bottom-2 fade-in duration-300";
     let color_class = match toast.level {
-        ToastLevel::Info => "bg-[color:var(--color-background-elevated)] border-[color:var(--color-outline)] text-[color:var(--color-text)]",
+        ToastLevel::Info => {
+            "bg-[color:var(--color-background-elevated)] border-[color:var(--color-outline)] text-[color:var(--color-text)]"
+        }
         ToastLevel::Success => "bg-green-500/10 border-green-500/20 text-green-400",
         ToastLevel::Warning => "bg-yellow-500/10 border-yellow-500/20 text-yellow-400",
         ToastLevel::Error => "bg-red-500/10 border-red-500/20 text-red-400",
@@ -24,7 +26,16 @@ pub fn ToastItem(toast: Toast) -> impl IntoView {
         ToastLevel::Error => i::BsExclamationCircle,
     };
 
-    let exit_class = move || if is_exiting() { "animate-out slide-out-to-right fade-out duration-300" } else { "" };
+    let exit_class = move || {
+        if is_exiting() {
+            "animate-out slide-out-to-right fade-out duration-300"
+        } else {
+            ""
+        }
+    };
+
+    let message = toast.message.clone();
+    let id = toast.id;
 
     view! {
         <div
@@ -32,13 +43,12 @@ pub fn ToastItem(toast: Toast) -> impl IntoView {
             role="alert"
         >
             <Icon icon width="1.2em" height="1.2em" />
-            <div class="flex-1">{toast.message.clone()}</div>
+            <div class="flex-1">{message}</div>
             <button
                 class="opacity-70 hover:opacity-100 transition-opacity"
                 aria-label="Close"
                 on:click=move |_| {
                     set_is_exiting(true);
-                    let id = toast.id;
                     set_timeout(move || {
                         toasts.remove(id);
                     }, std::time::Duration::from_millis(300));

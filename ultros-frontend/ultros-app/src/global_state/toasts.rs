@@ -1,8 +1,8 @@
+use leptos::leptos_dom::helpers::set_timeout;
 use leptos::prelude::*;
 use uuid::Uuid;
-use leptos::leptos_dom::helpers::set_timeout;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ToastLevel {
     Info,
     Success,
@@ -45,9 +45,12 @@ impl Toasts {
         if let Some(duration) = duration {
             let toasts = *self;
             #[cfg(feature = "hydrate")]
-            set_timeout(move || {
-                toasts.remove(id);
-            }, std::time::Duration::from_millis(duration));
+            set_timeout(
+                move || {
+                    toasts.remove(id);
+                },
+                std::time::Duration::from_millis(duration),
+            );
         }
     }
 
