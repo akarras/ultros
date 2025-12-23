@@ -10,10 +10,12 @@ use crate::components::recently_viewed::RecentItems;
 pub use crate::global_state::{LocalWorldData, home_world::GuessedRegion};
 use crate::global_state::{
     cheapest_prices::CheapestPrices, clipboard_text::GlobalLastCopiedText, cookies::Cookies,
-    theme::provide_theme_settings,
+    theme::provide_theme_settings, toasts::provide_toast_context,
 };
 use crate::{
-    components::{ad::Ad, apps_menu::*, patreon::*, search_box::*, theme_picker::*, tooltip::*},
+    components::{
+        ad::Ad, apps_menu::*, patreon::*, search_box::*, theme_picker::*, toast::*, tooltip::*,
+    },
     routes::{
         analyzer::*,
         currency_exchange::{CurrencyExchange, CurrencySelection, ExchangeItem},
@@ -205,6 +207,7 @@ pub fn App() -> impl IntoView {
     provide_context(GlobalLastCopiedText(RwSignal::new(None)));
     provide_context(RecentItems::new());
     provide_theme_settings();
+    provide_toast_context();
     // AnimationContext::provide();
     let root_node_ref = NodeRef::<Div>::new();
     #[cfg(feature = "hydrate")]
@@ -219,6 +222,7 @@ pub fn App() -> impl IntoView {
             <div class="absolute inset-0" style="background-image: radial-gradient(80% 60% at 50% 30%, var(--decor-spot), transparent 60%);" />
         </div>
         <div node_ref=root_node_ref class="min-h-screen flex flex-col m-0">
+            <ToastContainer />
             <Router>
                 <NavRow />
                 // <AnimatedRoutes outro="route-out" intro="route-in" outro_back="route-out-back" intro_back="route-in-back">

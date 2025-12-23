@@ -16,6 +16,7 @@ use crate::api::get_lists;
 use crate::components::toggle::Toggle;
 use crate::components::tooltip::Tooltip;
 use crate::components::{item_icon::ItemIcon, loading::Loading, modal::Modal};
+use crate::global_state::toasts::use_toast;
 
 #[component]
 pub fn AddToList(
@@ -107,6 +108,7 @@ fn AddToListModal(
                                         let (saved, set_saved) = signal(false);
                                         let (running, set_running) = signal(false);
                                         let (error, set_error) = signal(Option::<String>::None);
+                                        let toasts = use_toast();
 
                                         view! {
                                             <div class="space-y-1">
@@ -135,8 +137,18 @@ fn AddToListModal(
                                                                     },
                                                                 ).await;
                                                                 match res {
-                                                                    Ok(()) => { set_saved(true); }
-                                                                    Err(e) => { set_error(Some(format!("{e}"))); }
+                                                                    Ok(()) => {
+                                                                        set_saved(true);
+                                                                        if let Some(toasts) = toasts {
+                                                                            toasts.success("Added to list!");
+                                                                        }
+                                                                    }
+                                                                    Err(e) => {
+                                                                        set_error(Some(format!("{e}")));
+                                                                        if let Some(toasts) = toasts {
+                                                                            toasts.error(format!("Failed to add to list: {e}"));
+                                                                        }
+                                                                    }
                                                                 }
                                                                 set_running(false);
                                                             });
