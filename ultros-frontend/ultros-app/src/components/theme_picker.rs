@@ -133,6 +133,7 @@ pub fn QuickThemeToggle() -> impl IntoView {
         <button
             class="nav-link"
             title="Toggle theme"
+            aria-label=move || format!("Toggle theme (Current: {})", label.get())
             on:click=move |_| cycle()
         >
             <Icon icon=icon />

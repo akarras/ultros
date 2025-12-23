@@ -32,6 +32,7 @@ pub fn AppsMenu() -> impl IntoView {
                 class="nav-link"
                 aria-haspopup="menu"
                 aria-expanded=move || if is_open() { "true" } else { "false" }
+                aria-label="Apps"
                 // click naturally focuses the button; no explicit toggle required
             >
                 <Icon height="1.4em" width="1.4em" icon=i::BsGrid />
@@ -138,7 +139,12 @@ pub fn UserMenu() -> impl IntoView {
                         None => {
                             // logged out trigger: user icon + caret
                             view! {
-                                <button class="nav-link flex items-center gap-2" aria-haspopup="menu" aria-expanded=move || if is_open() { "true" } else { "false" }>
+                                <button
+                                    class="nav-link flex items-center gap-2"
+                                    aria-haspopup="menu"
+                                    aria-expanded=move || if is_open() { "true" } else { "false" }
+                                    aria-label="User menu"
+                                >
                                     <Icon height="1.5em" width="1.5em" icon=i::BsPersonCircle />
                                     <Icon height="1em" width="1em" icon=i::BiChevronDownSolid />
                                 </button>
