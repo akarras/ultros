@@ -7919,6 +7919,7 @@ dependencies = [
  "sitemap-rs",
  "smallvec",
  "tantivy",
+ "tempfile",
  "thiserror 1.0.69",
  "tikv-jemallocator",
  "tokio",

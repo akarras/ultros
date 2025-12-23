@@ -25,6 +25,43 @@ pub enum AnySelector {
     Region(i32),
 }
 
+#[cfg(feature = "rkyv")]
+impl PartialEq for ArchivedAnySelector {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (ArchivedAnySelector::World(a), ArchivedAnySelector::World(b)) => a.eq(b),
+            (ArchivedAnySelector::Datacenter(a), ArchivedAnySelector::Datacenter(b)) => a.eq(b),
+            (ArchivedAnySelector::Region(a), ArchivedAnySelector::Region(b)) => a.eq(b),
+            _ => false,
+        }
+    }
+}
+
+#[cfg(feature = "rkyv")]
+impl Eq for ArchivedAnySelector {}
+
+#[cfg(feature = "rkyv")]
+impl Ord for ArchivedAnySelector {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match (self, other) {
+            (ArchivedAnySelector::World(a), ArchivedAnySelector::World(b)) => a.cmp(b),
+            (ArchivedAnySelector::Datacenter(a), ArchivedAnySelector::Datacenter(b)) => a.cmp(b),
+            (ArchivedAnySelector::Region(a), ArchivedAnySelector::Region(b)) => a.cmp(b),
+            (ArchivedAnySelector::World(_), _) => std::cmp::Ordering::Less,
+            (_, ArchivedAnySelector::World(_)) => std::cmp::Ordering::Greater,
+            (ArchivedAnySelector::Datacenter(_), _) => std::cmp::Ordering::Less,
+            (_, ArchivedAnySelector::Datacenter(_)) => std::cmp::Ordering::Greater,
+        }
+    }
+}
+
+#[cfg(feature = "rkyv")]
+impl PartialOrd for ArchivedAnySelector {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 #[derive(Debug, Serialize, PartialEq)]
 pub enum AnyResult<'a> {
     World(&'a world::Model),
