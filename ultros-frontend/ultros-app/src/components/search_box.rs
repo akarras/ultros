@@ -187,11 +187,25 @@ pub fn SearchBox() -> impl IntoView {
                     aria-autocomplete="list"
                 />
                 <div class="absolute left-3 top-1/2 -translate-y-1/2 text-[color:var(--color-text-muted)]">
-                    <Icon icon=i::AiSearchOutlined />
+                    <Show when=loading fallback=|| view! { <Icon icon=i::AiSearchOutlined /> }>
+                        <Loading />
+                    </Show>
                 </div>
                 <div class="absolute right-3 top-1/2 -translate-y-1/2">
-                    <Show when=loading fallback=|| ()>
-                        <Loading />
+                    <Show when=move || !search.get().is_empty()>
+                        <button
+                            class="text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] transition-colors"
+                            on:click=move |_| {
+                                set_search("".to_string());
+                                if let Some(input) = text_input.get() {
+                                    let _ = input.focus();
+                                }
+                                set_active(true);
+                            }
+                            aria-label="Clear search"
+                        >
+                            <Icon icon=i::BsX width="1.5em" height="1.5em" />
+                        </button>
                     </Show>
                 </div>
             </div>
