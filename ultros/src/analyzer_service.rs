@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use std::{
     cmp::Reverse,
@@ -41,7 +41,18 @@ pub enum AnalyzerError {
 }
 
 #[derive(
-    Hash, Eq, PartialEq, PartialOrd, Ord, Debug, Copy, Clone, Serialize, Archive, RkyvDeserialize, RkyvSerialize,
+    Hash,
+    Eq,
+    PartialEq,
+    PartialOrd,
+    Ord,
+    Debug,
+    Copy,
+    Clone,
+    Serialize,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
 )]
 #[archive(check_bytes)]
 pub(crate) struct ItemKey {
@@ -124,7 +135,9 @@ impl From<&ultros_db::listings::ListingSummary> for ItemKey {
     }
 }
 
-#[derive(Debug, PartialEq, PartialOrd, Eq, Ord, Clone, Copy, Archive, RkyvDeserialize, RkyvSerialize)]
+#[derive(
+    Debug, PartialEq, PartialOrd, Eq, Ord, Clone, Copy, Archive, RkyvDeserialize, RkyvSerialize,
+)]
 #[archive(check_bytes)]
 pub(crate) struct SaleSummary {
     pub(crate) price_per_item: i32,
@@ -184,9 +197,7 @@ impl SaleHistory {
     }
 }
 
-#[derive(
-    Debug, Copy, Clone, Eq, Serialize, Archive, RkyvDeserialize, RkyvSerialize,
-)]
+#[derive(Debug, Copy, Clone, Eq, Serialize, Archive, RkyvDeserialize, RkyvSerialize)]
 #[archive(check_bytes)]
 pub(crate) struct CheapestListingValue {
     pub(crate) price: i32,
@@ -1219,8 +1230,10 @@ mod tests {
         analyzer_service.serialize_state(false).await.unwrap();
 
         // Create a new service and restore from the snapshot
-        let new_cheapest_items: Arc<BTreeMap<AnySelector, RwLock<CheapestListings>>> = Arc::new(BTreeMap::new());
-        let new_recent_sale_history: Arc<BTreeMap<i32, RwLock<SaleHistory>>> = Arc::new(BTreeMap::new());
+        let new_cheapest_items: Arc<BTreeMap<AnySelector, RwLock<CheapestListings>>> =
+            Arc::new(BTreeMap::new());
+        let new_recent_sale_history: Arc<BTreeMap<i32, RwLock<SaleHistory>>> =
+            Arc::new(BTreeMap::new());
         let new_analyzer_service = AnalyzerService {
             recent_sale_history: new_recent_sale_history.clone(),
             cheapest_items: new_cheapest_items.clone(),
