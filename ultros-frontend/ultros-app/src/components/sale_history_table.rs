@@ -4,7 +4,6 @@ use super::{datacenter_name::*, gil::*, relative_time::*, world_name::*};
 use crate::components::icon::Icon;
 use chrono::{Duration, NaiveDateTime, TimeDelta, Utc};
 use icondata as i;
-use itertools::Itertools;
 use leptos::prelude::*;
 use linregress::{FormulaRegressionBuilder, RegressionDataBuilder};
 use log::{error, info};
@@ -119,25 +118,41 @@ struct SalesWindow {
 impl SalesWindow {
     fn try_new(date_range: RangeInclusive<NaiveDateTime>, sales: &[SaleHistory]) -> Option<Self> {
         let sales = find_date_range(date_range.clone(), sales)?;
-        if sales.is_empty() {
+        let count = sales.len();
+        if count == 0 {
             return None;
         }
-        let total_gil = sales
-            .iter()
-            .map(|sale| sale.price_per_item as u64 * sale.quantity as u64)
-            .sum();
 
-        let unit_prices: Vec<f64> = sales
-            .iter()
-            .map(|sale| sale.price_per_item as f64)
-            .collect();
+        let mut total_gil = 0u64;
+        let mut hq_count = 0usize;
+        let mut total_sale_price = 0i64;
+
+        let mut unit_prices = Vec::with_capacity(count);
+        let mut stack_sizes = Vec::with_capacity(count);
+        let mut dates = Vec::with_capacity(count);
+        let mut unit_prices_f64 = Vec::with_capacity(count);
+
         let start_timestamp = date_range.start().and_utc().timestamp();
-        let dates = sales
-            .iter()
-            .map(|sale| (sale.sold_date.and_utc().timestamp() - start_timestamp) as f64)
-            .collect::<Vec<_>>();
+
+        for sale in sales {
+            let price = sale.price_per_item;
+            let qty = sale.quantity;
+            let date_val = (sale.sold_date.and_utc().timestamp() - start_timestamp) as f64;
+
+            total_gil += price as u64 * qty as u64;
+            total_sale_price += price as i64;
+            if sale.hq {
+                hq_count += 1;
+            }
+
+            unit_prices.push(price);
+            stack_sizes.push(qty);
+            dates.push(date_val);
+            unit_prices_f64.push(price as f64);
+        }
+
         let data = RegressionDataBuilder::new()
-            .build_from([("X", unit_prices), ("Y", dates)])
+            .build_from([("X", unit_prices_f64), ("Y", dates)])
             .inspect_err(|e| {
                 error!("{e:?}");
             })
@@ -151,22 +166,15 @@ impl SalesWindow {
             })
             .ok()?;
 
-        let mut unit_prices = sales
-            .iter()
-            .map(|sale| sale.price_per_item)
-            .collect::<Vec<_>>();
-        unit_prices.sort();
-        let median_unit_price = unit_prices[unit_prices.len() / 2];
-        let total_sale_price: i32 = unit_prices.iter().sum();
-        let avg_sale_price = total_sale_price as f64 / unit_prices.len() as f64;
-        let stack_sizes = sales
-            .iter()
-            .map(|sale| sale.quantity)
-            .sorted()
-            .collect::<Vec<_>>();
-        let median_stack_size = stack_sizes[stack_sizes.len() / 2];
+        unit_prices.sort_unstable();
+        let median_unit_price = unit_prices[count / 2];
+        let avg_sale_price = total_sale_price as f64 / count as f64;
+
+        stack_sizes.sort_unstable();
+        let median_stack_size = stack_sizes[count / 2];
+
         let duration = *date_range.start() - *date_range.end();
-        let avg_duration = duration / sales.len() as i32;
+        let avg_duration = duration / count as i32;
         let next_sale_time = [(
             "Y",
             vec![
@@ -188,9 +196,7 @@ impl SalesWindow {
             max_unit_price: *unit_prices.last()?,
             min_unit_price: *unit_prices.first()?,
             median_stack_size,
-            hq_percent: ((sales.iter().filter(|sale| sale.hq).count() as f64 / sales.len() as f64)
-                * 100.0)
-                .round() as i32,
+            hq_percent: ((hq_count as f64 / count as f64) * 100.0).round() as i32,
             guessed_next_sale_price: next,
             time_between_sales: avg_duration,
             median_unit_price,
