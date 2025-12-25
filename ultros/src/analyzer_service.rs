@@ -1,6 +1,8 @@
+use anyhow::{Result, anyhow};
+use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use std::{
     cmp::Reverse,
-    collections::{BTreeMap, HashMap, hash_map::Entry},
+    collections::{BTreeMap, btree_map::Entry},
     fmt::Display,
     sync::{
         Arc,
@@ -13,7 +15,8 @@ use futures::StreamExt;
 use itertools::Itertools;
 use poise::serenity_prelude::Timestamp;
 use serde::{Deserialize, Serialize};
-use tracing::log::info;
+use tokio::fs;
+use tracing::log::{error, info};
 use ultros_api_types::{ActiveListing, Retainer, websocket::ListingEventData};
 use ultros_db::{
     UltrosDb,
@@ -25,7 +28,6 @@ use crate::event::EventReceivers;
 use thiserror::Error;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
-use tracing::log::error;
 use ultros_db::world_cache::{AnySelector, WorldCache};
 
 pub const SALE_HISTORY_SIZE: usize = 6;
@@ -38,11 +40,47 @@ pub enum AnalyzerError {
     DatacenterNotAvailable,
 }
 
-#[derive(Hash, Eq, PartialEq, PartialOrd, Ord, Debug, Copy, Clone, Serialize)]
+#[derive(
+    Hash,
+    Eq,
+    PartialEq,
+    PartialOrd,
+    Ord,
+    Debug,
+    Copy,
+    Clone,
+    Serialize,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+)]
+#[archive(check_bytes)]
 pub(crate) struct ItemKey {
     pub(crate) item_id: i32,
     pub(crate) hq: bool,
 }
+
+impl Ord for ArchivedItemKey {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.item_id
+            .cmp(&other.item_id)
+            .then_with(|| self.hq.cmp(&other.hq))
+    }
+}
+
+impl PartialOrd for ArchivedItemKey {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for ArchivedItemKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.item_id == other.item_id && self.hq == other.hq
+    }
+}
+
+impl Eq for ArchivedItemKey {}
 
 impl From<&active_listing::Model> for ItemKey {
     fn from(model: &active_listing::Model) -> Self {
@@ -97,7 +135,10 @@ impl From<&ultros_db::listings::ListingSummary> for ItemKey {
     }
 }
 
-#[derive(Debug, PartialEq, PartialOrd, Eq, Ord, Clone, Copy)]
+#[derive(
+    Debug, PartialEq, PartialOrd, Eq, Ord, Clone, Copy, Archive, RkyvDeserialize, RkyvSerialize,
+)]
+#[archive(check_bytes)]
 pub(crate) struct SaleSummary {
     pub(crate) price_per_item: i32,
     pub(crate) sale_date: NaiveDateTime,
@@ -130,9 +171,10 @@ impl From<&ultros_api_types::SaleHistory> for SaleSummary {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Archive, RkyvDeserialize, RkyvSerialize)]
+#[archive(check_bytes)]
 pub(crate) struct SaleHistory {
-    pub(crate) item_map: HashMap<ItemKey, arrayvec::ArrayVec<SaleSummary, SALE_HISTORY_SIZE>>,
+    pub(crate) item_map: BTreeMap<ItemKey, arrayvec::ArrayVec<SaleSummary, SALE_HISTORY_SIZE>>,
 }
 
 impl SaleHistory {
@@ -155,7 +197,8 @@ impl SaleHistory {
     }
 }
 
-#[derive(Debug, Copy, Clone, Eq, Serialize)]
+#[derive(Debug, Copy, Clone, Eq, Serialize, Archive, RkyvDeserialize, RkyvSerialize)]
+#[archive(check_bytes)]
 pub(crate) struct CheapestListingValue {
     pub(crate) price: i32,
     pub(crate) world_id: i32,
@@ -212,9 +255,10 @@ impl Ord for CheapestListingValue {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Archive, RkyvDeserialize, RkyvSerialize, Clone)]
+#[archive(check_bytes)]
 pub(crate) struct CheapestListings {
-    pub(crate) item_map: HashMap<ItemKey, CheapestListingValue>,
+    pub(crate) item_map: BTreeMap<ItemKey, CheapestListingValue>,
 }
 
 impl CheapestListings {
@@ -272,15 +316,33 @@ impl CheapestListings {
     }
 }
 
+#[derive(Archive, RkyvDeserialize, RkyvSerialize)]
+#[archive(check_bytes)]
+struct AnalyzerState {
+    recent_sale_history: BTreeMap<i32, SaleHistory>,
+    cheapest_items: BTreeMap<AnySelector, CheapestListings>,
+}
+
 /// Build a short list of all the items in the game that we think would sell well.
 /// Implemented as an easily cloneable Arc monster
 #[derive(Debug, Clone)]
 pub(crate) struct AnalyzerService {
     /// world_id -> TopSellers
-    recent_sale_history: Arc<HashMap<i32, RwLock<SaleHistory>>>,
+    recent_sale_history: Arc<BTreeMap<i32, RwLock<SaleHistory>>>,
     /// Cheapest items get stored as any anyselector. Currently exists for WorldID/RegionID, but not datacenter.
-    cheapest_items: Arc<HashMap<AnySelector, RwLock<CheapestListings>>>,
+    cheapest_items: Arc<BTreeMap<AnySelector, RwLock<CheapestListings>>>,
     initiated: Arc<AtomicBool>,
+}
+
+impl Drop for AnalyzerService {
+    fn drop(&mut self) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            if let Err(e) = self.serialize_state(true).await {
+                error!("Error serializing state on drop {e:?}");
+            }
+        });
+    }
 }
 
 impl AnalyzerService {
@@ -291,7 +353,10 @@ impl AnalyzerService {
         world_cache: Arc<WorldCache>,
         token: CancellationToken,
     ) -> Self {
-        let cheapest_items: HashMap<AnySelector, RwLock<CheapestListings>> = world_cache
+        tokio::fs::create_dir_all("analyzer-data")
+            .await
+            .expect("Unable to create directory for analyzer");
+        let cheapest_items: BTreeMap<AnySelector, RwLock<CheapestListings>> = world_cache
             .get_inner_data()
             .iter()
             .flat_map(|(region, dcs)| {
@@ -309,13 +374,31 @@ impl AnalyzerService {
                 .iter()
                 .flat_map(|(_, dcs)| dcs.iter().flat_map(|(_, w)| w.iter().map(|w| w.id)))
                 .map(|w| (w, RwLock::default()))
-                .collect::<HashMap<i32, RwLock<SaleHistory>>>(),
+                .collect::<BTreeMap<i32, RwLock<SaleHistory>>>(),
         );
         let temp = Self {
             recent_sale_history,
             cheapest_items,
             initiated: Arc::default(),
         };
+
+        let task_self = temp.clone();
+        let serialize_token = token.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(15 * 60));
+            loop {
+                tokio::select! {
+                    _ = serialize_token.cancelled() => {
+                        break;
+                    }
+                    _ = interval.tick() => {
+                        if let Err(e) = task_self.serialize_state(false).await {
+                            error!("Error serializing state {e:?}");
+                        }
+                    }
+                }
+            }
+        });
 
         let task_self = temp.clone();
         tokio::spawn(async move {
@@ -326,6 +409,86 @@ impl AnalyzerService {
         temp
     }
 
+    async fn serialize_state(&self, is_shutdown: bool) -> Result<()> {
+        let state = self.get_analyzer_state().await;
+        let bytes = rkyv::to_bytes::<_, 256>(&state).map_err(|e| anyhow!(e.to_string()))?;
+        let timestamp = Utc::now().timestamp();
+        let filename = format!("analyzer-data/snapshot-{}.bin", timestamp);
+        fs::write(&filename, &bytes).await?;
+        info!("Wrote snapshot to {}", filename);
+        if !is_shutdown {
+            let mut dir = fs::read_dir("analyzer-data").await?;
+            let mut entries = vec![];
+            while let Ok(Some(entry)) = dir.next_entry().await {
+                entries.push(entry);
+            }
+            if entries.len() > 4 {
+                entries.sort_by_key(|x| x.file_name());
+                for entry in entries.iter().take(entries.len() - 4) {
+                    fs::remove_file(entry.path()).await?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn get_analyzer_state(&self) -> AnalyzerState {
+        let mut cheapest_items = BTreeMap::new();
+        for (key, value) in self.cheapest_items.iter() {
+            let value = value.read().await;
+            cheapest_items.insert(*key, value.clone());
+        }
+        let mut recent_sale_history = BTreeMap::new();
+        for (key, value) in self.recent_sale_history.iter() {
+            let value = value.read().await;
+            recent_sale_history.insert(*key, value.clone());
+        }
+        AnalyzerState {
+            cheapest_items,
+            recent_sale_history,
+        }
+    }
+
+    async fn try_restore_from_snapshot(&self) -> bool {
+        let mut dir = match fs::read_dir("analyzer-data").await {
+            Ok(dir) => dir,
+            Err(_) => return false,
+        };
+        let mut entries = vec![];
+        while let Ok(Some(entry)) = dir.next_entry().await {
+            entries.push(entry);
+        }
+        entries.sort_by_key(|x| x.file_name());
+        for entry in entries.iter().rev() {
+            let file = match fs::read(entry.path()).await {
+                Ok(f) => f,
+                Err(e) => {
+                    error!("Error reading file {e:?}");
+                    continue;
+                }
+            };
+            let state: AnalyzerState = match rkyv::from_bytes(&file) {
+                Ok(s) => s,
+                Err(e) => {
+                    error!("Error deserializing state {e}");
+                    continue;
+                }
+            };
+            for (key, value) in state.cheapest_items {
+                let lock = self.cheapest_items.get(&key).unwrap();
+                let mut write = lock.write().await;
+                *write = value;
+            }
+            for (key, value) in state.recent_sale_history {
+                let lock = self.recent_sale_history.get(&key).unwrap();
+                let mut write = lock.write().await;
+                *write = value;
+            }
+            return true;
+        }
+        false
+    }
+
     async fn run_worker(
         &self,
         ultros_db: UltrosDb,
@@ -333,49 +496,51 @@ impl AnalyzerService {
         world_cache: Arc<WorldCache>,
         token: CancellationToken,
     ) {
-        // on startup we should try to read through the database to get the spiciest of item listings
-        info!("worker starting");
-        let (listings, sale_data) = futures::future::join(
-            ultros_db.cheapest_listings(),
-            ultros_db.last_n_sales(SALE_HISTORY_SIZE as i32),
-        )
-        .await;
-        info!("starting item listings");
-        match listings {
-            Ok(mut listings) => {
-                let writer = &self.cheapest_items;
-                while let Some(Ok(value)) = listings.next().await {
-                    let world = world_cache
-                        .lookup_selector(&AnySelector::World(value.world_id))
-                        .unwrap();
-                    let region = world_cache.get_region(&world).unwrap();
-                    let region_listings = writer
-                        .get(&AnySelector::Region(region.id))
-                        .expect("Region not found");
-                    region_listings.write().await.add_listing(&value);
-                    let world_listings = writer
-                        .get(&AnySelector::World(value.world_id))
-                        .expect("Unable to get world");
-                    world_listings.write().await.add_listing(&value);
+        if !self.try_restore_from_snapshot().await {
+            // on startup we should try to read through the database to get the spiciest of item listings
+            info!("worker starting");
+            let (listings, sale_data) = futures::future::join(
+                ultros_db.cheapest_listings(),
+                ultros_db.last_n_sales(SALE_HISTORY_SIZE as i32),
+            )
+            .await;
+            info!("starting item listings");
+            match listings {
+                Ok(mut listings) => {
+                    let writer = &self.cheapest_items;
+                    while let Some(Ok(value)) = listings.next().await {
+                        let world = world_cache
+                            .lookup_selector(&AnySelector::World(value.world_id))
+                            .unwrap();
+                        let region = world_cache.get_region(&world).unwrap();
+                        let region_listings = writer
+                            .get(&AnySelector::Region(region.id))
+                            .expect("Region not found");
+                        region_listings.write().await.add_listing(&value);
+                        let world_listings = writer
+                            .get(&AnySelector::World(value.world_id))
+                            .expect("Unable to get world");
+                        world_listings.write().await.add_listing(&value);
+                    }
+                }
+                Err(e) => {
+                    error!("Streaming item listings failed {e:?}");
                 }
             }
-            Err(e) => {
-                error!("Streaming item listings failed {e:?}");
-            }
-        }
-        info!("starting sale data");
-        match sale_data {
-            Ok(mut history_stream) => {
-                while let Some(Ok(value)) = history_stream.next().await {
-                    let history = self
-                        .recent_sale_history
-                        .get(&value.world_id)
-                        .expect("Unable to get world");
-                    history.write().await.add_sale(&value);
+            info!("starting sale data");
+            match sale_data {
+                Ok(mut history_stream) => {
+                    while let Some(Ok(value)) = history_stream.next().await {
+                        let history = self
+                            .recent_sale_history
+                            .get(&value.world_id)
+                            .expect("Unable to get world");
+                        history.write().await.add_sale(&value);
+                    }
                 }
-            }
-            Err(e) => {
-                error!("Streaming item listings failed {e:?}");
+                Err(e) => {
+                    error!("Streaming item listings failed {e:?}");
+                }
             }
         }
         self.initiated.store(true, Ordering::Relaxed);
@@ -1011,5 +1176,108 @@ mod test {
             SoldWithin::Today(SoldAmount(1)),
             "Should only count sales within the 'Today' window"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+    use tempfile::tempdir;
+    use tokio::time::sleep;
+
+    #[tokio::test]
+    async fn test_serialization_deserialization() {
+        let dir = tempdir().unwrap();
+        let data_dir = dir.path();
+        std::env::set_current_dir(data_dir).unwrap();
+        tokio::fs::create_dir_all("analyzer-data").await.unwrap();
+
+        let mut cheapest_items = BTreeMap::new();
+        let mut recent_sale_history = BTreeMap::new();
+
+        // Add some data to the service
+        let mut sale_history = SaleHistory::default();
+        sale_history.add_sale(&ultros_api_types::SaleHistory {
+            id: 0,
+            hq: true,
+            price_per_item: 100,
+            quantity: 1,
+            buyer_name: Some("Test Buyer".to_string()),
+            buying_character_id: 0,
+            sold_date: Utc::now().naive_utc(),
+            world_id: 1,
+            sold_item_id: 1,
+        });
+        recent_sale_history.insert(1, RwLock::new(sale_history));
+
+        let mut cheapest_listings = CheapestListings::default();
+        cheapest_listings.add_listing(&ultros_db::listings::ListingSummary {
+            item_id: 1,
+            world_id: 1,
+            price_per_unit: 100,
+            hq: true,
+        });
+        cheapest_items.insert(AnySelector::World(1), RwLock::new(cheapest_listings));
+
+        let analyzer_service = AnalyzerService {
+            recent_sale_history: Arc::new(recent_sale_history),
+            cheapest_items: Arc::new(cheapest_items),
+            initiated: Arc::new(AtomicBool::new(false)),
+        };
+
+        // Serialize the state
+        analyzer_service.serialize_state(false).await.unwrap();
+
+        // Create a new service and restore from the snapshot
+        let new_cheapest_items: Arc<BTreeMap<AnySelector, RwLock<CheapestListings>>> =
+            Arc::new(BTreeMap::new());
+        let new_recent_sale_history: Arc<BTreeMap<i32, RwLock<SaleHistory>>> =
+            Arc::new(BTreeMap::new());
+        let new_analyzer_service = AnalyzerService {
+            recent_sale_history: new_recent_sale_history.clone(),
+            cheapest_items: new_cheapest_items.clone(),
+            initiated: Arc::new(AtomicBool::new(false)),
+        };
+        assert!(new_analyzer_service.try_restore_from_snapshot().await);
+
+        // Check that the data was restored correctly
+        let sale_history = new_recent_sale_history.get(&1).unwrap().read().await;
+        assert_eq!(sale_history.item_map.len(), 1);
+        let cheapest_listings = new_cheapest_items
+            .get(&AnySelector::World(1))
+            .unwrap()
+            .read()
+            .await;
+        assert_eq!(cheapest_listings.item_map.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_snapshot_rotation() {
+        let dir = tempdir().unwrap();
+        let data_dir = dir.path();
+        std::env::set_current_dir(data_dir).unwrap();
+        tokio::fs::create_dir_all("analyzer-data").await.unwrap();
+
+        let analyzer_service = AnalyzerService {
+            recent_sale_history: Arc::new(BTreeMap::new()),
+            cheapest_items: Arc::new(BTreeMap::new()),
+            initiated: Arc::new(AtomicBool::new(false)),
+        };
+
+        // Create 5 snapshots
+        for _ in 0..5 {
+            analyzer_service.serialize_state(false).await.unwrap();
+            // Sleep for a second to ensure the timestamps are different
+            sleep(Duration::from_secs(1)).await;
+        }
+
+        // Check that only 4 snapshots remain
+        let mut entries = tokio::fs::read_dir("analyzer-data").await.unwrap();
+        let mut count = 0;
+        while entries.next_entry().await.unwrap().is_some() {
+            count += 1;
+        }
+        assert_eq!(count, 4);
     }
 }

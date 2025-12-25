@@ -8,7 +8,7 @@ license = "MIT or Apache-2.0"
 
 [dependencies]
 universalis = { path = "../universalis", features = ["websocket"] }
-ultros-db = { path = "../ultros-db" }
+ultros-db = { path = "../ultros-db", features = ["rkyv"] }
 anyhow = { workspace = true }
 axum.workspace = true
 axum-extra.workspace = true
@@ -51,7 +51,7 @@ smallvec = { version = "1.10.0", features = [
 ] }
 itertools = "0.14.0"
 sitemap-rs = "0.4.0"
-ultros-api-types = { path = "../ultros-api-types" }
+ultros-api-types = { path = "../ultros-api-types", features = ["rkyv"] }
 ultros-xiv-icons = { path = "../ultros-frontend/ultros-xiv-icons" }
 leptos = { workspace = true, features = ["ssr", "nightly"] }
 leptos_axum.workspace = true
@@ -75,6 +75,10 @@ tikv-jemallocator = { version = "0.6.1", features = [
 ], optional = true }
 jemalloc_pprof = { version = "0.8.1", optional = true }
 tantivy = "0.25.0"
+rkyv = { version = "0.7.42", features = ["validation", "arrayvec", "size_64"], default-features = false }
+
+[dev-dependencies]
+tempfile = "3.6.0"
 
 [features]
 profiling = ["dep:tikv-jemallocator", "dep:jemalloc_pprof"]
