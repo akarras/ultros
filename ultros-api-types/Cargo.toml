@@ -8,10 +8,10 @@ license = "MIT"
 
 [dependencies]
 serde = {version = "1.0.152", features = ["derive", "rc"]}
-chrono = {version = "0.4.23", features = ["serde", "rkyv-64", "rkyv-validation"]}
+chrono = {version = "0.4.23", features = ["serde"]}
 thiserror = "1.0.40"
 rkyv = { version = "0.7.42", features = ["validation", "size_64", "hashbrown"], default-features = false, optional = true }
 
 [features]
 default = []
-rkyv = ["dep:rkyv"]
+rkyv = ["dep:rkyv", "chrono/rkyv-64", "chrono/rkyv-validation"]
