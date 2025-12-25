@@ -114,22 +114,24 @@ where
         }
         // binary search for smallest i where i*row_height + prefix_sums[i] >= effective_scroll
         let effective_scroll = (scroll_offset() as f64 - header_h).max(0.0);
-        let mut lo: i32 = 0;
-        let mut hi: i32 = len as i32;
-        while lo < hi {
-            let mid = (lo + hi) / 2;
-            let base = mid as f64 * row_height;
-            let delta = fenwick.with(|f| f.sum(mid as usize));
-            if base + delta < effective_scroll {
-                lo = mid + 1;
-            } else {
-                hi = mid;
+
+        let lo_u32 = fenwick.with(|f| {
+            let mut lo: i32 = 0;
+            let mut hi: i32 = len as i32;
+            while lo < hi {
+                let mid = (lo + hi) / 2;
+                let base = mid as f64 * row_height;
+                let delta = f.sum(mid as usize);
+                if base + delta < effective_scroll {
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
             }
-        }
-        {
-            let lo_u32 = lo.max(0) as u32;
-            lo_u32.saturating_sub(render_ahead / 2)
-        }
+            lo.max(0) as u32
+        });
+
+        lo_u32.saturating_sub(render_ahead / 2)
     });
     let effective_viewport = (viewport_height - header_h).max(0.0);
     let avg_row_height = Memo::new(move |_| {
