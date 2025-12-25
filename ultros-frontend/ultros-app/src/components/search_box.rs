@@ -36,6 +36,10 @@ pub fn SearchBox() -> impl IntoView {
         })
     });
 
+    // Helper to generate a safe DOM ID from a URL
+    let get_id_from_url =
+        |url: &str| format!("search-result-{}", url.replace(['/', ':', '.'], "-"));
+
     // When results change, reset the focused index to the first item (if any)
     Effect::new(move |_| {
         let len = search_results.with(|v: &Vec<Arc<SearchResult>>| v.len());
@@ -185,6 +189,12 @@ pub fn SearchBox() -> impl IntoView {
                     aria-expanded=move || active().to_string()
                     role="combobox"
                     aria-autocomplete="list"
+                    aria-activedescendant=move || {
+                        focused_url
+                            .get()
+                            .map(|url| get_id_from_url(&url))
+                            .unwrap_or_default()
+                    }
                 />
                 <div class="absolute left-3 top-1/2 -translate-y-1/2 text-[color:var(--color-text-muted)]">
                     <Show when=loading fallback=|| view! { <Icon icon=i::AiSearchOutlined /> }>
@@ -229,9 +239,11 @@ pub fn SearchBox() -> impl IntoView {
                             let url_for_class = url.clone();
                             let url_for_aria = url.clone();
                             let url_for_click = url.clone();
+                            let url_for_id = url.clone();
 
                             view! {
                                 <div
+                                    id=get_id_from_url(&url_for_id)
                                     role="option"
                                     aria-selected=move || {
                                         match focused_url.get() {
