@@ -404,39 +404,56 @@ fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                 exchanges
                     .iter()
                     .map(|shop| {
-                        // Zip item_cost_0 and count_cost_0
-                        let costs_0 = shop.item_cost_0.iter().zip(shop.count_cost_0.iter());
+                        let trades = shop.item_receive_0.iter().enumerate().filter_map(|(i, item)| {
+                            let matches_0 = item.0 == item_id();
+                            // Check receive_1 if it exists at this index
+                            let matches_1 = shop
+                                .item_receive_1
+                                .get(i)
+                                .map(|x| x.0 == item_id())
+                                .unwrap_or(false);
 
-                        // Zip item_cost_1 and count_cost_1 (if they exist/have data)
-                        let costs_1 = shop.item_cost_1.iter().zip(shop.count_cost_1.iter());
+                            if matches_0 || matches_1 {
+                                Some(i)
+                            } else {
+                                None
+                            }
+                        });
+                        trades
+                            .map(|i| {
+                                let costs_0 = (shop.item_cost_0.get(i), shop.count_cost_0.get(i));
+                                let costs_1 = (shop.item_cost_1.get(i), shop.count_cost_1.get(i));
+                                let costs_2 = (shop.item_cost_2.get(i), shop.count_cost_2.get(i));
+                                let all_costs = [costs_0, costs_1, costs_2];
 
-                        // Zip item_cost_2 and count_cost_2
-                        let costs_2 = shop.item_cost_2.iter().zip(shop.count_cost_2.iter());
-
-                        let all_costs = costs_0.chain(costs_1).chain(costs_2);
-
-                        view! {
-                            <div class="group flex items-center justify-between gap-2 rounded-lg card p-1.5 transition-colors">
-                                <div class="flex items-center gap-2 flex-wrap">
-                                    <span class="text-sm font-medium">{shop.name.as_str()}</span>
-                                    <div class="flex items-center gap-1.5 text-xs text-[color:var(--color-text-muted)]">
-                                        "Costs:"
-                                        {all_costs.map(|(item_id, count)| {
-                                            if let Some(item) = data.items.get(item_id) {
-                                                view! {
-                                                    <div class="flex items-center gap-1 bg-[color:var(--color-base)]/50 px-1.5 py-0.5 rounded border border-[color:var(--color-outline)]">
-                                                        <span>{*count} "x"</span>
-                                                        <SmallItemDisplay item />
-                                                    </div>
-                                                }.into_any()
-                                            } else {
-                                                ().into_any()
-                                            }
-                                        }).collect_view()}
+                                view! {
+                                    <div class="group flex items-center justify-between gap-2 rounded-lg card p-1.5 transition-colors">
+                                        <div class="flex items-center gap-2 flex-wrap">
+                                            <span class="text-sm font-medium">{shop.name.as_str()}</span>
+                                            <div class="flex items-center gap-1.5 text-xs text-[color:var(--color-text-muted)]">
+                                                "Costs:"
+                                                {all_costs.into_iter().map(|(item_id, count)| {
+                                                    #[allow(clippy::collapsible_if)]
+                                                    if let (Some(item_id), Some(count)) = (item_id, count) {
+                                                        if let Some(item) = data.items.get(item_id) {
+                                                            if item.key_id.0 != 0 && *count > 0 {
+                                                                return view! {
+                                                                    <div class="flex items-center gap-1 bg-[color:var(--color-base)]/50 px-1.5 py-0.5 rounded border border-[color:var(--color-outline)]">
+                                                                        <span>{*count} "x"</span>
+                                                                        <SmallItemDisplay item />
+                                                                    </div>
+                                                                }.into_any()
+                                                            }
+                                                        }
+                                                    }
+                                                    ().into_any()
+                                                }).collect_view()}
+                                            </div>
+                                        </div>
                                     </div>
-                                </div>
-                            </div>
-                        }
+                                }
+                            })
+                            .collect_view()
                     })
                     .collect_view()
             })
