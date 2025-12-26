@@ -3,7 +3,9 @@ use futures::{SinkExt, StreamExt};
 #[cfg(feature = "hydrate")]
 use gloo_net::websocket::{Message, futures::WebSocket};
 use leptos::prelude::*;
-use ultros_api_types::alerts::{AlertsRx, AlertsTx};
+use ultros_api_types::alerts::AlertsRx;
+#[cfg(feature = "hydrate")]
+use ultros_api_types::alerts::AlertsTx;
 use ultros_api_types::world_helper::AnySelector;
 #[cfg(feature = "hydrate")]
 use web_sys::{Notification, NotificationPermission};
