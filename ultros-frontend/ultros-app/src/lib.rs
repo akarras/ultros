@@ -31,6 +31,7 @@ use crate::{
         recipe_analyzer::*,
         retainers::*,
         settings::*,
+        venture_analyzer::*,
     },
 };
 use git_const::git_short_hash;
@@ -264,6 +265,7 @@ pub fn App() -> impl IntoView {
                             <Route path=path!("flip-finder/:world") view=AnalyzerWorldView />
                             <Route path=path!("recipe-analyzer") view=RecipeAnalyzer />
                             <Route path=path!("leve-analyzer") view=LeveAnalyzer />
+                            <Route path=path!("venture-analyzer") view=VentureAnalyzer />
                             <Route path=path!("analyzer/:world") view=move || {
                                 let nav = leptos_router::hooks::use_navigate();
                                 let params = leptos_router::hooks::use_params_map();

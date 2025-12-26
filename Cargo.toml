@@ -69,6 +69,11 @@ xiv-gen = { path = "./xiv-gen", features = [
     "craft_leve",
     "leve_reward_item",
     "leve_reward_item_group",
+    "retainer_task",
+    "retainer_task_normal",
+    "retainer_task_random",
+    "retainer_task_lv_range",
+    "retainer_task_parameter",
 ] }
 icondata = "0.6"
 icondata_core = "0.1"
