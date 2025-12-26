@@ -10,7 +10,8 @@ use xiv_gen::{
 
 use crate::{
     components::{
-        add_recipe_to_list::AddRecipeToList, item_icon::ItemIcon, skeleton::SingleLineSkeleton,
+        add_recipe_to_list::AddRecipeToList, icon::Icon, item_icon::ItemIcon,
+        skeleton::SingleLineSkeleton,
     },
     global_state::{cheapest_prices::CheapestPrices, home_world::get_price_zone},
 };
@@ -357,22 +358,25 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                 Some(view! {
                     <a
                         href=format!("https://garlandtools.org/db/#npc/{}", resident.key_id.0)
-                        class="group flex items-center justify-between gap-2 rounded-lg card p-1.5 transition-colors"
+                        class="group flex flex-col gap-2 rounded-lg card p-3 transition-colors h-full hover:bg-[color:var(--color-base)]/50"
                     >
-                        <div class="flex items-center justify-between gap-2">
-                            <div class="text-md">{resident.singular.as_str()}</div>
+                        <div class="flex items-center justify-between gap-2 border-b border-[color:var(--color-outline)] pb-2">
+                            <div class="font-medium text-[color:var(--color-text)]">{resident.singular.as_str()}</div>
                             <Gil amount=price />
                         </div>
-                        <div class="text-xs italic text-[color:var(--color-text-muted)] truncate">"(" {shop.name.as_str()} ")"</div>
+                        <div class="text-sm text-[color:var(--color-text-muted)] flex items-center gap-1">
+                            <Icon icon=icondata::FaStoreSolid attr:class="text-xs opacity-70" />
+                            <span class="truncate">{shop.name.as_str()}</span>
+                        </div>
                     </a>
                 })
             }).collect_view())
     };
     let empty = move || npcs.with(|n| n.is_empty());
     view! {
-        <div class:collapse=empty class="space-y-1.5 p-1 max-h-80 overflow-y-auto w-full sm:w-96 xl:w-[600px]">
-            <span class="text-sm font-semibold text-[color:var(--brand-fg)]">"Vendor sources"</span>
-            <div class="grid grid-cols-1 gap-1.5">{data}</div>
+        <div class:collapse=empty class="flex flex-col gap-2 w-full mt-4">
+            <span class="content-title">"Vendor sources"</span>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">{data}</div>
         </div>
     }
     .into_any()
@@ -448,7 +452,7 @@ fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
             .with(|exchanges| {
                 exchanges
                     .iter()
-                    .flat_map(|shop| {
+                   .flat_map(|shop| {
                         let trades = get_trade_costs(shop, item_id());
                         trades.into_iter().map(move |costs| {
                             view! {
@@ -484,9 +488,11 @@ fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     let empty = move || exchanges.with(|e| e.is_empty());
 
     view! {
-        <div class:collapse=empty class="space-y-1.5 p-1 max-h-80 overflow-y-auto w-full sm:w-96 xl:w-[600px]">
-            <span class="text-sm font-semibold text-[color:var(--brand-fg)]">"Exchange sources"</span>
-            <div class="grid grid-cols-1 gap-1.5">{view}</div>
+        <div class:collapse=empty class="flex flex-col gap-2 w-full mt-4">
+            <span class="content-title">"Exchange sources"</span>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                {view}
+            </div>
         </div>
     }
     .into_any()
@@ -623,11 +629,15 @@ fn LeveSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                 .map(|leve| {
                     let job_name = data.class_job_categorys.get(&leve.class_job_category).map(|c| c.name.as_str()).unwrap_or("Unknown");
                     view! {
-                        <div class="group flex items-center justify-between gap-2 rounded-lg card p-1.5 transition-colors">
+                        <div class="group flex flex-col gap-2 rounded-lg card p-3 transition-colors h-full">
+                             <div class="text-sm font-medium border-b border-[color:var(--color-outline)] pb-2 text-[color:var(--color-text)]">{leve.name.as_str()}</div>
                              <div class="flex items-center gap-2">
-                                <span class="text-sm font-medium">{leve.name.as_str()}</span>
-                                <span class="text-xs text-[color:var(--color-text-muted)] bg-[color:var(--color-base)]/50 px-1.5 py-0.5 rounded border border-[color:var(--color-outline)]">
-                                    "Lvl " {leve.class_job_level} " " {job_name}
+                                <span class="px-2 py-1 rounded bg-[color:var(--brand-900)]/30 border border-[color:var(--brand-700)]/30 text-xs text-[color:var(--brand-200)] font-medium">
+                                    "Lvl " {leve.class_job_level}
+                                </span>
+                                <span class="text-xs text-[color:var(--color-text-muted)] truncate flex items-center gap-1">
+                                    <Icon icon=icondata::FaHammerSolid attr:class="text-[10px] opacity-70" />
+                                    {job_name}
                                 </span>
                              </div>
                         </div>
@@ -640,9 +650,9 @@ fn LeveSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     let empty = move || leves.with(|l| l.is_empty());
 
     view! {
-        <div class:collapse=empty class="space-y-1.5 p-1 max-h-80 overflow-y-auto w-full sm:w-96 xl:w-[600px]">
-            <span class="text-sm font-semibold text-[color:var(--brand-fg)]">"Levequest rewards"</span>
-            <div class="grid grid-cols-1 gap-1.5">{view}</div>
+        <div class:collapse=empty class="flex flex-col gap-2 w-full mt-4">
+            <span class="content-title">"Levequest rewards"</span>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">{view}</div>
         </div>
     }
     .into_any()
