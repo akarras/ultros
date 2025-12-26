@@ -9,6 +9,7 @@ use crate::api::get_cheapest_listings;
 use crate::api::get_recent_sales_for_world;
 use crate::components::add_to_list::AddToList;
 use crate::components::clipboard::Clipboard;
+use crate::components::filter_card::FilterCard;
 use crate::components::icon::Icon;
 use crate::components::item_icon::ItemIcon;
 use crate::components::loading::Loading;
@@ -409,88 +410,118 @@ pub fn ExchangeItem() -> impl IntoView {
                         }
                     />
                 </div>
-                <div class="flex items-center flex-wrap gap-3 text-sm">
-                    <span class="text-[color:var(--color-text-muted)] mr-1">"Quick filters:"</span>
-
-                    <div class="inline-flex items-center gap-2">
-                        <span class="text-[color:var(--color-text)]">"Price/item"</span>
+                <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+                    <FilterCard
+                        title="Price Per Item"
+                        description="Filter items based on price per unit"
+                    >
                         {move || {
                             let (min, set_min) = query_signal::<i32>("price_per_item_min");
                             let (max, set_max) = query_signal::<i32>("price_per_item_max");
                             view! {
-                                <ParseableInputBox
-                                    input=Signal::derive(min)
-                                    set_value=SignalSetter::map(set_min)
-                                />
-                                <span class="text-[color:var(--color-text-muted)]">"–"</span>
-                                <ParseableInputBox
-                                    input=Signal::derive(max)
-                                    set_value=SignalSetter::map(set_max)
-                                />
-                                <FilterModal filter_name="price_per_item" />
+                                <div class="flex flex-col gap-2">
+                                    <div class="flex items-center justify-between">
+                                        <span class="text-[color:var(--color-text)]">"Min"</span>
+                                        <ParseableInputBox
+                                            input=Signal::derive(min)
+                                            set_value=SignalSetter::map(set_min)
+                                        />
+                                    </div>
+                                    <div class="flex items-center justify-between">
+                                        <span class="text-[color:var(--color-text)]">"Max"</span>
+                                        <ParseableInputBox
+                                            input=Signal::derive(max)
+                                            set_value=SignalSetter::map(set_max)
+                                        />
+                                    </div>
+                                </div>
                             }
                         }}
-                    </div>
+                    </FilterCard>
 
-                    <div class="inline-flex items-center gap-2">
-                        <span class="text-[color:var(--color-text)]">"Qty recv"</span>
+                    <FilterCard
+                        title="Quantity Received"
+                        description="Filter by amount of items received"
+                    >
                         {move || {
                             let (min, set_min) = query_signal::<i32>("number_received_min");
                             let (max, set_max) = query_signal::<i32>("number_received_max");
                             view! {
-                                <ParseableInputBox
-                                    input=Signal::derive(min)
-                                    set_value=SignalSetter::map(set_min)
-                                />
-                                <span class="text-[color:var(--color-text-muted)]">"–"</span>
-                                <ParseableInputBox
-                                    input=Signal::derive(max)
-                                    set_value=SignalSetter::map(set_max)
-                                />
-                                <FilterModal filter_name="number_received" />
+                                <div class="flex flex-col gap-2">
+                                    <div class="flex items-center justify-between">
+                                        <span class="text-[color:var(--color-text)]">"Min"</span>
+                                        <ParseableInputBox
+                                            input=Signal::derive(min)
+                                            set_value=SignalSetter::map(set_min)
+                                        />
+                                    </div>
+                                    <div class="flex items-center justify-between">
+                                        <span class="text-[color:var(--color-text)]">"Max"</span>
+                                        <ParseableInputBox
+                                            input=Signal::derive(max)
+                                            set_value=SignalSetter::map(set_max)
+                                        />
+                                    </div>
+                                </div>
                             }
                         }}
-                    </div>
+                    </FilterCard>
 
-                    <div class="inline-flex items-center gap-2">
-                        <span class="text-[color:var(--color-text)]">"Profit"</span>
+                    <FilterCard
+                        title="Profit"
+                        description="Filter based on total profit"
+                    >
                         {move || {
                             let (min, set_min) = query_signal::<i32>("total_profit_min");
                             let (max, set_max) = query_signal::<i32>("total_profit_max");
                             view! {
-                                <ParseableInputBox
-                                    input=Signal::derive(min)
-                                    set_value=SignalSetter::map(set_min)
-                                />
-                                <span class="text-[color:var(--color-text-muted)]">"–"</span>
-                                <ParseableInputBox
-                                    input=Signal::derive(max)
-                                    set_value=SignalSetter::map(set_max)
-                                />
-                                <FilterModal filter_name="total_profit" />
+                                <div class="flex flex-col gap-2">
+                                    <div class="flex items-center justify-between">
+                                        <span class="text-[color:var(--color-text)]">"Min"</span>
+                                        <ParseableInputBox
+                                            input=Signal::derive(min)
+                                            set_value=SignalSetter::map(set_min)
+                                        />
+                                    </div>
+                                    <div class="flex items-center justify-between">
+                                        <span class="text-[color:var(--color-text)]">"Max"</span>
+                                        <ParseableInputBox
+                                            input=Signal::derive(max)
+                                            set_value=SignalSetter::map(set_max)
+                                        />
+                                    </div>
+                                </div>
                             }
                         }}
-                    </div>
+                    </FilterCard>
 
-                    <div class="inline-flex items-center gap-2">
-                        <span class="text-[color:var(--color-text)]">"Hours/sale"</span>
+                    <FilterCard
+                        title="Sales Velocity"
+                        description="Filter by hours between sales"
+                    >
                         {move || {
                             let (min, set_min) = query_signal::<i32>("hours_between_sales_min");
                             let (max, set_max) = query_signal::<i32>("hours_between_sales_max");
                             view! {
-                                <ParseableInputBox
-                                    input=Signal::derive(min)
-                                    set_value=SignalSetter::map(set_min)
-                                />
-                                <span class="text-[color:var(--color-text-muted)]">"–"</span>
-                                <ParseableInputBox
-                                    input=Signal::derive(max)
-                                    set_value=SignalSetter::map(set_max)
-                                />
-                                <FilterModal filter_name="hours_between_sales" />
+                                <div class="flex flex-col gap-2">
+                                    <div class="flex items-center justify-between">
+                                        <span class="text-[color:var(--color-text)]">"Min"</span>
+                                        <ParseableInputBox
+                                            input=Signal::derive(min)
+                                            set_value=SignalSetter::map(set_min)
+                                        />
+                                    </div>
+                                    <div class="flex items-center justify-between">
+                                        <span class="text-[color:var(--color-text)]">"Max"</span>
+                                        <ParseableInputBox
+                                            input=Signal::derive(max)
+                                            set_value=SignalSetter::map(set_max)
+                                        />
+                                    </div>
+                                </div>
                             }
                         }}
-                    </div>
+                    </FilterCard>
                 </div>
 
                 <div class="flex flex-wrap gap-2 mt-2">

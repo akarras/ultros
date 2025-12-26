@@ -74,6 +74,9 @@ xiv-gen = { path = "./xiv-gen", features = [
     "retainer_task_random",
     "retainer_task_lv_range",
     "retainer_task_parameter",
+    "collectables_shop",
+    "collectables_shop_item",
+    "collectables_shop_reward_scrip",
 ] }
 icondata = "0.6"
 icondata_core = "0.1"
