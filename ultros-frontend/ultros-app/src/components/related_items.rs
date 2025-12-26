@@ -111,16 +111,11 @@ pub(crate) fn recipe_tree_iter(item_id: ItemId) -> impl Iterator<Item = &'static
         .sorted_by_key(|r| r.key_id.0)
 }
 
-pub(crate) fn calculate_crafting_cost(
-    recipe: &Recipe,
-    prices: &CheapestListingsMap,
-) -> (i32, i32) {
+pub(crate) fn calculate_crafting_cost(recipe: &Recipe, prices: &CheapestListingsMap) -> (i32, i32) {
     let items = &xiv_gen_db::data().items;
     let sum_for = |prefer_hq: bool| -> i32 {
         IngredientsIter::new(recipe)
-            .flat_map(|(ingredient, amount)| {
-                items.get(&ingredient).map(|item| (item, amount))
-            })
+            .flat_map(|(ingredient, amount)| items.get(&ingredient).map(|item| (item, amount)))
             .flat_map(|(item, quantity)| {
                 let pref_key = CheapestListingMapKey {
                     item_id: item.key_id.0,
@@ -304,7 +299,6 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
         </div>
     }.into_any())
 }
-
 
 fn npc_rows(npc: &ENpcBase) -> impl Iterator<Item = u32> + '_ {
     // TODO- can I just parse the csv into a vec?

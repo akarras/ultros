@@ -9,9 +9,9 @@ use crate::components::{
     stats_display::*, toggle::Toggle, ui_text::*,
 };
 use crate::error::AppError;
+use crate::global_state::LocalWorldData;
 use crate::global_state::cheapest_prices::CheapestPrices;
 use crate::global_state::home_world::{get_price_zone, use_home_world};
-use crate::global_state::LocalWorldData;
 use chrono::{TimeDelta, Utc};
 use leptos::prelude::*;
 use leptos_meta::{Link, Meta};
