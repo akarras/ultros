@@ -64,7 +64,7 @@ impl ScripType {
     }
 
     fn color_class(&self) -> &'static str {
-         match self {
+        match self {
             ScripType::WhiteCrafters | ScripType::WhiteGatherers => "text-gray-200",
             ScripType::PurpleCrafters | ScripType::PurpleGatherers => "text-purple-400",
             ScripType::Other(_) => "text-gray-400",
@@ -136,7 +136,9 @@ fn ScripSourceTable(
         for item_vec in data.collectables_shop_items.values() {
             for item_entry in item_vec {
                 let reward_scrip_id = item_entry.collectables_shop_reward_scrip;
-                if reward_scrip_id.0 == 0 { continue; }
+                if reward_scrip_id.0 == 0 {
+                    continue;
+                }
 
                 let reward = match data.collectables_shop_reward_scrips.get(&reward_scrip_id) {
                     Some(r) => r,
@@ -149,18 +151,30 @@ fn ScripSourceTable(
 
                 // Filter Scrip Type
                 if let Some(ref s_filter) = scrip_filter_val {
-                     if s_filter == "WhiteCrafters" && scrip_type != ScripType::WhiteCrafters { continue; }
-                     if s_filter == "PurpleCrafters" && scrip_type != ScripType::PurpleCrafters { continue; }
-                     if s_filter == "WhiteGatherers" && scrip_type != ScripType::WhiteGatherers { continue; }
-                     if s_filter == "PurpleGatherers" && scrip_type != ScripType::PurpleGatherers { continue; }
+                    if s_filter == "WhiteCrafters" && scrip_type != ScripType::WhiteCrafters {
+                        continue;
+                    }
+                    if s_filter == "PurpleCrafters" && scrip_type != ScripType::PurpleCrafters {
+                        continue;
+                    }
+                    if s_filter == "WhiteGatherers" && scrip_type != ScripType::WhiteGatherers {
+                        continue;
+                    }
+                    if s_filter == "PurpleGatherers" && scrip_type != ScripType::PurpleGatherers {
+                        continue;
+                    }
                 } else {
                     // Default to showing Crafters scrips if no filter
-                     if matches!(scrip_type, ScripType::Other(_)) { continue; }
+                    if matches!(scrip_type, ScripType::Other(_)) {
+                        continue;
+                    }
                 }
 
                 // Reward amount (High Reward for max collectability)
                 let scrip_amount = reward.high_reward as u32;
-                if scrip_amount == 0 { continue; }
+                if scrip_amount == 0 {
+                    continue;
+                }
 
                 let item_id = item_entry.item;
                 let item_def = match items.get(&item_id) {
@@ -173,8 +187,8 @@ fn ScripSourceTable(
 
                 // Filter Job
                 if let Some(ref j_filter) = job_filter_val {
-                     if let Some(r) = recipe {
-                         let job_abbrev = match r.craft_type.0 {
+                    if let Some(r) = recipe {
+                        let job_abbrev = match r.craft_type.0 {
                             0 => "Carpenter",
                             1 => "Blacksmith",
                             2 => "Armorer",
@@ -183,14 +197,16 @@ fn ScripSourceTable(
                             5 => "Weaver",
                             6 => "Alchemist",
                             7 => "Culinarian",
-                             _ => "",
-                         };
-                         if job_abbrev != j_filter { continue; }
-                     } else if !j_filter.is_empty() {
-                         // If no recipe (gathering?), skip if job filter is active for crafting jobs
-                         // Unless we add gathering job filters later
-                         continue;
-                     }
+                            _ => "",
+                        };
+                        if job_abbrev != j_filter {
+                            continue;
+                        }
+                    } else if !j_filter.is_empty() {
+                        // If no recipe (gathering?), skip if job filter is active for crafting jobs
+                        // Unless we add gathering job filters later
+                        continue;
+                    }
                 }
 
                 // Cost Calculation
@@ -210,18 +226,21 @@ fn ScripSourceTable(
                     ];
 
                     for (ing_id, amount) in ingredients {
-                        if ing_id.0 == 0 || amount == 0 { continue; }
+                        if ing_id.0 == 0 || amount == 0 {
+                            continue;
+                        }
                         let price_summary = prices.find_matching_listings(ing_id.0);
                         let price = price_summary.lowest_gil().unwrap_or(0); // If no price, assume 0? Or skip?
                         cost += price * amount as i32;
                     }
-
                 } else {
                     // Skip non-craftables for now
                     continue;
                 }
 
-                if cost == 0 { continue; } // Avoid division by zero or free items
+                if cost == 0 {
+                    continue;
+                } // Avoid division by zero or free items
 
                 let cost_per_scrip = cost as f32 / scrip_amount as f32;
 
@@ -230,7 +249,7 @@ fn ScripSourceTable(
                     item_name: item_def.name.to_string(),
                     level: item_def.level_item.0,
                     job_category_name: if let Some(r) = recipe {
-                         match r.craft_type.0 {
+                        match r.craft_type.0 {
                             0 => "Carpenter".to_string(),
                             1 => "Blacksmith".to_string(),
                             2 => "Armorer".to_string(),
@@ -239,9 +258,11 @@ fn ScripSourceTable(
                             5 => "Weaver".to_string(),
                             6 => "Alchemist".to_string(),
                             7 => "Culinarian".to_string(),
-                             _ => "Unknown".to_string(),
-                         }
-                    } else { "Gathering".to_string() },
+                            _ => "Unknown".to_string(),
+                        }
+                    } else {
+                        "Gathering".to_string()
+                    },
                     scrip_type,
                     scrip_amount,
                     cost,
@@ -254,7 +275,9 @@ fn ScripSourceTable(
 
         // Sort
         match sort_mode().unwrap_or(SortMode::CostPerScrip) {
-            SortMode::CostPerScrip => results.sort_by(|a, b| a.cost_per_scrip.partial_cmp(&b.cost_per_scrip).unwrap()),
+            SortMode::CostPerScrip => {
+                results.sort_by(|a, b| a.cost_per_scrip.partial_cmp(&b.cost_per_scrip).unwrap())
+            }
             SortMode::ScripAmount => results.sort_by_key(|d| Reverse(d.scrip_amount)),
             SortMode::Cost => results.sort_by_key(|d| d.cost),
         }
