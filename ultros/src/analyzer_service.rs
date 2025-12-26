@@ -36,8 +36,8 @@ pub const SALE_HISTORY_SIZE: usize = 6;
 pub enum AnalyzerError {
     #[error("Still warming up with data, unable to serve requests.")]
     Uninitialized,
-    #[error("This endpoint currently does not support datacenters")]
-    DatacenterNotAvailable,
+    #[error("Data not found")]
+    NotFound,
 }
 
 #[derive(
@@ -852,7 +852,7 @@ impl AnalyzerService {
             let read = self
                 .cheapest_items
                 .get(selector)
-                .ok_or(AnalyzerError::DatacenterNotAvailable)?
+                .ok_or(AnalyzerError::NotFound)?
                 .read()
                 .await;
             Ok(extract(&read))
@@ -874,9 +874,9 @@ impl AnalyzerService {
                 .recent_sale_history
                 .get(&match selector {
                     AnySelector::World(world) => *world,
-                    _ => return Err(AnalyzerError::DatacenterNotAvailable),
+                    _ => return Err(AnalyzerError::NotFound),
                 })
-                .ok_or(AnalyzerError::DatacenterNotAvailable)?
+                .ok_or(AnalyzerError::NotFound)?
                 .read()
                 .await;
             Ok(extract(&read))
