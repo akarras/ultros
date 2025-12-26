@@ -734,7 +734,7 @@ pub fn ItemExplorer() -> impl IntoView {
             <div class="flex flex-row grow relative">
                 // Sidebar (Desktop Sticky / Mobile Drawer)
                 <aside
-                    class="fixed inset-y-0 left-0 z-40 bg-[color:var(--bg-panel)] border-r border-white/5
+                    class="fixed inset-y-0 left-0 z-[80] bg-[color:var(--bg-panel)] border-r border-white/5
                            lg:static lg:block lg:z-auto w-[280px] shrink-0
                            transition-transform duration-300 ease-in-out"
                     class=("translate-x-0", move || menu_open())
@@ -766,7 +766,7 @@ pub fn ItemExplorer() -> impl IntoView {
                     if menu_open() {
                         view! {
                             <div
-                                class="fixed inset-0 bg-black/50 backdrop-blur-sm z-30 lg:hidden"
+                                class="fixed inset-0 bg-black/50 backdrop-blur-sm z-[70] lg:hidden"
                                 on:click=move |_| set_open.set(Some(false))
                             />
                         }.into_any()
