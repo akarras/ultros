@@ -304,9 +304,9 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
     }.into_any())
 }
 
-fn npc_rows(npc: &ENpcBase) -> impl Iterator<Item = u32> + '_ {
+fn npc_rows(npc: &ENpcBase) -> impl Iterator<Item = u16> + '_ {
     // TODO- can I just parse the csv into a vec?
-    npc.e_npc_data.iter().map(|i| i.0 as u32)
+    npc.e_npc_data.iter().map(|i| i.0)
 }
 
 fn gil_shop_to_npc(gil_shops: &[GilShopId]) -> Vec<(GilShopId, &'static ENpcBase)> {
@@ -317,7 +317,7 @@ fn gil_shop_to_npc(gil_shops: &[GilShopId]) -> Vec<(GilShopId, &'static ENpcBase
         .flat_map(|npc: &'static ENpcBase| {
             npc_rows(npc)
                 .filter(move |row| gil_shops.contains(&GilShopId(*row as i32)))
-                .map(move |gil_shop| (GilShopId(gil_shop as i32), npc))
+                .map(move |gil_shop| (GilShopId(gil_shop.into()), npc))
         })
         .collect()
 }
