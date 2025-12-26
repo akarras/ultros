@@ -260,8 +260,7 @@ pub fn SearchBox() -> impl IntoView {
                     let _ = input.blur();
                 }
             } else {
-                let first_url =
-                    search_results.with_untracked(|r| r.first().map(|f| f.url.clone()));
+                let first_url = search_results.with_untracked(|r| r.first().map(|f| f.url.clone()));
                 if let Some(url) = first_url {
                     navigate_keydown(&url, NavigateOptions::default());
                     set_search("".to_string());
