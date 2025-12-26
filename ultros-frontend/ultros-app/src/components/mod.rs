@@ -6,6 +6,7 @@ pub mod cheapest_price;
 pub mod clipboard;
 pub mod crafter_settings;
 pub mod datacenter_name;
+pub mod filter_card;
 pub mod fonts;
 pub mod gil;
 pub mod icon;
