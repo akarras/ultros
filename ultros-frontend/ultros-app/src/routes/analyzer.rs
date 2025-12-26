@@ -1,8 +1,8 @@
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
-        add_to_list::AddToList, clipboard::*, gil::*, icon::Icon, item_icon::*, meta::*,
-        query_button::QueryButton, skeleton::BoxSkeleton, toggle::Toggle, tooltip::*,
+        add_to_list::AddToList, clipboard::*, filter_card::*, gil::*, icon::Icon, item_icon::*,
+        meta::*, query_button::QueryButton, skeleton::BoxSkeleton, toggle::Toggle, tooltip::*,
         virtual_scroller::*, world_picker::*,
     },
     error::AppError,
@@ -214,24 +214,6 @@ impl ProfitTable {
             .collect();
 
         ProfitTable(table)
-    }
-}
-
-#[component]
-fn FilterCard<T>(
-    #[prop(into)] title: Oco<'static, str>,
-    #[prop(into)] description: Oco<'static, str>,
-    children: TypedChildren<T>,
-) -> impl IntoView
-where
-    T: IntoView,
-{
-    view! {
-        <div class="panel p-4 sm:p-6 flex flex-col w-full bg-[color:var(--color-background-elevated)] bg-opacity-100">
-            <h3 class="font-bold text-xl mb-2 text-[color:var(--brand-fg)]">{title}</h3>
-            <p class="mb-4 text-[color:var(--color-text-muted)]">{description}</p>
-            {children.into_inner()().into_view()}
-        </div>
     }
 }
 

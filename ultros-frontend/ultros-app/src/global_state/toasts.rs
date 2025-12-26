@@ -53,6 +53,11 @@ impl Toasts {
                 },
                 std::time::Duration::from_millis(duration),
             );
+            #[cfg(not(feature = "hydrate"))]
+            {
+                let _ = toasts;
+                let _ = duration;
+            }
         }
     }
 
