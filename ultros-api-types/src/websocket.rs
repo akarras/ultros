@@ -152,3 +152,30 @@ pub enum ClientMessage {
         msg_type: SocketMessageType,
     },
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum AlertsRx {
+    Undercuts { margin: i32 },
+    WatchCharacter { name: String },
+    Ping(Vec<u8>),
+}
+
+#[derive(Debug, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord)]
+pub struct UndercutRetainer {
+    pub id: i32,
+    pub name: String,
+    pub undercut_amount: i32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum AlertsTx {
+    RetainerUndercut {
+        item_id: i32,
+        item_name: String,
+        /// List of all the retainers that were just undercut
+        undercut_retainers: Vec<UndercutRetainer>,
+    },
+    ItemPurchased {
+        item_id: i32,
+    },
+}

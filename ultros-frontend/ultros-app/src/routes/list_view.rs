@@ -87,7 +87,157 @@ pub fn ListView() -> impl IntoView {
     let edit_list_mode = RwSignal::new(false);
     let selected_items = RwSignal::new(HashSet::new());
 
+    let (watch_character_name, set_watch_character_name) = signal("".to_string());
+    let (is_watching, set_is_watching) = signal(false);
+
+    Effect::new(move |_| {
+        use leptos::leptos_dom::helpers::location;
+        use leptos::wasm_bindgen::JsCast;
+        use ultros_api_types::websocket::{AlertsRx, AlertsTx};
+        use web_sys::{MessageEvent, WebSocket};
+
+        if is_watching.get() {
+            let name = watch_character_name.get_untracked();
+            if name.is_empty() {
+                return;
+            }
+
+            let protocol = if location().protocol().unwrap() == "https:" {
+                "wss"
+            } else {
+                "ws"
+            };
+            let host = location().host().unwrap();
+            let url = format!("{protocol}://{host}/alerts/websocket");
+
+            if let Ok(ws) = WebSocket::new(&url) {
+                let name = name.clone();
+                let ws_for_open = ws.clone();
+                let onopen_callback =
+                    leptos::wasm_bindgen::closure::Closure::wrap(Box::new(move || {
+                        let msg = AlertsRx::WatchCharacter { name: name.clone() };
+                        // Manually serialize since we can't easily use serde_json to string here without adding it to Cargo.toml if missing
+                        // Actually ultros-app likely has serde-json.
+                        // But wait, AlertsRx is binary or text? Backend handles both.
+                        // Let's use text and serde_json.
+                        match serde_json::to_string(&msg) {
+                            Ok(text) => {
+                                let _ = ws_for_open.send_with_str(&text);
+                            }
+                            Err(e) => {
+                                leptos::logging::error!(
+                                    "Failed to serialize WatchCharacter: {:?}",
+                                    e
+                                );
+                            }
+                        }
+                    })
+                        as Box<dyn FnMut()>);
+                ws.set_onopen(Some(onopen_callback.as_ref().unchecked_ref()));
+                onopen_callback.forget();
+
+                let onmessage_callback =
+                    leptos::wasm_bindgen::closure::Closure::wrap(Box::new(move |e: MessageEvent| {
+                        if let Ok(txt) = e.data().dyn_into::<web_sys::js_sys::JsString>() {
+                            let txt: String = txt.into();
+                            if let Ok(AlertsTx::ItemPurchased { item_id }) =
+                                serde_json::from_str::<AlertsTx>(&txt)
+                            {
+                                // Mark item as acquired
+                                // We need to find the item in the list and update it.
+                                // However, `list_view` resource holds the state.
+                                // We can't easily modify the resource directly without refetching.
+                                // But we can trigger an action.
+                                // We need to know the list item ID (not just item_id) to update it properly via `edit_item` action?
+                                // No, `edit_item` takes `ListItem`.
+                                // Wait, `list_view` returns `(List, Vec<ListItem>)` or similar.
+                                // Actually `get_list_items_with_listings` returns `(List, Vec<(ListItem, Vec<ActiveListing>)>)`.
+
+                                // To update the UI without full refetch, we might want to update a signal.
+                                // But the data is in `list_view` resource which is read-only unless we mutate it via `update`.
+                                // `list_view.update(|data| ...)`
+
+                                list_view.update(|data| {
+                                    if let Some(Ok((_, items))) = data {
+                                        for (item, _) in items.iter_mut() {
+                                            if item.item_id == item_id {
+                                                // Increment acquired count
+                                                // Logic: if acquired < quantity, acquired++
+                                                let q = item.quantity.unwrap_or(1);
+                                                let current = item.acquired.unwrap_or(0);
+                                                if current < q {
+                                                    item.acquired = Some(current + 1);
+                                                    // Also trigger server update?
+                                                    // Yes, we should probably call `edit_list_item` action.
+                                                    // But we are inside an Effect.
+                                                    // We can spawn a local task to call the server action.
+                                                    let item_clone = item.clone();
+                                                    leptos::task::spawn_local(async move {
+                                                        let _ = edit_list_item(item_clone).await;
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    }
+                                });
+                            }
+                        }
+                    })
+                        as Box<dyn FnMut(MessageEvent)>);
+                ws.set_onmessage(Some(onmessage_callback.as_ref().unchecked_ref()));
+                onmessage_callback.forget();
+
+                // Keep ws alive? The variable `ws` drops at end of scope?
+                // `WebSocket` is a JS object, it stays alive if it has event listeners?
+                // No, we need to keep a reference or it might be GC'd.
+                // But in Rust/WASM, if we drop the `WebSocket` struct, it doesn't necessarily close the connection,
+                // but we lose the ability to close it.
+                // For a proper implementation we should store it in a cleanup closure.
+                // We use SendWrapper to satisfy the Send + Sync requirement of on_cleanup,
+                // which is safe because we are in a single-threaded WASM environment.
+                // send_wrapper crate is available in Cargo.toml.
+                let ws_clone = send_wrapper::SendWrapper::new(ws.clone());
+                on_cleanup(move || {
+                    let _ = ws_clone.close();
+                });
+            }
+        }
+    });
+
     view! {
+        <div class="flex-row">
+            <details class="content-well group w-full mb-4">
+                <summary class="flex items-center justify-between p-4 cursor-pointer list-none">
+                    <div class="flex items-center gap-2">
+                         <Icon icon=i::BiPurchaseTagSolid />
+                         <span class="font-bold">"Auto-mark Purchases"</span>
+                         <span class="text-xs text-[color:var(--color-text-muted)] ml-2">"Experimental"</span>
+                    </div>
+                    <Icon icon=i::BiChevronDownRegular attr:class="transition-transform group-open:rotate-180" />
+                </summary>
+                <div class="p-4 pt-0 border-t border-white/5 mt-2 pt-4 flex flex-col gap-3">
+                    <p class="text-sm text-[color:var(--color-text-muted)]">
+                        "Enter your character name below. When you purchase an item on the market board, it will automatically be marked as acquired in this list."
+                    </p>
+                    <div class="join w-full max-w-md">
+                        <input
+                            class="input input-bordered join-item flex-1"
+                            placeholder="Character Name"
+                            prop:value=watch_character_name
+                            on:input=move |e| set_watch_character_name(event_target_value(&e))
+                            disabled=move || is_watching.get()
+                        />
+                        <button
+                            class="btn join-item"
+                            class:btn-success=move || is_watching.get()
+                            on:click=move |_| set_is_watching.update(|w| *w = !*w)
+                        >
+                            {move || if is_watching.get() { "Watching..." } else { "Start Watching" }}
+                        </button>
+                    </div>
+                </div>
+            </details>
+        </div>
         <div class="flex-row">
             <Tooltip tooltip_text="Add an item to the list">
                 <button
