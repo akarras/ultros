@@ -1,3 +1,4 @@
+#[cfg(feature = "hydrate")]
 use leptos::leptos_dom::helpers::set_timeout;
 
 use leptos::prelude::*;
@@ -53,6 +54,11 @@ impl Toasts {
                 },
                 std::time::Duration::from_millis(duration),
             );
+            #[cfg(not(feature = "hydrate"))]
+            {
+                let _ = toasts;
+                let _ = duration;
+            }
         }
     }
 
