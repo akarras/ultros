@@ -45,6 +45,14 @@ impl OwnedResult {
             OwnedResult::World(w) => &w.name,
         }
     }
+
+    pub fn as_ref(&self) -> AnyResult<'_> {
+        match self {
+            OwnedResult::Region(r) => AnyResult::Region(r),
+            OwnedResult::Datacenter(d) => AnyResult::Datacenter(d),
+            OwnedResult::World(w) => AnyResult::World(w),
+        }
+    }
 }
 
 impl From<OwnedResult> for AnySelector {

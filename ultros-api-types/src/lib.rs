@@ -8,6 +8,7 @@ pub mod result;
 pub mod retainer;
 mod sale_history;
 pub mod search;
+pub mod trends;
 pub mod user;
 pub mod websocket;
 pub mod world;

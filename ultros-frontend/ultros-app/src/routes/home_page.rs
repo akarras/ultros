@@ -55,7 +55,7 @@ pub fn HomePage() -> impl IntoView {
                         <div class="flex flex-col md:flex-row items-center gap-6 md:gap-10">
                             <div class="flex-1 space-y-4 z-10">
                                 <h1 class="text-6xl sm:text-8xl font-extrabold leading-none tracking-tighter drop-shadow-2xl">
-                                    <span class="bg-clip-text text-transparent bg-gradient-to-br from-brand-100 via-brand-300 to-brand-500 filter drop-shadow-sm">"Ultros"</span>
+                                    <span class="bg-clip-text text-transparent bg-gradient-to-br from-brand-300 via-purple-400 to-pink-500 filter drop-shadow-sm animate-pulse">"Ultros"</span>
                                     <span class="block text-brand-100 text-xl sm:text-2xl mt-4 font-medium tracking-normal opacity-90">"market board analytics for final fantasy xiv"</span>
                                 </h1>
                                 <p class="text-lg text-[color:var(--color-text-muted)] max-w-prose leading-relaxed">
@@ -83,7 +83,7 @@ pub fn HomePage() -> impl IntoView {
                                     </a>
                                 </div>
                             </div>
-                            <div class="w-full md:w-72 lg:w-80 aspect-square rounded-2xl elevated surface-blur flex items-center justify-center">
+                            <div class="w-full md:w-72 lg:w-80 aspect-square rounded-2xl elevated surface-blur flex items-center justify-center animate-float">
                                 <Icon icon=i::FaMoneyBillTrendUpSolid width="4.5em" height="4.5em" attr:class="text-brand-300" />
                             </div>
                         </div>
@@ -105,6 +105,22 @@ pub fn HomePage() -> impl IntoView {
                                 width="3.5em"
                                 height="3.5em"
                                 icon=i::FaMoneyBillTrendUpSolid
+                            />
+                        </FeatureCard>
+                        <FeatureCard href="/recipe-analyzer" title="Recipe Analyzer" description="Profit calculator for crafting" badge="New">
+                            <Icon
+                                attr:class="feature-card-icon"
+                                width="3.5em"
+                                height="3.5em"
+                                icon=i::FaHammerSolid
+                            />
+                        </FeatureCard>
+                        <FeatureCard href="/leve-analyzer" title="Leve Analyzer" description="Levequest profit calculator" badge="New">
+                            <Icon
+                                attr:class="feature-card-icon"
+                                width="3.5em"
+                                height="3.5em"
+                                icon=i::FaScrollSolid
                             />
                         </FeatureCard>
                         <FeatureCard href="/retainers" title="Retainers" description="Track your retainers online">

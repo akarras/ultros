@@ -10,7 +10,6 @@ use crate::{
     },
 };
 use chrono::Utc;
-use humantime::{format_duration, parse_duration};
 use icondata as i;
 use leptos::{either::Either, prelude::*};
 use leptos_meta::{Meta, Title};
@@ -40,8 +39,9 @@ struct RecipeProfitData {
     cheapest_world_id: i32,
     ingredients_cost: Vec<(ItemId, i32)>, // ItemId, Cost
     sub_crafts: Vec<SubcraftInfo>,
-    avg_sale_interval_secs: Option<u64>,
-    num_sold: usize,
+    daily_sales: f32,
+    avg_price: i32,
+    total_sales: usize,
     required_level: i32,
 }
 
@@ -49,6 +49,7 @@ struct RecipeProfitData {
 enum SortMode {
     Roi,
     Profit,
+    Velocity,
 }
 
 impl FromStr for SortMode {
@@ -58,6 +59,7 @@ impl FromStr for SortMode {
         match s {
             "roi" => Ok(SortMode::Roi),
             "profit" => Ok(SortMode::Profit),
+            "velocity" => Ok(SortMode::Velocity),
             _ => Err(()),
         }
     }
@@ -68,6 +70,7 @@ impl Display for SortMode {
         let val = match self {
             SortMode::Roi => "roi",
             SortMode::Profit => "profit",
+            SortMode::Velocity => "velocity",
         };
         f.write_str(val)
     }
@@ -163,21 +166,52 @@ fn calculate_crafting_cost(
     (clamped_cost, sub_crafts)
 }
 
-fn compute_avg_interval_secs(sale: &SaleData) -> (usize, Option<u64>) {
+#[derive(Clone, Copy, Debug)]
+struct SalesStats {
+    daily_sales: f32,
+    avg_price: i32,
+    total_sales: usize,
+}
+
+fn analyze_sales(sales_data: &[&SaleData]) -> SalesStats {
     let now = Utc::now().naive_utc();
-    let num_sold = sale.sales.len();
-    if num_sold == 0 {
-        return (0, None);
+    let mut total_sales = 0;
+    let mut total_price: i64 = 0;
+    let mut oldest_date = now;
+
+    for data in sales_data {
+        for sale in &data.sales {
+            total_sales += 1;
+            total_price += sale.price_per_unit as i64;
+            if sale.sale_date < oldest_date {
+                oldest_date = sale.sale_date;
+            }
+        }
     }
-    let last = match sale.sales.last() {
-        Some(last) => last,
-        None => return (0, None),
-    };
-    let ms = (last.sale_date - now).num_milliseconds().abs() / num_sold as i64;
-    if ms < 0 {
-        (num_sold, None)
-    } else {
-        (num_sold, Some((ms as u64) / 1_000))
+
+    if total_sales == 0 {
+        return SalesStats {
+            daily_sales: 0.0,
+            avg_price: 0,
+            total_sales: 0,
+        };
+    }
+
+    let avg_price = (total_price / total_sales as i64) as i32;
+    let duration_millis = (now - oldest_date).num_milliseconds().abs();
+    // Clamp to at least 1 hour to prevent huge numbers for very recent single sales
+    let duration_hours = (duration_millis as f64 / 1000.0 / 3600.0).max(1.0);
+    let days_in_sample = duration_hours / 24.0;
+
+    // If we only have 1 sale, and it was recent, daily_sales might be huge if we strictly divide by duration.
+    // But logically, if it sold once in the last hour, that is a rate of 24/day *observed*.
+    // We will present it as is, but maybe the UI can clarify "based on 1 sale".
+    let daily_sales = total_sales as f32 / days_in_sample as f32;
+
+    SalesStats {
+        daily_sales,
+        avg_price,
+        total_sales,
     }
 }
 
@@ -226,16 +260,8 @@ fn RecipeAnalyzerTable(
     let (minimum_roi, set_minimum_roi) = query_signal::<i32>("roi");
     let (job_filter, set_job_filter) = query_signal::<String>("job");
     let (use_subcrafts, set_use_subcrafts) = query_signal::<bool>("subcrafts");
-    let (max_sale_interval, set_max_sale_interval) = query_signal::<String>("next-sale");
+    let (min_daily_sales, set_min_daily_sales) = query_signal::<f32>("min-sales");
     let (require_hq, set_require_hq) = query_signal::<bool>("require-hq");
-
-    let sale_interval_limit =
-        Memo::new(move |_| max_sale_interval().and_then(|d| parse_duration(d.as_str()).ok()));
-    let sale_interval_string = Memo::new(move |_| {
-        sale_interval_limit()
-            .map(|duration| format_duration(duration).to_string())
-            .unwrap_or("---".to_string())
-    });
 
     let cookies = use_context::<Cookies>().unwrap();
     let (crafter_levels, _) = cookies.use_cookie_typed::<_, CrafterLevels>("CRAFTER_LEVELS");
@@ -258,24 +284,12 @@ fn RecipeAnalyzerTable(
         let use_sub = use_subcrafts().unwrap_or(false);
         let require_hq_flag = require_hq().unwrap_or(false);
 
-        let sale_index: HashMap<i32, (usize, Option<u64>)> = if let Some(ref sales) = recent_sales {
-            let mut idx = HashMap::new();
+        let sales_map: HashMap<i32, Vec<&SaleData>> = if let Some(ref sales) = recent_sales {
+            let mut map = HashMap::new();
             for sale in &sales.sales {
-                let (count, interval) = compute_avg_interval_secs(sale);
-                idx.entry(sale.item_id)
-                    .and_modify(|(total, existing)| {
-                        *total += count;
-                        if let Some(new) = interval {
-                            match existing {
-                                Some(old) if new < *old => *existing = Some(new),
-                                None => *existing = Some(new),
-                                _ => {}
-                            }
-                        }
-                    })
-                    .or_insert((count, interval));
+                map.entry(sale.item_id).or_insert_with(Vec::new).push(sale);
             }
-            idx
+            map
         } else {
             HashMap::new()
         };
@@ -323,10 +337,15 @@ fn RecipeAnalyzerTable(
                 continue;
             }
 
-            let (num_sold, avg_interval_secs) = sale_index
-                .get(&recipe.item_result.0)
-                .cloned()
-                .unwrap_or((0, None));
+            let sales_stats = if let Some(item_sales) = sales_map.get(&recipe.item_result.0) {
+                analyze_sales(item_sales)
+            } else {
+                SalesStats {
+                    daily_sales: 0.0,
+                    avg_price: 0,
+                    total_sales: 0,
+                }
+            };
 
             let market_price_summary = prices.find_matching_listings(recipe.item_result.0);
             let market_price = market_price_summary.lowest_gil().unwrap_or(0);
@@ -376,8 +395,9 @@ fn RecipeAnalyzerTable(
                 cheapest_world_id,
                 ingredients_cost: vec![], // Populate if needed for tooltip
                 sub_crafts,
-                avg_sale_interval_secs: avg_interval_secs,
-                num_sold,
+                daily_sales: sales_stats.daily_sales,
+                avg_price: sales_stats.avg_price,
+                total_sales: sales_stats.total_sales,
                 required_level,
             });
         }
@@ -389,19 +409,19 @@ fn RecipeAnalyzerTable(
         if let Some(min) = minimum_roi() {
             results.retain(|d| d.return_on_investment >= min);
         }
-        if let Some(limit) = sale_interval_limit() {
-            let limit_secs = limit.as_secs();
-            results.retain(|d| {
-                d.avg_sale_interval_secs
-                    .map(|avg| avg <= limit_secs)
-                    .unwrap_or(false)
-            });
+        if let Some(min_sales) = min_daily_sales() {
+            results.retain(|d| d.daily_sales >= min_sales);
         }
 
         // Sort
         match sort_mode().unwrap_or(SortMode::Profit) {
             SortMode::Roi => results.sort_by_key(|d| Reverse(d.return_on_investment)),
             SortMode::Profit => results.sort_by_key(|d| Reverse(d.profit)),
+            SortMode::Velocity => results.sort_by(|a, b| {
+                b.daily_sales
+                    .partial_cmp(&a.daily_sales)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            }),
         }
 
         results
@@ -476,19 +496,31 @@ fn RecipeAnalyzerTable(
                 </FilterCard>
 
                 <FilterCard
-                    title="Sale Time Prediction"
-                    description="Filter by predicted time to next sale (e.g., 1d 12h)"
+                    title="Minimum Daily Sales"
+                    description="Filter items by sales velocity (sales/day)"
                 >
                     <div class="flex flex-col gap-2">
-                        <div class="text-brand-300">{sale_interval_string}</div>
+                        <div class="text-brand-300">
+                             {move || {
+                                min_daily_sales()
+                                    .map(|s| format!("{:.1} / day", s))
+                                    .unwrap_or("---".to_string())
+                            }}
+                        </div>
                         <input
                             class="input"
-                            placeholder="e.g. 1d 12h"
-                            title="Accepts formats like 1h 30m, 7d, 1M (month), etc."
-                            prop:value=move || max_sale_interval().unwrap_or_default()
+                            type="number"
+                            min="0"
+                            step="0.1"
+                            placeholder="e.g. 1.0"
+                            prop:value=min_daily_sales
                             on:input=move |input| {
                                 let value = event_target_value(&input);
-                                set_max_sale_interval(Some(value))
+                                if let Ok(s) = value.parse::<f32>() {
+                                    set_min_daily_sales(Some(s));
+                                } else if value.is_empty() {
+                                    set_min_daily_sales(None);
+                                }
                             }
                         />
                     </div>
@@ -590,7 +622,17 @@ fn RecipeAnalyzerTable(
                              </div>
                              <div role="columnheader" class="w-30 p-4">"Cost / unit"</div>
                              <div role="columnheader" class="w-30 p-4">"Price"</div>
-                             <div role="columnheader" class="w-40 p-4 hidden md:block">"Avg sale"</div>
+                             <div role="columnheader" class="w-30 p-4 hidden md:block">
+                                <QueryButton
+                                    class="!text-brand-300 hover:text-brand-200"
+                                    active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
+                                    key="sort"
+                                    value="velocity"
+                                >
+                                    "Daily Sales"
+                                </QueryButton>
+                             </div>
+                             <div role="columnheader" class="w-30 p-4 hidden md:block">"Avg Price"</div>
                              <div role="columnheader" class="w-20 p-4">"Actions"</div>
                         </div>
                     }.into_any()
@@ -620,35 +662,11 @@ fn RecipeAnalyzerTable(
                             _ => "",
                         };
 
-
-
-                        let (avg_label, avg_title) = if let Some(secs) = data.avg_sale_interval_secs {
-                            let days = secs / 86_400;
-                            let hours = (secs % 86_400) / 3_600;
-                            let minutes = (secs % 3_600) / 60;
-                            let mut parts = Vec::new();
-                            if days > 0 {
-                                parts.push(format!("{}d", days));
-                            }
-                            if hours > 0 && parts.len() < 2 {
-                                parts.push(format!("{}h", hours));
-                            }
-                            if minutes > 0 && parts.len() < 2 {
-                                parts.push(format!("{}m", minutes));
-                            }
-                            let label = if parts.is_empty() {
-                                "<1m".to_string()
-                            } else {
-                                parts.join(" ")
-                            };
-                            let title = format!(
-                                "Approximate time between sales based on recent history ({} sales in sample).",
-                                data.num_sold
-                            );
-                            (label, title)
-                        } else {
-                            ("no data".to_string(), "No recent sales data for this item.".to_string())
-                        };
+                        let sales_tooltip = format!(
+                            "Based on {} sales over {:.1} days",
+                            data.total_sales,
+                            (data.total_sales as f32 / data.daily_sales.max(0.001)) // approximate duration back
+                        );
 
                         view! {
                             <div class=classes role="row-group">
@@ -723,10 +741,13 @@ fn RecipeAnalyzerTable(
                                 <div role="cell" class="px-4 py-2 w-30 text-right">
                                     <Gil amount=data.market_price />
                                 </div>
-                                <div role="cell" class="px-4 py-2 w-40 text-right hidden md:block">
-                                    <span class="text-xs text-[color:var(--color-text-muted)]" title=avg_title>
-                                        {avg_label}
+                                <div role="cell" class="px-4 py-2 w-30 text-right hidden md:block">
+                                    <span class="text-xs text-[color:var(--color-text-muted)]" title=sales_tooltip>
+                                        {format!("{:.1} / day", data.daily_sales)}
                                     </span>
+                                </div>
+                                <div role="cell" class="px-4 py-2 w-30 text-right hidden md:block">
+                                    <Gil amount=data.avg_price />
                                 </div>
                                  <div role="cell" class="px-4 py-2 w-20">
                                      <AddRecipeToList recipe=data.recipe />
@@ -814,12 +835,14 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                 <div class="flex flex-row justify-between items-center">
                     <h1 class="text-2xl font-bold text-brand-100">"Recipe Analyzer"</h1>
                     <div class="flex flex-row gap-2 items-center">
-                        <Show when=move || recent_sales.get().is_none()>
-                            <div class="text-brand-300 text-sm animate-pulse">"Loading sales data..."</div>
-                        </Show>
-                        <Show when=move || recent_sales.get().and_then(|r| r.err()).is_some()>
-                            <div class="text-red-400 text-sm">"Error loading sales data"</div>
-                        </Show>
+                        <Suspense fallback=|| view! { <div class="text-brand-300 text-sm animate-pulse">"Loading sales data..."</div> }>
+                            {move || {
+                                recent_sales
+                                    .get()
+                                    .and_then(|r| r.err())
+                                    .map(|_| view! { <div class="text-red-400 text-sm">"Error loading sales data"</div> })
+                            }}
+                        </Suspense>
                     </div>
                 </div>
                 {

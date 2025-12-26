@@ -3,10 +3,15 @@ use itertools::Itertools;
 use leptos::prelude::*;
 use leptos_router::components::A;
 use ultros_api_types::{cheapest_listings::CheapestListingMapKey, icon_size::IconSize};
-use xiv_gen::{ENpcBase, ENpcResidentId, GilShopId, Item, ItemId, Recipe};
+use xiv_gen::{
+    ENpcBase, ENpcResidentId, GilShopId, Item, ItemId, Leve, LeveRewardItem, LeveRewardItemGroup,
+    Recipe, SpecialShop,
+};
 
 use crate::{
-    components::{item_icon::ItemIcon, skeleton::SingleLineSkeleton},
+    components::{
+        add_recipe_to_list::AddRecipeToList, item_icon::ItemIcon, skeleton::SingleLineSkeleton,
+    },
     global_state::{cheapest_prices::CheapestPrices, home_world::get_price_zone},
 };
 
@@ -208,6 +213,7 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
                             "ingredient"
                         </span>
                     })}
+                    <AddRecipeToList recipe />
                 </div>
             </div>
 
@@ -372,6 +378,176 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     .into_any()
 }
 
+fn special_shop_has_item(shop: &SpecialShop, item_id: i32) -> bool {
+    // Check first slot (vector)
+    if shop.item_receive_0.iter().any(|i| i.0 == item_id) {
+        return true;
+    }
+    // Check second slot (vector)
+    if shop.item_receive_1.iter().any(|i| i.0 == item_id) {
+        return true;
+    }
+    false
+}
+
+#[component]
+fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
+    let data = xiv_gen_db::data();
+    let exchanges = Memo::new(move |_| {
+        let item_id = item_id();
+        data.special_shops
+            .values()
+            .filter(move |shop| special_shop_has_item(shop, item_id))
+            .collect::<Vec<_>>()
+    });
+
+    let view = move || {
+        exchanges
+            .with(|exchanges| {
+                exchanges
+                    .iter()
+                    .map(|shop| {
+                        // Zip item_cost_0 and count_cost_0
+                        let costs_0 = shop.item_cost_0.iter().zip(shop.count_cost_0.iter());
+
+                        // Zip item_cost_1 and count_cost_1 (if they exist/have data)
+                        let costs_1 = shop.item_cost_1.iter().zip(shop.count_cost_1.iter());
+
+                        // Zip item_cost_2 and count_cost_2
+                        let costs_2 = shop.item_cost_2.iter().zip(shop.count_cost_2.iter());
+
+                        let all_costs = costs_0.chain(costs_1).chain(costs_2);
+
+                        view! {
+                            <div class="group flex items-center justify-between gap-2 rounded-lg card p-1.5 transition-colors">
+                                <div class="flex items-center gap-2 flex-wrap">
+                                    <span class="text-sm font-medium">{shop.name.as_str()}</span>
+                                    <div class="flex items-center gap-1.5 text-xs text-[color:var(--color-text-muted)]">
+                                        "Costs:"
+                                        {all_costs.map(|(item_id, count)| {
+                                            if let Some(item) = data.items.get(item_id) {
+                                                view! {
+                                                    <div class="flex items-center gap-1 bg-[color:var(--color-base)]/50 px-1.5 py-0.5 rounded border border-[color:var(--color-outline)]">
+                                                        <span>{*count} "x"</span>
+                                                        <SmallItemDisplay item />
+                                                    </div>
+                                                }.into_any()
+                                            } else {
+                                                ().into_any()
+                                            }
+                                        }).collect_view()}
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    })
+                    .collect_view()
+            })
+    };
+
+    let empty = move || exchanges.with(|e| e.is_empty());
+
+    view! {
+        <div class:collapse=empty class="space-y-1.5 p-1 max-h-80 overflow-y-auto w-full sm:w-96 xl:w-[600px]">
+            <span class="text-sm font-semibold text-[color:var(--brand-fg)]">"Exchange sources"</span>
+            <div class="grid grid-cols-1 gap-1.5">{view}</div>
+        </div>
+    }
+    .into_any()
+}
+
+fn leve_rewards_item(
+    leve: &Leve,
+    item_id: i32,
+    reward_items: &std::collections::HashMap<xiv_gen::LeveRewardItemId, LeveRewardItem>,
+    groups: &std::collections::HashMap<xiv_gen::LeveRewardItemGroupId, LeveRewardItemGroup>,
+) -> bool {
+    if let Some(reward) = reward_items.get(&leve.leve_reward_item) {
+        // Check all 8 groups
+        let group_ids = [
+            reward.leve_reward_item_group_0,
+            reward.leve_reward_item_group_1,
+            reward.leve_reward_item_group_2,
+            reward.leve_reward_item_group_3,
+            reward.leve_reward_item_group_4,
+            reward.leve_reward_item_group_5,
+            reward.leve_reward_item_group_6,
+            reward.leve_reward_item_group_7,
+        ];
+
+        for group_id in group_ids {
+            if let Some(group) = groups.get(&group_id) {
+                // Check all items in group (0-8)
+                let items = [
+                    group.item_0,
+                    group.item_1,
+                    group.item_2,
+                    group.item_3,
+                    group.item_4,
+                    group.item_5,
+                    group.item_6,
+                    group.item_7,
+                    group.item_8,
+                ];
+                if items.iter().any(|i| i.0 == item_id) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+#[component]
+fn LeveSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
+    let data = xiv_gen_db::data();
+    let leves = Memo::new(move |_| {
+        let item_id = item_id();
+        data.leves
+            .values()
+            .filter(|leve| {
+                leve_rewards_item(
+                    leve,
+                    item_id,
+                    &data.leve_reward_items,
+                    &data.leve_reward_item_groups,
+                )
+            })
+            .collect::<Vec<_>>()
+    });
+
+    let view = move || {
+        leves.with(|leves| {
+            leves
+                .iter()
+                .map(|leve| {
+                    let job_name = data.class_job_categorys.get(&leve.class_job_category).map(|c| c.name.as_str()).unwrap_or("Unknown");
+                    view! {
+                        <div class="group flex items-center justify-between gap-2 rounded-lg card p-1.5 transition-colors">
+                             <div class="flex items-center gap-2">
+                                <span class="text-sm font-medium">{leve.name.as_str()}</span>
+                                <span class="text-xs text-[color:var(--color-text-muted)] bg-[color:var(--color-base)]/50 px-1.5 py-0.5 rounded border border-[color:var(--color-outline)]">
+                                    "Lvl " {leve.class_job_level} " " {job_name}
+                                </span>
+                             </div>
+                        </div>
+                    }
+                })
+                .collect_view()
+        })
+    };
+
+    let empty = move || leves.with(|l| l.is_empty());
+
+    view! {
+        <div class:collapse=empty class="space-y-1.5 p-1 max-h-80 overflow-y-auto w-full sm:w-96 xl:w-[600px]">
+            <span class="text-sm font-semibold text-[color:var(--brand-fg)]">"Levequest rewards"</span>
+            <div class="grid grid-cols-1 gap-1.5">{view}</div>
+        </div>
+    }
+    .into_any()
+}
+
 #[component]
 pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     let db = xiv_gen_db::data();
@@ -499,6 +675,8 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
             </div>
         </div>
         <VendorItems item_id />
+        <ExchangeSources item_id />
+        <LeveSources item_id />
         <div
             class="content-well flex-col p-1"
             class:hidden=move || recipes.with(|recipes| recipes.is_empty())

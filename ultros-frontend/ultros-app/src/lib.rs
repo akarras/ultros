@@ -9,8 +9,11 @@ pub(crate) mod ws;
 use crate::components::recently_viewed::RecentItems;
 pub use crate::global_state::{LocalWorldData, home_world::GuessedRegion};
 use crate::global_state::{
-    cheapest_prices::CheapestPrices, clipboard_text::GlobalLastCopiedText, cookies::Cookies,
-    theme::provide_theme_settings, toasts::provide_toast_context,
+    cheapest_prices::CheapestPrices,
+    clipboard_text::GlobalLastCopiedText,
+    cookies::Cookies,
+    theme::{ThemeMode, provide_theme_settings, use_theme_settings},
+    toasts::provide_toast_context,
 };
 use crate::{
     components::{
@@ -32,12 +35,14 @@ use crate::{
         retainers::*,
         settings::*,
         venture_analyzer::*,
+        trends::*,
     },
 };
 use git_const::git_short_hash;
 use icondata as i;
 use leptos::html::Div;
 use leptos::prelude::*;
+use leptos_hotkeys::use_hotkeys;
 #[cfg(feature = "hydrate")]
 use leptos_hotkeys::{provide_hotkeys_context, scopes};
 // use leptos_animation::AnimationContext;
@@ -149,6 +154,20 @@ pub fn Footer() -> impl IntoView {
 
 #[component]
 pub fn NavRow() -> impl IntoView {
+    // Global hotkeys
+    let settings = use_theme_settings();
+    let mode = settings.mode;
+
+    // Toggle theme with Alt+T
+    use_hotkeys!(("AltLeft+KeyT,AltRight+KeyT", "*") => move |_| {
+        let next = match mode.get_untracked() {
+            ThemeMode::Dark => ThemeMode::Light,
+            ThemeMode::Light => ThemeMode::System,
+            ThemeMode::System => ThemeMode::Dark,
+        };
+        mode.set(next);
+    });
+
     // mobile: inline search (no modal)
     view! {
         // Navigation
@@ -276,6 +295,7 @@ pub fn App() -> impl IntoView {
                                 });
                                 view! { <div /> }
                             } />
+                            <Route path=path!("trends/:world") view=Trends />
                             <Route path=path!("settings") view=Settings />
                             <Route path=path!("profile") view=Profile />
                             <Route path=path!("privacy") view=PrivacyPolicy />

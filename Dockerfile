@@ -40,4 +40,6 @@ ENV LEPTOS_ENVIRONMENT="production"
 ENV LEPTOS_SITE_ADDR="0.0.0.0:8080"
 ENV LEPTOS_SITE_ROOT="site"
 EXPOSE 8080
+RUN mkdir -p /app/analyzer-data
+VOLUME ["/app/analyzer-data"]
 CMD ["/app/ultros"]

@@ -10,6 +10,83 @@ use std::sync::Arc;
 use ultros_api_types::search::SearchResult;
 use web_sys::KeyboardEvent;
 
+fn get_static_pages() -> Vec<SearchResult> {
+    vec![
+        SearchResult {
+            score: 100.0,
+            title: "Flip Finder".to_string(),
+            result_type: "Tool".to_string(),
+            url: "/analyzer".to_string(),
+            icon_id: None,
+            category: Some("Market Analysis".to_string()),
+        },
+        SearchResult {
+            score: 100.0,
+            title: "Recipe Analyzer".to_string(),
+            result_type: "Tool".to_string(),
+            url: "/recipe-analyzer".to_string(),
+            icon_id: None,
+            category: Some("Crafting".to_string()),
+        },
+        SearchResult {
+            score: 100.0,
+            title: "Leve Analyzer".to_string(),
+            result_type: "Tool".to_string(),
+            url: "/leve-analyzer".to_string(),
+            icon_id: None,
+            category: Some("Leveling".to_string()),
+        },
+        SearchResult {
+            score: 100.0,
+            title: "Currency Exchange".to_string(),
+            result_type: "Tool".to_string(),
+            url: "/currency-exchange".to_string(),
+            icon_id: None,
+            category: Some("Currencies".to_string()),
+        },
+        SearchResult {
+            score: 100.0,
+            title: "My Lists".to_string(),
+            result_type: "Page".to_string(),
+            url: "/lists".to_string(),
+            icon_id: None,
+            category: Some("Personal".to_string()),
+        },
+        SearchResult {
+            score: 100.0,
+            title: "Retainers".to_string(),
+            result_type: "Page".to_string(),
+            url: "/retainers".to_string(),
+            icon_id: None,
+            category: Some("Personal".to_string()),
+        },
+        SearchResult {
+            score: 100.0,
+            title: "Settings".to_string(),
+            result_type: "Page".to_string(),
+            url: "/settings".to_string(),
+            icon_id: None,
+            category: Some("System".to_string()),
+        },
+        SearchResult {
+            score: 100.0,
+            title: "History".to_string(),
+            result_type: "Page".to_string(),
+            url: "/history".to_string(),
+            icon_id: None,
+            category: Some("Personal".to_string()),
+        },
+        SearchResult {
+            score: 100.0,
+            title: "Alerts".to_string(),
+            result_type: "Page".to_string(),
+            url: "/alerts".to_string(),
+            icon_id: None,
+            category: Some("Personal".to_string()),
+        },
+    ]
+}
+
 #[component]
 pub fn SearchBox() -> impl IntoView {
     let text_input = NodeRef::<Input>::new();
@@ -68,11 +145,28 @@ pub fn SearchBox() -> impl IntoView {
                 return;
             }
 
+            let s_lower = s.to_lowercase();
+            let mut matched_pages: Vec<SearchResult> = get_static_pages()
+                .into_iter()
+                .filter(|p| p.title.to_lowercase().contains(&s_lower))
+                .collect();
+
+            // Sort matched pages so exact matches or starts_with come first
+            matched_pages.sort_by(|a, b| {
+                let a_starts = a.title.to_lowercase().starts_with(&s_lower);
+                let b_starts = b.title.to_lowercase().starts_with(&s_lower);
+                b_starts.cmp(&a_starts) // true (starts with) comes first
+            });
+
             set_loading.set(true);
             match api_search(&s).await {
-                Ok(results) => {
+                Ok(mut results) => {
                     if search_id.get_untracked() == current_id {
-                        let results = results.into_iter().map(Arc::new).collect();
+                        // Prepend static pages to the backend results
+                        let mut final_results = matched_pages;
+                        final_results.append(&mut results);
+
+                        let results = final_results.into_iter().map(Arc::new).collect();
                         set_search_results.set(results);
                         set_loading.set(false);
                     }
@@ -80,7 +174,9 @@ pub fn SearchBox() -> impl IntoView {
                 Err(e) => {
                     if search_id.get_untracked() == current_id {
                         log::error!("Search failed: {}", e);
-                        set_search_results.set(vec![]);
+                        // Even if backend fails, show matched static pages
+                        let results = matched_pages.into_iter().map(Arc::new).collect();
+                        set_search_results.set(results);
                         set_loading.set(false);
                     }
                 }
@@ -285,6 +381,8 @@ pub fn SearchBox() -> impl IntoView {
                                                     "currency" => view! { <Icon icon=i::FaCoinsSolid /> }.into_any(),
                                                     "category" => view! { <Icon icon=i::FaListSolid /> }.into_any(),
                                                     "job equipment" => view! { <Icon icon=i::FaUserSolid /> }.into_any(),
+                                                    "Tool" => view! { <Icon icon=i::FaWrenchSolid /> }.into_any(),
+                                                    "Page" => view! { <Icon icon=i::AiFileTextOutlined /> }.into_any(),
                                                     _ => view! { <Icon icon=i::AiSearchOutlined /> }.into_any(),
                                                 }
                                             }
@@ -294,6 +392,8 @@ pub fn SearchBox() -> impl IntoView {
                                                 "currency" => view! { <Icon icon=i::FaCoinsSolid /> }.into_any(),
                                                 "category" => view! { <Icon icon=i::FaListSolid /> }.into_any(),
                                                 "job equipment" => view! { <Icon icon=i::FaUserSolid /> }.into_any(),
+                                                "Tool" => view! { <Icon icon=i::FaWrenchSolid /> }.into_any(),
+                                                "Page" => view! { <Icon icon=i::AiFileTextOutlined /> }.into_any(),
                                                 _ => view! { <Icon icon=i::AiSearchOutlined /> }.into_any(),
                                             }
                                         }
