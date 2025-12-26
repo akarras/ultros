@@ -52,7 +52,7 @@ pub fn Clipboard(#[prop(into)] clipboard_text: Signal<String>) -> impl IntoView 
                         let text = clipboard_text.get_untracked();
                         let _ = clipboard.write_text(&text);
                         last_copied_text.0.set(Some(text));
-                        if let Some(toasts) = toasts {
+                        if let Some(toasts) = _toasts {
                             toasts.success("Copied to clipboard!");
                         }
                     }

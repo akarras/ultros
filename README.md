@@ -1,98 +1,102 @@
 # Ultros
 
-Ultros is a Final Fantasy XIV market board analysis tool that utilizes data sourced from Universalis. Blazingly fast and written in Rust.
+Ultros is a Final Fantasy XIV market board analysis tool that utilizes data sourced from Universalis. It is built with Rust for high performance and reliability.
 
-Uses Axum, Leptos, SeaOrm, and Serenity to create something that works most the time!
+The project is built using:
+- **[Axum](https://github.com/tokio-rs/axum)**: Backend web framework
+- **[Leptos](https://github.com/leptos-rs/leptos)**: Full-stack Rust web framework
+- **[SeaORM](https://github.com/SeaQL/sea-orm)**: Async ORM for the database
+- **[Serenity](https://github.com/serenity-rs/serenity)**: Discord bot library
 
-Currently hosted with hetzner via https://ultros.app
+The live version is hosted at [https://ultros.app](https://ultros.app).
 
-A userguide is available [here](https://book.ultros.app)
-
+A comprehensive user guide is available [here](https://book.ultros.app).
 
 ## Ads
 
-Currently am experimenting with running ads on the site to see how much revenue can be generated. Ideally, I'd like to get the site hosting expenses
-covered without trying to coerce community members into donating. The ads are entirely opt out via the settings page, and adblocks will continue working.
+The site currently runs ads to help cover hosting expenses without relying on donations. These ads are completely optional and can be disabled via the settings page. Ad blockers will also continue to work without issue.
 
-## Contributing
+## Development
 
-Contributions are appreciated, this project is messy because I just sort of threw everything together. Feel free to open an issue, submit a PR, or contact me directly with feedback and changes requested.
+### Prerequisites
 
-Ultros requires a nightly rust toolchain which can be acquired with `rustup`. Check (rustup.rs)[https://rustup.rs] for more details.
+*   **Rust Nightly Toolchain**: Ultros requires a nightly Rust toolchain. You can install it via [rustup.rs](https://rustup.rs).
+*   **Git Submodules**: This project uses git submodules for assets.
+    *   Clone with `git clone --recursive <repo_url>`
+    *   Or update an existing checkout with `git submodule update --init`.
+*   **Postgres Database**: A running Postgres instance is required.
+*   **cargo-leptos**: The build tool for Leptos apps. Install with:
+    ```bash
+    cargo install cargo-leptos --locked
+    ```
 
-This project utilizes git submodules to bring in assets. Since I'm not smart enough to put this into a build script, you must use `git submodule update --init` or `git clone --recursive` when cloning the project.
+### Running the Project
 
-The project can be run with `cargo-leptos`, assuming a Rust toolchain is installed you can install it with `cargo install cargo-leptos --locked`. Then use `cargo leptos serve` or `cargo leptos watch`. Add `--release` to enable optimizations.
+1.  **Database Setup**:
+    We recommend using Docker to run a local Postgres instance:
+    ```bash
+    docker run --name ultros-dev -e POSTGRES_PASSWORD=ultros-dev-password -p 5432:5432 -d postgres
+    ```
 
+2.  **Environment Configuration**:
+    Create a `.env` file in the repository root based on `.env.example`.
 
-The application also requires a postgres database and a Discord application token.
+    **Minimal `.env` for local development:**
+    ```env
+    # Discord / OAuth (Required for login/bot features)
+    DISCORD_TOKEN=your-token
+    DISCORD_CLIENT_ID=your-client-id
+    DISCORD_CLIENT_SECRET=your-client-secret
+    HOSTNAME=http://localhost:8080
+    KEY=some-random-secret-key-at-least-32-chars
 
+    # Database
+    # Note: Ensure username/password match your Docker container settings.
+    DATABASE_URL=postgres://postgres:ultros-dev-password@localhost:5432/postgres
+
+    # Server
+    PORT=8080
+    RUST_LOG=ultros=info,warn
+    ```
+
+3.  **Run the Application**:
+    ```bash
+    cargo leptos serve
+    # Or for a release build with optimizations:
+    cargo leptos serve --release
+    ```
+
+    *Note: On first boot, the app will apply database migrations and fetch game data (worlds, regions) from Universalis. A restart may be required after this initial fetch.*
 
 ### Environment Variables
 
-Ultros supports loading configuration from a local `.env` file in the repository root (next to this README). On startup, the `ultros` binary will load any key/value pairs from `.env` into the process environment before reading them with `std::env::var`.
+| Variable | Description | Default / Example |
+| :--- | :--- | :--- |
+| `DISCORD_TOKEN` | Discord Bot Token | Required |
+| `DISCORD_CLIENT_ID` | Discord Application ID | Required |
+| `DISCORD_CLIENT_SECRET` | Discord Client Secret | Required |
+| `HOSTNAME` | Public URL of the app (for OAuth redirects) | `http://localhost:8080` |
+| `KEY` | Secret key for cookie encryption | Random string |
+| `DATABASE_URL` | Postgres connection string | `postgres://user:pass@host/db` |
+| `PORT` | HTTP server port | `8080` |
+| `RUST_LOG` | Log filtering configuration | `ultros=info,warn` |
+| `POSTGRES_MAX_CONNECTIONS`| Max DB connections | `50` |
 
-For local development, create a `.env` file like:
+## Project Structure
 
-```env
-DISCORD_TOKEN=...
-DATABASE_URL=postgres://user:pass@localhost:5432/ultros
-DISCORD_CLIENT_ID=...
-DISCORD_CLIENT_SECRET=...
-HOSTNAME=http://localhost:8080
-KEY=some-long-random-secret
-PORT=8080
-```
+This repository contains several crates that make up the Ultros ecosystem:
 
-I recommend starting a docker container for the postgres database, and using the `DATABASE_URL` environment variable to connect to it. For example:
+*   **`ultros`**: The main backend crate. Initializes Axum, the Discord bot, and background services.
+*   **`ultros-frontend`**: The frontend workspace.
+    *   **`ultros-app`**: The main Leptos application code (shared between server and client).
+    *   **`ultros-client`**: The WASM client entry point.
+*   **`ultros-db`**: Database layer using SeaORM.
+*   **`ultros-api-types`**: Shared types between frontend and backend.
+*   **`universalis`**: A wrapper for the Universalis API (HTTP & WebSocket).
+*   **`xiv-gen`**: Generates Rust structs from FFXIV game data (sourced from `ffxiv-datamining`).
+*   **`xiv-gen-db`**: Statically embeds compressed game data for fast access.
+*   **`migration`**: Database migration tool.
 
-```bash
-docker run --name ultros-dev -e POSTGRES_PASSWORD=ultros-dev-password -p 5432:5432 -d postgres
-# in your .env file
-DATABASE_URL=postgres://ultros-dev:ultros@localhost:5432/ultros
-```
+## Contributing
 
-When you run the app using `cargo leptos serve`, it will automatically apply database migrations, and start to load data from universalis. On first boot, it will fetch all worlds, and regions, and will require a onetime restart to function properly after that.
-
-After that, the app will continually load data from universalis over the websocket.
-There is no way to backfill data from an extended period of time.
-If you contribute data to universalis, you should see it reflected locally in real time.
-
-### Configuration
-
-Required variables:
-* `DISCORD_TOKEN` - A discord bot token
-* `DATABASE_URL` - Database connection string
-* `DISCORD_CLIENT_ID` - ID of your Discord application
-* `DISCORD_CLIENT_SECRET` - Client secret of your Discord application
-* `HOSTNAME` - Address that your app is hosted at. Necessary to get OAuth to work.
-* `KEY` - A secret hash used to encrypt cookies
-
-Optional variables:
-
-* `PORT` - Port the HTTP server listens on (defaults to `8080` if unset)
-* `POSTGRES_MAX_CONNECTIONS` - Maximum connections for the Postgres pool (defaults to `300`)
-* `UNIVERSALIS_WEBSOCKET_COOLDOWN_SECS` - Cooldown between Universalis websocket reconnect attempts (defaults to `2` seconds)
-* `RUST_LOG` - Log level to log at. ex: `RUST_LOG=ultros=info,warn`
-
-### Contributing
-
-
-Contributing is always appreciated - this project is still just a hobby for me.
-Feel free to open an issue, submit a PR, or contact me directly with feedback and changes requested.
-
-### Crates
-
-This repo has been my sandbox for FFXIV projects, and still has unused crates within the repo for reference, but might not compile or be maintained.
-
-* `ultros` - Main crate for the ultros website. Contains main axum initialization and discord.
-* `ultros-db` - Ultros' datastore. Uses SeaOrm to store data in Postgres.
-* `migration` - SeaOrm migration executable to run executables.
-* `xiv-gen` - Generates structs that represent ffxiv scraped data sourced from [https://github.com/xivapi/ffxiv-datamining](ffxiv-datamining), or rawexd from SaintCoinarch.
-* `xiv-gen-db` - Statically embeds a compressed file containing xiv data.
-* `ultros-api-types` - Common API types between the frontend and backend
-* `universalis` - API wrapper for Universalis, contains a websocket API and a simple HTTP client using reqwest internally.
-* `ultros-frontend` - Frontend crates for ultros, primarily driven by leptos.
-    * `ultros-app` - Main leptos app code.
-    * `ultros-client` - WASM Client for ultros-app. Basically just provides some context and an init function.
-    * `ultros-xiv-icons` - An attempt to bundle assets using Rust build.rs files and then statically including them
+Contributions are welcome! This project is a hobby, so it might be a bit messy in places. Feel free to open an issue, submit a PR, or contact me directly with feedback or feature requests.
