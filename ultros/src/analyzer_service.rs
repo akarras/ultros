@@ -631,9 +631,7 @@ impl AnalyzerService {
             // Filter out sales older than 30 days to keep "trends" relevant
             let recent_sales: Vec<_> = sales
                 .iter()
-                .filter(|s| {
-                    (now - s.sale_date).num_days() < 30
-                })
+                .filter(|s| (now - s.sale_date).num_days() < 30)
                 .collect();
 
             if recent_sales.len() < 2 {
@@ -646,7 +644,11 @@ impl AnalyzerService {
             let sales_count = recent_sales.len() as f32;
             let sales_per_week = (sales_count / days_diff) * 7.0;
 
-            let avg_price = recent_sales.iter().map(|s| s.price_per_item as f32).sum::<f32>() / sales_count;
+            let avg_price = recent_sales
+                .iter()
+                .map(|s| s.price_per_item as f32)
+                .sum::<f32>()
+                / sales_count;
 
             if let Some(cheapest) = cheapest_listings.item_map.get(key) {
                 let price_diff_ratio = cheapest.price as f32 / avg_price;
@@ -675,9 +677,21 @@ impl AnalyzerService {
             }
         }
 
-        high_velocity.sort_by(|a, b| b.sales_per_week.partial_cmp(&a.sales_per_week).unwrap_or(std::cmp::Ordering::Equal));
-        rising_price.sort_by(|a, b| (b.price as f32 / b.average_sale_price).partial_cmp(&(a.price as f32 / a.average_sale_price)).unwrap_or(std::cmp::Ordering::Equal));
-        falling_price.sort_by(|a, b| (a.price as f32 / a.average_sale_price).partial_cmp(&(b.price as f32 / b.average_sale_price)).unwrap_or(std::cmp::Ordering::Equal));
+        high_velocity.sort_by(|a, b| {
+            b.sales_per_week
+                .partial_cmp(&a.sales_per_week)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        rising_price.sort_by(|a, b| {
+            (b.price as f32 / b.average_sale_price)
+                .partial_cmp(&(a.price as f32 / a.average_sale_price))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        falling_price.sort_by(|a, b| {
+            (a.price as f32 / a.average_sale_price)
+                .partial_cmp(&(b.price as f32 / b.average_sale_price))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         high_velocity.truncate(50);
         rising_price.truncate(50);

@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
 use ultros_api_types::icon_size::IconSize;
-use ultros_api_types::trends::{TrendItem, TrendsData};
+use ultros_api_types::trends::TrendItem;
 
 use crate::{api::get_trends, components::item_icon::ItemIcon};
 
@@ -13,11 +13,11 @@ pub fn Trends() -> impl IntoView {
 
     let trends = Resource::new(
         move || world(),
-        move |world| async move {
-            if world.is_empty() {
+        move |w| async move {
+            if w.is_empty() {
                 return Ok(None);
             }
-            get_trends(&world).await.map(Some)
+            get_trends(&w).await.map(Some)
         },
     );
 

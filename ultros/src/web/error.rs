@@ -191,8 +191,6 @@ pub enum WebError {
     NotFound,
     #[error("Bad request")]
     BadRequest,
-    #[error("Internal error")]
-    InternalError,
 }
 
 impl WebError {

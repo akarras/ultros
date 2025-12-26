@@ -1,9 +1,8 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, State},
-    response::{IntoResponse, Response},
     Json,
+    extract::{Path, State},
 };
 use tracing::instrument;
 use ultros_api_types::trends::TrendsData;
