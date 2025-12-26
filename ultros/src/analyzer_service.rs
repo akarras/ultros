@@ -28,6 +28,7 @@ use crate::event::EventReceivers;
 use thiserror::Error;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
+use ultros_api_types::trends::{TrendItem, TrendsData};
 use ultros_db::world_cache::{AnySelector, WorldCache};
 
 pub const SALE_HISTORY_SIZE: usize = 6;
@@ -599,6 +600,94 @@ impl AnalyzerService {
                 }
             }
         }
+    }
+
+    pub(crate) async fn get_trends(&self, world_id: i32) -> Option<TrendsData> {
+        if !self.initiated.load(Ordering::Relaxed) {
+            return None;
+        }
+
+        let sale_history_map = self.recent_sale_history.get(&world_id)?.read().await;
+        let cheapest_listings = self
+            .cheapest_items
+            .get(&AnySelector::World(world_id))?
+            .read()
+            .await;
+
+        let mut high_velocity = Vec::new();
+        let mut rising_price = Vec::new();
+        let mut falling_price = Vec::new();
+        let now = Utc::now().naive_utc();
+
+        for (key, sales) in &sale_history_map.item_map {
+            // calculate velocity
+            // sales per week
+            // we have up to 6 sales
+            // time range = oldest to newest (or now)
+            if sales.is_empty() {
+                continue;
+            }
+
+            // Filter out sales older than 30 days to keep "trends" relevant
+            let recent_sales: Vec<_> = sales
+                .iter()
+                .filter(|s| {
+                    (now - s.sale_date).num_days() < 30
+                })
+                .collect();
+
+            if recent_sales.len() < 2 {
+                continue;
+            }
+
+            let newest = recent_sales.first()?;
+            let oldest = recent_sales.last()?;
+            let days_diff = (newest.sale_date - oldest.sale_date).num_days().max(1) as f32;
+            let sales_count = recent_sales.len() as f32;
+            let sales_per_week = (sales_count / days_diff) * 7.0;
+
+            let avg_price = recent_sales.iter().map(|s| s.price_per_item as f32).sum::<f32>() / sales_count;
+
+            if let Some(cheapest) = cheapest_listings.item_map.get(key) {
+                let price_diff_ratio = cheapest.price as f32 / avg_price;
+
+                let trend_item = TrendItem {
+                    item_id: key.item_id,
+                    hq: key.hq,
+                    price: cheapest.price,
+                    world_id,
+                    average_sale_price: avg_price,
+                    sales_per_week,
+                };
+
+                if sales_per_week > 10.0 {
+                    high_velocity.push(trend_item.clone());
+                }
+
+                // Rising: Current price is 50% higher than average
+                if price_diff_ratio > 1.5 {
+                    rising_price.push(trend_item.clone());
+                }
+                // Falling: Current price is 50% lower than average
+                else if price_diff_ratio < 0.5 {
+                    falling_price.push(trend_item.clone());
+                }
+            }
+        }
+
+        high_velocity.sort_by(|a, b| b.sales_per_week.partial_cmp(&a.sales_per_week).unwrap_or(std::cmp::Ordering::Equal));
+        rising_price.sort_by(|a, b| (b.price as f32 / b.average_sale_price).partial_cmp(&(a.price as f32 / a.average_sale_price)).unwrap_or(std::cmp::Ordering::Equal));
+        falling_price.sort_by(|a, b| (a.price as f32 / a.average_sale_price).partial_cmp(&(b.price as f32 / b.average_sale_price)).unwrap_or(std::cmp::Ordering::Equal));
+
+        high_velocity.truncate(50);
+        rising_price.truncate(50);
+        falling_price.truncate(50);
+
+        Some(TrendsData {
+            high_velocity,
+            rising_price,
+            falling_price,
+        })
     }
 
     pub(crate) async fn get_best_resale(

@@ -187,6 +187,12 @@ pub enum WebError {
     InvalidItemId(i32),
     #[error("World not found {0}")]
     WorldNotFound(String),
+    #[error("Not found")]
+    NotFound,
+    #[error("Bad request")]
+    BadRequest,
+    #[error("Internal error")]
+    InternalError,
 }
 
 impl WebError {

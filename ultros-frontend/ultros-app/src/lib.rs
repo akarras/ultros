@@ -31,6 +31,7 @@ use crate::{
         recipe_analyzer::*,
         retainers::*,
         settings::*,
+        trends::*,
     },
 };
 use git_const::git_short_hash;
@@ -274,6 +275,7 @@ pub fn App() -> impl IntoView {
                                 });
                                 view! { <div /> }
                             } />
+                            <Route path=path!("trends/:world") view=Trends />
                             <Route path=path!("settings") view=Settings />
                             <Route path=path!("profile") view=Profile />
                             <Route path=path!("privacy") view=PrivacyPolicy />
