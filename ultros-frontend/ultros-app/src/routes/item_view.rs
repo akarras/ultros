@@ -330,13 +330,26 @@ fn SummaryCards(
                                                              let (hq, lq) = calculate_crafting_cost(recipe, &prices);
                                                              let min_cost = if lq > 0 { lq } else { hq };
                                                              if min_cost > 0 {
-                                                                 view! { <span>"Craft for ~" <Gil amount=min_cost /></span> }
-                                                                     .into_any()
-                                                             } else {
+                                                 // Determine phrasing based on if this item is a recipe result
+                                                 // or just an ingredient.
+                                                 // Actually, recipe_tree_iter returns recipes *related* to the item.
+                                                 // It could be the item ITSELF (craftable), or it could be an ingredient.
+                                                 // We only want to show "Craft for ~" if the item itself is the result.
+                                                 if recipe.item_result.0 == item_id {
+                                                     view! { <span>"Craft for ~" <Gil amount=min_cost /></span> }
+                                                         .into_any()
+                                                 } else {
+                                                     "Used in Crafting".into_any()
+                                                 }
+                                             } else if recipe.item_result.0 == item_id {
                                                                  "Craftable".into_any()
+                                             } else {
+                                                 "Used in Crafting".into_any()
                                                              }
-                                                         } else {
+                                         } else if recipe.item_result.0 == item_id {
                                                              "Craftable".into_any()
+                                         } else {
+                                             "Used in Crafting".into_any()
                                                          }
                                                      })
                                                  } else {
