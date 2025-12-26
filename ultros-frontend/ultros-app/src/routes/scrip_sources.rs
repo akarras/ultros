@@ -6,7 +6,7 @@ use crate::{
     },
     global_state::{LocalWorldData, home_world::use_home_world},
 };
-use leptos::{either::Either, prelude::*};
+use leptos::prelude::*;
 use leptos_meta::{Meta, Title};
 use leptos_router::{
     NavigateOptions,
