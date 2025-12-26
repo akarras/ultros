@@ -11,15 +11,12 @@ pub fn Trends() -> impl IntoView {
     let world = move || params.with(|params| params.get("world").unwrap_or_default());
     let (selected_tab, set_selected_tab) = signal("velocity".to_string());
 
-    let trends = Resource::new(
-        move || world(),
-        move |w| async move {
-            if w.is_empty() {
-                return Ok(None);
-            }
-            get_trends(&w).await.map(Some)
-        },
-    );
+    let trends = Resource::new(world, move |w| async move {
+        if w.is_empty() {
+            return Ok(None);
+        }
+        get_trends(&w).await.map(Some)
+    });
 
     view! {
         <div class="p-4">
