@@ -13,4 +13,5 @@ pub mod lists;
 pub mod recipe_analyzer;
 pub mod retainers;
 pub mod settings;
+pub mod venture_analyzer;
 pub mod trends;
