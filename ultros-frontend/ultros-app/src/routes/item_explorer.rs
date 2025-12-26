@@ -5,6 +5,7 @@ use std::{collections::HashSet, str::FromStr};
 use crate::CheapestPrices;
 use crate::components::clipboard::Clipboard;
 use crate::components::icon::Icon;
+use crate::components::loading::Loading;
 use crate::components::query_button::QueryButton;
 use crate::components::toggle::Toggle;
 use crate::components::{add_to_list::*, cheapest_price::*, fonts::*, item_icon::*, meta::*};
@@ -502,6 +503,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
     });
 
     view! {
+        <Suspense fallback=move || view! { <div class="flex justify-center p-10"><Loading /></div> }>
         <div class="flex flex-col gap-6">
             // Sort and Direction Controls - Floating / Sticky Bar
             <div class="flex flex-col sm:flex-row justify-between gap-4 p-4 rounded-xl panel items-center sticky top-[72px] lg:top-4 z-20 backdrop-blur-md bg-[color:var(--bg-panel)]/90 border border-white/5 shadow-lg">
@@ -687,6 +689,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
             </QueryButton>
             <div class="h-8" /> // Bottom spacing
         </div>
+        </Suspense>
     }.into_any()
 }
 
