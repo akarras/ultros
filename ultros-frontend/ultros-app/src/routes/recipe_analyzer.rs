@@ -814,12 +814,14 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                 <div class="flex flex-row justify-between items-center">
                     <h1 class="text-2xl font-bold text-brand-100">"Recipe Analyzer"</h1>
                     <div class="flex flex-row gap-2 items-center">
-                        <Show when=move || recent_sales.get().is_none()>
-                            <div class="text-brand-300 text-sm animate-pulse">"Loading sales data..."</div>
-                        </Show>
-                        <Show when=move || recent_sales.get().and_then(|r| r.err()).is_some()>
-                            <div class="text-red-400 text-sm">"Error loading sales data"</div>
-                        </Show>
+                        <Suspense fallback=|| view! { <div class="text-brand-300 text-sm animate-pulse">"Loading sales data..."</div> }>
+                            {move || {
+                                recent_sales
+                                    .get()
+                                    .and_then(|r| r.err())
+                                    .map(|_| view! { <div class="text-red-400 text-sm">"Error loading sales data"</div> })
+                            }}
+                        </Suspense>
                     </div>
                 </div>
                 {
