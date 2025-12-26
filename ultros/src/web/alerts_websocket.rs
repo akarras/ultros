@@ -1,6 +1,9 @@
 use super::oauth::AuthDiscordUser;
 use crate::{
-    alerts::undercut_alert::{Undercut, UndercutRetainer, UndercutTracker},
+    alerts::{
+        price_alert::{PriceAlertService, PriceUndercutData},
+        undercut_alert::{Undercut, UndercutTracker},
+    },
     event::EventReceivers,
     utils,
 };
@@ -12,39 +15,12 @@ use axum::{
     response::Response,
 };
 use futures::future::select;
-use serde::{Deserialize, Serialize};
 use tracing::{
     instrument,
     log::{debug, error, info},
 };
+use ultros_api_types::websocket::{AlertsRx, AlertsTx};
 use ultros_db::UltrosDb;
-
-#[derive(Debug, Deserialize)]
-pub(crate) enum AlertsRx {
-    Undercuts { margin: i32 },
-    // CreatePriceAlert {
-    //     item_id: i32,
-    //     travel_amount: AnySelector,
-    //     price_threshold: i32,
-    // },
-    Ping(Vec<u8>),
-}
-
-#[derive(Debug, Serialize)]
-pub(crate) enum AlertsTx {
-    RetainerUndercut {
-        item_id: i32,
-        item_name: String,
-        /// List of all the retainers that were just undercut
-        undercut_retainers: Vec<UndercutRetainer>,
-    },
-    // PriceAlert {
-    //     world_id: i32,
-    //     item_id: i32,
-    //     item_name: String,
-    //     price: i32,
-    // },
-}
 
 /// Websocket connection will enable the user to receive real time events for alerts.
 /// The websocket messages are defined by AlertsTx, AlertsRx.
@@ -54,11 +30,14 @@ pub(crate) enum AlertsTx {
 pub(crate) async fn connect_websocket(
     State(receivers): State<EventReceivers>,
     State(ultros_db): State<UltrosDb>,
+    State(price_alert_service): State<PriceAlertService>,
     user: AuthDiscordUser,
     websocket: WebSocketUpgrade,
 ) -> Response {
     info!("creating websocket");
-    websocket.on_upgrade(|socket| handle_upgrade(socket, user, receivers, ultros_db))
+    websocket.on_upgrade(|socket| {
+        handle_upgrade(socket, user, receivers, ultros_db, price_alert_service)
+    })
 }
 
 #[instrument(skip(ws))]
@@ -67,6 +46,7 @@ async fn handle_upgrade(
     user: AuthDiscordUser,
     mut receivers: EventReceivers,
     ultros_db: UltrosDb,
+    price_alert_service: PriceAlertService,
 ) {
     info!("websocket upgraded");
     let mut undercut_tracker: Option<UndercutTracker> = None;
@@ -74,8 +54,17 @@ async fn handle_upgrade(
         Tx(AlertsTx),
         Pong(Vec<u8>),
     }
+    let (action_tx, mut action_rx) = tokio::sync::mpsc::channel::<Action>(10);
     loop {
-        let result = match select(Box::pin(ws.recv()), Box::pin(receivers.listings.recv())).await {
+        let result = match select(
+            Box::pin(ws.recv()),
+            select(
+                Box::pin(receivers.listings.recv()),
+                Box::pin(action_rx.recv()),
+            ),
+        )
+        .await
+        {
             futures::future::Either::Left((websocket, _)) => {
                 if let Some(received_message) = websocket {
                     let alert_value = match received_message {
@@ -121,14 +110,50 @@ async fn handle_upgrade(
                                 UndercutTracker::new(user.id, &ultros_db, margin).await.ok();
                             continue;
                         }
-                        // AlertsRx::CreatePriceAlert {
-                        //     item_id,
-                        //     travel_amount,
-                        //     price_threshold,
-                        // } => {
-                        //     info!("price alert tried create, but not implemented");
-                        //     continue;
-                        // }
+                        AlertsRx::CreatePriceAlert {
+                            item_id,
+                            travel_amount,
+                            price_threshold,
+                        } => {
+                            let travel_amount = match travel_amount {
+                                ultros_api_types::world_helper::AnySelector::World(w) => {
+                                    ultros_db::world_cache::AnySelector::World(w)
+                                }
+                                ultros_api_types::world_helper::AnySelector::Datacenter(d) => {
+                                    ultros_db::world_cache::AnySelector::Datacenter(d)
+                                }
+                                ultros_api_types::world_helper::AnySelector::Region(r) => {
+                                    ultros_db::world_cache::AnySelector::Region(r)
+                                }
+                            };
+                            let mut alert = price_alert_service
+                                .create_alert(price_threshold, item_id, travel_amount)
+                                .await;
+                            let action_tx = action_tx.clone();
+                            tokio::spawn(async move {
+                                while let Some(PriceUndercutData {
+                                    item_id,
+                                    undercut_by,
+                                    world_id,
+                                }) = alert.recv().await
+                                {
+                                    let item_name = utils::get_item_name(item_id).to_string();
+                                    if let Err(e) = action_tx
+                                        .send(Action::Tx(AlertsTx::PriceAlert {
+                                            item_id,
+                                            item_name,
+                                            price: undercut_by,
+                                            world_id,
+                                        }))
+                                        .await
+                                    {
+                                        error!("Error sending alert {e:?}");
+                                        break;
+                                    }
+                                }
+                            });
+                            continue;
+                        }
                         AlertsRx::Ping(ping) => Action::Pong(ping),
                     }
                 } else {
@@ -137,35 +162,50 @@ async fn handle_upgrade(
                     break;
                 }
             }
-            futures::future::Either::Right((listing_event, _)) => {
-                if let Some(undercut) = &mut undercut_tracker {
-                    match undercut
-                        .handle_listing_event(listing_event.map_err(|e| e.into()))
-                        .await
-                    {
-                        Ok(ok) => match ok {
-                            None => {
-                                continue;
+            futures::future::Either::Right((either_listing_or_action, _)) => {
+                match either_listing_or_action {
+                    futures::future::Either::Left((listing_event, _)) => {
+                        if let Some(undercut) = &mut undercut_tracker {
+                            match undercut
+                                .handle_listing_event(listing_event.map_err(|e| e.into()))
+                                .await
+                            {
+                                Ok(ok) => match ok {
+                                    None => {
+                                        continue;
+                                    }
+                                    Some(Undercut {
+                                        item_id,
+                                        undercut_retainers,
+                                    }) => {
+                                        let item_name = utils::get_item_name(item_id).to_string();
+                                        Action::Tx(AlertsTx::RetainerUndercut {
+                                            item_id,
+                                            item_name,
+                                            undercut_retainers: undercut_retainers.into_iter().map(|r| ultros_api_types::websocket::UndercutRetainer {
+                                                id: r.id,
+                                                name: r.name,
+                                                undercut_amount: r.undercut_amount,
+                                            }).collect(),
+                                        })
+                                    }
+                                },
+                                Err(e) => {
+                                    error!("{e:?}");
+                                    continue;
+                                }
                             }
-                            Some(Undercut {
-                                item_id,
-                                undercut_retainers,
-                            }) => {
-                                let item_name = utils::get_item_name(item_id).to_string();
-                                Action::Tx(AlertsTx::RetainerUndercut {
-                                    item_id,
-                                    item_name,
-                                    undercut_retainers,
-                                })
-                            }
-                        },
-                        Err(e) => {
-                            error!("{e:?}");
+                        } else {
                             continue;
                         }
                     }
-                } else {
-                    continue;
+                    futures::future::Either::Right((action, _)) => {
+                        if let Some(action) = action {
+                            action
+                        } else {
+                            break;
+                        }
+                    }
                 }
             }
         };

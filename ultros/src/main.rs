@@ -13,6 +13,7 @@ pub(crate) mod utils;
 mod web;
 mod web_metrics;
 
+use crate::alerts::price_alert::PriceAlertService;
 use crate::item_update_service::UpdateService;
 #[cfg(feature = "profiling")]
 use crate::profiling::start_profiling_server;
@@ -241,6 +242,7 @@ async fn main() -> Result<()> {
         token.clone(),
     )
     .await;
+    let price_alert_service = PriceAlertService::new(receivers.clone());
     let update_service = Arc::new(UpdateService {
         db: db.clone(),
         world_cache: world_cache.clone(),
@@ -284,6 +286,7 @@ async fn main() -> Result<()> {
     leptos_options.site_pkg_dir = Arc::from(["pkg/", git_hash].concat());
     let web_state = WebState {
         analyzer_service,
+        price_alert_service,
         db,
         key: Key::from(key.as_bytes()),
         character_verification,
