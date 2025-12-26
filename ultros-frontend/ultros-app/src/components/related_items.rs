@@ -304,7 +304,7 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
     }.into_any())
 }
 
-fn npc_rows(npc: &ENpcBase) -> impl Iterator<Item = u32> + '_ {
+fn npc_rows(npc: &ENpcBase) -> impl Iterator<Item = u16> + '_ {
     // TODO- can I just parse the csv into a vec?
     npc.e_npc_data.iter().map(|i| i.0)
 }
