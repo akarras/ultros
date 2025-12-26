@@ -257,44 +257,42 @@ impl SearchService {
             }
         };
 
-        results.extend(top_docs
-            .into_iter()
-            .map(|(score, doc_address)| {
-                let retrieved_doc: tantivy::schema::TantivyDocument =
-                    searcher.doc(doc_address).unwrap();
-                let title = retrieved_doc
-                    .get_first(self.title_field)
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let result_type = retrieved_doc
-                    .get_first(self.type_field)
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let url = retrieved_doc
-                    .get_first(self.url_field)
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let icon_id = retrieved_doc
-                    .get_first(self.icon_id_field)
-                    .and_then(|v| v.as_i64())
-                    .map(|v| v as i32);
-                let category = retrieved_doc
-                    .get_first(self.category_field)
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
+        results.extend(top_docs.into_iter().map(|(score, doc_address)| {
+            let retrieved_doc: tantivy::schema::TantivyDocument =
+                searcher.doc(doc_address).unwrap();
+            let title = retrieved_doc
+                .get_first(self.title_field)
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let result_type = retrieved_doc
+                .get_first(self.type_field)
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let url = retrieved_doc
+                .get_first(self.url_field)
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let icon_id = retrieved_doc
+                .get_first(self.icon_id_field)
+                .and_then(|v| v.as_i64())
+                .map(|v| v as i32);
+            let category = retrieved_doc
+                .get_first(self.category_field)
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
 
-                SearchResult {
-                    score,
-                    title,
-                    result_type,
-                    url,
-                    icon_id,
-                    category,
-                }
-            }));
+            SearchResult {
+                score,
+                title,
+                result_type,
+                url,
+                icon_id,
+                category,
+            }
+        }));
 
         results
     }
@@ -307,7 +305,7 @@ mod tests {
     #[test]
     fn test_search_service_initialization() {
         if let Ok(_service) = SearchService::new() {
-             assert!(true);
+            assert!(true);
         } else {
             panic!("Failed to init service");
         }
@@ -319,11 +317,15 @@ mod tests {
         let data = xiv_gen_db::data();
 
         // Find a marketable item
-        if let Some((id, item)) = data.items.iter().find(|(_, i)| i.item_search_category.0 > 0) {
+        if let Some((id, item)) = data
+            .items
+            .iter()
+            .find(|(_, i)| i.item_search_category.0 > 0)
+        {
             let id_str = id.0.to_string();
             let results = service.search(&id_str);
             if results.is_empty() {
-                 panic!("No results found for ID {} ({})", id_str, item.name);
+                panic!("No results found for ID {} ({})", id_str, item.name);
             }
             let first = &results[0];
             assert_eq!(first.result_type, "item");
@@ -339,23 +341,27 @@ mod tests {
         let data = xiv_gen_db::data();
 
         // Find a craft leve that links to a valid Leve
-        if let Some(craft_leve) = data.craft_leves.values().find(|cl| data.leves.contains_key(&cl.leve) && cl.item_0.0 > 0) {
-             let leve = data.leves.get(&craft_leve.leve).unwrap();
-             let name = &leve.name;
+        if let Some(craft_leve) = data
+            .craft_leves
+            .values()
+            .find(|cl| data.leves.contains_key(&cl.leve) && cl.item_0.0 > 0)
+        {
+            let leve = data.leves.get(&craft_leve.leve).unwrap();
+            let name = &leve.name;
 
-             let results = service.search(name);
-             let found = results.iter().find(|r| r.result_type == "Leve");
+            let results = service.search(name);
+            let found = results.iter().find(|r| r.result_type == "Leve");
 
-             if found.is_none() {
-                 let titles: Vec<_> = results.iter().map(|r| r.title.clone()).collect();
-                 panic!("Leve not found for '{}'. Found: {:?}", name, titles);
-             }
+            if found.is_none() {
+                let titles: Vec<_> = results.iter().map(|r| r.title.clone()).collect();
+                panic!("Leve not found for '{}'. Found: {:?}", name, titles);
+            }
         } else {
-             // If no craft leves, we can't test. But this shouldn't happen in real DB.
-             // If minimal DB, maybe.
-             if !data.craft_leves.is_empty() {
-                  panic!("Craft leves exist but none matched criteria?");
-             }
+            // If no craft leves, we can't test. But this shouldn't happen in real DB.
+            // If minimal DB, maybe.
+            if !data.craft_leves.is_empty() {
+                panic!("Craft leves exist but none matched criteria?");
+            }
         }
     }
 }
