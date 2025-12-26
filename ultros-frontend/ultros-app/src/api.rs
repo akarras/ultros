@@ -45,6 +45,23 @@ pub(crate) async fn get_cheapest_listings(world_name: &str) -> AppResult<Cheapes
     fetch_api(&format!("/api/v1/cheapest/{}", world_name)).await
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub(crate) struct ResaleStatsDto {
+    pub(crate) profit: i32,
+    pub(crate) item_id: i32,
+    pub(crate) sold_within: String,
+    pub(crate) return_on_investment: f32,
+    pub(crate) world_id: i32,
+}
+
+pub(crate) async fn get_best_deals(world_name: &str) -> AppResult<Vec<ResaleStatsDto>> {
+    fetch_api(&format!(
+        "/api/v1/best_deals/{}?min_profit=10000&filter_sale=Week",
+        world_name
+    ))
+    .await
+}
+
 #[allow(dead_code)]
 pub(crate) async fn get_bulk_listings(
     world: &str,

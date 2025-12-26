@@ -37,6 +37,7 @@ pub mod theme_picker;
 pub mod toast;
 pub mod toggle;
 pub mod tooltip;
+pub mod top_deals;
 pub mod ui_text;
 pub mod virtual_scroller;
 pub mod wasm_loading_indicator;
