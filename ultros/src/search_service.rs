@@ -157,6 +157,24 @@ impl SearchService {
             }
         }
 
+        // Index Leves
+        // Only iterate Crafting Leves as they are the primary focus for analyzers
+        for craft_leve in data.craft_leves.values() {
+            if let Some(leve) = data.leves.get(&craft_leve.leve) {
+                // Link to the turn-in item's page, which shows Leve info
+                let turn_in_item_id = craft_leve.item_0.0;
+                if turn_in_item_id > 0 {
+                    index_writer.add_document(doc!(
+                        title_field => leve.name.as_str(),
+                        type_field => "Leve",
+                        url_field => format!("/item/{}", turn_in_item_id),
+                        icon_id_field => turn_in_item_id as i64,
+                        category_field => "Levequest",
+                    ))?;
+                }
+            }
+        }
+
         index_writer.commit()?;
         info!("SearchService: Indexing complete.");
 
@@ -177,6 +195,32 @@ impl SearchService {
     }
 
     pub fn search(&self, query_str: &str) -> Vec<SearchResult> {
+        let mut results = Vec::new();
+        let data = xiv_gen_db::data();
+
+        // Check for direct Item ID match
+        if let Ok(id) = query_str.trim().parse::<i32>() {
+            if let Some(item) = data.items.get(&xiv_gen::ItemId(id)) {
+                if item.item_search_category.0 > 0 {
+                    let category_name = data
+                        .item_search_categorys
+                        .get(&item.item_search_category)
+                        .map(|c| c.name.as_str())
+                        .unwrap_or("")
+                        .to_string();
+
+                    results.push(SearchResult {
+                        score: 1000.0, // High score for direct match
+                        title: format!("{} (ID: {})", item.name, id),
+                        result_type: "item".to_string(),
+                        url: format!("/item/{}", id),
+                        icon_id: Some(id),
+                        category: Some(category_name),
+                    });
+                }
+            }
+        }
+
         let searcher = self.reader.searcher();
         // Exact match parser (High boost)
         let mut exact_parser =
@@ -201,7 +245,7 @@ impl SearchService {
             (Err(_), Ok(fq)) => fq,
             (Err(e), Err(_)) => {
                 warn!("SearchService: Invalid query '{}': {}", query_str, e);
-                return vec![];
+                return results; // Return any ID matches if query was invalid for tantivy but valid ID (unlikely if numeric)
             }
         };
 
@@ -209,11 +253,11 @@ impl SearchService {
             Ok(docs) => docs,
             Err(e) => {
                 error!("SearchService: Search execution failed: {}", e);
-                return vec![];
+                return results;
             }
         };
 
-        top_docs
+        results.extend(top_docs
             .into_iter()
             .map(|(score, doc_address)| {
                 let retrieved_doc: tantivy::schema::TantivyDocument =
@@ -250,7 +294,68 @@ impl SearchService {
                     icon_id,
                     category,
                 }
-            })
-            .collect()
+            }));
+
+        results
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_search_service_initialization() {
+        if let Ok(_service) = SearchService::new() {
+             assert!(true);
+        } else {
+            panic!("Failed to init service");
+        }
+    }
+
+    #[test]
+    fn test_search_by_id() {
+        let service = SearchService::new().expect("Init failed");
+        let data = xiv_gen_db::data();
+
+        // Find a marketable item
+        if let Some((id, item)) = data.items.iter().find(|(_, i)| i.item_search_category.0 > 0) {
+            let id_str = id.0.to_string();
+            let results = service.search(&id_str);
+            if results.is_empty() {
+                 panic!("No results found for ID {} ({})", id_str, item.name);
+            }
+            let first = &results[0];
+            assert_eq!(first.result_type, "item");
+            assert!(first.title.contains(&id_str));
+        } else {
+            panic!("No marketable items found in DB to test with");
+        }
+    }
+
+    #[test]
+    fn test_search_leve() {
+        let service = SearchService::new().expect("Init failed");
+        let data = xiv_gen_db::data();
+
+        // Find a craft leve that links to a valid Leve
+        if let Some(craft_leve) = data.craft_leves.values().find(|cl| data.leves.contains_key(&cl.leve) && cl.item_0.0 > 0) {
+             let leve = data.leves.get(&craft_leve.leve).unwrap();
+             let name = &leve.name;
+
+             let results = service.search(name);
+             let found = results.iter().find(|r| r.result_type == "Leve");
+
+             if found.is_none() {
+                 let titles: Vec<_> = results.iter().map(|r| r.title.clone()).collect();
+                 panic!("Leve not found for '{}'. Found: {:?}", name, titles);
+             }
+        } else {
+             // If no craft leves, we can't test. But this shouldn't happen in real DB.
+             // If minimal DB, maybe.
+             if !data.craft_leves.is_empty() {
+                  panic!("Craft leves exist but none matched criteria?");
+             }
+        }
     }
 }
