@@ -587,7 +587,7 @@ fn HighQualityTable(
                     });
                     view! {
                         <div
-                            class="panel p-6"
+                            class="panel p-4 sm:p-6"
                             class:hidden=move || hq_listings.with(|l| l.is_empty())
                         >
                             <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
@@ -633,7 +633,7 @@ fn LowQualityTable(
                     });
                     view! {
                         <div
-                            class="panel p-6"
+                            class="panel p-4 sm:p-6"
                             class:hidden=move || lq_listings.with(|l| l.is_empty())
                         >
                             <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
@@ -668,14 +668,14 @@ fn SalesDetails(listing_resource: Resource<Result<CurrentlyShownItem, AppError>>
 
                 view! {
                     <div class="flex flex-col gap-6 h-full"> // Use flex col to stack table and insights
-                        <div class="panel p-6 flex-1">
+                        <div class="panel p-4 sm:p-6 flex-1">
                             <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
                                 "Sale History"
                             </h2>
                             <SaleHistoryTable sales=sales.into() />
                         </div>
 
-                        <div class="panel p-6">
+                        <div class="panel p-4 sm:p-6">
                             <SalesInsights sales=sales.into() />
                         </div>
                     </div>
@@ -806,8 +806,8 @@ pub fn ItemView() -> impl IntoView {
         />
         <Link rel="canonical" prop:href=move || format!("https://ultros.app/item/{}", item_id()) />
         <div class="min-h-screen">
-            <div class="w-full px-4 py-6">
-                <div class="flex flex-col gap-6 p-6 panel">
+            <div class="w-full px-0 sm:px-4 py-4 sm:py-6">
+                <div class="flex flex-col gap-6 p-4 sm:p-6 panel">
                     <div class="flex flex-col md:flex-row items-start gap-4">
                         <div class="flex items-center gap-4 flex-1">
                             <ItemIcon item_id icon_size=IconSize::Large />
@@ -883,7 +883,7 @@ pub fn ItemView() -> impl IntoView {
 
             <WorldMenu world_name=world item_id />
 
-            <div class="main-content px-4">
+            <div class="main-content px-0 sm:px-4">
                 <ListingsContent item_id world />
                 <div class="mt-6 panel p-3">
                     <RelatedItems item_id=Signal::from(item_id) />
