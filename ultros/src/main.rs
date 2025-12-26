@@ -57,6 +57,7 @@ struct Config {
     discord_client_secret: String,
     key: String,
     discord_token: String,
+    owner_id: Option<u64>,
 }
 
 async fn run_socket_listener(
@@ -258,6 +259,7 @@ async fn main() -> Result<()> {
         discord_client_secret,
         key,
         discord_token,
+        owner_id,
     } = config;
 
     tokio::spawn(start_discord(
@@ -301,6 +303,7 @@ async fn main() -> Result<()> {
         leptos_options,
         search_service,
         token: token.clone(),
+        owner_id,
     };
     let web_task = tokio::spawn(web::start_web(web_state));
     tokio::select! {

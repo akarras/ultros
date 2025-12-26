@@ -256,6 +256,10 @@ pub(crate) async fn update_retainer_order(retainers: Vec<OwnedRetainer>) -> AppR
     post_api("/api/v1/retainer/reorder", retainers).await
 }
 
+pub(crate) async fn trigger_rescan() -> AppResult<()> {
+    post_api("/api/v1/admin/rescan", ()).await
+}
+
 /// Return the T, or try and return an AppError
 #[instrument]
 fn deserialize<T>(json: &str) -> AppResult<T>

@@ -211,6 +211,7 @@ pub(crate) struct WebState {
     pub(crate) leptos_options: LeptosOptions,
     pub(crate) search_service: SearchService,
     pub(crate) token: CancellationToken,
+    pub(crate) owner_id: Option<u64>,
 }
 
 impl FromRef<WebState> for UltrosDb {
@@ -384,12 +385,32 @@ pub(crate) async fn world_data(State(world_cache): State<Arc<WorldCache>>) -> im
     response
 }
 
-pub(crate) async fn current_user(user: AuthDiscordUser) -> Json<UserData> {
+pub(crate) async fn current_user(
+    State(state): State<WebState>,
+    user: AuthDiscordUser,
+) -> Json<UserData> {
+    let is_admin = state.owner_id.map(|id| id == user.id).unwrap_or(false);
     Json(UserData {
         id: user.id,
         username: user.name,
         avatar: user.avatar_url,
+        is_admin,
     })
+}
+
+pub(crate) async fn admin_rescan(
+    State(state): State<WebState>,
+    user: AuthDiscordUser,
+) -> Result<Json<()>, ApiError> {
+    if state.owner_id.map(|id| id == user.id).unwrap_or(false) {
+        state
+            .analyzer_service
+            .rescan_from_db(&state.db, &state.world_cache)
+            .await;
+        Ok(Json(()))
+    } else {
+        Err(ApiError::AccessDenied)
+    }
 }
 
 pub(crate) async fn retainer_listings(
@@ -922,6 +943,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/world_data", get(world_data))
         .route("/api/v1/current_user", get(current_user))
         .route("/api/v1/user/retainer", get(user_retainers))
+        .route("/api/v1/admin/rescan", post(admin_rescan))
         .route("/api/v1/retainer/reorder", post(reorder_retainer))
         .route(
             "/api/v1/user/retainer/listings",

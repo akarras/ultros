@@ -20,6 +20,7 @@ use crate::{
         ad::Ad, apps_menu::*, patreon::*, search_box::*, theme_picker::*, toast::*, tooltip::*,
     },
     routes::{
+        admin::*,
         analyzer::*,
         currency_exchange::{CurrencyExchange, CurrencySelection, ExchangeItem},
         edit_retainers::*,
@@ -298,6 +299,7 @@ pub fn App() -> impl IntoView {
                             <Route path=path!("trends/:world") view=Trends />
                             <Route path=path!("settings") view=Settings />
                             <Route path=path!("profile") view=Profile />
+                            <Route path=path!("admin") view=Admin />
                             <Route path=path!("privacy") view=PrivacyPolicy />
                             <Route path=path!("cookie-policy") view=CookiePolicy />
                             <Route path=path!("history") view=History />

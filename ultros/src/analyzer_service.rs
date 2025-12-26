@@ -487,6 +487,76 @@ impl AnalyzerService {
         false
     }
 
+    async fn populate_from_db(&self, ultros_db: &UltrosDb, world_cache: &WorldCache) {
+        // on startup we should try to read through the database to get the spiciest of item listings
+        info!("worker starting");
+        let (listings, sale_data) = futures::future::join(
+            ultros_db.cheapest_listings(),
+            ultros_db.last_n_sales(SALE_HISTORY_SIZE as i32),
+        )
+        .await;
+        info!("starting item listings");
+        match listings {
+            Ok(mut listings) => {
+                let writer = &self.cheapest_items;
+                while let Some(Ok(value)) = listings.next().await {
+                    let world = world_cache
+                        .lookup_selector(&AnySelector::World(value.world_id))
+                        .unwrap();
+                    let region = world_cache.get_region(&world).unwrap();
+                    let datacenters = world_cache.get_datacenters(&world).unwrap();
+                    let region_listings = writer
+                        .get(&AnySelector::Region(region.id))
+                        .expect("Region not found");
+                    region_listings.write().await.add_listing(&value);
+                    for dc in datacenters {
+                        let dc_listings = writer
+                            .get(&AnySelector::Datacenter(dc.id))
+                            .expect("Datacenter not found");
+                        dc_listings.write().await.add_listing(&value);
+                    }
+                    let world_listings = writer
+                        .get(&AnySelector::World(value.world_id))
+                        .expect("Unable to get world");
+                    world_listings.write().await.add_listing(&value);
+                }
+            }
+            Err(e) => {
+                error!("Streaming item listings failed {e:?}");
+            }
+        }
+        info!("starting sale data");
+        match sale_data {
+            Ok(mut history_stream) => {
+                while let Some(Ok(value)) = history_stream.next().await {
+                    let history = self
+                        .recent_sale_history
+                        .get(&value.world_id)
+                        .expect("Unable to get world");
+                    history.write().await.add_sale(&value);
+                }
+            }
+            Err(e) => {
+                error!("Streaming item listings failed {e:?}");
+            }
+        }
+    }
+
+    pub async fn rescan_from_db(&self, ultros_db: &UltrosDb, world_cache: &WorldCache) {
+        info!("Rescan started");
+        // clear old data
+        for (_, value) in self.cheapest_items.iter() {
+            let mut value = value.write().await;
+            value.item_map.clear();
+        }
+        for (_, value) in self.recent_sale_history.iter() {
+            let mut value = value.write().await;
+            value.item_map.clear();
+        }
+        self.populate_from_db(ultros_db, world_cache).await;
+        info!("Rescan finished");
+    }
+
     async fn run_worker(
         &self,
         ultros_db: UltrosDb,
@@ -495,58 +565,7 @@ impl AnalyzerService {
         token: CancellationToken,
     ) {
         if !self.try_restore_from_snapshot().await {
-            // on startup we should try to read through the database to get the spiciest of item listings
-            info!("worker starting");
-            let (listings, sale_data) = futures::future::join(
-                ultros_db.cheapest_listings(),
-                ultros_db.last_n_sales(SALE_HISTORY_SIZE as i32),
-            )
-            .await;
-            info!("starting item listings");
-            match listings {
-                Ok(mut listings) => {
-                    let writer = &self.cheapest_items;
-                    while let Some(Ok(value)) = listings.next().await {
-                        let world = world_cache
-                            .lookup_selector(&AnySelector::World(value.world_id))
-                            .unwrap();
-                        let region = world_cache.get_region(&world).unwrap();
-                        let datacenters = world_cache.get_datacenters(&world).unwrap();
-                        let region_listings = writer
-                            .get(&AnySelector::Region(region.id))
-                            .expect("Region not found");
-                        region_listings.write().await.add_listing(&value);
-                        for dc in datacenters {
-                            let dc_listings = writer
-                                .get(&AnySelector::Datacenter(dc.id))
-                                .expect("Datacenter not found");
-                            dc_listings.write().await.add_listing(&value);
-                        }
-                        let world_listings = writer
-                            .get(&AnySelector::World(value.world_id))
-                            .expect("Unable to get world");
-                        world_listings.write().await.add_listing(&value);
-                    }
-                }
-                Err(e) => {
-                    error!("Streaming item listings failed {e:?}");
-                }
-            }
-            info!("starting sale data");
-            match sale_data {
-                Ok(mut history_stream) => {
-                    while let Some(Ok(value)) = history_stream.next().await {
-                        let history = self
-                            .recent_sale_history
-                            .get(&value.world_id)
-                            .expect("Unable to get world");
-                        history.write().await.add_sale(&value);
-                    }
-                }
-                Err(e) => {
-                    error!("Streaming item listings failed {e:?}");
-                }
-            }
+            self.populate_from_db(&ultros_db, &world_cache).await;
         }
         self.initiated.store(true, Ordering::Relaxed);
         info!("worker primed, now using live data");
