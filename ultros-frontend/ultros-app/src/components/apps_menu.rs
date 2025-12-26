@@ -15,6 +15,7 @@ use leptos_use::use_element_hover;
 pub fn AppsMenu() -> impl IntoView {
     // Focus/hover-driven open state (mirrors Select component behavior)
     let (has_focus, set_has_focus) = signal(false);
+    let (force_close, set_force_close) = signal(false);
     let (homeworld, _set_homeworld) = use_home_world();
     let panel_ref = NodeRef::<html::Div>::new();
     cfg_if! {
@@ -24,10 +25,23 @@ pub fn AppsMenu() -> impl IntoView {
             let (hovered, _set_hovered) = signal(false);
         }
     }
-    let is_open = Signal::derive(move || has_focus() || hovered());
+    let is_open = Signal::derive(move || (has_focus() || hovered()) && !force_close());
+
+    let close_menu = move |_| {
+        set_has_focus(false);
+        set_force_close(true);
+    };
 
     view! {
-        <div class="relative" on:focusin=move |_| set_has_focus(true) on:focusout=move |_| set_has_focus(false)>
+        <div
+            class="relative"
+            on:focusin=move |_| {
+                set_has_focus(true);
+                set_force_close(false);
+            }
+            on:focusout=move |_| set_has_focus(false)
+            on:mouseleave=move |_| set_force_close(false)
+        >
             <button
                 class="nav-link"
                 aria-haspopup="menu"
@@ -55,7 +69,7 @@ pub fn AppsMenu() -> impl IntoView {
                                 .map(|w| format!("/flip-finder/{}", w.name))
                                 .unwrap_or("/flip-finder".to_string())
                             attr:class="nav-link w-full justify-start"
-                            on:click=move |_| set_has_focus(false)
+                            on:click=close_menu
                         >
                             <Icon height="1.1em" width="1.1em" icon=i::FaMoneyBillTrendUpSolid />
                             <span class="ml-2">"Flip Finder"</span>
@@ -66,7 +80,7 @@ pub fn AppsMenu() -> impl IntoView {
                                 .map(|w| format!("/recipe-analyzer?world={}", w.name))
                                 .unwrap_or("/recipe-analyzer".to_string())
                             attr:class="nav-link w-full justify-start"
-                            on:click=move |_| set_has_focus(false)
+                            on:click=close_menu
                         >
                             <Icon height="1.1em" width="1.1em" icon=i::FaHammerSolid />
                             <span class="ml-2">"Recipe Analyzer"</span>
@@ -77,7 +91,7 @@ pub fn AppsMenu() -> impl IntoView {
                                 .map(|w| format!("/leve-analyzer?world={}", w.name))
                                 .unwrap_or("/leve-analyzer".to_string())
                             attr:class="nav-link w-full justify-start"
-                            on:click=move |_| set_has_focus(false)
+                            on:click=close_menu
                         >
                             <Icon height="1.1em" width="1.1em" icon=i::FaScrollSolid />
                             <span class="ml-2">"Leve Analyzer"</span>
@@ -86,7 +100,7 @@ pub fn AppsMenu() -> impl IntoView {
                         <A
                             href="/items?menu-open=true"
                             attr:class="nav-link w-full justify-start"
-                            on:click=move |_| set_has_focus(false)
+                            on:click=close_menu
                         >
                             <Icon height="1.1em" width="1.1em" icon=i::FaScrewdriverWrenchSolid />
                             <span class="ml-2">"Explorer"</span>
@@ -95,7 +109,7 @@ pub fn AppsMenu() -> impl IntoView {
                         <A
                             href="/currency-exchange"
                             attr:class="nav-link w-full justify-start"
-                            on:click=move |_| set_has_focus(false)
+                            on:click=close_menu
                         >
                             <Icon height="1.1em" width="1.1em" icon=i::BsArrowLeftRight />
                             <span class="ml-2">"Exchange"</span>
@@ -115,6 +129,7 @@ pub fn AppsMenu() -> impl IntoView {
 pub fn UserMenu() -> impl IntoView {
     // Focus/hover-driven open state (mirrors Select component behavior)
     let (has_focus, set_has_focus) = signal(false);
+    let (force_close, set_force_close) = signal(false);
     let user = Resource::new(move || {}, move |_| async move { get_login().await.ok() });
     let panel_ref = NodeRef::<html::Div>::new();
     cfg_if! {
@@ -124,7 +139,12 @@ pub fn UserMenu() -> impl IntoView {
             let (hovered, _set_hovered) = signal(false);
         }
     }
-    let is_open = Signal::derive(move || has_focus() || hovered());
+    let is_open = Signal::derive(move || (has_focus() || hovered()) && !force_close());
+
+    let close_menu = move |_| {
+        set_has_focus(false);
+        set_force_close(true);
+    };
 
     let on_keydown = move |ev: leptos::ev::KeyboardEvent| {
         if ev.key() == "Escape" {
@@ -133,7 +153,16 @@ pub fn UserMenu() -> impl IntoView {
     };
 
     view! {
-        <div class="relative" on:keydown=on_keydown on:focusin=move |_| set_has_focus(true) on:focusout=move |_| set_has_focus(false)>
+        <div
+            class="relative"
+            on:keydown=on_keydown
+            on:focusin=move |_| {
+                set_has_focus(true);
+                set_force_close(false);
+            }
+            on:focusout=move |_| set_has_focus(false)
+            on:mouseleave=move |_| set_force_close(false)
+        >
             <Suspense fallback=move || view! { <button class="nav-link opacity-70 cursor-wait"><Icon icon=i::BsPersonCircle /><span class="hidden lg:inline ml-2">"Account"</span></button> }>
                 {move || {
                     let u = user.get().flatten();
@@ -182,29 +211,29 @@ pub fn UserMenu() -> impl IntoView {
                                 match u {
                                     Some(_auth) => {
                                         view! {
-                                            <A href="/profile" attr:class="nav-link w-full justify-start" on:click=move |_| set_has_focus(false)>
+                                            <A href="/profile" attr:class="nav-link w-full justify-start" on:click=close_menu>
                                                 <Icon height="1.1em" width="1.1em" icon=i::BsPersonCircle />
                                                 <span class="ml-2">"Profile"</span>
                                             </A>
-                                            <A href="/settings" attr:class="nav-link w-full justify-start" on:click=move |_| set_has_focus(false)>
+                                            <A href="/settings" attr:class="nav-link w-full justify-start" on:click=close_menu>
                                                 <Icon height="1.1em" width="1.1em" icon=i::IoSettingsSharp />
                                                 <span class="ml-2">"Settings"</span>
                                             </A>
 
                         <div class="divider my-1"></div>
 
-                                            <A href="/list" attr:class="nav-link w-full justify-start" on:click=move |_| set_has_focus(false)>
+                                            <A href="/list" attr:class="nav-link w-full justify-start" on:click=close_menu>
                                                 <Icon height="1.1em" width="1.1em" icon=i::AiOrderedListOutlined />
                                                 <span class="ml-2">"Lists"</span>
                                             </A>
-                                            <A href="/retainers/listings" attr:class="nav-link w-full justify-start" on:click=move |_| set_has_focus(false)>
+                                            <A href="/retainers/listings" attr:class="nav-link w-full justify-start" on:click=close_menu>
                                                 <Icon height="1.1em" width="1.1em" icon=i::BiGroupSolid />
                                                 <span class="ml-2">"Retainers"</span>
                                             </A>
 
                                             <div class="divider my-1"></div>
 
-                                            <a rel="external" href="/invitebot" class="nav-link w-full justify-start" on:click=move |_| set_has_focus(false)>
+                                            <a rel="external" href="/invitebot" class="nav-link w-full justify-start" on:click=close_menu>
                                                 <Icon height="1.1em" width="1.1em" icon=i::BsDiscord />
                                                 <span class="ml-2">"Invite Bot"</span>
                                             </a>
@@ -215,18 +244,18 @@ pub fn UserMenu() -> impl IntoView {
 
                                             <div class="divider my-1"></div>
 
-                                            <a rel="external" href="/logout" class="nav-link w-full justify-start" on:click=move |_| set_has_focus(false)>
+                                            <a rel="external" href="/logout" class="nav-link w-full justify-start" on:click=close_menu>
                                                 <span class="ml-2">"Logout"</span>
                                             </a>
                                         }.into_any()
                                     }
                                     None => {
                                         view! {
-                                            <a rel="external" href="/login" class="nav-link w-full justify-start" on:click=move |_| set_has_focus(false)>
+                                            <a rel="external" href="/login" class="nav-link w-full justify-start" on:click=close_menu>
                                                 <Icon height="1.1em" width="1.1em" icon=i::BsDiscord />
                                                 <span class="ml-2">"Login with Discord"</span>
                                             </a>
-                                            <A href="/settings" attr:class="nav-link w-full justify-start" on:click=move |_| set_has_focus(false)>
+                                            <A href="/settings" attr:class="nav-link w-full justify-start" on:click=close_menu>
                                                 <Icon height="1.1em" width="1.1em" icon=i::IoSettingsSharp />
                                                 <span class="ml-2">"Settings"</span>
                                             </A>
