@@ -80,6 +80,16 @@ fn LeveAnalyzerTable(
     let (minimum_profit, set_minimum_profit) = query_signal::<i32>("profit");
     let (job_filter, set_job_filter) = query_signal::<String>("job");
 
+    let crafting_jobs = Memo::new(move |_| {
+        let mut jobs = data
+            .class_jobs
+            .values()
+            .filter(|job| !job.name.is_empty() && job.job_index > 0)
+            .collect::<Vec<_>>();
+        jobs.sort_by(|a, b| a.name.cmp(&b.name));
+        jobs
+    });
+
     let computed_data = Memo::new(move |_| {
         let mut results = Vec::new();
 
@@ -113,7 +123,7 @@ fn LeveAnalyzerTable(
             // Filter by Job
             if let Some(filter) = job_filter()
                 && !filter.is_empty()
-                && !job_category_name.contains(&filter)
+                && job_category_name != filter
             {
                 continue;
             }
@@ -321,14 +331,13 @@ fn LeveAnalyzerTable(
                         }
                     >
                         <option value="">"All Jobs"</option>
-                        <option value="Carpenter" selected=move || job_filter() == Some("Carpenter".to_string())>"Carpenter"</option>
-                        <option value="Blacksmith" selected=move || job_filter() == Some("Blacksmith".to_string())>"Blacksmith"</option>
-                        <option value="Armorer" selected=move || job_filter() == Some("Armorer".to_string())>"Armorer"</option>
-                        <option value="Goldsmith" selected=move || job_filter() == Some("Goldsmith".to_string())>"Goldsmith"</option>
-                        <option value="Leatherworker" selected=move || job_filter() == Some("Leatherworker".to_string())>"Leatherworker"</option>
-                        <option value="Weaver" selected=move || job_filter() == Some("Weaver".to_string())>"Weaver"</option>
-                        <option value="Alchemist" selected=move || job_filter() == Some("Alchemist".to_string())>"Alchemist"</option>
-                        <option value="Culinarian" selected=move || job_filter() == Some("Culinarian".to_string())>"Culinarian"</option>
+                        <For
+                            each=crafting_jobs
+                            key=|job| job.key_id
+                            let:job
+                        >
+                            <option value=job.name.to_string() selected=move || job_filter() == Some(job.name.to_string())>{job.name.to_string()}</option>
+                        </For>
                     </select>
                 </div>
             </div>
