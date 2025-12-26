@@ -41,6 +41,7 @@ where
     view! {
         <a
             class=move || if is_active() { active_classes.to_string() } else { class.get() }
+            aria-current=move || if is_active() { "true" } else { "false" }
             href=move || {
                 let mut query = query();
                 for remove in remove_queries {
