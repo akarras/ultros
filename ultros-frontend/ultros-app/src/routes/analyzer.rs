@@ -52,11 +52,17 @@ struct ProfitKey {
 
 #[derive(Clone, Debug, PartialEq)]
 struct ProfitData {
-    profit: i32,
-    return_on_investment: i32,
+    estimated_sale_price: i32,
     cheapest_price: i32,
     cheapest_world_id: i32,
     sale_summary: SaleSummary,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct CalculatedProfitData {
+    inner: Arc<ProfitData>,
+    profit: i32,
+    return_on_investment: i32,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -198,10 +204,7 @@ impl ProfitTable {
                     };
 
                 Some(ProfitData {
-                    profit: estimated_sale_price - cheapest_price,
-                    return_on_investment: ((estimated_sale_price - cheapest_price) as f32
-                        / cheapest_price as f32
-                        * 100.0) as i32,
+                    estimated_sale_price,
                     sale_summary: summary,
                     cheapest_world_id,
                     cheapest_price,
@@ -267,6 +270,9 @@ fn AnalyzerTable(
     let (max_predicted_time, set_max_predicted_time) = query_signal::<String>("next-sale");
     let (world_filter, set_world_filter) = query_signal::<String>("world");
     let (datacenter_filter, set_datacenter_filter) = query_signal::<String>("datacenter");
+    let (tax_enabled, set_tax_enabled) = query_signal::<bool>("tax");
+    let (minimum_sales, set_minimum_sales) = query_signal::<usize>("sales");
+    let (category_filter, set_category_filter) = query_signal::<i32>("category");
 
     let world_clone = worlds.clone();
     let world_filter_list = Memo::new(move |_| {
@@ -295,9 +301,28 @@ fn AnalyzerTable(
     });
 
     let sorted_data = Memo::new(move |_| {
+        let include_tax = tax_enabled().unwrap_or(true);
         let mut sorted_data = profits
             .0
             .iter()
+            .map(|data| {
+                let estimated = if include_tax {
+                    (data.estimated_sale_price as f32 * 0.95) as i32
+                } else {
+                    data.estimated_sale_price
+                };
+                let profit = estimated - data.cheapest_price;
+                let return_on_investment = if data.cheapest_price > 0 {
+                    ((profit as f32 / data.cheapest_price as f32) * 100.0) as i32
+                } else {
+                    0
+                };
+                CalculatedProfitData {
+                    inner: data.clone(),
+                    profit,
+                    return_on_investment,
+                }
+            })
             .filter(move |data| {
                 minimum_profit()
                     .map(|min| data.profit > min)
@@ -309,9 +334,25 @@ fn AnalyzerTable(
                     .unwrap_or(true)
             })
             .filter(move |data| {
+                minimum_sales()
+                    .map(|sales| data.inner.sale_summary.num_sold >= sales)
+                    .unwrap_or(true)
+            })
+            .filter(move |data| {
+                category_filter()
+                    .map(|cat_id| {
+                        items
+                            .get(&ItemId(data.inner.sale_summary.item_id))
+                            .map(|item| item.item_search_category.0 == cat_id)
+                            .unwrap_or(false)
+                    })
+                    .unwrap_or(true)
+            })
+            .filter(move |data| {
                 predicted_time()
                     .map(|time| {
-                        data.sale_summary
+                        data.inner
+                            .sale_summary
                             .avg_sale_duration
                             .map(|dur| dur.to_std().ok().map(|dur| dur < time).unwrap_or(false))
                             .unwrap_or(false)
@@ -320,16 +361,15 @@ fn AnalyzerTable(
             })
             .filter(move |data| {
                 world_filter_list()
-                    .map(|world_filter| world_filter.contains(&data.cheapest_world_id))
+                    .map(|world_filter| world_filter.contains(&data.inner.cheapest_world_id))
                     .unwrap_or(true)
             })
             .filter(move |data| {
-                data.cheapest_world_id
+                data.inner.cheapest_world_id
                     != lookup_world()
                         .and_then(|w| w.as_world_id())
                         .unwrap_or_default()
             })
-            .cloned()
             .collect::<Vec<_>>();
 
         match sort_mode().unwrap_or(SortMode::Roi) {
@@ -339,7 +379,7 @@ fn AnalyzerTable(
         sorted_data
             .into_iter()
             .enumerate()
-            .collect::<Vec<(usize, Arc<ProfitData>)>>()
+            .collect::<Vec<(usize, CalculatedProfitData)>>()
     });
     view! {
         <div class="flex flex-col gap-6">
@@ -370,6 +410,70 @@ fn AnalyzerTable(
                                     set_minimum_profit(Some(profit))
                                 } else if value.is_empty() {
                                     set_minimum_profit(None);
+                                }
+                            }
+                        />
+                    </div>
+                </FilterCard>
+
+                <FilterCard
+                    title="Item Category"
+                    description="Filter by item category"
+                >
+                    <div class="flex flex-col gap-2">
+                         <select
+                            class="input"
+                            on:change=move |ev| {
+                                let val = event_target_value(&ev);
+                                if let Ok(id) = val.parse::<i32>() {
+                                    set_category_filter(Some(id));
+                                } else {
+                                    set_category_filter(None);
+                                }
+                            }
+                            prop:value=move || category_filter().map(|c| c.to_string()).unwrap_or_default()
+                        >
+                            <option value="">"All Categories"</option>
+                            {
+                                let mut categories = xiv_gen_db::data().item_search_categorys
+                                    .iter()
+                                    .map(|(id, cat)| (id.0, cat.name.clone()))
+                                    .collect::<Vec<_>>();
+                                categories.sort_by(|a, b| a.1.cmp(&b.1));
+                                categories.into_iter().map(|(id, name)| {
+                                    view! { <option value=id.to_string() selected=move || category_filter() == Some(id)>{name}</option> }
+                                }).collect_view()
+                            }
+                        </select>
+                    </div>
+                </FilterCard>
+
+                <FilterCard
+                    title="Minimum Sales"
+                    description="Filter by minimum number of recent sales"
+                >
+                    <div class="flex flex-col gap-2">
+                        <div class="text-brand-300">
+                            {move || {
+                                minimum_sales()
+                                    .map(|sales| format!("{} sales", sales))
+                                    .unwrap_or("---".to_string())
+                            }}
+                        </div>
+                        <input
+                            class="input"
+                            min=0
+                            max=1000
+                            step=1
+                            placeholder="e.g. 5"
+                            type="number"
+                            prop:value=minimum_sales
+                            on:input=move |input| {
+                                let value = event_target_value(&input);
+                                if let Ok(sales) = value.parse::<usize>() {
+                                    set_minimum_sales(Some(sales));
+                                } else if value.is_empty() {
+                                    set_minimum_sales(None);
                                 }
                             }
                         />
@@ -426,6 +530,20 @@ fn AnalyzerTable(
                         />
                     </div>
                 </FilterCard>
+
+                <FilterCard
+                    title="Tax Calculation"
+                    description="Include 5% market tax in profit calculations"
+                >
+                    <div class="flex items-center">
+                        <Toggle
+                            checked=Signal::derive(move || tax_enabled().unwrap_or(true))
+                            set_checked=SignalSetter::map(move |val: bool| set_tax_enabled(val.then_some(true)))
+                            checked_label=Oco::Borrowed("Tax enabled (5%)")
+                            unchecked_label=Oco::Borrowed("Tax disabled")
+                        />
+                    </div>
+                </FilterCard>
             </div>
 
             // Results summary
@@ -441,6 +559,31 @@ fn AnalyzerTable(
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
                                     "Profit ≥ " <Gil amount=p />
                                     <button class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_profit(None)>
+                                        <Icon icon=icondata::MdiClose />
+                                    </button>
+                                </span>
+                            }.into_any());
+                        }
+                        if let Some(cat_id) = category_filter() {
+                            let cat_name = xiv_gen_db::data()
+                                .item_search_categorys
+                                .get(&xiv_gen::ItemSearchCategoryId(cat_id))
+                                .map(|c| c.name.clone())
+                                .unwrap_or_else(|| format!("Category {}", cat_id));
+                            chips.push(view! {
+                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
+                                    "Category: " {cat_name}
+                                    <button class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_category_filter(None)>
+                                        <Icon icon=icondata::MdiClose />
+                                    </button>
+                                </span>
+                            }.into_any());
+                        }
+                        if let Some(sales) = minimum_sales() {
+                            chips.push(view! {
+                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
+                                    "Sales ≥ " {sales}
+                                    <button class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_sales(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -499,6 +642,8 @@ fn AnalyzerTable(
                     set_max_predicted_time(None);
                     set_world_filter(None);
                     set_datacenter_filter(None);
+                    set_minimum_sales(None);
+                    set_category_filter(None);
                 }>
                     "Clear all"
                 </button>
@@ -602,16 +747,17 @@ fn AnalyzerTable(
                             </div>
                         }.into_any()
                         each=sorted_data.into()
-                        key=move |(index, data): &(usize, Arc<ProfitData>)| (
+                        key=move |(index, data): &(usize, CalculatedProfitData)| (
                             *index,
-                            data.sale_summary.item_id,
-                            data.cheapest_world_id,
-                            data.sale_summary.hq,
+                            data.inner.sale_summary.item_id,
+                            data.inner.cheapest_world_id,
+                            data.inner.sale_summary.hq,
+                            data.profit,
                         )
-                        view=move |(index, data): (usize, Arc<ProfitData>)| {
+                        view=move |(index, data): (usize, CalculatedProfitData)| {
                             let data_clone = data.clone();
                             let world = worlds
-                                .lookup_selector(AnySelector::World(data.cheapest_world_id));
+                                .lookup_selector(AnySelector::World(data.inner.cheapest_world_id));
                             let datacenter = world
                                 .as_ref()
                                 .and_then(|world| {
@@ -627,7 +773,7 @@ fn AnalyzerTable(
                                 .unwrap_or_default()
                                 .to_string();
                             let world = Signal::derive(move || world.clone());
-                            let item_id = data.sale_summary.item_id;
+                            let item_id = data.inner.sale_summary.item_id;
                             let item = items
                                 .get(&ItemId(item_id))
                                 .map(|item| item.name.as_str())
@@ -641,7 +787,7 @@ fn AnalyzerTable(
                             view! {
                                 <div class=classes role="row-group">
                                     <div role="cell" class="px-2 py-2 w-[40px] flex items-center justify-center">
-                                        {if data.sale_summary.hq {
+                                        {if data.inner.sale_summary.hq {
                                             Some(view! { <span class="px-2 py-0.5 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)]">"HQ"</span> })
                                         } else {
                                             None
@@ -688,7 +834,7 @@ fn AnalyzerTable(
                                         </span>
                                     </div>
                                     <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
-                                        <Gil amount=data.cheapest_price />
+                                        <Gil amount=data.inner.cheapest_price />
                                     </div>
                                     <div role="cell" class="px-4 py-2 w-30 hidden lg:block flex items-center">
                                         <Tooltip tooltip_text=Signal::derive(move || {
@@ -721,7 +867,7 @@ fn AnalyzerTable(
                                         </Tooltip>
                                     </div>
                                     <div role="cell" class="px-4 py-2 w-30 truncate hidden md:block flex items-center">
-                                        {data
+                                        {data.inner
                                             .sale_summary
                                             .avg_sale_duration
                                             .and_then(|duration| duration.to_std().ok())
