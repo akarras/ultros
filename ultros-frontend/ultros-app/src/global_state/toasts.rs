@@ -45,14 +45,14 @@ impl Toasts {
         };
         self.0.update(|toasts| toasts.push(toast));
 
-        if let Some(_duration) = duration {
-            let _toasts = *self;
+        if let Some(duration) = duration {
+            let toasts = *self;
             #[cfg(feature = "hydrate")]
             set_timeout(
                 move || {
-                    _toasts.remove(id);
+                    toasts.remove(id);
                 },
-                std::time::Duration::from_millis(_duration),
+                std::time::Duration::from_millis(duration),
             );
         }
     }
