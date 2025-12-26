@@ -390,6 +390,48 @@ fn special_shop_has_item(shop: &SpecialShop, item_id: i32) -> bool {
     false
 }
 
+type Cost = (ItemId, u32);
+type TradeCosts = Vec<Cost>;
+
+fn get_trade_costs(shop: &SpecialShop, item_id: i32) -> Vec<TradeCosts> {
+    shop.item_receive_0
+        .iter()
+        .enumerate()
+        .filter_map(|(i, item)| {
+            let matches_0 = item.0 == item_id;
+            // Check receive_1 if it exists at this index
+            let matches_1 = shop
+                .item_receive_1
+                .get(i)
+                .map(|x| x.0 == item_id)
+                .unwrap_or(false);
+
+            if matches_0 || matches_1 {
+                Some(i)
+            } else {
+                None
+            }
+        })
+        .map(|i| {
+            let costs_0 = (shop.item_cost_0.get(i), shop.count_cost_0.get(i));
+            let costs_1 = (shop.item_cost_1.get(i), shop.count_cost_1.get(i));
+            let costs_2 = (shop.item_cost_2.get(i), shop.count_cost_2.get(i));
+            [costs_0, costs_1, costs_2]
+                .into_iter()
+                .filter_map(|(item, count)| {
+                    #[allow(clippy::collapsible_if)]
+                    if let (Some(item), Some(count)) = (item, count) {
+                        if item.0 != 0 && *count > 0 {
+                            return Some((*item, *count));
+                        }
+                    }
+                    None
+                })
+                .collect()
+        })
+        .collect()
+}
+
 #[component]
 fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     let data = xiv_gen_db::data();
@@ -406,40 +448,34 @@ fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
             .with(|exchanges| {
                 exchanges
                     .iter()
-                    .map(|shop| {
-                        // Zip item_cost_0 and count_cost_0
-                        let costs_0 = shop.item_cost_0.iter().zip(shop.count_cost_0.iter());
-
-                        // Zip item_cost_1 and count_cost_1 (if they exist/have data)
-                        let costs_1 = shop.item_cost_1.iter().zip(shop.count_cost_1.iter());
-
-                        // Zip item_cost_2 and count_cost_2
-                        let costs_2 = shop.item_cost_2.iter().zip(shop.count_cost_2.iter());
-
-                        let all_costs = costs_0.chain(costs_1).chain(costs_2);
-
-                        view! {
-                            <div class="group flex items-center justify-between gap-2 rounded-lg card p-1.5 transition-colors">
-                                <div class="flex items-center gap-2 flex-wrap">
-                                    <span class="text-sm font-medium">{shop.name.as_str()}</span>
-                                    <div class="flex items-center gap-1.5 text-xs text-[color:var(--color-text-muted)]">
-                                        "Costs:"
-                                        {all_costs.map(|(item_id, count)| {
-                                            if let Some(item) = data.items.get(item_id) {
-                                                view! {
-                                                    <div class="flex items-center gap-1 bg-[color:var(--color-base)]/50 px-1.5 py-0.5 rounded border border-[color:var(--color-outline)]">
-                                                        <span>{*count} "x"</span>
-                                                        <SmallItemDisplay item />
-                                                    </div>
-                                                }.into_any()
-                                            } else {
-                                                ().into_any()
+                    .flat_map(|shop| {
+                        let trades = get_trade_costs(shop, item_id());
+                        trades.into_iter().map(move |costs| {
+                            view! {
+                                <div class="group flex items-center justify-between gap-2 rounded-lg card p-1.5 transition-colors">
+                                    <div class="flex items-center gap-2 flex-wrap">
+                                        <span class="text-sm font-medium">{shop.name.as_str()}</span>
+                                        <div class="flex items-center gap-1.5 text-xs text-[color:var(--color-text-muted)]">
+                                            "Costs:"
+                                            {
+                                                costs.into_iter().map(|(item_id, count)| {
+                                                    if let Some(item) = data.items.get(&item_id) {
+                                                        view! {
+                                                            <div class="flex items-center gap-1 bg-[color:var(--color-base)]/50 px-1.5 py-0.5 rounded border border-[color:var(--color-outline)]">
+                                                                <span>{count} "x"</span>
+                                                                <SmallItemDisplay item />
+                                                            </div>
+                                                        }.into_any()
+                                                    } else {
+                                                        ().into_any()
+                                                    }
+                                                }).collect_view()
                                             }
-                                        }).collect_view()}
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
-                        }
+                            }
+                        })
                     })
                     .collect_view()
             })
@@ -454,6 +490,70 @@ fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
         </div>
     }
     .into_any()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use xiv_gen::{ItemId, SpecialShop};
+
+    #[test]
+    fn test_get_trade_costs() {
+        let shop = SpecialShop {
+            key_id: xiv_gen::SpecialShopId(1),
+            name: "Test Shop".to_string(),
+            complete_text: xiv_gen::DefaultTalkId(0),
+            not_complete_text: xiv_gen::DefaultTalkId(0),
+            item_receive_0: vec![ItemId(100), ItemId(200), ItemId(100)],
+            count_receive_0: vec![1, 1, 1],
+            item_receive_1: vec![ItemId(0), ItemId(0), ItemId(0)],
+            count_receive_1: vec![0, 0, 0],
+            item_cost_0: vec![ItemId(10), ItemId(20), ItemId(30)],
+            count_cost_0: vec![5, 10, 15],
+            item_cost_1: vec![ItemId(0), ItemId(0), ItemId(0)],
+            count_cost_1: vec![0, 0, 0],
+            item_cost_2: vec![ItemId(0), ItemId(0), ItemId(0)],
+            count_cost_2: vec![0, 0, 0],
+            hq_receive_0: vec![false, false, false],
+            hq_receive_1: vec![false, false, false],
+            hq_cost_0: vec![0, 0, 0],
+            hq_cost_1: vec![0, 0, 0],
+            hq_cost_2: vec![0, 0, 0],
+            achievement_unlock: vec![
+                xiv_gen::AchievementId(0),
+                xiv_gen::AchievementId(0),
+                xiv_gen::AchievementId(0),
+            ],
+            use_currency_type: 0,
+            // Filling missing fields manually as Default is not implemented
+            special_shop_item_category_0: vec![xiv_gen::SpecialShopItemCategoryId(0); 3],
+            special_shop_item_category_1: vec![xiv_gen::SpecialShopItemCategoryId(0); 3],
+            collectability_rating_cost_0: vec![0; 3],
+            collectability_rating_cost_1: vec![0; 3],
+            collectability_rating_cost_2: vec![0; 3],
+            quest_item: vec![xiv_gen::QuestId(0); 3],
+            patch_number: vec![0; 3],
+            quest_unlock: xiv_gen::QuestId(0),
+        };
+
+        // Case 1: Searching for item 100. Should appear at indices 0 and 2.
+        // Index 0 cost: Item 10, count 5
+        // Index 2 cost: Item 30, count 15
+        let costs_100 = get_trade_costs(&shop, 100);
+        assert_eq!(costs_100.len(), 2);
+        assert_eq!(costs_100[0], vec![(ItemId(10), 5)]);
+        assert_eq!(costs_100[1], vec![(ItemId(30), 15)]);
+
+        // Case 2: Searching for item 200. Should appear at index 1.
+        // Index 1 cost: Item 20, count 10
+        let costs_200 = get_trade_costs(&shop, 200);
+        assert_eq!(costs_200.len(), 1);
+        assert_eq!(costs_200[0], vec![(ItemId(20), 10)]);
+
+        // Case 3: Searching for item 300. Not present.
+        let costs_300 = get_trade_costs(&shop, 300);
+        assert!(costs_300.is_empty());
+    }
 }
 
 fn leve_rewards_item(
