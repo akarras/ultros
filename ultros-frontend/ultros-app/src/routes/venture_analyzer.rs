@@ -109,11 +109,10 @@ fn VentureAnalyzerTable(
                 let revenue = market_price * quantity;
                 let profit = revenue - venture_cost_gil;
 
-                #[allow(clippy::collapsible_if)]
-                if let Some(min) = minimum_profit() {
-                    if profit < min {
-                        continue;
-                    }
+                if let Some(min) = minimum_profit()
+                    && profit < min
+                {
+                    continue;
                 }
 
                 results.push(VentureProfitData {
@@ -303,11 +302,10 @@ pub fn VentureAnalyzer() -> impl IntoView {
 
     // If no world is selected initially, try to use home world
     Effect::new(move |_| {
-        #[allow(clippy::collapsible_if)]
-        if selected_world.get_untracked().is_none() {
-            if let Some(home) = home_world.get() {
-                set_selected_world(Some(home));
-            }
+        if selected_world.get_untracked().is_none()
+            && let Some(home) = home_world.get()
+        {
+            set_selected_world(Some(home));
         }
     });
 
