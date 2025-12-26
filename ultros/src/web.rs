@@ -898,11 +898,8 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/search", get(search))
         .route("/api/v1/realtime/events", get(real_time_data))
         .route("/api/v1/cheapest/{world}", get(cheapest_per_world))
-<<<<<<< HEAD
         .route("/api/v1/trends/{world}", get(get_trends))
-=======
         .route("/api/v1/best_deals/{world}", get(get_best_deals))
->>>>>>> 403522c (feat: Add Market Movers section to Homepage)
         .route("/api/v1/recentSales/{world}", get(recent_sales))
         .route(
             "/api/v1/listings/{world}/{itemid}",

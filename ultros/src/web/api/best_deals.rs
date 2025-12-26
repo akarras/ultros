@@ -45,7 +45,9 @@ pub(crate) async fn get_best_deals(
 ) -> Result<Json<Vec<ResaleStatsDto>>, WebError> {
     let world = world_cache.lookup_value_by_name(&world_name)?;
     let world_id = world.as_world()?.id;
-    let region = world_cache.get_region(&world)?;
+    let region = world_cache
+        .get_region(&world)
+        .ok_or_else(|| anyhow::anyhow!("Region not found for world {}", world_name))?;
 
     let filter_sale = match query.filter_sale.as_deref() {
         Some("Day") => Some(SoldWithin::Today(crate::analyzer_service::SoldAmount(1))),
