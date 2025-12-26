@@ -356,6 +356,13 @@ mod tests {
                 let titles: Vec<_> = results.iter().map(|r| r.title.clone()).collect();
                 panic!("Leve not found for '{}'. Found: {:?}", name, titles);
             }
+            if let Some(l) = found {
+                assert!(
+                    l.url.starts_with("/leve/"),
+                    "URL should start with /leve/, got {}",
+                    l.url
+                );
+            }
         } else {
             // If no craft leves, we can't test. But this shouldn't happen in real DB.
             // If minimal DB, maybe.
