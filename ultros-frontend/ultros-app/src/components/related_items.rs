@@ -6,7 +6,9 @@ use ultros_api_types::{cheapest_listings::CheapestListingMapKey, icon_size::Icon
 use xiv_gen::{ENpcBase, ENpcResidentId, GilShopId, Item, ItemId, Recipe};
 
 use crate::{
-    components::{item_icon::ItemIcon, skeleton::SingleLineSkeleton},
+    components::{
+        add_recipe_to_list::AddRecipeToList, item_icon::ItemIcon, skeleton::SingleLineSkeleton,
+    },
     global_state::{cheapest_prices::CheapestPrices, home_world::get_price_zone},
 };
 
@@ -208,6 +210,7 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
                             "ingredient"
                         </span>
                     })}
+                    <AddRecipeToList recipe />
                 </div>
             </div>
 

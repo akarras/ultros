@@ -1,5 +1,4 @@
 use crate::api::get_listings;
-use crate::components::add_recipe_to_list::AddRecipeToList;
 use crate::components::gil::Gil;
 use crate::components::icon::Icon;
 use crate::components::price_history_chart::PriceHistoryChart;
@@ -776,7 +775,7 @@ pub fn ItemView() -> impl IntoView {
         recently_viewed.add_item(item_id());
     });
 
-    let data = xiv_gen_db::data();
+    let data = &xiv_gen_db::data();
     let items = &data.items;
     let categories = &data.item_ui_categorys;
     let search_categories = &data.item_search_categorys;
@@ -876,19 +875,6 @@ pub fn ItemView() -> impl IntoView {
 
                         <div class="flex flex-wrap gap-2 items-center">
                             <div class="cursor-pointer"><AddToList item_id /></div>
-                            {move || {
-                                let id = ItemId(item_id());
-                                data.recipes
-                                    .values()
-                                    .find(|r| r.item_result == id)
-                                    .map(|recipe| {
-                                        view! {
-                                            <div class="cursor-pointer">
-                                                <AddRecipeToList recipe />
-                                            </div>
-                                        }
-                                    })
-                            }}
                             <a
                                 class="btn-primary"
                                 target="_blank"
