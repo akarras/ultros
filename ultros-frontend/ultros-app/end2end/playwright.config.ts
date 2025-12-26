@@ -18,7 +18,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'cd .. && cargo leptos serve',
+    command: 'cd .. && cargo leptos serve --release',
     url: 'http://127.0.0.1:3000',
     reuseExistingServer: !process.env.CI,
   },
