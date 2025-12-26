@@ -953,12 +953,12 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     );
 
     view! {
-        <div class="main-content p-6">
+        <div class="main-content p-2 sm:p-6">
             <Title text=move || format!("Flip Finder - {}", world()) />
             <div class="container mx-auto max-w-7xl">
                 <div class="flex flex-col gap-8">
                     // Header Section
-                    <div class="panel p-8 rounded-2xl">
+                    <div class="panel p-4 sm:p-8 rounded-2xl">
                         <h1 class="text-3xl font-bold text-[color:var(--brand-fg)] mb-4">
                             "Flip Finder for " {world}
                         </h1>
@@ -1137,11 +1137,11 @@ pub fn Analyzer() -> impl IntoView {
         <MetaTitle title="Flip Finder - Ultros" />
         <MetaDescription text="Find items on the Final Fantasy 14 marketboard that are great for resale. Used to earn gil quickly." />
 
-        <div class="main-content p-6">
+        <div class="main-content p-2 sm:p-6">
             <div class="container mx-auto max-w-7xl">
                 <div class="flex flex-col gap-8">
                     // Hero Section
-                    <div class="panel p-8 rounded-2xl">
+                    <div class="panel p-4 sm:p-8 rounded-2xl">
                         <h1 class="text-3xl font-bold text-[color:var(--brand-fg)] mb-4">
                             "Flip Finder"
                         </h1>
