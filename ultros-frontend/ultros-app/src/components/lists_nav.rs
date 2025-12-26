@@ -1,6 +1,7 @@
 use crate::components::icon::Icon;
+use icondata::AiOrderedListOutlined;
 use leptos::prelude::*;
-use leptos_router::*;
+use leptos_router::components::A;
 
 #[component]
 pub fn ListsNav() -> impl IntoView {
