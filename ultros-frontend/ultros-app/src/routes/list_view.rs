@@ -92,8 +92,8 @@ pub fn ListView() -> impl IntoView {
 
     Effect::new(move |_| {
         use leptos::leptos_dom::helpers::location;
-        use ultros_api_types::websocket::{AlertsRx, AlertsTx};
         use leptos::wasm_bindgen::JsCast;
+        use ultros_api_types::websocket::{AlertsRx, AlertsTx};
         use web_sys::{MessageEvent, WebSocket};
 
         if is_watching.get() {
@@ -113,70 +113,77 @@ pub fn ListView() -> impl IntoView {
             if let Ok(ws) = WebSocket::new(&url) {
                 let name = name.clone();
                 let ws_for_open = ws.clone();
-                let onopen_callback = leptos::wasm_bindgen::closure::Closure::wrap(Box::new(move || {
-                    let msg = AlertsRx::WatchCharacter {
-                        name: name.clone(),
-                    };
-                    // Manually serialize since we can't easily use serde_json to string here without adding it to Cargo.toml if missing
-                    // Actually ultros-app likely has serde-json.
-                    // But wait, AlertsRx is binary or text? Backend handles both.
-                    // Let's use text and serde_json.
-                     match serde_json::to_string(&msg) {
-                        Ok(text) => {
-                             let _ = ws_for_open.send_with_str(&text);
+                let onopen_callback =
+                    leptos::wasm_bindgen::closure::Closure::wrap(Box::new(move || {
+                        let msg = AlertsRx::WatchCharacter { name: name.clone() };
+                        // Manually serialize since we can't easily use serde_json to string here without adding it to Cargo.toml if missing
+                        // Actually ultros-app likely has serde-json.
+                        // But wait, AlertsRx is binary or text? Backend handles both.
+                        // Let's use text and serde_json.
+                        match serde_json::to_string(&msg) {
+                            Ok(text) => {
+                                let _ = ws_for_open.send_with_str(&text);
+                            }
+                            Err(e) => {
+                                leptos::logging::error!(
+                                    "Failed to serialize WatchCharacter: {:?}",
+                                    e
+                                );
+                            }
                         }
-                        Err(e) => {
-                            leptos::logging::error!("Failed to serialize WatchCharacter: {:?}", e);
-                        }
-                    }
-                }) as Box<dyn FnMut()>);
+                    })
+                        as Box<dyn FnMut()>);
                 ws.set_onopen(Some(onopen_callback.as_ref().unchecked_ref()));
                 onopen_callback.forget();
 
-                let onmessage_callback = leptos::wasm_bindgen::closure::Closure::wrap(Box::new(move |e: MessageEvent| {
-                     if let Ok(txt) = e.data().dyn_into::<web_sys::js_sys::JsString>() {
-                        let txt: String = txt.into();
-                         if let Ok(AlertsTx::ItemPurchased { item_id }) = serde_json::from_str::<AlertsTx>(&txt) {
-                             // Mark item as acquired
-                             // We need to find the item in the list and update it.
-                             // However, `list_view` resource holds the state.
-                             // We can't easily modify the resource directly without refetching.
-                             // But we can trigger an action.
-                             // We need to know the list item ID (not just item_id) to update it properly via `edit_item` action?
-                             // No, `edit_item` takes `ListItem`.
-                             // Wait, `list_view` returns `(List, Vec<ListItem>)` or similar.
-                             // Actually `get_list_items_with_listings` returns `(List, Vec<(ListItem, Vec<ActiveListing>)>)`.
+                let onmessage_callback =
+                    leptos::wasm_bindgen::closure::Closure::wrap(Box::new(move |e: MessageEvent| {
+                        if let Ok(txt) = e.data().dyn_into::<web_sys::js_sys::JsString>() {
+                            let txt: String = txt.into();
+                            if let Ok(AlertsTx::ItemPurchased { item_id }) =
+                                serde_json::from_str::<AlertsTx>(&txt)
+                            {
+                                // Mark item as acquired
+                                // We need to find the item in the list and update it.
+                                // However, `list_view` resource holds the state.
+                                // We can't easily modify the resource directly without refetching.
+                                // But we can trigger an action.
+                                // We need to know the list item ID (not just item_id) to update it properly via `edit_item` action?
+                                // No, `edit_item` takes `ListItem`.
+                                // Wait, `list_view` returns `(List, Vec<ListItem>)` or similar.
+                                // Actually `get_list_items_with_listings` returns `(List, Vec<(ListItem, Vec<ActiveListing>)>)`.
 
-                             // To update the UI without full refetch, we might want to update a signal.
-                             // But the data is in `list_view` resource which is read-only unless we mutate it via `update`.
-                             // `list_view.update(|data| ...)`
+                                // To update the UI without full refetch, we might want to update a signal.
+                                // But the data is in `list_view` resource which is read-only unless we mutate it via `update`.
+                                // `list_view.update(|data| ...)`
 
-                             list_view.update(|data| {
-                                 if let Some(Ok((_, items))) = data {
-                                     for (item, _) in items.iter_mut() {
-                                         if item.item_id == item_id {
-                                              // Increment acquired count
-                                              // Logic: if acquired < quantity, acquired++
-                                              let q = item.quantity.unwrap_or(1);
-                                              let current = item.acquired.unwrap_or(0);
-                                              if current < q {
-                                                  item.acquired = Some(current + 1);
-                                                  // Also trigger server update?
-                                                  // Yes, we should probably call `edit_list_item` action.
-                                                  // But we are inside an Effect.
-                                                  // We can spawn a local task to call the server action.
-                                                  let item_clone = item.clone();
-                                                  leptos::task::spawn_local(async move {
-                                                      let _ = edit_list_item(item_clone).await;
-                                                  });
-                                              }
-                                         }
-                                     }
-                                 }
-                             });
-                         }
-                     }
-                }) as Box<dyn FnMut(MessageEvent)>);
+                                list_view.update(|data| {
+                                    if let Some(Ok((_, items))) = data {
+                                        for (item, _) in items.iter_mut() {
+                                            if item.item_id == item_id {
+                                                // Increment acquired count
+                                                // Logic: if acquired < quantity, acquired++
+                                                let q = item.quantity.unwrap_or(1);
+                                                let current = item.acquired.unwrap_or(0);
+                                                if current < q {
+                                                    item.acquired = Some(current + 1);
+                                                    // Also trigger server update?
+                                                    // Yes, we should probably call `edit_list_item` action.
+                                                    // But we are inside an Effect.
+                                                    // We can spawn a local task to call the server action.
+                                                    let item_clone = item.clone();
+                                                    leptos::task::spawn_local(async move {
+                                                        let _ = edit_list_item(item_clone).await;
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    }
+                                });
+                            }
+                        }
+                    })
+                        as Box<dyn FnMut(MessageEvent)>);
                 ws.set_onmessage(Some(onmessage_callback.as_ref().unchecked_ref()));
                 onmessage_callback.forget();
 
@@ -191,7 +198,7 @@ pub fn ListView() -> impl IntoView {
                 // send_wrapper crate is available in Cargo.toml.
                 let ws_clone = send_wrapper::SendWrapper::new(ws.clone());
                 on_cleanup(move || {
-                     let _ = ws_clone.close();
+                    let _ = ws_clone.close();
                 });
             }
         }
