@@ -1,9 +1,11 @@
 use anyhow::{Result, anyhow};
+use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use std::{
     cmp::Reverse,
     collections::{BTreeMap, btree_map::Entry},
     fmt::Display,
+    io::{Read, Write},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -408,9 +410,14 @@ impl AnalyzerService {
     async fn serialize_state(&self, is_shutdown: bool) -> Result<()> {
         let state = self.get_analyzer_state().await;
         let bytes = rkyv::to_bytes::<_, 256>(&state).map_err(|e| anyhow!(e.to_string()))?;
+
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&bytes)?;
+        let compressed_bytes = encoder.finish()?;
+
         let timestamp = Utc::now().timestamp();
-        let filename = format!("analyzer-data/snapshot-{}.bin", timestamp);
-        fs::write(&filename, &bytes).await?;
+        let filename = format!("analyzer-data/snapshot-{}.bin.gz", timestamp);
+        fs::write(&filename, &compressed_bytes).await?;
         info!("Wrote snapshot to {}", filename);
         if !is_shutdown {
             let mut dir = fs::read_dir("analyzer-data").await?;
@@ -456,14 +463,28 @@ impl AnalyzerService {
         }
         entries.sort_by_key(|x| x.file_name());
         for entry in entries.iter().rev() {
-            let file = match fs::read(entry.path()).await {
+            let path = entry.path();
+            let file = match fs::read(&path).await {
                 Ok(f) => f,
                 Err(e) => {
                     error!("Error reading file {e:?}");
                     continue;
                 }
             };
-            let state: AnalyzerState = match rkyv::from_bytes(&file) {
+
+            let decompressed_data = if path.to_string_lossy().ends_with(".gz") {
+                let mut decoder = GzDecoder::new(&file[..]);
+                let mut s = Vec::new();
+                if let Err(e) = decoder.read_to_end(&mut s) {
+                    error!("Error decompressing file {path:?}: {e}");
+                    continue;
+                }
+                s
+            } else {
+                file
+            };
+
+            let state: AnalyzerState = match rkyv::from_bytes(&decompressed_data) {
                 Ok(s) => s,
                 Err(e) => {
                     error!("Error deserializing state {e}");
@@ -1369,6 +1390,16 @@ mod tests {
 
         // Serialize the state
         analyzer_service.serialize_state(false).await.unwrap();
+
+        // Verify .bin.gz exists
+        let mut entries = tokio::fs::read_dir("analyzer-data").await.unwrap();
+        let mut found = false;
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            if entry.file_name().to_string_lossy().ends_with(".bin.gz") {
+                found = true;
+            }
+        }
+        assert!(found, "Should have created a .bin.gz file");
 
         // Create a new service and restore from the snapshot
         let mut new_cheapest_items_map = BTreeMap::new();

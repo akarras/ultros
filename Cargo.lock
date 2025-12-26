@@ -7890,6 +7890,7 @@ dependencies = [
  "cookie",
  "dotenvy",
  "envy",
+ "flate2",
  "futures",
  "git-const",
  "http-body-util",
