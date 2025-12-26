@@ -5,8 +5,8 @@ use crate::components::price_history_chart::PriceHistoryChart;
 use crate::components::world_name::WorldName;
 use crate::components::{
     ad::Ad, add_to_list::AddToList, clipboard::*, item_icon::*, listings_table::*, meta::*,
-    recently_viewed::RecentItems, related_items::*, sale_history_table::*, skeleton::BoxSkeleton,
-    stats_display::*, toggle::Toggle, ui_text::*,
+    price_alert_modal::PriceAlertModal, recently_viewed::RecentItems, related_items::*,
+    sale_history_table::*, skeleton::BoxSkeleton, stats_display::*, toggle::Toggle, ui_text::*,
 };
 use crate::error::AppError;
 use crate::global_state::LocalWorldData;
@@ -828,7 +828,10 @@ pub fn ItemView() -> impl IntoView {
         )
     });
 
+    let show_alert_modal = RwSignal::new(false);
+
     view! {
+        <PriceAlertModal show=show_alert_modal item_id=item_id() world_name=world() />
         <MetaDescription text=description />
         <MetaTitle title=move || {
             format!("{} - 🌍{} - Market board - Ultros", item_name(), world())
@@ -875,6 +878,13 @@ pub fn ItemView() -> impl IntoView {
 
                         <div class="flex flex-wrap gap-2 items-center">
                             <div class="cursor-pointer"><AddToList item_id /></div>
+                            <button
+                                class="btn-primary"
+                                on:click=move |_| show_alert_modal.set(true)
+                            >
+                                <Icon icon=icondata::AiBellOutlined />
+                                "Alert"
+                            </button>
                             <a
                                 class="btn-primary"
                                 target="_blank"

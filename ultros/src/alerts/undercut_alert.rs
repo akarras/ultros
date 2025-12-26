@@ -6,9 +6,10 @@ use std::{
 use anyhow::Result;
 use futures::future::{self, Either};
 use poise::serenity_prelude::{self, Color, UserId};
-use serde::Serialize;
 use tracing::{debug, error, instrument};
-use ultros_api_types::{user::OwnedRetainer, websocket::ListingEventData};
+use ultros_api_types::{
+    alerts::UndercutRetainer, user::OwnedRetainer, websocket::ListingEventData,
+};
 use ultros_db::UltrosDb;
 
 use crate::event::{EventBus, EventType};
@@ -102,13 +103,6 @@ struct ListingKey {
 struct ListingValue {
     lowest_price: i32,
     has_alerted: bool,
-}
-
-#[derive(Debug, Eq, PartialEq, PartialOrd, Ord, Serialize)]
-pub(crate) struct UndercutRetainer {
-    pub(crate) id: i32,
-    pub(crate) name: String,
-    pub(crate) undercut_amount: i32,
 }
 
 #[derive(Debug)]

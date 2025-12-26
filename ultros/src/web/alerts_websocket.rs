@@ -2,55 +2,26 @@ use super::oauth::AuthDiscordUser;
 use crate::{
     alerts::{
         price_alert::{PriceAlertService, PriceUndercutData},
-        undercut_alert::{Undercut, UndercutRetainer, UndercutTracker},
+        undercut_alert::{Undercut, UndercutTracker},
     },
     event::EventReceivers,
     utils,
 };
 use axum::{
     extract::{
-        State, WebSocketUpgrade,
         ws::{Message, WebSocket},
+        State, WebSocketUpgrade,
     },
     response::Response,
 };
 use futures::future::select;
-use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{
     instrument,
     log::{debug, error, info},
 };
-use ultros_db::{UltrosDb, world_cache::AnySelector};
-
-#[derive(Debug, Deserialize)]
-pub(crate) enum AlertsRx {
-    Undercuts {
-        margin: i32,
-    },
-    CreatePriceAlert {
-        item_id: i32,
-        travel_amount: AnySelector,
-        price_threshold: i32,
-    },
-    Ping(Vec<u8>),
-}
-
-#[derive(Debug, Serialize)]
-pub(crate) enum AlertsTx {
-    RetainerUndercut {
-        item_id: i32,
-        item_name: String,
-        /// List of all the retainers that were just undercut
-        undercut_retainers: Vec<UndercutRetainer>,
-    },
-    PriceAlert {
-        world_id: i32,
-        item_id: i32,
-        item_name: String,
-        price: i32,
-    },
-}
+use ultros_api_types::alerts::{AlertsRx, AlertsTx};
+use ultros_db::UltrosDb;
 
 /// Websocket connection will enable the user to receive real time events for alerts.
 /// The websocket messages are defined by AlertsTx, AlertsRx.
@@ -148,22 +119,11 @@ async fn handle_upgrade(
                             price_threshold,
                         } => {
                             info!("Creating price alert for {item_id}");
-                            let api_selector = match travel_amount {
-                                AnySelector::World(w) => {
-                                    ultros_api_types::world_helper::AnySelector::World(w)
-                                }
-                                AnySelector::Region(r) => {
-                                    ultros_api_types::world_helper::AnySelector::Region(r)
-                                }
-                                AnySelector::Datacenter(d) => {
-                                    ultros_api_types::world_helper::AnySelector::Datacenter(d)
-                                }
-                            };
                             price_alert_service
                                 .create_alert(
                                     price_threshold,
                                     item_id,
-                                    api_selector,
+                                    travel_amount,
                                     price_tx.clone(),
                                 )
                                 .await;

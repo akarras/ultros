@@ -12,6 +12,7 @@ use crate::global_state::{
     cheapest_prices::CheapestPrices, clipboard_text::GlobalLastCopiedText, cookies::Cookies,
     theme::provide_theme_settings, toasts::provide_toast_context,
 };
+use crate::ws::alerts::AlertsService;
 use crate::{
     components::{
         ad::Ad, apps_menu::*, patreon::*, search_box::*, theme_picker::*, toast::*, tooltip::*,
@@ -207,6 +208,7 @@ pub fn App() -> impl IntoView {
     provide_context(CheapestPrices::new());
     provide_context(GlobalLastCopiedText(RwSignal::new(None)));
     provide_context(RecentItems::new());
+    provide_context(AlertsService::new());
     provide_theme_settings();
     provide_toast_context();
     // AnimationContext::provide();
