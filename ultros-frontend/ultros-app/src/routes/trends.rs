@@ -1,9 +1,13 @@
+use icondata::{AiArrowDownOutlined, AiArrowUpOutlined};
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
 use ultros_api_types::icon_size::IconSize;
 use ultros_api_types::trends::TrendItem;
 
-use crate::{api::get_trends, components::item_icon::ItemIcon};
+use crate::{
+    api::get_trends,
+    components::{icon::Icon, item_icon::ItemIcon},
+};
 
 #[component]
 pub fn Trends() -> impl IntoView {
@@ -57,6 +61,7 @@ fn TrendList(items: Vec<TrendItem>, world: String) -> impl IntoView {
                         <th>"Item"</th>
                         <th>"Price"</th>
                         <th>"Avg Price"</th>
+                        <th>"Trend"</th>
                         <th>"Weekly Sales"</th>
                     </tr>
                 </thead>
@@ -66,6 +71,7 @@ fn TrendList(items: Vec<TrendItem>, world: String) -> impl IntoView {
                         key=|item| (item.item_id, item.hq)
                         children=move |item| {
                             let world_clone = world.clone();
+                            let price_diff = (item.price as f32 - item.average_sale_price) / item.average_sale_price * 100.0;
                             view! {
                                 <tr>
                                     <td class="flex items-center gap-2">
@@ -84,6 +90,25 @@ fn TrendList(items: Vec<TrendItem>, world: String) -> impl IntoView {
                                     </td>
                                     <td>{item.price.to_string()} " gil"</td>
                                     <td>{format!("{:.0}", item.average_sale_price)} " gil"</td>
+                                    <td>
+                                        <div class="flex items-center gap-1">
+                                            {if price_diff > 0.0 {
+                                                view! {
+                                                    <span class="text-green-600 flex items-center">
+                                                        <Icon icon=AiArrowUpOutlined />
+                                                        {format!("{:.1}%", price_diff.abs())}
+                                                    </span>
+                                                }.into_any()
+                                            } else {
+                                                view! {
+                                                    <span class="text-red-600 flex items-center">
+                                                        <Icon icon=AiArrowDownOutlined />
+                                                        {format!("{:.1}%", price_diff.abs())}
+                                                    </span>
+                                                }.into_any()
+                                            }}
+                                        </div>
+                                    </td>
                                     <td>{format!("{:.1}", item.sales_per_week)}</td>
                                 </tr>
                             }
