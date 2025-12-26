@@ -1,6 +1,7 @@
-use leptos::leptos_dom::helpers::set_timeout;
 
 use leptos::prelude::*;
+#[cfg(feature = "hydrate")]
+use leptos::leptos_dom::helpers::set_timeout;
 use uuid::Uuid;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
