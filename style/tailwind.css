@@ -1235,7 +1235,9 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 .btn-primary:hover {
     background-color: color-mix(in srgb, var(--brand-bg) 25%, transparent);
     border-color: var(--brand-ring);
-    box-shadow: 0 0 15px -3px color-mix(in srgb, var(--brand-ring) 40%, transparent);
+    box-shadow: 0 0 20px -5px var(--brand-ring);
+    text-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
+    transform: translateY(-1px);
 }
 
 @utility btn-secondary {
@@ -1402,4 +1404,14 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 }
 @utility forced-layer {
     transform: translateZ(0);
+}
+
+/* Sex appeal animations */
+@keyframes float {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(-10px); }
+}
+
+@utility animate-float {
+    animation: float 6s ease-in-out infinite;
 }
