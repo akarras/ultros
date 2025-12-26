@@ -1,13 +1,14 @@
 use leptos::prelude::*;
 use leptos_router::{
-    hooks::{use_navigate, use_params_map},
     NavigateOptions,
+    hooks::{use_navigate, use_params_map},
 };
 use ultros_api_types::{icon_size::IconSize, trends::TrendItem};
 
 use crate::{
     api::get_trends,
     components::{
+        add_to_list::AddToList,
         clipboard::Clipboard,
         gil::Gil,
         item_icon::ItemIcon,
@@ -15,7 +16,6 @@ use crate::{
         skeleton::BoxSkeleton,
         virtual_scroller::VirtualScroller,
         world_picker::WorldOnlyPicker,
-        add_to_list::AddToList,
     },
     global_state::LocalWorldData,
 };
@@ -122,8 +122,9 @@ fn TrendsWorldNavigator() -> impl IntoView {
     let initial_world = params.with_untracked(|p| {
         let world = p.get_str("world").unwrap_or_default();
         if let Ok(w_data) = &worlds {
-             w_data.lookup_world_by_name(world)
-            .and_then(|w| w.as_world().cloned())
+            w_data
+                .lookup_world_by_name(world)
+                .and_then(|w| w.as_world().cloned())
         } else {
             None
         }
@@ -134,10 +135,7 @@ fn TrendsWorldNavigator() -> impl IntoView {
     Effect::new(move |_| {
         if let Some(world) = current_world() {
             let world = world.name;
-            nav(
-                &format!("/trends/{world}"),
-                NavigateOptions::default(),
-            );
+            nav(&format!("/trends/{world}"), NavigateOptions::default());
         }
     });
 
