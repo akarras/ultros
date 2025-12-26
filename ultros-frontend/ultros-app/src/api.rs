@@ -12,6 +12,7 @@ use ultros_api_types::{
     result::JsonErrorWrapper,
     retainer::{Retainer, RetainerListings},
     search::SearchResult,
+    trends::TrendsData,
     user::{OwnedRetainer, UserData, UserRetainerListings, UserRetainers},
 };
 
@@ -59,6 +60,10 @@ pub(crate) async fn get_bulk_listings(
 /// Get most expensive
 pub(crate) async fn get_recent_sales_for_world(region_name: &str) -> AppResult<RecentSales> {
     fetch_api(&format!("/api/v1/recentSales/{}", region_name)).await
+}
+
+pub(crate) async fn get_trends(world_name: &str) -> AppResult<TrendsData> {
+    fetch_api(&format!("/api/v1/trends/{}", world_name)).await
 }
 
 /// Returns a list of the logged in user's retainers
