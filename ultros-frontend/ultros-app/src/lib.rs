@@ -34,6 +34,8 @@ use crate::{
         recipe_analyzer::*,
         retainers::*,
         settings::*,
+        trends::*,
+        venture_analyzer::*,
     },
 };
 use git_const::git_short_hash;
@@ -247,7 +249,7 @@ pub fn App() -> impl IntoView {
                 // <AnimatedRoutes outro="route-out" intro="route-in" outro_back="route-out-back" intro_back="route-in-back">
                 // https://github.com/leptos-rs/leptos/issues/1754
                 <main class="flex-1">
-                    <div class="mx-auto max-w-7xl px-2 sm:px-4 lg:px-6 py-4 sm:py-6">
+                    <div class="mx-auto max-w-7xl px-0 sm:px-4 lg:px-6 py-4 sm:py-6">
                         <Routes fallback=move || {
                             view! { <div>"Page not found"</div> }
                         }>
@@ -282,6 +284,7 @@ pub fn App() -> impl IntoView {
                             <Route path=path!("flip-finder/:world") view=AnalyzerWorldView />
                             <Route path=path!("recipe-analyzer") view=RecipeAnalyzer />
                             <Route path=path!("leve-analyzer") view=LeveAnalyzer />
+                            <Route path=path!("venture-analyzer") view=VentureAnalyzer />
                             <Route path=path!("analyzer/:world") view=move || {
                                 let nav = leptos_router::hooks::use_navigate();
                                 let params = leptos_router::hooks::use_params_map();
@@ -292,6 +295,7 @@ pub fn App() -> impl IntoView {
                                 });
                                 view! { <div /> }
                             } />
+                            <Route path=path!("trends/:world") view=Trends />
                             <Route path=path!("settings") view=Settings />
                             <Route path=path!("profile") view=Profile />
                             <Route path=path!("privacy") view=PrivacyPolicy />

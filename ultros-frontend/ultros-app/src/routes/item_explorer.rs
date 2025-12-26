@@ -5,6 +5,7 @@ use std::{collections::HashSet, str::FromStr};
 use crate::CheapestPrices;
 use crate::components::clipboard::Clipboard;
 use crate::components::icon::Icon;
+use crate::components::loading::Loading;
 use crate::components::query_button::QueryButton;
 use crate::components::toggle::Toggle;
 use crate::components::{add_to_list::*, cheapest_price::*, fonts::*, item_icon::*, meta::*};
@@ -502,6 +503,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
     });
 
     view! {
+        <Suspense fallback=move || view! { <div class="flex justify-center p-10"><Loading /></div> }>
         <div class="flex flex-col gap-6">
             // Sort and Direction Controls - Floating / Sticky Bar
             <div class="flex flex-col sm:flex-row justify-between gap-4 p-4 rounded-xl panel items-center sticky top-[72px] lg:top-4 z-20 backdrop-blur-md bg-[color:var(--bg-panel)]/90 border border-white/5 shadow-lg">
@@ -687,6 +689,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
             </QueryButton>
             <div class="h-8" /> // Bottom spacing
         </div>
+        </Suspense>
     }.into_any()
 }
 
@@ -734,7 +737,7 @@ pub fn ItemExplorer() -> impl IntoView {
             <div class="flex flex-row grow relative">
                 // Sidebar (Desktop Sticky / Mobile Drawer)
                 <aside
-                    class="fixed inset-y-0 left-0 z-40 bg-[color:var(--bg-panel)] border-r border-white/5
+                    class="fixed inset-y-0 left-0 z-[80] bg-[color:var(--bg-panel)] border-r border-white/5
                            lg:static lg:block lg:z-auto w-[280px] shrink-0
                            transition-transform duration-300 ease-in-out"
                     class=("translate-x-0", move || menu_open())
@@ -766,7 +769,7 @@ pub fn ItemExplorer() -> impl IntoView {
                     if menu_open() {
                         view! {
                             <div
-                                class="fixed inset-0 bg-black/50 backdrop-blur-sm z-30 lg:hidden"
+                                class="fixed inset-0 bg-black/50 backdrop-blur-sm z-[70] lg:hidden"
                                 on:click=move |_| set_open.set(Some(false))
                             />
                         }.into_any()

@@ -98,6 +98,17 @@ pub fn AppsMenu() -> impl IntoView {
                         </A>
 
                         <A
+                            href=homeworld()
+                                .map(|w| format!("/venture-analyzer?world={}", w.name))
+                                .unwrap_or("/venture-analyzer".to_string())
+                            attr:class="nav-link w-full justify-start"
+                            on:click=move |_| set_has_focus(false)
+                        >
+                             <Icon height="1.1em" width="1.1em" icon=i::FaBriefcaseSolid />
+                            <span class="ml-2">"Venture Analyzer"</span>
+                        </A>
+
+                        <A
                             href="/items?menu-open=true"
                             attr:class="nav-link w-full justify-start"
                             on:click=close_menu

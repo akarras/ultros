@@ -12,6 +12,7 @@ use ultros_api_types::{
     result::JsonErrorWrapper,
     retainer::{Retainer, RetainerListings},
     search::SearchResult,
+    trends::TrendsData,
     user::{OwnedRetainer, UserData, UserRetainerListings, UserRetainers},
 };
 
@@ -44,6 +45,23 @@ pub(crate) async fn get_cheapest_listings(world_name: &str) -> AppResult<Cheapes
     fetch_api(&format!("/api/v1/cheapest/{}", world_name)).await
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub(crate) struct ResaleStatsDto {
+    pub(crate) profit: i32,
+    pub(crate) item_id: i32,
+    pub(crate) sold_within: String,
+    pub(crate) return_on_investment: f32,
+    pub(crate) world_id: i32,
+}
+
+pub(crate) async fn get_best_deals(world_name: &str) -> AppResult<Vec<ResaleStatsDto>> {
+    fetch_api(&format!(
+        "/api/v1/best_deals/{}?min_profit=10000&filter_sale=Week",
+        world_name
+    ))
+    .await
+}
+
 #[allow(dead_code)]
 pub(crate) async fn get_bulk_listings(
     world: &str,
@@ -59,6 +77,10 @@ pub(crate) async fn get_bulk_listings(
 /// Get most expensive
 pub(crate) async fn get_recent_sales_for_world(region_name: &str) -> AppResult<RecentSales> {
     fetch_api(&format!("/api/v1/recentSales/{}", region_name)).await
+}
+
+pub(crate) async fn get_trends(world_name: &str) -> AppResult<TrendsData> {
+    fetch_api(&format!("/api/v1/trends/{}", world_name)).await
 }
 
 /// Returns a list of the logged in user's retainers
