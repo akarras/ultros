@@ -34,8 +34,8 @@ use crate::{
         recipe_analyzer::*,
         retainers::*,
         settings::*,
-        venture_analyzer::*,
         trends::*,
+        venture_analyzer::*,
     },
 };
 use git_const::git_short_hash;
@@ -249,7 +249,7 @@ pub fn App() -> impl IntoView {
                 // <AnimatedRoutes outro="route-out" intro="route-in" outro_back="route-out-back" intro_back="route-in-back">
                 // https://github.com/leptos-rs/leptos/issues/1754
                 <main class="flex-1">
-                    <div class="mx-auto max-w-7xl px-2 sm:px-4 lg:px-6 py-4 sm:py-6">
+                    <div class="mx-auto max-w-7xl px-0 sm:px-4 lg:px-6 py-4 sm:py-6">
                         <Routes fallback=move || {
                             view! { <div>"Page not found"</div> }
                         }>

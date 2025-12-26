@@ -39,7 +39,7 @@ fn FeatureCard(
 pub fn HomePage() -> impl IntoView {
     view! {
         <MetaDescription text="Ultros is a fast market board analysis tool, keep up to date with all of your retainers and ensure you've got the best prices!" />
-        <div class="main-content p-6">
+        <div class="main-content p-2 sm:p-6">
             <Title text="Ultros - Home" />
             <div class="container flex flex-col gap-6 lg:flex-row-reverse mx-auto items-start max-w-7xl">
                 // Right sidebar
@@ -51,7 +51,7 @@ pub fn HomePage() -> impl IntoView {
 
                 // Main content
                 <div class="flex flex-col grow gap-8">
-                    <div class="panel p-6 sm:p-8 overflow-hidden relative">
+                    <div class="panel p-4 sm:p-8 overflow-hidden relative">
                         <div class="flex flex-col md:flex-row items-center gap-6 md:gap-10">
                             <div class="flex-1 space-y-4 z-10">
                                 <h1 class="text-6xl sm:text-8xl font-extrabold leading-none tracking-tighter drop-shadow-2xl">
