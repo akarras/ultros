@@ -7,10 +7,11 @@ use leptos::{html::Input, prelude::*, task::spawn_local};
 use leptos_hotkeys::use_hotkeys;
 use leptos_router::{NavigateOptions, hooks::use_navigate};
 use std::sync::Arc;
+use std::sync::LazyLock;
 use ultros_api_types::search::SearchResult;
 use web_sys::KeyboardEvent;
 
-fn get_static_pages() -> Vec<SearchResult> {
+static STATIC_PAGES: LazyLock<Vec<SearchResult>> = LazyLock::new(|| {
     vec![
         SearchResult {
             score: 100.0,
@@ -85,6 +86,10 @@ fn get_static_pages() -> Vec<SearchResult> {
             category: Some("Personal".to_string()),
         },
     ]
+});
+
+fn get_static_pages() -> &'static [SearchResult] {
+    &STATIC_PAGES
 }
 
 #[component]
@@ -147,8 +152,9 @@ pub fn SearchBox() -> impl IntoView {
 
             let s_lower = s.to_lowercase();
             let mut matched_pages: Vec<SearchResult> = get_static_pages()
-                .into_iter()
+                .iter()
                 .filter(|p| p.title.to_lowercase().contains(&s_lower))
+                .cloned()
                 .collect();
 
             // Sort matched pages so exact matches or starts_with come first

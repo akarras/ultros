@@ -12,5 +12,8 @@
 - [Lists](./lists/lists.md)
     - [Importing a Makeplace List](./lists/import_makeplace.md)
 - [Flip Finder](./analyzer/analyzer.md)
+- [Recipe Analyzer](./analyzer/recipe.md)
+- [Leve Analyzer](./analyzer/leve.md)
+- [Currency Exchange](./currency/exchange.md)
 - [Hotkeys](./hotkeys.md)
 - [Data notice](./data.md)
