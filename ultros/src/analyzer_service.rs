@@ -334,17 +334,6 @@ pub(crate) struct AnalyzerService {
     initiated: Arc<AtomicBool>,
 }
 
-impl Drop for AnalyzerService {
-    fn drop(&mut self) {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            if let Err(e) = self.serialize_state(true).await {
-                error!("Error serializing state on drop {e:?}");
-            }
-        });
-    }
-}
-
 impl AnalyzerService {
     /// Creates a task that will feed the analyzer and returns Self so that data can be read externally
     pub async fn start_analyzer(
@@ -389,6 +378,9 @@ impl AnalyzerService {
             loop {
                 tokio::select! {
                     _ = serialize_token.cancelled() => {
+                        if let Err(e) = task_self.serialize_state(true).await {
+                            error!("Error serializing state {e:?}");
+                        }
                         break;
                     }
                     _ = interval.tick() => {
@@ -475,14 +467,16 @@ impl AnalyzerService {
                 }
             };
             for (key, value) in state.cheapest_items {
-                let lock = self.cheapest_items.get(&key).unwrap();
-                let mut write = lock.write().await;
-                *write = value;
+                if let Some(lock) = self.cheapest_items.get(&key) {
+                    let mut write = lock.write().await;
+                    *write = value;
+                }
             }
             for (key, value) in state.recent_sale_history {
-                let lock = self.recent_sale_history.get(&key).unwrap();
-                let mut write = lock.write().await;
-                *write = value;
+                if let Some(lock) = self.recent_sale_history.get(&key) {
+                    let mut write = lock.write().await;
+                    *write = value;
+                }
             }
             return true;
         }
@@ -1187,12 +1181,13 @@ mod tests {
     use tokio::time::sleep;
 
     #[tokio::test]
-    async fn test_serialization_deserialization() {
+    async fn test_persistence() {
         let dir = tempdir().unwrap();
         let data_dir = dir.path();
         std::env::set_current_dir(data_dir).unwrap();
         tokio::fs::create_dir_all("analyzer-data").await.unwrap();
 
+        // Part 1: Serialization and Deserialization
         let mut cheapest_items = BTreeMap::new();
         let mut recent_sale_history = BTreeMap::new();
 
@@ -1230,10 +1225,17 @@ mod tests {
         analyzer_service.serialize_state(false).await.unwrap();
 
         // Create a new service and restore from the snapshot
-        let new_cheapest_items: Arc<BTreeMap<AnySelector, RwLock<CheapestListings>>> =
-            Arc::new(BTreeMap::new());
-        let new_recent_sale_history: Arc<BTreeMap<i32, RwLock<SaleHistory>>> =
-            Arc::new(BTreeMap::new());
+        let mut new_cheapest_items_map = BTreeMap::new();
+        new_cheapest_items_map.insert(
+            AnySelector::World(1),
+            RwLock::new(CheapestListings::default()),
+        );
+        let new_cheapest_items = Arc::new(new_cheapest_items_map);
+
+        let mut new_recent_sale_history_map = BTreeMap::new();
+        new_recent_sale_history_map.insert(1, RwLock::new(SaleHistory::default()));
+        let new_recent_sale_history = Arc::new(new_recent_sale_history_map);
+
         let new_analyzer_service = AnalyzerService {
             recent_sale_history: new_recent_sale_history.clone(),
             cheapest_items: new_cheapest_items.clone(),
@@ -1250,22 +1252,9 @@ mod tests {
             .read()
             .await;
         assert_eq!(cheapest_listings.item_map.len(), 1);
-    }
 
-    #[tokio::test]
-    async fn test_snapshot_rotation() {
-        let dir = tempdir().unwrap();
-        let data_dir = dir.path();
-        std::env::set_current_dir(data_dir).unwrap();
-        tokio::fs::create_dir_all("analyzer-data").await.unwrap();
-
-        let analyzer_service = AnalyzerService {
-            recent_sale_history: Arc::new(BTreeMap::new()),
-            cheapest_items: Arc::new(BTreeMap::new()),
-            initiated: Arc::new(AtomicBool::new(false)),
-        };
-
-        // Create 5 snapshots
+        // Part 2: Snapshot Rotation
+        // Create 5 more snapshots (total 6)
         for _ in 0..5 {
             analyzer_service.serialize_state(false).await.unwrap();
             // Sleep for a second to ensure the timestamps are different
