@@ -17,6 +17,9 @@ pub fn EditRetainers() -> impl IntoView {
     let (retainer_search, set_retainer_search) = signal(String::new());
 
     let search_results = Resource::new(retainer_search, move |search| async move {
+        if search.is_empty() {
+            return Ok(vec![]);
+        }
         search_retainers(search).await
     });
 
@@ -120,9 +123,6 @@ pub fn EditRetainers() -> impl IntoView {
                                                         }
                                                     });
                                                     view! {
-                                                        // I have no idea how I would have found that the #[server] macro takes params as a struct
-                                                        // without the compiler just spelling it out for me
-
                                                         {if let Some(character) = character {
                                                             Either::Left(
                                                                 view! {
@@ -143,7 +143,7 @@ pub fn EditRetainers() -> impl IntoView {
                                                                     let retainer_name = retainer.name.to_string();
                                                                     let world_id = retainer.world_id;
                                                                     view! {
-                                                                        <div class="flex-row">
+                                                                        <div class="card flex-row gap-2 p-2 items-center rounded-xl mb-2">
                                                                             <div class="flex w-full md:w-[300px]">
                                                                                 <span class="w-full md:w-[200px] truncate">{retainer_name}</span>
                                                                                 <span>
@@ -151,7 +151,7 @@ pub fn EditRetainers() -> impl IntoView {
                                                                                 </span>
                                                                             </div>
                                                                             <button
-                                                                                class="btn"
+                                                                                class="btn btn-danger"
                                                                                 on:click=move |_| {
                                                                                     let _ = remove_retainer.dispatch(owned_id);
                                                                                 }
@@ -173,15 +173,6 @@ pub fn EditRetainers() -> impl IntoView {
                                 Err(e) => {
                                     Either::Right(
                                         view! {
-                                            // I have no idea how I would have found that the #[server] macro takes params as a struct
-                                            // without the compiler just spelling it out for me
-
-                                            // I have no idea how I would have found that the #[server] macro takes params as a struct
-                                            // without the compiler just spelling it out for me
-
-                                            // I have no idea how I would have found that the #[server] macro takes params as a struct
-                                            // without the compiler just spelling it out for me
-
                                             <div>"Retainers" <br /> {e.to_string()}</div>
                                         },
                                     )
@@ -212,7 +203,7 @@ pub fn EditRetainers() -> impl IntoView {
                                     Ok(retainers) => {
                                         Either::Left(
                                             view! {
-                                                <div class="content-well flex-column">
+                                                <div class="flex-column gap-2 mt-2">
                                                     <For
                                                         each=move || retainers.clone()
                                                         key=move |retainer| retainer.id
@@ -247,9 +238,12 @@ pub fn EditRetainers() -> impl IntoView {
                                         )
                                     }
                                     Err(e) => {
-                                        Either::Right(
-                                            view! { <div>{format!("No retainers found\n{e}")}</div> },
-                                        )
+                                        let message = if !retainer_search.with(|s| s.is_empty()) {
+                                            format!("No retainers found\n{e}")
+                                        } else {
+                                            String::new()
+                                        };
+                                        Either::Right(view! { <div>{message}</div> })
                                     }
                                 }
                             })

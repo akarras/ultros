@@ -34,8 +34,8 @@ use crate::{
         recipe_analyzer::*,
         retainers::*,
         settings::*,
-        venture_analyzer::*,
         trends::*,
+        venture_analyzer::*,
     },
 };
 use git_const::git_short_hash;
