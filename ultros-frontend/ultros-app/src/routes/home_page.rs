@@ -6,7 +6,7 @@ use leptos_router::components::A;
 
 use crate::components::{
     ad::Ad, live_sale_ticker::LiveSaleTicker, meta::MetaDescription,
-    recently_viewed::RecentlyViewed,
+    recently_viewed::RecentlyViewed, top_deals::TopDeals,
 };
 
 #[component]
@@ -88,6 +88,8 @@ pub fn HomePage() -> impl IntoView {
                             </div>
                         </div>
                     </div>
+
+                    <TopDeals />
 
                     // Feature cards grid
                                         <div class="feature-grid">
