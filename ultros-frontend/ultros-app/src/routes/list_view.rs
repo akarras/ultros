@@ -626,7 +626,6 @@ pub fn ListView() -> impl IntoView {
                                                             <tr>
                                                                 {move || {
                                                                     if !edit() || edit_list_mode() {
-                                                                        let item = item();
                                                                         Either::Left(
                                                                             view! {
                                                                                 <td class:hidden=move || !edit_list_mode()>
@@ -635,29 +634,30 @@ pub fn ListView() -> impl IntoView {
                                                                                         on:click=move |_| {
                                                                                             selected_items
                                                                                                 .update(|u| {
-                                                                                                    if u.contains(&item.id) {
-                                                                                                        u.remove(&item.id);
+                                                                                                    let id = item.with(|i| i.id);
+                                                                                                    if u.contains(&id) {
+                                                                                                        u.remove(&id);
                                                                                                     } else {
-                                                                                                        u.insert(item.id);
+                                                                                                        u.insert(id);
                                                                                                     }
                                                                                                 })
                                                                                         }
                                                                                     />
 
                                                                                 </td>
-                                                                                <td>{item.hq.and_then(|hq| hq.then_some("✅"))}</td>
+                                                                                <td>{item.with(|i| i.hq).and_then(|hq| hq.then_some("✅"))}</td>
                                                                                 <td>
                                                                                     <div class="flex-row">
-                                                                                        <ItemIcon item_id=item.item_id icon_size=IconSize::Small />
+                                                                                        <ItemIcon item_id=item.with(|i| i.item_id) icon_size=IconSize::Small />
                                                                                         {game_items
-                                                                                            .get(&ItemId(item.item_id))
+                                                                                            .get(&ItemId(item.with(|i| i.item_id)))
                                                                                             .map(|item| item.name.as_str())}
                                                                                         <Clipboard clipboard_text=game_items
-                                                                                            .get(&ItemId(item.item_id))
+                                                                                            .get(&ItemId(item.with(|i| i.item_id)))
                                                                                             .map(|item| item.name.to_string())
                                                                                             .unwrap_or_default() />
                                                                                         {game_items
-                                                                                            .get(&ItemId(item.item_id))
+                                                                                            .get(&ItemId(item.with(|i| i.item_id)))
                                                                                             .map(|item| item.item_search_category.0 <= 1)
                                                                                             .unwrap_or_default()
                                                                                             .then(move || {
@@ -672,18 +672,81 @@ pub fn ListView() -> impl IntoView {
 
                                                                                     </div>
                                                                                 </td>
-                                                                                <td>{item.quantity}</td>
                                                                                 <td>
                                                                                     {move || {
+                                                        let item = item.get();
+                                                        let q = item.quantity.unwrap_or(1);
+                                                        let a = item.acquired.unwrap_or(0);
+                                                        if q > 1 {
+                                                            view! {
+                                                                <div class="flex flex-col gap-1">
+                                                                    <span>{format!("{a} / {q}")}</span>
+                                                                    <progress
+                                                                        class="progress progress-primary w-full h-2"
+                                                                        value=a
+                                                                        max=q
+                                                                    ></progress>
+                                                                </div>
+                                                            }
+                                                                .into_any()
+                                                        } else {
+                                                            view! { <span>{q}</span> }.into_any()
+                                                        }
+                                                    }}
+
+                                                </td>
+                                                <td>
+                                                    {move || {
+                                                        let q = item.with(|i| i.quantity.unwrap_or(1));
+                                                        let a = item.with(|i| i.acquired.unwrap_or(0));
+                                                        let remaining = q.saturating_sub(a);
                                                                                         view! {
                                                                                             <PriceViewer
-                                                                                                quantity=item.quantity.unwrap_or(1)
-                                                                                                hq=item.hq
+                                                                quantity=remaining
+                                                                hq=item.with(|i| i.hq)
                                                                                                 listings=listings()
                                                                                             />
                                                                                         }
                                                                                     }}
 
+                                                </td>
+                                                <td class:hidden=edit_list_mode>
+                                                    <div class="flex gap-1">
+                                                        <button
+                                                            class="btn"
+                                                            on:click=move |_| {
+                                                                let _ = delete_item.dispatch(item.with(|i| i.id));
+                                                            }
+                                                        >
+                                                            <Icon icon=i::BiTrashSolid />
+                                                        </button>
+                                                        <button
+                                                            class="btn"
+                                                            on:click=move |_| {
+                                                                if temp_item() != item() {
+                                                                    let _ = edit_item.dispatch(temp_item());
+                                                                }
+                                                                set_edit(!edit())
+                                                            }
+                                                        >
+                                                            <Icon icon=Signal::derive(move || {
+                                                                if edit() { i::BsCheck } else { i::BsPencilFill }
+                                                            }) />
+                                                        </button>
+                                                        <Tooltip tooltip_text="Mark as acquired">
+                                                            <button
+                                                                class="btn"
+                                                                on:click=move |_| {
+                                                                    item.update(|i| {
+                                                                        i.acquired = i.quantity;
+                                                                    });
+                                                                    let _ = edit_item.dispatch(item());
+                                                                }
+                                                            >
+                                                                <Icon icon=i::BiCheckRegular />
+                                                            </button>
+                                                        </Tooltip>
+                                                    </div>
                                                                                 </td>
                                                                             },
                                                                         )
@@ -728,57 +791,79 @@ pub fn ListView() -> impl IntoView {
                                                                                     </div>
                                                                                 </td>
                                                                                 <td>
-                                                                                    <input
-                                                                                        prop:value=move || temp_item.with(|i| i.quantity)
-                                                                                        on:input=move |e| {
-                                                                                            if let Ok(value) = event_target_value(&e).parse::<i32>() {
-                                                                                                temp_item
-                                                                                                    .update(|i| {
-                                                                                                        i.quantity = Some(value);
-                                                                                                    })
+                                                    <div class="flex flex-col gap-1">
+                                                        <label class="text-xs">"Qty"</label>
+                                                        <input
+                                                            class="input w-20"
+                                                            prop:value=move || temp_item.with(|i| i.quantity)
+                                                            on:input=move |e| {
+                                                                if let Ok(value) = event_target_value(&e).parse::<i32>() {
+                                                                    temp_item
+                                                                        .update(|i| {
+                                                                            i.quantity = Some(value);
+                                                                        })
+                                                                }
                                                                                             }
-                                                                                        }
-                                                                                    />
+                                                        />
 
+                                                        <label class="text-xs">"Acquired"</label>
+                                                        <input
+                                                            class="input w-20"
+                                                            prop:value=move || temp_item.with(|i| i.acquired.unwrap_or(0))
+                                                            on:input=move |e| {
+                                                                if let Ok(value) = event_target_value(&e).parse::<i32>() {
+                                                                    temp_item
+                                                                        .update(|i| {
+                                                                            i.acquired = Some(value);
+                                                                        })
+                                                                }
+                                                            }
+                                                        />
+
+                                                    </div>
                                                                                 </td>
                                                                                 <td>
                                                                                     {move || {
+                                                        let q = item.quantity.unwrap_or(1);
+                                                        let a = item.acquired.unwrap_or(0);
+                                                        let remaining = q.saturating_sub(a);
                                                                                         view! {
                                                                                             <PriceViewer
-                                                                                                quantity=item.quantity.unwrap_or(1)
+                                                                quantity=remaining
                                                                                                 hq=item.hq
                                                                                                 listings=listings()
                                                                                             />
                                                                                         }
                                                                                     }}
 
+                                                </td>
+                                                <td>
+                                                    <button
+                                                        class="btn"
+                                                        on:click=move |_| {
+                                                            let _ = delete_item.dispatch(item.id);
+                                                        }
+                                                    >
+                                                        <Icon icon=i::BiTrashSolid />
+                                                    </button>
+                                                    <button
+                                                        class="btn"
+                                                        on:click=move |_| {
+                                                            if temp_item() != item {
+                                                                let _ = edit_item.dispatch(temp_item());
+                                                            }
+                                                            set_edit(!edit())
+                                                        }
+                                                    >
+                                                        <Icon icon=Signal::derive(move || {
+                                                            if edit() { i::BsCheck } else { i::BsPencilFill }
+                                                        }) />
+                                                    </button>
                                                                                 </td>
                                                                             },
                                                                         )
                                                                     }
-                                                                }} <td class:hidden=edit_list_mode>
-                                                                    <button
-                                                                        class="btn"
-                                                                        on:click=move |_| {
-                                                                            let _ = delete_item.dispatch(item().id);
-                                                                        }
-                                                                    >
-                                                                        <Icon icon=i::BiTrashSolid />
-                                                                    </button>
-                                                                    <button
-                                                                        class="btn"
-                                                                        on:click=move |_| {
-                                                                            if temp_item() != item() {
-                                                                                let _ = edit_item.dispatch(temp_item());
-                                                                            }
-                                                                            set_edit(!edit())
-                                                                        }
-                                                                    >
-                                                                        <Icon icon=Signal::derive(move || {
-                                                                            if edit() { i::BsCheck } else { i::BsPencilFill }
-                                                                        }) />
-                                                                    </button>
-                                                                </td>
+                                }}
                                                             </tr>
                                                         }
                                                             .into_any()
