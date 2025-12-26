@@ -76,6 +76,7 @@ tikv-jemallocator = { version = "0.6.1", features = [
 jemalloc_pprof = { version = "0.8.1", optional = true }
 tantivy = "0.25.0"
 rkyv = { version = "0.7.42", features = ["validation", "arrayvec", "size_64"], default-features = false }
+flate2 = "1.1.5"
 
 [dev-dependencies]
 tempfile = "3.6.0"
