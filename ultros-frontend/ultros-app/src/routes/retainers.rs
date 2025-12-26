@@ -248,7 +248,8 @@ pub(crate) fn CharacterRetainerUndercutList(
 pub fn RetainerUndercuts() -> impl IntoView {
     let retainers = Resource::new(|| "undercuts", move |_| get_retainer_undercuts());
     view! {
-        <MetaTitle title="Retainer Undercuts" />
+        <MetaTitle title="Retainer Undercuts - Ultros" />
+        <MetaDescription text="View your retainer's undercuts." />
         <span class="content-title">"Retainer Undercuts"</span>
         <br />
         <span>
@@ -374,7 +375,7 @@ pub fn RetainerListings() -> impl IntoView {
     let retainers = Resource::new(|| "undercuts", move |_| get_user_retainer_listings());
     view! {
         <span class="content-title">"All Listings"</span>
-        <MetaTitle title="All Listings" />
+        <MetaTitle title="All Listings - Ultros" />
         <MetaDescription text="View your retainer's listings without making it a second job!" />
         <br />
         <span>
@@ -429,6 +430,8 @@ pub fn RetainerListings() -> impl IntoView {
 pub fn Retainers() -> impl IntoView {
     // let retainers = create_resource(|| "retainers", move |_| get_retainer_listings(cx));
     view! {
+        <MetaTitle title="Retainers - Ultros" />
+        <MetaDescription text="Manage your retainers, view their listings and undercuts." />
         <div class="flex items-center gap-2 md:gap-3 mb-3">
             <A exact=true attr:class="nav-link" href="/retainers/edit">
                 <Icon height="1.25em" width="1.25em" icon=i::BsPencilFill />

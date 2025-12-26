@@ -6,6 +6,7 @@ use leptos_router::components::{A, Outlet};
 
 use crate::api::{create_list, delete_list, edit_list, get_lists};
 use crate::components::ad::Ad;
+use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::components::{loading::*, tooltip::*, world_name::*, world_picker::*};
 use crate::global_state::home_world::get_price_zone;
 use ultros_api_types::list::{CreateList, List};
@@ -45,6 +46,8 @@ pub fn EditLists() -> impl IntoView {
     });
 
     view! {
+        <MetaTitle title="Shopping Lists - Ultros" />
+        <MetaDescription text="Manage your shopping lists, track prices, and find the best deals." />
         <div class="flex items-center gap-2 md:gap-3 mb-3">
             <A exact=true attr:class="nav-link" href="/list">
                 <Icon height="1.25em" width="1.25em" icon=i::AiOrderedListOutlined />

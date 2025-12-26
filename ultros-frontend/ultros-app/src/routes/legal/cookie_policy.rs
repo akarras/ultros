@@ -1,8 +1,11 @@
+use crate::components::meta::{MetaDescription, MetaTitle};
 use leptos::prelude::*;
 
 #[component]
 pub fn CookiePolicy() -> impl IntoView {
     view! {
+        <MetaTitle title="Cookie Policy - Ultros" />
+        <MetaDescription text="Information about how Ultros uses cookies." />
         <h1>Cookie Policy for Ultros</h1>
         <p>
             "This is the Cookie Policy for Ultros, accessible from "

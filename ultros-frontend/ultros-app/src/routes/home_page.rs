@@ -1,11 +1,12 @@
 use crate::components::icon::Icon;
 use icondata as i;
 use leptos::prelude::*;
-use leptos_meta::*;
 use leptos_router::components::A;
 
 use crate::components::{
-    ad::Ad, live_sale_ticker::LiveSaleTicker, meta::MetaDescription,
+    ad::Ad,
+    live_sale_ticker::LiveSaleTicker,
+    meta::{MetaDescription, MetaTitle},
     recently_viewed::RecentlyViewed,
 };
 
@@ -21,14 +22,21 @@ fn FeatureCard(
     let aria = format!("{title} — {description}");
     let rel = if external { Some("external") } else { None };
     view! {
-        <A href=href attr:rel=rel attr:aria-label=aria attr:class="group focus:outline-none rounded-2xl">
+        <A
+            href=href
+            attr:rel=rel
+            attr:aria-label=aria
+            attr:class="group focus:outline-none rounded-2xl"
+        >
             <div class="feature-card w-full aspect-square flex flex-col items-center justify-center text-center gap-3">
-                <div aria-hidden="true">
-                    {children().into_view()}
-                </div>
+                <div aria-hidden="true">{children().into_view()}</div>
                 {badge.map(|b| view! { <span class="feature-badge">{b}</span> })}
-                <h3 class="font-extrabold tracking-tight text-[color:var(--color-text)]">{title}</h3>
-                <span class="feature-card-desc" style="color: var(--color-text)">{description}</span>
+                <h3 class="font-extrabold tracking-tight text-[color:var(--color-text)]">
+                    {title}
+                </h3>
+                <span class="feature-card-desc" style="color: var(--color-text)">
+                    {description}
+                </span>
             </div>
         </A>
     }
@@ -39,8 +47,8 @@ fn FeatureCard(
 pub fn HomePage() -> impl IntoView {
     view! {
         <MetaDescription text="Ultros is a fast market board analysis tool, keep up to date with all of your retainers and ensure you've got the best prices!" />
+        <MetaTitle title="Ultros - Home" />
         <div class="main-content p-6">
-            <Title text="Ultros - Home" />
             <div class="container flex flex-col gap-6 lg:flex-row-reverse mx-auto items-start max-w-7xl">
                 // Right sidebar
                 <div class="flex flex-col w-full lg:w-[424px] gap-6 sticky top-4">
@@ -55,8 +63,12 @@ pub fn HomePage() -> impl IntoView {
                         <div class="flex flex-col md:flex-row items-center gap-6 md:gap-10">
                             <div class="flex-1 space-y-4 z-10">
                                 <h1 class="text-6xl sm:text-8xl font-extrabold leading-none tracking-tighter drop-shadow-2xl">
-                                    <span class="bg-clip-text text-transparent bg-gradient-to-br from-brand-100 via-brand-300 to-brand-500 filter drop-shadow-sm">"Ultros"</span>
-                                    <span class="block text-brand-100 text-xl sm:text-2xl mt-4 font-medium tracking-normal opacity-90">"market board analytics for final fantasy xiv"</span>
+                                    <span class="bg-clip-text text-transparent bg-gradient-to-br from-brand-100 via-brand-300 to-brand-500 filter drop-shadow-sm">
+                                        "Ultros"
+                                    </span>
+                                    <span class="block text-brand-100 text-xl sm:text-2xl mt-4 font-medium tracking-normal opacity-90">
+                                        "market board analytics for final fantasy xiv"
+                                    </span>
                                 </h1>
                                 <p class="text-lg text-[color:var(--color-text-muted)] max-w-prose leading-relaxed">
                                     "buy low, sell high, and track your retainers with a fast, modern ui."
@@ -70,7 +82,11 @@ pub fn HomePage() -> impl IntoView {
                                         "get started"
                                     </a>
                                     <A href="/flip-finder" attr:class="btn-primary py-3 px-6 text-lg">
-                                        <Icon icon=i::FaMoneyBillTrendUpSolid width="1.25em" height="1.25em" />
+                                        <Icon
+                                            icon=i::FaMoneyBillTrendUpSolid
+                                            width="1.25em"
+                                            height="1.25em"
+                                        />
                                         <span>"open flip finder"</span>
                                     </A>
                                     <a
@@ -84,14 +100,24 @@ pub fn HomePage() -> impl IntoView {
                                 </div>
                             </div>
                             <div class="w-full md:w-72 lg:w-80 aspect-square rounded-2xl elevated surface-blur flex items-center justify-center">
-                                <Icon icon=i::FaMoneyBillTrendUpSolid width="4.5em" height="4.5em" attr:class="text-brand-300" />
+                                <Icon
+                                    icon=i::FaMoneyBillTrendUpSolid
+                                    width="4.5em"
+                                    height="4.5em"
+                                    attr:class="text-brand-300"
+                                />
                             </div>
                         </div>
                     </div>
 
                     // Feature cards grid
-                                        <div class="feature-grid">
-                        <FeatureCard href="/items?menu-open=true" title="Item Explorer" description="Explore all the items on the market board" badge="New">
+                    <div class="feature-grid">
+                        <FeatureCard
+                            href="/items?menu-open=true"
+                            title="Item Explorer"
+                            description="Explore all the items on the market board"
+                            badge="New"
+                        >
                             <Icon
                                 attr:class="feature-card-icon"
                                 width="3.5em"
@@ -99,7 +125,11 @@ pub fn HomePage() -> impl IntoView {
                                 icon=i::FaScrewdriverWrenchSolid
                             />
                         </FeatureCard>
-                        <FeatureCard href="/flip-finder" title="Flip Finder" description="Earn gil by buying low, selling high">
+                        <FeatureCard
+                            href="/flip-finder"
+                            title="Flip Finder"
+                            description="Earn gil by buying low, selling high"
+                        >
                             <Icon
                                 attr:class="feature-card-icon"
                                 width="3.5em"
@@ -107,7 +137,11 @@ pub fn HomePage() -> impl IntoView {
                                 icon=i::FaMoneyBillTrendUpSolid
                             />
                         </FeatureCard>
-                        <FeatureCard href="/retainers" title="Retainers" description="Track your retainers online">
+                        <FeatureCard
+                            href="/retainers"
+                            title="Retainers"
+                            description="Track your retainers online"
+                        >
                             <Icon
                                 attr:class="feature-card-icon"
                                 width="3.5em"
@@ -115,7 +149,11 @@ pub fn HomePage() -> impl IntoView {
                                 icon=i::BiGroupSolid
                             />
                         </FeatureCard>
-                        <FeatureCard href="/list" title="Lists" description="Create lists & buy the cheapest items">
+                        <FeatureCard
+                            href="/list"
+                            title="Lists"
+                            description="Create lists & buy the cheapest items"
+                        >
                             <Icon
                                 attr:class="feature-card-icon"
                                 width="3.5em"
@@ -123,7 +161,12 @@ pub fn HomePage() -> impl IntoView {
                                 icon=i::AiOrderedListOutlined
                             />
                         </FeatureCard>
-                        <FeatureCard href="/invitebot" external=true title="Discord Bot" description="Get alerts when your retainer is undercut">
+                        <FeatureCard
+                            href="/invitebot"
+                            external=true
+                            title="Discord Bot"
+                            description="Get alerts when your retainer is undercut"
+                        >
                             <Icon
                                 attr:class="feature-card-icon"
                                 width="3.5em"
@@ -131,7 +174,11 @@ pub fn HomePage() -> impl IntoView {
                                 icon=i::BsDiscord
                             />
                         </FeatureCard>
-                        <FeatureCard href="/currency-exchange" title="Currency Exchange" description="Spend tomestones, get gil">
+                        <FeatureCard
+                            href="/currency-exchange"
+                            title="Currency Exchange"
+                            description="Spend tomestones, get gil"
+                        >
                             <Icon
                                 attr:class="feature-card-icon"
                                 width="3.5em"

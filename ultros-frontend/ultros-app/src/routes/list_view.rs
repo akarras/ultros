@@ -15,8 +15,15 @@ use crate::api::{
 };
 use crate::components::related_items::IngredientsIter;
 use crate::components::{
-    clipboard::*, item_icon::*, list_summary::*, loading::*, make_place_importer::*,
-    price_viewer::*, small_item_display::*, tooltip::*,
+    clipboard::*,
+    item_icon::*,
+    list_summary::*,
+    loading::*,
+    make_place_importer::*,
+    meta::{MetaDescription, MetaTitle},
+    price_viewer::*,
+    small_item_display::*,
+    tooltip::*,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -88,6 +95,39 @@ pub fn ListView() -> impl IntoView {
     let selected_items = RwSignal::new(HashSet::new());
 
     view! {
+        <Transition fallback=move || {
+            view! {
+                <MetaTitle title="Shopping List - Ultros" />
+                <MetaDescription text="View your shopping list on Ultros" />
+            }
+        }>
+            {move || {
+                list_view
+                    .get()
+                    .map(|list| {
+                        match list {
+                            Ok((list, _)) => {
+                                view! {
+                                    <MetaTitle title=format!("{} - Shopping List", list.name) />
+                                    <MetaDescription text=format!(
+                                        "Shopping list '{}' on Ultros",
+                                        list.name,
+                                    ) />
+                                }
+                                    .into_any()
+                            }
+                            Err(_) => {
+                                view! {
+                                    <MetaTitle title="Shopping List - Ultros" />
+                                    <MetaDescription text="View your shopping list on Ultros" />
+                                }
+                                    .into_any()
+                            }
+                        }
+                    })
+            }}
+
+        </Transition>
         <div class="flex-row">
             <Tooltip tooltip_text="Add an item to the list">
                 <button

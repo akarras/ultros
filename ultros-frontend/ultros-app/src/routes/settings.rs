@@ -286,7 +286,7 @@ fn DeleteUser() -> impl IntoView {
                 <button
                     class=move || {
                         if confirmed() {
-                            "px-4 py-2 rounded-lg bg-red-800 hover:bg-red-700
+                            "px-4 py-2 rounded-lg bg-red-800 hover:bg-red-900
                              text-white transition-colors duration-200"
                         } else {
                             "px-4 py-2 rounded-lg bg-gray-700 text-gray-400 cursor-not-allowed"
@@ -310,9 +310,9 @@ fn DeleteUser() -> impl IntoView {
 pub fn Settings() -> impl IntoView {
     use crate::components::theme_picker::ThemePicker;
     view! {
+        <MetaTitle title="Ultros settings page" />
+        <MetaDescription text="Manage settings such as homeworld or other for Ultros" />
         <div class="main-content p-6">
-            <MetaTitle title="Ultros settings page" />
-            <MetaDescription text="Manage settings such as homeworld or other for Ultros" />
 
             <div class="container mx-auto max-w-7xl space-y-6">
                 <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">"Settings"</h1>
@@ -346,6 +346,8 @@ pub fn Profile() -> impl IntoView {
     );
 
     view! {
+        <MetaTitle title="Profile Settings" />
+        <MetaDescription text="Manage your profile settings, add characters, and more." />
         <div class="main-content p-6">
             <div class="container mx-auto max-w-7xl space-y-6">
                 <div class="flex items-center justify-between">

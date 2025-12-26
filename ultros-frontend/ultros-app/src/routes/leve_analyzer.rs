@@ -1,13 +1,17 @@
 use crate::{
     api::get_cheapest_listings,
     components::{
-        gil::*, item_icon::*, query_button::QueryButton, skeleton::BoxSkeleton,
-        virtual_scroller::*, world_picker::WorldOnlyPicker,
+        gil::*,
+        item_icon::*,
+        meta::{MetaDescription, MetaTitle},
+        query_button::QueryButton,
+        skeleton::BoxSkeleton,
+        virtual_scroller::*,
+        world_picker::WorldOnlyPicker,
     },
     global_state::{LocalWorldData, home_world::use_home_world},
 };
 use leptos::{either::Either, prelude::*};
-use leptos_meta::{Meta, Title};
 use leptos_router::{
     NavigateOptions,
     hooks::{query_signal, use_navigate, use_query_map},
@@ -511,8 +515,8 @@ pub fn LeveAnalyzer() -> impl IntoView {
 
     view! {
         <div class="flex flex-col gap-4 h-full">
-            <Title text="Leve Analyzer - Ultros" />
-            <Meta name="description" content="Analyze Crafting Levequests for profitability" />
+            <MetaTitle title="Leve Analyzer - Ultros" />
+            <MetaDescription text="Analyze Crafting Levequests for profitability" />
 
             <div class="flex flex-col gap-4 p-4 bg-brand-900/50 rounded-lg border border-brand-800">
                 <div class="flex flex-row justify-between items-center">

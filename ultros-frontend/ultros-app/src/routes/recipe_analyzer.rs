@@ -1,9 +1,17 @@
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
-        add_recipe_to_list::AddRecipeToList, crafter_settings::CrafterSettings, gil::*, icon::Icon,
-        item_icon::*, query_button::QueryButton, skeleton::BoxSkeleton, tooltip::Tooltip,
-        virtual_scroller::*, world_picker::WorldOnlyPicker,
+        add_recipe_to_list::AddRecipeToList,
+        crafter_settings::CrafterSettings,
+        gil::*,
+        icon::Icon,
+        item_icon::*,
+        meta::{MetaDescription, MetaTitle},
+        query_button::QueryButton,
+        skeleton::BoxSkeleton,
+        tooltip::Tooltip,
+        virtual_scroller::*,
+        world_picker::WorldOnlyPicker,
     },
     global_state::{
         LocalWorldData, cookies::Cookies, crafter_levels::CrafterLevels, home_world::use_home_world,
@@ -13,7 +21,6 @@ use chrono::Utc;
 use humantime::{format_duration, parse_duration};
 use icondata as i;
 use leptos::{either::Either, prelude::*};
-use leptos_meta::{Meta, Title};
 use leptos_router::hooks::{query_signal, use_params_map};
 use std::{cmp::Reverse, collections::HashMap, fmt::Display, str::FromStr, sync::Arc};
 use ultros_api_types::{
@@ -807,8 +814,8 @@ pub fn RecipeAnalyzer() -> impl IntoView {
 
     view! {
         <div class="flex flex-col gap-4 h-full">
-            <Title text="Recipe Analyzer - Ultros" />
-            <Meta name="description" content="Analyze crafting recipes for profitability" />
+            <MetaTitle title="Recipe Analyzer - Ultros" />
+            <MetaDescription text="Analyze crafting recipes for profitability" />
 
             <div class="flex flex-col gap-4 p-4 bg-brand-900/50 rounded-lg border border-brand-800">
                 <div class="flex flex-row justify-between items-center">

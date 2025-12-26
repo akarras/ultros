@@ -1,4 +1,3 @@
-use leptos::leptos_dom::helpers::set_timeout;
 use leptos::prelude::*;
 use uuid::Uuid;
 
@@ -43,8 +42,8 @@ impl Toasts {
         };
         self.0.update(|toasts| toasts.push(toast));
 
-        if let Some(duration) = duration {
-            let toasts = *self;
+        if let Some(_duration) = duration {
+            let _toasts = *self;
             #[cfg(feature = "hydrate")]
             set_timeout(
                 move || {

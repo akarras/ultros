@@ -58,7 +58,8 @@ pub fn EditRetainers() -> impl IntoView {
 
     view! {
         <div class="retainer-list flex-column w-full max-w-lg">
-            <MetaTitle title="Edit Retainers" />
+            <MetaTitle title="Edit Retainers - Ultros" />
+            <MetaDescription text="Manage your retainers, claim new ones, and reorder them." />
             <span class="content-title">"Retainers"</span>
             <Transition fallback=move || {
                 view! { <div></div> }
