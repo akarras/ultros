@@ -87,6 +87,8 @@ pub enum ApiError {
     NoAuthCookie,
     #[error("Discord token was invalid")]
     DiscordTokenInvalid(PrivateCookieJar<Key>),
+    #[error("Access denied")]
+    AccessDenied,
 }
 
 impl ApiError {
@@ -108,6 +110,15 @@ impl IntoResponse for ApiError {
                 cookies,
                 Json(JsonErrorWrapper::ApiError(
                     ultros_api_types::result::ApiError::NotAuthenticated,
+                )),
+            )
+                .into_response();
+        }
+        if let ApiError::AccessDenied = self {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(JsonErrorWrapper::ApiError(
+                    ultros_api_types::result::ApiError::Message("Access denied".to_string()),
                 )),
             )
                 .into_response();

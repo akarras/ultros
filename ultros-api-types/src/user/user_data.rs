@@ -5,4 +5,5 @@ pub struct UserData {
     pub id: u64,
     pub username: String,
     pub avatar: String,
+    pub is_admin: bool,
 }
