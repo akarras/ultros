@@ -39,7 +39,8 @@ pub(crate) async fn live_sales(
                 Message::Text(o) => {
                     if let Ok(val) = serde_json::from_str::<ServerClient>(&o) {
                         match val {
-                            ServerClient::Sales(sig) => {
+                            ServerClient::Sales(sig) =>
+                            {
                                 #[allow(clippy::collapsible_if)]
                                 if let EventType::Added(add) = sig {
                                     if signal
