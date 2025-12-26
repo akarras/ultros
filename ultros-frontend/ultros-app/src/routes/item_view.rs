@@ -318,7 +318,7 @@ fn SummaryCards(listing_resource: Resource<Result<CurrentlyShownItem, AppError>>
                                                          <div>
                                                              <div class="flex items-center gap-2">
                                                                  <span class="text-xs font-bold text-brand-400 bg-brand-900/50 px-1.5 py-0.5 rounded border border-brand-700/50">"NQ"</span>
-                                                                 <div class="text-xl font-bold text-white">
+                                        <div class="text-xl font-bold text-[color:var(--color-text)]">
                                                                      <Gil amount=listing.price_per_unit />
                                                                  </div>
                                                              </div>
@@ -350,7 +350,7 @@ fn SummaryCards(listing_resource: Resource<Result<CurrentlyShownItem, AppError>>
                                                                  <Icon icon=icondata::FaStarSolid attr:class="text-[9px]" />
                                                                  "HQ"
                                                              </span>
-                                                             <div class="text-xl font-bold text-white">
+                                        <div class="text-xl font-bold text-[color:var(--color-text)]">
                                                                  <Gil amount=listing.price_per_unit />
                                                              </div>
                                                          </div>
@@ -373,18 +373,18 @@ fn SummaryCards(listing_resource: Resource<Result<CurrentlyShownItem, AppError>>
                             <a href="#history" class="panel p-4 border-l-4 border-l-blue-500 hover:scale-[1.02] transition-all cursor-pointer group bg-gradient-to-br from-blue-900/20 to-transparent">
                                  <div class="flex justify-between items-start">
                                      <div>
-                                         <div class="text-xs font-bold text-blue-300 uppercase tracking-wider mb-1">"Recent Average"</div>
-                                         <div class="text-2xl font-bold text-white">
+                                    <div class="text-xs font-bold text-blue-700 dark:text-blue-300 uppercase tracking-wider mb-1">"Recent Average"</div>
+                                    <div class="text-2xl font-bold text-[color:var(--color-text)]">
                                             {if avg_price > 0 {
                                                 view! { <Gil amount=avg_price as i32 /> }.into_any()
                                             } else {
                                                 view! { <span class="text-gray-400">"No Data"</span> }.into_any()
                                             }}
                                          </div>
-                                         <div class="text-sm text-blue-200 mt-1">
+                                         <div class="text-sm text-blue-700 dark:text-blue-200 mt-1">
                                              {format!("Based on {} sales", recent_sales.len())}
                                          </div>
-                                         <div class="text-sm text-blue-200 mt-1">
+                                         <div class="text-sm text-blue-700 dark:text-blue-200 mt-1">
                                              {
                                                  if recent_sales.len() > 1 {
                                                      let newest = recent_sales.first().unwrap().sold_date;
@@ -420,11 +420,11 @@ fn SummaryCards(listing_resource: Resource<Result<CurrentlyShownItem, AppError>>
                             <a href="#listings" class="panel p-4 border-l-4 border-l-emerald-500 hover:scale-[1.02] transition-all cursor-pointer group bg-gradient-to-br from-emerald-900/20 to-transparent">
                                  <div class="flex justify-between items-start">
                                      <div>
-                                         <div class="text-xs font-bold text-emerald-300 uppercase tracking-wider mb-1">"Active Listings"</div>
-                                         <div class="text-2xl font-bold text-white">
+                                    <div class="text-xs font-bold text-emerald-700 dark:text-emerald-300 uppercase tracking-wider mb-1">"Active Listings"</div>
+                                    <div class="text-2xl font-bold text-[color:var(--color-text)]">
                                              {listings_count}
                                          </div>
-                                         <div class="text-sm text-emerald-200 mt-1">
+                                    <div class="text-sm text-emerald-700 dark:text-emerald-200 mt-1">
                                              "Available now"
                                          </div>
                                      </div>
