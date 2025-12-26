@@ -123,6 +123,14 @@ pub fn HomePage() -> impl IntoView {
                                 icon=i::FaScrollSolid
                             />
                         </FeatureCard>
+                        <FeatureCard href="/trends" title="Market Trends" description="View top market movers" badge="New">
+                            <Icon
+                                attr:class="feature-card-icon"
+                                width="3.5em"
+                                height="3.5em"
+                                icon=i::FaChartLineSolid
+                            />
+                        </FeatureCard>
                         <FeatureCard href="/retainers" title="Retainers" description="Track your retainers online">
                             <Icon
                                 attr:class="feature-card-icon"
