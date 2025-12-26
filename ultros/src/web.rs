@@ -59,6 +59,7 @@ use self::character_verifier_service::CharacterVerifierService;
 use self::country_code_decoder::Region;
 use self::error::{ApiError, WebError};
 use self::oauth::{AuthDiscordUser, AuthUserCache, DiscordAuthConfig};
+use crate::alerts::price_alert::PriceAlertService;
 use crate::analyzer_service::AnalyzerService;
 use crate::event::{EventReceivers, EventSenders, EventType};
 use crate::leptos::create_leptos_app;
@@ -207,6 +208,7 @@ pub(crate) struct WebState {
     /// Common variant of world_cache. Maybe get rid of world_cache?
     pub(crate) world_helper: Arc<WorldHelper>,
     pub(crate) analyzer_service: AnalyzerService,
+    pub(crate) price_alert_service: PriceAlertService,
     pub(crate) character_verification: CharacterVerifierService,
     pub(crate) leptos_options: LeptosOptions,
     pub(crate) search_service: SearchService,
@@ -258,6 +260,12 @@ impl FromRef<WebState> for Arc<WorldHelper> {
 impl FromRef<WebState> for AnalyzerService {
     fn from_ref(input: &WebState) -> Self {
         input.analyzer_service.clone()
+    }
+}
+
+impl FromRef<WebState> for PriceAlertService {
+    fn from_ref(input: &WebState) -> Self {
+        input.price_alert_service.clone()
     }
 }
 

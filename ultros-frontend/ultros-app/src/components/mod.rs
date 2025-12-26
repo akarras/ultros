@@ -19,6 +19,7 @@ pub mod meta;
 pub mod modal;
 pub mod number_input;
 pub mod patreon;
+pub mod price_alert_modal;
 pub mod price_history_chart;
 pub mod price_viewer;
 pub mod profile_display;

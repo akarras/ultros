@@ -19,6 +19,7 @@ use crate::profiling::start_profiling_server;
 use crate::search_service::SearchService;
 use crate::web::WebState;
 use ::leptos::config::get_configuration;
+use alerts::price_alert::PriceAlertService;
 use analyzer_service::AnalyzerService;
 use anyhow::Result;
 use axum_extra::extract::cookie::Key;
@@ -277,6 +278,7 @@ async fn main() -> Result<()> {
         db: db.clone(),
         world_cache: world_cache.clone(),
     };
+    let price_alert_service = PriceAlertService::new(receivers.clone(), world_helper.clone());
     let search_service = SearchService::new()?;
     let conf = get_configuration(Some("Cargo.toml")).unwrap();
     let mut leptos_options = conf.leptos_options;
@@ -298,6 +300,7 @@ async fn main() -> Result<()> {
         event_senders: senders,
         world_cache,
         world_helper,
+        price_alert_service,
         leptos_options,
         search_service,
         token: token.clone(),
