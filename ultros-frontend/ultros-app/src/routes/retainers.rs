@@ -1,6 +1,4 @@
-use crate::api::{
-    get_retainer_listings, get_retainer_undercuts, get_user_retainer_listings,
-};
+use crate::api::{get_retainer_listings, get_retainer_undercuts, get_user_retainer_listings};
 use crate::components::ad::Ad;
 use crate::components::icon::Icon;
 use crate::components::retainer_table::{
