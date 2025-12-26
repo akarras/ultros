@@ -10,6 +10,7 @@ use crate::components::{
 };
 use crate::error::AppError;
 use crate::global_state::LocalWorldData;
+use crate::global_state::cheapest_prices::CheapestPrices;
 use crate::global_state::home_world::{get_price_zone, use_home_world};
 use chrono::{TimeDelta, Utc};
 use leptos::prelude::*;
@@ -242,7 +243,10 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
 }
 
 #[component]
-fn SummaryCards(listing_resource: Resource<Result<CurrentlyShownItem, AppError>>) -> impl IntoView {
+fn SummaryCards(
+    listing_resource: Resource<Result<CurrentlyShownItem, AppError>>,
+    item_id: i32,
+) -> impl IntoView {
     view! {
         <Transition fallback=move || view! { <BoxSkeleton /> }>
             {move || {
@@ -269,8 +273,165 @@ fn SummaryCards(listing_resource: Resource<Result<CurrentlyShownItem, AppError>>
                     let listings_count = data.listings.len();
                     let has_nq = cheapest_nq.is_some();
 
+                    // Re-evaluate logic inside the closure to avoid cloning AnyView
+                    let non_market_card = {
+                         let data = xiv_gen_db::data();
+                         let cheapest_prices = use_context::<CheapestPrices>();
+
+                         let vendor_exists = is_vendor_item(item_id);
+                         let exchange_exists = data
+                             .special_shops
+                             .values()
+                             .any(|s| special_shop_has_item(s, item_id));
+                         let leve_exists = data.leves.values().any(|l| {
+                             leve_rewards_item(
+                                 l,
+                                 item_id,
+                                 &data.leve_reward_items,
+                                 &data.leve_reward_item_groups,
+                             )
+                         });
+                         let recipe_exists = recipe_tree_iter(ItemId(item_id)).next().is_some();
+
+                         if vendor_exists || exchange_exists || leve_exists || recipe_exists {
+                             let (title, summary, icon, href, color_class, border_color) = if vendor_exists {
+                                 let price = data
+                                     .items
+                                     .get(&ItemId(item_id))
+                                     .map(|i| i.price_mid)
+                                     .unwrap_or(0);
+                                 (
+                                     "Vendor Available",
+                                     view! { <span>"Sold for " <Gil amount=price as i32 /></span> }.into_any(),
+                                     icondata::FaShopSolid,
+                                     "#vendor-sources",
+                                     "from-amber-900/20",
+                                     "border-l-amber-500",
+                                 )
+                             } else if exchange_exists {
+                                 (
+                                     "Exchange Available",
+                                     view! { <span>"Exchange for items/currency"</span> }.into_any(),
+                                     icondata::BsArrowLeftRight,
+                                     "#exchange-sources",
+                                     "from-purple-900/20",
+                                     "border-l-purple-500",
+                                 )
+                             } else if recipe_exists {
+                                 let summary_view = view! {
+                                     <Suspense fallback=move || "Craftable">
+                                         {move || {
+                                             if let Some(recipe) = recipe_tree_iter(ItemId(item_id)).next() {
+                                                 if let Some(prices) = cheapest_prices.as_ref() {
+                                                     prices.read_listings.with(|prices| {
+                                                         let prices = prices.as_ref().and_then(|p| p.as_ref().ok());
+                                                         if let Some(prices) = prices {
+                                            let prices = prices.clone();
+                                                             let (hq, lq) = calculate_crafting_cost(recipe, &prices);
+                                                             let min_cost = if lq > 0 { lq } else { hq };
+                                                             if min_cost > 0 {
+                                                 // Determine phrasing based on if this item is a recipe result
+                                                 // or just an ingredient.
+                                                 // Actually, recipe_tree_iter returns recipes *related* to the item.
+                                                 // It could be the item ITSELF (craftable), or it could be an ingredient.
+                                                 // We only want to show "Craft for ~" if the item itself is the result.
+                                                 if recipe.item_result.0 == item_id {
+                                                     view! { <span>"Craft for ~" <Gil amount=min_cost /></span> }
+                                                         .into_any()
+                                                 } else {
+                                                     "Used in Crafting".into_any()
+                                                 }
+                                             } else if recipe.item_result.0 == item_id {
+                                                                 "Craftable".into_any()
+                                             } else {
+                                                 "Used in Crafting".into_any()
+                                                             }
+                                         } else if recipe.item_result.0 == item_id {
+                                                             "Craftable".into_any()
+                                         } else {
+                                             "Used in Crafting".into_any()
+                                                         }
+                                                     })
+                                                 } else {
+                                                     "Craftable".into_any()
+                                                 }
+                                             } else {
+                                                 "Craftable".into_any()
+                                             }
+                                         }}
+                                     </Suspense>
+                                 }
+                                 .into_any();
+
+                                 (
+                                     "Crafting Recipe",
+                                     summary_view,
+                                     icondata::FaHammerSolid,
+                                     "#crafting-recipes",
+                                     "from-orange-900/20",
+                                     "border-l-orange-500",
+                                 )
+                             } else {
+                                 (
+                                     "Levequest Reward",
+                                     view! { "Obtainable via Levequest" }.into_any(),
+                                     icondata::FaScrollSolid,
+                                     "#leve-sources",
+                                     "from-pink-900/20",
+                                     "border-l-pink-500",
+                                 )
+                             };
+
+                             Some(
+                                 view! {
+                                     <a
+                                         href=href
+                                         class=format!(
+                                             "panel p-4 border-l-4 hover:scale-[1.02] transition-all cursor-pointer group bg-gradient-to-br to-transparent {} {}",
+                                             border_color,
+                                             color_class,
+                                         )
+                                     >
+                                         <div class="flex justify-between items-start">
+                                             <div>
+                                                 <div class=format!(
+                                                     "text-xs font-bold uppercase tracking-wider mb-2 {}",
+                                                     border_color.replace("border-l-", "text-"),
+                                                 )>
+                                                     {title}
+                                                 </div>
+                                                 <div class="text-xl font-bold text-[color:var(--color-text)]">
+                                                     {summary}
+                                                 </div>
+                                                 <div class="text-xs opacity-80 mt-1 text-[color:var(--color-text-muted)]">
+                                                     "Click to view details"
+                                                 </div>
+                                             </div>
+                                             <Icon
+                                                 icon=icon
+                                                 attr:class=format!(
+                                                     "text-3xl opacity-20 group-hover:opacity-40 transition-opacity {}",
+                                                     border_color.replace("border-l-", "text-"),
+                                                 )
+                                             />
+                                         </div>
+                                     </a>
+                                 }
+                                 .into_any(),
+                             )
+                         } else {
+                             None
+                         }
+                    };
+
+                    let grid_class = if non_market_card.is_some() {
+                        "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6"
+                    } else {
+                        "grid grid-cols-1 md:grid-cols-3 gap-4 mb-6"
+                    };
+
                     view! {
-                         <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                         <div class=grid_class>
                             // Card 1: Cheapest Found
                              <a href="#listings" class="panel p-4 border-l-4 border-l-brand-500 hover:scale-[1.02] transition-all cursor-pointer group bg-gradient-to-br from-brand-900/50 to-transparent">
                                  <div class="flex justify-between items-start">
@@ -396,6 +557,7 @@ fn SummaryCards(listing_resource: Resource<Result<CurrentlyShownItem, AppError>>
                                      <Icon icon=icondata::FaListSolid attr:class="text-3xl text-emerald-500/20 group-hover:text-emerald-500/40 transition-colors" />
                                  </div>
                             </a>
+                            {non_market_card}
                          </div>
                     }.into_any()
                 } else {
@@ -587,7 +749,7 @@ fn HighQualityTable(
                     });
                     view! {
                         <div
-                            class="panel p-6"
+                            class="panel p-4 sm:p-6"
                             class:hidden=move || hq_listings.with(|l| l.is_empty())
                         >
                             <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
@@ -633,7 +795,7 @@ fn LowQualityTable(
                     });
                     view! {
                         <div
-                            class="panel p-6"
+                            class="panel p-4 sm:p-6"
                             class:hidden=move || lq_listings.with(|l| l.is_empty())
                         >
                             <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
@@ -668,14 +830,14 @@ fn SalesDetails(listing_resource: Resource<Result<CurrentlyShownItem, AppError>>
 
                 view! {
                     <div class="flex flex-col gap-6 h-full"> // Use flex col to stack table and insights
-                        <div class="panel p-6 flex-1">
+                        <div class="panel p-4 sm:p-6 flex-1">
                             <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
                                 "Sale History"
                             </h2>
                             <SaleHistoryTable sales=sales.into() />
                         </div>
 
-                        <div class="panel p-6">
+                        <div class="panel p-4 sm:p-6">
                             <SalesInsights sales=sales.into() />
                         </div>
                     </div>
@@ -703,7 +865,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
     });
     view! {
         <div class="w-full py-8 text-[color:var(--color-text)]">
-            <SummaryCards listing_resource />
+            <SummaryCards listing_resource item_id=item_id() />
 
             <div id="listings" class="grid grid-cols-1 gap-6">
                 <HighQualityTable listing_resource />
@@ -806,8 +968,8 @@ pub fn ItemView() -> impl IntoView {
         />
         <Link rel="canonical" prop:href=move || format!("https://ultros.app/item/{}", item_id()) />
         <div class="min-h-screen">
-            <div class="w-full px-4 py-6">
-                <div class="flex flex-col gap-6 p-6 panel">
+            <div class="w-full px-0 sm:px-4 py-4 sm:py-6">
+                <div class="flex flex-col gap-6 p-4 sm:p-6 panel">
                     <div class="flex flex-col md:flex-row items-start gap-4">
                         <div class="flex items-center gap-4 flex-1">
                             <ItemIcon item_id icon_size=IconSize::Large />
@@ -883,7 +1045,7 @@ pub fn ItemView() -> impl IntoView {
 
             <WorldMenu world_name=world item_id />
 
-            <div class="main-content px-4">
+            <div class="main-content px-0 sm:px-4">
                 <ListingsContent item_id world />
                 <div class="mt-6 panel p-3">
                     <RelatedItems item_id=Signal::from(item_id) />

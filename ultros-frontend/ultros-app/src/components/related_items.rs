@@ -2,7 +2,10 @@ use itertools::Itertools;
 /// Related items links items that are related to the current set
 use leptos::prelude::*;
 use leptos_router::components::A;
-use ultros_api_types::{cheapest_listings::CheapestListingMapKey, icon_size::IconSize};
+use ultros_api_types::{
+    cheapest_listings::{CheapestListingMapKey, CheapestListingsMap},
+    icon_size::IconSize,
+};
 use xiv_gen::{
     ENpcBase, ENpcResidentId, GilShopId, Item, ItemId, Leve, LeveRewardItem, LeveRewardItemGroup,
     Recipe, SpecialShop,
@@ -10,7 +13,8 @@ use xiv_gen::{
 
 use crate::{
     components::{
-        add_recipe_to_list::AddRecipeToList, item_icon::ItemIcon, skeleton::SingleLineSkeleton,
+        add_recipe_to_list::AddRecipeToList, icon::Icon, item_icon::ItemIcon,
+        skeleton::SingleLineSkeleton,
     },
     global_state::{cheapest_prices::CheapestPrices, home_world::get_price_zone},
 };
@@ -98,7 +102,7 @@ impl<'a> Iterator for IngredientsIter<'a> {
 }
 
 /// This iterator will traverse the recipe tree for items that are related to using this item for crafting
-fn recipe_tree_iter(item_id: ItemId) -> impl Iterator<Item = &'static Recipe> {
+pub(crate) fn recipe_tree_iter(item_id: ItemId) -> impl Iterator<Item = &'static Recipe> {
     let recipes = &xiv_gen_db::data().recipes;
     // our item id could be in item_result, or item_ingredient
     recipes
@@ -110,9 +114,33 @@ fn recipe_tree_iter(item_id: ItemId) -> impl Iterator<Item = &'static Recipe> {
         .sorted_by_key(|r| r.key_id.0)
 }
 
+pub(crate) fn calculate_crafting_cost(recipe: &Recipe, prices: &CheapestListingsMap) -> (i32, i32) {
+    let items = &xiv_gen_db::data().items;
+    let sum_for = |prefer_hq: bool| -> i32 {
+        IngredientsIter::new(recipe)
+            .flat_map(|(ingredient, amount)| items.get(&ingredient).map(|item| (item, amount)))
+            .flat_map(|(item, quantity)| {
+                let pref_key = CheapestListingMapKey {
+                    item_id: item.key_id.0,
+                    hq: prefer_hq && item.can_be_hq,
+                };
+                let fallback_key = CheapestListingMapKey {
+                    item_id: item.key_id.0,
+                    hq: false,
+                };
+                prices
+                    .map
+                    .get(&pref_key)
+                    .or_else(|| prices.map.get(&fallback_key))
+                    .map(|d| d.price * quantity)
+            })
+            .sum()
+    };
+    (sum_for(true), sum_for(false))
+}
+
 #[component]
 fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
-    let items = &xiv_gen_db::data().items;
     let cheapest_prices = use_context::<CheapestPrices>().unwrap();
 
     view! {
@@ -125,34 +153,7 @@ fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
                     .with(|prices| {
                         let prices = prices.as_ref()?;
                         let prices = prices.as_ref().ok()?;
-
-                        // sum helper that prefers HQ or LQ and falls back if missing
-                        let sum_for = |prefer_hq: bool| -> i32 {
-                            IngredientsIter::new(recipe)
-                                .flat_map(|(ingredient, amount)| {
-                                    items.get(&ingredient).map(|item| (item, amount))
-                                })
-                                .flat_map(|(item, quantity)| {
-                                    let pref_key = CheapestListingMapKey {
-                                        item_id: item.key_id.0,
-                                        hq: prefer_hq && item.can_be_hq,
-                                    };
-                                    let fallback_key = CheapestListingMapKey {
-                                        item_id: item.key_id.0,
-                                        hq: false,
-                                    };
-                                    prices
-                                        .map
-                                        .get(&pref_key)
-                                        .or_else(|| prices.map.get(&fallback_key))
-                                        .map(|d| d.price * quantity)
-                                })
-                                .sum()
-                        };
-
-                        let hq_amount = sum_for(true);
-                        let lq_amount = sum_for(false);
-
+                        let (hq_amount, lq_amount) = calculate_crafting_cost(recipe, prices);
                         let result_view = view! {
                             <span class="flex flex-row gap-2 items-center">
                                 <span class="px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--brand-ring)_16%,transparent)] text-xs">"HQ:"</span>
@@ -305,7 +306,7 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
 
 fn npc_rows(npc: &ENpcBase) -> impl Iterator<Item = u32> + '_ {
     // TODO- can I just parse the csv into a vec?
-    npc.e_npc_data.iter().map(|row| u32::from(row.0))
+    npc.e_npc_data.iter().map(|i| i.0)
 }
 
 fn gil_shop_to_npc(gil_shops: &[GilShopId]) -> Vec<(GilShopId, &'static ENpcBase)> {
@@ -357,20 +358,23 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                 Some(view! {
                     <a
                         href=format!("https://garlandtools.org/db/#npc/{}", resident.key_id.0)
-                        class="group flex items-center justify-between gap-2 rounded-lg card p-1.5 transition-colors"
+                        class="group flex flex-col gap-2 rounded-lg card p-3 transition-colors h-full hover:bg-[color:var(--color-base)]/50"
                     >
-                        <div class="flex items-center justify-between gap-2">
-                            <div class="text-md">{resident.singular.as_str()}</div>
+                        <div class="flex items-center justify-between gap-2 border-b border-[color:var(--color-outline)] pb-2">
+                            <div class="font-medium text-[color:var(--color-text)]">{resident.singular.as_str()}</div>
                             <Gil amount=price />
                         </div>
-                        <div class="text-xs italic text-[color:var(--color-text-muted)] truncate">"(" {shop.name.as_str()} ")"</div>
+                        <div class="text-sm text-[color:var(--color-text-muted)] flex items-center gap-1">
+                            <Icon icon=icondata::FaStoreSolid attr:class="text-xs opacity-70" />
+                            <span class="truncate">{shop.name.as_str()}</span>
+                        </div>
                     </a>
                 })
             }).collect_view())
     };
     let empty = move || npcs.with(|n| n.is_empty());
     view! {
-        <div class:collapse=empty class="space-y-1.5 p-1 max-h-80 overflow-y-auto w-full sm:w-96 xl:w-[600px]">
+        <div id="vendor-sources" class:collapse=empty class="space-y-1.5 p-1 max-h-80 overflow-y-auto w-full sm:w-96 xl:w-[600px]">
             <span class="text-sm font-semibold text-[color:var(--brand-fg)]">"Vendor sources"</span>
             <div class="grid grid-cols-1 gap-1.5">{data}</div>
         </div>
@@ -378,7 +382,14 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     .into_any()
 }
 
-fn special_shop_has_item(shop: &SpecialShop, item_id: i32) -> bool {
+pub(crate) fn is_vendor_item(item_id: i32) -> bool {
+    let data = xiv_gen_db::data();
+    data.gil_shop_items
+        .iter()
+        .any(|(_shop_id, items)| items.iter().any(|shop_item| shop_item.item.0 == item_id))
+}
+
+pub(crate) fn special_shop_has_item(shop: &SpecialShop, item_id: i32) -> bool {
     // Check first slot (vector)
     if shop.item_receive_0.iter().any(|i| i.0 == item_id) {
         return true;
@@ -388,6 +399,48 @@ fn special_shop_has_item(shop: &SpecialShop, item_id: i32) -> bool {
         return true;
     }
     false
+}
+
+type Cost = (ItemId, u32);
+type TradeCosts = Vec<Cost>;
+
+fn get_trade_costs(shop: &SpecialShop, item_id: i32) -> Vec<TradeCosts> {
+    shop.item_receive_0
+        .iter()
+        .enumerate()
+        .filter_map(|(i, item)| {
+            let matches_0 = item.0 == item_id;
+            // Check receive_1 if it exists at this index
+            let matches_1 = shop
+                .item_receive_1
+                .get(i)
+                .map(|x| x.0 == item_id)
+                .unwrap_or(false);
+
+            if matches_0 || matches_1 {
+                Some(i)
+            } else {
+                None
+            }
+        })
+        .map(|i| {
+            let costs_0 = (shop.item_cost_0.get(i), shop.count_cost_0.get(i));
+            let costs_1 = (shop.item_cost_1.get(i), shop.count_cost_1.get(i));
+            let costs_2 = (shop.item_cost_2.get(i), shop.count_cost_2.get(i));
+            [costs_0, costs_1, costs_2]
+                .into_iter()
+                .filter_map(|(item, count)| {
+                    #[allow(clippy::collapsible_if)]
+                    if let (Some(item), Some(count)) = (item, count) {
+                        if item.0 != 0 && *count > 0 {
+                            return Some((*item, *count));
+                        }
+                    }
+                    None
+                })
+                .collect()
+        })
+        .collect()
 }
 
 #[component]
@@ -406,40 +459,34 @@ fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
             .with(|exchanges| {
                 exchanges
                     .iter()
-                    .map(|shop| {
-                        // Zip item_cost_0 and count_cost_0
-                        let costs_0 = shop.item_cost_0.iter().zip(shop.count_cost_0.iter());
-
-                        // Zip item_cost_1 and count_cost_1 (if they exist/have data)
-                        let costs_1 = shop.item_cost_1.iter().zip(shop.count_cost_1.iter());
-
-                        // Zip item_cost_2 and count_cost_2
-                        let costs_2 = shop.item_cost_2.iter().zip(shop.count_cost_2.iter());
-
-                        let all_costs = costs_0.chain(costs_1).chain(costs_2);
-
-                        view! {
-                            <div class="group flex items-center justify-between gap-2 rounded-lg card p-1.5 transition-colors">
-                                <div class="flex items-center gap-2 flex-wrap">
-                                    <span class="text-sm font-medium">{shop.name.as_str()}</span>
-                                    <div class="flex items-center gap-1.5 text-xs text-[color:var(--color-text-muted)]">
-                                        "Costs:"
-                                        {all_costs.map(|(item_id, count)| {
-                                            if let Some(item) = data.items.get(item_id) {
-                                                view! {
-                                                    <div class="flex items-center gap-1 bg-[color:var(--color-base)]/50 px-1.5 py-0.5 rounded border border-[color:var(--color-outline)]">
-                                                        <span>{*count} "x"</span>
-                                                        <SmallItemDisplay item />
-                                                    </div>
-                                                }.into_any()
-                                            } else {
-                                                ().into_any()
+                   .flat_map(|shop| {
+                        let trades = get_trade_costs(shop, item_id());
+                        trades.into_iter().map(move |costs| {
+                            view! {
+                                <div class="group flex items-center justify-between gap-2 rounded-lg card p-1.5 transition-colors">
+                                    <div class="flex items-center gap-2 flex-wrap">
+                                        <span class="text-sm font-medium">{shop.name.as_str()}</span>
+                                        <div class="flex items-center gap-1.5 text-xs text-[color:var(--color-text-muted)]">
+                                            "Costs:"
+                                            {
+                                                costs.into_iter().map(|(item_id, count)| {
+                                                    if let Some(item) = data.items.get(&item_id) {
+                                                        view! {
+                                                            <div class="flex items-center gap-1 bg-[color:var(--color-base)]/50 px-1.5 py-0.5 rounded border border-[color:var(--color-outline)]">
+                                                                <span>{count} "x"</span>
+                                                                <SmallItemDisplay item />
+                                                            </div>
+                                                        }.into_any()
+                                                    } else {
+                                                        ().into_any()
+                                                    }
+                                                }).collect_view()
                                             }
-                                        }).collect_view()}
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
-                        }
+                            }
+                        })
                     })
                     .collect_view()
             })
@@ -448,15 +495,81 @@ fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     let empty = move || exchanges.with(|e| e.is_empty());
 
     view! {
-        <div class:collapse=empty class="space-y-1.5 p-1 max-h-80 overflow-y-auto w-full sm:w-96 xl:w-[600px]">
+        <div id="exchange-sources" class:collapse=empty class="space-y-1.5 p-1 max-h-80 overflow-y-auto w-full sm:w-96 xl:w-[600px]">
             <span class="text-sm font-semibold text-[color:var(--brand-fg)]">"Exchange sources"</span>
-            <div class="grid grid-cols-1 gap-1.5">{view}</div>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                {view}
+            </div>
         </div>
     }
     .into_any()
 }
 
-fn leve_rewards_item(
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use xiv_gen::{ItemId, SpecialShop};
+
+    #[test]
+    fn test_get_trade_costs() {
+        let shop = SpecialShop {
+            key_id: xiv_gen::SpecialShopId(1),
+            name: "Test Shop".to_string(),
+            complete_text: xiv_gen::DefaultTalkId(0),
+            not_complete_text: xiv_gen::DefaultTalkId(0),
+            item_receive_0: vec![ItemId(100), ItemId(200), ItemId(100)],
+            count_receive_0: vec![1, 1, 1],
+            item_receive_1: vec![ItemId(0), ItemId(0), ItemId(0)],
+            count_receive_1: vec![0, 0, 0],
+            item_cost_0: vec![ItemId(10), ItemId(20), ItemId(30)],
+            count_cost_0: vec![5, 10, 15],
+            item_cost_1: vec![ItemId(0), ItemId(0), ItemId(0)],
+            count_cost_1: vec![0, 0, 0],
+            item_cost_2: vec![ItemId(0), ItemId(0), ItemId(0)],
+            count_cost_2: vec![0, 0, 0],
+            hq_receive_0: vec![false, false, false],
+            hq_receive_1: vec![false, false, false],
+            hq_cost_0: vec![0, 0, 0],
+            hq_cost_1: vec![0, 0, 0],
+            hq_cost_2: vec![0, 0, 0],
+            achievement_unlock: vec![
+                xiv_gen::AchievementId(0),
+                xiv_gen::AchievementId(0),
+                xiv_gen::AchievementId(0),
+            ],
+            use_currency_type: 0,
+            // Filling missing fields manually as Default is not implemented
+            special_shop_item_category_0: vec![xiv_gen::SpecialShopItemCategoryId(0); 3],
+            special_shop_item_category_1: vec![xiv_gen::SpecialShopItemCategoryId(0); 3],
+            collectability_rating_cost_0: vec![0; 3],
+            collectability_rating_cost_1: vec![0; 3],
+            collectability_rating_cost_2: vec![0; 3],
+            quest_item: vec![xiv_gen::QuestId(0); 3],
+            patch_number: vec![0; 3],
+            quest_unlock: xiv_gen::QuestId(0),
+        };
+
+        // Case 1: Searching for item 100. Should appear at indices 0 and 2.
+        // Index 0 cost: Item 10, count 5
+        // Index 2 cost: Item 30, count 15
+        let costs_100 = get_trade_costs(&shop, 100);
+        assert_eq!(costs_100.len(), 2);
+        assert_eq!(costs_100[0], vec![(ItemId(10), 5)]);
+        assert_eq!(costs_100[1], vec![(ItemId(30), 15)]);
+
+        // Case 2: Searching for item 200. Should appear at index 1.
+        // Index 1 cost: Item 20, count 10
+        let costs_200 = get_trade_costs(&shop, 200);
+        assert_eq!(costs_200.len(), 1);
+        assert_eq!(costs_200[0], vec![(ItemId(20), 10)]);
+
+        // Case 3: Searching for item 300. Not present.
+        let costs_300 = get_trade_costs(&shop, 300);
+        assert!(costs_300.is_empty());
+    }
+}
+
+pub fn leve_rewards_item(
     leve: &Leve,
     item_id: i32,
     reward_items: &std::collections::HashMap<xiv_gen::LeveRewardItemId, LeveRewardItem>,
@@ -523,11 +636,15 @@ fn LeveSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                 .map(|leve| {
                     let job_name = data.class_job_categorys.get(&leve.class_job_category).map(|c| c.name.as_str()).unwrap_or("Unknown");
                     view! {
-                        <div class="group flex items-center justify-between gap-2 rounded-lg card p-1.5 transition-colors">
+                        <div class="group flex flex-col gap-2 rounded-lg card p-3 transition-colors h-full">
+                             <div class="text-sm font-medium border-b border-[color:var(--color-outline)] pb-2 text-[color:var(--color-text)]">{leve.name.as_str()}</div>
                              <div class="flex items-center gap-2">
-                                <span class="text-sm font-medium">{leve.name.as_str()}</span>
-                                <span class="text-xs text-[color:var(--color-text-muted)] bg-[color:var(--color-base)]/50 px-1.5 py-0.5 rounded border border-[color:var(--color-outline)]">
-                                    "Lvl " {leve.class_job_level} " " {job_name}
+                                <span class="px-2 py-1 rounded bg-[color:var(--brand-900)]/30 border border-[color:var(--brand-700)]/30 text-xs text-[color:var(--brand-200)] font-medium">
+                                    "Lvl " {leve.class_job_level}
+                                </span>
+                                <span class="text-xs text-[color:var(--color-text-muted)] truncate flex items-center gap-1">
+                                    <Icon icon=icondata::FaHammerSolid attr:class="text-[10px] opacity-70" />
+                                    {job_name}
                                 </span>
                              </div>
                         </div>
@@ -540,7 +657,7 @@ fn LeveSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     let empty = move || leves.with(|l| l.is_empty());
 
     view! {
-        <div class:collapse=empty class="space-y-1.5 p-1 max-h-80 overflow-y-auto w-full sm:w-96 xl:w-[600px]">
+        <div id="leve-sources" class:collapse=empty class="space-y-1.5 p-1 max-h-80 overflow-y-auto w-full sm:w-96 xl:w-[600px]">
             <span class="text-sm font-semibold text-[color:var(--brand-fg)]">"Levequest rewards"</span>
             <div class="grid grid-cols-1 gap-1.5">{view}</div>
         </div>
@@ -678,6 +795,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
         <ExchangeSources item_id />
         <LeveSources item_id />
         <div
+            id="crafting-recipes"
             class="content-well flex-col p-1"
             class:hidden=move || recipes.with(|recipes| recipes.is_empty())
         >

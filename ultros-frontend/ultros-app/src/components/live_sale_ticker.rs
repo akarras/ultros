@@ -68,6 +68,7 @@ pub fn LiveSaleTicker() -> impl IntoView {
         });
         spawn_local(async move {
             #[cfg(not(feature = "ssr"))]
+            #[allow(clippy::collapsible_if)]
             if let Some(world) = hw_2.map(|h| h.name) {
                 #[allow(clippy::collapsible_if)]
                 if let Ok(recent_sales) = crate::api::get_recent_sales_for_world(&world).await {

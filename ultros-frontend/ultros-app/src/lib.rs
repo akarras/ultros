@@ -33,6 +33,7 @@ use crate::{
         lists::*,
         recipe_analyzer::*,
         retainers::*,
+        scrip_sources::*,
         settings::*,
         trends::*,
         venture_analyzer::*,
@@ -249,7 +250,7 @@ pub fn App() -> impl IntoView {
                 // <AnimatedRoutes outro="route-out" intro="route-in" outro_back="route-out-back" intro_back="route-in-back">
                 // https://github.com/leptos-rs/leptos/issues/1754
                 <main class="flex-1">
-                    <div class="mx-auto max-w-7xl px-2 sm:px-4 lg:px-6 py-4 sm:py-6">
+                    <div class="mx-auto max-w-7xl px-0 sm:px-4 lg:px-6 py-4 sm:py-6">
                         <Routes fallback=move || {
                             view! { <div>"Page not found"</div> }
                         }>
@@ -284,6 +285,7 @@ pub fn App() -> impl IntoView {
                             <Route path=path!("flip-finder/:world") view=AnalyzerWorldView />
                             <Route path=path!("recipe-analyzer") view=RecipeAnalyzer />
                             <Route path=path!("leve-analyzer") view=LeveAnalyzer />
+                            <Route path=path!("scrip-sources") view=ScripSources />
                             <Route path=path!("venture-analyzer") view=VentureAnalyzer />
                             <Route path=path!("analyzer/:world") view=move || {
                                 let nav = leptos_router::hooks::use_navigate();

@@ -8,7 +8,7 @@ use leptos::prelude::*;
 #[component]
 pub fn Clipboard(#[prop(into)] clipboard_text: Signal<String>) -> impl IntoView {
     let last_copied_text = use_context::<GlobalLastCopiedText>().unwrap();
-    let toasts = use_toast();
+    let _toasts = use_toast();
     let clipboard_text = Memo::new(move |_| clipboard_text());
     let copied = Memo::new(move |_| {
         last_copied_text.0()
@@ -52,11 +52,15 @@ pub fn Clipboard(#[prop(into)] clipboard_text: Signal<String>) -> impl IntoView 
                         let text = clipboard_text.get_untracked();
                         let _ = clipboard.write_text(&text);
                         last_copied_text.0.set(Some(text));
-                        if let Some(toasts) = toasts {
+                        if let Some(toasts) = _toasts {
                             toasts.success("Copied to clipboard!");
                         }
                     }
                 }
+    #[cfg(not(feature = "hydrate"))]
+    {
+        let _ = toasts;
+    }
             }
         >
             <Tooltip tooltip_text=tooltip_text>

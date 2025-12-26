@@ -1,8 +1,8 @@
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
-        add_to_list::AddToList, clipboard::*, gil::*, icon::Icon, item_icon::*, meta::*,
-        query_button::QueryButton, skeleton::BoxSkeleton, toggle::Toggle, tooltip::*,
+        add_to_list::AddToList, clipboard::*, filter_card::*, gil::*, icon::Icon, item_icon::*,
+        meta::*, query_button::QueryButton, skeleton::BoxSkeleton, toggle::Toggle, tooltip::*,
         virtual_scroller::*, world_picker::*,
     },
     error::AppError,
@@ -214,24 +214,6 @@ impl ProfitTable {
             .collect();
 
         ProfitTable(table)
-    }
-}
-
-#[component]
-fn FilterCard<T>(
-    #[prop(into)] title: Oco<'static, str>,
-    #[prop(into)] description: Oco<'static, str>,
-    children: TypedChildren<T>,
-) -> impl IntoView
-where
-    T: IntoView,
-{
-    view! {
-        <div class="panel p-6 flex flex-col w-full bg-[color:var(--color-background-elevated)] bg-opacity-100">
-            <h3 class="font-bold text-xl mb-2 text-[color:var(--brand-fg)]">{title}</h3>
-            <p class="mb-4 text-[color:var(--color-text-muted)]">{description}</p>
-            {children.into_inner()().into_view()}
-        </div>
     }
 }
 
@@ -971,12 +953,12 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     );
 
     view! {
-        <div class="main-content p-6">
+        <div class="main-content p-2 sm:p-6">
             <Title text=move || format!("Flip Finder - {}", world()) />
             <div class="container mx-auto max-w-7xl">
                 <div class="flex flex-col gap-8">
                     // Header Section
-                    <div class="panel p-8 rounded-2xl">
+                    <div class="panel p-4 sm:p-8 rounded-2xl">
                         <h1 class="text-3xl font-bold text-[color:var(--brand-fg)] mb-4">
                             "Flip Finder for " {world}
                         </h1>
@@ -1155,11 +1137,11 @@ pub fn Analyzer() -> impl IntoView {
         <MetaTitle title="Flip Finder - Ultros" />
         <MetaDescription text="Find items on the Final Fantasy 14 marketboard that are great for resale. Used to earn gil quickly." />
 
-        <div class="main-content p-6">
+        <div class="main-content p-2 sm:p-6">
             <div class="container mx-auto max-w-7xl">
                 <div class="flex flex-col gap-8">
                     // Hero Section
-                    <div class="panel p-8 rounded-2xl">
+                    <div class="panel p-4 sm:p-8 rounded-2xl">
                         <h1 class="text-3xl font-bold text-[color:var(--brand-fg)] mb-4">
                             "Flip Finder"
                         </h1>

@@ -1,5 +1,5 @@
+#[cfg(feature = "hydrate")]
 use leptos::leptos_dom::helpers::set_timeout;
-
 use leptos::prelude::*;
 use uuid::Uuid;
 
@@ -44,15 +44,20 @@ impl Toasts {
         };
         self.0.update(|toasts| toasts.push(toast));
 
+        #[cfg(feature = "hydrate")]
         if let Some(duration) = duration {
             let toasts = *self;
-            #[cfg(feature = "hydrate")]
             set_timeout(
                 move || {
                     toasts.remove(id);
                 },
                 std::time::Duration::from_millis(duration),
             );
+            #[cfg(not(feature = "hydrate"))]
+            {
+                let _ = toasts;
+                let _ = duration;
+            }
         }
     }
 
