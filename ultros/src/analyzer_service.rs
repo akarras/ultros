@@ -349,13 +349,13 @@ impl AnalyzerService {
             .get_inner_data()
             .iter()
             .flat_map(|(region, dcs)| {
-                [AnySelector::Region(region.id)].into_iter().chain(
-                    dcs.iter().flat_map(|(dc, worlds)| {
+                [AnySelector::Region(region.id)]
+                    .into_iter()
+                    .chain(dcs.iter().flat_map(|(dc, worlds)| {
                         [AnySelector::Datacenter(dc.id)]
                             .into_iter()
                             .chain(worlds.iter().map(|w| AnySelector::World(w.id)))
-                    }),
-                )
+                    }))
             })
             .map(|s| (s, RwLock::default()))
             .collect();
@@ -755,6 +755,7 @@ impl AnalyzerService {
                 .expect("Unable to get region");
             entry.write().await.add_listing(listing);
             if let Some(dc_selector) = dc_selector {
+                #[allow(clippy::collapsible_if)]
                 if let Some(entry) = self.cheapest_items.get(&dc_selector) {
                     entry.write().await.add_listing(listing);
                 }
@@ -794,6 +795,7 @@ impl AnalyzerService {
         for (listing, _) in listings.listings.iter() {
             let world_result = world_cache.lookup_selector(&AnySelector::World(listing.world_id));
             if let Ok(w) = world_result {
+                #[allow(clippy::collapsible_if)]
                 if let Some(dcs) = world_cache.get_datacenters(&w) {
                     for dc in dcs {
                         if let Some(entry) =
@@ -1296,7 +1298,10 @@ mod tests {
 
         // Check Datacenter support
         let mut dc_cheapest_items = BTreeMap::new();
-        dc_cheapest_items.insert(AnySelector::Datacenter(1), RwLock::new(cheapest_listings.clone()));
+        dc_cheapest_items.insert(
+            AnySelector::Datacenter(1),
+            RwLock::new(cheapest_listings.clone()),
+        );
         let dc_cheapest_items = Arc::new(dc_cheapest_items);
         let dc_analyzer_service = AnalyzerService {
             recent_sale_history: new_recent_sale_history.clone(),
@@ -1307,14 +1312,21 @@ mod tests {
         dc_analyzer_service.serialize_state(false).await.unwrap();
         // Restore
         let mut restore_dc_cheapest_items = BTreeMap::new();
-        restore_dc_cheapest_items.insert(AnySelector::Datacenter(1), RwLock::new(CheapestListings::default()));
+        restore_dc_cheapest_items.insert(
+            AnySelector::Datacenter(1),
+            RwLock::new(CheapestListings::default()),
+        );
         let restore_dc_cheapest_items = Arc::new(restore_dc_cheapest_items);
         let restore_dc_analyzer_service = AnalyzerService {
             recent_sale_history: new_recent_sale_history.clone(),
             cheapest_items: restore_dc_cheapest_items.clone(),
             initiated: Arc::new(AtomicBool::new(false)),
         };
-        assert!(restore_dc_analyzer_service.try_restore_from_snapshot().await);
+        assert!(
+            restore_dc_analyzer_service
+                .try_restore_from_snapshot()
+                .await
+        );
         let restored_listings = restore_dc_cheapest_items
             .get(&AnySelector::Datacenter(1))
             .unwrap()
