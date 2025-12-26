@@ -417,7 +417,11 @@ fn RecipeAnalyzerTable(
         match sort_mode().unwrap_or(SortMode::Profit) {
             SortMode::Roi => results.sort_by_key(|d| Reverse(d.return_on_investment)),
             SortMode::Profit => results.sort_by_key(|d| Reverse(d.profit)),
-            SortMode::Velocity => results.sort_by(|a, b| b.daily_sales.partial_cmp(&a.daily_sales).unwrap_or(std::cmp::Ordering::Equal)),
+            SortMode::Velocity => results.sort_by(|a, b| {
+                b.daily_sales
+                    .partial_cmp(&a.daily_sales)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            }),
         }
 
         results
