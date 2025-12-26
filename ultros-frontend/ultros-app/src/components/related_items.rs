@@ -2,7 +2,10 @@ use itertools::Itertools;
 /// Related items links items that are related to the current set
 use leptos::prelude::*;
 use leptos_router::components::A;
-use ultros_api_types::{cheapest_listings::CheapestListingMapKey, icon_size::IconSize};
+use ultros_api_types::{
+    cheapest_listings::{CheapestListingMapKey, CheapestListingsMap},
+    icon_size::IconSize,
+};
 use xiv_gen::{
     ENpcBase, ENpcResidentId, GilShopId, Item, ItemId, Leve, LeveRewardItem, LeveRewardItemGroup,
     Recipe, SpecialShop,
@@ -96,7 +99,7 @@ impl<'a> Iterator for IngredientsIter<'a> {
 }
 
 /// This iterator will traverse the recipe tree for items that are related to using this item for crafting
-fn recipe_tree_iter(item_id: ItemId) -> impl Iterator<Item = &'static Recipe> {
+pub(crate) fn recipe_tree_iter(item_id: ItemId) -> impl Iterator<Item = &'static Recipe> {
     let recipes = &xiv_gen_db::data().recipes;
     // our item id could be in item_result, or item_ingredient
     recipes
@@ -108,9 +111,38 @@ fn recipe_tree_iter(item_id: ItemId) -> impl Iterator<Item = &'static Recipe> {
         .sorted_by_key(|r| r.key_id.0)
 }
 
+pub(crate) fn calculate_crafting_cost(
+    recipe: &Recipe,
+    prices: &CheapestListingsMap,
+) -> (i32, i32) {
+    let items = &xiv_gen_db::data().items;
+    let sum_for = |prefer_hq: bool| -> i32 {
+        IngredientsIter::new(recipe)
+            .flat_map(|(ingredient, amount)| {
+                items.get(&ingredient).map(|item| (item, amount))
+            })
+            .flat_map(|(item, quantity)| {
+                let pref_key = CheapestListingMapKey {
+                    item_id: item.key_id.0,
+                    hq: prefer_hq && item.can_be_hq,
+                };
+                let fallback_key = CheapestListingMapKey {
+                    item_id: item.key_id.0,
+                    hq: false,
+                };
+                prices
+                    .map
+                    .get(&pref_key)
+                    .or_else(|| prices.map.get(&fallback_key))
+                    .map(|d| d.price * quantity)
+            })
+            .sum()
+    };
+    (sum_for(true), sum_for(false))
+}
+
 #[component]
 fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
-    let items = &xiv_gen_db::data().items;
     let cheapest_prices = use_context::<CheapestPrices>().unwrap();
 
     view! {
@@ -123,34 +155,7 @@ fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
                     .with(|prices| {
                         let prices = prices.as_ref()?;
                         let prices = prices.as_ref().ok()?;
-
-                        // sum helper that prefers HQ or LQ and falls back if missing
-                        let sum_for = |prefer_hq: bool| -> i32 {
-                            IngredientsIter::new(recipe)
-                                .flat_map(|(ingredient, amount)| {
-                                    items.get(&ingredient).map(|item| (item, amount))
-                                })
-                                .flat_map(|(item, quantity)| {
-                                    let pref_key = CheapestListingMapKey {
-                                        item_id: item.key_id.0,
-                                        hq: prefer_hq && item.can_be_hq,
-                                    };
-                                    let fallback_key = CheapestListingMapKey {
-                                        item_id: item.key_id.0,
-                                        hq: false,
-                                    };
-                                    prices
-                                        .map
-                                        .get(&pref_key)
-                                        .or_else(|| prices.map.get(&fallback_key))
-                                        .map(|d| d.price * quantity)
-                                })
-                                .sum()
-                        };
-
-                        let hq_amount = sum_for(true);
-                        let lq_amount = sum_for(false);
-
+                        let (hq_amount, lq_amount) = calculate_crafting_cost(recipe, prices);
                         let result_view = view! {
                             <span class="flex flex-row gap-2 items-center">
                                 <span class="px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--brand-ring)_16%,transparent)] text-xs">"HQ:"</span>
@@ -300,6 +305,7 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
     }.into_any())
 }
 
+
 fn npc_rows(npc: &ENpcBase) -> impl Iterator<Item = u32> + '_ {
     // TODO- can I just parse the csv into a vec?
     npc.e_npc_data.iter().map(|row| row.0)
@@ -367,7 +373,7 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     };
     let empty = move || npcs.with(|n| n.is_empty());
     view! {
-        <div class:collapse=empty class="space-y-1.5 p-1 max-h-80 overflow-y-auto w-full sm:w-96 xl:w-[600px]">
+        <div id="vendor-sources" class:collapse=empty class="space-y-1.5 p-1 max-h-80 overflow-y-auto w-full sm:w-96 xl:w-[600px]">
             <span class="text-sm font-semibold text-[color:var(--brand-fg)]">"Vendor sources"</span>
             <div class="grid grid-cols-1 gap-1.5">{data}</div>
         </div>
@@ -375,7 +381,14 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     .into_any()
 }
 
-fn special_shop_has_item(shop: &SpecialShop, item_id: i32) -> bool {
+pub(crate) fn is_vendor_item(item_id: i32) -> bool {
+    let data = xiv_gen_db::data();
+    data.gil_shop_items
+        .iter()
+        .any(|(_shop_id, items)| items.iter().any(|shop_item| shop_item.item.0 == item_id))
+}
+
+pub(crate) fn special_shop_has_item(shop: &SpecialShop, item_id: i32) -> bool {
     // Check first slot (vector)
     if shop.item_receive_0.iter().any(|i| i.0 == item_id) {
         return true;
@@ -445,7 +458,7 @@ fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     let empty = move || exchanges.with(|e| e.is_empty());
 
     view! {
-        <div class:collapse=empty class="space-y-1.5 p-1 max-h-80 overflow-y-auto w-full sm:w-96 xl:w-[600px]">
+        <div id="exchange-sources" class:collapse=empty class="space-y-1.5 p-1 max-h-80 overflow-y-auto w-full sm:w-96 xl:w-[600px]">
             <span class="text-sm font-semibold text-[color:var(--brand-fg)]">"Exchange sources"</span>
             <div class="grid grid-cols-1 gap-1.5">{view}</div>
         </div>
@@ -453,7 +466,7 @@ fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     .into_any()
 }
 
-fn leve_rewards_item(
+pub(crate) fn leve_rewards_item(
     leve: &Leve,
     item_id: i32,
     reward_items: &std::collections::HashMap<xiv_gen::LeveRewardItemId, LeveRewardItem>,
@@ -537,7 +550,7 @@ fn LeveSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     let empty = move || leves.with(|l| l.is_empty());
 
     view! {
-        <div class:collapse=empty class="space-y-1.5 p-1 max-h-80 overflow-y-auto w-full sm:w-96 xl:w-[600px]">
+        <div id="leve-sources" class:collapse=empty class="space-y-1.5 p-1 max-h-80 overflow-y-auto w-full sm:w-96 xl:w-[600px]">
             <span class="text-sm font-semibold text-[color:var(--brand-fg)]">"Levequest rewards"</span>
             <div class="grid grid-cols-1 gap-1.5">{view}</div>
         </div>
@@ -675,6 +688,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
         <ExchangeSources item_id />
         <LeveSources item_id />
         <div
+            id="crafting-recipes"
             class="content-well flex-col p-1"
             class:hidden=move || recipes.with(|recipes| recipes.is_empty())
         >
