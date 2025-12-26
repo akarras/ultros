@@ -59,7 +59,7 @@ pub fn Clipboard(#[prop(into)] clipboard_text: Signal<String>) -> impl IntoView 
                 }
     #[cfg(not(feature = "hydrate"))]
     {
-        let _ = toasts;
+        let _ = _toasts;
     }
             }
         >
