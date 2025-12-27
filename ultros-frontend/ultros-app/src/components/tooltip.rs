@@ -142,6 +142,8 @@ where
             class="inline-block"
             on:mouseenter=move |_| is_hover.set(true)
             on:mouseleave=move |_| is_hover.set(false)
+            on:focusin=move |_| is_hover.set(true)
+            on:focusout=move |_| is_hover.set(false)
             node_ref=target
         >
             {children()}
