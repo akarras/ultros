@@ -32,41 +32,41 @@ pub fn Clipboard(#[prop(into)] clipboard_text: Signal<String>) -> impl IntoView 
     });
 
     view! {
-        <button
-            type="button"
-            class="clipboard cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ring)] rounded"
-            aria-label=move || {
-                if !copied() {
-                    format!("Copy {} to clipboard", clipboard_text())
-                } else {
-                    format!("Copied {} to clipboard", clipboard_text())
-                }
-            }
-            on:click=move |e| {
-                e.prevent_default();
-                #[cfg(all(feature = "hydrate"))]
-                {
-                    if let Some(window) = web_sys::window() {
-                        let navigator = window.navigator();
-                        let clipboard = navigator.clipboard();
-                        let text = clipboard_text.get_untracked();
-                        let _ = clipboard.write_text(&text);
-                        last_copied_text.0.set(Some(text));
-                        if let Some(toasts) = toasts {
-                            toasts.success("Copied to clipboard!");
-                        }
+        <Tooltip tooltip_text=tooltip_text>
+            <button
+                type="button"
+                class="clipboard cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ring)] rounded"
+                aria-label=move || {
+                    if !copied() {
+                        format!("Copy {} to clipboard", clipboard_text())
+                    } else {
+                        format!("Copied {} to clipboard", clipboard_text())
                     }
                 }
-    #[cfg(not(feature = "hydrate"))]
-    {
-        let _ = toasts;
-    }
-            }
-        >
-            <Tooltip tooltip_text=tooltip_text>
+                on:click=move |e| {
+                    e.prevent_default();
+                    #[cfg(all(feature = "hydrate"))]
+                    {
+                        if let Some(window) = web_sys::window() {
+                            let navigator = window.navigator();
+                            let clipboard = navigator.clipboard();
+                            let text = clipboard_text.get_untracked();
+                            let _ = clipboard.write_text(&text);
+                            last_copied_text.0.set(Some(text));
+                            if let Some(toasts) = toasts {
+                                toasts.success("Copied to clipboard!");
+                            }
+                        }
+                    }
+                    #[cfg(not(feature = "hydrate"))]
+                    {
+                        let _ = toasts;
+                    }
+                }
+            >
                 <Icon icon />
-            </Tooltip>
-        </button>
+            </button>
+        </Tooltip>
     }
     .into_any()
 }
