@@ -54,6 +54,7 @@ fn AddToListModal(
     let lists = Resource::new(move || {}, move |_| get_lists());
     let (hq, set_hq) = signal(false);
     let (quantity, set_quantity) = signal(1);
+    let quantity_id = move || format!("add-to-list-qty-{}", item_id());
 
     view! {
         <Modal set_visible>
@@ -72,8 +73,14 @@ fn AddToListModal(
                 </div>
 
                 <div class="flex flex-wrap items-center gap-3">
-                    <label class="text-sm text-[color:var(--color-text-muted)]">"quantity"</label>
+                    <label
+                        class="text-sm text-[color:var(--color-text-muted)]"
+                        for=quantity_id
+                    >
+                        "quantity"
+                    </label>
                     <input
+                        id=quantity_id
                         type="number"
                         min="1"
                         class="input w-24"
