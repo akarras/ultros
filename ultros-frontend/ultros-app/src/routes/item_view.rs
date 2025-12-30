@@ -19,9 +19,9 @@ use leptos_router::components::A;
 use leptos_router::hooks::use_params_map;
 use leptos_router::location::Url;
 use std::sync::Arc;
-use ultros_api_types::{CurrentlyShownItem, SaleHistory};
 use ultros_api_types::world_helper::AnySelector;
 use ultros_api_types::world_helper::{AnyResult, OwnedResult};
+use ultros_api_types::{CurrentlyShownItem, SaleHistory};
 use xiv_gen::ItemId;
 
 #[component]
