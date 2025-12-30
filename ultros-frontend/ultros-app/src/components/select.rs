@@ -16,6 +16,7 @@ pub fn Select<T, EF, L, ViewOut>(
     children: EF,
     #[prop(optional)] class: Option<&'static str>,
     #[prop(optional)] dropdown_class: Option<&'static str>,
+    #[prop(optional, into)] label: Option<String>,
     // _view_out: PhantomData<ViewOut>,
 ) -> impl IntoView
 where
@@ -106,6 +107,7 @@ where
                 node_ref=input
                 class=move || format!("{} {}", default_input_class, class.unwrap_or(""))
                 class:cursor=move || !has_focus()
+                aria-label=move || label.clone().unwrap_or_else(|| "Search".to_string())
                 on:focus=move |_| set_focused(true)
                 on:focusout=move |_| set_focused(false)
                 on:input=move |e| {

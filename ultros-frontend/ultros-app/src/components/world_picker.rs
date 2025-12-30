@@ -31,6 +31,7 @@ pub fn WorldOnlyPicker(
                         as_label=move |w| w.name.clone()
                         choice=current_world
                         set_choice=set_current_world
+                        label="Select World"
                         children=move |_w, label| {
                             view! {
                                 <div class="flex items-center px-4 py-2 rounded-lg transition-colors hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)]">
@@ -91,6 +92,7 @@ pub fn WorldPicker(
                         choice=choice
                         set_choice=set_choice
                         as_label=move |(d, _)| d.clone()
+                        label="Select World, Region, or Data Center"
                         children=move |(_, s), view| {
                             view! {
                                 <div class="flex justify-between px-4 py-2
