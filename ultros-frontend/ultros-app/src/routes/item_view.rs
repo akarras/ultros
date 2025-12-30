@@ -19,7 +19,7 @@ use leptos_router::components::A;
 use leptos_router::hooks::use_params_map;
 use leptos_router::location::Url;
 use std::sync::Arc;
-use ultros_api_types::CurrentlyShownItem;
+use ultros_api_types::{CurrentlyShownItem, SaleHistory};
 use ultros_api_types::world_helper::AnySelector;
 use ultros_api_types::world_helper::{AnyResult, OwnedResult};
 use xiv_gen::ItemId;
@@ -571,6 +571,7 @@ fn SummaryCards(
 #[component]
 pub fn ChartWrapper(
     listing_resource: Resource<Result<CurrentlyShownItem, AppError>>,
+    #[prop(into)] sales: Signal<Vec<Arc<SaleHistory>>>,
     item_id: Memo<i32>,
     world: Memo<String>,
 ) -> impl IntoView {
@@ -601,17 +602,8 @@ pub fn ChartWrapper(
                         </div>
                     }.into_any()
                 } else {
-                    let base_sales = Memo::new(move |_| {
-                        listing_resource
-                            .with(|l| {
-                                l.as_ref()
-                                    .and_then(|l| l.as_ref().map(|l| l.sales.clone()).ok())
-                            })
-                            .unwrap_or_default()
-                    });
-
                     let filtered_sales = Memo::new(move |_| {
-                        let mut sales = base_sales();
+                        let mut sales = sales();
                         if hq_only() {
                             sales.retain(|s| s.hq);
                         }
@@ -686,7 +678,7 @@ pub fn ChartWrapper(
                             </div>
 
                             {move || {
-                                if filtered_sales.with(|s| s.is_empty()) {
+                                if filtered_sales.with(|s: &Vec<Arc<SaleHistory>>| s.is_empty()) {
                                     view! {
                                         <div role="status" class="bg-amber-900/30 text-amber-200 border border-amber-700/40 rounded-xl p-4">
                                             "No sales found for the selected filters. Try expanding the time range or disabling HQ-only."
@@ -813,32 +805,24 @@ fn LowQualityTable(
 }
 
 #[component]
-fn SalesDetails(listing_resource: Resource<Result<CurrentlyShownItem, AppError>>) -> impl IntoView {
+fn SalesDetails(#[prop(into)] sales: Signal<Vec<Arc<SaleHistory>>>) -> impl IntoView {
     view! {
         // Removed mt-8 and space-y-6 wrapper to let grid control layout
         <Transition fallback=move || {
             view! { <BoxSkeleton /> }
         }>
             {move || {
-                let sales = Memo::new(move |_| {
-                    listing_resource
-                        .with(|l| {
-                            l.as_ref().and_then(|l| l.as_ref().map(|l| l.sales.clone()).ok())
-                        })
-                        .unwrap_or_default()
-                });
-
                 view! {
                     <div class="flex flex-col gap-6 h-full"> // Use flex col to stack table and insights
                         <div class="panel p-4 sm:p-6 flex-1">
                             <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
                                 "Sale History"
                             </h2>
-                            <SaleHistoryTable sales=sales.into() />
+                            <SaleHistoryTable sales=sales />
                         </div>
 
                         <div class="panel p-4 sm:p-6">
-                            <SalesInsights sales=sales.into() />
+                            <SalesInsights sales=sales />
                         </div>
                     </div>
                 }
@@ -872,12 +856,32 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
                 <LowQualityTable listing_resource />
             </div>
 
-            <div id="history" class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
-                 <div class="lg:sticky lg:top-24 h-fit"> // Make chart sticky? Or just normal col.
-                     <ChartWrapper listing_resource item_id world />
-                 </div>
-                 <SalesDetails listing_resource />
-            </div>
+            {move || {
+                let sales = Memo::new(move |_| {
+                    listing_resource
+                        .with(|l| {
+                            l.as_ref().and_then(|l| {
+                                l.as_ref()
+                                    .ok()
+                                    .map(|l| {
+                                        l.sales
+                                            .iter()
+                                            .map(|s| Arc::new(s.clone()))
+                                            .collect::<Vec<_>>()
+                                    })
+                            })
+                        })
+                        .unwrap_or_default()
+                });
+                view! {
+                    <div id="history" class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
+                         <div class="lg:sticky lg:top-24 h-fit"> // Make chart sticky? Or just normal col.
+                             <ChartWrapper sales listing_resource item_id world />
+                         </div>
+                         <SalesDetails sales />
+                    </div>
+                }
+            }}
 
             <div class="mt-6 mx-auto">
                 <Ad class="h-[336px] w-[280px] rounded-xl overflow-hidden" />

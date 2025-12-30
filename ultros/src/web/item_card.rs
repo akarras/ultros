@@ -28,11 +28,11 @@ pub(crate) async fn generate_image(
     world: &AnyResult<'_>,
 ) -> Result<Vec<u8>> {
     let world_ids: Vec<_> = world.all_worlds().map(|w| w.id).collect();
-    let sales: Vec<SaleHistory> = db
+    let sales: Vec<Arc<SaleHistory>> = db
         .get_sale_history_from_multiple_worlds(world_ids.into_iter(), item.key_id.0, 200)
         .await?
         .into_iter()
-        .map(SaleHistory::from)
+        .map(|s| Arc::new(SaleHistory::from(s)))
         .collect();
     const SIZE: (u32, u32) = (1920 / 2, 1080 / 2);
     let buffer = {

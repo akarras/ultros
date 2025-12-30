@@ -5,6 +5,7 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use anyhow::anyhow;
 use chrono::DateTime;
@@ -40,7 +41,7 @@ enum DayLabelMode {
 }
 
 /// Returns a filter where Some((min, max))
-fn get_iqr_filter(sales: &[SaleHistory]) -> Option<(i32, i32)> {
+fn get_iqr_filter(sales: &[Arc<SaleHistory>]) -> Option<(i32, i32)> {
     if sales.len() < 10 {
         return None;
     }
@@ -60,7 +61,7 @@ fn get_iqr_filter(sales: &[SaleHistory]) -> Option<(i32, i32)> {
     ))
 }
 
-fn filter_outliers<'a>(sales: &'a [SaleHistory]) -> Cow<'a, [SaleHistory]> {
+fn filter_outliers<'a>(sales: &'a [Arc<SaleHistory>]) -> Cow<'a, [Arc<SaleHistory>]> {
     if let Some((min, max)) = get_iqr_filter(sales) {
         let range = min..=max;
         Cow::Owned(
@@ -125,7 +126,7 @@ pub struct ChartOptions {
 pub fn draw_sale_history_scatter_plot<'a, T>(
     backend: Rc<RefCell<T>>,
     world_helper: &WorldHelper,
-    sales: &[SaleHistory],
+    sales: &[Arc<SaleHistory>],
     chart_options: ChartOptions,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'a>>
 where
@@ -149,7 +150,7 @@ where
 fn draw_impl<'a, T>(
     backend: Rc<RefCell<T>>,
     world_helper: &WorldHelper,
-    sales: &[SaleHistory],
+    sales: &[Arc<SaleHistory>],
     ChartOptions {
         remove_outliers,
         icon_item_id,
@@ -370,7 +371,7 @@ pub type LabelSaleData = Option<(String, Vec<(DateTime<Local>, i32, i32)>)>;
 fn map_sales_in(
     world_helper: &WorldHelper,
     selector: AnySelector,
-    sales: &[SaleHistory],
+    sales: &[Arc<SaleHistory>],
 ) -> LabelSaleData {
     let result = world_helper.lookup_selector(selector)?;
     Some((
@@ -398,7 +399,7 @@ pub type UnlabeledSaleData = Vec<(String, Vec<(DateTime<Local>, i32, i32)>)>;
 
 fn map_sale_history_to_line(
     world_helper: &WorldHelper,
-    sales: &[SaleHistory],
+    sales: &[Arc<SaleHistory>],
 ) -> UnlabeledSaleData {
     // figure out whether we want to group these by world or what
     let world_ids: HashSet<_> = sales

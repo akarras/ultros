@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use cfg_if::cfg_if;
 use leptos::html::Div;
@@ -17,7 +18,7 @@ use crate::global_state::theme::use_theme_settings;
 use crate::{components::toggle::Toggle, global_state::LocalWorldData};
 
 #[component]
-pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
+pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<Arc<SaleHistory>>>) -> impl IntoView {
     let canvas = NodeRef::<Canvas>::new();
     let local_world_data = use_context::<LocalWorldData>().unwrap();
     cfg_if! {
