@@ -732,25 +732,22 @@ impl AnalyzerService {
         });
         // figure out what items are selling best on our world first, then figure out what items are available in the region that complement that.
         let sale = self.recent_sale_history.get(&world_id)?;
+        let now = Utc::now().naive_utc();
+        let filter_sale_duration = resale_options.filter_sale.as_ref().map(Duration::from);
+
         let sale_history: BTreeMap<_, _> = sale
             .read()
             .await
             .item_map
             .iter()
-            .map(|(i, values)| (i, values, values.iter().collect::<SoldWithin>()))
+            .map(|(i, values)| (i, values, SoldWithin::calculate(values.iter(), now)))
             .flat_map(|(item, values, sold_within)| {
                 values
                     .iter()
                     .filter(|sale| {
-                        resale_options
-                            .filter_sale
-                            .as_ref()
+                        filter_sale_duration
                             .map(|sale_within| {
-                                let sale_within = Duration::from(sale_within);
-                                Utc::now()
-                                    .naive_utc()
-                                    .signed_duration_since(sale.sale_date)
-                                    .lt(&sale_within)
+                                now.signed_duration_since(sale.sale_date).lt(&sale_within)
                             })
                             .unwrap_or(true)
                     })
