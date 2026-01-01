@@ -3,6 +3,7 @@ use leptos_router::{
     NavigateOptions,
     hooks::{use_navigate, use_params_map},
 };
+use std::sync::Arc;
 use ultros_api_types::{icon_size::IconSize, trends::TrendItem};
 
 use crate::{
@@ -21,14 +22,21 @@ use crate::{
 };
 
 #[component]
-fn TrendsTable(items: Vec<TrendItem>, world: String) -> impl IntoView {
-    let items = Memo::new(move |_| {
-        items
-            .iter()
-            .cloned()
-            .enumerate()
-            .collect::<Vec<(usize, TrendItem)>>()
+fn TrendsTable(
+    #[prop(into)] items: Signal<Vec<TrendItem>>,
+    #[prop(into)] world: Signal<String>,
+) -> impl IntoView {
+    let items_with_index = Memo::new(move |_| {
+        items.with(|items| {
+            items
+                .iter()
+                .copied()
+                .enumerate()
+                .collect::<Vec<(usize, TrendItem)>>()
+        })
     });
+
+    let world_arc = Memo::new(move |_| Arc::new(world.get()));
 
     view! {
         <div class="rounded-2xl overflow-x-auto panel content-visible contain-layout contain-paint will-change-scroll forced-layer">
@@ -57,10 +65,10 @@ fn TrendsTable(items: Vec<TrendItem>, world: String) -> impl IntoView {
                         </div>
                     </div>
                 }.into_any()
-                each=items.into()
+                each=items_with_index.into()
                 key=move |(index, item): &(usize, TrendItem)| (*index, item.item_id, item.hq)
                 view=move |(index, item): (usize, TrendItem)| {
-                    let world = world.clone();
+                    let world = world_arc.get();
                     let item_id = item.item_id;
                     let item_data = xiv_gen_db::data().items.get(&xiv_gen::ItemId(item_id));
                     let item_name = item_data.map(|i| i.name.as_str()).unwrap_or("Unknown Item").to_string();
@@ -233,21 +241,27 @@ pub fn Trends() -> impl IntoView {
                         <Suspense fallback=BoxSkeleton>
                             {move || match trends.get() {
                                 Some(Ok(Some(data))) => {
-                                    let items = match selected_tab.get() {
-                                        TrendTab::Velocity => data.high_velocity,
-                                        TrendTab::Rising => data.rising_price,
-                                        TrendTab::Falling => data.falling_price,
-                                    };
+                                    // Use a memo to derive items based on selected_tab, so we don't re-create the table component
+                                    let items = Memo::new(move |_| {
+                                        match selected_tab.get() {
+                                            TrendTab::Velocity => data.high_velocity.clone(),
+                                            TrendTab::Rising => data.rising_price.clone(),
+                                            TrendTab::Falling => data.falling_price.clone(),
+                                        }
+                                    });
 
-                                    if items.is_empty() {
-                                        view! {
+                                    // Check if current list is empty
+                                    let is_empty = move || items.with(|i| i.is_empty());
+
+                                    view! {
+                                        <Show when=move || !is_empty() fallback=|| view! {
                                             <div class="text-xl text-[color:var(--color-text)] text-center p-8 bg-brand-900/20 rounded-2xl border border-white/10">
                                                 "No trends data available for this category."
                                             </div>
-                                        }.into_any()
-                                    } else {
-                                        view! { <TrendsTable items=items world=world() /> }.into_any()
-                                    }
+                                        }>
+                                            <TrendsTable items=items world=Signal::derive(move || world()) />
+                                        </Show>
+                                    }.into_any()
                                 },
                                 Some(Ok(None)) => view! {
                                     <div class="text-xl text-[color:var(--color-text)] text-center p-8 bg-brand-900/20 rounded-2xl border border-white/10">
