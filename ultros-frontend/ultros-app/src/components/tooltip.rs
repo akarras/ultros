@@ -66,7 +66,8 @@ pub fn Tooltip<T>(
 where
     T: Sized + Render + RenderHtml + Send,
 {
-    let is_hover = RwSignal::new(false);
+    let (is_hovered, set_is_hovered) = signal(false);
+    let (is_focused, set_is_focused) = signal(false);
     let target = NodeRef::<Div>::new();
 
     let children = children.into_inner();
@@ -82,7 +83,7 @@ where
                 } = use_element_bounding(target);
 
                 move || {
-                    (tooltip_text.with(|t| !t.is_empty()) && is_hover.get()).then(move || {
+                    (tooltip_text.with(|t| !t.is_empty()) && (is_hovered.get() || is_focused.get())).then(move || {
                         let (screen_width, screen_height) = use_window_size();
                         let (scroll_x, scroll_y) = use_window_scroll();
                         let node_ref = NodeRef::<Div>::new();
@@ -140,8 +141,10 @@ where
     view! {
         <div
             class="inline-block"
-            on:mouseenter=move |_| is_hover.set(true)
-            on:mouseleave=move |_| is_hover.set(false)
+            on:mouseenter=move |_| set_is_hovered.set(true)
+            on:mouseleave=move |_| set_is_hovered.set(false)
+            on:focusin=move |_| set_is_focused.set(true)
+            on:focusout=move |_| set_is_focused.set(false)
             node_ref=target
         >
             {children()}
