@@ -298,6 +298,7 @@ pub fn App() -> impl IntoView {
                                 view! { <div /> }
                             } />
                             <Route path=path!("trends/:world") view=Trends />
+                            <Route path=path!("trends") view=Trends />
                             <Route path=path!("settings") view=Settings />
                             <Route path=path!("profile") view=Profile />
                             <Route path=path!("privacy") view=PrivacyPolicy />
