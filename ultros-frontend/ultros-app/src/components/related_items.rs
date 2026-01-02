@@ -306,7 +306,7 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
 
 fn npc_rows(npc: &ENpcBase) -> impl Iterator<Item = u32> + '_ {
     // TODO- can I just parse the csv into a vec?
-    npc.e_npc_data.iter().map(|i| i.0)
+    npc.e_npc_data.iter().map(|i| u32::from(i.0))
 }
 
 fn gil_shop_to_npc(gil_shops: &[GilShopId]) -> Vec<(GilShopId, &'static ENpcBase)> {
@@ -358,6 +358,9 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                 Some(view! {
                     <a
                         href=format!("https://garlandtools.org/db/#npc/{}", resident.key_id.0)
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label=format!("View {} on Garland Tools (opens in new tab)", resident.singular.as_str())
                         class="group flex flex-col gap-2 rounded-lg card p-3 transition-colors h-full hover:bg-[color:var(--color-base)]/50"
                     >
                         <div class="flex items-center justify-between gap-2 border-b border-[color:var(--color-outline)] pb-2">
