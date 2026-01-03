@@ -872,10 +872,8 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
                 <LowQualityTable listing_resource />
             </div>
 
-            <div id="history" class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
-                 <div class="lg:sticky lg:top-24 h-fit"> // Make chart sticky? Or just normal col.
-                     <ChartWrapper listing_resource item_id world />
-                 </div>
+            <div id="history" class="grid grid-cols-1 gap-6 mt-8">
+                 <ChartWrapper listing_resource item_id world />
                  <SalesDetails listing_resource />
             </div>
 
