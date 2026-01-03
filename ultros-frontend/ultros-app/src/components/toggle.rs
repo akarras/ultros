@@ -13,6 +13,8 @@ pub fn Toggle(
                 type="checkbox"
                 class="sr-only peer"
                 prop:checked=checked
+                role="switch"
+                aria-checked=move || checked().to_string()
                 on:change=move |_| {
                     let checked = checked.get_untracked();
                     set_checked(!checked);
