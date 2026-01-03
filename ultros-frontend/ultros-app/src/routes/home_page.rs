@@ -109,6 +109,14 @@ pub fn HomePage() -> impl IntoView {
                                 icon=i::FaMoneyBillTrendUpSolid
                             />
                         </FeatureCard>
+                        <FeatureCard href="/vendor-resale" title="Vendor Resale" description="Buy from vendors, sell on market">
+                            <Icon
+                                attr:class="feature-card-icon"
+                                width="3.5em"
+                                height="3.5em"
+                                icon=i::FaShopSolid
+                            />
+                        </FeatureCard>
                         <FeatureCard href="/recipe-analyzer" title="Recipe Analyzer" description="Profit calculator for crafting" badge="New">
                             <Icon
                                 attr:class="feature-card-icon"

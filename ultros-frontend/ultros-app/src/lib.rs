@@ -36,6 +36,7 @@ use crate::{
         scrip_sources::*,
         settings::*,
         trends::*,
+        vendor_resale::*,
         venture_analyzer::*,
     },
 };
@@ -283,6 +284,8 @@ pub fn App() -> impl IntoView {
                                 view! { <div /> }
                             } />
                             <Route path=path!("flip-finder/:world") view=AnalyzerWorldView />
+                            <Route path=path!("vendor-resale") view=VendorResale />
+                            <Route path=path!("vendor-resale/:world") view=VendorWorldView />
                             <Route path=path!("recipe-analyzer") view=RecipeAnalyzer />
                             <Route path=path!("leve-analyzer") view=LeveAnalyzer />
                             <Route path=path!("scrip-sources") view=ScripSources />

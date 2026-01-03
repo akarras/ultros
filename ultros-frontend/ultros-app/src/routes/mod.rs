@@ -14,6 +14,7 @@ pub mod retainers;
 pub mod scrip_sources;
 pub mod settings;
 pub mod trends;
+pub mod vendor_resale;
 pub mod venture_analyzer;
 
 pub mod legal {

@@ -77,6 +77,17 @@ pub fn AppsMenu() -> impl IntoView {
 
                         <A
                             href=homeworld()
+                                .map(|w| format!("/vendor-resale/{}", w.name))
+                                .unwrap_or("/vendor-resale".to_string())
+                            attr:class="nav-link w-full justify-start"
+                            on:click=close_menu
+                        >
+                            <Icon height="1.1em" width="1.1em" icon=i::FaShopSolid />
+                            <span class="ml-2">"Vendor Resale"</span>
+                        </A>
+
+                        <A
+                            href=homeworld()
                                 .map(|w| format!("/recipe-analyzer?world={}", w.name))
                                 .unwrap_or("/recipe-analyzer".to_string())
                             attr:class="nav-link w-full justify-start"
