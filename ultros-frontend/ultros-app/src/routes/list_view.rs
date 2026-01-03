@@ -3,27 +3,26 @@ use std::collections::HashSet;
 
 use crate::components::icon::Icon;
 use icondata as i;
-use leptos::either::{Either, EitherOf3};
+use leptos::either::Either;
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
 use ultros_api_types::list::ListItem;
-use xiv_gen::{Item, ItemId, Recipe};
+use xiv_gen::ItemId;
 
 use crate::api::{
-    add_item_to_list, bulk_add_item_to_list, delete_list_item, delete_list_items, edit_list_item,
+    add_item_to_list, delete_list_item, delete_list_items, edit_list_item,
     get_list_items_with_listings,
 };
-use crate::components::related_items::IngredientsIter;
 use crate::components::{
-    clipboard::*, item_icon::*, list_summary::*, loading::*, make_place_importer::*,
-    price_viewer::*, small_item_display::*, tooltip::*,
+    add_recipe_to_current_list::AddRecipeToCurrentListModal, clipboard::*, item_icon::*,
+    list_summary::*, loading::*, make_place_importer::*, price_viewer::*, tooltip::*,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum MenuState {
     None,
     Item,
-    Recipe,
+    // Recipe is now handled by a modal
     MakePlace,
 }
 
@@ -31,7 +30,6 @@ enum MenuState {
 pub fn ListView() -> impl IntoView {
     let data = xiv_gen_db::data();
     let game_items = &data.items;
-    let recipes = &data.recipes;
 
     let params = use_params_map();
     let list_id = Memo::new(move |_| {
@@ -44,29 +42,18 @@ pub fn ListView() -> impl IntoView {
         add_item_to_list(item.list_id, item)
     });
     let delete_item = Action::new(move |list_item: &i32| delete_list_item(*list_item));
-    let recipe_add = Action::new(move |data: &(&Recipe, i32, bool, bool)| {
-        let ingredients = IngredientsIter::new(data.0);
-        let craft_count = data.1;
-        let items: Vec<_> = ingredients
-            .map(|(id, amount)| {
-                let item = game_items.get(&id);
-                let amount = craft_count * amount;
-                let can_be_hq = item.map(|i| i.can_be_hq).unwrap_or(true);
-                ListItem {
-                    id: 0,
-                    item_id: id.0,
-                    list_id: list_id(),
-                    hq: Some(data.2 && can_be_hq),
-                    quantity: Some(amount),
-                    acquired: None,
-                }
-            })
-            .collect();
 
-        bulk_add_item_to_list(list_id(), items)
-    });
+    // This action definition was removed as logic moved to the modal.
+    // However, we need to handle the update trigger.
+    // We'll rely on the modal's on_success callback to trigger refetch.
+
     let edit_item = Action::new(move |item: &ListItem| edit_list_item(item.clone()));
     let delete_items = Action::new(move |items: &Vec<i32>| delete_list_items(items.clone()));
+
+    // We need to trigger refetch when items are added via modal.
+    // We can use a signal for versioning external updates.
+    let (external_update_version, set_external_update_version) = signal(0);
+
     let list_view = Resource::new(
         move || {
             (
@@ -74,7 +61,8 @@ pub fn ListView() -> impl IntoView {
                 (
                     add_item.version().get(),
                     delete_item.version().get(),
-                    recipe_add.version().get(),
+                    // removed recipe_add version
+                    external_update_version.get(),
                     edit_item.version().get(),
                     delete_items.version().get(),
                 ),
@@ -84,6 +72,8 @@ pub fn ListView() -> impl IntoView {
     );
 
     let (menu, set_menu) = signal(MenuState::None);
+    let (recipe_modal_open, set_recipe_modal_open) = signal(false);
+
     let edit_list_mode = RwSignal::new(false);
     let selected_items = RwSignal::new(HashSet::new());
 
@@ -116,10 +106,6 @@ pub fn ListView() -> impl IntoView {
                 let onopen_callback =
                     leptos::wasm_bindgen::closure::Closure::wrap(Box::new(move || {
                         let msg = AlertsRx::WatchCharacter { name: name.clone() };
-                        // Manually serialize since we can't easily use serde_json to string here without adding it to Cargo.toml if missing
-                        // Actually ultros-app likely has serde-json.
-                        // But wait, AlertsRx is binary or text? Backend handles both.
-                        // Let's use text and serde_json.
                         match serde_json::to_string(&msg) {
                             Ok(text) => {
                                 let _ = ws_for_open.send_with_str(&text);
@@ -143,34 +129,14 @@ pub fn ListView() -> impl IntoView {
                             if let Ok(AlertsTx::ItemPurchased { item_id }) =
                                 serde_json::from_str::<AlertsTx>(&txt)
                             {
-                                // Mark item as acquired
-                                // We need to find the item in the list and update it.
-                                // However, `list_view` resource holds the state.
-                                // We can't easily modify the resource directly without refetching.
-                                // But we can trigger an action.
-                                // We need to know the list item ID (not just item_id) to update it properly via `edit_item` action?
-                                // No, `edit_item` takes `ListItem`.
-                                // Wait, `list_view` returns `(List, Vec<ListItem>)` or similar.
-                                // Actually `get_list_items_with_listings` returns `(List, Vec<(ListItem, Vec<ActiveListing>)>)`.
-
-                                // To update the UI without full refetch, we might want to update a signal.
-                                // But the data is in `list_view` resource which is read-only unless we mutate it via `update`.
-                                // `list_view.update(|data| ...)`
-
                                 list_view.update(|data| {
                                     if let Some(Ok((_, items))) = data {
                                         for (item, _) in items.iter_mut() {
                                             if item.item_id == item_id {
-                                                // Increment acquired count
-                                                // Logic: if acquired < quantity, acquired++
                                                 let q = item.quantity.unwrap_or(1);
                                                 let current = item.acquired.unwrap_or(0);
                                                 if current < q {
                                                     item.acquired = Some(current + 1);
-                                                    // Also trigger server update?
-                                                    // Yes, we should probably call `edit_list_item` action.
-                                                    // But we are inside an Effect.
-                                                    // We can spawn a local task to call the server action.
                                                     let item_clone = item.clone();
                                                     leptos::task::spawn_local(async move {
                                                         let _ = edit_list_item(item_clone).await;
@@ -187,15 +153,6 @@ pub fn ListView() -> impl IntoView {
                 ws.set_onmessage(Some(onmessage_callback.as_ref().unchecked_ref()));
                 onmessage_callback.forget();
 
-                // Keep ws alive? The variable `ws` drops at end of scope?
-                // `WebSocket` is a JS object, it stays alive if it has event listeners?
-                // No, we need to keep a reference or it might be GC'd.
-                // But in Rust/WASM, if we drop the `WebSocket` struct, it doesn't necessarily close the connection,
-                // but we lose the ability to close it.
-                // For a proper implementation we should store it in a cleanup closure.
-                // We use SendWrapper to satisfy the Send + Sync requirement of on_cleanup,
-                // which is safe because we are in a single-threaded WASM environment.
-                // send_wrapper crate is available in Cargo.toml.
                 let ws_clone = send_wrapper::SendWrapper::new(ws.clone());
                 on_cleanup(move || {
                     let _ = ws_clone.close();
@@ -260,13 +217,8 @@ pub fn ListView() -> impl IntoView {
             <Tooltip tooltip_text="Add a recipe's ingredients to the list">
                 <button
                     class="btn-secondary"
-                    class:active=move || menu() == MenuState::Recipe
-                    on:click=move |_| set_menu(
-                        match menu() {
-                            MenuState::Recipe => MenuState::None,
-                            _ => MenuState::Recipe,
-                        },
-                    )
+                    class:active=move || recipe_modal_open()
+                    on:click=move |_| set_recipe_modal_open(true)
                 >
 
                     "Add Recipe"
@@ -289,10 +241,22 @@ pub fn ListView() -> impl IntoView {
             </Tooltip>
 
         </div>
+
+        <Show when=recipe_modal_open>
+            <AddRecipeToCurrentListModal
+                list_id=list_id
+                set_visible=set_recipe_modal_open
+                on_success=move || {
+                    set_external_update_version.update(|v| *v += 1);
+                    set_recipe_modal_open(false);
+                }
+            />
+        </Show>
+
         {move || match menu() {
             MenuState::Item => {
                 Some(
-                    EitherOf3::A({
+                    Either::Left({
                         let (search, set_search) = signal("".to_string());
                         let items = &xiv_gen_db::data().items;
                         let item_search = move || {
@@ -405,118 +369,10 @@ pub fn ListView() -> impl IntoView {
                 )
             }
             MenuState::None => None,
-            MenuState::Recipe => {
-                Some(
-                    EitherOf3::B({
-                        let (recipe, set_recipe) = signal("".to_string());
-                        let recipe_data: Vec<(&Item, &Recipe)> = recipes
-                            .iter()
-                            .flat_map(|(_, r)| { game_items.get(&r.item_result).map(|i| (i, r)) })
-                            .collect();
-                        let item_search = move || {
-                            recipe
-                                .with(|r| {
-                                    let r_lower = r.to_lowercase();
-                                    let mut score = recipe_data
-                                        .clone()
-                                        .into_iter()
-                                        .filter(|_| !r.is_empty())
-                                        .filter_map(|(i, recipe)| {
-                                            if i.name.to_lowercase().contains(&r_lower) {
-                                                Some((i.key_id, recipe, i))
-                                            } else {
-                                                None
-                                            }
-                                        })
-                                        .collect::<Vec<_>>();
-                                    score
-                                        .sort_by_key(|(_, _, i)| (
-                                            Reverse(i.level_item.0),
-                                        ));
-                                    score
-                                        .into_iter()
-                                        .take(100)
-                                        .collect::<Vec<_>>()
-                                })
-                        };
-                        let pending = recipe_add.pending();
-                        let result = recipe_add.value();
-                        view! {
-                            <div class="flex-row">
-                                <label>"recipe search:"</label>
-                                <br />
-                                <input
-                                    prop:value=recipe
-                                    on:input=move |input| set_recipe(event_target_value(&input))
-                                />
-                            </div>
-                            {move || pending().then(|| view! { <Loading /> })}
-                            {move || {
-                                result.get()
-                                    .map(|v| match v {
-                                        Ok(()) => "Success".to_string().into_view(),
-                                        Err(e) => format!("{e:?}").into_view(),
-                                    })
-                            }}
-
-                            <div class="content-well flex-column">
-                                {move || {
-                                    item_search()
-                                        .into_iter()
-                                        .map(|(_id, ri, item)| {
-                                            let (quantity, set_quantity) = signal(1);
-                                            let hq = RwSignal::new(false);
-                                            let crystals = RwSignal::new(false);
-                                            view! {
-                                                <div class="flex-row">
-                                                    <SmallItemDisplay item=item />
-                                                    <label>"Craft count"</label>
-                                                    <input
-                                                        type="number"
-                                                        prop:value=quantity
-                                                        on:input=move |i| {
-                                                            let input = event_target_value(&i);
-                                                            if let Ok(i) = input.parse() {
-                                                                set_quantity(i);
-                                                            }
-                                                        }
-                                                    />
-
-                                                    <label>"HQ Only"</label>
-                                                    <input
-                                                        type="checkbox"
-                                                        prop:checked=hq
-                                                        on:click=move |_| hq.update(|h| *h = !*h)
-                                                    />
-                                                    <label>"Ignore Crystals"</label>
-                                                    <input
-                                                        type="checkbox"
-                                                        prop:checked=crystals
-                                                        on:click=move |_| crystals.update(|c| *c = !*c)
-                                                    />
-                                                    <button
-                                                        class="btn"
-                                                        on:click=move |_| {
-                                                            recipe_add.dispatch((ri, quantity(), hq(), crystals()));
-                                                        }
-                                                    >
-
-                                                        "Add Recipe"
-                                                    </button>
-                                                </div>
-                                            }
-                                        })
-                                        .collect::<Vec<_>>()
-                                }}
-
-                            </div>
-                        }
-                    }),
-                )
-            }
+            // Removed MenuState::Recipe block
             MenuState::MakePlace => {
                 Some(
-                    EitherOf3::C({
+                    Either::Right({
                         view! {
                             <MakePlaceImporter
                                 list_id=Signal::derive(move || {
