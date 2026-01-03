@@ -31,6 +31,7 @@ use crate::{
         leve_analyzer::*,
         list_view::*,
         lists::*,
+        not_found::NotFound,
         recipe_analyzer::*,
         retainers::*,
         scrip_sources::*,
@@ -251,9 +252,7 @@ pub fn App() -> impl IntoView {
                 // https://github.com/leptos-rs/leptos/issues/1754
                 <main class="flex-1">
                     <div class="mx-auto max-w-7xl px-0 sm:px-4 lg:px-6 py-4 sm:py-6">
-                        <Routes fallback=move || {
-                            view! { <div>"Page not found"</div> }
-                        }>
+                        <Routes fallback=NotFound>
                             <Route path=path!("") view=HomePage />
                             <ParentRoute path=path!("retainers") view=Retainers>
                                 <Route path=path!("edit") view=EditRetainers />
