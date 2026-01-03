@@ -1,10 +1,10 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use plotters_svg::SVGBackend;
-use ultros_api_types::{SaleHistory, world_helper::WorldHelper};
-use ultros_charts::{ChartOptions, draw_sale_history_scatter_plot};
+use ultros_api_types::{world_helper::WorldHelper, SaleHistory};
+use ultros_charts::{draw_sale_history_scatter_plot, ChartOptions};
 
 pub fn render_chart(
     world_helper: &WorldHelper,
@@ -28,7 +28,6 @@ pub fn render_chart(
 
 #[cfg(test)]
 mod tests {
-
 
     #[test]
     fn test_renderer_compiles() {
