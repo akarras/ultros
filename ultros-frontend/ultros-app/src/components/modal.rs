@@ -10,6 +10,7 @@ use leptos_use::use_window_scroll;
 pub fn Modal<T>(
     children: TypedChildrenFn<T>,
     #[prop(into)] set_visible: SignalSetter<bool>,
+    #[prop(optional, into)] max_width: Option<String>,
 ) -> impl IntoView
 where
     T: Render + RenderHtml + Send + 'static,
@@ -22,6 +23,7 @@ where
         set_visible(false);
     });
     let children = children.into_inner();
+    let max_width = max_width.unwrap_or_else(|| "max-w-2xl w-[95%] sm:w-[500px]".to_string());
     view! {
         <Portal>
             <div
@@ -31,11 +33,11 @@ where
                 on:click=move |_| set_visible(false)
             >
                 <div
-                    class="flex flex-col mx-auto max-w-2xl w-[95%] sm:w-[500px]
+                    class=format!("flex flex-col mx-auto {max_width}
                     panel rounded-2xl shadow-xl
                     backdrop-blur-md
                     p-6 z-50
-                    animate-slide-in"
+                    animate-slide-in")
                     role="dialog"
                     aria-modal="true"
                     on:click=move |e| {
