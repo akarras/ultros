@@ -68,6 +68,12 @@ where
 {
     let (is_hovered, set_is_hovered) = signal(false);
     let (is_focused, set_is_focused) = signal(false);
+    // Suppress unused variable warnings for non-hydrate builds
+    #[cfg(not(feature = "hydrate"))]
+    {
+        let _ = is_hovered;
+        let _ = is_focused;
+    }
     let target = NodeRef::<Div>::new();
 
     let children = children.into_inner();

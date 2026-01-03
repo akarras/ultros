@@ -711,11 +711,12 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
 #[component]
 fn CategorySection(
     title: &'static str,
+    #[prop(into)] open: Signal<bool>,
     #[prop(optional)] category: Option<u8>,
     #[prop(optional)] children: Option<Children>,
 ) -> impl IntoView {
     view! {
-        <details class="group/section" open>
+        <details class="group/section" open=open>
             <summary class="flex items-center justify-between w-full px-2 py-2 cursor-pointer
                            text-xs font-bold uppercase tracking-wider text-[color:var(--color-text-muted)]
                            hover:text-[color:var(--color-text)] transition-colors select-none list-none">
@@ -733,8 +734,33 @@ fn CategorySection(
 
 #[component]
 pub fn ItemExplorer() -> impl IntoView {
+    let params = use_params_map();
+    let data = xiv_gen_db::data();
     let (menu_open, set_open) = query_signal("menu-open");
     let menu_open = Memo::new(move |_| menu_open().unwrap_or(false));
+    let active_category_group = Memo::new(move |_| {
+        let params = params();
+        if params.get("jobset").is_some() {
+            return Some(5);
+        }
+
+        #[allow(clippy::collapsible_if)]
+        if let Some(cat_raw) = params.get("category") {
+            if let Ok(cat_name) = percent_encoding::percent_decode_str(&cat_raw).decode_utf8() {
+                for cat in data.item_search_categorys.values() {
+                    if cat.name == cat_name {
+                        return Some(cat.category);
+                    }
+                }
+            }
+        }
+        None
+    });
+    let is_open = move |id: u8| {
+        Signal::derive(move || {
+            active_category_group.with(|active| active.map(|a| a == id).unwrap_or(true))
+        })
+    };
 
     view! {
         <div class="flex flex-col min-h-[calc(100vh-64px)]">
@@ -768,11 +794,11 @@ pub fn ItemExplorer() -> impl IntoView {
                         </div>
 
                         <div class="space-y-1">
-                            <CategorySection title="Weapons" category=1 />
-                            <CategorySection title="Armor" category=2 />
-                            <CategorySection title="Items" category=3 />
-                            <CategorySection title="Housing" category=4 />
-                            <CategorySection title="Job Sets">
+                            <CategorySection title="Weapons" category=1 open=is_open(1) />
+                            <CategorySection title="Armor" category=2 open=is_open(2) />
+                            <CategorySection title="Items" category=3 open=is_open(3) />
+                            <CategorySection title="Housing" category=4 open=is_open(4) />
+                            <CategorySection title="Job Sets" open=is_open(5)>
                                 <JobsList />
                             </CategorySection>
                         </div>
