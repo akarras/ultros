@@ -123,12 +123,12 @@ where
                             let calculate_position = move || {
                                 // If the tooltip hasn't been measured yet, hide it to prevent overlap/flashing
                                 if tooltip_height() < 1.0 || tooltip_width() < 1.0 {
-                                    return "opacity: 0; pointer-events: none; position: fixed;".to_string();
+                                    return "visibility: hidden; pointer-events: none; position: fixed;".to_string();
                                 }
 
                                 let element_center_x = left() + (width() / 2.0);
 
-                                let gap = 5.0;
+                                let gap = 10.0;
                                 let mut pos_y = top() - tooltip_height() - gap;
 
                                 if pos_y < 0.0 {
@@ -167,8 +167,7 @@ where
                                         rounded-lg shadow-lg shadow-brand-950/50
                                         backdrop-blur-md
                                         text-gray-200
-                                        transition-opacity duration-150
-                                        animate-fade-in"
+                                        transition-opacity duration-150"
                                         style=calculate_position
                                         on:mouseenter=on_enter.clone()
                                         on:mouseleave=on_leave.clone()
