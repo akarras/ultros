@@ -101,6 +101,7 @@ impl From<&WorldCache> for WorldData {
             regions: value
                 .get_inner_data()
                 .iter()
+                .filter(|(region, _)| region.name != "NA-Cloud-DC")
                 .map(|(region, datacenters)| {
                     let region::Model {
                         id: region_id,
