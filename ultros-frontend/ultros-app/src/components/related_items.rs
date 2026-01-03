@@ -323,10 +323,7 @@ fn gil_shop_to_npc(gil_shops: &[GilShopId]) -> Vec<(GilShopId, &'static ENpcBase
                     shops.push(GilShopId(row_as_i32));
                 }
 
-                if let Some(ts) = data
-                    .topic_selects
-                    .get(&xiv_gen::TopicSelectId(row_as_i32))
-                {
+                if let Some(ts) = data.topic_selects.get(&xiv_gen::TopicSelectId(row_as_i32)) {
                     let ts_shops = [
                         &ts.shop_0, &ts.shop_1, &ts.shop_2, &ts.shop_3, &ts.shop_4, &ts.shop_5,
                         &ts.shop_6, &ts.shop_7, &ts.shop_8, &ts.shop_9,
@@ -339,10 +336,8 @@ fn gil_shop_to_npc(gil_shops: &[GilShopId]) -> Vec<(GilShopId, &'static ENpcBase
                     }
                 }
 
-                if let Some(ph) = data
-                    .pre_handlers
-                    .get(&xiv_gen::PreHandlerId(row_as_i32))
-                {
+                #[allow(clippy::collapsible_if)]
+                if let Some(ph) = data.pre_handlers.get(&xiv_gen::PreHandlerId(row_as_i32)) {
                     if let Some(ts) = data
                         .topic_selects
                         .get(&xiv_gen::TopicSelectId(ph.target.0 as i32))
