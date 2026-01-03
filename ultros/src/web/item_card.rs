@@ -48,6 +48,8 @@ pub(crate) async fn generate_image(
                 remove_outliers: true,
                 icon_item_id: item.key_id.0,
                 draw_icon: true,
+                // hex 202124
+                background_rgb: Some((0x20, 0x21, 0x24)),
                 ..Default::default()
             },
         ) {
