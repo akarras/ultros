@@ -5,7 +5,8 @@ use leptos::{html::Div, prelude::*};
 #[cfg(feature = "hydrate")]
 use leptos_use::{
     UseElementBoundingReturn, UseElementSizeReturn, UseEventListenerOptions, use_element_bounding,
-    use_element_size, use_event_listener_with_options, use_window, use_window_scroll,
+    use_element_size, use_event_listener_with_options, use_timeout_fn, use_window,
+    use_window_scroll,
 };
 
 #[cfg_attr(not(feature = "hydrate"), allow(dead_code))]
@@ -70,6 +71,26 @@ where
     let (is_focused, set_is_focused) = signal(false);
     let target = NodeRef::<Div>::new();
 
+    #[cfg(feature = "hydrate")]
+    let timeout = std::sync::Arc::new(use_timeout_fn(
+        move |_: ()| {
+            set_is_hovered.set(false);
+        },
+        200.0,
+    ));
+
+    // Redefine helpers to avoid moving closures
+    #[cfg(feature = "hydrate")]
+    let stop_timeout = {
+        let timeout = timeout.clone();
+        move || (timeout.stop)()
+    };
+    #[cfg(feature = "hydrate")]
+    let start_timeout = {
+        let timeout = timeout.clone();
+        move || (timeout.start)(())
+    };
+
     let children = children.into_inner();
     let tooltip = {
         cfg_if! {
@@ -82,54 +103,75 @@ where
                     ..
                 } = use_element_bounding(target);
 
+                // Capture necessary state for inner closure
+                let timeout_inner = timeout.clone();
+
                 move || {
-                    (tooltip_text.with(|t| !t.is_empty()) && (is_hovered.get() || is_focused.get())).then(move || {
-                        let (screen_width, screen_height) = use_window_size();
-                        let (scroll_x, scroll_y) = use_window_scroll();
-                        let node_ref = NodeRef::<Div>::new();
-                        let UseElementSizeReturn {
-                            width: tooltip_width,
-                            height: tooltip_height,
-                        } = use_element_size(node_ref);
+                    (tooltip_text.with(|t| !t.is_empty()) && (is_hovered.get() || is_focused.get())).then({
+                        let timeout_inner = timeout_inner.clone();
 
-                        let calculate_position = move || {
-                            let element_center_x = left() + (width() / 2.0);
-                            let viewport_right = scroll_x() + screen_width();
-                            let _viewport_bottom = scroll_y() + screen_height();
+                        move || {
+                            let (screen_width, _screen_height) = use_window_size();
+                            let (_scroll_x, _) = use_window_scroll();
+                            let node_ref = NodeRef::<Div>::new();
+                            let UseElementSizeReturn {
+                                width: tooltip_width,
+                                height: tooltip_height,
+                            } = use_element_size(node_ref);
 
-                            let mut pos_y = top() - tooltip_height() - 8.0;
-                            let mut pos_x = element_center_x - (tooltip_width() / 2.0);
+                            let calculate_position = move || {
+                                let element_center_x = left() + (width() / 2.0);
 
-                            if pos_y < scroll_y() {
-                                pos_y = bottom() + 8.0;
-                            }
+                                let gap = 5.0;
+                                let mut pos_y = top() - tooltip_height() - gap;
 
-                            pos_x = pos_x.clamp(
-                                scroll_x() + 8.0,
-                                viewport_right - tooltip_width() - 8.0,
-                            );
+                                if pos_y < 0.0 {
+                                    pos_y = bottom() + gap;
+                                }
 
-                            format!("top: {}px; left: {}px;", pos_y, pos_x)
-                        };
+                                let mut pos_x = element_center_x - (tooltip_width() / 2.0);
+                                let max_x = screen_width() - tooltip_width() - 8.0;
+                                pos_x = pos_x.clamp(8.0, max_x);
 
-                        view! {
-                            <Portal mount=document().body().unwrap()>
-                                <div
-                                    node_ref=node_ref
-                                    class="fixed z-50 px-4 py-2 text-sm
-                                    bg-gradient-to-br from-brand-950/95 to-brand-900/95
-                                    border border-brand-800/50
-                                    rounded-lg shadow-lg shadow-brand-950/50
-                                    backdrop-blur-md
-                                    text-gray-200
-                                    transition-opacity duration-150
-                                    animate-fade-in"
-                                    style=calculate_position
-                                >
-                                    {move || tooltip_text().to_string()}
-                                </div>
-                            </Portal>
-                        }.into_any()
+                                format!("top: {}px; left: {}px;", pos_y, pos_x)
+                            };
+
+                            let on_enter = {
+                                let timeout = timeout_inner.clone();
+                                move |_| {
+                                    (timeout.stop)();
+                                    set_is_hovered.set(true);
+                                }
+                            };
+
+                            let on_leave = {
+                                let timeout = timeout_inner.clone();
+                                move |_| {
+                                    (timeout.start)(());
+                                }
+                            };
+
+                            view! {
+                                <Portal mount=document().body().unwrap()>
+                                    <div
+                                        node_ref=node_ref
+                                        class="fixed z-50 px-4 py-2 text-sm
+                                        bg-gradient-to-br from-brand-950/95 to-brand-900/95
+                                        border border-brand-800/50
+                                        rounded-lg shadow-lg shadow-brand-950/50
+                                        backdrop-blur-md
+                                        text-gray-200
+                                        transition-opacity duration-150
+                                        animate-fade-in"
+                                        style=calculate_position
+                                        on:mouseenter=on_enter.clone()
+                                        on:mouseleave=on_leave.clone()
+                                    >
+                                        {move || tooltip_text().to_string()}
+                                    </div>
+                                </Portal>
+                            }.into_any()
+                        }
                     })
                 }
             } else {
@@ -141,8 +183,18 @@ where
     view! {
         <div
             class="inline-block"
-            on:mouseenter=move |_| set_is_hovered.set(true)
-            on:mouseleave=move |_| set_is_hovered.set(false)
+            // Clone handlers for outer view
+            on:mouseenter=move |_| {
+                #[cfg(feature = "hydrate")]
+                {
+                    stop_timeout();
+                    set_is_hovered.set(true);
+                }
+            }
+            on:mouseleave=move |_| {
+                #[cfg(feature = "hydrate")]
+                start_timeout();
+            }
             on:focusin=move |_| set_is_focused.set(true)
             on:focusout=move |_| set_is_focused.set(false)
             node_ref=target
