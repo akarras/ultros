@@ -83,7 +83,7 @@ where
     // hybrid variable-height state: per-index delta from estimated row_height and prefix sums
     let children_len = Memo::new(move |_| each.with(|children| children.len()));
     let (height_deltas, set_height_deltas) = signal(Vec::<f64>::new());
-    let initial_len = each.with(|children| children.len());
+    let initial_len = each.with_untracked(|children| children.len());
     let fenwick = RwSignal::new(Fenwick::new(initial_len));
 
     // keep vectors sized to item count and reinitialize Fenwick when the dataset changes
