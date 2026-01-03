@@ -53,6 +53,11 @@ fn calculate_list_totals(
 
     for (list_item, listings) in items {
         let quantity = list_item.quantity.unwrap_or(1);
+        let acquired = list_item.acquired.unwrap_or(0);
+        let quantity = quantity.saturating_sub(acquired);
+        if quantity <= 0 {
+            continue;
+        }
         let hq = list_item.hq;
 
         let cheapest_listings = get_cheapest_listing(listings, quantity, hq);
@@ -133,6 +138,17 @@ pub fn ListSummary(items: Vec<(ListItem, Vec<ActiveListing>)>) -> impl IntoView 
 
     let (grand_total, world_prices) = calculate_list_totals(marketable_items, &world_data);
 
+    if grand_total == 0 && world_prices.is_empty() {
+        return view! {
+            <div class="panel p-4 rounded-xl mt-4 border-2 border-[color:var(--brand-border)]">
+                <div class="text-center font-bold text-lg text-[color:var(--brand-fg)]">
+                    "All items acquired! 🎉"
+                </div>
+            </div>
+        }
+        .into_any();
+    }
+
     // Group by datacenter and calculate datacenter totals
     let mut datacenter_groups: HashMap<i32, Vec<WorldPrice>> = HashMap::new();
     let mut datacenter_totals: HashMap<i32, (String, i32, usize)> = HashMap::new();
@@ -185,7 +201,7 @@ pub fn ListSummary(items: Vec<(ListItem, Vec<ActiveListing>)>) -> impl IntoView 
         <div class="panel p-4 rounded-xl mt-4 border-2 border-[color:var(--brand-border)]">
             <div class="flex flex-row items-center justify-center gap-2">
                 <span class="text-lg font-semibold text-[color:var(--brand-fg)]">
-                    "List Total:"
+                    "Estimated Remaining Cost:"
                 </span>
                 <Gil amount=Signal::derive(move || grand_total) />
             </div>
