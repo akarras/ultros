@@ -97,7 +97,7 @@ pub fn AddRecipeToCurrentListModal(
 
     view! {
         <Modal set_visible>
-            <div class="panel p-6 rounded-xl space-y-4 w-full max-w-4xl h-[80vh] flex flex-col">
+            <div class="panel p-6 rounded-xl space-y-4 w-full max-w-[90vw] h-[80vh] flex flex-col">
                 <div class="flex items-center justify-between shrink-0">
                     <h2 class="text-xl font-bold">"Add Recipe to List"</h2>
                     <button class="btn-ghost p-2" on:click=move |_| set_visible(false)>
@@ -129,7 +129,7 @@ pub fn AddRecipeToCurrentListModal(
                                     <div class="flex items-center gap-3 flex-1 min-w-0">
                                         <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
                                         <div class="flex flex-col min-w-0">
-                                            <span class="font-bold truncate">{item.name.as_str()}</span>
+                                            <span class="font-bold whitespace-normal">{item.name.as_str()}</span>
                                             <span class="text-xs text-[color:var(--color-text-muted)]">
                                                 "Lvl " {item.level_item.0}
                                             </span>
