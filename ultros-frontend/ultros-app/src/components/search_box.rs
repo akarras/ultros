@@ -217,8 +217,6 @@ pub fn SearchBox() -> impl IntoView {
         })
     };
 
-    let item_search = move || search_results.get();
-
     let navigate_keydown = navigate.clone();
 
     // Keyboard navigation for Up/Down; Enter uses focused item
@@ -236,7 +234,7 @@ pub fn SearchBox() -> impl IntoView {
             }
         } else if key == "ArrowDown" {
             e.prevent_default();
-            let len = search_results.with(|v: &Vec<Arc<SearchResult>>| v.len());
+            let len = search_results.with_untracked(|v: &Vec<Arc<SearchResult>>| v.len());
             if len > 0 {
                 let next = focused_index
                     .get_untracked()
@@ -247,7 +245,7 @@ pub fn SearchBox() -> impl IntoView {
             }
         } else if key == "ArrowUp" {
             e.prevent_default();
-            let len = search_results.with(|v: &Vec<Arc<SearchResult>>| v.len());
+            let len = search_results.with_untracked(|v: &Vec<Arc<SearchResult>>| v.len());
             if len > 0 {
                 let current = focused_index.get_untracked().unwrap_or(0);
                 let next = current.saturating_sub(1);
@@ -261,12 +259,15 @@ pub fn SearchBox() -> impl IntoView {
                 if let Some(input) = text_input.get() {
                     let _ = input.blur();
                 }
-            } else if let Some(first) = item_search().first() {
-                navigate_keydown(&first.url, NavigateOptions::default());
-                set_search("".to_string());
-                set_active(false);
-                if let Some(input) = text_input.get() {
-                    let _ = input.blur();
+            } else {
+                let first_url = search_results.with_untracked(|r| r.first().map(|f| f.url.clone()));
+                if let Some(url) = first_url {
+                    navigate_keydown(&url, NavigateOptions::default());
+                    set_search("".to_string());
+                    set_active(false);
+                    if let Some(input) = text_input.get() {
+                        let _ = input.blur();
+                    }
                 }
             }
         }
@@ -331,7 +332,7 @@ pub fn SearchBox() -> impl IntoView {
             >
                 <div class="scroll-panel content-auto contain-layout contain-paint will-change-scroll forced-layer cis-42">
                     <VirtualScroller
-                        each=Signal::derive(item_search)
+                        each=Signal::derive(move || search_results.get())
                         key={move |result: &Arc<SearchResult>| result.url.clone()}
                         view={move |result: Arc<SearchResult>| {
                             let url = result.url.clone();
