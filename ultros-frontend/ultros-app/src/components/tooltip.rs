@@ -112,7 +112,8 @@ where
 
                         move || {
                             let (screen_width, _screen_height) = use_window_size();
-                            let (_scroll_x, _) = use_window_scroll();
+                            // We don't need scroll_x for fixed positioning relative to viewport
+                            let _ = use_window_scroll();
                             let node_ref = NodeRef::<Div>::new();
                             let UseElementSizeReturn {
                                 width: tooltip_width,
@@ -120,6 +121,11 @@ where
                             } = use_element_size(node_ref);
 
                             let calculate_position = move || {
+                                // If the tooltip hasn't been measured yet, hide it to prevent overlap/flashing
+                                if tooltip_height() < 1.0 || tooltip_width() < 1.0 {
+                                    return "opacity: 0; pointer-events: none; position: fixed;".to_string();
+                                }
+
                                 let element_center_x = left() + (width() / 2.0);
 
                                 let gap = 5.0;
