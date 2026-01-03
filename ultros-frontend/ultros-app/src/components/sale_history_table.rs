@@ -10,7 +10,10 @@ use log::{error, info};
 use ultros_api_types::{SaleHistory, world_helper::AnySelector};
 
 #[component]
-pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
+pub fn SaleHistoryTable(
+    #[prop(into)] sales: Signal<Vec<SaleHistory>>,
+    #[prop(optional, into)] hovered_sale: Signal<Option<SaleHistory>>,
+) -> impl IntoView {
     let (show_more, set_show_more) = signal(false);
     // Optimization: Avoid cloning the entire sales vector when we only need a slice.
     // Using `sales.with` allows us to inspect the vector without cloning it.
@@ -24,6 +27,18 @@ pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
             }
         })
     });
+
+    #[cfg(feature = "hydrate")]
+    Effect::new(move |_| {
+        if let Some(sale) = hovered_sale.get() {
+             let doc = document();
+             let id = format!("sale-row-{}", sale.id);
+             if let Some(el) = doc.get_element_by_id(&id) {
+                 el.scroll_into_view();
+             }
+        }
+    });
+
     view! {
         <div class="overflow-x-auto max-h-[60vh] overflow-y-auto rounded-lg">
             <table class="w-full text-sm min-w-[720px]">
@@ -45,8 +60,26 @@ pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
                     key=move |sale| sale.sold_date.and_utc().timestamp()
                     children=move |sale| {
                         let total = sale.price_per_item * sale.quantity;
+                        let sale_id = sale.id;
+
+                        // Derive is_hovered
+                        let is_hovered = Memo::new(move |_| {
+                            hovered_sale.with(|h| {
+                                if let Some(h) = h {
+                                    h.id == sale_id
+                                } else {
+                                    false
+                                }
+                            })
+                        });
+
                         view! {
-                            <tr>
+                            <tr
+                                id=format!("sale-row-{}", sale_id)
+                                class=("bg-brand-500/20", is_hovered)
+                                class=("transition-colors", true)
+                                class=("duration-200", true)
+                            >
                                 <td>
                                     {sale
                                         .hq

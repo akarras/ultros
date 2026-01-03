@@ -23,6 +23,7 @@ use ultros_api_types::CurrentlyShownItem;
 use ultros_api_types::world_helper::AnySelector;
 use ultros_api_types::world_helper::{AnyResult, OwnedResult};
 use xiv_gen::ItemId;
+use ultros_api_types::SaleHistory;
 
 #[component]
 fn WorldButton(
@@ -573,6 +574,7 @@ pub fn ChartWrapper(
     listing_resource: Resource<Result<CurrentlyShownItem, AppError>>,
     item_id: Memo<i32>,
     world: Memo<String>,
+    #[prop(into)] set_hovered_sale: WriteSignal<Option<SaleHistory>>,
 ) -> impl IntoView {
     let (hq_only, set_hq_only) = signal(false);
     let (days_range, set_days_range) = signal(30i32); // 0 = All
@@ -695,7 +697,7 @@ pub fn ChartWrapper(
                                 } else {
                                     view! {
                                         <div class="panel p-6 text-[color:var(--color-text)]">
-                                            <PriceHistoryChart sales=filtered_sales />
+                                            <PriceHistoryChart sales=filtered_sales set_hovered_sale />
                                         </div>
                                     }.into_any()
                                 }
@@ -813,7 +815,10 @@ fn LowQualityTable(
 }
 
 #[component]
-fn SalesDetails(listing_resource: Resource<Result<CurrentlyShownItem, AppError>>) -> impl IntoView {
+fn SalesDetails(
+    listing_resource: Resource<Result<CurrentlyShownItem, AppError>>,
+    #[prop(into)] hovered_sale: Signal<Option<SaleHistory>>,
+) -> impl IntoView {
     view! {
         // Removed mt-8 and space-y-6 wrapper to let grid control layout
         <Transition fallback=move || {
@@ -834,7 +839,7 @@ fn SalesDetails(listing_resource: Resource<Result<CurrentlyShownItem, AppError>>
                             <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
                                 "Sale History"
                             </h2>
-                            <SaleHistoryTable sales=sales.into() />
+                            <SaleHistoryTable sales=sales hovered_sale />
                         </div>
 
                         <div class="panel p-4 sm:p-6">
@@ -863,6 +868,8 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
         let val = listing_resource.get();
         tracing::info!(?val, "Listings updated");
     });
+    let (hovered_sale, set_hovered_sale) = signal::<Option<SaleHistory>>(None);
+
     view! {
         <div class="w-full py-8 text-[color:var(--color-text)]">
             <SummaryCards listing_resource item_id=item_id() />
@@ -873,8 +880,8 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
             </div>
 
             <div id="history" class="grid grid-cols-1 gap-6 mt-8">
-                 <ChartWrapper listing_resource item_id world />
-                 <SalesDetails listing_resource />
+                 <ChartWrapper listing_resource item_id world set_hovered_sale />
+                 <SalesDetails listing_resource hovered_sale />
             </div>
 
             <div class="mt-6 mx-auto">
