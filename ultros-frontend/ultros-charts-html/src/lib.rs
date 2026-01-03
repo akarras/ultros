@@ -32,6 +32,5 @@ mod tests {
     #[test]
     fn test_renderer_compiles() {
         // Just verify that the signature and imports are correct
-        assert!(true);
     }
 }
