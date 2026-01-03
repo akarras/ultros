@@ -742,7 +742,9 @@ pub fn ItemExplorer() -> impl IntoView {
         None
     });
     let is_open = move |id: u8| {
-        Signal::derive(move || active_category_group.with(|active| active.map(|a| a == id).unwrap_or(true)))
+        Signal::derive(move || {
+            active_category_group.with(|active| active.map(|a| a == id).unwrap_or(true))
+        })
     };
 
     view! {
