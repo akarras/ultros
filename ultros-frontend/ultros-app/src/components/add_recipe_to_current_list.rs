@@ -96,8 +96,8 @@ pub fn AddRecipeToCurrentListModal(
     });
 
     view! {
-        <Modal set_visible>
-            <div class="panel p-6 rounded-xl space-y-4 w-full max-w-[90vw] h-[80vh] flex flex-col">
+        <Modal set_visible max_width="max-w-[90vw] w-[90vw]">
+            <div class="space-y-4 h-[80vh] flex flex-col">
                 <div class="flex items-center justify-between shrink-0">
                     <h2 class="text-xl font-bold">"Add Recipe to List"</h2>
                     <button class="btn-ghost p-2" on:click=move |_| set_visible(false)>
