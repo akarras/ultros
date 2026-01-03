@@ -8021,6 +8021,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ultros-charts-html"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "plotters",
+ "plotters-svg",
+ "ultros-api-types",
+ "ultros-charts",
+ "xiv-gen-db",
+]
+
+[[package]]
 name = "ultros-client"
 version = "0.1.0"
 dependencies = [

@@ -9,6 +9,7 @@ members = [
     "xiv-gen-db",
     "ultros-frontend/ultros-client",
     "ultros-frontend/ultros-app",
+    "ultros-frontend/ultros-charts-html",
     "ultros-frontend/ultros-xiv-icons",
     "proc-macros/dumb-csv-macros",
     "proc-macros/field-iterator-macros",

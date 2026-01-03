@@ -1,0 +1,17 @@
+[package]
+name = "ultros-charts-html"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[features]
+image = ["ultros-charts/image"]
+
+[dependencies]
+ultros-charts = { path = "../ultros-charts" }
+ultros-api-types = { path = "../../ultros-api-types" }
+xiv-gen-db = { path = "../../xiv-gen-db" }
+plotters = "0.3"
+plotters-svg = { version = "0.3", features = ["bitmap_encoder"] }
+anyhow = "1.0"
+chrono.workspace = true
