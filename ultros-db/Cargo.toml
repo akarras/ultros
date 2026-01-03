@@ -9,16 +9,16 @@ license = "MIT"
 [dependencies]
 sea-orm.workspace = true
 universalis = {path = "../universalis"}
-anyhow = "1.0.63"
-serde = {version = "1.0.144", features = ["derive"]}
+anyhow = "1.0.100"
+serde = {version = "1.0.228", features = ["derive"]}
 tracing = {workspace = true}
 futures = {workspace = true}
 migration = {path = "../migration"}
 sea-query.workspace = true
-chrono = "0.4.23"
+chrono = "0.4.42"
 itertools.workspace = true
 yoke.workspace = true
-thiserror = "1.0.38"
+thiserror = "2.0.17"
 ultros-api-types = {path = "../ultros-api-types"}
 metrics = "0.24.3"
 dotenvy = "0.15.7"
