@@ -2,6 +2,8 @@ use itertools::Itertools;
 /// Related items links items that are related to the current set
 use leptos::prelude::*;
 use leptos_router::components::A;
+use std::collections::HashSet;
+use std::sync::LazyLock;
 use ultros_api_types::{
     cheapest_listings::{CheapestListingMapKey, CheapestListingsMap},
     icon_size::IconSize,
@@ -383,11 +385,34 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     .into_any()
 }
 
-pub(crate) fn is_vendor_item(item_id: i32) -> bool {
+static VENDOR_ITEM_IDS: LazyLock<HashSet<i32>> = LazyLock::new(|| {
     let data = xiv_gen_db::data();
-    data.gil_shop_items
-        .iter()
-        .any(|(_shop_id, items)| items.iter().any(|shop_item| shop_item.item.0 == item_id))
+    let mut set = HashSet::new();
+    for items in data.gil_shop_items.values() {
+        for shop_item in items {
+            set.insert(shop_item.item.0);
+        }
+    }
+    set
+});
+
+pub(crate) fn is_vendor_item(item_id: i32) -> bool {
+    VENDOR_ITEM_IDS.contains(&item_id)
+}
+
+pub(crate) fn get_vendor_price(item_id: i32) -> Option<u32> {
+    if is_vendor_item(item_id) {
+        let data = xiv_gen_db::data();
+        if let Some(item) = data.items.get(&ItemId(item_id)) {
+            let price = if item.price_mid > 0 {
+                item.price_mid
+            } else {
+                item.price_low
+            };
+            return Some(price);
+        }
+    }
+    None
 }
 
 pub(crate) fn special_shop_has_item(shop: &SpecialShop, item_id: i32) -> bool {
