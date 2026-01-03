@@ -332,7 +332,7 @@ pub fn SearchBox() -> impl IntoView {
             >
                 <div class="scroll-panel content-auto contain-layout contain-paint will-change-scroll forced-layer cis-42">
                     <VirtualScroller
-                        each=Signal::derive(move || search_results.get())
+                        each=search_results.into()
                         key={move |result: &Arc<SearchResult>| result.url.clone()}
                         view={move |result: Arc<SearchResult>| {
                             let url = result.url.clone();
