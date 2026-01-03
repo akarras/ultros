@@ -78,11 +78,11 @@ fn ItemAmount(#[prop(into)] item_amount: Option<ItemAmount>) -> impl IntoView {
             view! {
                 <div class="flex flex-row gap-1">
                     <A
-                        attr:class="flex flex-row gap-1"
+                        attr:class="flex flex-row gap-1 min-w-0"
                         href=format!("/item/{}", item_amount.item.key_id.0)
                     >
                         <ItemIcon item_id=item_amount.item.key_id.0 icon_size=IconSize::Small />
-                        <span>{item_amount.item.name.as_str()}</span>
+                        <span class="truncate" title=item_amount.item.name.as_str()>{item_amount.item.name.as_str()}</span>
                     </A>
                     <div>"x" {item_amount.amount}</div>
                     <span on:click=move |ev| { ev.stop_propagation(); ev.prevent_default(); }>
@@ -659,7 +659,7 @@ pub fn ExchangeItem() -> impl IntoView {
                                                         <ShopNames shop_names=t.shop_names.clone() />
                                                     </div>
                                                     <div class="flex items-center justify-between">
-                                                        <div class="flex items-center gap-2">
+                                                        <div class="flex items-center gap-2 min-w-0">
                                                             <ItemAmount item_amount=t.receive_item />
                                                         </div>
                                                         <div class="text-right">
@@ -677,10 +677,11 @@ pub fn ExchangeItem() -> impl IntoView {
                                     }
                                 })
                             }}
-                            <h3 class="text-xl font-bold text-[color:var(--brand-fg)] mb-2">"Full results"</h3>
-                            <Suspense fallback=Loading>
-                                {move || {
-                                    let sort_label = sorted_by();
+                            <div class="panel p-6 rounded-xl mb-6">
+                                <h3 class="text-xl font-bold text-[color:var(--brand-fg)] mb-2">"Full results"</h3>
+                                <Suspense fallback=Loading>
+                                    {move || {
+                                        let sort_label = sorted_by();
                                     let s_res = s_getter_2.get();
                                     let l_res = l_getter_2.get();
                                     let s = s_res.as_ref().and_then(|r| r.as_ref().ok());
@@ -831,7 +832,8 @@ pub fn ExchangeItem() -> impl IntoView {
                                             }
                                         })
                                 }}
-                            </Suspense>
+                                </Suspense>
+                            </div>
                         };
                         Either::Right(right)
                     }
@@ -873,7 +875,10 @@ fn ShopNames(#[prop(into)] shop_names: ShopNames) -> impl IntoView {
             {shop_names
                 .shops
                 .into_iter()
-                .map(|shop| view! { <div>{shop}</div> })
+                .map(|shop| {
+                    let title = shop.clone();
+                    view! { <div class="truncate" title=title>{shop}</div> }
+                })
                 .collect::<Vec<_>>()}
         </div>
     }
