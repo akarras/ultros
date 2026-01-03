@@ -383,7 +383,7 @@ pub fn VentureAnalyzer() -> impl IntoView {
             .unwrap_or_else(|| "North-America".to_string())
     });
 
-    let global_cheapest_listings = Resource::new(region, move |region: String| async move {
+    let global_cheapest_listings = ArcResource::new(region, move |region: String| async move {
         get_cheapest_listings(&region).await
     });
 
