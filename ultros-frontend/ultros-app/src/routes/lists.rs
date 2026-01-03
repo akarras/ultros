@@ -19,12 +19,12 @@ fn ListCard(
     let (is_edit, set_is_edit) = signal(false);
     // Local state for editing
     let (name, set_name) = signal(list.name.clone());
-    let (current_world, set_current_world) = signal(Some(list.wdr_filter.clone()));
+    let (current_world, set_current_world) = signal(Some(list.wdr_filter));
 
     let list_clone_cancel = list.clone();
     let cancel_edit = move |_| {
         set_name(list_clone_cancel.name.clone());
-        set_current_world(Some(list_clone_cancel.wdr_filter.clone()));
+        set_current_world(Some(list_clone_cancel.wdr_filter));
         set_is_edit(false);
     };
 
@@ -97,7 +97,7 @@ fn ListCard(
                                     </a>
                                     <div class="text-sm text-gray-400 flex items-center gap-1">
                                          <Icon icon=i::BiWorldRegular />
-                                         <WorldName id=list.wdr_filter.clone() />
+                                         <WorldName id=list.wdr_filter />
                                     </div>
                                 </div>
                                 <Tooltip tooltip_text="Edit List">
