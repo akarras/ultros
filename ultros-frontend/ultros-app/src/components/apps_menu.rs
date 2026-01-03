@@ -49,7 +49,7 @@ pub fn AppsMenu() -> impl IntoView {
                 aria-label="Apps"
                 // click naturally focuses the button; no explicit toggle required
             >
-                <Icon height="1.4em" width="1.4em" icon=i::BsGrid />
+                <Icon height="1.4em" width="1.4em" icon=i::MdiJellyfish />
                 <span class="hidden lg:inline ml-2">"Apps"</span>
             </button>
 
@@ -145,7 +145,7 @@ pub fn AppsMenu() -> impl IntoView {
                             attr:class="nav-link w-full justify-start"
                             on:click=close_menu
                         >
-                            <Icon height="1.1em" width="1.1em" icon=i::FaScrewdriverWrenchSolid />
+                            <Icon height="1.1em" width="1.1em" icon=i::MdiJellyfish />
                             <span class="ml-2">"Explorer"</span>
                         </A>
 

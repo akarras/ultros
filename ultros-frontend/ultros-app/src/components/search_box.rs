@@ -300,7 +300,7 @@ pub fn SearchBox() -> impl IntoView {
                     }
                 />
                 <div class="absolute left-3 top-1/2 -translate-y-1/2 text-[color:var(--color-text-muted)]">
-                    <Show when=loading fallback=|| view! { <Icon icon=i::AiSearchOutlined /> }>
+                    <Show when=loading fallback=|| view! { <Icon icon=i::MdiJellyfish /> }>
                         <Loading />
                     </Show>
                 </div>
@@ -398,7 +398,7 @@ pub fn SearchBox() -> impl IntoView {
                                                     "job equipment" => view! { <Icon icon=i::FaUserSolid /> }.into_any(),
                                                     "Tool" => view! { <Icon icon=i::FaWrenchSolid /> }.into_any(),
                                                     "Page" => view! { <Icon icon=i::AiFileTextOutlined /> }.into_any(),
-                                                    _ => view! { <Icon icon=i::AiSearchOutlined /> }.into_any(),
+                                                    _ => view! { <Icon icon=i::MdiJellyfish /> }.into_any(),
                                                 }
                                             }
                                         } else {
@@ -409,7 +409,7 @@ pub fn SearchBox() -> impl IntoView {
                                                 "job equipment" => view! { <Icon icon=i::FaUserSolid /> }.into_any(),
                                                 "Tool" => view! { <Icon icon=i::FaWrenchSolid /> }.into_any(),
                                                 "Page" => view! { <Icon icon=i::AiFileTextOutlined /> }.into_any(),
-                                                _ => view! { <Icon icon=i::AiSearchOutlined /> }.into_any(),
+                                                _ => view! { <Icon icon=i::MdiJellyfish /> }.into_any(),
                                             }
                                         }
                                     }

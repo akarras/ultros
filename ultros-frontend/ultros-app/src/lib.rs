@@ -137,6 +137,7 @@ pub fn Footer() -> impl IntoView {
                             href="https://universalis.app/"
                             class="text-brand-300 hover:text-[color:var(--brand-fg)] transition-colors underline decoration-dotted underline-offset-4"
                         >
+                            <Icon icon=i::FaSpaghettiMonsterFlyingSolid width="1.2em" height="1.2em" attr:class="inline mr-1" />
                             "universalis"
                         </a>
                         "' API. Please contribute to Universalis to help this site stay up to date."
@@ -187,7 +188,7 @@ pub fn NavRow() -> impl IntoView {
                         exact=true
                         attr:class="nav-link"
                     >
-                        <Icon icon=i::BiHomeSolid />
+                        <Icon icon=i::MdiJellyfish />
                         <span class="hidden sm:inline">"Home"</span>
                     </A>
 
@@ -205,7 +206,7 @@ pub fn NavRow() -> impl IntoView {
                                     </div>
                                     <div class="mt-2 flex items-center justify-between w-full">
                                         <A href="/" exact=true attr:class="nav-link">
-                                            <Icon icon=i::BiHomeSolid />
+                                            <Icon icon=i::MdiJellyfish />
                                             <span class="hidden sm:inline">"Home"</span>
                                         </A>
                                         <AppsMenu />
