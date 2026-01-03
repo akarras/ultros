@@ -930,7 +930,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
             .collect::<Vec<_>>()
     };
 
-    let cross_region = Resource::new(
+    let cross_region = ArcResource::new(
         move || (cross_region_enabled(), region(), enabled_regions()),
         move |(enabled, region, enabled_regions)| async move {
             let region = region?;

@@ -241,12 +241,12 @@ pub fn ExchangeItem() -> impl IntoView {
     let query = use_query_map();
     let (home_world, _) = use_home_world();
     let (currency_quantity, set_currency_quantity) = query_signal::<i32>("currency_amount");
-    let sales = Resource::new(home_world, move |world| async move {
+    let sales = ArcResource::new(home_world, move |world| async move {
         let world = world.ok_or(AppError::NoHomeWorld)?;
         get_recent_sales_for_world(&world.name).await
     });
 
-    let world_cheapest_listings = Resource::new(home_world, move |world| async move {
+    let world_cheapest_listings = ArcResource::new(home_world, move |world| async move {
         let world = world.ok_or(AppError::NoHomeWorld)?;
         get_cheapest_listings(&world.name).await
     });
@@ -288,28 +288,30 @@ pub fn ExchangeItem() -> impl IntoView {
             })
             .collect::<Vec<_>>()
     };
-    let with_prices = move || {
-        let current_quantity = currency_quantity.get();
-        let sales: HashMap<(bool, i32), SaleData> = sales
-            .get()?
-            .ok()?
+
+    let (sorted_by, _set_sorted_by) = query_signal::<String>("sorted-by");
+    let item_name = move || item().map(|i| i.name.as_str()).unwrap_or_default();
+
+    // Define the computation logic as a separate closure that takes data as arguments.
+    // This avoids capturing the ArcResources directly, preventing move/FnOnce issues.
+    let compute_prices = move |sales: Option<&ultros_api_types::recent_sales::RecentSales>,
+                               listings: Option<&ultros_api_types::cheapest_listings::CheapestListings>,
+                               quantity: i32| {
+        let sales: HashMap<(bool, i32), SaleData> = sales?
             .sales
-            .into_iter()
-            .map(|sale| ((sale.hq, sale.item_id), sale))
+            .iter()
+            .map(|sale| ((sale.hq, sale.item_id), sale.clone()))
             .collect();
-        let world_listings: HashMap<(bool, i32), CheapestListingItem> = world_cheapest_listings
-            .get()?
-            .ok()?
+        let world_listings: HashMap<(bool, i32), CheapestListingItem> = listings?
             .cheapest_listings
-            .into_iter()
-            .map(|cheapest| ((cheapest.hq, cheapest.item_id), cheapest))
+            .iter()
+            .map(|cheapest| ((cheapest.hq, cheapest.item_id), cheapest.clone()))
             .collect();
         let shops_with_item = shop_data();
         let now = Utc::now().naive_utc();
         let rows = shops_with_item
             .iter()
             .filter_map(|(item, shop)| {
-                // going to just assume first item matters?
                 let cost = item.cost[0];
                 let recv = item
                     .recv
@@ -317,7 +319,6 @@ pub fn ExchangeItem() -> impl IntoView {
                     .find(|i| i.item.item_search_category.0 >= 0)?;
                 let item_key = (false, recv.item.key_id.0);
                 let sales = &sales.get(&item_key)?.sales;
-                // filter out stale items that haven't sold in ~2 months
                 let recent = sales.first()?;
                 let most_recent = recent.sale_date;
                 let stale_threshold = now - TimeDelta::days(60);
@@ -329,7 +330,7 @@ pub fn ExchangeItem() -> impl IntoView {
                     .get(&item_key)
                     .map(|listing| listing.cheapest_price - 1);
                 let guessed_price_per_item = current_listing_price.unwrap_or(sale).min(sale);
-                let input_amount = current_quantity;
+                let input_amount = quantity;
                 let number_received = recv.amount as i32 * (input_amount / cost.amount as i32);
                 let sales_len = sales.len();
                 let hours_between_sales = sales
@@ -382,8 +383,22 @@ pub fn ExchangeItem() -> impl IntoView {
         Some(rows)
     };
 
-    let (sorted_by, _set_sorted_by) = query_signal::<String>("sorted-by");
-    let item_name = move || item().map(|i| i.name.as_str()).unwrap_or_default();
+    let compute_prices_1 = compute_prices.clone();
+    let compute_prices_2 = compute_prices.clone();
+
+    // Create derived signals to access resources, avoiding ownership issues in view closures.
+    let sales_1 = sales.clone();
+    let s_getter_1 = Signal::derive(move || sales_1.get());
+
+    let listings_1 = world_cheapest_listings.clone();
+    let l_getter_1 = Signal::derive(move || listings_1.get());
+
+    let sales_2 = sales.clone();
+    let s_getter_2 = Signal::derive(move || sales_2.get());
+
+    let listings_2 = world_cheapest_listings.clone();
+    let l_getter_2 = Signal::derive(move || listings_2.get());
+
     view! {
         <div class="container mx-auto p-4">
             <MetaTitle title=move || format!("Currency Exchange - {}", item_name()) />
@@ -617,7 +632,12 @@ pub fn ExchangeItem() -> impl IntoView {
                                 {move || home_world().map(|w| format!("Assuming sales on your home world: {}", w.name))}
                             </div>
                             {move || {
-                                with_prices().map(|p: Vec<CurrencyTrade>| {
+                                let s_res = s_getter_1.get();
+                                let l_res = l_getter_1.get();
+                                let s = s_res.as_ref().and_then(|r| r.as_ref().ok()).map(|r| r);
+                                let l = l_res.as_ref().and_then(|r| r.as_ref().ok()).map(|r| r);
+                                let q = currency_quantity.get();
+                                compute_prices_1(s, l, q).map(|p: Vec<CurrencyTrade>| {
                                     let mut rows = p.clone();
                                     rows.sort_by(|a, b| b.total_profit.cmp(&a.total_profit));
                                     let top = rows.into_iter().take(5).collect::<Vec<_>>();
@@ -663,7 +683,12 @@ pub fn ExchangeItem() -> impl IntoView {
                             <Suspense fallback=Loading>
                                 {move || {
                                     let sort_label = sorted_by();
-                                    with_prices()
+                                    let s_res = s_getter_2.get();
+                                    let l_res = l_getter_2.get();
+                                    let s = s_res.as_ref().and_then(|r| r.as_ref().ok()).map(|r| r);
+                                    let l = l_res.as_ref().and_then(|r| r.as_ref().ok()).map(|r| r);
+                                    let q = currency_quantity.get();
+                                    compute_prices_2(s, l, q)
                                         .map(|p: Vec<CurrencyTrade>| {
                                             let trades = p.len();
                                             let sorted_and_filtered_rows = move || {
@@ -730,7 +755,7 @@ pub fn ExchangeItem() -> impl IntoView {
                                                     .collect_view()
                                             };
                                             let count = sorted_and_filtered_rows().len();
-                                            let s = sales.get();
+                                            let s = s_getter_2.get();
                                             let sales = s
                                                 .as_ref()
                                                 .map(|sales| sales.as_ref().map(|sales| sales.sales.len()));
@@ -792,7 +817,7 @@ pub fn ExchangeItem() -> impl IntoView {
                                         })
                                 }}
                                 {move || {
-                                    sales
+                                    s_getter_2
                                         .with(|sales| {
                                             if let Some(Err(e)) = sales {
                                                 Either::Left(
