@@ -798,7 +798,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
             .unwrap_or_else(|| "North-America".to_string())
     });
 
-    let global_cheapest_listings = Resource::new(region, move |region: String| async move {
+    let global_cheapest_listings = ArcResource::new(region, move |region: String| async move {
         get_cheapest_listings(&region).await
     });
 
@@ -811,7 +811,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
         }
     });
 
-    let recent_sales = Resource::new(selected_world, move |world| async move {
+    let recent_sales = ArcResource::new(selected_world, move |world| async move {
         if let Some(world) = world {
             leptos::logging::log!("Fetching sales for world: {}", &world.name);
             let res = get_recent_sales_for_world(&world.name).await;
@@ -826,6 +826,8 @@ pub fn RecipeAnalyzer() -> impl IntoView {
         }
     });
 
+    let recent_sales_clone = recent_sales.clone();
+
     view! {
         <div class="flex flex-col gap-4 h-full">
             <Title text="Recipe Analyzer - Ultros" />
@@ -836,7 +838,9 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                     <h1 class="text-2xl font-bold text-brand-100">"Recipe Analyzer"</h1>
                     <div class="flex flex-row gap-2 items-center">
                         <Suspense fallback=|| view! { <div class="text-brand-300 text-sm animate-pulse">"Loading sales data..."</div> }>
-                            {move || {
+                            {
+                                let recent_sales = recent_sales_clone.clone();
+                                move || {
                                 recent_sales
                                     .get()
                                     .and_then(|r| r.err())
@@ -883,7 +887,9 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                 </Show>
 
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>
-                    {move || {
+                    {
+                        let recent_sales = recent_sales.clone();
+                        move || {
                         let listings = global_cheapest_listings.get();
                         let sales = recent_sales.get();
                         match (listings, sales) {
