@@ -1,0 +1,33 @@
+    Checking ultros-app v0.1.0 (/app/ultros-frontend/ultros-app)
+warning: unused variable: `is_hovered`
+  --> ultros-frontend/ultros-app/src/components/tooltip.rs:69:10
+   |
+69 |     let (is_hovered, set_is_hovered) = signal(false);
+   |          ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_is_hovered`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `is_focused`
+  --> ultros-frontend/ultros-app/src/components/tooltip.rs:70:10
+   |
+70 |     let (is_focused, set_is_focused) = signal(false);
+   |          ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_is_focused`
+
+warning: `ultros-app` (lib) generated 2 warnings (run `cargo fix --lib -p ultros-app` to apply 2 suggestions)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 56.36s
+ros-frontend/ultros-app/src/components/tooltip.rs:69:10
+   |
+69 |     let (is_hovered, set_is_hovered) = signal(false);
+   |          ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_is_hovered`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `is_focused`
+  --> ultros-frontend/ultros-app/src/components/tooltip.rs:70:10
+   |
+70 |     let (is_focused, set_is_focused) = signal(false);
+   |          ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_is_focused`
+
+For more information about this error, try `rustc --explain E0308`.
+warning: `ultros-app` (lib) generated 2 warnings
+error: could not compile `ultros-app` (lib) due to 1 previous error; 2 warnings emitted
