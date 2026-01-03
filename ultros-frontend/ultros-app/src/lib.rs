@@ -188,7 +188,7 @@ pub fn NavRow() -> impl IntoView {
                         exact=true
                         attr:class="nav-link"
                     >
-                        <Icon icon=i::MdiJellyfish />
+                        <Icon icon=i::AiHomeFilled />
                         <span class="hidden sm:inline">"Home"</span>
                     </A>
 
@@ -206,7 +206,7 @@ pub fn NavRow() -> impl IntoView {
                                     </div>
                                     <div class="mt-2 flex items-center justify-between w-full">
                                         <A href="/" exact=true attr:class="nav-link">
-                                            <Icon icon=i::MdiJellyfish />
+                                            <Icon icon=i::AiHomeFilled />
                                             <span class="hidden sm:inline">"Home"</span>
                                         </A>
                                         <AppsMenu />
