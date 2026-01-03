@@ -6,13 +6,14 @@ use crate::{
     },
     global_state::{LocalWorldData, home_world::use_home_world},
 };
+use itertools::Itertools;
 use leptos::{either::Either, prelude::*};
 use leptos_meta::{Meta, Title};
 use leptos_router::{
     NavigateOptions,
-    hooks::{query_signal, use_navigate, use_query_map},
+    hooks::{query_signal, use_location, use_navigate, use_query_map},
 };
-use std::{cmp::Reverse, sync::Arc};
+use std::{cmp::Reverse, collections::HashSet, sync::Arc};
 use ultros_api_types::{
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     world_helper::AnyResult,
@@ -68,14 +69,84 @@ fn VentureAnalyzerTable(
 
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
     let (minimum_profit, set_minimum_profit) = query_signal::<i32>("profit");
+    let query = use_query_map();
+    let location = use_location();
+    let nav = use_navigate();
+
+    let categories = Memo::new(move |_| {
+        retainer_tasks
+            .values()
+            .filter(|t| !t.is_random)
+            .map(|t| t.class_job_category)
+            .unique()
+            .filter_map(|id| {
+                data.class_job_categorys
+                    .get(&id)
+                    .map(|c| (id, c.name.as_str().to_string()))
+            })
+            .sorted_by(|a, b| a.1.cmp(&b.1))
+            .collect::<Vec<_>>()
+    });
+
+    let selected_jobs_set = Memo::new(move |_| {
+        query.with(|q| {
+            q.get("jobs")
+                .map(|s| s.split(',').map(|s| s.to_string()).collect::<HashSet<_>>())
+                .unwrap_or_default()
+        })
+    });
+
+    let toggle_job = move |job_name: String| {
+        let mut current = selected_jobs_set.get();
+        if current.contains(&job_name) {
+            current.remove(&job_name);
+        } else {
+            current.insert(job_name);
+        }
+
+        let mut q = query.get_untracked();
+        if current.is_empty() {
+            q.remove("jobs");
+        } else {
+            q.insert("jobs".to_string(), current.into_iter().join(","));
+        }
+
+        let qs = q.to_query_string();
+        nav(
+            &format!("{}{}", location.pathname.get(), qs),
+            NavigateOptions::default(),
+        );
+    };
+
+    let selected_category_ids = Memo::new(move |_| {
+        let selected_names = selected_jobs_set.get();
+        if selected_names.is_empty() {
+            return None;
+        }
+        let ids: HashSet<_> = categories
+            .get()
+            .iter()
+            .filter(|(_, name)| selected_names.contains(name))
+            .map(|(id, _)| *id)
+            .collect();
+        Some(ids)
+    });
 
     let computed_data = Memo::new(move |_| {
         let mut results = Vec::new();
+        let selected_ids = selected_category_ids.get();
 
         // Iterate over RetainerTasks to find normal ventures
         for (_task_id, task) in retainer_tasks.iter() {
             if task.is_random {
                 continue;
+            }
+
+            #[allow(clippy::collapsible_if)]
+            if let Some(ids) = &selected_ids {
+                if !ids.contains(&task.class_job_category) {
+                    continue;
+                }
             }
 
             // Check if `task.task` (RowId) corresponds to a RetainerTaskNormal
@@ -142,7 +213,38 @@ fn VentureAnalyzerTable(
     view! {
         <div class="flex flex-col gap-6">
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                 <div class="panel p-6 flex flex-col w-full bg-[color:var(--color-background-elevated)] bg-opacity-100 z-20">
+                <div class="panel p-6 flex flex-col w-full bg-[color:var(--color-background-elevated)] bg-opacity-100 z-20">
+                    <h3 class="font-bold text-xl mb-2 text-[color:var(--brand-fg)]">"Filter by Job"</h3>
+                    <div class="flex flex-wrap gap-2">
+                        {move || {
+                            let selected = selected_jobs_set.get();
+                            categories
+                                .get()
+                                .into_iter()
+                                .map(|(_id, name)| {
+                                    let is_selected = selected.contains(&name);
+                                    let name_clone = name.clone();
+                                    let toggle_job = toggle_job.clone();
+                                    view! {
+                                        <button
+                                            class=move || {
+                                                if is_selected {
+                                                    "px-3 py-1 rounded-full text-xs font-bold bg-brand-600 text-white transition-colors border border-brand-500"
+                                                } else {
+                                                    "px-3 py-1 rounded-full text-xs font-bold bg-[color:var(--color-base)] hover:bg-[color:var(--brand-ring)]/20 text-[color:var(--color-text)] transition-colors border border-[color:var(--color-outline)]"
+                                                }
+                                            }
+                                            on:click=move |_| toggle_job(name_clone.clone())
+                                        >
+                                            {name}
+                                        </button>
+                                    }
+                                })
+                                .collect_view()
+                        }}
+                    </div>
+                </div>
+                <div class="panel p-6 flex flex-col w-full bg-[color:var(--color-background-elevated)] bg-opacity-100 z-20">
                     <h3 class="font-bold text-xl mb-2 text-[color:var(--brand-fg)]">"Minimum Profit"</h3>
                     <p class="mb-4 text-[color:var(--color-text-muted)]">"Set the minimum profit margin"</p>
                     <div class="flex flex-col gap-2">
