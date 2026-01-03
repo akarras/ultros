@@ -63,6 +63,10 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
         <html lang="en" data-theme="dark" data-palette="violet">
             <head>
                 <meta charset="utf-8" />
+                <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png" />
+                <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png" />
+                <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png" />
+                <link rel="manifest" href="/static/site.webmanifest" />
                 <script>
     "(function(){try{var d=document.documentElement;var ls=localStorage;var g=function(k){try{return ls.getItem(k)}catch(_){return null}};var gc=function(n){var m=document.cookie.match(new RegExp('(?:^|; )'+n+'=([^;]+)'));return m?decodeURIComponent(m[1]):null};var mode=g('theme.mode')||gc('theme_mode')||'system';if(mode==='system'){mode=(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light'};d.setAttribute('data-theme',mode==='light'?'light':'dark');var palette=g('theme.palette')||gc('theme_palette')||'violet';d.setAttribute('data-palette',palette)}catch(_){}})();"
                 </script>
