@@ -12,7 +12,6 @@ use chrono::{Duration, Utc};
 use humantime::{format_duration, parse_duration};
 use icondata as i;
 use leptos::{either::Either, prelude::*, reactive::wrappers::write::SignalSetter};
-use leptos_meta::Title;
 use leptos_router::{
     NavigateOptions,
     hooks::{query_signal, use_navigate, use_params_map, use_query_map},
@@ -729,7 +728,7 @@ pub fn VendorWorldView() -> impl IntoView {
 
     view! {
         <div class="main-content p-2 sm:p-6">
-            <Title text=move || format!("Vendor Resale - {}", world()) />
+            <MetaTitle title=move || format!("Vendor Resale - {}", world()) />
             <div class="container mx-auto max-w-7xl">
                 <div class="flex flex-col gap-8">
                     // Header Section
@@ -738,7 +737,6 @@ pub fn VendorWorldView() -> impl IntoView {
                             "Vendor Resale for " {world}
                         </h1>
                         <div class="flex flex-col gap-4">
-                            <MetaTitle title=move || format!("Vendor Resale - {}", world()) />
                             <MetaDescription text=move || {
                                 format!(
                                     "Find items sold by vendors that can be resold on the {} marketboard for a profit.",

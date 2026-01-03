@@ -5,7 +5,8 @@ use leptos_meta::*;
 pub fn MetaTitle(#[prop(into)] title: TextProp) -> impl IntoView {
     view! {
         <Title text=title.clone() />
-        <Meta name="og:title" content=title />
+        <Meta name="og:title" content=title.clone() />
+        <Meta name="twitter:title" content=title />
     }
 }
 

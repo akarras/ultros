@@ -1,3 +1,4 @@
+use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::{
     api::get_cheapest_listings,
     components::{
@@ -8,7 +9,6 @@ use crate::{
 };
 use itertools::Itertools;
 use leptos::{either::Either, prelude::*};
-use leptos_meta::{Meta, Title};
 use leptos_router::{
     NavigateOptions,
     hooks::{query_signal, use_location, use_navigate, use_query_map},
@@ -435,8 +435,8 @@ pub fn VentureAnalyzer() -> impl IntoView {
 
     view! {
         <div class="flex flex-col gap-4 h-full">
-            <Title text="Venture Analyzer - Ultros" />
-            <Meta name="description" content="Analyze Retainer Ventures for profitability" />
+            <MetaTitle title="Venture Analyzer - Ultros" />
+            <MetaDescription text="Analyze Retainer Ventures for profitability" />
 
             <div class="flex flex-col gap-4 p-4 bg-brand-900/50 rounded-lg border border-brand-800">
                 <div class="flex flex-row justify-between items-center">

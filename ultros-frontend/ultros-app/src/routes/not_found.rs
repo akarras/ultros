@@ -1,11 +1,11 @@
+use crate::components::meta::MetaTitle;
 use leptos::prelude::*;
-use leptos_meta::Title;
 use leptos_router::components::A;
 
 #[component]
 pub fn NotFound() -> impl IntoView {
     view! {
-        <Title text="Page Not Found - Ultros" />
+        <MetaTitle title="Page Not Found - Ultros" />
         <div class="flex flex-col items-center justify-center min-h-[80vh] text-center space-y-12 p-4 overflow-hidden relative select-none">
 
             // Background effect

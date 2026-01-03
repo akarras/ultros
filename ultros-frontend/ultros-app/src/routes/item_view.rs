@@ -954,11 +954,10 @@ pub fn ItemView() -> impl IntoView {
     });
 
     view! {
-        <MetaDescription text=description />
         <MetaTitle title=move || {
             format!("{} - 🌍{} - Market board - Ultros", item_name(), world())
         } />
-        <Meta name="twitter:card" content="summary_large_image" />
+        <MetaDescription text=description />
         <MetaImage url=move || format!("https://ultros.app/itemcard/{}/{}", world(), item_id()) />
         <Meta
             property="thumbnail"
