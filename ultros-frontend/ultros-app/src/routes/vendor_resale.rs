@@ -2,7 +2,7 @@ use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
         add_to_list::AddToList, clipboard::*, filter_card::*, gil::*, icon::Icon, item_icon::*,
-        meta::*, query_button::QueryButton, skeleton::BoxSkeleton, toggle::Toggle, tooltip::*,
+        meta::*, query_button::QueryButton, skeleton::BoxSkeleton, toggle::Toggle,
         virtual_scroller::*, world_picker::*,
     },
     error::AppError,
@@ -14,14 +14,14 @@ use icondata as i;
 use leptos::{either::Either, prelude::*, reactive::wrappers::write::SignalSetter};
 use leptos_meta::Title;
 use leptos_router::{
-    hooks::{query_signal, use_navigate, use_params_map, use_query_map},
     NavigateOptions,
+    hooks::{query_signal, use_navigate, use_params_map, use_query_map},
 };
 use std::{cmp::Reverse, collections::HashMap, str::FromStr, sync::Arc};
 use ultros_api_types::{
     cheapest_listings::CheapestListings,
     recent_sales::{RecentSales, SaleData},
-    world_helper::{AnyResult, AnySelector, WorldHelper},
+    world_helper::WorldHelper,
 };
 use xiv_gen::ItemId;
 
@@ -71,11 +71,7 @@ struct VendorProfitTable(Vec<Arc<VendorProfitData>>);
 
 fn compute_summary(sale: SaleData) -> SaleSummary {
     let now = Utc::now().naive_utc();
-    let SaleData {
-        item_id,
-        hq,
-        sales,
-    } = sale;
+    let SaleData { item_id, hq, sales } = sale;
     let min_price = sales
         .iter()
         .map(|price| price.price_per_unit)
@@ -136,7 +132,7 @@ impl VendorProfitTable {
         // Build map of vendor items: ItemId -> VendorPrice
         // We only care about base items, HQ doesn't exist for vendors usually (or is same price)
         let mut vendor_prices = HashMap::new();
-        for (_, items) in &data.gil_shop_items {
+        for items in data.gil_shop_items.values() {
             for shop_item in items {
                 if let Some(item_def) = data.items.get(&shop_item.item) {
                     vendor_prices.insert(shop_item.item.0, item_def.price_mid as i32);
