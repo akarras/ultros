@@ -6,10 +6,10 @@ use leptos_router::components::A;
 pub fn NotFound() -> impl IntoView {
     view! {
         <Title text="Page Not Found - Ultros" />
-        <div class="flex flex-col items-center justify-center min-h-[60vh] text-center space-y-12 p-4 overflow-hidden relative select-none">
+        <div class="flex flex-col items-center justify-center min-h-[80vh] text-center space-y-12 p-4 overflow-hidden relative select-none">
 
             // Background effect
-            <div class="absolute inset-0 pointer-events-none opacity-20 bg-[radial-gradient(circle_at_center,var(--brand-ring),transparent_70%)]"></div>
+            <div class="fixed inset-0 pointer-events-none opacity-30 bg-[radial-gradient(circle_at_center,var(--brand-ring),transparent_70%)]"></div>
 
             <div class="relative w-64 h-64 sm:w-80 sm:h-80 flex items-center justify-center">
                  // Void Rings
@@ -43,12 +43,12 @@ pub fn NotFound() -> impl IntoView {
             </div>
 
             <div class="space-y-6 max-w-lg z-10 relative">
-                <h1 class="text-4xl sm:text-5xl font-extrabold tracking-tight">
-                    <span class="bg-clip-text text-transparent bg-gradient-to-r from-[color:var(--brand-text)] to-[color:var(--decor-spot)]">
+                <h1 class="text-4xl sm:text-5xl font-extrabold tracking-tight drop-shadow-lg">
+                    <span class="bg-clip-text text-transparent bg-gradient-to-r from-[color:var(--brand-text)] to-[color:var(--decor-spot)] filter drop-shadow-[0_2px_2px_rgba(0,0,0,0.3)]">
                         "Lost in the Void"
                     </span>
                 </h1>
-                <p class="text-lg sm:text-xl text-[color:var(--color-text-muted)] leading-relaxed">
+                <p class="text-lg sm:text-xl text-[color:var(--color-text-muted)] leading-relaxed font-medium drop-shadow-md">
                     "The page you are looking for has been cast into the void, or perhaps never existed at all."
                 </p>
 
