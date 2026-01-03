@@ -108,7 +108,7 @@ fn ListCard(
                             </div>
                             <div class="mt-4 flex justify-end">
                                 <a href=format!("/list/{}", list.id) class="btn-secondary btn-sm">
-                                    "View Items" <Icon icon=i::AiArrowRightOutlined class="ml-1"/>
+                                    "View Items" <Icon icon=i::AiArrowRightOutlined attr:class="ml-1"/>
                                 </a>
                             </div>
                         </>
@@ -225,7 +225,7 @@ pub fn EditLists() -> impl IntoView {
 
             <div class="relative">
                 <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                     <Icon icon=i::AiSearchOutlined class="text-gray-400"/>
+                     <Icon icon=i::AiSearchOutlined attr:class="text-gray-400"/>
                 </div>
                 <input
                     class="input w-full pl-10"
@@ -245,7 +245,7 @@ pub fn EditLists() -> impl IntoView {
                                     if lists.is_empty() {
                                         Either::Left(view! {
                                             <div class="flex flex-col items-center justify-center py-12 text-gray-400">
-                                                <Icon icon=i::AiOrderedListOutlined width="4em" height="4em" class="mb-4 opacity-50"/>
+                                                <Icon icon=i::AiOrderedListOutlined width="4em" height="4em" attr:class="mb-4 opacity-50"/>
                                                 <h3 class="text-xl font-semibold">"No lists found"</h3>
                                                 <p>"Create a new list to get started!"</p>
                                             </div>
