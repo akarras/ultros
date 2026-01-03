@@ -44,11 +44,11 @@ pub fn NotFound() -> impl IntoView {
 
             <div class="space-y-6 max-w-lg z-10 relative">
                 <h1 class="text-4xl sm:text-5xl font-extrabold tracking-tight drop-shadow-lg">
-                    <span class="bg-clip-text text-transparent bg-gradient-to-r from-[color:var(--brand-text)] to-[color:var(--decor-spot)] filter drop-shadow-[0_2px_2px_rgba(0,0,0,0.3)]">
+                    <span class="text-[color:var(--color-text)]">
                         "Lost in the Void"
                     </span>
                 </h1>
-                <p class="text-lg sm:text-xl text-[color:var(--color-text-muted)] leading-relaxed font-medium drop-shadow-md">
+                <p class="text-lg sm:text-xl text-[color:var(--color-text)] leading-relaxed font-medium drop-shadow-md">
                     "The page you are looking for has been cast into the void, or perhaps never existed at all."
                 </p>
 
