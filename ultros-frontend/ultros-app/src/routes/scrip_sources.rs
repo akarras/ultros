@@ -35,6 +35,8 @@ struct ScripSourceData {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ScripType {
+    OrangeCrafters,
+    OrangeGatherers,
     WhiteCrafters,
     PurpleCrafters,
     WhiteGatherers,
@@ -45,6 +47,8 @@ enum ScripType {
 impl ScripType {
     fn from_id(id: u32) -> Self {
         match id {
+            41784 => ScripType::OrangeCrafters,
+            41785 => ScripType::OrangeGatherers,
             25199 => ScripType::WhiteCrafters,
             33913 => ScripType::PurpleCrafters,
             25200 => ScripType::WhiteGatherers,
@@ -55,6 +59,8 @@ impl ScripType {
 
     fn name(&self) -> &'static str {
         match self {
+            ScripType::OrangeCrafters => "Orange Crafters' Scrip",
+            ScripType::OrangeGatherers => "Orange Gatherers' Scrip",
             ScripType::WhiteCrafters => "White Crafters' Scrip",
             ScripType::PurpleCrafters => "Purple Crafters' Scrip",
             ScripType::WhiteGatherers => "White Gatherers' Scrip",
@@ -65,6 +71,7 @@ impl ScripType {
 
     fn color_class(&self) -> &'static str {
         match self {
+            ScripType::OrangeCrafters | ScripType::OrangeGatherers => "text-orange-400",
             ScripType::WhiteCrafters | ScripType::WhiteGatherers => "text-gray-200",
             ScripType::PurpleCrafters | ScripType::PurpleGatherers => "text-purple-400",
             ScripType::Other(_) => "text-gray-400",
@@ -151,6 +158,12 @@ fn ScripSourceTable(
 
                 // Filter Scrip Type
                 if let Some(ref s_filter) = scrip_filter_val {
+                    if s_filter == "OrangeCrafters" && scrip_type != ScripType::OrangeCrafters {
+                        continue;
+                    }
+                    if s_filter == "OrangeGatherers" && scrip_type != ScripType::OrangeGatherers {
+                        continue;
+                    }
                     if s_filter == "WhiteCrafters" && scrip_type != ScripType::WhiteCrafters {
                         continue;
                     }
@@ -310,6 +323,8 @@ fn ScripSourceTable(
                         }
                     >
                         <option value="">"All Scrips"</option>
+                        <option value="OrangeCrafters" selected=move || scrip_filter() == Some("OrangeCrafters".to_string())>"Orange Crafters' Scrip"</option>
+                        <option value="OrangeGatherers" selected=move || scrip_filter() == Some("OrangeGatherers".to_string())>"Orange Gatherers' Scrip"</option>
                         <option value="PurpleCrafters" selected=move || scrip_filter() == Some("PurpleCrafters".to_string())>"Purple Crafters' Scrip"</option>
                         <option value="WhiteCrafters" selected=move || scrip_filter() == Some("WhiteCrafters".to_string())>"White Crafters' Scrip"</option>
                         <option value="PurpleGatherers" selected=move || scrip_filter() == Some("PurpleGatherers".to_string())>"Purple Gatherers' Scrip"</option>
