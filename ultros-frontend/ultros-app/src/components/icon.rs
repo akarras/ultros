@@ -9,6 +9,7 @@ pub fn Icon(
     #[prop(into, optional)] style: MaybeProp<String>,
     #[prop(into, optional)] width: MaybeProp<String>,
     #[prop(into, optional)] height: MaybeProp<String>,
+    #[prop(into, optional)] class: MaybeProp<String>,
 ) -> impl IntoView {
     move || {
         let icon = icon.get();
@@ -21,6 +22,7 @@ pub fn Icon(
         data.push_str("</g>");
 
         svg::svg()
+            .class(class.get().unwrap_or_default())
             .style(match (style.get(), icon.style) {
                 (Some(a), Some(b)) => Some(format!("{b} {a}")),
                 (Some(a), None) => Some(a),
