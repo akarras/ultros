@@ -1,7 +1,7 @@
-use leptos::prelude::*;
-use crate::components::live_sale_ticker::LiveSaleTicker;
-use crate::components::meta::{MetaTitle, MetaDescription};
 use crate::components::ad::Ad;
+use crate::components::live_sale_ticker::LiveSaleTicker;
+use crate::components::meta::{MetaDescription, MetaTitle};
+use leptos::prelude::*;
 
 #[component]
 pub fn LiveSales() -> impl IntoView {
