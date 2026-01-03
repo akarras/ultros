@@ -84,6 +84,8 @@ pub struct ChartOptions {
     pub text_rgb: Option<(u8, u8, u8)>,
     /// Optional override for grid line base color as (r, g, b)
     pub grid_rgb: Option<(u8, u8, u8)>,
+    /// Optional background color
+    pub background_rgb: Option<(u8, u8, u8)>,
     /// Extra padding at the top of the Y axis (e.g. 0.10 for +10%)
     pub top_pad_ratio: f32,
     /// Draw a translucent IQR band for prices
@@ -156,6 +158,7 @@ fn draw_impl<'a, T>(
         draw_icon,
         text_rgb,
         grid_rgb,
+        background_rgb,
         top_pad_ratio,
         show_iqr_band,
         show_trendline,
@@ -190,7 +193,11 @@ where
     };
 
     let root = DrawingArea::from(&backend);
-    root.fill(&TRANSPARENT)?;
+    if let Some((r, g, b)) = background_rgb {
+        root.fill(&RGBColor(r, g, b))?;
+    } else {
+        root.fill(&TRANSPARENT)?;
+    }
     let line = map_sale_history_to_line(world_helper, &sales);
     let item_name = &xiv_gen_db::data()
         .items
