@@ -298,7 +298,7 @@ fn SummaryCards(
                                  let price = data
                                      .items
                                      .get(&ItemId(item_id))
-                                     .map(|i| i.price_mid)
+                                         .map(|i| if i.price_mid > 0 { i.price_mid } else { i.price_low })
                                      .unwrap_or(0);
                                  (
                                      "Vendor Available",
