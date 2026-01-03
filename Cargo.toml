@@ -77,6 +77,8 @@ xiv-gen = { path = "./xiv-gen", features = [
     "collectables_shop",
     "collectables_shop_item",
     "collectables_shop_reward_scrip",
+    "topic_select",
+    "pre_handler",
 ] }
 icondata = "0.6"
 icondata_core = "0.1"

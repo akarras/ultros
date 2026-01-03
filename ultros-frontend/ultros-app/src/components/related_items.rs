@@ -316,9 +316,47 @@ fn gil_shop_to_npc(gil_shops: &[GilShopId]) -> Vec<(GilShopId, &'static ENpcBase
     data.e_npc_bases
         .values()
         .flat_map(|npc: &'static ENpcBase| {
-            npc_rows(npc)
-                .filter(move |row| gil_shops.contains(&GilShopId(*row as i32)))
-                .map(move |gil_shop| (GilShopId(gil_shop as i32), npc))
+            npc_rows(npc).flat_map(move |row| {
+                let mut shops = Vec::new();
+                let row_as_i32 = row as i32;
+                if gil_shops.contains(&GilShopId(row_as_i32)) {
+                    shops.push(GilShopId(row_as_i32));
+                }
+
+                if let Some(ts) = data.topic_selects.get(&xiv_gen::TopicSelectId(row_as_i32)) {
+                    let ts_shops = [
+                        &ts.shop_0, &ts.shop_1, &ts.shop_2, &ts.shop_3, &ts.shop_4, &ts.shop_5,
+                        &ts.shop_6, &ts.shop_7, &ts.shop_8, &ts.shop_9,
+                    ];
+                    for shop in ts_shops {
+                        let shop_id = GilShopId(shop.0 as i32);
+                        if gil_shops.contains(&shop_id) {
+                            shops.push(shop_id);
+                        }
+                    }
+                }
+
+                #[allow(clippy::collapsible_if)]
+                if let Some(ph) = data.pre_handlers.get(&xiv_gen::PreHandlerId(row_as_i32)) {
+                    if let Some(ts) = data
+                        .topic_selects
+                        .get(&xiv_gen::TopicSelectId(ph.target.0 as i32))
+                    {
+                        let ts_shops = [
+                            &ts.shop_0, &ts.shop_1, &ts.shop_2, &ts.shop_3, &ts.shop_4, &ts.shop_5,
+                            &ts.shop_6, &ts.shop_7, &ts.shop_8, &ts.shop_9,
+                        ];
+                        for shop in ts_shops {
+                            let shop_id = GilShopId(shop.0 as i32);
+                            if gil_shops.contains(&shop_id) {
+                                shops.push(shop_id);
+                            }
+                        }
+                    }
+                }
+
+                shops.into_iter().map(move |gil_shop| (gil_shop, npc))
+            })
         })
         .collect()
 }
