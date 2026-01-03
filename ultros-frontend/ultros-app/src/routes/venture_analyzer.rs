@@ -146,6 +146,7 @@ fn VentureAnalyzerTable(
                 continue;
             }
 
+            #[allow(clippy::collapsible_if)]
             if let Some(ids) = &selected_ids {
                 if !ids.contains(&task.class_job_category) {
                     continue;
