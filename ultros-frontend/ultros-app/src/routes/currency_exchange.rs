@@ -294,97 +294,95 @@ pub fn ExchangeItem() -> impl IntoView {
 
     // Define the computation logic as a separate closure that takes data as arguments.
     // This avoids capturing the ArcResources directly, preventing move/FnOnce issues.
-    let compute_prices = move |sales: Option<&ultros_api_types::recent_sales::RecentSales>,
-                               listings: Option<&ultros_api_types::cheapest_listings::CheapestListings>,
-                               quantity: i32| {
-        let sales: HashMap<(bool, i32), SaleData> = sales?
-            .sales
-            .iter()
-            .map(|sale| ((sale.hq, sale.item_id), sale.clone()))
-            .collect();
-        let world_listings: HashMap<(bool, i32), CheapestListingItem> = listings?
-            .cheapest_listings
-            .iter()
-            .map(|cheapest| ((cheapest.hq, cheapest.item_id), cheapest.clone()))
-            .collect();
-        let shops_with_item = shop_data();
-        let now = Utc::now().naive_utc();
-        let rows = shops_with_item
-            .iter()
-            .filter_map(|(item, shop)| {
-                let cost = item.cost[0];
-                let recv = item
-                    .recv
-                    .iter()
-                    .find(|i| i.item.item_search_category.0 >= 0)?;
-                let item_key = (false, recv.item.key_id.0);
-                let sales = &sales.get(&item_key)?.sales;
-                let recent = sales.first()?;
-                let most_recent = recent.sale_date;
-                let stale_threshold = now - TimeDelta::days(60);
-                if most_recent < stale_threshold {
-                    return None;
-                }
-                let sale = recent.price_per_unit;
-                let current_listing_price = world_listings
-                    .get(&item_key)
-                    .map(|listing| listing.cheapest_price - 1);
-                let guessed_price_per_item = current_listing_price.unwrap_or(sale).min(sale);
-                let input_amount = quantity;
-                let number_received = recv.amount as i32 * (input_amount / cost.amount as i32);
-                let sales_len = sales.len();
-                let hours_between_sales = sales
-                    .last()
-                    .map(|last| {
-                        let time_between: TimeDelta = (now - last.sale_date) / sales_len as i32;
-                        time_between.num_hours() as i16
-                    })
-                    .unwrap_or(i16::MAX);
-                Some((
-                    (
-                        cost,
-                        *recv,
-                        guessed_price_per_item,
-                        number_received,
-                        guessed_price_per_item as i64 * number_received as i64,
-                        hours_between_sales,
-                    ),
-                    shop.name.to_string(),
-                ))
-            })
-            .into_group_map()
-            .into_iter()
-            .map(
-                |(
-                    (
-                        cost,
-                        recv,
-                        guessed_price_per_item,
-                        number_received,
-                        total_profit,
-                        hours_between_sales,
-                    ),
-                    shop_names,
-                )| {
-                    CurrencyTrade {
-                        shop_names: ShopNames {
-                            shops: shop_names.into_iter().unique().collect(),
-                        },
-                        cost_item: Some(cost),
-                        receive_item: Some(recv),
-                        price_per_item: guessed_price_per_item,
-                        number_received,
-                        total_profit,
-                        hours_between_sales,
+    let compute_prices =
+        move |sales: Option<&ultros_api_types::recent_sales::RecentSales>,
+              listings: Option<&ultros_api_types::cheapest_listings::CheapestListings>,
+              quantity: i32| {
+            let sales: HashMap<(bool, i32), SaleData> = sales?
+                .sales
+                .iter()
+                .map(|sale| ((sale.hq, sale.item_id), sale.clone()))
+                .collect();
+            let world_listings: HashMap<(bool, i32), CheapestListingItem> = listings?
+                .cheapest_listings
+                .iter()
+                .map(|cheapest| ((cheapest.hq, cheapest.item_id), cheapest.clone()))
+                .collect();
+            let shops_with_item = shop_data();
+            let now = Utc::now().naive_utc();
+            let rows = shops_with_item
+                .iter()
+                .filter_map(|(item, shop)| {
+                    let cost = item.cost[0];
+                    let recv = item
+                        .recv
+                        .iter()
+                        .find(|i| i.item.item_search_category.0 >= 0)?;
+                    let item_key = (false, recv.item.key_id.0);
+                    let sales = &sales.get(&item_key)?.sales;
+                    let recent = sales.first()?;
+                    let most_recent = recent.sale_date;
+                    let stale_threshold = now - TimeDelta::days(60);
+                    if most_recent < stale_threshold {
+                        return None;
                     }
-                },
-            )
-            .collect::<Vec<_>>();
-        Some(rows)
-    };
-
-    let compute_prices_1 = compute_prices.clone();
-    let compute_prices_2 = compute_prices.clone();
+                    let sale = recent.price_per_unit;
+                    let current_listing_price = world_listings
+                        .get(&item_key)
+                        .map(|listing| listing.cheapest_price - 1);
+                    let guessed_price_per_item = current_listing_price.unwrap_or(sale).min(sale);
+                    let input_amount = quantity;
+                    let number_received = recv.amount as i32 * (input_amount / cost.amount as i32);
+                    let sales_len = sales.len();
+                    let hours_between_sales = sales
+                        .last()
+                        .map(|last| {
+                            let time_between: TimeDelta = (now - last.sale_date) / sales_len as i32;
+                            time_between.num_hours() as i16
+                        })
+                        .unwrap_or(i16::MAX);
+                    Some((
+                        (
+                            cost,
+                            *recv,
+                            guessed_price_per_item,
+                            number_received,
+                            guessed_price_per_item as i64 * number_received as i64,
+                            hours_between_sales,
+                        ),
+                        shop.name.to_string(),
+                    ))
+                })
+                .into_group_map()
+                .into_iter()
+                .map(
+                    |(
+                        (
+                            cost,
+                            recv,
+                            guessed_price_per_item,
+                            number_received,
+                            total_profit,
+                            hours_between_sales,
+                        ),
+                        shop_names,
+                    )| {
+                        CurrencyTrade {
+                            shop_names: ShopNames {
+                                shops: shop_names.into_iter().unique().collect(),
+                            },
+                            cost_item: Some(cost),
+                            receive_item: Some(recv),
+                            price_per_item: guessed_price_per_item,
+                            number_received,
+                            total_profit,
+                            hours_between_sales,
+                        }
+                    },
+                )
+                .collect::<Vec<_>>();
+            Some(rows)
+        };
 
     // Create derived signals to access resources, avoiding ownership issues in view closures.
     let sales_1 = sales.clone();
@@ -634,10 +632,10 @@ pub fn ExchangeItem() -> impl IntoView {
                             {move || {
                                 let s_res = s_getter_1.get();
                                 let l_res = l_getter_1.get();
-                                let s = s_res.as_ref().and_then(|r| r.as_ref().ok()).map(|r| r);
-                                let l = l_res.as_ref().and_then(|r| r.as_ref().ok()).map(|r| r);
+                                let s = s_res.as_ref().and_then(|r| r.as_ref().ok());
+                                let l = l_res.as_ref().and_then(|r| r.as_ref().ok());
                                 let q = currency_quantity.get();
-                                compute_prices_1(s, l, q).map(|p: Vec<CurrencyTrade>| {
+                                compute_prices(s, l, q).map(|p: Vec<CurrencyTrade>| {
                                     let mut rows = p.clone();
                                     rows.sort_by(|a, b| b.total_profit.cmp(&a.total_profit));
                                     let top = rows.into_iter().take(5).collect::<Vec<_>>();
@@ -685,10 +683,10 @@ pub fn ExchangeItem() -> impl IntoView {
                                     let sort_label = sorted_by();
                                     let s_res = s_getter_2.get();
                                     let l_res = l_getter_2.get();
-                                    let s = s_res.as_ref().and_then(|r| r.as_ref().ok()).map(|r| r);
-                                    let l = l_res.as_ref().and_then(|r| r.as_ref().ok()).map(|r| r);
+                                    let s = s_res.as_ref().and_then(|r| r.as_ref().ok());
+                                    let l = l_res.as_ref().and_then(|r| r.as_ref().ok());
                                     let q = currency_quantity.get();
-                                    compute_prices_2(s, l, q)
+                                    compute_prices(s, l, q)
                                         .map(|p: Vec<CurrencyTrade>| {
                                             let trades = p.len();
                                             let sorted_and_filtered_rows = move || {
