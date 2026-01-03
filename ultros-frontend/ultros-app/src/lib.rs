@@ -33,6 +33,7 @@ use crate::{
         lists::*,
         recipe_analyzer::*,
         retainers::*,
+        scrip_sources::*,
         settings::*,
         trends::*,
         venture_analyzer::*,
@@ -284,6 +285,7 @@ pub fn App() -> impl IntoView {
                             <Route path=path!("flip-finder/:world") view=AnalyzerWorldView />
                             <Route path=path!("recipe-analyzer") view=RecipeAnalyzer />
                             <Route path=path!("leve-analyzer") view=LeveAnalyzer />
+                            <Route path=path!("scrip-sources") view=ScripSources />
                             <Route path=path!("venture-analyzer") view=VentureAnalyzer />
                             <Route path=path!("analyzer/:world") view=move || {
                                 let nav = leptos_router::hooks::use_navigate();
@@ -296,6 +298,7 @@ pub fn App() -> impl IntoView {
                                 view! { <div /> }
                             } />
                             <Route path=path!("trends/:world") view=Trends />
+                            <Route path=path!("trends") view=Trends />
                             <Route path=path!("settings") view=Settings />
                             <Route path=path!("profile") view=Profile />
                             <Route path=path!("privacy") view=PrivacyPolicy />

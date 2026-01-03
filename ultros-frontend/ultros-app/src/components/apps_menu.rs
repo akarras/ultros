@@ -99,6 +99,27 @@ pub fn AppsMenu() -> impl IntoView {
 
                         <A
                             href=homeworld()
+                                .map(|w| format!("/trends/{}", w.name))
+                                .unwrap_or("/trends".to_string())
+                            attr:class="nav-link w-full justify-start"
+                            on:click=close_menu
+                        >
+                            <Icon height="1.1em" width="1.1em" icon=i::FaChartLineSolid />
+                            <span class="ml-2">"Trends"</span>
+                        </A>
+                        <A
+                            href=homeworld()
+                                .map(|w| format!("/scrip-sources?world={}", w.name))
+                                .unwrap_or("/scrip-sources".to_string())
+                            attr:class="nav-link w-full justify-start"
+                            on:click=close_menu
+                        >
+                            <Icon height="1.1em" width="1.1em" icon=i::FaCoinsSolid />
+                            <span class="ml-2">"Scrip Sources"</span>
+                        </A>
+
+                        <A
+                            href=homeworld()
                                 .map(|w| format!("/venture-analyzer?world={}", w.name))
                                 .unwrap_or("/venture-analyzer".to_string())
                             attr:class="nav-link w-full justify-start"
