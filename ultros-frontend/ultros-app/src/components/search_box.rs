@@ -373,12 +373,20 @@ pub fn SearchBox() -> impl IntoView {
                                     {
                                         if let Some(icon_id) = result.icon_id {
                                             if icon_id > 0 {
+                                                let (failed, set_failed) = signal(false);
                                                 view! {
                                                     <div class="w-8 h-8 flex-shrink-0">
                                                         <img
-                                                            src=format!("/static/itemicon/{}?size=Small", icon_id)
+                                                            src=move || {
+                                                                if failed.get() {
+                                                                    "/static/itemicon/fallback".to_string()
+                                                                } else {
+                                                                    format!("/static/itemicon/{}?size=Small", icon_id)
+                                                                }
+                                                            }
                                                             class="w-full h-full object-contain"
                                                             loading="lazy"
+                                                            on:error=move |_| set_failed.set(true)
                                                         />
                                                     </div>
                                                 }.into_any()
