@@ -89,9 +89,10 @@ pub fn AddRecipeToCurrentListModal(
 
     Effect::new(move |_| {
         if let Some(Ok(_)) = add_action.value().get()
-            && let Some(cb) = on_success {
-                cb.run(());
-            }
+            && let Some(cb) = on_success
+        {
+            cb.run(());
+        }
     });
 
     view! {
