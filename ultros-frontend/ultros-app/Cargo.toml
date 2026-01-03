@@ -40,15 +40,15 @@ itertools.workspace = true
 futures = "0.3"
 humantime = "2.1"
 colorsys = "0.6.6"
-thiserror = "1.0"
-log = "0.4"
-anyhow = "1.0.69"
+thiserror = "2.0.17"
+log = "0.4.29"
+anyhow = "1.0.100"
 cookie = { version = "0.18", features = ["percent-encode"] }
 wasm-bindgen = { version = "0.2", optional = true }
 time = "0.3.20"
 js-sys = { version = "0.3.61", optional = true }
 tracing = "0.1"
-serde_json = "1.0.94"
+serde_json = "1.0.145"
 ultros-charts = { path = "../ultros-charts" }
 plotters-canvas = "0.3"
 icondata.workspace = true
@@ -65,7 +65,7 @@ field-iterator = { path = "../../field-iterator" }
 leptos_hotkeys = { git = "https://github.com/slowtec/leptos-hotkeys.git", branch = "leptos-0.8" }
 codee = {version = "0.3", features = ["json_serde"]}
 send_wrapper = "0.6"
-flume = { version = "0.11", features = ["async"] }
+flume = { version = "0.11.1", features = ["async"] }
 icondata_core.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

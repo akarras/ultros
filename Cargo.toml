@@ -24,31 +24,31 @@ axum-extra = { version = "0.10.3", features = [
     "cookie-private",
     "typed-header",
 ] }
-tokio = { version = "1", features = ["full"] }
-tracing = "0.1.36"
-tracing-subscriber = "0.3"
-futures = "0.3.24"
-anyhow = "1.0.72"
-leptos = { version = "0.8", default-features = false, features = ["nightly"] }
-leptos_axum = { version = "0.8" }
-leptos_router = { version = "0.8", default-features = false, features = [
+tokio = { version = "1.48", features = ["full"] }
+tracing = "0.1.43"
+tracing-subscriber = "0.3.22"
+futures = "0.3.31"
+anyhow = "1.0.100"
+leptos = { version = "0.8.14", default-features = false, features = ["nightly"] }
+leptos_axum = { version = "0.8.7" }
+leptos_router = { version = "0.8.10", default-features = false, features = [
     "nightly",
 ] }
-leptos_meta = { version = "0.8", default-features = false, features = [] }
+leptos_meta = { version = "0.8.5", default-features = false, features = [] }
 leptos-use = { version = "0.16.3", features = [] }
 chrono = "0.4.42"
 itertools = "0.14.0"
 image = "0.25.9"
 plotters = "0.3.7"
-sea-orm = { version = "^1.1.0", features = [
+sea-orm = { version = "^1.1.19", features = [
     "sqlx-postgres",
     "runtime-tokio-rustls",
 ] }
-sea-orm-migration = { version = "^1.1.0", features = [
+sea-orm-migration = { version = "^1.1.19", features = [
     "sqlx-postgres",
     "runtime-tokio-rustls",
 ] }
-sea-query = "^0.32.0"
+sea-query = "^0.32.7"
 yoke = "0.8.1"
 xiv-gen = { path = "./xiv-gen", features = [
     "item",
@@ -81,10 +81,10 @@ xiv-gen = { path = "./xiv-gen", features = [
 icondata = "0.6"
 icondata_core = "0.1"
 leptos_icons = "0.7"
-cfg-if = "1.0.0"
+cfg-if = "1.0.4"
 git-const = "1.1.0"
 gloo-net = { version = "0.6.0", features = ["http", "websocket"] }
-dotenvy = "0.15"
+dotenvy = "0.15.7"
 
 [patch.crates-io]
 #leptos = { path = "../leptos/leptos" }
