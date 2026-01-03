@@ -66,8 +66,8 @@ pub fn Tooltip<T>(
 where
     T: Sized + Render + RenderHtml + Send,
 {
-    let (_is_hovered, set_is_hovered) = signal(false);
-    let (_is_focused, set_is_focused) = signal(false);
+    let (is_hovered, set_is_hovered) = signal(false);
+    let (is_focused, set_is_focused) = signal(false);
     let target = NodeRef::<Div>::new();
 
     let children = children.into_inner();
@@ -83,7 +83,7 @@ where
                 } = use_element_bounding(target);
 
                 move || {
-                    (tooltip_text.with(|t| !t.is_empty()) && (_is_hovered.get() || _is_focused.get())).then(move || {
+                    (tooltip_text.with(|t| !t.is_empty()) && (is_hovered.get() || is_focused.get())).then(move || {
                         let (screen_width, screen_height) = use_window_size();
                         let (scroll_x, scroll_y) = use_window_scroll();
                         let node_ref = NodeRef::<Div>::new();
