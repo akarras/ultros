@@ -4,6 +4,7 @@ use std::{collections::HashSet, str::FromStr};
 
 use crate::CheapestPrices;
 use crate::components::clipboard::Clipboard;
+use crate::components::gil::Gil;
 use crate::components::icon::Icon;
 use crate::components::loading::Loading;
 use crate::components::query_button::QueryButton;
@@ -621,6 +622,20 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                         } else {
                                             view! { <div/> }.into_any()
                                         }}
+                                        {
+                                            if let Some(price) = crate::components::related_items::get_vendor_price(id.0) {
+                                                view! {
+                                                    <div class="flex items-center gap-2">
+                                                        <span class="text-xs font-bold px-1.5 py-0.5 rounded bg-white/10 text-[color:var(--color-text-muted)] whitespace-nowrap">
+                                                            "Vendor"
+                                                        </span>
+                                                        <Gil amount=price as i32 />
+                                                    </div>
+                                                }.into_any()
+                                            } else {
+                                                ().into_any()
+                                            }
+                                        }
                                     </div>
                                     <div class="flex items-center gap-2 mt-1">
                                         <div class="flex-1">
