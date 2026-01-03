@@ -10,8 +10,8 @@ use itertools::Itertools;
 use leptos::{either::Either, prelude::*};
 use leptos_meta::{Meta, Title};
 use leptos_router::{
-    hooks::{query_signal, use_location, use_navigate, use_query_map},
     NavigateOptions,
+    hooks::{query_signal, use_location, use_navigate, use_query_map},
 };
 use std::{cmp::Reverse, collections::HashSet, sync::Arc};
 use ultros_api_types::{
@@ -91,11 +91,7 @@ fn VentureAnalyzerTable(
     let selected_jobs_set = Memo::new(move |_| {
         query.with(|q| {
             q.get("jobs")
-                .map(|s| {
-                    s.split(',')
-                        .map(|s| s.to_string())
-                        .collect::<HashSet<_>>()
-                })
+                .map(|s| s.split(',').map(|s| s.to_string()).collect::<HashSet<_>>())
                 .unwrap_or_default()
         })
     });
