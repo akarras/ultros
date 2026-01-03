@@ -8,6 +8,7 @@ pub mod item_explorer;
 pub mod item_view;
 pub mod leve_analyzer;
 pub mod list_view;
+pub mod live_sales;
 pub mod lists;
 pub mod not_found;
 pub mod recipe_analyzer;
