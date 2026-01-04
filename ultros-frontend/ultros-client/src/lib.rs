@@ -62,23 +62,25 @@ async fn try_populate_xiv_gen_data(rexie: &Rexie) -> anyhow::Result<()> {
     {
         let (transaction, game_data) = open_transaction(rexie).await?;
         if let Ok(value) = game_data.get(&version.into()).await {
-            match serde_wasm_bindgen::from_value::<Data>(value) {
-                Ok(value) => match xiv_gen_db::try_init(&value.data) {
-                    Ok(()) => return Ok(()),
-                    Err(e) => error!("Error initializing using data {e}"),
-                },
-                Err(e) => error!("Error converting indexdb to data {e}"),
-            };
+            if !value.is_null() && !value.is_undefined() {
+                match serde_wasm_bindgen::from_value::<Data>(value) {
+                    Ok(value) => match xiv_gen_db::try_init(&value.data) {
+                        Ok(()) => return Ok(()),
+                        Err(e) => error!("Error initializing using data {e}"),
+                    },
+                    Err(e) => error!("Error converting indexdb to data {e}"),
+                };
 
-            error!("failed to deserialize data. removing {version}");
-            game_data
-                .delete(&version.into())
-                .await
-                .map_err(|_| anyhow!("error deleting?"))?;
-            transaction
-                .done()
-                .await
-                .map_err(|e| anyhow!("error closing first transaction {e}"))?;
+                error!("failed to deserialize data. removing {version}");
+                game_data
+                    .delete(&version.into())
+                    .await
+                    .map_err(|_| anyhow!("error deleting?"))?;
+                transaction
+                    .done()
+                    .await
+                    .map_err(|e| anyhow!("error closing first transaction {e}"))?;
+            }
         }
     }
     let response = init_data().await?;
