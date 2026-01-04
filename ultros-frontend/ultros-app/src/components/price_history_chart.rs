@@ -1,4 +1,3 @@
-
 use crate::global_state::LocalWorldData;
 use crate::global_state::theme::use_theme_settings;
 use leptos::html::Div;
@@ -40,13 +39,14 @@ pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl 
         // Basic theme support for text color
         if let Some(w) = web_sys::window()
             && let Some(doc) = w.document()
-                && let Some(el) = doc.document_element() {
-                    let style = w.get_computed_style(&el).ok().flatten();
-                    if let Some(_style) = style {
-                        // We are not using text_rgb in prepare_chart_data yet but if we did:
-                        // ...
-                    }
-                }
+            && let Some(el) = doc.document_element()
+        {
+            let style = w.get_computed_style(&el).ok().flatten();
+            if let Some(_style) = style {
+                // We are not using text_rgb in prepare_chart_data yet but if we did:
+                // ...
+            }
+        }
 
         prepare_chart_data(&helper, &sales_val, options).ok()
     });
@@ -99,7 +99,6 @@ pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl 
                                         />
                                     }.into_any()
                                 } else {
-                                    let _: () = view! {};
                                     ().into_any()
                                 }
                             }}
@@ -116,11 +115,9 @@ pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl 
                                             <line x1=x1 y1=y1 x2=x2 y2=y2 stroke="#ccc" stroke-opacity="0.4" stroke-width="2" />
                                         }.into_any()
                                     } else {
-                                        let _: () = view! {};
                                         ().into_any()
                                     }
                                 } else {
-                                    let _: () = view! {};
                                     ().into_any()
                                 }
                             }}
@@ -200,7 +197,6 @@ pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl 
                          </div>
                      }.into_any()
                  } else {
-                     let _: () = view! {};
                      ().into_any()
                  }
             }}
