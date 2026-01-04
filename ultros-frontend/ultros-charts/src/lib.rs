@@ -21,6 +21,40 @@ use ultros_api_types::{
 use ultros_xiv_icons::get_item_image;
 use xiv_gen::ItemId;
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct PreparedChartData {
+    pub series: Vec<SeriesData>,
+    pub trendline: Option<Vec<(i64, i32)>>,
+    pub iqr_band: Option<IQRBand>,
+    pub min_x: i64,
+    pub max_x: i64,
+    pub min_y: i32,
+    pub max_y: i32,
+    pub x_label: String,
+    pub y_label: String,
+    pub caption: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SeriesData {
+    pub name: String,
+    pub points: Vec<PointData>,
+    pub color: String, // CSS color string
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PointData {
+    pub x: i64, // Timestamp
+    pub y: i32, // Price
+    pub r: f32, // Radius (quantity)
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IQRBand {
+    pub min_price: i32,
+    pub max_price: i32,
+}
+
 fn short_number(value: i32) -> String {
     match value {
         1000000.. => {
@@ -75,7 +109,7 @@ fn filter_outliers<'a>(sales: &'a [SaleHistory]) -> Cow<'a, [SaleHistory]> {
     }
 }
 
-#[derive(Default)]
+#[derive(Debug, Default, Clone)]
 pub struct ChartOptions {
     pub remove_outliers: bool,
     pub icon_item_id: i32,
@@ -123,6 +157,160 @@ pub struct ChartOptions {
 //     T: 'a + DrawingBackend,{
 //         draw_impl(backend, world_helper, sales, chart_options)
 // }
+
+pub fn prepare_chart_data(
+    world_helper: &WorldHelper,
+    sales: &[SaleHistory],
+    ChartOptions {
+        remove_outliers,
+        icon_item_id: _icon_item_id,
+        draw_icon: _draw_icon,
+        text_rgb: _text_rgb,
+        grid_rgb: _grid_rgb,
+        background_rgb: _background_rgb,
+        top_pad_ratio,
+        show_iqr_band,
+        show_trendline,
+        x_label,
+        y_label,
+        caption,
+        palette_rgb,
+    }: ChartOptions,
+) -> Result<PreparedChartData, anyhow::Error> {
+    let sales = if remove_outliers {
+        filter_outliers(sales)
+    } else {
+        Cow::Borrowed(sales)
+    };
+
+    let line = map_sale_history_to_line(world_helper, &sales);
+    let item_name = &xiv_gen_db::data()
+        .items
+        .get(&ItemId(
+            sales.first().ok_or(anyhow!("no sales"))?.sold_item_id,
+        ))
+        .ok_or(anyhow!("no item data"))?
+        .name;
+
+    let max_sale = line
+        .iter()
+        .flat_map(|(_, sales)| sales)
+        .map(|(_, price, _)| price)
+        .max()
+        .copied()
+        .ok_or(anyhow!("price hidden"))?;
+    let (first_sale_ts, last_sale_ts) = {
+        let (first_sale, last_sale) = line
+            .iter()
+            .flat_map(|(_, sales)| sales)
+            .map(|(date, _, _)| date)
+            .minmax()
+            .into_option()
+            .ok_or(anyhow!("bad dates"))?;
+
+        if first_sale == last_sale {
+            Err(anyhow!("only one sale"))?;
+        }
+        (first_sale.timestamp(), last_sale.timestamp())
+    };
+
+    let pad_top = ((max_sale as f32) * (1.0 + top_pad_ratio.max(0.0))).ceil() as i32;
+
+    let caption_text = caption.unwrap_or_else(|| format!("{} - Sale History", item_name));
+    let x_label_text = x_label.unwrap_or_else(|| "Time".to_string());
+    let y_label_text = y_label.unwrap_or_else(|| "Price per unit".to_string());
+
+    let iqr_band = if show_iqr_band {
+        get_iqr_filter(sales.as_ref()).map(|(min, max)| IQRBand {
+            min_price: min,
+            max_price: max,
+        })
+    } else {
+        None
+    };
+
+    let mut trendline = None;
+    if show_trendline {
+        let mut xs = Vec::<f64>::new();
+        let mut ys = Vec::<f64>::new();
+        for (_, pts) in &line {
+            for (dt, price, _qty) in pts {
+                xs.push(dt.timestamp() as f64);
+                ys.push(*price as f64);
+            }
+        }
+        if xs.len() > 1 {
+            let n = xs.len() as f64;
+            let mean_x = xs.iter().sum::<f64>() / n;
+            let mean_y = ys.iter().sum::<f64>() / n;
+            let mut cov = 0.0;
+            let mut varx = 0.0;
+            for i in 0..xs.len() {
+                let dx = xs[i] - mean_x;
+                cov += dx * (ys[i] - mean_y);
+                varx += dx * dx;
+            }
+            if varx > 0.0 {
+                let m = cov / varx;
+                let b = mean_y - m * mean_x;
+                let x1 = first_sale_ts as f64;
+                let x2 = last_sale_ts as f64;
+                let y1 = (b + m * x1).round() as i32;
+                let y2 = (b + m * x2).round() as i32;
+                trendline = Some(vec![(first_sale_ts, y1), (last_sale_ts, y2)]);
+            }
+        }
+    }
+
+    let series_count = line.len();
+    let series = line
+        .into_iter()
+        .enumerate()
+        .map(|(i, (name, points))| {
+            let color_str = if let Some(ref palette) = palette_rgb {
+                let (r, g, b) = palette[i % palette.len()];
+                format!("rgb({}, {}, {})", r, g, b)
+            } else {
+                let h = if series_count == 0 {
+                    0.0
+                } else {
+                    i as f64 / series_count as f64
+                };
+                // Approximate HSL to RGB or just return HSL string if client supports it
+                // H is 0..1, S=0.7, L=0.55
+                // CSS hsl: deg, %, %
+                format!("hsl({:.2}, 70%, 55%)", h * 360.0)
+            };
+
+            SeriesData {
+                name,
+                points: points
+                    .into_iter()
+                    .map(|(dt, price, qty)| PointData {
+                        x: dt.timestamp(),
+                        y: price,
+                        r: (qty as f32 / 50.0 * 5.0).clamp(2.5, 5.0),
+                    })
+                    .collect(),
+                color: color_str,
+            }
+        })
+        .collect();
+
+    let (min_x, max_x) = (first_sale_ts, last_sale_ts);
+    Ok(PreparedChartData {
+        series,
+        trendline,
+        iqr_band,
+        min_x,
+        max_x,
+        min_y: 0,
+        max_y: pad_top,
+        x_label: x_label_text,
+        y_label: y_label_text,
+        caption: caption_text,
+    })
+}
 
 pub fn draw_sale_history_scatter_plot<'a, T>(
     backend: Rc<RefCell<T>>,
