@@ -174,8 +174,8 @@ end2end-cmd = "npm test"
 end2end-dir = "integration"
 
 [profile.dev.build-override]
-opt-level = 3
+opt-level = 1
 
 [profile.release.build-override]
-opt-level = 3
+opt-level = 1
 codegen-units = 256
