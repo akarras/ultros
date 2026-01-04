@@ -667,9 +667,9 @@ pub fn ExchangeItem() -> impl IntoView {
                                                             {t.total_profit}
                                                         </div>
                                                     </div>
-                                                    <div class="mt-2 flex items-center justify-between text-xs text-[color:var(--color-text-muted)]">
-                                                        <span>{format!("{} items", t.number_received)}</span>
-                                                        <span>{format!("{}h/sale", t.hours_between_sales)}</span>
+                                                    <div class="mt-2 flex items-center justify-between gap-2 min-w-0 text-xs text-[color:var(--color-text-muted)]">
+                                                        <span class="truncate">{format!("{} items", t.number_received)}</span>
+                                                        <span class="truncate">{format!("{}h/sale", t.hours_between_sales)}</span>
                                                     </div>
                                                 </div>
                                             }).collect_view()}
