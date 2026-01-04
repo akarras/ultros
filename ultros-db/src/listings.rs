@@ -116,22 +116,15 @@ impl UltrosDb {
         item: ItemId,
     ) -> Result<Vec<(active_listing::Model, Option<retainer::Model>)>> {
         let instant = Instant::now();
-        let listings = try_join_all(
-            worlds
-                .iter()
-                .map(|world| self.get_all_listings(*world, item)),
-        )
-        .await?;
+        // OPTIMIZATION: Fetch all listings in one query
+        let listings = active_listing::Entity::find()
+            .filter(active_listing::Column::ItemId.eq(item.0))
+            .filter(active_listing::Column::WorldId.is_in(worlds.to_vec()))
+            .all(&self.db)
+            .await?;
 
         let retainers = retainer::Entity::find()
-            .filter(
-                retainer::Column::Id.is_in(
-                    listings
-                        .iter()
-                        .flat_map(|l| l.iter().map(|l| l.retainer_id))
-                        .unique(),
-                ),
-            )
+            .filter(retainer::Column::Id.is_in(listings.iter().map(|l| l.retainer_id).unique()))
             .all(&self.db)
             .await?
             .into_iter()
@@ -139,11 +132,9 @@ impl UltrosDb {
             .collect::<HashMap<_, _>>();
         let data = listings
             .into_iter()
-            .flat_map(|s| {
-                s.into_iter().map(|l| {
-                    let retainer = retainers.get(&l.retainer_id).cloned();
-                    (l, retainer)
-                })
+            .map(|l| {
+                let retainer = retainers.get(&l.retainer_id).cloned();
+                (l, retainer)
             })
             .collect();
         histogram!("ultros_db_query_listings_all_world_with_retainers_duration_seconds")
@@ -157,14 +148,13 @@ impl UltrosDb {
         worlds: &Vec<i32>,
         item: ItemId,
     ) -> Result<Vec<active_listing::Model>> {
-        let result = try_join_all(
-            worlds
-                .iter()
-                .map(|world| self.get_listings_for_world(WorldId(*world), item)),
-        )
-        .await?;
-        let data = result.into_iter().flat_map(|s| s.into_iter()).collect();
-        Ok(data)
+        // OPTIMIZATION: Fetch all listings in one query
+        let listings = active_listing::Entity::find()
+            .filter(active_listing::Column::ItemId.eq(item.0))
+            .filter(active_listing::Column::WorldId.is_in(worlds.clone()))
+            .all(&self.db)
+            .await?;
+        Ok(listings)
     }
 
     #[instrument(skip(self))]
