@@ -175,7 +175,6 @@ end2end-dir = "integration"
 
 [profile.dev.build-override]
 opt-level = 3
-codegen-units = 256
 
 [profile.release.build-override]
 opt-level = 3
