@@ -96,9 +96,9 @@ pub fn EditRetainers() -> impl IntoView {
                                                     children=move |(character, retainers)| {
                                                         let retainers = RwSignal::new(retainers);
                                                         Effect::new(move |_| {
-                                                            let retainers = retainers();
+                                                            let retainers_list = retainers.get();
                                                             let mut changed = false;
-                                                            let retainers = retainers
+                                                            let updates: Vec<OwnedRetainer> = retainers_list
                                                                 .into_iter()
                                                                 .enumerate()
                                                                 .flat_map(|(i, (mut owned, _retainer))| {
@@ -118,7 +118,14 @@ pub fn EditRetainers() -> impl IntoView {
                                                                 .collect();
                                                             if changed {
                                                                 log::info!("Updating retainer list");
-                                                                update_retainers.dispatch(retainers);
+                                                                update_retainers.dispatch(updates);
+                                                                retainers.update(|retainers| {
+                                                                    for (i, (owned, _)) in
+                                                                        retainers.iter_mut().enumerate()
+                                                                    {
+                                                                        owned.weight = Some(i as i32);
+                                                                    }
+                                                                });
                                                             }
                                                         });
                                                         view! {
