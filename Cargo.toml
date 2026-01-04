@@ -35,7 +35,7 @@ leptos_router = { version = "0.8.10", default-features = false, features = [
     "nightly",
 ] }
 leptos_meta = { version = "0.8.5", default-features = false, features = [] }
-leptos-use = { version = "0.16.3", features = [] }
+leptos-use = { version = "0.17.0", features = [] }
 chrono = "0.4.42"
 itertools = "0.14.0"
 image = "0.25.9"

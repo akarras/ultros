@@ -3,7 +3,6 @@ use leptos::{
     prelude::*,
     reactive::wrappers::write::SignalSetter,
 };
-use leptos_use::use_element_hover;
 use web_sys::KeyboardEvent;
 use web_sys::wasm_bindgen::JsCast;
 
@@ -29,7 +28,14 @@ where
     let (has_focus, set_focused) = signal(false);
     let dropdown = NodeRef::<Div>::new();
     let input = NodeRef::<Input>::new();
-    let hovered = use_element_hover(dropdown);
+    #[cfg(feature = "hydrate")]
+    let hovered = leptos_use::use_element_hover(dropdown);
+    #[cfg(not(feature = "hydrate"))]
+    let hovered = {
+        let _ = dropdown;
+        ArcSignal::derive(move || false)
+    };
+
     let labels =
         Memo::new(move |_| items.with(|i| i.iter().map(as_label).enumerate().collect::<Vec<_>>()));
     let search_results = Memo::new(move |_| {
@@ -173,5 +179,6 @@ where
                 </For>
             </div>
         </div>
-    }.into_any()
+    }
+    .into_any()
 }
