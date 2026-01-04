@@ -374,6 +374,7 @@ pub fn SearchBox() -> impl IntoView {
                                         if let Some(icon_id) = result.icon_id {
                                             if icon_id > 0 {
                                                 let (failed, set_failed) = signal(false);
+                                                let result_title = result.title.clone();
                                                 view! {
                                                     <div class="w-8 h-8 flex-shrink-0">
                                                         <img
@@ -384,6 +385,7 @@ pub fn SearchBox() -> impl IntoView {
                                                                     format!("/static/itemicon/{}?size=Small", icon_id)
                                                                 }
                                                             }
+                                                            alt=move || format!("Icon for {}", result_title)
                                                             class="w-full h-full object-contain"
                                                             loading="lazy"
                                                             on:error=move |_| set_failed.set(true)
