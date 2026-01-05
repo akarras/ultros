@@ -317,7 +317,7 @@ pub fn SearchBox() -> impl IntoView {
                             }
                             aria-label="Clear search"
                         >
-                            <Icon icon=i::BsX width="1.5em" height="1.5em" />
+                            <Icon icon=i::BsX width="1.5em" height="1.5em" aria_hidden=true />
                         </button>
                     </Show>
                 </div>

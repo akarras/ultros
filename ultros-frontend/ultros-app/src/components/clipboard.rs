@@ -64,7 +64,7 @@ pub fn Clipboard(#[prop(into)] clipboard_text: Signal<String>) -> impl IntoView 
             }
         >
             <Tooltip tooltip_text=tooltip_text>
-                <Icon icon />
+                <Icon icon aria_hidden=true />
             </Tooltip>
         </button>
     }
