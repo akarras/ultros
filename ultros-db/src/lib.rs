@@ -19,7 +19,6 @@ pub use sea_orm::error::DbErr as SeaDbErr;
 
 use anyhow::Result;
 use dotenvy::dotenv;
-use futures::future::try_join_all;
 use migration::{Migrator, MigratorTrait};
 
 use sea_orm::{
@@ -345,16 +344,15 @@ impl UltrosDb {
         world_id: i32,
     ) -> Result<Vec<retainer::Model>> {
         use retainer::*;
-        let retainers = try_join_all(names.map(|name| {
-            Entity::find()
-                .filter(Column::Name.eq(name))
-                .filter(Column::WorldId.eq(world_id))
-                .one(&self.db)
-        }))
-        .await?
-        .into_iter()
-        .flatten()
-        .collect();
+        let names: Vec<&str> = names.collect();
+        if names.is_empty() {
+            return Ok(vec![]);
+        }
+        let retainers = Entity::find()
+            .filter(Column::Name.is_in(names))
+            .filter(Column::WorldId.eq(world_id))
+            .all(&self.db)
+            .await?;
         Ok(retainers)
     }
 
