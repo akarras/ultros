@@ -25,7 +25,7 @@ pub fn WorldOnlyPicker(
                     .collect::<Vec<_>>()
             });
             let left = view! {
-                <div class="relative">
+                <div class="relative z-10">
                     <Select
                         items=data.into()
                         as_label=move |w| w.name.clone()
@@ -85,7 +85,7 @@ pub fn WorldPicker(
             };
             let set_choice = set_choice.into_signal_setter();
             Either::Left(view! {
-                <div class="relative">
+                <div class="relative z-10">
                     <Select
                         items=data.into()
                         choice=choice
