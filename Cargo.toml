@@ -14,6 +14,7 @@ members = [
     "proc-macros/field-iterator-macros",
     "dumb-csv",
     "field-iterator",
+    "price-checker",
 ]
 resolver = "2"
 
