@@ -1,4 +1,3 @@
-
 pub fn filter_outliers_iqr(data: &[i32]) -> Vec<i32> {
     if data.len() < 4 {
         return data.to_vec();
