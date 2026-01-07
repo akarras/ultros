@@ -477,7 +477,7 @@ fn FCCraftingAnalyzerTable(
                 </FilterCard>
             </div>
 
-            <div class="rounded-2xl overflow-x-auto panel content-visible contain-layout contain-paint will-change-scroll forced-layer">
+            <div class="rounded-2xl panel content-visible contain-layout contain-paint will-change-scroll forced-layer">
                  <VirtualScroller
                     viewport_height=720.0
                     row_height=60.0
@@ -486,8 +486,8 @@ fn FCCraftingAnalyzerTable(
                     variable_height=false
                      header=view! {
                         <div class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]" role="rowgroup">
-                             <div role="columnheader" class="w-84 p-4">"Project Result"</div>
-                             <div role="columnheader" class="w-30 p-4">
+                             <div role="columnheader" class="w-84 shrink-0 p-4">"Project Result"</div>
+                             <div role="columnheader" class="w-30 shrink-0 p-4">
                                 <QueryButton
                                     class="!text-brand-300 hover:text-brand-200"
                                     active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
@@ -497,7 +497,7 @@ fn FCCraftingAnalyzerTable(
                                     "Profit"
                                 </QueryButton>
                              </div>
-                             <div role="columnheader" class="w-30 p-4">
+                             <div role="columnheader" class="w-30 shrink-0 p-4">
                                 <QueryButton
                                     class="!text-brand-300 hover:text-brand-200"
                                     active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
@@ -507,9 +507,9 @@ fn FCCraftingAnalyzerTable(
                                     "ROI"
                                 </QueryButton>
                              </div>
-                             <div role="columnheader" class="w-30 p-4">"Total Cost"</div>
-                             <div role="columnheader" class="w-30 p-4">"Market Price"</div>
-                             <div role="columnheader" class="w-30 p-4 hidden md:block">
+                             <div role="columnheader" class="w-30 shrink-0 p-4">"Total Cost"</div>
+                             <div role="columnheader" class="w-30 shrink-0 p-4">"Market Price"</div>
+                             <div role="columnheader" class="w-30 shrink-0 p-4 hidden md:block">
                                 <QueryButton
                                     class="!text-brand-300 hover:text-brand-200"
                                     active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
@@ -540,7 +540,7 @@ fn FCCraftingAnalyzerTable(
 
                         view! {
                             <div class=classes role="row-group">
-                                <div role="cell" class="px-4 py-2 flex flex-row w-84 items-center gap-2">
+                                <div role="cell" class="px-4 py-2 flex flex-row w-84 shrink-0 items-center gap-2">
                                      <a
                                         class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip w-full"
                                         href=format!("/item/{}/{}", world(), item_id.0)
@@ -551,10 +551,10 @@ fn FCCraftingAnalyzerTable(
                                         <span>{item}</span>
                                     </a>
                                 </div>
-                                <div role="cell" class="px-4 py-2 w-30 text-right">
+                                <div role="cell" class="px-4 py-2 w-30 shrink-0 text-right">
                                     <Gil amount=data.profit />
                                 </div>
-                                <div role="cell" class="px-4 py-2 w-30 text-right">
+                                <div role="cell" class="px-4 py-2 w-30 shrink-0 text-right">
                                     <span class={
                                         let data = data_clone.clone();
                                         move || {
@@ -566,13 +566,13 @@ fn FCCraftingAnalyzerTable(
                                         {format!("{}%", data.return_on_investment)}
                                     </span>
                                 </div>
-                                <div role="cell" class="px-4 py-2 w-30 text-right">
+                                <div role="cell" class="px-4 py-2 w-30 shrink-0 text-right">
                                     <Gil amount=data.cost />
                                 </div>
-                                <div role="cell" class="px-4 py-2 w-30 text-right">
+                                <div role="cell" class="px-4 py-2 w-30 shrink-0 text-right">
                                     <Gil amount=data.market_price />
                                 </div>
-                                <div role="cell" class="px-4 py-2 w-30 text-right hidden md:block">
+                                <div role="cell" class="px-4 py-2 w-30 shrink-0 text-right hidden md:block">
                                     <span class="text-xs text-[color:var(--color-text-muted)]" title=sales_tooltip>
                                         {format!("{:.1} / day", data.daily_sales)}
                                     </span>
