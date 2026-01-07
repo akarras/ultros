@@ -253,7 +253,13 @@ pub fn SearchBox() -> impl IntoView {
             }
         } else if key == "Enter" {
             if let Some(url) = focused_url.get_untracked() {
-                navigate_keydown(&url, NavigateOptions::default());
+                navigate_keydown(
+                    &url,
+                    NavigateOptions {
+                        scroll: false,
+                        ..Default::default()
+                    },
+                );
                 set_search("".to_string());
                 set_active(false);
                 if let Some(input) = text_input.get() {
@@ -262,7 +268,13 @@ pub fn SearchBox() -> impl IntoView {
             } else {
                 let first_url = search_results.with_untracked(|r| r.first().map(|f| f.url.clone()));
                 if let Some(url) = first_url {
-                    navigate_keydown(&url, NavigateOptions::default());
+                    navigate_keydown(
+                        &url,
+                        NavigateOptions {
+                            scroll: false,
+                            ..Default::default()
+                        },
+                    );
                     set_search("".to_string());
                     set_active(false);
                     if let Some(input) = text_input.get() {
@@ -362,7 +374,13 @@ pub fn SearchBox() -> impl IntoView {
                                         format!("p-2 hover:bg-[color:var(--color-background-elevated)] cursor-pointer flex items-center gap-2{}", hl)
                                     }
                                     on:click=move |_| {
-                                        navigate(&url_for_click, NavigateOptions::default());
+                                        navigate(
+                                            &url_for_click,
+                                            NavigateOptions {
+                                                scroll: false,
+                                                ..Default::default()
+                                            },
+                                        );
                                         set_search("".to_string());
                                         set_active(false);
                                         if let Some(input) = text_input.get() {

@@ -135,7 +135,10 @@ fn TrendsWorldNavigator() -> impl IntoView {
     Effect::new(move |_| {
         if let Some(world) = current_world() {
             let world = world.name;
-            nav(&format!("/trends/{world}"), NavigateOptions::default());
+            nav(&format!("/trends/{world}"), NavigateOptions {
+                scroll: false,
+                ..Default::default()
+            });
         }
     });
 

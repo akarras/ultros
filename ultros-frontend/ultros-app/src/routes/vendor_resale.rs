@@ -846,7 +846,10 @@ fn VendorWorldNavigator() -> impl IntoView {
             let query = query_map.to_query_string();
             nav(
                 &format!("/vendor-resale/{world}?{query}"),
-                NavigateOptions::default(),
+                NavigateOptions {
+                    scroll: false,
+                    ..Default::default()
+                },
             );
         }
     });

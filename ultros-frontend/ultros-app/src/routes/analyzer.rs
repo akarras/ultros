@@ -1149,7 +1149,10 @@ fn AnalyzerWorldNavigator() -> impl IntoView {
             let query = query_map.to_query_string();
             nav(
                 &format!("/flip-finder/{world}?{query}"),
-                NavigateOptions::default(),
+                NavigateOptions {
+                    scroll: false,
+                    ..Default::default()
+                },
             );
         }
     });
