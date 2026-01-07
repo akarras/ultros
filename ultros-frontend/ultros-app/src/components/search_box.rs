@@ -300,7 +300,7 @@ pub fn SearchBox() -> impl IntoView {
                     }
                 />
                 <div class="absolute left-3 top-1/2 -translate-y-1/2 text-[color:var(--color-text-muted)]">
-                    <Show when=loading fallback=|| view! { <Icon icon=i::MdiJellyfish /> }>
+                    <Show when=loading fallback=|| view! { <Icon icon=i::AiSearchOutlined /> }>
                         <Loading />
                     </Show>
                 </div>
