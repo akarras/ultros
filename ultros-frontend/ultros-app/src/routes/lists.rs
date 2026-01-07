@@ -178,7 +178,7 @@ pub fn EditLists() -> impl IntoView {
                         let selector = global().map(|global| global.into());
                         let (wdr_filter, set_wdr_filter) = signal(selector);
                         view! {
-                            <div class="panel p-6 rounded-xl animate-fade-in">
+                            <div class="panel p-6 rounded-xl animate-fade-in relative z-10">
                                 <h3 class="text-lg font-bold mb-4">"Create New List"</h3>
                                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     <div class="flex flex-col gap-1">
