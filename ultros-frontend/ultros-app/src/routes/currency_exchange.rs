@@ -197,21 +197,21 @@ fn FilterModal(filter_name: &'static str) -> impl IntoView {
                                     <div class="flex items-center justify-between">
                                         <label for=format!("{filter_name}_max") class="text-[color:var(--color-text)]">"Max"</label>
                                         <ParseableInputBox
-                                            id=Some(format!("{filter_name}_max"))
+                                            id=format!("{filter_name}_max")
                                             input=Signal::derive(max)
                                             set_value=SignalSetter::map(set_max)
-                                            aria_label=Some(format!("Maximum {}", filter_name.replace("_", " ")))
-                                            input_type=Some("number".to_string())
+                                            aria_label=format!("Maximum {}", filter_name.replace("_", " "))
+                                            input_type="number"
                                         />
                                     </div>
                                     <div class="flex items-center justify-between">
                                         <label for=format!("{filter_name}_min") class="text-[color:var(--color-text)]">"Min"</label>
                                         <ParseableInputBox
-                                            id=Some(format!("{filter_name}_min"))
+                                            id=format!("{filter_name}_min")
                                             input=Signal::derive(min)
                                             set_value=SignalSetter::map(set_min)
-                                            aria_label=Some(format!("Minimum {}", filter_name.replace("_", " ")))
-                                            input_type=Some("number".to_string())
+                                            aria_label=format!("Minimum {}", filter_name.replace("_", " "))
+                                            input_type="number"
                                         />
                                     </div>
                                 </div>
@@ -442,21 +442,21 @@ pub fn ExchangeItem() -> impl IntoView {
                                     <div class="flex items-center justify-between">
                                         <label for="price_per_item_min" class="text-[color:var(--color-text)]">"Min"</label>
                                         <ParseableInputBox
-                                            id=Some("price_per_item_min".to_string())
+                                            id="price_per_item_min"
                                             input=Signal::derive(min)
                                             set_value=SignalSetter::map(set_min)
-                                            aria_label=Some("Minimum Price Per Item".to_string())
-                                            input_type=Some("number".to_string())
+                                            aria_label="Minimum Price Per Item"
+                                            input_type="number"
                                         />
                                     </div>
                                     <div class="flex items-center justify-between">
                                         <label for="price_per_item_max" class="text-[color:var(--color-text)]">"Max"</label>
                                         <ParseableInputBox
-                                            id=Some("price_per_item_max".to_string())
+                                            id="price_per_item_max"
                                             input=Signal::derive(max)
                                             set_value=SignalSetter::map(set_max)
-                                            aria_label=Some("Maximum Price Per Item".to_string())
-                                            input_type=Some("number".to_string())
+                                            aria_label="Maximum Price Per Item"
+                                            input_type="number"
                                         />
                                     </div>
                                 </div>
@@ -476,21 +476,21 @@ pub fn ExchangeItem() -> impl IntoView {
                                     <div class="flex items-center justify-between">
                                         <label for="number_received_min" class="text-[color:var(--color-text)]">"Min"</label>
                                         <ParseableInputBox
-                                            id=Some("number_received_min".to_string())
+                                            id="number_received_min"
                                             input=Signal::derive(min)
                                             set_value=SignalSetter::map(set_min)
-                                            aria_label=Some("Minimum Quantity Received".to_string())
-                                            input_type=Some("number".to_string())
+                                            aria_label="Minimum Quantity Received"
+                                            input_type="number"
                                         />
                                     </div>
                                     <div class="flex items-center justify-between">
                                         <label for="number_received_max" class="text-[color:var(--color-text)]">"Max"</label>
                                         <ParseableInputBox
-                                            id=Some("number_received_max".to_string())
+                                            id="number_received_max"
                                             input=Signal::derive(max)
                                             set_value=SignalSetter::map(set_max)
-                                            aria_label=Some("Maximum Quantity Received".to_string())
-                                            input_type=Some("number".to_string())
+                                            aria_label="Maximum Quantity Received"
+                                            input_type="number"
                                         />
                                     </div>
                                 </div>
@@ -510,21 +510,21 @@ pub fn ExchangeItem() -> impl IntoView {
                                     <div class="flex items-center justify-between">
                                         <label for="total_profit_min" class="text-[color:var(--color-text)]">"Min"</label>
                                         <ParseableInputBox
-                                            id=Some("total_profit_min".to_string())
+                                            id="total_profit_min"
                                             input=Signal::derive(min)
                                             set_value=SignalSetter::map(set_min)
-                                            aria_label=Some("Minimum Profit".to_string())
-                                            input_type=Some("number".to_string())
+                                            aria_label="Minimum Profit"
+                                            input_type="number"
                                         />
                                     </div>
                                     <div class="flex items-center justify-between">
                                         <label for="total_profit_max" class="text-[color:var(--color-text)]">"Max"</label>
                                         <ParseableInputBox
-                                            id=Some("total_profit_max".to_string())
+                                            id="total_profit_max"
                                             input=Signal::derive(max)
                                             set_value=SignalSetter::map(set_max)
-                                            aria_label=Some("Maximum Profit".to_string())
-                                            input_type=Some("number".to_string())
+                                            aria_label="Maximum Profit"
+                                            input_type="number"
                                         />
                                     </div>
                                 </div>
@@ -544,21 +544,21 @@ pub fn ExchangeItem() -> impl IntoView {
                                     <div class="flex items-center justify-between">
                                         <label for="hours_between_sales_min" class="text-[color:var(--color-text)]">"Min"</label>
                                         <ParseableInputBox
-                                            id=Some("hours_between_sales_min".to_string())
+                                            id="hours_between_sales_min"
                                             input=Signal::derive(min)
                                             set_value=SignalSetter::map(set_min)
-                                            aria_label=Some("Minimum Sales Velocity".to_string())
-                                            input_type=Some("number".to_string())
+                                            aria_label="Minimum Sales Velocity"
+                                            input_type="number"
                                         />
                                     </div>
                                     <div class="flex items-center justify-between">
                                         <label for="hours_between_sales_max" class="text-[color:var(--color-text)]">"Max"</label>
                                         <ParseableInputBox
-                                            id=Some("hours_between_sales_max".to_string())
+                                            id="hours_between_sales_max"
                                             input=Signal::derive(max)
                                             set_value=SignalSetter::map(set_max)
-                                            aria_label=Some("Maximum Sales Velocity".to_string())
-                                            input_type=Some("number".to_string())
+                                            aria_label="Maximum Sales Velocity"
+                                            input_type="number"
                                         />
                                     </div>
                                 </div>
