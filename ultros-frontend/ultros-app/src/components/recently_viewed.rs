@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 
 use codee::string::JsonSerdeCodec;
+use leptos::leptos_dom::helpers::set_timeout;
 use leptos::prelude::*;
 use leptos_router::components::A;
 use leptos_use::storage::use_local_storage;
@@ -51,6 +52,8 @@ pub fn RecentlyViewed() -> impl IntoView {
     let item_data = use_context::<RecentItems>().unwrap();
     let items = item_data.reader();
     let local_items = LocalResource::new(move || async move { items() });
+    let (confirm_clear, set_confirm_clear) = signal(false);
+
     view! {
         <div class="p-6 rounded-xl panel">
             <Suspense fallback=move || {
@@ -69,10 +72,21 @@ pub fn RecentlyViewed() -> impl IntoView {
                     <div class="flex items-center justify-between">
                         <h4 class="text-xl font-bold text-[color:var(--color-text)]">"Recently Viewed"</h4>
                         <button
-                            class="text-sm text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] transition-colors"
-                            on:click=move |_| item_data.clear_items()
+                            class="text-sm text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] transition-colors focus:outline-none focus:ring-2 focus:ring-[color:var(--brand-ring)] rounded px-2"
+                            on:click=move |_| {
+                                if confirm_clear.get_untracked() {
+                                    item_data.clear_items();
+                                    set_confirm_clear(false);
+                                } else {
+                                    set_confirm_clear(true);
+                                    set_timeout(
+                                        move || set_confirm_clear(false),
+                                        std::time::Duration::from_secs(3),
+                                    );
+                                }
+                            }
                         >
-                            "Clear All"
+                            {move || if confirm_clear.get() { "Confirm Clear?" } else { "Clear All" }}
                         </button>
                     </div>
 
