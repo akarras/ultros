@@ -42,7 +42,7 @@ pub fn ToastItem(toast: Toast) -> impl IntoView {
             class=move || format!("{} {} {}", base_class, color_class, exit_class())
             role="alert"
         >
-            <Icon icon width="1.2em" height="1.2em" />
+            <Icon icon width="1.2em" height="1.2em" aria_hidden=true />
             <div class="flex-1">{message}</div>
             <button
                 class="opacity-70 hover:opacity-100 transition-opacity"
@@ -54,7 +54,7 @@ pub fn ToastItem(toast: Toast) -> impl IntoView {
                     }, std::time::Duration::from_millis(300));
                 }
             >
-                <Icon icon=i::BsX width="1.2em" height="1.2em" />
+                <Icon icon=i::BsX width="1.2em" height="1.2em" aria_hidden=true />
             </button>
         </div>
     }

@@ -9,6 +9,7 @@ pub fn Icon(
     #[prop(into, optional)] style: MaybeProp<String>,
     #[prop(into, optional)] width: MaybeProp<String>,
     #[prop(into, optional)] height: MaybeProp<String>,
+    #[prop(into, optional)] aria_hidden: MaybeProp<bool>,
 ) -> impl IntoView {
     move || {
         let icon = icon.get();
@@ -38,6 +39,13 @@ pub fn Icon(
             .attr("stroke", icon.stroke)
             .attr("fill", icon.fill.unwrap_or("currentColor"))
             .attr("role", "graphics-symbol")
+            .attr("aria-hidden", move || {
+                if aria_hidden.get().unwrap_or(false) {
+                    Some("true")
+                } else {
+                    None
+                }
+            })
             .child(svg::InertElement::new(data))
     }
 }
