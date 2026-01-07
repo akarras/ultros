@@ -278,6 +278,7 @@ fn AnalyzerTable(
     let (tax_enabled, set_tax_enabled) = query_signal::<bool>("tax");
     let (minimum_sales, set_minimum_sales) = query_signal::<usize>("sales");
     let (category_filter, set_category_filter) = query_signal::<i32>("category");
+    let (max_purchase_price, set_max_purchase_price) = query_signal::<i32>("max-price");
 
     let world_clone = worlds.clone();
     let world_filter_list = Memo::new(move |_| {
@@ -351,6 +352,11 @@ fn AnalyzerTable(
                             .map(|item| item.item_search_category.0 == cat_id)
                             .unwrap_or(false)
                     })
+                    .unwrap_or(true)
+            })
+            .filter(move |data| {
+                max_purchase_price()
+                    .map(|max| data.inner.cheapest_price <= max)
                     .unwrap_or(true)
             })
             .filter(move |data| {
@@ -518,6 +524,37 @@ fn AnalyzerTable(
                 </FilterCard>
 
                 <FilterCard
+                    title="Maximum Budget"
+                    description="Set the maximum purchase price per item"
+                >
+                    <div class="flex flex-col gap-2">
+                        <div class="text-brand-300">
+                            {move || {
+                                max_purchase_price()
+                                    .map(|p| Either::Left(view! { <Gil amount=p /> }))
+                                    .unwrap_or(Either::Right("---"))
+                            }}
+                        </div>
+                        <input
+                            class="input"
+                            min=0
+                            step=1000
+                            placeholder="e.g. 500000"
+                            type="number"
+                            prop:value=max_purchase_price
+                            on:input=move |input| {
+                                let value = event_target_value(&input);
+                                if let Ok(p) = value.parse::<i32>() {
+                                    set_max_purchase_price(Some(p));
+                                } else if value.is_empty() {
+                                    set_max_purchase_price(None);
+                                }
+                            }
+                        />
+                    </div>
+                </FilterCard>
+
+                <FilterCard
                     title="Sale Time Prediction"
                     description="Filter by predicted time to next sale (e.g., 1w 30m)"
                 >
@@ -604,6 +641,16 @@ fn AnalyzerTable(
                                 </span>
                             }.into_any());
                         }
+                        if let Some(p) = max_purchase_price() {
+                            chips.push(view! {
+                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
+                                    "Budget ≤ " <Gil amount=p />
+                                    <button class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_max_purchase_price(None)>
+                                        <Icon icon=icondata::MdiClose />
+                                    </button>
+                                </span>
+                            }.into_any());
+                        }
                         if let Some(_ns) = max_predicted_time() {
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
@@ -649,6 +696,7 @@ fn AnalyzerTable(
                     set_datacenter_filter(None);
                     set_minimum_sales(None);
                     set_category_filter(None);
+                    set_max_purchase_price(None);
                 }>
                     "Clear all"
                 </button>
