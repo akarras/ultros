@@ -527,26 +527,24 @@ fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                         let trades = get_trade_costs(shop, item_id());
                         trades.into_iter().map(move |costs| {
                             view! {
-                                <div class="group flex items-center justify-between gap-2 rounded-lg card p-1.5 transition-colors">
-                                    <div class="flex items-center gap-2 flex-wrap">
-                                        <span class="text-sm font-medium">{shop.name.as_str()}</span>
-                                        <div class="flex items-center gap-1.5 text-xs text-[color:var(--color-text-muted)]">
-                                            "Costs:"
-                                            {
-                                                costs.into_iter().map(|(item_id, count)| {
-                                                    if let Some(item) = data.items.get(&item_id) {
-                                                        view! {
-                                                            <div class="flex items-center gap-1 bg-[color:var(--color-base)]/50 px-1.5 py-0.5 rounded border border-[color:var(--color-outline)]">
-                                                                <span>{count} "x"</span>
-                                                                <SmallItemDisplay item />
-                                                            </div>
-                                                        }.into_any()
-                                                    } else {
-                                                        ().into_any()
-                                                    }
-                                                }).collect_view()
-                                            }
-                                        </div>
+                                <div class="group flex flex-col gap-2 rounded-lg card p-3 transition-colors">
+                                    <span class="text-sm font-medium border-b border-[color:var(--color-outline)] pb-2">{shop.name.as_str()}</span>
+                                    <div class="flex items-center gap-2 flex-wrap text-xs text-[color:var(--color-text-muted)]">
+                                        "Costs:"
+                                        {
+                                            costs.into_iter().map(|(item_id, count)| {
+                                                if let Some(item) = data.items.get(&item_id) {
+                                                    view! {
+                                                        <div class="flex items-center gap-1 bg-[color:var(--color-base)]/50 px-1.5 py-0.5 rounded border border-[color:var(--color-outline)]">
+                                                            <span>{count} "x"</span>
+                                                            <SmallItemDisplay item />
+                                                        </div>
+                                                    }.into_any()
+                                                } else {
+                                                    ().into_any()
+                                                }
+                                            }).collect_view()
+                                        }
                                     </div>
                                 </div>
                             }
@@ -561,7 +559,7 @@ fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     view! {
         <div id="exchange-sources" class:collapse=empty class="space-y-1.5 p-1 max-h-80 overflow-y-auto w-full sm:w-96 xl:w-[600px]">
             <span class="text-sm font-semibold text-[color:var(--brand-fg)]">"Exchange sources"</span>
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+            <div class="grid grid-cols-1 gap-1.5">
                 {view}
             </div>
         </div>
