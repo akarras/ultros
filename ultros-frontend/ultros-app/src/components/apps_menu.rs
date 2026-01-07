@@ -99,6 +99,17 @@ pub fn AppsMenu() -> impl IntoView {
 
                         <A
                             href=homeworld()
+                                .map(|w| format!("/fc-crafting-analyzer/{}", w.name))
+                                .unwrap_or("/fc-crafting-analyzer".to_string())
+                            attr:class="nav-link w-full justify-start"
+                            on:click=close_menu
+                        >
+                            <Icon height="1.1em" width="1.1em" icon=i::MdiSubmarine />
+                            <span class="ml-2">"FC Crafting"</span>
+                        </A>
+
+                        <A
+                            href=homeworld()
                                 .map(|w| format!("/leve-analyzer?world={}", w.name))
                                 .unwrap_or("/leve-analyzer".to_string())
                             attr:class="nav-link w-full justify-start"

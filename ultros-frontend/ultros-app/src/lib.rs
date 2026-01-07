@@ -28,6 +28,7 @@ use crate::{
         item_explorer::*,
         item_view::*,
         legal::{cookie_policy::CookiePolicy, privacy_policy::PrivacyPolicy},
+        fc_crafting_analyzer::*,
         leve_analyzer::*,
         list_view::*,
         lists::*,
@@ -291,6 +292,8 @@ pub fn App() -> impl IntoView {
                             <Route path=path!("vendor-resale") view=VendorResale />
                             <Route path=path!("vendor-resale/:world") view=VendorWorldView />
                             <Route path=path!("recipe-analyzer") view=RecipeAnalyzer />
+                            <Route path=path!("fc-crafting-analyzer") view=FCCraftingAnalyzer />
+                            <Route path=path!("fc-crafting-analyzer/:world") view=FCCraftingAnalyzer />
                             <Route path=path!("leve-analyzer") view=LeveAnalyzer />
                             <Route path=path!("scrip-sources") view=ScripSources />
                             <Route path=path!("venture-analyzer") view=VentureAnalyzer />
