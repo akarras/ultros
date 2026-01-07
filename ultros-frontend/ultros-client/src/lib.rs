@@ -61,6 +61,7 @@ async fn try_populate_xiv_gen_data(rexie: &Rexie) -> anyhow::Result<()> {
     let version = xiv_gen::data_version();
     {
         let (transaction, game_data) = open_transaction(rexie).await?;
+        #[allow(clippy::collapsible_if)]
         if let Ok(value) = game_data.get(&version.into()).await {
             if !value.is_null() && !value.is_undefined() {
                 match serde_wasm_bindgen::from_value::<Data>(value) {
