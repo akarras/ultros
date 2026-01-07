@@ -1,11 +1,13 @@
 use crate::{
-    api::get_cheapest_listings,
+    analysis::{analyze_sales, SalesStats},
+    api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
-        gil::*, item_icon::*, query_button::QueryButton, skeleton::BoxSkeleton,
+        gil::*, icon::Icon, item_icon::*, query_button::QueryButton, skeleton::BoxSkeleton,
         virtual_scroller::*, world_picker::WorldOnlyPicker,
     },
     global_state::{LocalWorldData, home_world::use_home_world},
 };
+use icondata as i;
 use itertools::Itertools;
 use leptos::{either::Either, prelude::*};
 use leptos_meta::{Meta, Title};
@@ -13,9 +15,10 @@ use leptos_router::{
     NavigateOptions,
     hooks::{query_signal, use_location, use_navigate, use_query_map},
 };
-use std::{cmp::Reverse, collections::HashSet, sync::Arc};
+use std::{cmp::Reverse, collections::{HashMap, HashSet}, sync::Arc};
 use ultros_api_types::{
     cheapest_listings::{CheapestListings, CheapestListingsMap},
+    recent_sales::{RecentSales, SaleData},
     world_helper::AnyResult,
 };
 
@@ -26,6 +29,8 @@ struct VentureProfitData {
     quantity: i32,
     market_price: i32,
     profit: i32,
+    avg_price: i32,
+    daily_sales: f32,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -59,6 +64,7 @@ impl std::fmt::Display for SortMode {
 #[component]
 fn VentureAnalyzerTable(
     global_cheapest_listings: CheapestListings,
+    recent_sales: Option<RecentSales>,
     world: Signal<String>,
 ) -> impl IntoView {
     let prices = CheapestListingsMap::from(global_cheapest_listings);
@@ -69,6 +75,7 @@ fn VentureAnalyzerTable(
 
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
     let (minimum_profit, set_minimum_profit) = query_signal::<i32>("profit");
+    let (filter_outliers, set_filter_outliers) = query_signal::<bool>("filter-outliers");
     let query = use_query_map();
     let location = use_location();
     let nav = use_navigate();
@@ -135,6 +142,17 @@ fn VentureAnalyzerTable(
     let computed_data = Memo::new(move |_| {
         let mut results = Vec::new();
         let selected_ids = selected_category_ids.get();
+        let filter_outliers = filter_outliers().unwrap_or(false);
+
+        let sales_map: HashMap<i32, Vec<&SaleData>> = if let Some(ref sales) = recent_sales {
+            let mut map = HashMap::new();
+            for sale in &sales.sales {
+                map.entry(sale.item_id).or_insert_with(Vec::new).push(sale);
+            }
+            map
+        } else {
+            HashMap::new()
+        };
 
         // Iterate over RetainerTasks to find normal ventures
         for (_task_id, task) in retainer_tasks.iter() {
@@ -175,6 +193,16 @@ fn VentureAnalyzerTable(
                     continue;
                 }
 
+                let sales_stats = if let Some(item_sales) = sales_map.get(&item_id.0) {
+                    analyze_sales(item_sales, filter_outliers)
+                } else {
+                    SalesStats {
+                        daily_sales: 0.0,
+                        avg_price: 0,
+                        total_sales: 0,
+                    }
+                };
+
                 let venture_cost_gil = 0; // Placeholder
 
                 let revenue = market_price * quantity;
@@ -192,6 +220,8 @@ fn VentureAnalyzerTable(
                     quantity,
                     market_price,
                     profit,
+                    avg_price: sales_stats.avg_price,
+                    daily_sales: sales_stats.daily_sales,
                 });
             }
         }
@@ -212,7 +242,7 @@ fn VentureAnalyzerTable(
 
     view! {
         <div class="flex flex-col gap-6">
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 <div class="panel p-6 flex flex-col w-full bg-[color:var(--color-background-elevated)] bg-opacity-100 z-20">
                     <h3 class="font-bold text-xl mb-2 text-[color:var(--brand-fg)]">"Filter by Job"</h3>
                     <div class="flex flex-wrap gap-2">
@@ -272,6 +302,23 @@ fn VentureAnalyzerTable(
                         />
                     </div>
                 </div>
+
+                <div class="panel p-6 flex flex-col w-full bg-[color:var(--color-background-elevated)] bg-opacity-100 z-20">
+                    <h3 class="font-bold text-xl mb-2 text-[color:var(--brand-fg)]">"Options"</h3>
+                    <div class="flex flex-row gap-4 flex-wrap">
+                        <input
+                            type="checkbox"
+                            id="filter-outliers"
+                            class="checkbox"
+                            prop:checked=move || filter_outliers().unwrap_or(false)
+                            on:change=move |ev| set_filter_outliers(Some(event_target_checked(&ev)))
+                        />
+                        <label for="filter-outliers">"Filter Outliers"</label>
+                        <div class="text-brand-300 cursor-help" title="If enabled, sales outliers will be removed from the average price calculation using the Interquartile Range (IQR) method.">
+                            <Icon icon=i::AiQuestionCircleOutlined />
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <div class="rounded-2xl overflow-x-auto panel content-visible contain-layout contain-paint will-change-scroll forced-layer">
@@ -295,6 +342,8 @@ fn VentureAnalyzerTable(
                                 </QueryButton>
                              </div>
                              <div role="columnheader" class="w-30 p-4">"Unit Price"</div>
+                             <div role="columnheader" class="w-30 p-4 hidden md:block">"Avg Price"</div>
+                             <div role="columnheader" class="w-30 p-4 hidden md:block">"Daily Sales"</div>
                              <div role="columnheader" class="w-30 p-4 hidden md:block">
                                 <QueryButton
                                     class="!text-brand-300 hover:text-brand-200"
@@ -342,6 +391,14 @@ fn VentureAnalyzerTable(
                                 </div>
                                 <div role="cell" class="px-4 py-2 w-30 text-right">
                                     <Gil amount=data.market_price />
+                                </div>
+                                <div role="cell" class="px-4 py-2 w-30 text-right hidden md:block">
+                                    <Gil amount=data.avg_price />
+                                </div>
+                                <div role="cell" class="px-4 py-2 w-30 text-right hidden md:block">
+                                    <span class="text-xs text-[color:var(--color-text-muted)]">
+                                        {format!("{:.1} / day", data.daily_sales)}
+                                    </span>
                                 </div>
                                 <div role="cell" class="px-4 py-2 w-30 text-right hidden md:block">
                                     <span class="text-xs text-[color:var(--color-text-muted)]">
@@ -433,6 +490,15 @@ pub fn VentureAnalyzer() -> impl IntoView {
         }
     });
 
+    let recent_sales = ArcResource::new(selected_world, move |world| async move {
+        if let Some(world) = world {
+            get_recent_sales_for_world(&world.name).await
+        } else {
+            Ok(RecentSales { sales: vec![] })
+        }
+    });
+
+    let recent_sales_clone = recent_sales.clone();
     view! {
         <div class="flex flex-col gap-4 h-full">
             <Title text="Venture Analyzer - Ultros" />
@@ -441,6 +507,16 @@ pub fn VentureAnalyzer() -> impl IntoView {
             <div class="flex flex-col gap-4 p-4 bg-brand-900/50 rounded-lg border border-brand-800">
                 <div class="flex flex-row justify-between items-center">
                     <h1 class="text-2xl font-bold text-brand-100">"Venture Analyzer"</h1>
+                    <div class="flex flex-row gap-2 items-center">
+                        <Suspense fallback=|| view! { <div class="text-brand-300 text-sm animate-pulse">"Loading sales data..."</div> }>
+                            {move || {
+                                recent_sales_clone
+                                    .get()
+                                    .and_then(|r| r.err())
+                                    .map(|_| view! { <div class="text-red-400 text-sm">"Error loading sales data"</div> })
+                            }}
+                        </Suspense>
+                    </div>
                 </div>
 
                 <div class="flex flex-col md:flex-row items-center gap-2">
@@ -456,16 +532,27 @@ pub fn VentureAnalyzer() -> impl IntoView {
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>
                     {move || {
                         let listings = global_cheapest_listings.get();
-                        match listings {
-                            Some(Ok(listings)) => {
+                        let sales = recent_sales.get();
+                        match (listings, sales) {
+                            (Some(Ok(listings)), Some(Ok(sales))) => {
                                 view! {
                                     <VentureAnalyzerTable
                                         global_cheapest_listings=listings
+                                        recent_sales=Some(sales)
                                         world=region.into()
                                     />
                                 }.into_any()
                             }
-                            Some(Err(e)) => {
+                            (Some(Ok(listings)), _) => {
+                                view! {
+                                    <VentureAnalyzerTable
+                                        global_cheapest_listings=listings
+                                        recent_sales=None
+                                        world=region.into()
+                                    />
+                                }.into_any()
+                            }
+                            (Some(Err(e)), _) => {
                                 view! {
                                     <div class="text-red-400">
                                         "Error loading listings: " {e.to_string()}

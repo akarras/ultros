@@ -1,20 +1,23 @@
 use crate::{
-    api::get_cheapest_listings,
+    analysis::{analyze_sales, SalesStats},
+    api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
-        gil::*, item_icon::*, query_button::QueryButton, skeleton::BoxSkeleton,
+        gil::*, icon::Icon, item_icon::*, query_button::QueryButton, skeleton::BoxSkeleton,
         virtual_scroller::*, world_picker::WorldOnlyPicker,
     },
     global_state::{LocalWorldData, home_world::use_home_world},
 };
+use icondata as i;
 use leptos::{either::Either, prelude::*};
 use leptos_meta::{Meta, Title};
 use leptos_router::{
     NavigateOptions,
     hooks::{query_signal, use_navigate, use_query_map},
 };
-use std::{cmp::Reverse, sync::Arc};
+use std::{cmp::Reverse, collections::HashMap, sync::Arc};
 use ultros_api_types::{
     cheapest_listings::{CheapestListings, CheapestListingsMap},
+    recent_sales::{RecentSales, SaleData},
     world_helper::AnyResult,
 };
 use xiv_gen::{CraftLeve, ItemId, Leve};
@@ -32,6 +35,8 @@ struct LeveProfitData {
     item_count: u32,
     class_job_level: u16,
     job_category_name: String,
+    avg_price: i32,
+    daily_sales: f32,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -65,6 +70,7 @@ impl std::fmt::Display for SortMode {
 #[component]
 fn LeveAnalyzerTable(
     global_cheapest_listings: CheapestListings,
+    recent_sales: Option<RecentSales>,
     world: Signal<String>,
 ) -> impl IntoView {
     let prices = CheapestListingsMap::from(global_cheapest_listings);
@@ -79,9 +85,21 @@ fn LeveAnalyzerTable(
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
     let (minimum_profit, set_minimum_profit) = query_signal::<i32>("profit");
     let (job_filter, set_job_filter) = query_signal::<String>("job");
+    let (filter_outliers, set_filter_outliers) = query_signal::<bool>("filter-outliers");
 
     let computed_data = Memo::new(move |_| {
         let mut results = Vec::new();
+        let filter_outliers = filter_outliers().unwrap_or(false);
+
+        let sales_map: HashMap<i32, Vec<&SaleData>> = if let Some(ref sales) = recent_sales {
+            let mut map = HashMap::new();
+            for sale in &sales.sales {
+                map.entry(sale.item_id).or_insert_with(Vec::new).push(sale);
+            }
+            map
+        } else {
+            HashMap::new()
+        };
 
         for craft_leve in craft_leves.values() {
             let leve_id = craft_leve.leve;
@@ -127,6 +145,16 @@ fn LeveAnalyzerTable(
                 // Can't calculate profit without market price
                 continue;
             }
+
+            let sales_stats = if let Some(item_sales) = sales_map.get(&item_id.0) {
+                analyze_sales(item_sales, filter_outliers)
+            } else {
+                SalesStats {
+                    daily_sales: 0.0,
+                    avg_price: 0,
+                    total_sales: 0,
+                }
+            };
 
             let cheapest_world_id = market_price_summary
                 .lq
@@ -257,6 +285,8 @@ fn LeveAnalyzerTable(
                 item_count,
                 class_job_level: leve.class_job_level,
                 job_category_name,
+                avg_price: sales_stats.avg_price,
+                daily_sales: sales_stats.daily_sales,
             });
         }
 
@@ -276,7 +306,7 @@ fn LeveAnalyzerTable(
 
     view! {
         <div class="flex flex-col gap-6">
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                  <div class="panel p-6 flex flex-col w-full bg-[color:var(--color-background-elevated)] bg-opacity-100 z-20">
                     <h3 class="font-bold text-xl mb-2 text-[color:var(--brand-fg)]">"Minimum Profit"</h3>
                     <p class="mb-4 text-[color:var(--color-text-muted)]">"Set the minimum profit margin"</p>
@@ -331,6 +361,23 @@ fn LeveAnalyzerTable(
                         <option value="Culinarian" selected=move || job_filter() == Some("Culinarian".to_string())>"Culinarian"</option>
                     </select>
                 </div>
+
+                <div class="panel p-6 flex flex-col w-full bg-[color:var(--color-background-elevated)] bg-opacity-100 z-20">
+                    <h3 class="font-bold text-xl mb-2 text-[color:var(--brand-fg)]">"Options"</h3>
+                    <div class="flex flex-row gap-4 flex-wrap">
+                        <input
+                            type="checkbox"
+                            id="filter-outliers"
+                            class="checkbox"
+                            prop:checked=move || filter_outliers().unwrap_or(false)
+                            on:change=move |ev| set_filter_outliers(Some(event_target_checked(&ev)))
+                        />
+                        <label for="filter-outliers">"Filter Outliers"</label>
+                        <div class="text-brand-300 cursor-help" title="If enabled, sales outliers will be removed from the average price calculation using the Interquartile Range (IQR) method.">
+                            <Icon icon=i::AiQuestionCircleOutlined />
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <div class="rounded-2xl overflow-x-auto panel content-visible contain-layout contain-paint will-change-scroll forced-layer">
@@ -355,6 +402,8 @@ fn LeveAnalyzerTable(
                              </div>
                              <div role="columnheader" class="w-30 p-4">"Revenue"</div>
                              <div role="columnheader" class="w-30 p-4">"Cost"</div>
+                             <div role="columnheader" class="w-30 p-4 hidden md:block">"Avg Price"</div>
+                             <div role="columnheader" class="w-30 p-4 hidden md:block">"Daily Sales"</div>
                              <div role="columnheader" class="w-40 p-4 hidden md:block">
                                 <QueryButton
                                     class="!text-brand-300 hover:text-brand-200"
@@ -406,6 +455,14 @@ fn LeveAnalyzerTable(
                                 </div>
                                 <div role="cell" class="px-4 py-2 w-30 text-right">
                                     <Gil amount=data.cost />
+                                </div>
+                                <div role="cell" class="px-4 py-2 w-30 text-right hidden md:block">
+                                    <Gil amount=data.avg_price />
+                                </div>
+                                <div role="cell" class="px-4 py-2 w-30 text-right hidden md:block">
+                                    <span class="text-xs text-[color:var(--color-text-muted)]">
+                                        {format!("{:.1} / day", data.daily_sales)}
+                                    </span>
                                 </div>
                                 <div role="cell" class="px-4 py-2 w-40 text-right hidden md:block">
                                     <span class="text-xs text-[color:var(--color-text-muted)]">
@@ -479,15 +536,6 @@ pub fn LeveAnalyzer() -> impl IntoView {
     Effect::new(move |_| {
         if let Some(world) = selected_world.get() {
             let world_name = world.name;
-            // Preserve other query params if needed, or just overwrite for now.
-            // LeveAnalyzerTable manages its own state via query_signal which reads/writes directly.
-            // But we should try to preserve existing params if possible, or at least not wipe them out unnecessarily.
-            // Since we are changing the main context (world), a full refresh of params might be acceptable or we can just append.
-            // Actually, query_signal handles reading/writing. We just need to update `world`.
-
-            // Note: navigate will replace the current query params if not carefully merged.
-            // use_query_map is reactive.
-
             let current_query = query.get_untracked();
             let world_matches = current_query
                 .get("world")
@@ -495,20 +543,26 @@ pub fn LeveAnalyzer() -> impl IntoView {
                 .unwrap_or(false);
 
             if !world_matches {
-                // Construct new query string
-                // Let's try to preserve them.
                 let mut query_string = format!("?world={}", world_name);
                 for (k, v) in current_query.into_iter() {
                     if k != "world" {
                         query_string.push_str(&format!("&{}={}", k, v));
                     }
                 }
-
                 nav(&query_string, NavigateOptions::default());
             }
         }
     });
 
+    let recent_sales = ArcResource::new(selected_world, move |world| async move {
+        if let Some(world) = world {
+            get_recent_sales_for_world(&world.name).await
+        } else {
+            Ok(RecentSales { sales: vec![] })
+        }
+    });
+
+    let recent_sales_clone = recent_sales.clone();
     view! {
         <div class="flex flex-col gap-4 h-full">
             <Title text="Leve Analyzer - Ultros" />
@@ -517,6 +571,16 @@ pub fn LeveAnalyzer() -> impl IntoView {
             <div class="flex flex-col gap-4 p-4 bg-brand-900/50 rounded-lg border border-brand-800">
                 <div class="flex flex-row justify-between items-center">
                     <h1 class="text-2xl font-bold text-brand-100">"Leve Analyzer"</h1>
+                    <div class="flex flex-row gap-2 items-center">
+                        <Suspense fallback=|| view! { <div class="text-brand-300 text-sm animate-pulse">"Loading sales data..."</div> }>
+                            {move || {
+                                recent_sales_clone
+                                    .get()
+                                    .and_then(|r| r.err())
+                                    .map(|_| view! { <div class="text-red-400 text-sm">"Error loading sales data"</div> })
+                            }}
+                        </Suspense>
+                    </div>
                 </div>
 
                 <div class="flex flex-col md:flex-row items-center gap-2">
@@ -532,16 +596,27 @@ pub fn LeveAnalyzer() -> impl IntoView {
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>
                     {move || {
                         let listings = global_cheapest_listings.get();
-                        match listings {
-                            Some(Ok(listings)) => {
+                        let sales = recent_sales.get();
+                        match (listings, sales) {
+                            (Some(Ok(listings)), Some(Ok(sales))) => {
                                 view! {
                                     <LeveAnalyzerTable
                                         global_cheapest_listings=listings
+                                        recent_sales=Some(sales)
                                         world=region.into()
                                     />
                                 }.into_any()
                             }
-                            Some(Err(e)) => {
+                            (Some(Ok(listings)), _) => {
+                                view! {
+                                    <LeveAnalyzerTable
+                                        global_cheapest_listings=listings
+                                        recent_sales=None
+                                        world=region.into()
+                                    />
+                                }.into_any()
+                            }
+                            (Some(Err(e)), _) => {
                                 view! {
                                     <div class="text-red-400">
                                         "Error loading listings: " {e.to_string()}

@@ -1,8 +1,10 @@
 #![recursion_limit = "256"]
+pub(crate) mod analysis;
 pub(crate) mod api;
 pub(crate) mod components;
 pub(crate) mod error;
 pub(crate) mod global_state;
+pub(crate) mod math;
 pub(crate) mod routes;
 pub(crate) mod ws;
 

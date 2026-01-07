@@ -7,6 +7,7 @@ use crate::{
     },
     error::AppError,
     global_state::LocalWorldData,
+    math::filter_outliers_iqr,
 };
 use chrono::{Duration, Utc};
 use humantime::{format_duration, parse_duration};
@@ -90,7 +91,11 @@ fn listings_to_map(listings: CheapestListings) -> HashMap<ProfitKey, (i32, i32)>
         .collect()
 }
 
-fn compute_summary(sale: SaleData, hq_data: Option<&SaleData>) -> SaleSummary {
+fn compute_summary(
+    sale: SaleData,
+    hq_data: Option<&SaleData>,
+    filter_outliers: bool,
+) -> SaleSummary {
     let now = Utc::now().naive_utc();
     let SaleData { item_id, hq, sales } = sale;
     let min_price = hq_data
@@ -106,11 +111,23 @@ fn compute_summary(sale: SaleData, hq_data: Option<&SaleData>) -> SaleSummary {
         .map(|price| price.price_per_unit)
         .max()
         .unwrap_or_default();
-    let avg_price = (sales
-        .iter()
-        .map(|price| price.price_per_unit as i64)
-        .sum::<i64>()
-        / sales.len() as i64) as i32;
+
+    let avg_price = if filter_outliers {
+        let prices: Vec<i32> = sales.iter().map(|s| s.price_per_unit).collect();
+        let filtered = filter_outliers_iqr(&prices);
+        if filtered.is_empty() {
+            0
+        } else {
+            (filtered.iter().map(|&p| p as i64).sum::<i64>() / filtered.len() as i64) as i32
+        }
+    } else {
+        (sales
+            .iter()
+            .map(|price| price.price_per_unit as i64)
+            .sum::<i64>()
+            / sales.len() as i64) as i32
+    };
+
     let t = sales
         .last()
         .map(|last| (last.sale_date - now).num_milliseconds().abs() / sales.len() as i64);
@@ -155,6 +172,7 @@ impl ProfitTable {
         global_cheapest_listings: CheapestListings,
         world_cheapest_listings: CheapestListings,
         cross_region: Vec<CheapestListings>,
+        filter_outliers: bool,
     ) -> Self {
         let mut region_cheapest = listings_to_map(global_cheapest_listings);
         let world_cheapest = listings_to_map(world_cheapest_listings);
@@ -192,8 +210,11 @@ impl ProfitTable {
                 let hq = sale.hq;
                 let key = ProfitKey { item_id, hq };
                 let (cheapest_price, cheapest_world_id) = *region_cheapest.get(&key)?;
-                let summary =
-                    compute_summary(sale, (!hq).then(|| hq_sales.get(&item_id)).flatten());
+                let summary = compute_summary(
+                    sale,
+                    (!hq).then(|| hq_sales.get(&item_id)).flatten(),
+                    filter_outliers,
+                );
 
                 // Use the world's price as estimated sale price
                 let estimated_sale_price =
@@ -237,12 +258,14 @@ fn AnalyzerTable(
     cross_region: Vec<CheapestListings>,
     worlds: Arc<WorldHelper>,
     world: Signal<String>,
+    filter_outliers: bool,
 ) -> impl IntoView {
     let profits = ProfitTable::new(
         sales,
         global_cheapest_listings,
         world_cheapest_listings,
         cross_region,
+        filter_outliers,
     );
 
     let items = &xiv_gen_db::data().items;
@@ -919,6 +942,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     });
 
     let (cross_region_enabled, set_cross_region_enabled) = query_signal::<bool>("cross");
+    let (filter_outliers, set_filter_outliers) = query_signal::<bool>("filter-outliers");
     let connected_regions = &["Europe", "Japan", "North-America", "Oceania"];
     let query = use_query_map();
 
@@ -984,6 +1008,16 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                         ))
                                         checked_label=Oco::Borrowed("Cross region enabled")
                                         unchecked_label=Oco::Borrowed("Cross region disabled")
+                                    />
+                                    <Toggle
+                                        checked=Signal::derive(move || {
+                                            filter_outliers().unwrap_or_default()
+                                        })
+                                        set_checked=SignalSetter::map(move |val: bool| set_filter_outliers(
+                                            val.then_some(true),
+                                        ))
+                                        checked_label=Oco::Borrowed("Filter outliers enabled")
+                                        unchecked_label=Oco::Borrowed("Filter outliers disabled")
                                     />
 
                                     <div
@@ -1063,6 +1097,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                                     cross_region
                                                     worlds
                                                     world=world.into()
+                                                    filter_outliers=filter_outliers().unwrap_or(false)
                                                 />
                                             },
                                         )

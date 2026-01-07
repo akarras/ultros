@@ -8,8 +8,8 @@ use crate::{
     global_state::{
         LocalWorldData, cookies::Cookies, crafter_levels::CrafterLevels, home_world::use_home_world,
     },
+    analysis::{analyze_sales, SalesStats},
 };
-use chrono::Utc;
 use icondata as i;
 use leptos::{either::Either, prelude::*};
 use leptos_meta::{Meta, Title};
@@ -166,54 +166,6 @@ fn calculate_crafting_cost(
     (clamped_cost, sub_crafts)
 }
 
-#[derive(Clone, Copy, Debug)]
-struct SalesStats {
-    daily_sales: f32,
-    avg_price: i32,
-    total_sales: usize,
-}
-
-fn analyze_sales(sales_data: &[&SaleData]) -> SalesStats {
-    let now = Utc::now().naive_utc();
-    let mut total_sales = 0;
-    let mut total_price: i64 = 0;
-    let mut oldest_date = now;
-
-    for data in sales_data {
-        for sale in &data.sales {
-            total_sales += 1;
-            total_price += sale.price_per_unit as i64;
-            if sale.sale_date < oldest_date {
-                oldest_date = sale.sale_date;
-            }
-        }
-    }
-
-    if total_sales == 0 {
-        return SalesStats {
-            daily_sales: 0.0,
-            avg_price: 0,
-            total_sales: 0,
-        };
-    }
-
-    let avg_price = (total_price / total_sales as i64) as i32;
-    let duration_millis = (now - oldest_date).num_milliseconds().abs();
-    // Clamp to at least 1 hour to prevent huge numbers for very recent single sales
-    let duration_hours = (duration_millis as f64 / 1000.0 / 3600.0).max(1.0);
-    let days_in_sample = duration_hours / 24.0;
-
-    // If we only have 1 sale, and it was recent, daily_sales might be huge if we strictly divide by duration.
-    // But logically, if it sold once in the last hour, that is a rate of 24/day *observed*.
-    // We will present it as is, but maybe the UI can clarify "based on 1 sale".
-    let daily_sales = total_sales as f32 / days_in_sample as f32;
-
-    SalesStats {
-        daily_sales,
-        avg_price,
-        total_sales,
-    }
-}
 
 #[component]
 fn FilterCard<T>(
@@ -262,6 +214,7 @@ fn RecipeAnalyzerTable(
     let (use_subcrafts, set_use_subcrafts) = query_signal::<bool>("subcrafts");
     let (min_daily_sales, set_min_daily_sales) = query_signal::<f32>("min-sales");
     let (require_hq, set_require_hq) = query_signal::<bool>("require-hq");
+    let (filter_outliers, set_filter_outliers) = query_signal::<bool>("filter-outliers");
 
     let cookies = use_context::<Cookies>().unwrap();
     let (crafter_levels, _) = cookies.use_cookie_typed::<_, CrafterLevels>("CRAFTER_LEVELS");
@@ -283,6 +236,7 @@ fn RecipeAnalyzerTable(
         let levels = crafter_levels.get().unwrap_or_default();
         let use_sub = use_subcrafts().unwrap_or(false);
         let require_hq_flag = require_hq().unwrap_or(false);
+        let filter_outliers = filter_outliers().unwrap_or(false);
 
         let sales_map: HashMap<i32, Vec<&SaleData>> = if let Some(ref sales) = recent_sales {
             let mut map = HashMap::new();
@@ -338,7 +292,7 @@ fn RecipeAnalyzerTable(
             }
 
             let sales_stats = if let Some(item_sales) = sales_map.get(&recipe.item_result.0) {
-                analyze_sales(item_sales)
+                analyze_sales(item_sales, filter_outliers)
             } else {
                 SalesStats {
                     daily_sales: 0.0,
@@ -561,6 +515,19 @@ fn RecipeAnalyzerTable(
                     />
                     <label for="require-hq">"Require HQ Ingredients"</label>
                     <div class="text-brand-300 cursor-help" title="If enabled, ingredient costs will prefer HQ listings when available. Falls back to LQ if no HQ listing exists.">
+                        <Icon icon=i::AiQuestionCircleOutlined />
+                    </div>
+                </div>
+                <div class="flex flex-row gap-4 flex-wrap">
+                    <input
+                        type="checkbox"
+                        id="filter-outliers"
+                        class="checkbox"
+                        prop:checked=move || filter_outliers().unwrap_or(false)
+                        on:change=move |ev| set_filter_outliers(Some(event_target_checked(&ev)))
+                    />
+                    <label for="filter-outliers">"Filter Outliers"</label>
+                    <div class="text-brand-300 cursor-help" title="If enabled, sales outliers will be removed from the average price calculation using the Interquartile Range (IQR) method.">
                         <Icon icon=i::AiQuestionCircleOutlined />
                     </div>
                 </div>
