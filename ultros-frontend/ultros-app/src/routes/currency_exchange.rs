@@ -162,7 +162,9 @@ fn resolve_currency(
     use_currency_type: u8,
     data: &'static xiv_gen::Data,
 ) -> Option<ItemAmount> {
-    let new_item_id = if use_currency_type == 4 && (item_id.0 == 1 || item_id.0 == 0) {
+    let new_item_id = if (use_currency_type == 4 || use_currency_type == 16)
+        && (item_id.0 == 1 || item_id.0 == 0)
+    {
         // Poetics shop uses currency type 4 and often has cost 1 (Gil) or 0
         ItemId(28)
     } else if item_id.0 == 46728 {
