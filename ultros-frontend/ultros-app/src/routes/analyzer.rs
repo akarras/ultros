@@ -419,6 +419,7 @@ fn AnalyzerTable(
                             {
                                 let mut categories = xiv_gen_db::data().item_search_categorys
                                     .iter()
+                                    .filter(|(_, cat)| !cat.name.is_empty())
                                     .map(|(id, cat)| (id.0, cat.name.clone()))
                                     .collect::<Vec<_>>();
                                 categories.sort_by(|a, b| a.1.cmp(&b.1));
