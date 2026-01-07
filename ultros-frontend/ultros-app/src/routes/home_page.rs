@@ -1,12 +1,14 @@
 use crate::components::icon::Icon;
 use icondata as i;
 use leptos::prelude::*;
-use leptos_meta::*;
 use leptos_router::components::A;
 
 use crate::components::{
-    ad::Ad, live_sale_ticker::LiveSaleTicker, meta::MetaDescription,
-    recently_viewed::RecentlyViewed, top_deals::TopDeals,
+    ad::Ad,
+    live_sale_ticker::LiveSaleTicker,
+    meta::{MetaDescription, MetaTitle},
+    recently_viewed::RecentlyViewed,
+    top_deals::TopDeals,
 };
 
 #[component]
@@ -38,9 +40,9 @@ fn FeatureCard(
 #[component]
 pub fn HomePage() -> impl IntoView {
     view! {
+        <MetaTitle title="Ultros - Home" />
         <MetaDescription text="Ultros is a fast market board analysis tool, keep up to date with all of your retainers and ensure you've got the best prices!" />
         <div class="main-content p-2 sm:p-6">
-            <Title text="Ultros - Home" />
             <div class="container flex flex-col gap-6 lg:flex-row-reverse mx-auto items-start max-w-7xl">
                 // Right sidebar
                 <div class="flex flex-col w-full lg:w-[424px] gap-6 sticky top-4">

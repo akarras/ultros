@@ -1,3 +1,4 @@
+use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::{
     analysis::{SalesStats, analyze_sales},
     api::{get_cheapest_listings, get_recent_sales_for_world},
@@ -9,7 +10,6 @@ use crate::{
 };
 use icondata as i;
 use leptos::{either::Either, prelude::*};
-use leptos_meta::{Meta, Title};
 use leptos_router::{
     NavigateOptions,
     hooks::{query_signal, use_navigate, use_query_map},
@@ -565,8 +565,8 @@ pub fn LeveAnalyzer() -> impl IntoView {
     let recent_sales_clone = recent_sales.clone();
     view! {
         <div class="flex flex-col gap-4 h-full">
-            <Title text="Leve Analyzer - Ultros" />
-            <Meta name="description" content="Analyze Crafting Levequests for profitability" />
+            <MetaTitle title="Leve Analyzer - Ultros" />
+            <MetaDescription text="Analyze Crafting Levequests for profitability" />
 
             <div class="flex flex-col gap-4 p-4 bg-brand-900/50 rounded-lg border border-brand-800">
                 <div class="flex flex-row justify-between items-center">
