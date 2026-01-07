@@ -49,7 +49,7 @@ static STATIC_PAGES: LazyLock<Vec<SearchResult>> = LazyLock::new(|| {
             score: 100.0,
             title: "My Lists".to_string(),
             result_type: "Page".to_string(),
-            url: "/lists".to_string(),
+            url: "/list".to_string(),
             icon_id: None,
             category: Some("Personal".to_string()),
         },
