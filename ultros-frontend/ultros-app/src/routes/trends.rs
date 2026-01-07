@@ -12,7 +12,7 @@ use crate::{
         clipboard::Clipboard,
         gil::Gil,
         item_icon::ItemIcon,
-        meta::{MetaDescription, MetaTitle},
+        meta::{MetaDescription, MetaImage, MetaTitle},
         skeleton::BoxSkeleton,
         virtual_scroller::VirtualScroller,
         world_picker::WorldOnlyPicker,
@@ -175,6 +175,7 @@ pub fn Trends() -> impl IntoView {
     view! {
         <MetaTitle title="Market Trends - Ultros" />
         <MetaDescription text="View market trends for Final Fantasy 14 items, including high velocity, rising prices, and falling prices." />
+        <MetaImage />
 
         <div class="main-content p-6">
             <div class="container mx-auto max-w-7xl">

@@ -5,13 +5,17 @@ use leptos_meta::*;
 pub fn MetaTitle(#[prop(into)] title: TextProp) -> impl IntoView {
     view! {
         <Title text=title.clone() />
+        <Meta name="twitter:title" content=title.clone() />
         <Meta name="og:title" content=title />
     }
 }
 
 /// Creates appropriate meta tags to indicate an image is present on the page
 #[component]
-pub fn MetaImage(#[prop(into)] url: TextProp) -> impl IntoView {
+pub fn MetaImage(#[prop(into, optional)] url: Option<TextProp>) -> impl IntoView {
+    let url = url
+        .map(|u| u.get())
+        .unwrap_or_else(|| "https://ultros.app/static/apple-touch-icon.png".into());
     view! {
         <Meta name="twitter:image" content=url.clone() />
         <Meta name="og:image" property="og:image" content=url />
