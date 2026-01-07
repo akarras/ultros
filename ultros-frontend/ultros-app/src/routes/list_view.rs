@@ -14,8 +14,11 @@ use crate::api::{
 };
 use crate::components::{
     add_recipe_to_current_list::AddRecipeToCurrentListModal,
-    auto_mark_purchases::AutoMarkPurchases, item_icon::*, list_item_row::ListItemRow,
-    list_summary::*, loading::*, make_place_importer::*, tooltip::*,
+    item_icon::*,
+    list::{auto_mark_purchases::AutoMarkPurchases, list_item_row::ListItemRow, list_summary::*},
+    loading::*,
+    make_place_importer::*,
+    tooltip::*,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
