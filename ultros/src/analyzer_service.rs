@@ -685,6 +685,17 @@ impl AnalyzerService {
                 .sum::<f32>()
                 / sales_count;
 
+            // Calculate Standard Deviation
+            let variance = recent_sales
+                .iter()
+                .map(|s| {
+                    let diff = s.price_per_item as f32 - avg_price;
+                    diff * diff
+                })
+                .sum::<f32>()
+                / sales_count;
+            let std_dev = variance.sqrt();
+
             if let Some(cheapest) = cheapest_listings.item_map.get(key) {
                 let price_diff_ratio = cheapest.price as f32 / avg_price;
 
@@ -701,12 +712,25 @@ impl AnalyzerService {
                     high_velocity.push(trend_item.clone());
                 }
 
-                // Rising: Current price is 50% higher than average
-                if price_diff_ratio > 1.5 {
+                // Rising: Current price is significantly higher than average (using SD or fixed ratio)
+                // Use 1.5 ratio OR > 2 SDs if SD is significant relative to price
+                // If SD is small, 1.5 ratio is safer. If SD is huge, 1.5 ratio might be within noise.
+                // Let's keep 1.5 ratio as a base, but maybe refine it?
+                // Actually, let's use SD if available and meaningful.
+                // If price > avg + 1.0 * SD (and ratio > 1.2), it's rising.
+                // But to keep it simple and consistent with "Rising Prices" meaning "Buy Low Sell High later" or "Market Spiking":
+                // If we want to find "Rising" markets to maybe invest in? No, usually "Rising" means "Don't buy now".
+                // Or does it mean "It's trending up, buy now before it goes higher"?
+                // Let's stick to the previous logic but maybe make it a bit more statistically sound if possible.
+                // For now, I'll stick to the requested improvement: Use Standard Deviation.
+
+                // If price is > 1 standard deviation above average, and at least 20% higher.
+                if (cheapest.price as f32 > avg_price + std_dev) && price_diff_ratio > 1.2 {
                     rising_price.push(trend_item.clone());
                 }
-                // Falling: Current price is 50% lower than average
-                else if price_diff_ratio < 0.5 {
+                // Falling: Price < 1 SD below average, and at least 20% lower.
+                else if (cheapest.price as f32) < (avg_price - std_dev) && price_diff_ratio < 0.8
+                {
                     falling_price.push(trend_item.clone());
                 }
             }
@@ -764,7 +788,7 @@ impl AnalyzerService {
             .iter()
             .map(|(i, values)| (i, values, values.iter().collect::<SoldWithin>()))
             .flat_map(|(item, values, sold_within)| {
-                values
+                let mut prices: smallvec::SmallVec<[i32; SALE_HISTORY_SIZE]> = values
                     .iter()
                     .filter(|sale| {
                         resale_options
@@ -780,8 +804,19 @@ impl AnalyzerService {
                             .unwrap_or(true)
                     })
                     .map(|sale| sale.price_per_item)
-                    .min()
-                    .map(|price| (*item, (price, sold_within)))
+                    .collect();
+                if prices.is_empty() {
+                    return None;
+                }
+                prices.sort_unstable();
+                let len = prices.len();
+                // Get median. If even, pick the lower one to be conservative?
+                // Actually, let's pick the one at len / 2.
+                // 1 item: idx 0. 2 items: idx 1. 3 items: idx 1. 4 items: idx 2.
+                // This essentially picks the slightly higher one in even cases, or middle in odd.
+                // Let's pick len / 2.
+                let price = prices[len / 2];
+                Some((*item, (price, sold_within)))
             })
             .collect();
 
