@@ -83,16 +83,19 @@ fn get_param_data_for_item(item: ItemId) -> Option<Vec<ParamData>> {
 fn ParamView(data: ParamData) -> impl IntoView {
     view! {
         <div class="w-full">
-            <Tooltip tooltip_text=data.base_param.description.as_str()>
-                <div class="flex justify-between w-full">
-                    <span class="text-brand-300">{data.base_param.name.as_str()}</span>
-                    <div>
+            <Tooltip
+                class="w-full"
+                tooltip_text=data.base_param.description.as_str()
+            >
+                <div class="flex justify-between items-center w-full gap-x-2">
+                    <span class="text-brand-300 truncate">{data.base_param.name.as_str()}</span>
+                    <div class="flex items-center gap-x-2 flex-shrink-0">
                         <span class="font-medium text-brand-100">{data.normal_value}</span>
                         {data
                             .special_value
                             .map(|special| {
                                 view! {
-                                    <span class="text-brand-400 ml-1 text-xs">
+                                    <span class="text-brand-400 text-xs whitespace-nowrap">
                                         "(HQ: "
                                         {data.normal_value + special}
                                         ")"

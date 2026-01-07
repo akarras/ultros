@@ -61,6 +61,7 @@ pub fn Tooltip<T>(
     #[prop(into)]
     #[allow(unused_variables)]
     tooltip_text: Signal<String>,
+    #[prop(optional, into)] class: Option<String>,
     children: TypedChildrenFn<T>,
 ) -> impl IntoView
 where
@@ -146,7 +147,9 @@ where
 
     view! {
         <div
-            class="inline-block"
+            class=move || {
+                format!("inline-block {}", class.clone().unwrap_or_default())
+            }
             on:mouseenter=move |_| set_is_hovered.set(true)
             on:mouseleave=move |_| set_is_hovered.set(false)
             on:focusin=move |_| set_is_focused.set(true)
