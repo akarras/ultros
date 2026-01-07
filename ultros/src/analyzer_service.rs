@@ -408,6 +408,10 @@ impl AnalyzerService {
     }
 
     async fn serialize_state(&self, is_shutdown: bool) -> Result<()> {
+        if !self.initiated.load(Ordering::Relaxed) {
+            info!("Analyzer not initialized, skipping serialization");
+            return Ok(());
+        }
         let state = self.get_analyzer_state().await;
         let bytes = rkyv::to_bytes::<_, 256>(&state).map_err(|e| anyhow!(e.to_string()))?;
 
@@ -1391,6 +1395,19 @@ mod tests {
         // Serialize the state
         analyzer_service.serialize_state(false).await.unwrap();
 
+        // Verify .bin.gz does not exist because we aren't initiated
+        let mut entries = tokio::fs::read_dir("analyzer-data").await.unwrap();
+        let mut found = false;
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            if entry.file_name().to_string_lossy().ends_with(".bin.gz") {
+                found = true;
+            }
+        }
+        assert!(!found, "Should not have created a .bin.gz file");
+
+        analyzer_service.initiated.store(true, Ordering::Relaxed);
+        analyzer_service.serialize_state(false).await.unwrap();
+
         // Verify .bin.gz exists
         let mut entries = tokio::fs::read_dir("analyzer-data").await.unwrap();
         let mut found = false;
@@ -1440,7 +1457,7 @@ mod tests {
         let dc_analyzer_service = AnalyzerService {
             recent_sale_history: new_recent_sale_history.clone(),
             cheapest_items: dc_cheapest_items.clone(),
-            initiated: Arc::new(AtomicBool::new(false)),
+            initiated: Arc::new(AtomicBool::new(true)),
         };
         // Serialize
         dc_analyzer_service.serialize_state(false).await.unwrap();
