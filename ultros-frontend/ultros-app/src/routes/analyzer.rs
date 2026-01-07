@@ -988,6 +988,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                         </h1>
                         <div class="flex flex-col gap-4">
                             <MetaTitle title=move || format!("Flip Finder - {}", world()) />
+                            <MetaImage />
                             <MetaDescription text=move || {
                                 format!(
                                     "The analyzer enables FFXIV merchants to find the best items to buy on other worlds and sell on {}. Filter for the best profits or return, make gil through market arbitrage.",
@@ -1171,6 +1172,7 @@ pub fn Analyzer() -> impl IntoView {
     view! {
         <MetaTitle title="Flip Finder - Ultros" />
         <MetaDescription text="Find items on the Final Fantasy 14 marketboard that are great for resale. Used to earn gil quickly." />
+        <MetaImage />
 
         <div class="main-content p-2 sm:p-6">
             <div class="container mx-auto max-w-7xl">
