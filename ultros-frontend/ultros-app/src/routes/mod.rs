@@ -1,3 +1,4 @@
+pub mod about;
 pub mod alerts;
 pub mod analyzer;
 pub mod currency_exchange;
