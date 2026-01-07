@@ -191,6 +191,7 @@ fn JobsList() -> impl IntoView {
             {jobs
                 .into_iter()
                 .filter(|(_, job)| job.job_index > 0 || job.doh_dol_job_index >= 0)
+                .filter(|(_, job)| !job.abbreviation.is_empty() || !job.name.is_empty())
                 .map(|(_id, job)| {
                     let seg = if job.abbreviation.is_empty() { job.name.as_str() } else { job.abbreviation.as_str() };
                     let href = ["/items/jobset/", &seg.replace("/", "%2F")].concat();
@@ -832,7 +833,6 @@ pub fn ItemExplorer() -> impl IntoView {
 
 #[cfg(test)]
 mod tests {
-
     #[test]
     fn test_job_filtering() {
         let data = xiv_gen_db::data();
@@ -840,11 +840,21 @@ mod tests {
         let visible_jobs: Vec<_> = jobs
             .iter()
             .filter(|(_, job)| job.job_index > 0 || job.doh_dol_job_index >= 0)
+            .filter(|(_, job)| !job.abbreviation.is_empty() || !job.name.is_empty())
             .collect();
 
         println!("Visible jobs count: {}", visible_jobs.len());
-        for (_, job) in &visible_jobs {
-            println!("Visible: {}", job.name);
+        for (id, job) in &visible_jobs {
+            let seg = if job.abbreviation.is_empty() {
+                job.name.as_str()
+            } else {
+                job.abbreviation.as_str()
+            };
+            println!(
+                "Visible: {} (ID: {}) Abbr: '{}' Seg: '{}'",
+                job.name, id.0, job.abbreviation, seg
+            );
+            assert!(!seg.is_empty(), "Segment should not be empty");
         }
 
         assert!(
@@ -858,6 +868,19 @@ mod tests {
         assert!(
             !visible_jobs.iter().any(|(_, j)| j.name == "marauder"),
             "Marauder should not be visible."
+        );
+        // Ensure invalid jobs are filtered out
+        assert!(
+            !visible_jobs.iter().any(|(id, _)| id.0 == 43),
+            "Job 43 should be filtered out"
+        );
+        assert!(
+            !visible_jobs.iter().any(|(id, _)| id.0 == 44),
+            "Job 44 should be filtered out"
+        );
+        assert!(
+            !visible_jobs.iter().any(|(id, _)| id.0 == 45),
+            "Job 45 should be filtered out"
         );
     }
 }
