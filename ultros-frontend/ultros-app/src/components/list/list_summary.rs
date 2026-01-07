@@ -4,7 +4,7 @@ use leptos::prelude::*;
 use ultros_api_types::{ActiveListing, list::ListItem};
 use xiv_gen::ItemId;
 
-use super::gil::*;
+use crate::components::gil::*;
 use crate::global_state::LocalWorldData;
 use ultros_api_types::world_helper::{AnyResult, AnySelector};
 
