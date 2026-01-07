@@ -725,7 +725,8 @@ impl AnalyzerService {
                     rising_price.push(trend_item.clone());
                 }
                 // Falling: Price < 1 SD below average, and at least 20% lower.
-                else if (cheapest.price as f32) < (avg_price - std_dev) && price_diff_ratio < 0.8 {
+                else if (cheapest.price as f32) < (avg_price - std_dev) && price_diff_ratio < 0.8
+                {
                     falling_price.push(trend_item.clone());
                 }
             }
