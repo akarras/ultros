@@ -104,7 +104,7 @@ impl MigrationTrait for Migration {
         db.execute_unprepared(
             r#"
             INSERT INTO notification_endpoint (user_id, name, method, config)
-            SELECT DISTINCT
+            SELECT
                 a.owner as user_id,
                 'Discord Channel ' || dest.channel_id::text as name,
                 'DiscordChannel' as method,
@@ -117,6 +117,7 @@ impl MigrationTrait for Migration {
                 AND (ne.config->>'channel_id')::bigint = dest.channel_id
                 AND ne.method = 'DiscordChannel'
             )
+            GROUP BY a.owner, dest.channel_id
             "#,
         )
         .await?;
