@@ -173,19 +173,26 @@ pub fn hydrate() {
     log::info!("hydrate mode - hydrating");
     spawn_local(async move {
         info!("fetching..");
-        let (_, (worlds, region)) = join(
+        let (data_result, (worlds, region)) = join(
             populate_xiv_gen_data(),
             join(get_world_data(), get_region()),
         )
         .await;
         info!("hydrating body");
-        hydrate_body(move || {
-            let worlds = worlds.clone();
-            let region = region.clone();
-            let worlds = Ok(worlds);
-            provide_context(GuessedRegion(region));
-            provide_context(LocalWorldData(worlds));
-            view! { <App /> }
+        hydrate_body(move || match data_result {
+            Ok(_) => {
+                let worlds = worlds.clone();
+                let region = region.clone();
+                let worlds = Ok(worlds);
+                provide_context(GuessedRegion(region));
+                provide_context(LocalWorldData(worlds));
+                view! { <App /> }.into_view()
+            }
+            Err(e) => {
+                error!("Failed to load data, this may cause issues with the app {e:?}");
+                view! { <p>"Could not load game data. Please try CTRL+R to refresh the page."</p> }
+                    .into_view()
+            }
         });
     });
 }

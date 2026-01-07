@@ -35,4 +35,4 @@ console_log = { version = "1.0.0", features = ["color"] }
 
 [features]
 default = ["hydrate"]
-hydrate = ["leptos/hydrate", "ultros-app/hydrate"]
+hydrate = ["leptos/hydrate", "leptos/csr", "ultros-app/hydrate"]

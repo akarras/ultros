@@ -25,7 +25,7 @@ where
     T: Deserialize<'de> + Default,
     D: Deserializer<'de>,
 {
-    Ok(T::deserialize(deserializer).unwrap_or_default())
+    T::deserialize(deserializer)
 }
 
 #[cfg(test)]
