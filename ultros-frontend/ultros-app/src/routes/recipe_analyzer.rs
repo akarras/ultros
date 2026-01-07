@@ -565,8 +565,8 @@ fn RecipeAnalyzerTable(
                     variable_height=false
                     header=view! {
                         <div class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]" role="rowgroup">
-                             <div role="columnheader" class="w-84 p-4">"Item"</div>
-                             <div role="columnheader" class="w-30 p-4">
+                             <div role="columnheader" class="w-64 md:w-80 shrink-0 p-4">"Item"</div>
+                             <div role="columnheader" class="w-32 shrink-0 p-4">
                                 <QueryButton
                                     class="!text-brand-300 hover:text-brand-200"
                                     active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
@@ -576,7 +576,7 @@ fn RecipeAnalyzerTable(
                                     "Profit"
                                 </QueryButton>
                              </div>
-                             <div role="columnheader" class="w-30 p-4">
+                             <div role="columnheader" class="w-32 shrink-0 p-4">
                                 <QueryButton
                                     class="!text-brand-300 hover:text-brand-200"
                                     active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
@@ -586,9 +586,9 @@ fn RecipeAnalyzerTable(
                                     "ROI"
                                 </QueryButton>
                              </div>
-                             <div role="columnheader" class="w-30 p-4">"Cost / unit"</div>
-                             <div role="columnheader" class="w-30 p-4">"Price"</div>
-                             <div role="columnheader" class="w-30 p-4 hidden md:block">
+                             <div role="columnheader" class="w-32 shrink-0 p-4">"Cost / unit"</div>
+                             <div role="columnheader" class="w-32 shrink-0 p-4">"Price"</div>
+                             <div role="columnheader" class="w-32 shrink-0 p-4 hidden md:block">
                                 <QueryButton
                                     class="!text-brand-300 hover:text-brand-200"
                                     active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
@@ -598,8 +598,8 @@ fn RecipeAnalyzerTable(
                                     "Daily Sales"
                                 </QueryButton>
                              </div>
-                             <div role="columnheader" class="w-30 p-4 hidden md:block">"Avg Price"</div>
-                             <div role="columnheader" class="w-20 p-4">"Actions"</div>
+                             <div role="columnheader" class="w-32 shrink-0 p-4 hidden md:block">"Avg Price"</div>
+                             <div role="columnheader" class="w-20 shrink-0 p-4">"Actions"</div>
                         </div>
                     }.into_any()
                     each=computed_data.into()
@@ -636,7 +636,7 @@ fn RecipeAnalyzerTable(
 
                         view! {
                             <div class=classes role="row-group">
-                                <div role="cell" class="px-4 py-2 flex flex-row w-84 items-center gap-2">
+                                <div role="cell" class="px-4 py-2 flex flex-row w-64 md:w-80 shrink-0 items-center gap-2">
                                      <a
                                         class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip w-full"
                                         href=format!("/item/{}/{}", world(), item_id.0)
@@ -652,10 +652,10 @@ fn RecipeAnalyzerTable(
                                         </div>
                                     </a>
                                 </div>
-                                <div role="cell" class="px-4 py-2 w-30 text-right">
+                                <div role="cell" class="px-4 py-2 w-32 shrink-0 text-right">
                                     <Gil amount=data.profit />
                                 </div>
-                                <div role="cell" class="px-4 py-2 w-30 text-right">
+                                <div role="cell" class="px-4 py-2 w-32 shrink-0 text-right">
                                      <span class={
                                         let data = data_clone.clone();
                                         move || {
@@ -667,7 +667,7 @@ fn RecipeAnalyzerTable(
                                         {format!("{}%", data.return_on_investment)}
                                     </span>
                                 </div>
-                                <div role="cell" class="px-4 py-2 w-30 text-right">
+                                <div role="cell" class="px-4 py-2 w-32 shrink-0 text-right">
                                     <Gil amount=data.cost />
                                     {
                                         let has_sub_crafts = !data.sub_crafts.is_empty();
@@ -704,18 +704,18 @@ fn RecipeAnalyzerTable(
                                         }
                                     }
                                 </div>
-                                <div role="cell" class="px-4 py-2 w-30 text-right">
+                                <div role="cell" class="px-4 py-2 w-32 shrink-0 text-right">
                                     <Gil amount=data.market_price />
                                 </div>
-                                <div role="cell" class="px-4 py-2 w-30 text-right hidden md:block">
+                                <div role="cell" class="px-4 py-2 w-32 shrink-0 text-right hidden md:block">
                                     <span class="text-xs text-[color:var(--color-text-muted)]" title=sales_tooltip>
                                         {format!("{:.1} / day", data.daily_sales)}
                                     </span>
                                 </div>
-                                <div role="cell" class="px-4 py-2 w-30 text-right hidden md:block">
+                                <div role="cell" class="px-4 py-2 w-32 shrink-0 text-right hidden md:block">
                                     <Gil amount=data.avg_price />
                                 </div>
-                                 <div role="cell" class="px-4 py-2 w-20">
+                                 <div role="cell" class="px-4 py-2 w-20 shrink-0">
                                      <AddRecipeToList recipe=data.recipe />
                                  </div>
                             </div>
