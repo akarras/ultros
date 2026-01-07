@@ -23,6 +23,7 @@ use crate::{
         analyzer::*,
         currency_exchange::{CurrencyExchange, CurrencySelection, ExchangeItem},
         edit_retainers::*,
+        fc_crafting_analyzer::*,
         history::*,
         home_page::*,
         item_explorer::*,
@@ -291,6 +292,8 @@ pub fn App() -> impl IntoView {
                             <Route path=path!("vendor-resale") view=VendorResale />
                             <Route path=path!("vendor-resale/:world") view=VendorWorldView />
                             <Route path=path!("recipe-analyzer") view=RecipeAnalyzer />
+                            <Route path=path!("fc-crafting-analyzer") view=FCCraftingAnalyzer />
+                            <Route path=path!("fc-crafting-analyzer/:world") view=FCCraftingAnalyzer />
                             <Route path=path!("leve-analyzer") view=LeveAnalyzer />
                             <Route path=path!("scrip-sources") view=ScripSources />
                             <Route path=path!("venture-analyzer") view=VentureAnalyzer />
