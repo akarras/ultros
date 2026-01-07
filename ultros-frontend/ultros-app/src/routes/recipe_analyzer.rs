@@ -15,8 +15,7 @@ use crate::{
         world_picker::WorldOnlyPicker,
     },
     global_state::{
-        cookies::Cookies, crafter_levels::CrafterLevels, home_world::use_home_world,
-        LocalWorldData,
+        LocalWorldData, cookies::Cookies, crafter_levels::CrafterLevels, home_world::use_home_world,
     },
 };
 use icondata as i;
