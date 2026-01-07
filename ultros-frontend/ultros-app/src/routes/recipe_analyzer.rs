@@ -1,4 +1,5 @@
 use crate::{
+    analysis::{SalesStats, analyze_sales},
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
         add_recipe_to_list::AddRecipeToList, crafter_settings::CrafterSettings, gil::*, icon::Icon,
@@ -8,7 +9,6 @@ use crate::{
     global_state::{
         LocalWorldData, cookies::Cookies, crafter_levels::CrafterLevels, home_world::use_home_world,
     },
-    analysis::{analyze_sales, SalesStats},
 };
 use icondata as i;
 use leptos::{either::Either, prelude::*};
@@ -165,7 +165,6 @@ fn calculate_crafting_cost(
 
     (clamped_cost, sub_crafts)
 }
-
 
 #[component]
 fn FilterCard<T>(

@@ -1,5 +1,5 @@
 use crate::{
-    analysis::{analyze_sales, SalesStats},
+    analysis::{SalesStats, analyze_sales},
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
         gil::*, icon::Icon, item_icon::*, query_button::QueryButton, skeleton::BoxSkeleton,
@@ -15,7 +15,11 @@ use leptos_router::{
     NavigateOptions,
     hooks::{query_signal, use_location, use_navigate, use_query_map},
 };
-use std::{cmp::Reverse, collections::{HashMap, HashSet}, sync::Arc};
+use std::{
+    cmp::Reverse,
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 use ultros_api_types::{
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     recent_sales::{RecentSales, SaleData},

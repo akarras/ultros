@@ -1,6 +1,6 @@
+use crate::math::filter_outliers_iqr;
 use chrono::Utc;
 use ultros_api_types::recent_sales::SaleData;
-use crate::math::filter_outliers_iqr;
 
 #[derive(Clone, Copy, Debug)]
 pub struct SalesStats {

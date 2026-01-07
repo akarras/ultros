@@ -1,27 +1,3 @@
-pub fn mean(data: &[f64]) -> Option<f64> {
-    let count = data.len() as f64;
-    if count > 0.0 {
-        let sum: f64 = data.iter().sum();
-        Some(sum / count)
-    } else {
-        None
-    }
-}
-
-pub fn std_deviation(data: &[f64]) -> Option<f64> {
-    match (mean(data), data.len()) {
-        (Some(data_mean), count) if count > 0 => {
-            let variance = data.iter().map(|value| {
-                let diff = data_mean - (*value as f64);
-
-                diff * diff
-            }).sum::<f64>() / count as f64;
-
-            Some(variance.sqrt())
-        },
-        _ => None
-    }
-}
 
 pub fn filter_outliers_iqr(data: &[i32]) -> Vec<i32> {
     if data.len() < 4 {

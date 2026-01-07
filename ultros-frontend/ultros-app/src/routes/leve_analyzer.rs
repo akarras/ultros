@@ -1,5 +1,5 @@
 use crate::{
-    analysis::{analyze_sales, SalesStats},
+    analysis::{SalesStats, analyze_sales},
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
         gil::*, icon::Icon, item_icon::*, query_button::QueryButton, skeleton::BoxSkeleton,
