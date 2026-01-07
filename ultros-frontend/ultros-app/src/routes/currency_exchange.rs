@@ -148,11 +148,13 @@ fn shop_items(special_shop: &SpecialShop) -> impl Iterator<Item = ShopItems> + '
                 .zip(cost_1.zip(cost_2))
                 .map(|(cost_0, (cost_1, cost_2))| (cost_0, cost_1, cost_2)),
         )
-        .map(move |((recv_0, recv_1), (cost_0, cost_1, cost_2))| ShopItems {
-            recv: [recv_0, recv_1].into_iter().flatten().collect(),
-            cost: [cost_0, cost_1, cost_2].into_iter().flatten().collect(),
-            use_currency_type: *use_currency_type,
-        })
+        .map(
+            move |((recv_0, recv_1), (cost_0, cost_1, cost_2))| ShopItems {
+                recv: [recv_0, recv_1].into_iter().flatten().collect(),
+                cost: [cost_0, cost_1, cost_2].into_iter().flatten().collect(),
+                use_currency_type: *use_currency_type,
+            },
+        )
 }
 
 fn resolve_currency(
@@ -320,11 +322,8 @@ pub fn ExchangeItem() -> impl IntoView {
                             .cost
                             .iter()
                             .flat_map(|c| {
-                                let mut resolved = resolve_currency(
-                                    c.item.key_id,
-                                    items.use_currency_type,
-                                    data,
-                                )?;
+                                let mut resolved =
+                                    resolve_currency(c.item.key_id, items.use_currency_type, data)?;
                                 resolved.amount = c.amount;
                                 Some(resolved)
                             })
@@ -954,8 +953,7 @@ pub fn CurrencySelection() -> impl IntoView {
                 .flat_map(|f| {
                     let use_currency = f.use_currency_type;
                     f.cost.into_iter().flat_map(move |i| {
-                        resolve_currency(i.item.key_id, use_currency, data)
-                            .map(|r| r.item.key_id)
+                        resolve_currency(i.item.key_id, use_currency, data).map(|r| r.item.key_id)
                     })
                 })
         })
