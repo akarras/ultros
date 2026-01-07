@@ -194,114 +194,121 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
     let is_ingredient = IngredientsIter::new(recipe).any(|(i, _)| i == item_id);
 
     Some(view! {
-        <div class="card p-3 space-y-2 rounded-lg">
-            "Crafting Recipe:"
-            <div class="flex items-center justify-between gap-2">
-                <div class="flex items-center gap-2">
+        <div class="card p-4 space-y-3 rounded-lg border border-brand-700/30 hover:shadow-lg hover:border-brand-500/50 transition-all">
+            <div class="flex items-center justify-between gap-2 border-b border-brand-700/30 pb-2">
+                <div class="flex items-center gap-3">
                     <SmallItemDisplay item=target_item />
                     <CheapestPrice item_id=target_item.key_id />
                 </div>
-                <div class="flex items-center gap-1">
+                <div class="flex items-center gap-1.5">
                     {is_target.then(|| view! {
-                        <span class="px-2 py-0.5 rounded-full text-xs font-medium
-                                     bg-[color:color-mix(in_srgb,var(--brand-ring)_22%,transparent)]
-                                     text-[color:var(--brand-fg)]">
-                            "target"
+                        <span class="px-2 py-0.5 rounded-full text-xs font-bold
+                                     bg-emerald-900/40 border border-emerald-700/40
+                                     text-emerald-200">
+                            "Target"
                         </span>
                     })}
                     {is_ingredient.then(|| view! {
-                        <span class="px-2 py-0.5 rounded-full text-xs font-medium
-                                     bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)]
-                                     text-[color:var(--color-text)]">
-                            "ingredient"
+                        <span class="px-2 py-0.5 rounded-full text-xs font-bold
+                                     bg-blue-900/40 border border-blue-700/40
+                                     text-blue-200">
+                            "Ingredient"
                         </span>
                     })}
                     <AddRecipeToList recipe />
                 </div>
             </div>
 
-            "Ingredients:"
-            {ingredients}
-
-            <div class="flex items-center gap-2 text-sm pt-1">
-                <span class="underline">"Total craft cost:"</span>
-                " "
-                <RecipePriceEstimate recipe />
+            <div class="space-y-1">
+                <div class="text-xs font-semibold text-brand-300 uppercase tracking-wide">"Ingredients"</div>
+                <div class="pl-1 border-l-2 border-brand-700/30 space-y-1">
+                    {ingredients}
+                </div>
             </div>
 
-            // Profitability at a glance
-            <Suspense fallback=move || {
-                view! { <SingleLineSkeleton /> }
-            }>
-                {move || {
-                    use_context::<CheapestPrices>()
-                        .unwrap()
-                        .read_listings
-                        .with(|data| {
-                            let data = data.as_ref()?.as_ref().ok()?;
-                            // compute costs again to compare directly
-                            let sum_for = |prefer_hq: bool| -> i32 {
-                                IngredientsIter::new(recipe)
-                                    .flat_map(|(ingredient, amount)| {
-                                        items.get(&ingredient).map(|item| (item, amount))
+            <div class="pt-2 border-t border-brand-700/30">
+                <div class="flex items-center justify-between gap-2 text-sm">
+                    <span class="text-brand-300">"Est. Cost:"</span>
+                    <RecipePriceEstimate recipe />
+                </div>
+
+                // Profitability at a glance
+                <Suspense fallback=move || {
+                    view! { <SingleLineSkeleton /> }
+                }>
+                    {move || {
+                        use_context::<CheapestPrices>()
+                            .unwrap()
+                            .read_listings
+                            .with(|data| {
+                                let data = data.as_ref()?.as_ref().ok()?;
+                                // compute costs again to compare directly
+                                let sum_for = |prefer_hq: bool| -> i32 {
+                                    IngredientsIter::new(recipe)
+                                        .flat_map(|(ingredient, amount)| {
+                                            items.get(&ingredient).map(|item| (item, amount))
+                                        })
+                                        .flat_map(|(item, quantity)| {
+                                            let pref_key = CheapestListingMapKey {
+                                                item_id: item.key_id.0,
+                                                hq: prefer_hq && item.can_be_hq,
+                                            };
+                                            let fallback_key = CheapestListingMapKey {
+                                                item_id: item.key_id.0,
+                                                hq: false,
+                                            };
+                                            data.map
+                                                        .get(&pref_key)
+                                                        .or_else(|| data.map.get(&fallback_key))
+                                                        .map(|d| d.price * quantity)
+                                                })
+                                                .sum()
+                                        };
+                                        let hq_cost = sum_for(true);
+                                        let lq_cost = sum_for(false);
+
+                                let lq_sell = data
+                                    .map
+                                    .get(&CheapestListingMapKey { item_id: target_item.key_id.0, hq: false })
+                                    .map(|d| d.price);
+                                let hq_sell = if target_item.can_be_hq {
+                                    data.map
+                                        .get(&CheapestListingMapKey { item_id: target_item.key_id.0, hq: true })
+                                        .or_else(|| data.map.get(&CheapestListingMapKey { item_id: target_item.key_id.0, hq: false }))
+                                        .map(|d| d.price)
+                                } else {
+                                    None
+                                };
+
+                                let profit_chip = |label: &str, profit_opt: Option<i32>| {
+                                    profit_opt.map(|profit| {
+                                        let cls = if profit >= 0 {
+                                            "px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-900/30 text-emerald-300 border border-emerald-700/30 flex items-center gap-1"
+                                        } else {
+                                            "px-2 py-0.5 rounded-full text-xs font-bold bg-red-900/30 text-red-300 border border-red-700/30 flex items-center gap-1"
+                                        };
+                                        view! {
+                                            <span class=cls>
+                                                <span>{label}</span>
+                                                <Gil amount=profit />
+                                            </span>
+                                        }.into_any()
                                     })
-                                    .flat_map(|(item, quantity)| {
-                                        let pref_key = CheapestListingMapKey {
-                                            item_id: item.key_id.0,
-                                            hq: prefer_hq && item.can_be_hq,
-                                        };
-                                        let fallback_key = CheapestListingMapKey {
-                                            item_id: item.key_id.0,
-                                            hq: false,
-                                        };
-                                        data.map
-                                                    .get(&pref_key)
-                                                    .or_else(|| data.map.get(&fallback_key))
-                                                    .map(|d| d.price * quantity)
-                                            })
-                                            .sum()
-                                    };
-                                    let hq_cost = sum_for(true);
-                                    let lq_cost = sum_for(false);
+                                };
 
-                            let lq_sell = data
-                                .map
-                                .get(&CheapestListingMapKey { item_id: target_item.key_id.0, hq: false })
-                                .map(|d| d.price);
-                            let hq_sell = if target_item.can_be_hq {
-                                data.map
-                                    .get(&CheapestListingMapKey { item_id: target_item.key_id.0, hq: true })
-                                    .or_else(|| data.map.get(&CheapestListingMapKey { item_id: target_item.key_id.0, hq: false }))
-                                    .map(|d| d.price)
-                            } else {
-                                None
-                            };
-
-                            let profit_chip = |label: &str, profit_opt: Option<i32>| {
-                                profit_opt.map(|profit| {
-                                    let cls = if profit >= 0 {
-                                        "px-2 py-0.5 rounded-full text-xs font-medium bg-[color:color-mix(in_srgb,#16a34a_22%,transparent)] text-[color:#bbf7d0]"
-                                    } else {
-                                        "px-2 py-0.5 rounded-full text-xs font-medium bg-[color:color-mix(in_srgb,#dc2626_18%,transparent)] text-[color:#fecaca]"
-                                    };
-                                    view! {
-                                        <span class=cls>
-                                            {label} ": " <Gil amount=profit />
-                                        </span>
-                                    }.into_any()
+                                Some(view! {
+                                    <div class="flex flex-wrap items-center justify-between gap-2 text-sm mt-2">
+                                        <span class="text-brand-300">"Est. Profit:"</span>
+                                        <div class="flex gap-2">
+                                            {profit_chip("HQ", hq_sell.map(|p| p - hq_cost))}
+                                            {profit_chip("LQ", lq_sell.map(|p| p - lq_cost))}
+                                        </div>
+                                    </div>
                                 })
-                            };
-
-                            Some(view! {
-                                <div class="flex flex-wrap items-center gap-2 text-sm">
-                                    <span class="text-[color:var(--color-text-muted)] mr-1">"Profit:"</span>
-                                    {profit_chip("HQ", hq_sell.map(|p| p - hq_cost))}
-                                    {profit_chip("LQ", lq_sell.map(|p| p - lq_cost))}
-                                </div>
                             })
-                        })
-                }}
-            </Suspense>
+                    }}
+                </Suspense>
+            </div>
         </div>
     }.into_any())
 }
@@ -367,12 +374,6 @@ fn gil_shop_to_npc(gil_shops: &[GilShopId]) -> Vec<(GilShopId, &'static ENpcBase
 fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     let data = xiv_gen_db::data();
     // lookup items
-    // from miu on xiv api discord:
-    // GilShop => ENpcResident,
-    // GilShop => TopicSelect => ENpcResident,
-    // GilShop => PreHandler => TopicSelect => ENpcResident (or the other way around I don't remember),
-    // GilShop => PreHandler => ENpcResident and last but not least, lua scripts (mostly for fate shops)
-    // https://github.com/ffxiv-teamcraft/ffxiv-teamcraft/blob/staging/apps/data-extraction/src/extractors/shops.extractor.ts
     let npcs = Memo::new(move |_| {
         let item_id = item_id();
         let gil_shops = data
@@ -399,7 +400,7 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                 Some(view! {
                     <a
                         href=format!("https://garlandtools.org/db/#npc/{}", resident.key_id.0)
-                        class="group flex flex-col gap-2 rounded-lg card p-3 transition-colors h-full hover:bg-[color:var(--color-base)]/50"
+                        class="group flex flex-col gap-2 rounded-lg card p-3 transition-all h-full hover:bg-[color:var(--color-base)]/50 hover:shadow-md border border-brand-700/30"
                     >
                         <div class="flex items-center justify-between gap-2 border-b border-[color:var(--color-outline)] pb-2">
                             <div class="font-medium text-[color:var(--color-text)]">{resident.singular.as_str()}</div>
@@ -415,9 +416,12 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     };
     let empty = move || npcs.with(|n| n.is_empty());
     view! {
-        <div id="vendor-sources" class:collapse=empty class="space-y-1.5 p-1 max-h-80 overflow-y-auto w-full sm:w-96 xl:w-[600px]">
-            <span class="text-sm font-semibold text-[color:var(--brand-fg)]">"Vendor sources"</span>
-            <div class="grid grid-cols-1 gap-1.5">{data}</div>
+        <div id="vendor-sources" class:hidden=empty class="panel p-4 sm:p-6 flex flex-col gap-4 max-h-[500px] overflow-y-auto">
+            <h3 class="text-lg font-bold text-brand-200 flex items-center gap-2">
+                <Icon icon=icondata::FaShopSolid attr:class="text-brand-300" />
+                "Vendor Sources"
+            </h3>
+            <div class="grid grid-cols-1 gap-3">{data}</div>
         </div>
     }
     .into_any()
@@ -527,16 +531,16 @@ fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                         let trades = get_trade_costs(shop, item_id());
                         trades.into_iter().map(move |costs| {
                             view! {
-                                <div class="group flex flex-col gap-2 rounded-lg card p-3 transition-colors">
-                                    <span class="text-sm font-medium border-b border-[color:var(--color-outline)] pb-2">{shop.name.as_str()}</span>
-                                    <div class="flex items-center gap-2 flex-wrap text-xs text-[color:var(--color-text-muted)]">
-                                        "Costs:"
+                                <div class="group flex flex-col gap-2 rounded-lg card p-3 transition-all hover:shadow-md border border-brand-700/30">
+                                    <span class="text-sm font-medium border-b border-[color:var(--color-outline)] pb-2 text-brand-100">{shop.name.as_str()}</span>
+                                    <div class="flex items-center gap-2 flex-wrap text-xs text-[color:var(--color-text-muted)] mt-1">
+                                        <span class="font-semibold text-brand-300">"Costs:"</span>
                                         {
                                             costs.into_iter().map(|(item_id, count)| {
                                                 if let Some(item) = data.items.get(&item_id) {
                                                     view! {
-                                                        <div class="flex items-center gap-1 bg-[color:var(--color-base)]/50 px-1.5 py-0.5 rounded border border-[color:var(--color-outline)]">
-                                                            <span>{count} "x"</span>
+                                                        <div class="flex items-center gap-1 bg-brand-900/40 px-2 py-1 rounded border border-brand-700/40 hover:bg-brand-900/60 transition-colors">
+                                                            <span class="font-bold text-brand-200">{count} "x"</span>
                                                             <SmallItemDisplay item />
                                                         </div>
                                                     }.into_any()
@@ -557,9 +561,12 @@ fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     let empty = move || exchanges.with(|e| e.is_empty());
 
     view! {
-        <div id="exchange-sources" class:collapse=empty class="space-y-1.5 p-1 max-h-80 overflow-y-auto w-full sm:w-96 xl:w-[600px]">
-            <span class="text-sm font-semibold text-[color:var(--brand-fg)]">"Exchange sources"</span>
-            <div class="grid grid-cols-1 gap-1.5">
+        <div id="exchange-sources" class:hidden=empty class="panel p-4 sm:p-6 flex flex-col gap-4 max-h-[500px] overflow-y-auto">
+            <h3 class="text-lg font-bold text-brand-200 flex items-center gap-2">
+                <Icon icon=icondata::BsArrowLeftRight attr:class="text-brand-300" />
+                "Exchange Sources"
+            </h3>
+            <div class="grid grid-cols-1 gap-3">
                 {view}
             </div>
         </div>
@@ -698,10 +705,10 @@ fn LeveSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                 .map(|leve| {
                     let job_name = data.class_job_categorys.get(&leve.class_job_category).map(|c| c.name.as_str()).unwrap_or("Unknown");
                     view! {
-                        <div class="group flex flex-col gap-2 rounded-lg card p-3 transition-colors h-full">
-                             <div class="text-sm font-medium border-b border-[color:var(--color-outline)] pb-2 text-[color:var(--color-text)]">{leve.name.as_str()}</div>
-                             <div class="flex items-center gap-2">
-                                <span class="px-2 py-1 rounded bg-[color:var(--brand-900)]/30 border border-[color:var(--brand-700)]/30 text-xs text-[color:var(--brand-200)] font-medium">
+                        <div class="group flex flex-col gap-2 rounded-lg card p-3 transition-all h-full hover:shadow-md border border-brand-700/30">
+                             <div class="text-sm font-medium border-b border-[color:var(--color-outline)] pb-2 text-brand-100">{leve.name.as_str()}</div>
+                             <div class="flex items-center gap-2 mt-1">
+                                <span class="px-2 py-1 rounded bg-brand-900/40 border border-brand-700/40 text-xs text-brand-200 font-bold">
                                     "Lvl " {leve.class_job_level}
                                 </span>
                                 <span class="text-xs text-[color:var(--color-text-muted)] truncate flex items-center gap-1">
@@ -719,9 +726,12 @@ fn LeveSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     let empty = move || leves.with(|l| l.is_empty());
 
     view! {
-        <div id="leve-sources" class:collapse=empty class="space-y-1.5 p-1 max-h-80 overflow-y-auto w-full sm:w-96 xl:w-[600px]">
-            <span class="text-sm font-semibold text-[color:var(--brand-fg)]">"Levequest rewards"</span>
-            <div class="grid grid-cols-1 gap-1.5">{view}</div>
+        <div id="leve-sources" class:hidden=empty class="panel p-4 sm:p-6 flex flex-col gap-4 max-h-[500px] overflow-y-auto">
+            <h3 class="text-lg font-bold text-brand-200 flex items-center gap-2">
+                <Icon icon=icondata::FaScrollSolid attr:class="text-brand-300" />
+                "Levequest Rewards"
+            </h3>
+            <div class="grid grid-cols-1 gap-3">{view}</div>
         </div>
     }
     .into_any()
@@ -745,7 +755,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                     .map(|item| {
                         view! {
                             <A
-                                attr:class="group flex flex-col gap-1 rounded-lg card p-1.5 transition-colors shadow-sm"
+                                attr:class="group flex flex-col gap-2 rounded-lg card p-3 transition-all hover:scale-[1.02] hover:shadow-lg hover:bg-brand-800/50 border border-brand-700/30"
                                 exact=true
                                 href=move || {
                                     format!(
@@ -761,10 +771,10 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
 
                                 <div class="flex items-center gap-2 text-sm">
                                     <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
-                                    <span class="flex-1 truncate">{item.name.as_str()}</span>
-                                    <span class="text-xs text-[color:var(--color-text-muted)]">{item.level_item.0}</span>
+                                    <span class="flex-1 truncate font-medium text-brand-100">{item.name.as_str()}</span>
+                                    <span class="text-xs text-[color:var(--color-text-muted)] bg-brand-900/50 px-1.5 py-0.5 rounded border border-brand-700/50">"iLvl " {item.level_item.0}</span>
                                 </div>
-                                <div class="text-xs text-[color:var(--brand-fg)]">
+                                <div class="text-sm font-bold text-[color:var(--brand-fg)] mt-1 ml-1">
                                     <CheapestPrice item_id=item.key_id />
                                 </div>
                             </A>
@@ -797,79 +807,85 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     };
 
     view! {
-        <div class="flex-col flex-auto flex-wrap p-1 w-full" class:hidden=move || item_set().is_empty()>
-            <span class="content-title">"related items"</span>
-            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
-                {item_set}
-                {move || {
-                    show_more().then(|| {
-                        item()
-                            .map(|item| {
-                                item_set_iter(item)
-                                    .chain(prefix_item_iterator(item))
-                                    .chain(suffix_item_iterator(item))
-                                    .sorted_by_key(|i| i.key_id.0)
-                                    .unique_by(|i| i.key_id)
-                                    .filter(|i| i.item_search_category.0 > 0)
-                                    .filter(|i| i.key_id.0 != item.key_id.0)
-                                    .skip(12)
-                                    .map(|item| {
-                                        view! {
-                                            <A
-                                                attr:class="group flex flex-col gap-1 rounded-lg card p-1.5 transition-colors shadow-sm"
-                                                exact=true
-                                                href=move || {
-                                                    format!(
-                                                        "/item/{}/{}",
-                                                        price_zone()
-                                                            .as_ref()
-                                                            .map(|z| z.get_name())
-                                                            .unwrap_or("North-America"),
-                                                        item.key_id.0,
-                                                    )
-                                                }
-                                            >
+        <div class="flex flex-col gap-6">
+            <div class="panel p-4 sm:p-6" class:hidden=move || item_set().is_empty()>
+                <h2 class="text-xl font-bold text-brand-200 mb-4 px-1">"Related Items"</h2>
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                    {item_set}
+                    {move || {
+                        show_more().then(|| {
+                            item()
+                                .map(|item| {
+                                    item_set_iter(item)
+                                        .chain(prefix_item_iterator(item))
+                                        .chain(suffix_item_iterator(item))
+                                        .sorted_by_key(|i| i.key_id.0)
+                                        .unique_by(|i| i.key_id)
+                                        .filter(|i| i.item_search_category.0 > 0)
+                                        .filter(|i| i.key_id.0 != item.key_id.0)
+                                        .skip(12)
+                                        .map(|item| {
+                                            view! {
+                                                <A
+                                                    attr:class="group flex flex-col gap-2 rounded-lg card p-3 transition-all hover:scale-[1.02] hover:shadow-lg hover:bg-brand-800/50 border border-brand-700/30"
+                                                    exact=true
+                                                    href=move || {
+                                                        format!(
+                                                            "/item/{}/{}",
+                                                            price_zone()
+                                                                .as_ref()
+                                                                .map(|z| z.get_name())
+                                                                .unwrap_or("North-America"),
+                                                            item.key_id.0,
+                                                        )
+                                                    }
+                                                >
 
-                                                <div class="flex items-center gap-2 text-sm">
-                                                    <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
-                                                    <span class="flex-1 truncate">{item.name.as_str()}</span>
-                                                    <span class="text-xs text-[color:var(--color-text-muted)]">{item.level_item.0}</span>
-                                                </div>
-                                                <div class="text-xs text-[color:var(--brand-fg)]">
-                                                    <CheapestPrice item_id=item.key_id />
-                                                </div>
-                                            </A>
-                                        }
-                                    })
-                                    .collect_view()
-                            })
-                            .unwrap_or_default()
-                    })
-                }}
+                                                    <div class="flex items-center gap-2 text-sm">
+                                                        <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
+                                                        <span class="flex-1 truncate font-medium text-brand-100">{item.name.as_str()}</span>
+                                                        <span class="text-xs text-[color:var(--color-text-muted)] bg-brand-900/50 px-1.5 py-0.5 rounded border border-brand-700/50">"iLvl " {item.level_item.0}</span>
+                                                    </div>
+                                                    <div class="text-sm font-bold text-[color:var(--brand-fg)] mt-1 ml-1">
+                                                        <CheapestPrice item_id=item.key_id />
+                                                    </div>
+                                                </A>
+                                            }
+                                        })
+                                        .collect_view()
+                                })
+                                .unwrap_or_default()
+                        })
+                    }}
+                </div>
+                <div class="mt-4 flex justify-center" class:hidden=move || !has_more()>
+                    <button class="btn-secondary" on:click=move |_| set_show_more(!show_more())>
+                        {move || if show_more() { "Show less" } else { "Show more" }}
+                    </button>
+                </div>
             </div>
-            <div class="mt-2 flex justify-center" class:hidden=move || !has_more()>
-                <button class="btn-secondary" on:click=move |_| set_show_more(!show_more())>
-                    {move || if show_more() { "Show less" } else { "Show more" }}
-                </button>
+
+            <div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 empty:hidden">
+                <VendorItems item_id />
+                <ExchangeSources item_id />
+                <LeveSources item_id />
             </div>
-        </div>
-        <VendorItems item_id />
-        <ExchangeSources item_id />
-        <LeveSources item_id />
-        <div
-            id="crafting-recipes"
-            class="content-well flex-col p-1"
-            class:hidden=move || recipes.with(|recipes| recipes.is_empty())
-        >
-            <span class="content-title">"crafting recipes"</span>
-            <div class="flex-wrap">
-                <For
-                    each=Signal::derive(move || recipes().into_iter().take(5).collect::<Vec<_>>())
-                    key=|recipe| recipe.key_id
-                    children=move |recipe: &'static Recipe| {
-                        view! { <Recipe recipe item_id=ItemId(item_id()) /> }
-                    }
-                />
+
+            <div
+                id="crafting-recipes"
+                class="panel p-4 sm:p-6"
+                class:hidden=move || recipes.with(|recipes| recipes.is_empty())
+            >
+                <h2 class="text-xl font-bold text-brand-200 mb-4 px-1">"Crafting Recipes"</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    <For
+                        each=Signal::derive(move || recipes().into_iter().take(5).collect::<Vec<_>>())
+                        key=|recipe| recipe.key_id
+                        children=move |recipe: &'static Recipe| {
+                            view! { <Recipe recipe item_id=ItemId(item_id()) /> }
+                        }
+                    />
+                </div>
             </div>
         </div>
     }

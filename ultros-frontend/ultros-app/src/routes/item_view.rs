@@ -1045,7 +1045,7 @@ pub fn ItemView() -> impl IntoView {
 
             <div class="main-content px-0 sm:px-4">
                 <ListingsContent item_id world />
-                <div class="mt-6 panel p-3">
+                <div class="mt-6">
                     <RelatedItems item_id=Signal::from(item_id) />
                 </div>
             </div>
