@@ -4,7 +4,7 @@ use crate::{
         filter_card::*, gil::*, item_icon::*, query_button::QueryButton, skeleton::BoxSkeleton,
         virtual_scroller::*, world_picker::WorldOnlyPicker,
     },
-    global_state::{home_world::use_home_world, LocalWorldData},
+    global_state::{LocalWorldData, home_world::use_home_world},
 };
 use chrono::Utc;
 use leptos::{either::Either, prelude::*};
@@ -105,26 +105,76 @@ fn calculate_fc_project_cost(
                     // Listing them out is safer for now.
 
                     let items = [
-                        (&process.supply_item_0, process.set_quantity_0, process.sets_required_0),
-                        (&process.supply_item_1, process.set_quantity_1, process.sets_required_1),
-                        (&process.supply_item_2, process.set_quantity_2, process.sets_required_2),
-                        (&process.supply_item_3, process.set_quantity_3, process.sets_required_3),
-                        (&process.supply_item_4, process.set_quantity_4, process.sets_required_4),
-                        (&process.supply_item_5, process.set_quantity_5, process.sets_required_5),
-                        (&process.supply_item_6, process.set_quantity_6, process.sets_required_6),
-                        (&process.supply_item_7, process.set_quantity_7, process.sets_required_7),
-                        (&process.supply_item_8, process.set_quantity_8, process.sets_required_8),
-                        (&process.supply_item_9, process.set_quantity_9, process.sets_required_9),
-                        (&process.supply_item_10, process.set_quantity_10, process.sets_required_10),
-                        (&process.supply_item_11, process.set_quantity_11, process.sets_required_11),
+                        (
+                            &process.supply_item_0,
+                            process.set_quantity_0,
+                            process.sets_required_0,
+                        ),
+                        (
+                            &process.supply_item_1,
+                            process.set_quantity_1,
+                            process.sets_required_1,
+                        ),
+                        (
+                            &process.supply_item_2,
+                            process.set_quantity_2,
+                            process.sets_required_2,
+                        ),
+                        (
+                            &process.supply_item_3,
+                            process.set_quantity_3,
+                            process.sets_required_3,
+                        ),
+                        (
+                            &process.supply_item_4,
+                            process.set_quantity_4,
+                            process.sets_required_4,
+                        ),
+                        (
+                            &process.supply_item_5,
+                            process.set_quantity_5,
+                            process.sets_required_5,
+                        ),
+                        (
+                            &process.supply_item_6,
+                            process.set_quantity_6,
+                            process.sets_required_6,
+                        ),
+                        (
+                            &process.supply_item_7,
+                            process.set_quantity_7,
+                            process.sets_required_7,
+                        ),
+                        (
+                            &process.supply_item_8,
+                            process.set_quantity_8,
+                            process.sets_required_8,
+                        ),
+                        (
+                            &process.supply_item_9,
+                            process.set_quantity_9,
+                            process.sets_required_9,
+                        ),
+                        (
+                            &process.supply_item_10,
+                            process.set_quantity_10,
+                            process.sets_required_10,
+                        ),
+                        (
+                            &process.supply_item_11,
+                            process.set_quantity_11,
+                            process.sets_required_11,
+                        ),
                     ];
 
                     for (supply_item_link, quantity_per_set, sets_required) in items {
-                         if quantity_per_set == 0 || sets_required == 0 {
+                        if quantity_per_set == 0 || sets_required == 0 {
                             continue;
                         }
 
-                        if let Some(supply_item) = data.company_craft_supply_items.get(supply_item_link) {
+                        if let Some(supply_item) =
+                            data.company_craft_supply_items.get(supply_item_link)
+                        {
                             if supply_item.item.0 == 0 {
                                 continue;
                             }
@@ -236,7 +286,7 @@ fn FCCraftingAnalyzerTable(
         let mut results = Vec::new();
 
         for sequence in sequences.values() {
-             // result_item can be 0 for some incomplete data, skip those
+            // result_item can be 0 for some incomplete data, skip those
             if sequence.result_item.0 == 0 {
                 continue;
             }
@@ -250,7 +300,7 @@ fn FCCraftingAnalyzerTable(
             let sales_stats = if let Some(item_sales) = sales_map.get(&sequence.result_item.0) {
                 analyze_sales(item_sales)
             } else {
-                 SalesStats {
+                SalesStats {
                     daily_sales: 0.0,
                     avg_price: 0,
                     total_sales: 0,
@@ -264,7 +314,7 @@ fn FCCraftingAnalyzerTable(
                 continue;
             }
 
-             let cheapest_world_id = market_price_summary
+            let cheapest_world_id = market_price_summary
                 .lq
                 .map(|d| d.world_id)
                 .or(market_price_summary.hq.map(|d| d.world_id))
@@ -282,7 +332,7 @@ fn FCCraftingAnalyzerTable(
             }
 
             let profit = market_price - cost;
-             let roi = if cost > 0 {
+            let roi = if cost > 0 {
                 (profit as f64 / cost as f64 * 100.0) as i32
             } else {
                 0
@@ -538,7 +588,7 @@ fn FCCraftingAnalyzerTable(
 
 #[component]
 pub fn FCCraftingAnalyzer() -> impl IntoView {
-     let params = use_params_map();
+    let params = use_params_map();
     let (home_world, _) = use_home_world();
 
     let region = Memo::new(move |_| {
