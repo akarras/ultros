@@ -82,20 +82,25 @@ fn get_param_data_for_item(item: ItemId) -> Option<Vec<ParamData>> {
 #[component]
 fn ParamView(data: ParamData) -> impl IntoView {
     view! {
-        <div>
+        <div class="w-full">
             <Tooltip tooltip_text=data.base_param.description.as_str()>
-                <span class="w-48">{data.base_param.name.as_str()}</span>
-                "  "
-                {data.normal_value}
-                {data
-                    .special_value
-                    .map(|special| {
-                        view! {
-                            " hq: "
-                            {data.normal_value + special}
-                        }
-                    })}
-
+                <div class="flex justify-between w-full">
+                    <span class="text-brand-300">{data.base_param.name.as_str()}</span>
+                    <div>
+                        <span class="font-medium text-brand-100">{data.normal_value}</span>
+                        {data
+                            .special_value
+                            .map(|special| {
+                                view! {
+                                    <span class="text-brand-400 ml-1 text-xs">
+                                        "(HQ: "
+                                        {data.normal_value + special}
+                                        ")"
+                                    </span>
+                                }
+                            })}
+                    </div>
+                </div>
             </Tooltip>
         </div>
     }
@@ -106,9 +111,13 @@ pub(crate) fn ItemStats(item_id: ItemId) -> impl IntoView {
     let params = get_param_data_for_item(item_id);
     params
         .map(|p| {
-            p.into_iter()
-                .map(|p| view! { <ParamView data=p /> })
-                .collect::<Vec<_>>()
+            view! {
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-x-8 gap-y-2 w-full">
+                    {p.into_iter()
+                        .map(|p| view! { <ParamView data=p /> })
+                        .collect_view()}
+                </div>
+            }
         })
         .into_any()
 }
