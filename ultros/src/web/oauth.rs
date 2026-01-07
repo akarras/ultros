@@ -101,9 +101,32 @@ pub enum OAuthScope {
 
 impl Display for OAuthScope {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let renamed_value = serde_json::to_string(self).expect("Should never fail this serialize");
-        // this is a bad hack, I should have thought of something better than serde rename to get this display
-        write!(f, "{}", renamed_value.replace('"', ""))
+        let s = match self {
+            OAuthScope::ActivitiesRead => "activities.read",
+            OAuthScope::ActivitiesWrite => "activities.write",
+            OAuthScope::ApplicationBuildsRead => "applications.builds.read",
+            OAuthScope::ApplicationBuildsUpload => "applications.builds.upload",
+            OAuthScope::ApplicationsCommands => "applications.commands",
+            OAuthScope::ApplicationsCommandsUpdate => "applications.commands.update",
+            OAuthScope::ApplicationsEntitlements => "applications.entitlements",
+            OAuthScope::ApplicationsStoreUpdate => "applications.store.update",
+            OAuthScope::Bot => "bot",
+            OAuthScope::Connections => "connections",
+            OAuthScope::Email => "email",
+            OAuthScope::GroupDmJoin => "gdm.join",
+            OAuthScope::Guilds => "guilds",
+            OAuthScope::GuildsJoin => "guilds.join",
+            OAuthScope::Identify => "identify",
+            OAuthScope::MessagesRead => "messages.read",
+            OAuthScope::RelationshipsRead => "relationships.read",
+            OAuthScope::Rpc => "rpc",
+            OAuthScope::RpcActivitiesWrite => "rpc.activities.write",
+            OAuthScope::RpcNotificationsRead => "rpc.notifications.read",
+            OAuthScope::RpcVoiceRead => "rpc.voice.read",
+            OAuthScope::RpcVoiceWrite => "rpc.voice.write",
+            OAuthScope::WebhookIncoming => "webhook.incoming",
+        };
+        write!(f, "{}", s)
     }
 }
 
