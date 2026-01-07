@@ -557,171 +557,173 @@ fn RecipeAnalyzerTable(
 
             // Results Table
              <div class="rounded-2xl overflow-x-auto panel content-visible contain-layout contain-paint will-change-scroll forced-layer">
-                <VirtualScroller
-                    viewport_height=720.0
-                    row_height=60.0
-                    overscan=8
-                    header_height=64.0
-                    variable_height=false
-                    header=view! {
-                        <div class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]" role="rowgroup">
-                             <div role="columnheader" class="w-84 p-4">"Item"</div>
-                             <div role="columnheader" class="w-30 p-4">
-                                <QueryButton
-                                    class="!text-brand-300 hover:text-brand-200"
-                                    active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                                    key="sort"
-                                    value="profit"
-                                >
-                                    "Profit"
-                                </QueryButton>
-                             </div>
-                             <div role="columnheader" class="w-30 p-4">
-                                <QueryButton
-                                    class="!text-brand-300 hover:text-brand-200"
-                                    active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                                    key="sort"
-                                    value="roi"
-                                >
-                                    "ROI"
-                                </QueryButton>
-                             </div>
-                             <div role="columnheader" class="w-30 p-4">"Cost / unit"</div>
-                             <div role="columnheader" class="w-30 p-4">"Price"</div>
-                             <div role="columnheader" class="w-30 p-4 hidden md:block">
-                                <QueryButton
-                                    class="!text-brand-300 hover:text-brand-200"
-                                    active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                                    key="sort"
-                                    value="velocity"
-                                >
-                                    "Daily Sales"
-                                </QueryButton>
-                             </div>
-                             <div role="columnheader" class="w-30 p-4 hidden md:block">"Avg Price"</div>
-                             <div role="columnheader" class="w-20 p-4">"Actions"</div>
-                        </div>
-                    }.into_any()
-                    each=computed_data.into()
-                    key=move |(index, data): &(usize, Arc<RecipeProfitData>)| (*index, data.recipe.key_id)
-                    view=move |(index, data): (usize, Arc<RecipeProfitData>)| {
-                        // Clone data for use in closures to avoid moving the Arc
-                        let data_clone = data.clone();
-                        let item_id = data.recipe.item_result;
-                        let item = items.get(&item_id).map(|i| i.name.as_str()).unwrap_or("Unknown");
-                        let item_level = items.get(&item_id).map(|i| i.level_item.0).unwrap_or(0);
-                        let classes = if (index % 2) == 0 {
-                            "flex flex-row items-center flex-nowrap h-15 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_6%,transparent)] transition-colors"
-                        } else {
-                            "flex flex-row items-center flex-nowrap h-15 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_8%,transparent)] transition-colors"
-                        };
-
-                        let job_abbrev = match data.recipe.craft_type.0 {
-                            0 => "CRP",
-                            1 => "BSM",
-                            2 => "ARM",
-                            3 => "GSM",
-                            4 => "LTW",
-                            5 => "WVR",
-                            6 => "ALC",
-                            7 => "CUL",
-                            _ => "",
-                        };
-
-                        let sales_tooltip = format!(
-                            "Based on {} sales over {:.1} days",
-                            data.total_sales,
-                            (data.total_sales as f32 / data.daily_sales.max(0.001)) // approximate duration back
-                        );
-
-                        view! {
-                            <div class=classes role="row-group">
-                                <div role="cell" class="px-4 py-2 flex flex-row w-84 items-center gap-2">
-                                     <a
-                                        class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip w-full"
-                                        href=format!("/item/{}/{}", world(), item_id.0)
+                <div class="min-w-[56rem] md:min-w-[71rem]">
+                    <VirtualScroller
+                        viewport_height=720.0
+                        row_height=60.0
+                        overscan=8
+                        header_height=64.0
+                        variable_height=false
+                        header=view! {
+                            <div class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]" role="rowgroup">
+                                 <div role="columnheader" class="w-84 p-4 shrink-0">"Item"</div>
+                                 <div role="columnheader" class="w-30 p-4 shrink-0">
+                                    <QueryButton
+                                        class="!text-brand-300 hover:text-brand-200"
+                                        active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
+                                        key="sort"
+                                        value="profit"
                                     >
-                                        <div class="shrink-0">
-                                            <ItemIcon item_id=item_id.0 icon_size=IconSize::Small />
-                                        </div>
-                                        <div class="flex flex-col">
-                                            <span>{item}</span>
-                                            <span class="text-xs text-[color:var(--color-text-muted)]">
-                                                "Lv " {data.required_level} " • iLv " {item_level} " " {job_abbrev}
-                                            </span>
-                                        </div>
-                                    </a>
-                                </div>
-                                <div role="cell" class="px-4 py-2 w-30 text-right">
-                                    <Gil amount=data.profit />
-                                </div>
-                                <div role="cell" class="px-4 py-2 w-30 text-right">
-                                     <span class={
-                                        let data = data_clone.clone();
-                                        move || {
-                                            let roi = data.return_on_investment;
-                                            let tint = if roi >= 500 { "24%" } else if roi >= 200 { "20%" } else if roi >= 100 { "16%" } else if roi >= 50 { "12%" } else { "10%" };
-                                            format!("inline-flex items-center justify-end px-2 py-1 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_{tint},transparent)]")
-                                        }
-                                    }>
-                                        {format!("{}%", data.return_on_investment)}
-                                    </span>
-                                </div>
-                                <div role="cell" class="px-4 py-2 w-30 text-right">
-                                    <Gil amount=data.cost />
-                                    {
-                                        let has_sub_crafts = !data.sub_crafts.is_empty();
-                                        let sub_crafts = data.sub_crafts.clone();
-                                        view! {
-                                            <Show when=move || has_sub_crafts>
-                                                {
-                                                    let sub_crafts_for_text = sub_crafts.clone();
-                                                    let count = sub_crafts.len();
-                                                    view! {
-                                                        <Tooltip
-                                                            tooltip_text={
-                                                                let sub_crafts_details: Vec<(String, i32, i32)> = sub_crafts_for_text.iter().map(|sub| {
-                                                                    let name = items.get(&sub.item_id).map(|i| i.name.to_string()).unwrap_or("Unknown".to_string());
-                                                                    (name, sub.amount, sub.unit_cost)
-                                                                }).collect();
-                                                                Signal::derive(move || {
-                                                                    let mut tooltip = String::from("Includes sub-crafts:\n");
-                                                                    for (name, amount, cost) in &sub_crafts_details {
-                                                                        tooltip.push_str(&format!("• {}x {} ({} gil)\n", amount, name, cost));
-                                                                    }
-                                                                    tooltip
-                                                                })
-                                                            }
-                                                        >
-                                                            <div class="text-xs text-brand-300 flex items-center justify-end gap-1 cursor-help">
-                                                                <Icon icon=i::FaHammerSolid width="0.8em" height="0.8em" />
-                                                                <span>{count} " sub"</span>
-                                                            </div>
-                                                        </Tooltip>
-                                                    }
-                                                }
-                                            </Show>
-                                        }
-                                    }
-                                </div>
-                                <div role="cell" class="px-4 py-2 w-30 text-right">
-                                    <Gil amount=data.market_price />
-                                </div>
-                                <div role="cell" class="px-4 py-2 w-30 text-right hidden md:block">
-                                    <span class="text-xs text-[color:var(--color-text-muted)]" title=sales_tooltip>
-                                        {format!("{:.1} / day", data.daily_sales)}
-                                    </span>
-                                </div>
-                                <div role="cell" class="px-4 py-2 w-30 text-right hidden md:block">
-                                    <Gil amount=data.avg_price />
-                                </div>
-                                 <div role="cell" class="px-4 py-2 w-20">
-                                     <AddRecipeToList recipe=data.recipe />
+                                        "Profit"
+                                    </QueryButton>
                                  </div>
+                                 <div role="columnheader" class="w-30 p-4 shrink-0">
+                                    <QueryButton
+                                        class="!text-brand-300 hover:text-brand-200"
+                                        active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
+                                        key="sort"
+                                        value="roi"
+                                    >
+                                        "ROI"
+                                    </QueryButton>
+                                 </div>
+                                 <div role="columnheader" class="w-30 p-4 shrink-0">"Cost / unit"</div>
+                                 <div role="columnheader" class="w-30 p-4 shrink-0">"Price"</div>
+                                 <div role="columnheader" class="w-30 p-4 hidden md:block shrink-0">
+                                    <QueryButton
+                                        class="!text-brand-300 hover:text-brand-200"
+                                        active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
+                                        key="sort"
+                                        value="velocity"
+                                    >
+                                        "Daily Sales"
+                                    </QueryButton>
+                                 </div>
+                                 <div role="columnheader" class="w-30 p-4 hidden md:block shrink-0">"Avg Price"</div>
+                                 <div role="columnheader" class="w-20 p-4 shrink-0">"Actions"</div>
                             </div>
                         }.into_any()
-                    }
-                />
+                        each=computed_data.into()
+                        key=move |(index, data): &(usize, Arc<RecipeProfitData>)| (*index, data.recipe.key_id)
+                        view=move |(index, data): (usize, Arc<RecipeProfitData>)| {
+                            // Clone data for use in closures to avoid moving the Arc
+                            let data_clone = data.clone();
+                            let item_id = data.recipe.item_result;
+                            let item = items.get(&item_id).map(|i| i.name.as_str()).unwrap_or("Unknown");
+                            let item_level = items.get(&item_id).map(|i| i.level_item.0).unwrap_or(0);
+                            let classes = if (index % 2) == 0 {
+                                "flex flex-row items-center flex-nowrap h-15 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_6%,transparent)] transition-colors"
+                            } else {
+                                "flex flex-row items-center flex-nowrap h-15 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_8%,transparent)] transition-colors"
+                            };
+
+                            let job_abbrev = match data.recipe.craft_type.0 {
+                                0 => "CRP",
+                                1 => "BSM",
+                                2 => "ARM",
+                                3 => "GSM",
+                                4 => "LTW",
+                                5 => "WVR",
+                                6 => "ALC",
+                                7 => "CUL",
+                                _ => "",
+                            };
+
+                            let sales_tooltip = format!(
+                                "Based on {} sales over {:.1} days",
+                                data.total_sales,
+                                (data.total_sales as f32 / data.daily_sales.max(0.001)) // approximate duration back
+                            );
+
+                            view! {
+                                <div class=classes role="row-group">
+                                    <div role="cell" class="px-4 py-2 flex flex-row w-84 items-center gap-2 shrink-0">
+                                         <a
+                                            class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip w-full"
+                                            href=format!("/item/{}/{}", world(), item_id.0)
+                                        >
+                                            <div class="shrink-0">
+                                                <ItemIcon item_id=item_id.0 icon_size=IconSize::Small />
+                                            </div>
+                                            <div class="flex flex-col">
+                                                <span>{item}</span>
+                                                <span class="text-xs text-[color:var(--color-text-muted)]">
+                                                    "Lv " {data.required_level} " • iLv " {item_level} " " {job_abbrev}
+                                                </span>
+                                            </div>
+                                        </a>
+                                    </div>
+                                    <div role="cell" class="px-4 py-2 w-30 text-right shrink-0">
+                                        <Gil amount=data.profit />
+                                    </div>
+                                    <div role="cell" class="px-4 py-2 w-30 text-right shrink-0">
+                                         <span class={
+                                            let data = data_clone.clone();
+                                            move || {
+                                                let roi = data.return_on_investment;
+                                                let tint = if roi >= 500 { "24%" } else if roi >= 200 { "20%" } else if roi >= 100 { "16%" } else if roi >= 50 { "12%" } else { "10%" };
+                                                format!("inline-flex items-center justify-end px-2 py-1 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_{tint},transparent)]")
+                                            }
+                                        }>
+                                            {format!("{}%", data.return_on_investment)}
+                                        </span>
+                                    </div>
+                                    <div role="cell" class="px-4 py-2 w-30 text-right shrink-0">
+                                        <Gil amount=data.cost />
+                                        {
+                                            let has_sub_crafts = !data.sub_crafts.is_empty();
+                                            let sub_crafts = data.sub_crafts.clone();
+                                            view! {
+                                                <Show when=move || has_sub_crafts>
+                                                    {
+                                                        let sub_crafts_for_text = sub_crafts.clone();
+                                                        let count = sub_crafts.len();
+                                                        view! {
+                                                            <Tooltip
+                                                                tooltip_text={
+                                                                    let sub_crafts_details: Vec<(String, i32, i32)> = sub_crafts_for_text.iter().map(|sub| {
+                                                                        let name = items.get(&sub.item_id).map(|i| i.name.to_string()).unwrap_or("Unknown".to_string());
+                                                                        (name, sub.amount, sub.unit_cost)
+                                                                    }).collect();
+                                                                    Signal::derive(move || {
+                                                                        let mut tooltip = String::from("Includes sub-crafts:\n");
+                                                                        for (name, amount, cost) in &sub_crafts_details {
+                                                                            tooltip.push_str(&format!("• {}x {} ({} gil)\n", amount, name, cost));
+                                                                        }
+                                                                        tooltip
+                                                                    })
+                                                                }
+                                                            >
+                                                                <div class="text-xs text-brand-300 flex items-center justify-end gap-1 cursor-help">
+                                                                    <Icon icon=i::FaHammerSolid width="0.8em" height="0.8em" />
+                                                                    <span>{count} " sub"</span>
+                                                                </div>
+                                                            </Tooltip>
+                                                        }
+                                                    }
+                                                </Show>
+                                            }
+                                        }
+                                    </div>
+                                    <div role="cell" class="px-4 py-2 w-30 text-right shrink-0">
+                                        <Gil amount=data.market_price />
+                                    </div>
+                                    <div role="cell" class="px-4 py-2 w-30 text-right hidden md:block shrink-0">
+                                        <span class="text-xs text-[color:var(--color-text-muted)]" title=sales_tooltip>
+                                            {format!("{:.1} / day", data.daily_sales)}
+                                        </span>
+                                    </div>
+                                    <div role="cell" class="px-4 py-2 w-30 text-right hidden md:block shrink-0">
+                                        <Gil amount=data.avg_price />
+                                    </div>
+                                     <div role="cell" class="px-4 py-2 w-20 shrink-0">
+                                         <AddRecipeToList recipe=data.recipe />
+                                     </div>
+                                </div>
+                            }.into_any()
+                        }
+                    />
+                </div>
              </div>
         </div>
     }
