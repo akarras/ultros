@@ -20,6 +20,7 @@ use crate::{
         ad::Ad, apps_menu::*, patreon::*, search_box::*, theme_picker::*, toast::*, tooltip::*,
     },
     routes::{
+        about::*,
         analyzer::*,
         currency_exchange::{CurrencyExchange, CurrencySelection, ExchangeItem},
         edit_retainers::*,
@@ -125,6 +126,12 @@ pub fn Footer() -> impl IntoView {
                     >
                         <Icon icon=i::BsBook width="1.2em" height="1.2em" /><span>"Book"</span>
                     </a>
+                    <A
+                        href="/about"
+                        attr:class="btn-ghost opacity-80 hover:opacity-100"
+                    >
+                        <Icon icon=i::BsInfoCircle width="1.2em" height="1.2em" /><span>"About"</span>
+                    </A>
                 </div>
                 <div class="divider opacity-50"></div>
                 <div class="text-center space-y-3 muted text-sm max-w-3xl mx-auto opacity-75 hover:opacity-100 transition-opacity">
@@ -313,6 +320,7 @@ pub fn App() -> impl IntoView {
                             <Route path=path!("profile") view=Profile />
                             <Route path=path!("privacy") view=PrivacyPolicy />
                             <Route path=path!("cookie-policy") view=CookiePolicy />
+                            <Route path=path!("about") view=About />
                             <Route path=path!("history") view=History />
                             <ParentRoute path=path!("currency-exchange") view=CurrencyExchange>
                                 <Route path=path!(":id") view=ExchangeItem />
