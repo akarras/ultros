@@ -21,6 +21,7 @@ mod m20230311_230232_cleanup_fks;
 mod m20230312_184157_add_last_updated_table;
 mod m20230918_033709_remove_junk_pk_from_listing;
 mod m20240203_230653_add_list_item_owned_quantity;
+mod m20240424_000001_create_notification_endpoints;
 
 pub struct Migrator;
 
@@ -51,6 +52,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20230312_184157_add_last_updated_table::Migration),
             Box::new(m20230918_033709_remove_junk_pk_from_listing::Migration),
             Box::new(m20240203_230653_add_list_item_owned_quantity::Migration),
+            Box::new(m20240424_000001_create_notification_endpoints::Migration),
         ]
     }
 }

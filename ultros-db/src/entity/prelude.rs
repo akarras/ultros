@@ -3,6 +3,7 @@
 pub use super::active_listing::Entity as ActiveListing;
 pub use super::alert::Entity as Alert;
 pub use super::alert_discord_destination::Entity as AlertDiscordDestination;
+pub use super::alert_notification_rule::Entity as AlertNotificationRule;
 pub use super::alert_price::Entity as AlertPrice;
 pub use super::alert_retainer_undercut::Entity as AlertRetainerUndercut;
 pub use super::datacenter::Entity as Datacenter;
@@ -13,6 +14,7 @@ pub use super::list::Entity as List;
 pub use super::list_item::Entity as ListItem;
 pub use super::listing_last_updated::Entity as ListingLastUpdated;
 pub use super::materia_listing::Entity as MateriaListing;
+pub use super::notification_endpoint::Entity as NotificationEndpoint;
 pub use super::owned_ffxiv_character::Entity as OwnedFfxivCharacter;
 pub use super::owned_retainers::Entity as OwnedRetainers;
 pub use super::region::Entity as Region;
