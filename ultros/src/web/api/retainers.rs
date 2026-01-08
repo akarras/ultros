@@ -1,10 +1,11 @@
+use axum::Json;
 use axum::extract::{Path, State};
 use axum::response::Redirect;
-use axum::Json;
 use futures::future::try_join_all;
+use ultros_api_types::ActiveListing;
 use ultros_api_types::retainer::RetainerListings;
 use ultros_api_types::user::{OwnedRetainer, UserRetainerListings, UserRetainers};
-use ultros_api_types::{ActiveListing, FfxivCharacter, Retainer};
+use ultros_api_types::{FfxivCharacter, Retainer};
 use ultros_db::{ActiveValue, UltrosDb};
 
 use crate::web::error::{ApiError, WebError};

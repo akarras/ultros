@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
 use axum::Json;
+use axum::extract::{Path, State};
 use ultros_api_types::{FfxivCharacter, FfxivCharacterVerification};
-use ultros_db::world_cache::WorldCache;
 use ultros_db::UltrosDb;
+use ultros_db::world_cache::WorldCache;
 
 use crate::web::character_verifier_service::CharacterVerifierService;
 use crate::web::error::ApiError;

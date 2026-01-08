@@ -40,8 +40,8 @@ use ultros_api_types::world::WorldData;
 use ultros_api_types::world_helper::WorldHelper;
 use ultros_api_types::{ActiveListing, CurrentlyShownItem, Retainer};
 use ultros_app::{LocalWorldData, shell};
-use ultros_db::world_cache::WorldCache;
 use ultros_db::UltrosDb;
+use ultros_db::world_cache::WorldCache;
 use ultros_xiv_icons::get_item_image;
 use universalis::{ItemId, ListingView, UniversalisClient, WorldId};
 
