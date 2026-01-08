@@ -36,7 +36,13 @@ pub fn ListItemRow(
     let (edit, set_edit) = signal(false);
     let item = RwSignal::new(item);
     let temp_item = RwSignal::new(item());
-    let listings = RwSignal::new(listings);
+    // Optimization: Sort listings once upon initialization.
+    // PriceViewer expects sorted listings.
+    let listings = RwSignal::new({
+        let mut l = listings;
+        l.sort_by_key(|a| a.price_per_unit);
+        l
+    });
 
     view! {
         <tr>
@@ -113,14 +119,21 @@ pub fn ListItemRow(
                             </td>
                             <td>
                                 {move || {
-                                    let q = item.with(|i| i.quantity.unwrap_or(1));
-                                    let a = item.with(|i| i.acquired.unwrap_or(0));
-                                    let remaining = q.saturating_sub(a);
+                                    // Calculate quantity and acquired reactively
+                                    let q = Signal::derive(move || item.with(|i| i.quantity.unwrap_or(1)));
+                                    let a = Signal::derive(move || item.with(|i| i.acquired.unwrap_or(0)));
+                                    let remaining = Signal::derive(move || q.get().saturating_sub(a.get()));
+                                    let hq = Signal::derive(move || item.with(|i| i.hq));
+
+                                    // Pass signals to PriceViewer.
+                                    // Since PriceViewer takes signals, we don't need to wrap it in a closure that re-renders the component.
+                                    // However, inside this `move ||` block (which re-runs if item changes due to other dependencies in the row),
+                                    // we want to ensure we are passing stable signals if possible, or just new derived signals.
                                     view! {
                                         <PriceViewer
                                             quantity=remaining
-                                            hq=item.with(|i| i.hq)
-                                            listings=listings()
+                                            hq=hq
+                                            listings=listings
                                         />
                                     }
                                 }}
@@ -243,11 +256,13 @@ pub fn ListItemRow(
                                     let q = item.quantity.unwrap_or(1);
                                     let a = item.acquired.unwrap_or(0);
                                     let remaining = q.saturating_sub(a);
+                                    // Note: In Edit mode, `item` is a snapshot, so these values are constant for this render.
+                                    // We can pass them as constant signals or just values (which convert to signals).
                                     view! {
                                         <PriceViewer
                                             quantity=remaining
                                             hq=item.hq
-                                            listings=listings()
+                                            listings=listings
                                         />
                                     }
                                 }}
