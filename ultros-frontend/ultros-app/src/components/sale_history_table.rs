@@ -220,11 +220,14 @@ fn find_date_range(
         .iter()
         .enumerate()
         .find(|(_, sale)| date_range.contains(&sale.sold_date))?;
-    let (end, _) = sales
+    // Optimization: Sales are sorted descending by date.
+    // Instead of scanning from the end (O(N)), we scan forward from start (O(k))
+    // to find the first element OUTSIDE the range.
+    let end = sales[start..]
         .iter()
-        .enumerate()
-        .rev()
-        .find(|(_, sale)| date_range.contains(&sale.sold_date))?;
+        .position(|sale| !date_range.contains(&sale.sold_date))
+        .map(|offset| start + offset - 1)
+        .unwrap_or(sales.len() - 1);
     Some(&sales[start..=end])
 }
 
