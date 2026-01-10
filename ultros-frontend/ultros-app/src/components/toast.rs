@@ -45,7 +45,7 @@ pub fn ToastItem(toast: Toast) -> impl IntoView {
             <Icon icon width="1.2em" height="1.2em" aria_hidden=true />
             <div class="flex-1">{message}</div>
             <button
-                class="opacity-70 hover:opacity-100 transition-opacity"
+                class="opacity-70 hover:opacity-100 transition-opacity rounded focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-current"
                 aria-label="Close"
                 on:click=move |_| {
                     set_is_exiting(true);
