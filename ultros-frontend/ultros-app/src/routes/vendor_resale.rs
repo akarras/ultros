@@ -57,12 +57,14 @@ struct CalculatedVendorProfitData {
     inner: Arc<VendorProfitData>,
     profit: i32,
     return_on_investment: i32,
+    weekly_profit: i32,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum SortMode {
     Roi,
     Profit,
+    WeeklyProfit,
 }
 
 #[derive(Clone, Debug)]
@@ -109,6 +111,7 @@ impl FromStr for SortMode {
         match s {
             "roi" => Ok(SortMode::Roi),
             "profit" => Ok(SortMode::Profit),
+            "weekly-profit" => Ok(SortMode::WeeklyProfit),
             _ => Err(()),
         }
     }
@@ -119,6 +122,7 @@ impl std::fmt::Display for SortMode {
         let val = match self {
             SortMode::Roi => "roi",
             SortMode::Profit => "profit",
+            SortMode::WeeklyProfit => "weekly-profit",
         };
         f.write_str(val)
     }
@@ -233,10 +237,35 @@ fn VendorResaleTable(
                 } else {
                     0
                 };
+
+                let weekly_profit = {
+                    let total_duration_ms = data
+                        .sale_summary
+                        .as_ref()
+                        .and_then(|s| s.avg_sale_duration)
+                        .map(|d| {
+                            d.num_milliseconds() as f32
+                                * data.sale_summary.as_ref().unwrap().num_sold as f32
+                        })
+                        .unwrap_or(1.0);
+                    let total_weeks = total_duration_ms / 1000.0 / 60.0 / 60.0 / 24.0 / 7.0;
+                    let sales_per_week = if total_weeks > 0.0 {
+                        data.sale_summary
+                            .as_ref()
+                            .map(|s| s.num_sold as f32)
+                            .unwrap_or(0.0)
+                            / total_weeks
+                    } else {
+                        0.0
+                    };
+                    (profit as f32 * sales_per_week) as i32
+                };
+
                 CalculatedVendorProfitData {
                     inner: data.clone(),
                     profit,
                     return_on_investment,
+                    weekly_profit,
                 }
             })
             .filter(move |data| {
@@ -284,9 +313,10 @@ fn VendorResaleTable(
             })
             .collect::<Vec<_>>();
 
-        match sort_mode().unwrap_or(SortMode::Roi) {
+        match sort_mode().unwrap_or(SortMode::WeeklyProfit) {
             SortMode::Roi => sorted_data.sort_by_key(|data| Reverse(data.return_on_investment)),
             SortMode::Profit => sorted_data.sort_by_key(|data| Reverse(data.profit)),
+            SortMode::WeeklyProfit => sorted_data.sort_by_key(|data| Reverse(data.weekly_profit)),
         }
         sorted_data
             .into_iter()
@@ -579,12 +609,28 @@ fn VendorResaleTable(
                                         active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
                                         key="sort"
                                         value="roi"
-                                        default=true
                                     >
                                         <div class="flex items-center gap-2">
                                             "ROI"
                                             {move || {
                                                 (sort_mode() == Some(SortMode::Roi))
+                                                    .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
+                                            }}
+                                        </div>
+                                    </QueryButton>
+                                </div>
+                                <div role="columnheader" class="w-30 p-4">
+                                    <QueryButton
+                                        class="!text-brand-300 hover:text-brand-200"
+                                        active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
+                                        key="sort"
+                                        value="weekly-profit"
+                                        default=true
+                                    >
+                                        <div class="flex items-center gap-2">
+                                            "Weekly Profit"
+                                            {move || {
+                                                (sort_mode() == Some(SortMode::WeeklyProfit))
                                                     .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
                                             }}
                                         </div>
@@ -664,6 +710,9 @@ fn VendorResaleTable(
                                         }>
                                             {format!("{}%", data.return_on_investment)}
                                         </span>
+                                    </div>
+                                    <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
+                                        <Gil amount=data.weekly_profit />
                                     </div>
                                     <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
                                         <Gil amount=data.inner.vendor_price />
