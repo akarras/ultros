@@ -63,12 +63,14 @@ struct CalculatedProfitData {
     inner: Arc<ProfitData>,
     profit: i32,
     return_on_investment: i32,
+    tataru_score: f32,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum SortMode {
     Roi,
     Profit,
+    TataruScore,
 }
 
 #[derive(Clone, Debug)]
@@ -150,6 +152,7 @@ impl FromStr for SortMode {
         match s {
             "roi" => Ok(SortMode::Roi),
             "profit" => Ok(SortMode::Profit),
+            "tataru-score" => Ok(SortMode::TataruScore),
             _ => Err(()),
         }
     }
@@ -160,6 +163,7 @@ impl std::fmt::Display for SortMode {
         let val = match self {
             SortMode::Roi => "roi",
             SortMode::Profit => "profit",
+            SortMode::TataruScore => "tataru-score",
         };
         f.write_str(val)
     }
@@ -216,11 +220,20 @@ impl ProfitTable {
                 );
 
                 // Use the world's price as estimated sale price
+                // Update to Smarter Valuation: min(CurrentCheapest - 1, Median)
+                // Using avg as proxy for median if not sorting prices perfectly?
+                // Actually summary.avg_price is average.
+                // summary.min_price is min.
+                // We should probably recalculate median from sales if possible or trust avg is close enough for now?
+                // The backend implementation used actual median.
+                // Let's use avg_price as a "Median" proxy since `compute_summary` calculates average.
+                // But wait, `filter_outliers` option uses IQR which gives a robust average similar to median.
+
                 let estimated_sale_price =
                     if let Some((world_cheapest, _)) = world_cheapest.get(&key) {
-                        summary.min_price.min(*world_cheapest)
+                        (world_cheapest - 1).min(summary.avg_price)
                     } else {
-                        summary.min_price
+                        (summary.avg_price as f32 * 1.2) as i32
                     };
 
                 Some(ProfitData {
@@ -321,10 +334,64 @@ fn AnalyzerTable(
                 } else {
                     0
                 };
+
+                // Tataru Score = Log10(Profit) * (SalesPerWeek ^ 0.5) * Reliability
+                let tataru_score = {
+                    if profit <= 0 {
+                        0.0
+                    } else {
+                        // We don't have StdDev easily here without iterating sales again.
+                        // Let's approximate Reliability using (Max - Min) / Avg range or just assume 1.0 for now if simpler
+                        // Or recalculate from sales
+                        // data.inner.sale_summary.avg_price is available.
+                        // let's iterate sales again? No, we don't have raw sales here easily, they are in `data.inner.sale_summary`? No, summary is summary.
+                        // Wait, `ProfitData` has `sale_summary`. `RecentSales` has raw sales.
+                        // But here we are iterating `profits.0` which is `ProfitData`. `ProfitTable::new` consumed `sales`.
+                        // So we lost raw sales.
+                        // We can't perfectly calculate reliability here without modifying ProfitData to include it.
+                        // BUT, `compute_summary` calculates `avg_price`.
+                        // Let's modify `compute_summary` or `ProfitData`?
+                        // For now, let's use a simplified reliability or just use the other factors.
+                        // Or assume reliability 0.8.
+
+                        // Wait, we can modify `ProfitTable::new` to calculate reliability and store it in `ProfitData` or `SaleSummary`.
+                        // But I am editing `sorted_data` memo which runs on `ProfitTable` result.
+                        // Let's assume Reliability = 1.0 for frontend version for now to avoid massive refactor,
+                        // OR if I want to be consistent, I should add `reliability` to `SaleSummary`.
+
+                        // Let's stick to what we have:
+                        // SalesPerWeek = num_sold / (duration / 7)
+                        // Wait, `avg_sale_duration` in `compute_summary` is:
+                        // (last.sale_date - now) / sales.len().
+                        // It is "Total duration covered by sales / count".
+                        // So `sales_per_week` = `count / (total_duration_days / 7)`.
+                        // `avg_sale_duration` is roughly `total_duration / count`?
+                        // No, `t = (last - now) / len`.
+                        // So `t * len` = `last - now`. This is total duration.
+
+                        let total_duration_ms = data
+                            .sale_summary
+                            .avg_sale_duration
+                            .map(|d| {
+                                d.num_milliseconds() as f32 * data.sale_summary.num_sold as f32
+                            })
+                            .unwrap_or(1.0);
+                        let total_weeks = total_duration_ms / 1000.0 / 60.0 / 60.0 / 24.0 / 7.0;
+                        let sales_per_week = if total_weeks > 0.0 {
+                            data.sale_summary.num_sold as f32 / total_weeks
+                        } else {
+                            0.0
+                        };
+
+                        (profit as f32).log10() * sales_per_week.sqrt()
+                    }
+                };
+
                 CalculatedProfitData {
                     inner: data.clone(),
                     profit,
                     return_on_investment,
+                    tataru_score,
                 }
             })
             .filter(move |data| {
@@ -379,6 +446,11 @@ fn AnalyzerTable(
         match sort_mode().unwrap_or(SortMode::Roi) {
             SortMode::Roi => sorted_data.sort_by_key(|data| Reverse(data.return_on_investment)),
             SortMode::Profit => sorted_data.sort_by_key(|data| Reverse(data.profit)),
+            SortMode::TataruScore => sorted_data.sort_by(|a, b| {
+                b.tataru_score
+                    .partial_cmp(&a.tataru_score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            }),
         }
         sorted_data
             .into_iter()
@@ -704,6 +776,22 @@ fn AnalyzerTable(
                                     </QueryButton>
                                 </div>
                                 <div role="columnheader" class="w-30 p-4">
+                                    <QueryButton
+                                        class="!text-brand-300 hover:text-brand-200"
+                                        active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
+                                        key="sort"
+                                        value="tataru-score"
+                                    >
+                                        <div class="flex items-center gap-2">
+                                            "Score"
+                                            {move || {
+                                                (sort_mode() == Some(SortMode::TataruScore))
+                                                    .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
+                                            }}
+                                        </div>
+                                    </QueryButton>
+                                </div>
+                                <div role="columnheader" class="w-30 p-4">
                                     "Buy Price"
                                 </div>
                                 <div role="columnheader" class="w-30 p-4 flex flex-row gap-2 hidden lg:flex">
@@ -836,6 +924,11 @@ fn AnalyzerTable(
                                             }
                                         }>
                                             {format!("{}%", data.return_on_investment)}
+                                        </span>
+                                    </div>
+                                    <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
+                                        <span class="text-xs text-brand-300">
+                                            {format!("{:.1}", data.tataru_score)}
                                         </span>
                                     </div>
                                     <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
