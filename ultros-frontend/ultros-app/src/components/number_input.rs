@@ -25,6 +25,7 @@ where
             }
 
             prop:value=move || input().map(|value| value.into()).unwrap_or(JsValue::NULL)
+            aria-invalid=move || failed_to_parse().to_string()
             on:input=move |e| {
                 let value = event_target_value(&e);
                 if value.is_empty() {
