@@ -35,15 +35,17 @@ pub fn ListingsTable(
     view! {
         <div class="overflow-x-auto">
             <table class="w-full min-w-[720px]">
-            <tr>
-                <th>"price"</th>
-                <th>"qty."</th>
-                <th>"total"</th>
-                <th>"retainer name"</th>
-                <th>"world"</th>
-                <th>"datacenter"</th>
-                <th>"first seen"</th>
-            </tr>
+            <thead>
+                <tr>
+                    <th scope="col">"price"</th>
+                    <th scope="col">"qty."</th>
+                    <th scope="col">"total"</th>
+                    <th scope="col">"retainer name"</th>
+                    <th scope="col">"world"</th>
+                    <th scope="col">"datacenter"</th>
+                    <th scope="col">"first seen"</th>
+                </tr>
+            </thead>
             <tbody>
                 {move || {
                     view! {
