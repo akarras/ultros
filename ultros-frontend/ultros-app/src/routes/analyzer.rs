@@ -42,6 +42,7 @@ struct SaleSummary {
     max_price: i32,
     avg_price: i32,
     min_price: i32,
+    median_price: i32,
 }
 
 #[derive(Hash, Clone, Debug, PartialEq, Eq)]
@@ -127,6 +128,14 @@ fn compute_summary(
             / sales.len() as i64) as i32
     };
 
+    let mut median_prices: Vec<i32> = sales.iter().map(|s| s.price_per_unit).collect();
+    median_prices.sort_unstable();
+    let median_price = if median_prices.is_empty() {
+        0
+    } else {
+        median_prices[median_prices.len() / 2]
+    };
+
     let t = sales
         .last()
         .map(|last| (last.sale_date - now).num_milliseconds().abs() / sales.len() as i64);
@@ -139,6 +148,7 @@ fn compute_summary(
         max_price,
         avg_price,
         min_price,
+        median_price,
     }
 }
 
@@ -218,9 +228,9 @@ impl ProfitTable {
                 // Use the world's price as estimated sale price
                 let estimated_sale_price =
                     if let Some((world_cheapest, _)) = world_cheapest.get(&key) {
-                        summary.min_price.min(*world_cheapest)
+                        std::cmp::min(*world_cheapest - 1, summary.median_price)
                     } else {
-                        summary.min_price
+                        (summary.median_price as f32 * 1.2) as i32
                     };
 
                 Some(ProfitData {
