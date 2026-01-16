@@ -823,7 +823,16 @@ fn SalesDetails(listing_resource: Resource<Result<CurrentlyShownItem, AppError>>
                 let sales = Memo::new(move |_| {
                     listing_resource
                         .with(|l| {
-                            l.as_ref().and_then(|l| l.as_ref().map(|l| l.sales.clone()).ok())
+                            l.as_ref().and_then(|l| {
+                                l.as_ref()
+                                    .map(|l| {
+                                        l.sales
+                                            .iter()
+                                            .map(|s| Arc::new(s.clone()))
+                                            .collect::<Vec<_>>()
+                                    })
+                                    .ok()
+                            })
                         })
                         .unwrap_or_default()
                 });

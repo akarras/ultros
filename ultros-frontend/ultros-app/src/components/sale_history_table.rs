@@ -1,4 +1,5 @@
 use std::ops::RangeInclusive;
+use std::sync::Arc;
 
 use super::{datacenter_name::*, gil::*, relative_time::*, world_name::*};
 use crate::components::icon::Icon;
@@ -10,7 +11,7 @@ use log::{error, info};
 use ultros_api_types::{SaleHistory, world_helper::AnySelector};
 
 #[component]
-pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
+pub fn SaleHistoryTable(sales: Signal<Vec<Arc<SaleHistory>>>) -> impl IntoView {
     let (show_more, set_show_more) = signal(false);
     // Optimization: Avoid cloning the entire sales vector when we only need a slice.
     // Using `sales.with` allows us to inspect the vector without cloning it.
@@ -61,7 +62,7 @@ pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
                                 <td>
                                     <Gil amount=total />
                                 </td>
-                                <td>{sale.buyer_name}</td>
+                                <td>{sale.buyer_name.clone()}</td>
                                 <td>
                                     <WorldName id=AnySelector::World(sale.world_id) />
                                 </td>
@@ -116,7 +117,10 @@ struct SalesWindow {
 }
 
 impl SalesWindow {
-    fn try_new(date_range: RangeInclusive<NaiveDateTime>, sales: &[SaleHistory]) -> Option<Self> {
+    fn try_new(
+        date_range: RangeInclusive<NaiveDateTime>,
+        sales: &[Arc<SaleHistory>],
+    ) -> Option<Self> {
         let sales = find_date_range(date_range.clone(), sales)?;
         let count = sales.len();
         if count == 0 {
@@ -214,8 +218,8 @@ struct SalesSummaryData {
 
 fn find_date_range(
     date_range: RangeInclusive<NaiveDateTime>,
-    sales: &[SaleHistory],
-) -> Option<&[SaleHistory]> {
+    sales: &[Arc<SaleHistory>],
+) -> Option<&[Arc<SaleHistory>]> {
     let (start, _) = sales
         .iter()
         .enumerate()
@@ -229,7 +233,7 @@ fn find_date_range(
 }
 
 impl SalesSummaryData {
-    fn new(sale_history: &[SaleHistory]) -> Self {
+    fn new(sale_history: &[Arc<SaleHistory>]) -> Self {
         let now = Utc::now().naive_utc();
         let yesterday = now - TimeDelta::days(1);
         let day_range = yesterday..=now;
@@ -318,7 +322,7 @@ fn WindowStats(#[prop(into)] sales: Signal<SalesWindow>) -> impl IntoView {
 }
 
 #[component]
-pub fn SalesInsights(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
+pub fn SalesInsights(sales: Signal<Vec<Arc<SaleHistory>>>) -> impl IntoView {
     let sales = Memo::new(move |_| sales.with(|sales| SalesSummaryData::new(sales)));
     let day_sales = Memo::new(move |_| sales.with(|s| s.past_day.clone()).unwrap_or_default());
     let month_sales = Memo::new(move |_| sales.with(|s| s.month.clone()).unwrap_or_default());
