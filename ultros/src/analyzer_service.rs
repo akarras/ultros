@@ -712,23 +712,14 @@ impl AnalyzerService {
                     high_velocity.push(trend_item.clone());
                 }
 
-                // Rising: Current price is significantly higher than average (using SD or fixed ratio)
-                // Use 1.5 ratio OR > 2 SDs if SD is significant relative to price
-                // If SD is small, 1.5 ratio is safer. If SD is huge, 1.5 ratio might be within noise.
-                // Let's keep 1.5 ratio as a base, but maybe refine it?
-                // Actually, let's use SD if available and meaningful.
-                // If price > avg + 1.0 * SD (and ratio > 1.2), it's rising.
-                // But to keep it simple and consistent with "Rising Prices" meaning "Buy Low Sell High later" or "Market Spiking":
-                // If we want to find "Rising" markets to maybe invest in? No, usually "Rising" means "Don't buy now".
-                // Or does it mean "It's trending up, buy now before it goes higher"?
-                // Let's stick to the previous logic but maybe make it a bit more statistically sound if possible.
-                // For now, I'll stick to the requested improvement: Use Standard Deviation.
-
-                // If price is > 1 standard deviation above average, and at least 20% higher.
+                // Tataru's Analysis:
+                // "Rising Price" = Spiking / Overvalued. This is a SELL signal.
+                // Logic: Price is > 1 SD above average AND > 20% above average.
                 if (cheapest.price as f32 > avg_price + std_dev) && price_diff_ratio > 1.2 {
                     rising_price.push(trend_item.clone());
                 }
-                // Falling: Price < 1 SD below average, and at least 20% lower.
+                // "Falling Price" = Crashing / Undervalued. This is a BUY signal (if liquid).
+                // Logic: Price is > 1 SD below average AND < 20% below average (ratio < 0.8).
                 else if (cheapest.price as f32) < (avg_price - std_dev) && price_diff_ratio < 0.8
                 {
                     falling_price.push(trend_item.clone());
@@ -741,11 +732,14 @@ impl AnalyzerService {
                 .partial_cmp(&a.sales_per_week)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
+        // Tataru: Sort "Rising" by the highest premium relative to average (Sell High)
         rising_price.sort_by(|a, b| {
             (b.price as f32 / b.average_sale_price)
                 .partial_cmp(&(a.price as f32 / a.average_sale_price))
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
+        // Tataru: Sort "Falling" by the lowest price relative to average (Buy Low / Best Bargain)
+        // Ascending sort means smallest ratio (e.g. 0.5) comes first.
         falling_price.sort_by(|a, b| {
             (a.price as f32 / a.average_sale_price)
                 .partial_cmp(&(b.price as f32 / b.average_sale_price))
@@ -830,7 +824,7 @@ impl AnalyzerService {
             .get(&AnySelector::World(world_id))?
             .read()
             .await;
-        let possible_sales: Vec<_> = region
+        let mut possible_sales: Vec<_> = region
             .item_map
             .iter()
             .flat_map(|(item_key, cheapest_price)| {
@@ -881,6 +875,9 @@ impl AnalyzerService {
                     .unwrap_or(true)
             })
             .collect();
+
+        // Tataru: Sort by profit! We want the biggest pile of gil first.
+        possible_sales.sort_unstable_by(|a, b| b.profit.cmp(&a.profit));
 
         Some(possible_sales)
     }
