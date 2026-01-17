@@ -63,12 +63,14 @@ struct CalculatedProfitData {
     inner: Arc<ProfitData>,
     profit: i32,
     return_on_investment: i32,
+    profit_per_day: i32,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum SortMode {
     Roi,
     Profit,
+    ProfitPerDay,
 }
 
 #[derive(Clone, Debug)]
@@ -150,6 +152,7 @@ impl FromStr for SortMode {
         match s {
             "roi" => Ok(SortMode::Roi),
             "profit" => Ok(SortMode::Profit),
+            "profit-per-day" => Ok(SortMode::ProfitPerDay),
             _ => Err(()),
         }
     }
@@ -160,6 +163,7 @@ impl std::fmt::Display for SortMode {
         let val = match self {
             SortMode::Roi => "roi",
             SortMode::Profit => "profit",
+            SortMode::ProfitPerDay => "profit-per-day",
         };
         f.write_str(val)
     }
@@ -270,6 +274,7 @@ fn AnalyzerTable(
     let items = &xiv_gen_db::data().items;
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
     let (minimum_profit, set_minimum_profit) = query_signal::<i32>("profit");
+    let (minimum_profit_per_day, set_minimum_profit_per_day) = query_signal::<i32>("ppd");
     let (minimum_roi, set_minimum_roi) = query_signal::<i32>("roi");
     let (max_predicted_time, set_max_predicted_time) = query_signal::<String>("next-sale");
     let (world_filter, set_world_filter) = query_signal::<String>("world");
@@ -321,15 +326,30 @@ fn AnalyzerTable(
                 } else {
                     0
                 };
+                let profit_per_day = data
+                    .sale_summary
+                    .avg_sale_duration
+                    .map(|d| {
+                        let days = d.num_seconds() as f32 / 86400.0;
+                        let days = days.max(1.0);
+                        (profit as f32 / days) as i32
+                    })
+                    .unwrap_or(0);
                 CalculatedProfitData {
                     inner: data.clone(),
                     profit,
                     return_on_investment,
+                    profit_per_day,
                 }
             })
             .filter(move |data| {
                 minimum_profit()
                     .map(|min| data.profit > min)
+                    .unwrap_or(true)
+            })
+            .filter(move |data| {
+                minimum_profit_per_day()
+                    .map(|min| data.profit_per_day > min)
                     .unwrap_or(true)
             })
             .filter(move |data| {
@@ -379,6 +399,7 @@ fn AnalyzerTable(
         match sort_mode().unwrap_or(SortMode::Roi) {
             SortMode::Roi => sorted_data.sort_by_key(|data| Reverse(data.return_on_investment)),
             SortMode::Profit => sorted_data.sort_by_key(|data| Reverse(data.profit)),
+            SortMode::ProfitPerDay => sorted_data.sort_by_key(|data| Reverse(data.profit_per_day)),
         }
         sorted_data
             .into_iter()
@@ -414,6 +435,38 @@ fn AnalyzerTable(
                                     set_minimum_profit(Some(profit))
                                 } else if value.is_empty() {
                                     set_minimum_profit(None);
+                                }
+                            }
+                        />
+                    </div>
+                </FilterCard>
+
+                <FilterCard
+                    title="Profit / Day"
+                    description="Set the minimum profit per day (Profit / Sale Duration)"
+                >
+                    <div class="flex flex-col gap-2">
+                        <div class="text-brand-300">
+                            {move || {
+                                minimum_profit_per_day()
+                                    .map(|profit| Either::Left(view! { <Gil amount=profit /> }))
+                                    .unwrap_or(Either::Right("---"))
+                            }}
+                        </div>
+                        <input
+                            class="input"
+                            min=0
+                            max=100000
+                            step=1000
+                            placeholder="e.g. 10000"
+                            type="number"
+                            prop:value=minimum_profit_per_day
+                            on:input=move |input| {
+                                let value = event_target_value(&input);
+                                if let Ok(profit) = value.parse::<i32>() {
+                                    set_minimum_profit_per_day(Some(profit))
+                                } else if value.is_empty() {
+                                    set_minimum_profit_per_day(None);
                                 }
                             }
                         />
@@ -569,6 +622,16 @@ fn AnalyzerTable(
                                 </span>
                             }.into_any());
                         }
+                        if let Some(p) = minimum_profit_per_day() {
+                            chips.push(view! {
+                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
+                                    "Profit/Day ≥ " <Gil amount=p />
+                                    <button class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_profit_per_day(None)>
+                                        <Icon icon=icondata::MdiClose />
+                                    </button>
+                                </span>
+                            }.into_any());
+                        }
                         if let Some(cat_id) = category_filter() {
                             let cat_name = xiv_gen_db::data()
                                 .item_search_categorys
@@ -643,6 +706,7 @@ fn AnalyzerTable(
                 </div>
                 <button class="text-sm text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] self-start md:self-auto" on:click=move |_| {
                     set_minimum_profit(None);
+                    set_minimum_profit_per_day(None);
                     set_minimum_roi(None);
                     set_max_predicted_time(None);
                     set_world_filter(None);
@@ -681,6 +745,22 @@ fn AnalyzerTable(
                                             "Profit"
                                             {move || {
                                                 (sort_mode() == Some(SortMode::Profit))
+                                                    .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
+                                            }}
+                                        </div>
+                                    </QueryButton>
+                                </div>
+                                <div role="columnheader" class="w-30 p-4">
+                                    <QueryButton
+                                        class="!text-brand-300 hover:text-brand-200"
+                                        active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
+                                        key="sort"
+                                        value="profit-per-day"
+                                    >
+                                        <div class="flex items-center gap-2">
+                                            "Profit/Day"
+                                            {move || {
+                                                (sort_mode() == Some(SortMode::ProfitPerDay))
                                                     .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
                                             }}
                                         </div>
@@ -813,6 +893,9 @@ fn AnalyzerTable(
                                     </div>
                                     <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
                                         <Gil amount=data.profit />
+                                    </div>
+                                    <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
+                                        <Gil amount=data.profit_per_day />
                                     </div>
                                     <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
                                         <span class={
