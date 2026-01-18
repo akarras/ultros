@@ -20,10 +20,9 @@ pub fn ItemIcon(
     let data = xiv_gen_db::data();
     let item_name = move || {
         let item = data.items.get(&ItemId(item_id()));
-        format!(
-            "Image for item {}",
-            item.as_ref().map(|i| i.name.as_str()).unwrap_or_default()
-        )
+        item.as_ref()
+            .map(|i| i.name.as_str().to_string())
+            .unwrap_or_default()
     };
     view! {
         <div

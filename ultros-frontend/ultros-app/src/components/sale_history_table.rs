@@ -51,7 +51,11 @@ pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
                                     {sale
                                         .hq
                                         .then(|| {
-                                            view! { <Icon icon=i::BsCheck /> }.into_view()
+                                            view! {
+                                                <span class="sr-only">"High Quality"</span>
+                                                <Icon icon=i::BsCheck aria_hidden=true />
+                                            }
+                                            .into_view()
                                         })}
                                 </td>
                                 <td>
