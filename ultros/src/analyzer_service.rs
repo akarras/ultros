@@ -33,7 +33,7 @@ use tokio_util::sync::CancellationToken;
 use ultros_api_types::trends::{TrendItem, TrendsData};
 use ultros_db::world_cache::{AnySelector, WorldCache};
 
-pub const SALE_HISTORY_SIZE: usize = 6;
+pub const SALE_HISTORY_SIZE: usize = 20;
 
 #[derive(Debug, Error)]
 pub enum AnalyzerError {
@@ -697,7 +697,7 @@ impl AnalyzerService {
             let std_dev = variance.sqrt();
 
             if let Some(cheapest) = cheapest_listings.item_map.get(key) {
-                let price_diff_ratio = cheapest.price as f32 / avg_price;
+                let _price_diff_ratio = cheapest.price as f32 / avg_price;
 
                 let trend_item = TrendItem {
                     item_id: key.item_id,
@@ -724,13 +724,12 @@ impl AnalyzerService {
                 // Let's stick to the previous logic but maybe make it a bit more statistically sound if possible.
                 // For now, I'll stick to the requested improvement: Use Standard Deviation.
 
-                // If price is > 1 standard deviation above average, and at least 20% higher.
-                if (cheapest.price as f32 > avg_price + std_dev) && price_diff_ratio > 1.2 {
+                // Spike Detection: Price > Average + 2 * StdDev.
+                if cheapest.price as f32 > avg_price + 2.0 * std_dev {
                     rising_price.push(trend_item.clone());
                 }
-                // Falling: Price < 1 SD below average, and at least 20% lower.
-                else if (cheapest.price as f32) < (avg_price - std_dev) && price_diff_ratio < 0.8
-                {
+                // Crash Detection: Price < Average - 2 * StdDev.
+                else if (cheapest.price as f32) < (avg_price - 2.0 * std_dev) {
                     falling_price.push(trend_item.clone());
                 }
             }
@@ -835,12 +834,13 @@ impl AnalyzerService {
             .iter()
             .flat_map(|(item_key, cheapest_price)| {
                 let (cheapest_history, sold_within) = *sale_history.get(item_key)?;
-                let current_cheapest_on_sale_world = sale_world_listings
-                    .item_map
-                    .get(item_key)
-                    .map(|l| l.price)
-                    .unwrap_or(cheapest_history);
-                let est_sale_price = (cheapest_history).min(current_cheapest_on_sale_world);
+                let current_listing_opt = sale_world_listings.item_map.get(item_key);
+                let est_sale_price = if let Some(listing) = current_listing_opt {
+                    (cheapest_history).min((listing.price - 1).max(1))
+                } else {
+                    (cheapest_history as f32 * 1.2) as i32
+                };
+
                 let profit = est_sale_price - cheapest_price.price;
                 Some(ResaleStats {
                     profit,
@@ -1535,5 +1535,152 @@ mod tests {
             count += 1;
         }
         assert_eq!(count, 4);
+    }
+
+    #[tokio::test]
+    async fn test_valuation_logic() {
+        // Setup
+        let mut cheapest_items = BTreeMap::new();
+        let mut recent_sale_history = BTreeMap::new();
+
+        // 1. Setup Sales
+        // Create 5 sales with prices 100, 200, 300, 400, 500. Median should be 300.
+        let mut sale_history = SaleHistory::default();
+        for i in 1..=5 {
+            sale_history.add_sale(&ultros_api_types::SaleHistory {
+                id: i,
+                hq: true,
+                price_per_item: i * 100,
+                quantity: 1,
+                buyer_name: None,
+                buying_character_id: 0,
+                sold_date: Utc::now().naive_utc(),
+                world_id: 1,
+                sold_item_id: 1,
+            });
+        }
+        recent_sale_history.insert(1, RwLock::new(sale_history));
+
+        // 2. Setup Region Listings (Source world)
+        let mut region_listings = CheapestListings::default();
+        region_listings.add_listing(&ultros_db::listings::ListingSummary {
+            item_id: 1,
+            world_id: 2,        // Source world (in same region)
+            price_per_unit: 50, // Very cheap!
+            hq: true,
+        });
+        cheapest_items.insert(AnySelector::Region(1), RwLock::new(region_listings));
+
+        // 3. Setup World Listings (Destination world)
+        // Case A: Listing exists
+        let mut world_listings_a = CheapestListings::default();
+        world_listings_a.add_listing(&ultros_db::listings::ListingSummary {
+            item_id: 1,
+            world_id: 1,
+            price_per_unit: 1000,
+            hq: true,
+        });
+        cheapest_items.insert(AnySelector::World(1), RwLock::new(world_listings_a));
+
+        let analyzer_service = AnalyzerService {
+            recent_sale_history: Arc::new(recent_sale_history),
+            cheapest_items: Arc::new(cheapest_items),
+            initiated: Arc::new(AtomicBool::new(true)),
+        };
+
+        // Run get_best_resale for Case A
+        let results = analyzer_service
+            .get_best_resale(
+                1, // World ID
+                1, // Region ID
+                ResaleOptions::default(),
+                &Arc::new(WorldCache::empty()), // Mock WorldCache? Need to handle lookups if any.
+                                                // WorldCache usage in get_best_resale:
+                                                // datacenter_filters_worlds (skipped if filter is None)
+            )
+            .await
+            .unwrap();
+
+        // Logic: Median = 300. CurrentListing = 1000.
+        // EstSalePrice = min(Median, CurrentListing - 1) = min(300, 999) = 300.
+        // Profit = 300 - 50 = 250.
+        // But wait, the previous code had logic:
+        // let price = prices[len / 2];
+        // 5 items: 100, 200, 300, 400, 500. Sorted.
+        // len=5. len/2 = 2. prices[2] = 300. Correct.
+
+        assert!(!results.is_empty());
+        let res = results.first().unwrap();
+        // Profit should be EstSalePrice (300) - BuyPrice (50) = 250.
+        assert_eq!(res.profit, 250, "Profit calculation failed for Case A");
+
+        // Case B: No Listing (Market Empty)
+        // Modify World Listings to remove the item
+        let mut cheapest_items_b = BTreeMap::new();
+        // Region listings same as before
+        let mut region_listings = CheapestListings::default();
+        region_listings.add_listing(&ultros_db::listings::ListingSummary {
+            item_id: 1,
+            world_id: 2,
+            price_per_unit: 50,
+            hq: true,
+        });
+        cheapest_items_b.insert(AnySelector::Region(1), RwLock::new(region_listings));
+
+        // World listings empty for this item
+        let world_listings_b = CheapestListings::default();
+        cheapest_items_b.insert(AnySelector::World(1), RwLock::new(world_listings_b));
+
+        // Sale History needs to be cloned or recreated
+        let mut sale_history = SaleHistory::default();
+        for i in 1..=5 {
+            sale_history.add_sale(&ultros_api_types::SaleHistory {
+                id: i,
+                hq: true,
+                price_per_item: i * 100,
+                quantity: 1,
+                buyer_name: None,
+                buying_character_id: 0,
+                sold_date: Utc::now().naive_utc(),
+                world_id: 1,
+                sold_item_id: 1,
+            });
+        }
+        let mut recent_sale_history_b = BTreeMap::new();
+        recent_sale_history_b.insert(1, RwLock::new(sale_history));
+
+        let analyzer_service_b = AnalyzerService {
+            recent_sale_history: Arc::new(recent_sale_history_b),
+            cheapest_items: Arc::new(cheapest_items_b),
+            initiated: Arc::new(AtomicBool::new(true)),
+        };
+
+        let results_b = analyzer_service_b
+            .get_best_resale(
+                1,
+                1,
+                ResaleOptions::default(),
+                &Arc::new(WorldCache::empty()),
+            )
+            .await
+            .unwrap();
+
+        // Logic: Market empty.
+        // EstSalePrice = Median * 1.2 = 300 * 1.2 = 360.
+        // Profit = 360 - 50 = 310.
+
+        assert!(!results_b.is_empty());
+        let res_b = results_b.first().unwrap();
+        assert_eq!(
+            res_b.profit, 310,
+            "Profit calculation failed for Case B (Empty Market)"
+        );
+
+        // Case C: Listing is cheaper than Median
+        // Listing = 200. Median = 300.
+        // EstSalePrice = min(Median, Listing - 1) = min(300, 199) = 199.
+        // Profit = 199 - 50 = 149.
+
+        // ... (can add this if needed, but A and B cover the main changes)
     }
 }
