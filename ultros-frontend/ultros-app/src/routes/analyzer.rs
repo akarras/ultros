@@ -7,7 +7,7 @@ use crate::{
     },
     error::AppError,
     global_state::LocalWorldData,
-    math::filter_outliers_iqr,
+    math::{calculate_sales_velocity, filter_outliers_iqr},
 };
 use chrono::{Duration, Utc};
 use humantime::{format_duration, parse_duration};
@@ -31,7 +31,7 @@ use ultros_api_types::{
 use xiv_gen::ItemId;
 
 /// Computed sale stats
-#[derive(Hash, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct SaleSummary {
     item_id: i32,
     hq: bool,
@@ -39,6 +39,7 @@ struct SaleSummary {
     num_sold: usize,
     /// Represents the average time between sales within the `num_sold`
     avg_sale_duration: Option<Duration>,
+    sales_per_day: f64,
     max_price: i32,
     avg_price: i32,
     min_price: i32,
@@ -131,11 +132,19 @@ fn compute_summary(
         .last()
         .map(|last| (last.sale_date - now).num_milliseconds().abs() / sales.len() as i64);
     let avg_sale_duration = t.map(Duration::milliseconds);
+
+    let timestamps: Vec<i64> = sales
+        .iter()
+        .map(|s| s.sale_date.and_utc().timestamp_millis())
+        .collect();
+    let sales_per_day = calculate_sales_velocity(&timestamps, now.and_utc().timestamp_millis());
+
     SaleSummary {
         item_id,
         hq,
         num_sold: sales.len(),
         avg_sale_duration,
+        sales_per_day,
         max_price,
         avg_price,
         min_price,
@@ -747,7 +756,7 @@ fn AnalyzerTable(
                                     </div>
                                 </div>
                                 <div role="columnheader" class="w-30 p-4 hidden md:block">
-                                    "Avg Sale Time"
+                                    "Sales/Day"
                                 </div>
                             </div>
                         }.into_any()
@@ -871,25 +880,8 @@ fn AnalyzerTable(
                                             </QueryButton>
                                         </Tooltip>
                                     </div>
-                                    <div role="cell" class="px-4 py-2 w-30 truncate hidden md:block flex items-center">
-                                        {data.inner
-                                            .sale_summary
-                                            .avg_sale_duration
-                                            .and_then(|duration| duration.to_std().ok())
-                                            .map(|duration| {
-                                                let secs = duration.as_secs();
-                                                let days = secs / 86_400;
-                                                let hours = (secs % 86_400) / 3_600;
-                                                let minutes = (secs % 3_600) / 60;
-                                                let seconds = secs % 60;
-                                                let mut parts = Vec::new();
-                                                if days > 0 { parts.push(format!("{}d", days)); }
-                                                if hours > 0 { parts.push(format!("{}h", hours)); }
-                                                if minutes > 0 && parts.len() < 2 { parts.push(format!("{}m", minutes)); }
-                                                if seconds > 0 && parts.len() < 2 { parts.push(format!("{}s", seconds)); }
-                                                if parts.is_empty() { "0s".to_string() } else { parts[..parts.len().min(2)].join(" ") }
-                                            })
-                                            .unwrap_or_else(|| "---".to_string())}
+                                    <div role="cell" class="px-4 py-2 w-30 truncate hidden md:block flex items-center text-right justify-end">
+                                        {format!("{:.1}", data.inner.sale_summary.sales_per_day)}
                                     </div>
                                 </div>
                             }
