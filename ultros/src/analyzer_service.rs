@@ -33,7 +33,7 @@ use tokio_util::sync::CancellationToken;
 use ultros_api_types::trends::{TrendItem, TrendsData};
 use ultros_db::world_cache::{AnySelector, WorldCache};
 
-pub const SALE_HISTORY_SIZE: usize = 6;
+pub const SALE_HISTORY_SIZE: usize = 20;
 
 #[derive(Debug, Error)]
 pub enum AnalyzerError {
@@ -712,24 +712,13 @@ impl AnalyzerService {
                     high_velocity.push(trend_item.clone());
                 }
 
-                // Rising: Current price is significantly higher than average (using SD or fixed ratio)
-                // Use 1.5 ratio OR > 2 SDs if SD is significant relative to price
-                // If SD is small, 1.5 ratio is safer. If SD is huge, 1.5 ratio might be within noise.
-                // Let's keep 1.5 ratio as a base, but maybe refine it?
-                // Actually, let's use SD if available and meaningful.
-                // If price > avg + 1.0 * SD (and ratio > 1.2), it's rising.
-                // But to keep it simple and consistent with "Rising Prices" meaning "Buy Low Sell High later" or "Market Spiking":
-                // If we want to find "Rising" markets to maybe invest in? No, usually "Rising" means "Don't buy now".
-                // Or does it mean "It's trending up, buy now before it goes higher"?
-                // Let's stick to the previous logic but maybe make it a bit more statistically sound if possible.
-                // For now, I'll stick to the requested improvement: Use Standard Deviation.
-
-                // If price is > 1 standard deviation above average, and at least 20% higher.
-                if (cheapest.price as f32 > avg_price + std_dev) && price_diff_ratio > 1.2 {
+                // Rising: Price > Average + 2 * StdDev.
+                if (cheapest.price as f32 > avg_price + (2.0 * std_dev)) && price_diff_ratio > 1.2 {
                     rising_price.push(trend_item.clone());
                 }
-                // Falling: Price < 1 SD below average, and at least 20% lower.
-                else if (cheapest.price as f32) < (avg_price - std_dev) && price_diff_ratio < 0.8
+                // Falling: Price < Average - 2 * StdDev.
+                else if (cheapest.price as f32) < (avg_price - (2.0 * std_dev))
+                    && price_diff_ratio < 0.8
                 {
                     falling_price.push(trend_item.clone());
                 }
@@ -834,13 +823,16 @@ impl AnalyzerService {
             .item_map
             .iter()
             .flat_map(|(item_key, cheapest_price)| {
-                let (cheapest_history, sold_within) = *sale_history.get(item_key)?;
-                let current_cheapest_on_sale_world = sale_world_listings
-                    .item_map
-                    .get(item_key)
-                    .map(|l| l.price)
-                    .unwrap_or(cheapest_history);
-                let est_sale_price = (cheapest_history).min(current_cheapest_on_sale_world);
+                let (median_sale_price, sold_within) = *sale_history.get(item_key)?;
+                let est_sale_price =
+                    if let Some(listing) = sale_world_listings.item_map.get(item_key) {
+                        // EstimatedSalePrice = min(CurrentCheapestListing - 1, Median(RecentSales))
+                        (listing.price - 1).min(median_sale_price)
+                    } else {
+                        // If CurrentCheapestListing doesn't exist (market is empty), use Median(RecentSales) * 1.2
+                        (median_sale_price as f32 * 1.2) as i32
+                    };
+
                 let profit = est_sale_price - cheapest_price.price;
                 Some(ResaleStats {
                     profit,
