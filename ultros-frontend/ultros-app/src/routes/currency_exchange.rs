@@ -100,6 +100,7 @@ fn ItemAmount(#[prop(into)] item_amount: Option<ItemAmount>) -> impl IntoView {
 struct ShopItems {
     recv: Vec<ItemAmount>,
     cost: Vec<ItemAmount>,
+    use_currency_type: u8,
 }
 
 fn from_lists(
@@ -125,6 +126,7 @@ fn shop_items(special_shop: &SpecialShop) -> impl Iterator<Item = ShopItems> + '
         count_cost_1,
         item_cost_2,
         count_cost_2,
+        use_currency_type,
         ..
     } = special_shop;
 
@@ -146,10 +148,36 @@ fn shop_items(special_shop: &SpecialShop) -> impl Iterator<Item = ShopItems> + '
                 .zip(cost_1.zip(cost_2))
                 .map(|(cost_0, (cost_1, cost_2))| (cost_0, cost_1, cost_2)),
         )
-        .map(|((recv_0, recv_1), (cost_0, cost_1, cost_2))| ShopItems {
-            recv: [recv_0, recv_1].into_iter().flatten().collect(),
-            cost: [cost_0, cost_1, cost_2].into_iter().flatten().collect(),
-        })
+        .map(
+            move |((recv_0, recv_1), (cost_0, cost_1, cost_2))| ShopItems {
+                recv: [recv_0, recv_1].into_iter().flatten().collect(),
+                cost: [cost_0, cost_1, cost_2].into_iter().flatten().collect(),
+                use_currency_type: *use_currency_type,
+            },
+        )
+}
+
+fn resolve_currency(
+    item_id: ItemId,
+    use_currency_type: u8,
+    data: &'static xiv_gen::Data,
+) -> Option<ItemAmount> {
+    let new_item_id = if (use_currency_type == 4 || use_currency_type == 16)
+        && (item_id.0 == 1 || item_id.0 == 0)
+    {
+        // Poetics shop uses currency type 4 and often has cost 1 (Gil) or 0
+        ItemId(28)
+    } else if item_id.0 == 46728 {
+        // Universal Tomestone 2.0 -> Mathematics
+        ItemId(48)
+    } else if item_id.0 == 49756 {
+        // Universal Tomestone 3.0 -> Mnemonics
+        ItemId(49)
+    } else {
+        item_id
+    };
+    let item = data.items.get(&new_item_id)?;
+    Some(ItemAmount { item, amount: 1 })
 }
 
 #[component]
@@ -278,13 +306,32 @@ pub fn ExchangeItem() -> impl IntoView {
                 shop_items(shop)
                     .filter(move |items| {
                         // make sure the item is valid on the marketboard before we lookup prices for it
-                        items.cost.iter().any(|i| i.item.key_id.0 == item.0)
+                        items
+                            .cost
+                            .iter()
+                            .flat_map(|c| {
+                                resolve_currency(c.item.key_id, items.use_currency_type, data)
+                            })
+                            .any(|i| i.item.key_id.0 == item.0)
                             && items
                                 .recv
                                 .iter()
                                 .any(|i| i.item.item_search_category.0 != 0)
                     })
-                    .map(move |items| (items, shop))
+                    .map(move |mut items| {
+                        // fix costs
+                        items.cost = items
+                            .cost
+                            .iter()
+                            .flat_map(|c| {
+                                let mut resolved =
+                                    resolve_currency(c.item.key_id, items.use_currency_type, data)?;
+                                resolved.amount = c.amount;
+                                Some(resolved)
+                            })
+                            .collect();
+                        (items, shop)
+                    })
             })
             .collect::<Vec<_>>()
     };
@@ -910,7 +957,12 @@ pub fn CurrencySelection() -> impl IntoView {
                         .iter()
                         .any(|i| i.item.item_search_category.0 != 0)
                 })
-                .flat_map(|f| f.cost.into_iter().map(|i| i.item.key_id))
+                .flat_map(|f| {
+                    let use_currency = f.use_currency_type;
+                    f.cost.into_iter().flat_map(move |i| {
+                        resolve_currency(i.item.key_id, use_currency, data).map(|r| r.item.key_id)
+                    })
+                })
         })
         .filter(|f| {
             let Some(item) = data.items.get(f) else {
