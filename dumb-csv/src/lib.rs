@@ -44,14 +44,16 @@ where
     T: DumbCsvDeserialize,
     R: std::io::Read,
 {
-    let mut data = vec![];
-
-    for record in rdr.records() {
-        let record = record?;
-
-        data.push(T::from_str_list(record.iter()));
-    }
-    Ok(data)
+    Ok(rdr
+        .records()
+        .filter_map(|record| match record {
+            Ok(record) => Some(T::from_str_list(record.iter())),
+            Err(e) => {
+                eprintln!("Failed to parse dumb-csv record, skipping. {e:?}");
+                None
+            }
+        })
+        .collect())
 }
 
 pub trait DumbCsvDeserialize {

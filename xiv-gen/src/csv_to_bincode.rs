@@ -40,8 +40,9 @@ pub fn read_csv<T: DeserializeOwned>(path: &str) -> Vec<T> {
     // line 2
     csv.deserialize()
         .skip(2)
-        .map(|m| {
-            if let Err(e) = &m {
+        .filter_map(|m| match m {
+            Ok(m) => Some(m),
+            Err(e) => {
                 // try to pretty print this error a bit, otherwise it's hard to tell what went wrong
                 if let Some(position) = e.position() {
                     if let ErrorKind::Deserialize { err, .. } = e.kind()
@@ -62,8 +63,8 @@ pub fn read_csv<T: DeserializeOwned>(path: &str) -> Vec<T> {
                         "^".to_string()
                     );
                 }
+                None
             }
-            m.unwrap_or_else(|_| panic!("Failed to deserialize file {}", path))
         })
         .collect()
 }
