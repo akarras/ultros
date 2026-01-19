@@ -1,59 +1,58 @@
-# Tataru's Master Plan for Gil Maximization
+# Tataru's Master Plan for Infinite Gil
 
-Hello minions! This is your project manager Tataru. I have analyzed our current tools and found them... lacking. We are leaving too much gil on the table!
+As the Treasurer of the Scions of the Seventh Dawn (and potentially the richest person in Eorzea), I, Tataru Taru, have devised a master plan to improve our investment tooling. Our goal is simple: **Maximize Gil**.
 
-Here is the specification for the next generation of investment tools.
+## 1. The "Gil-per-Day" Metric (Daily Profit)
+**Status**: Implementation in progress.
+**Concept**: "Profit" is meaningless without "Time". A 1,000,000 gil profit that takes 10 years to realize is worse than a 10,000 gil profit that happens every hour.
+**Formula**: `Daily Profit = (Selling Price - Buying Price) * (Sales Per Day)`
+**Requirement**:
+- Integrate "Sales Velocity" into the Profit Table.
+- Allow sorting by "Daily Profit".
 
-## 1. Smarter Valuation Logic (The "Greedy but Wise" Algorithm)
+## 2. Investment Score (The "Scion Score")
+**Status**: Planned.
+**Concept**: A single number to rule them all. Novice investors get confused by too many numbers. We need a simple 0-100 score.
+**Formula**: A weighted average of:
+- **ROI** (30% weight): Efficiency of capital.
+- **Velocity** (40% weight): How fast we get paid.
+- **Risk** (20% weight): Price volatility.
+- **Saturation** (10% weight): Competition.
 
-**Problem:** Our current "Flip Finder" (`get_best_resale`) is too cowardly. It estimates the sale price based on the *minimum* price of the last few sales. If one person got lucky and bought a `Golden Beaver` for 1 gil, we assume we can only sell it for 1 gil. This is unacceptable!
+## 3. Market Saturation Index
+**Status**: Planned.
+**Concept**: Are we walking into a trap? If there are 100 listings and only 1 sale a week, we will never sell.
+**Formula**: `Saturation = Active Listings / Weekly Sales`.
+**Requirement**:
+- We currently fetch `CheapestListings` (single price). We need `ListingCount` from the backend.
+- Backend needs to aggregate listing counts per item/world.
 
-**Solution:**
-- We shall use the **Median** or **Weighted Average** of recent sales.
-- Specifically, we should look at the sale history (last 20 sales if possible, currently we store 6).
-- **Algorithm Update**:
-    - `EstimatedSalePrice = min(CurrentCheapestListing - 1, Median(RecentSales))`
-    - If `CurrentCheapestListing` doesn't exist (market is empty), use `Median(RecentSales) * 1.2` (Monopoly pricing!).
-    - If `RecentSales` is empty, ignore the item (too risky).
+## 4. Cross-World Arbitrage Route Planner
+**Status**: Planned.
+**Concept**: Instead of just "Item X is cheap on World A", give me a **Travel Plan**.
+- "Go to World A, buy X, Y, Z."
+- "Go to World B, buy A, B, C."
+- "Return to Home World, sell all."
+**Requirement**:
+- Knapsack algorithm to maximize profit given inventory space (140 slots).
 
-## 2. The "Tataru Score" (Investment Grading)
+## 5. Undercut Alert System
+**Status**: Planned.
+**Concept**: Time is money. If I'm undercut, I'm not selling.
+- Real-time alerts via Discord/Websocket when my retaining price is no longer the lowest.
 
-**Problem:** Minions get confused by "Profit" vs "ROI". A 100% ROI on a 1 gil item is useless. A 1,000,000 gil profit on an item that sells once a year is a trap.
+## 6. Historical Trend Analysis
+**Status**: Backend supported (`get_trends`), Frontend needs update.
+**Concept**: "Buy Low, Sell High". We need to know if the current price is "Low".
+- Compare current cheapest price to 30-day average.
+- Visual indicator: "Price is 20% below average" -> BUY SIGNAL.
 
-**Solution:**
-- Introduce a composite score: `TataruScore`.
-- `TataruScore = Log10(Profit) * (SalesPerWeek ^ 0.5) * Reliability`
-- **Reliability**: A factor (0.0 to 1.0) based on price volatility.
-- Display this score in the UI and allow sorting by it. "Sort by Best Opportunity".
-
-## 3. Advanced Market Trends
-
-**Problem:** "Rising Price" just means "Current > 1.5 * Average". This is too simple.
-
-**Solution:**
-- Implement **Standard Deviation** checks.
-- **Spike Detection**: Price > Average + 2 * StdDev.
-- **Crash Detection**: Price < Average - 2 * StdDev.
-- **Volatility Index**: High StdDev means high risk (or high reward for brave traders).
-
-## 4. Vendor Resale "Cash Flow"
-
-**Problem:** Vendor resale list is clogged with items that never sell.
-
-**Solution:**
-- Default sort by `WeeklyProfit = UnitProfit * SalesPerWeek`.
-- Highlight items that can be bought from a vendor in *housing districts* (Material Suppliers) vs those that require travel to obscure zones.
-
-## Implementation Plan
-
-1.  **Upgrade `analyzer_service.rs`**:
-    - Modify `get_best_resale` to calculate Median price instead of Min.
-    - Modify `get_trends` to include Standard Deviation calculation.
-2.  **Upgrade `analyzer.rs` (Frontend)**:
-    - Expose the new valuation in the UI.
-    - (Optional) Add the "Tataru Score" column.
+## 7. Tax Evasion... I mean, Tax Optimization
+**Status**: Planned.
+**Concept**: Some city-states have reduced tax rates due to "events" or "favors".
+- Track current tax rates for each retainer city.
+- Suggest where to sell based on tax rates.
 
 ---
-
 *Signed,*
 *Tataru Taru*
