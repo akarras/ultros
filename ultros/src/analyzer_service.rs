@@ -326,6 +326,13 @@ struct AnalyzerState {
     cheapest_items: BTreeMap<AnySelector, CheapestListings>,
 }
 
+fn calculate_valuation(median_price: i32, current_listing_price: Option<i32>) -> i32 {
+    match current_listing_price {
+        Some(price) => std::cmp::min(std::cmp::max(1, price - 1), median_price),
+        None => (median_price as f32 * 1.2) as i32,
+    }
+}
+
 /// Build a short list of all the items in the game that we think would sell well.
 /// Implemented as an easily cloneable Arc monster
 #[derive(Debug, Clone)]
@@ -724,12 +731,13 @@ impl AnalyzerService {
                 // Let's stick to the previous logic but maybe make it a bit more statistically sound if possible.
                 // For now, I'll stick to the requested improvement: Use Standard Deviation.
 
-                // If price is > 1 standard deviation above average, and at least 20% higher.
-                if (cheapest.price as f32 > avg_price + std_dev) && price_diff_ratio > 1.2 {
+                // If price is > 2 standard deviation above average, and at least 20% higher.
+                if (cheapest.price as f32 > avg_price + (2.0 * std_dev)) && price_diff_ratio > 1.2 {
                     rising_price.push(trend_item.clone());
                 }
-                // Falling: Price < 1 SD below average, and at least 20% lower.
-                else if (cheapest.price as f32) < (avg_price - std_dev) && price_diff_ratio < 0.8
+                // Falling: Price < 2 SD below average, and at least 20% lower.
+                else if (cheapest.price as f32) < (avg_price - (2.0 * std_dev))
+                    && price_diff_ratio < 0.8
                 {
                     falling_price.push(trend_item.clone());
                 }
@@ -835,12 +843,10 @@ impl AnalyzerService {
             .iter()
             .flat_map(|(item_key, cheapest_price)| {
                 let (cheapest_history, sold_within) = *sale_history.get(item_key)?;
-                let current_cheapest_on_sale_world = sale_world_listings
-                    .item_map
-                    .get(item_key)
-                    .map(|l| l.price)
-                    .unwrap_or(cheapest_history);
-                let est_sale_price = (cheapest_history).min(current_cheapest_on_sale_world);
+                let current_cheapest_on_sale_world =
+                    sale_world_listings.item_map.get(item_key).map(|l| l.price);
+                let est_sale_price =
+                    calculate_valuation(cheapest_history, current_cheapest_on_sale_world);
                 let profit = est_sale_price - cheapest_price.price;
                 Some(ResaleStats {
                     profit,
@@ -1212,7 +1218,38 @@ mod test {
 
     use crate::analyzer_service::ItemKey;
 
-    use super::{SaleHistory, SaleSummary, SoldAmount, SoldWithin};
+    use super::{SaleHistory, SaleSummary, SoldAmount, SoldWithin, calculate_valuation};
+
+    #[test]
+    fn test_calculate_valuation() {
+        // Case 1: Market empty (None), use 1.2 * median
+        assert_eq!(calculate_valuation(100, None), 120);
+        assert_eq!(calculate_valuation(10, None), 12);
+
+        // Case 2: Market has listing higher than median
+        // min(listing - 1, median) -> min(200 - 1, 100) -> 100
+        assert_eq!(calculate_valuation(100, Some(200)), 100);
+
+        // Case 3: Market has listing lower than median
+        // min(listing - 1, median) -> min(90 - 1, 100) -> 89
+        assert_eq!(calculate_valuation(100, Some(90)), 89);
+
+        // Case 4: Market has listing equal to median
+        // min(100 - 1, 100) -> 99
+        assert_eq!(calculate_valuation(100, Some(100)), 99);
+
+        // Case 5: Listing is 1 gil
+        // min(max(1, 1 - 1), median) -> min(1, 100) -> 1
+        assert_eq!(calculate_valuation(100, Some(1)), 1);
+
+        // Case 6: Listing is 2 gil
+        // min(2 - 1, 100) -> 1
+        assert_eq!(calculate_valuation(100, Some(2)), 1);
+
+        // Case 7: Listing is 1 gil, median is 1 gil
+        // min(1, 1) -> 1
+        assert_eq!(calculate_valuation(1, Some(1)), 1);
+    }
 
     #[test]
     fn test_sale_history_sort() {
