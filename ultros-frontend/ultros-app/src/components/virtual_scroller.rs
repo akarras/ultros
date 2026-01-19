@@ -258,12 +258,12 @@ where
                 }
             }
             node_ref=scroller
-            class="overflow-y-auto overflow-x-visible w-full will-change-scroll contain-paint forced-layer"
+            class="overflow-y-auto overflow-x-auto w-full will-change-scroll contain-paint forced-layer"
             style=format!("height: {}px;", viewport_height.ceil() as u32)
         >
-            {header_opt.map(|h| view! { <div class="sticky top-0 z-10 content-visible contain-content">{h}</div> })}
+            {header_opt.map(|h| view! { <div class="sticky top-0 z-10">{h}</div> })}
             <div
-                class="overflow-y-hidden overflow-x-visible will-change-[transform] relative w-full contain-layout contain-paint content-visible forced-layer"
+                class="overflow-y-hidden overflow-x-visible will-change-[transform] relative w-full contain-layout forced-layer"
                 style=move || {
                     format!(
                         r#"height: {}px;"#,
@@ -320,9 +320,9 @@ where
                                     node_ref=row
                                     class=move || {
                                         if variable_height {
-                                            "content-auto contain-layout contain-paint will-change-transform".to_string()
+                                            "content-auto contain-layout will-change-transform".to_string()
                                         } else {
-                                            "content-visible contain-layout contain-paint will-change-transform overflow-hidden".to_string()
+                                            "content-visible contain-layout will-change-transform overflow-hidden".to_string()
                                         }
                                     }
                                     style=move || {
