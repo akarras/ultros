@@ -1,28 +1,37 @@
 use leptos::prelude::*;
 pub use ultros_api_types::icon_size::IconSize;
-use xiv_gen::ItemId;
+use xiv_gen::{Item, ItemId};
 
 #[component]
 pub fn ItemIcon(
     #[prop(into)] item_id: Signal<i32>,
     icon_size: IconSize,
     #[prop(optional)] loading: &'static str,
+    #[prop(optional)] item: Option<&'static Item>,
 ) -> impl IntoView {
     let valid_search_category = move || {
-        xiv_gen_db::data()
-            .items
-            .get(&ItemId(item_id()))
-            .map(|item| item.item_search_category.0 > 0)
-            .unwrap_or_default()
+        if let Some(item) = item {
+            item.item_search_category.0 > 0
+        } else {
+            xiv_gen_db::data()
+                .items
+                .get(&ItemId(item_id()))
+                .map(|item| item.item_search_category.0 > 0)
+                .unwrap_or_default()
+        }
     };
     let (failed, set_failed) = signal(0);
     let failed_item = move || failed() == item_id();
     let data = xiv_gen_db::data();
     let item_name = move || {
-        let item = data.items.get(&ItemId(item_id()));
-        item.as_ref()
-            .map(|i| i.name.as_str().to_string())
-            .unwrap_or_default()
+        if let Some(item) = item {
+            item.name.as_str().to_string()
+        } else {
+            let item = data.items.get(&ItemId(item_id()));
+            item.as_ref()
+                .map(|i| i.name.as_str().to_string())
+                .unwrap_or_default()
+        }
     };
     view! {
         <div

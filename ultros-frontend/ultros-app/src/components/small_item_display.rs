@@ -11,7 +11,7 @@ fn ItemDetails(item: &'static Item) -> impl IntoView {
     view! {
         <div class="flex flex-row items-center gap-2 min-w-0">
             <div class="shrink-0">
-                <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Small />
+                <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Small item />
             </div>
             <span class="flex-1 min-w-0 truncate">{item.name.as_str()}</span>
             <span class="w-10 text-[color:var(--color-text-muted)] text-right shrink-0">{item.level_item.0}</span>
