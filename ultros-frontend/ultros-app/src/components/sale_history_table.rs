@@ -224,11 +224,21 @@ fn find_date_range(
         .iter()
         .enumerate()
         .find(|(_, sale)| date_range.contains(&sale.sold_date))?;
-    let (end, _) = sales
+
+    // Optimization: Sales are sorted descending by date.
+    // Instead of scanning from the end of the list (which could be very far away for "Past Day"),
+    // we scan forward from `start` until we find the first item outside the range.
+    // The previous item is the end of our range.
+    let count = sales[start..]
         .iter()
-        .enumerate()
-        .rev()
-        .find(|(_, sale)| date_range.contains(&sale.sold_date))?;
+        .take_while(|sale| date_range.contains(&sale.sold_date))
+        .count();
+
+    if count == 0 {
+        return None;
+    }
+
+    let end = start + count - 1;
     Some(&sales[start..=end])
 }
 
