@@ -697,8 +697,6 @@ impl AnalyzerService {
             let std_dev = variance.sqrt();
 
             if let Some(cheapest) = cheapest_listings.item_map.get(key) {
-                let price_diff_ratio = cheapest.price as f32 / avg_price;
-
                 let trend_item = TrendItem {
                     item_id: key.item_id,
                     hq: key.hq,
@@ -724,13 +722,12 @@ impl AnalyzerService {
                 // Let's stick to the previous logic but maybe make it a bit more statistically sound if possible.
                 // For now, I'll stick to the requested improvement: Use Standard Deviation.
 
-                // If price is > 1 standard deviation above average, and at least 20% higher.
-                if (cheapest.price as f32 > avg_price + std_dev) && price_diff_ratio > 1.2 {
+                // If price is > 2 standard deviation above average
+                if cheapest.price as f32 > avg_price + (2.0 * std_dev) {
                     rising_price.push(trend_item.clone());
                 }
-                // Falling: Price < 1 SD below average, and at least 20% lower.
-                else if (cheapest.price as f32) < (avg_price - std_dev) && price_diff_ratio < 0.8
-                {
+                // Falling: Price < 2 SD below average
+                else if (cheapest.price as f32) < (avg_price - (2.0 * std_dev)) {
                     falling_price.push(trend_item.clone());
                 }
             }
@@ -838,9 +835,9 @@ impl AnalyzerService {
                 let current_cheapest_on_sale_world = sale_world_listings
                     .item_map
                     .get(item_key)
-                    .map(|l| l.price)
-                    .unwrap_or(cheapest_history);
-                let est_sale_price = (cheapest_history).min(current_cheapest_on_sale_world);
+                    .map(|l| l.price);
+                let est_sale_price =
+                    Self::calculate_estimated_price(cheapest_history, current_cheapest_on_sale_world);
                 let profit = est_sale_price - cheapest_price.price;
                 Some(ResaleStats {
                     profit,
@@ -1045,6 +1042,21 @@ impl AnalyzerService {
             Ok(extract(&read))
         } else {
             Err(AnalyzerError::Uninitialized)
+        }
+    }
+
+    fn calculate_estimated_price(median_price: i32, current_listing_price: Option<i32>) -> i32 {
+        match current_listing_price {
+            Some(listing_price) => {
+                // EstimatedSalePrice = min(CurrentCheapestListing - 1, Median(RecentSales))
+                // Ensure price is at least 1
+                let undercut = (listing_price - 1).max(1);
+                undercut.min(median_price)
+            }
+            None => {
+                // If CurrentCheapestListing doesn't exist (market is empty), use Median(RecentSales) * 1.2
+                (median_price as f32 * 1.2) as i32
+            }
         }
     }
 }
@@ -1385,6 +1397,33 @@ mod tests {
     use std::time::Duration;
     use tempfile::tempdir;
     use tokio::time::sleep;
+
+    #[test]
+    fn test_calculate_estimated_price() {
+        // Case A: Listing < Median
+        // Median 150, Listing 100. Result should be 99.
+        assert_eq!(AnalyzerService::calculate_estimated_price(150, Some(100)), 99);
+
+        // Case B: Listing > Median
+        // Median 150, Listing 200. Result should be 150.
+        // min(150, 199) = 150.
+        assert_eq!(AnalyzerService::calculate_estimated_price(150, Some(200)), 150);
+
+        // Case C: No Listing
+        // Median 150. Result should be 150 * 1.2 = 180.
+        assert_eq!(AnalyzerService::calculate_estimated_price(150, None), 180);
+
+        // Edge case: Listing at 1
+        assert_eq!(AnalyzerService::calculate_estimated_price(150, Some(1)), 1);
+
+        // Edge case: Listing at median + 1
+        // min(150, 150) = 150
+        assert_eq!(AnalyzerService::calculate_estimated_price(150, Some(151)), 150);
+
+        // Edge case: Listing at median
+        // min(150, 149) = 149
+        assert_eq!(AnalyzerService::calculate_estimated_price(150, Some(150)), 149);
+    }
 
     #[tokio::test]
     async fn test_persistence() {
