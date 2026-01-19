@@ -36,6 +36,8 @@ where
         ArcSignal::derive(move || false)
     };
 
+    let (highlighted_index, set_highlighted_index) = signal(0usize);
+
     let labels =
         Memo::new(move |_| items.with(|i| i.iter().map(as_label).enumerate().collect::<Vec<_>>()));
     let search_results = Memo::new(move |_| {
@@ -54,30 +56,58 @@ where
             })
         })
     });
+
+    // Memo stores ((original_index, label), visual_index)
     let final_result = Memo::new(move |_| {
         let search_results = search_results();
-        if search_results.is_empty() {
+        let list = if search_results.is_empty() {
             labels()
         } else {
             search_results
-        }
+        };
+        list.into_iter().enumerate().map(|(v, item)| (item, v)).collect::<Vec<_>>()
     });
+
+    // Reset highlight when results change
+    Effect::new(move |_| {
+        final_result.track();
+        set_highlighted_index(0);
+    });
+
     let keydown = move |e: KeyboardEvent| {
-        if e.key() == "Enter"
-            && let Some(id) = search_results.with_untracked(|s| s.first().map(|(i, _)| *i))
-            && let Some(item) = items.with(|i| i.get(id).cloned())
-        {
-            set_choice(Some(item));
-            set_current_input("".to_string());
-            if let Some(element) = document()
-                .active_element()
-                .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
-            {
-                element.blur().unwrap();
+        let key = e.key();
+        if key == "ArrowDown" {
+            e.prevent_default();
+            let len = final_result.with_untracked(|l| l.len());
+            if len > 0 {
+                set_highlighted_index.update(|i| *i = (*i + 1).min(len.saturating_sub(1)));
             }
-            let input = input.get_untracked().unwrap();
-            input.focus().unwrap();
-            input.blur().unwrap();
+        } else if key == "ArrowUp" {
+            e.prevent_default();
+            set_highlighted_index.update(|i| *i = i.saturating_sub(1));
+        } else if key == "Enter" {
+            e.prevent_default();
+            // Use highlighted_index to pick from final_result
+            let idx = highlighted_index.get_untracked();
+            // final_result item is ((original_id, label), visual_id)
+            if let Some(((id, _), _)) = final_result.with_untracked(|s| s.get(idx).cloned())
+                && let Some(item) = items.with(|i| i.get(id).cloned())
+            {
+                set_choice(Some(item));
+                set_current_input("".to_string());
+                set_focused(false); // Close dropdown on selection
+                if let Some(element) = document()
+                    .active_element()
+                    .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
+                {
+                    element.blur().unwrap();
+                }
+                // Maintain focus/blur sequence if it was intentional for other reasons
+                if let Some(input) = input.get_untracked() {
+                    let _ = input.focus();
+                    let _ = input.blur();
+                }
+            }
         }
     };
 
@@ -136,14 +166,18 @@ where
                 class=move || format!("{} {}", default_dropdown_class, dropdown_class.unwrap_or(""))
                 class:hidden=move || !has_focus() && !hovered()
             >
-                <For each=final_result key=move |(l, _)| *l let:data>
+                <For each=final_result key=move |((l, _), _)| *l let:data>
                     {
+                        // data is ((original_id, label), visual_id)
+                        let ((original_id, label), visual_id) = data;
                         let is_selected_selector = is_selected_selector.clone();
                         view! {
                     <button
                         class="w-full text-left"
+                        // Sync highlighted index on mouse hover
+                        on:mouseenter=move |_| set_highlighted_index(visual_id)
                         on:click=move |_| {
-                            if let Some(item) = items.with(|i| i.get(data.0).cloned()) {
+                            if let Some(item) = items.with(|i| i.get(original_id).cloned()) {
                                 set_choice(Some(item));
                                 set_focused(false);
                                 set_current_input("".to_string());
@@ -157,19 +191,23 @@ where
                         }
                     >
                         <div class=move || {
-                            let is_selected = is_selected_selector.selected(&Some(data.0));
+                            let is_selected = is_selected_selector.selected(&Some(original_id));
+                            let is_highlighted = highlighted_index.get() == visual_id;
+
                             if is_selected {
                                 "flex items-center rounded-lg p-2 transition-colors duration-200 bg-[color:color-mix(in_srgb,var(--brand-ring)_18%,transparent)]"
+                            } else if is_highlighted {
+                                "flex items-center rounded-lg p-2 transition-colors duration-200 bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)]"
                             } else {
                                 "flex items-center rounded-lg p-2 transition-colors duration-200 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)]"
                             }
                         }>
                             {move || items
-                                .with(|i| i.get(data.0).cloned())
+                                .with(|i| i.get(original_id).cloned())
                                 .map(|c| children(
                                     c,
                                     {
-                                        view! { <div>{data.1.to_string()}</div> }.into_any()
+                                        view! { <div>{label.to_string()}</div> }.into_any()
                                     }
                                 ))}
                         </div>
