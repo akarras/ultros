@@ -127,7 +127,7 @@ pub fn AddRecipeToCurrentListModal(
                             view! {
                                 <div class="card p-3 flex flex-col sm:flex-row sm:items-center gap-3 bg-[color:var(--color-background-elevated)]">
                                     <div class="flex items-center gap-3 flex-1 min-w-0">
-                                        <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
+                                        <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium item />
                                         <div class="flex flex-col min-w-0">
                                             <span class="font-bold whitespace-normal">{item.name.as_str()}</span>
                                             <span class="text-xs text-[color:var(--color-text-muted)]">

@@ -770,7 +770,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                             >
 
                                 <div class="flex items-center gap-2 text-sm">
-                                    <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
+                                    <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium item />
                                     <span class="flex-1 truncate font-medium text-brand-100">{item.name.as_str()}</span>
                                     <span class="text-xs text-[color:var(--color-text-muted)] bg-brand-900/50 px-1.5 py-0.5 rounded border border-brand-700/50">"iLvl " {item.level_item.0}</span>
                                 </div>
@@ -842,7 +842,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                                                 >
 
                                                     <div class="flex items-center gap-2 text-sm">
-                                                        <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
+                                                        <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium item />
                                                         <span class="flex-1 truncate font-medium text-brand-100">{item.name.as_str()}</span>
                                                         <span class="text-xs text-[color:var(--color-text-muted)] bg-brand-900/50 px-1.5 py-0.5 rounded border border-brand-700/50">"iLvl " {item.level_item.0}</span>
                                                     </div>
