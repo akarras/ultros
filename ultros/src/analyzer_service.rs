@@ -33,7 +33,7 @@ use tokio_util::sync::CancellationToken;
 use ultros_api_types::trends::{TrendItem, TrendsData};
 use ultros_db::world_cache::{AnySelector, WorldCache};
 
-pub const SALE_HISTORY_SIZE: usize = 6;
+pub const SALE_HISTORY_SIZE: usize = 20;
 
 #[derive(Debug, Error)]
 pub enum AnalyzerError {
@@ -697,7 +697,7 @@ impl AnalyzerService {
             let std_dev = variance.sqrt();
 
             if let Some(cheapest) = cheapest_listings.item_map.get(key) {
-                let price_diff_ratio = cheapest.price as f32 / avg_price;
+                let _price_diff_ratio = cheapest.price as f32 / avg_price;
 
                 let trend_item = TrendItem {
                     item_id: key.item_id,
@@ -724,13 +724,12 @@ impl AnalyzerService {
                 // Let's stick to the previous logic but maybe make it a bit more statistically sound if possible.
                 // For now, I'll stick to the requested improvement: Use Standard Deviation.
 
-                // If price is > 1 standard deviation above average, and at least 20% higher.
-                if (cheapest.price as f32 > avg_price + std_dev) && price_diff_ratio > 1.2 {
+                // Spike Detection: Price > Average + 2 * StdDev.
+                if (cheapest.price as f32) > avg_price + (2.0 * std_dev) {
                     rising_price.push(trend_item.clone());
                 }
-                // Falling: Price < 1 SD below average, and at least 20% lower.
-                else if (cheapest.price as f32) < (avg_price - std_dev) && price_diff_ratio < 0.8
-                {
+                // Crash Detection: Price < Average - 2 * StdDev.
+                else if (cheapest.price as f32) < avg_price - (2.0 * std_dev) {
                     falling_price.push(trend_item.clone());
                 }
             }
@@ -834,13 +833,18 @@ impl AnalyzerService {
             .item_map
             .iter()
             .flat_map(|(item_key, cheapest_price)| {
-                let (cheapest_history, sold_within) = *sale_history.get(item_key)?;
+                let (median_recent_sales, sold_within) = *sale_history.get(item_key)?;
                 let current_cheapest_on_sale_world = sale_world_listings
                     .item_map
                     .get(item_key)
-                    .map(|l| l.price)
-                    .unwrap_or(cheapest_history);
-                let est_sale_price = (cheapest_history).min(current_cheapest_on_sale_world);
+                    .map(|l| l.price);
+
+                let est_sale_price = if let Some(current_cheapest) = current_cheapest_on_sale_world
+                {
+                    median_recent_sales.min(current_cheapest - 1)
+                } else {
+                    (median_recent_sales as f32 * 1.2) as i32
+                };
                 let profit = est_sale_price - cheapest_price.price;
                 Some(ResaleStats {
                     profit,
