@@ -29,14 +29,14 @@ pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
             <table class="w-full text-sm min-w-[720px]">
             <thead class="text-xs uppercase">
                 <tr>
-                    <th>"hq"</th>
-                    <th>"price"</th>
-                    <th>"qty."</th>
-                    <th>"total"</th>
-                    <th>"purchaser"</th>
-                    <th>"world"</th>
-                    <th>"datacenter"</th>
-                    <th>"time sold"</th>
+                    <th scope="col">"hq"</th>
+                    <th scope="col">"price"</th>
+                    <th scope="col">"qty."</th>
+                    <th scope="col">"total"</th>
+                    <th scope="col">"purchaser"</th>
+                    <th scope="col">"world"</th>
+                    <th scope="col">"datacenter"</th>
+                    <th scope="col">"time sold"</th>
                 </tr>
             </thead>
             <tbody class="divide-y divide-[color:var(--color-outline)]">
