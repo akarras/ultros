@@ -125,7 +125,10 @@ fn VentureAnalyzerTable(
         let qs = q.to_query_string();
         nav(
             &format!("{}{}", location.pathname.get(), qs),
-            NavigateOptions::default(),
+            NavigateOptions {
+                scroll: false,
+                ..Default::default()
+            },
         );
     };
 
@@ -489,7 +492,13 @@ pub fn VentureAnalyzer() -> impl IntoView {
                         query_string.push_str(&format!("&{}={}", k, v));
                     }
                 }
-                nav(&query_string, NavigateOptions::default());
+                nav(
+                    &query_string,
+                    NavigateOptions {
+                        scroll: false,
+                        ..Default::default()
+                    },
+                );
             }
         }
     });
