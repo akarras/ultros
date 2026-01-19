@@ -224,11 +224,24 @@ fn find_date_range(
         .iter()
         .enumerate()
         .find(|(_, sale)| date_range.contains(&sale.sold_date))?;
-    let (end, _) = sales
+    // Optimization: Sales are sorted descending by date.
+    // Instead of scanning from the end (O(N)), we scan forward from start (O(K) where K is result size).
+    // We look for the first item that is OUT of range (too old).
+    // The item before it is the last item in range.
+    let end_offset = sales[start..]
         .iter()
-        .enumerate()
-        .rev()
-        .find(|(_, sale)| date_range.contains(&sale.sold_date))?;
+        .position(|sale| !date_range.contains(&sale.sold_date))
+        .unwrap_or(sales.len() - start);
+
+    let end = start + end_offset - 1;
+    // Safety check: if end < start, it means position returned 0, which is impossible
+    // because sales[start] is known to be in range.
+    // However, if position returned 0, end would be start - 1.
+    // But sales[start] matches, so position >= 1 or None.
+
+    // If position returns None, it means ALL remaining items are in range.
+    // So end = start + (len - start) - 1 = len - 1. Correct.
+
     Some(&sales[start..=end])
 }
 
@@ -340,4 +353,51 @@ pub fn SalesInsights(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
         </div>
     }
     .into_any()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::NaiveDate;
+
+    fn create_sale(date: NaiveDateTime) -> SaleHistory {
+        SaleHistory {
+            id: 0,
+            quantity: 1,
+            price_per_item: 100,
+            buying_character_id: 0,
+            hq: false,
+            sold_item_id: 0,
+            sold_date: date,
+            world_id: 0,
+            buyer_name: None,
+        }
+    }
+
+    #[test]
+    fn test_find_date_range_logic() {
+        let now = NaiveDate::from_ymd_opt(2024, 1, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        // [Newest (0h), 1h, 2h, ... 24h, 25h ... ]
+        let sales: Vec<SaleHistory> = (0..50)
+            .map(|i| create_sale(now - chrono::Duration::hours(i)))
+            .collect();
+
+        // Range: Last 24 hours (inclusive)
+        // From (Now - 24h) to Now.
+        let start_time = now - chrono::Duration::hours(24);
+        let range = start_time..=now;
+
+        let slice = find_date_range(range, &sales).expect("Should find slice");
+
+        // slice[0] should be 0h ago.
+        assert_eq!(slice.first().unwrap().sold_date, now);
+        // slice.last() should be 24h ago.
+        assert_eq!(slice.last().unwrap().sold_date, start_time);
+
+        // 0h to 24h inclusive -> 25 items.
+        assert_eq!(slice.len(), 25);
+    }
 }
