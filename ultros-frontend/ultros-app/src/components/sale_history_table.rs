@@ -224,11 +224,15 @@ fn find_date_range(
         .iter()
         .enumerate()
         .find(|(_, sale)| date_range.contains(&sale.sold_date))?;
-    let (end, _) = sales
+    // Optimization: Sales are sorted descending by date.
+    // Instead of scanning from the end (O(N)), we scan forward from start (O(K) where K is result size).
+    // We look for the first element that is OUT of range (too old).
+    // The element before it is the last one in range.
+    let end = sales[start..]
         .iter()
-        .enumerate()
-        .rev()
-        .find(|(_, sale)| date_range.contains(&sale.sold_date))?;
+        .position(|sale| !date_range.contains(&sale.sold_date))
+        .map(|offset| start + offset - 1)
+        .unwrap_or(sales.len() - 1);
     Some(&sales[start..=end])
 }
 
@@ -340,4 +344,51 @@ pub fn SalesInsights(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
         </div>
     }
     .into_any()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::NaiveDate;
+
+    fn create_sale(date: NaiveDateTime) -> SaleHistory {
+        SaleHistory {
+            id: 0,
+            quantity: 1,
+            price_per_item: 100,
+            buying_character_id: 0,
+            hq: false,
+            sold_item_id: 0,
+            sold_date: date,
+            world_id: 0,
+            buyer_name: None,
+        }
+    }
+
+    #[test]
+    fn test_find_date_range_logic() {
+        let now = NaiveDate::from_ymd_opt(2024, 1, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        // [Newest (0h), 1h, 2h, ... 24h, 25h ... ]
+        let sales: Vec<SaleHistory> = (0..50)
+            .map(|i| create_sale(now - chrono::Duration::hours(i)))
+            .collect();
+
+        // Range: Last 24 hours (inclusive)
+        // From (Now - 24h) to Now.
+        let start_time = now - chrono::Duration::hours(24);
+        let range = start_time..=now;
+
+        let slice = find_date_range(range, &sales).expect("Should find slice");
+
+        // slice[0] should be 0h ago.
+        assert_eq!(slice.first().unwrap().sold_date, now);
+        // slice.last() should be 24h ago.
+        assert_eq!(slice.last().unwrap().sold_date, start_time);
+
+        // 0h to 24h inclusive -> 25 items.
+        assert_eq!(slice.len(), 25);
+    }
 }
