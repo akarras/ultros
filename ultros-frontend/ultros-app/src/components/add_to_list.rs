@@ -55,16 +55,17 @@ fn AddToListModal(
     let (hq, set_hq) = signal(false);
     let (quantity, set_quantity) = signal(1);
     let quantity_id = move || format!("add-to-list-qty-{}", item_id());
+    let title_id = move || format!("add-to-list-title-{}", item_id());
 
     view! {
-        <Modal set_visible>
+        <Modal set_visible title_id=title_id()>
             <div class="panel p-6 rounded-xl space-y-4">
                 <div class="flex items-start gap-3">
                     <div class="shrink-0">
                         <ItemIcon item_id icon_size=IconSize::Medium />
                     </div>
                     <div class="min-w-0 flex-1">
-                        <div class="text-xl font-extrabold text-[color:var(--brand-fg)]">"add to list"</div>
+                        <div id=title_id() class="text-xl font-extrabold text-[color:var(--brand-fg)]">"add to list"</div>
                         <div class="text-[color:var(--color-text-muted)] truncate">
                             {move || item().map(|i| i.name.as_str()).unwrap_or("unknown item")}
                         </div>

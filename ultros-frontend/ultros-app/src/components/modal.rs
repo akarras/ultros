@@ -11,6 +11,7 @@ pub fn Modal<T>(
     children: TypedChildrenFn<T>,
     #[prop(into)] set_visible: SignalSetter<bool>,
     #[prop(optional, into)] max_width: Option<String>,
+    #[prop(optional, into)] title_id: Option<String>,
 ) -> impl IntoView
 where
     T: Render + RenderHtml + Send + 'static,
@@ -40,6 +41,7 @@ where
                     animate-slide-in")
                     role="dialog"
                     aria-modal="true"
+                    aria-labelledby=title_id.clone()
                     on:click=move |e| {
                         e.stop_propagation();
                     }
