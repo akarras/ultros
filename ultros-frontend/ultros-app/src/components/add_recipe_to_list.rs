@@ -110,15 +110,17 @@ fn AddRecipeToListModal(
         });
     });
 
+    let title_id = format!("add-recipe-to-list-title-{}", recipe.item_result.0);
+
     view! {
-        <Modal set_visible>
+        <Modal set_visible title_id=title_id.clone()>
             <div class="panel p-6 rounded-xl space-y-4">
                 <div class="flex items-start gap-3">
                     <div class="shrink-0">
                         <ItemIcon item_id=recipe.item_result.0 icon_size=IconSize::Medium />
                     </div>
                     <div class="min-w-0 flex-1">
-                        <div class="text-xl font-extrabold text-[color:var(--brand-fg)]">
+                        <div id=title_id.clone() class="text-xl font-extrabold text-[color:var(--brand-fg)]">
                             "Add Recipe to List"
                         </div>
                         <div class="text-[color:var(--color-text-muted)] truncate">

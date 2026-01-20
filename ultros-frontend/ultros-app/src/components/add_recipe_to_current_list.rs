@@ -95,11 +95,13 @@ pub fn AddRecipeToCurrentListModal(
         }
     });
 
+    let title_id = "add-recipe-to-current-list-title";
+
     view! {
-        <Modal set_visible max_width="max-w-[90vw] w-[90vw]">
+        <Modal set_visible max_width="max-w-[90vw] w-[90vw]" title_id=title_id>
             <div class="space-y-4 h-[80vh] flex flex-col">
                 <div class="flex items-center justify-between shrink-0">
-                    <h2 class="text-xl font-bold">"Add Recipe to List"</h2>
+                    <h2 id=title_id class="text-xl font-bold">"Add Recipe to List"</h2>
                     <button class="btn-ghost p-2" on:click=move |_| set_visible(false)>
                         <Icon icon=i::BsX width="24" height="24" />
                     </button>
