@@ -984,30 +984,29 @@ pub fn CurrencySelection() -> impl IntoView {
 
             // Currency List
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {move || {
-                    filtered_currencies()
-                        .into_iter()
-                        .map(|(item_id, item_name, category_name)| {
-                            view! {
-                                <A
-                                    href=item_id.to_string()
-                                    attr:class="card p-4 rounded-lg transition-colors duration-200 group"
-                                >
-                                    <div class="flex flex-col gap-2">
-                                        <span class="text-lg font-medium text-[color:var(--color-text)]
-                                        group-hover:text-[color:var(--brand-fg)] transition-colors">
-                                            {item_name}
-                                        </span>
-                                        <span class="text-sm text-[color:var(--color-text)] italic
-                                        group-hover:text-[color:var(--brand-fg)] transition-colors">
-                                            {category_name}
-                                        </span>
-                                    </div>
-                                </A>
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                }}
+                <For
+                    each=filtered_currencies
+                    key=|(item_id, _, _)| *item_id
+                    children=|(item_id, item_name, category_name)| {
+                        view! {
+                            <A
+                                href=item_id.to_string()
+                                attr:class="card p-4 rounded-lg transition-colors duration-200 group"
+                            >
+                                <div class="flex flex-col gap-2">
+                                    <span class="text-lg font-medium text-[color:var(--color-text)]
+                                    group-hover:text-[color:var(--brand-fg)] transition-colors">
+                                        {item_name}
+                                    </span>
+                                    <span class="text-sm text-[color:var(--color-text)] italic
+                                    group-hover:text-[color:var(--brand-fg)] transition-colors">
+                                        {category_name}
+                                    </span>
+                                </div>
+                            </A>
+                        }
+                    }
+                />
             </div>
 
             // Empty State
