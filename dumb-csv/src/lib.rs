@@ -58,10 +58,6 @@ pub trait DumbCsvDeserialize {
     fn from_str_list<'a>(csv: impl Iterator<Item = &'a str>) -> Self;
 }
 
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

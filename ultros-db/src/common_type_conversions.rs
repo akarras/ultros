@@ -3,7 +3,7 @@ use crate::{
         self, datacenter, final_fantasy_character, list, list_item, owned_retainers, region,
         unknown_final_fantasy_character,
     },
-    world_cache::WorldCache,
+    world_data::world_cache::WorldCache,
 };
 use thiserror::Error;
 use ultros_api_types::{
@@ -262,12 +262,16 @@ impl From<ListItem> for list_item::Model {
     }
 }
 
-impl From<AnySelector> for crate::world_cache::AnySelector {
+impl From<AnySelector> for crate::world_data::world_cache::AnySelector {
     fn from(value: AnySelector) -> Self {
         match value {
-            AnySelector::Region(region) => crate::world_cache::AnySelector::Region(region),
-            AnySelector::Datacenter(dc) => crate::world_cache::AnySelector::Datacenter(dc),
-            AnySelector::World(world) => crate::world_cache::AnySelector::World(world),
+            AnySelector::Region(region) => {
+                crate::world_data::world_cache::AnySelector::Region(region)
+            }
+            AnySelector::Datacenter(dc) => {
+                crate::world_data::world_cache::AnySelector::Datacenter(dc)
+            }
+            AnySelector::World(world) => crate::world_data::world_cache::AnySelector::World(world),
         }
     }
 }

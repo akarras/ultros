@@ -4,7 +4,7 @@ use tokio::sync::{
     mpsc::{self, Receiver},
 };
 use ultros_api_types::{ActiveListing, Retainer};
-use ultros_db::world_cache::AnySelector;
+use ultros_db::world_data::world_cache::AnySelector;
 
 use crate::event::EventReceivers;
 
