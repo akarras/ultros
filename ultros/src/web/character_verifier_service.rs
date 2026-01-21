@@ -11,7 +11,7 @@ use tracing::log::warn;
 use ultros_db::{
     UltrosDb,
     entity::ffxiv_character_verification,
-    world_cache::{self, WorldCacheError},
+    world_data::world_cache::{self, WorldCacheError},
 };
 
 #[derive(Debug, Clone)]

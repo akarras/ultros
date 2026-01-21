@@ -23,7 +23,7 @@ use std::{
     sync::Arc,
 };
 use ultros_api_types::world_helper::WorldHelper;
-use ultros_db::world_cache::{AnySelector, WorldCache};
+use ultros_db::world_data::world_cache::{AnySelector, WorldCache};
 
 pub(crate) struct Xml(Vec<u8>);
 

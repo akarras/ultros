@@ -19,7 +19,7 @@ use tokio::{sync::broadcast::error::SendError, time::error::Elapsed};
 use tracing::{error, info};
 use ultros_api_types::result::JsonErrorWrapper;
 use ultros_db::{
-    SeaDbErr, common_type_conversions::ApiConversionError, world_cache::WorldCacheError,
+    SeaDbErr, common_type_conversions::ApiConversionError, world_data::world_cache::WorldCacheError,
 };
 
 use crate::{analyzer_service::AnalyzerError, event};

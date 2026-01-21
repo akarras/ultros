@@ -120,8 +120,7 @@ where
 
 #[cfg(test)]
 mod test {
-    use crate::partial_diff_iterator::DiffItem;
-
+    use super::DiffItem;
     use super::PartialDiffIterator;
     #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
     struct TestA {

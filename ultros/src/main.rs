@@ -36,7 +36,7 @@ use ultros_api_types::websocket::{ListingEventData, SaleEventData};
 use ultros_api_types::world::WorldData;
 use ultros_api_types::world_helper::WorldHelper;
 use ultros_db::UltrosDb;
-use ultros_db::world_cache::WorldCache;
+use ultros_db::world_data::world_cache::WorldCache;
 use universalis::websocket::SocketRx;
 use universalis::websocket::event_types::{EventChannel, SubscribeMode, WSMessage};
 use universalis::{DataCentersView, UniversalisClient, WebsocketClient, WorldId, WorldsView};

@@ -1,7 +1,7 @@
 use super::{Context, Error};
 use anyhow::anyhow;
 use itertools::Itertools;
-use ultros_db::world_cache::AnySelector;
+use ultros_db::world_data::world_cache::AnySelector;
 use xiv_gen::ItemId;
 
 #[poise::command(
