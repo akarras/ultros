@@ -11,6 +11,7 @@ pub mod item_view;
 pub mod leve_analyzer;
 pub mod list_view;
 pub mod lists;
+pub mod live_sales;
 pub mod not_found;
 pub mod recipe_analyzer;
 pub mod retainers;
