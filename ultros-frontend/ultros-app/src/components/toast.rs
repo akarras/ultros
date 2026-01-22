@@ -37,10 +37,15 @@ pub fn ToastItem(toast: Toast) -> impl IntoView {
     let message = toast.message.clone();
     let id = toast.id;
 
+    let role = match toast.level {
+        ToastLevel::Error | ToastLevel::Warning => "alert",
+        _ => "status",
+    };
+
     view! {
         <div
             class=move || format!("{} {} {}", base_class, color_class, exit_class())
-            role="alert"
+            role=role
         >
             <Icon icon width="1.2em" height="1.2em" aria_hidden=true />
             <div class="flex-1">{message}</div>
