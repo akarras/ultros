@@ -33,7 +33,7 @@ use tokio_util::sync::CancellationToken;
 use ultros_api_types::trends::{TrendItem, TrendsData};
 use ultros_db::world_cache::{AnySelector, WorldCache};
 
-pub const SALE_HISTORY_SIZE: usize = 6;
+pub const SALE_HISTORY_SIZE: usize = 20;
 
 #[derive(Debug, Error)]
 pub enum AnalyzerError {
@@ -834,13 +834,13 @@ impl AnalyzerService {
             .item_map
             .iter()
             .flat_map(|(item_key, cheapest_price)| {
-                let (cheapest_history, sold_within) = *sale_history.get(item_key)?;
-                let current_cheapest_on_sale_world = sale_world_listings
-                    .item_map
-                    .get(item_key)
-                    .map(|l| l.price)
-                    .unwrap_or(cheapest_history);
-                let est_sale_price = (cheapest_history).min(current_cheapest_on_sale_world);
+                let (median_price, sold_within) = *sale_history.get(item_key)?;
+                let est_sale_price =
+                    if let Some(listing) = sale_world_listings.item_map.get(item_key) {
+                        (listing.price - 1).min(median_price).max(1)
+                    } else {
+                        (median_price as f32 * 1.2) as i32
+                    };
                 let profit = est_sale_price - cheapest_price.price;
                 Some(ResaleStats {
                     profit,
