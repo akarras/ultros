@@ -1,0 +1,3 @@
+## 2024-05-20 - [O(N) Scanning on Sorted Data]
+**Learning:** Found an $O(N)$ linear scan (`find` + `rev().find()`) used to find a date range in a list of sales history. Since the history is naturally sorted by date, this can be optimized to $O(\log N)$ using binary search (`partition_point`). This is especially valuable when the list is long but the target range is small (e.g. "Last 24h" out of "All Time").
+**Action:** When filtering or slicing lists based on ordered properties (like dates, prices), always check if the list is sorted and use binary search (`binary_search`, `partition_point`) instead of linear scan.
