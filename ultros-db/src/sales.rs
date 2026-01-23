@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     time::Instant,
 };
 
@@ -141,42 +141,53 @@ impl UltrosDb {
         Ok(sales)
     }
 
+    // Optimization: Batch fetch existing buyers to prevent N+1 queries.
+    // Only perform individual queries/inserts for new buyers.
     async fn lookup_buyer_names(
         &self,
         sales: &[SaleView],
     ) -> Result<HashMap<String, unknown_final_fantasy_character::Model>, anyhow::Error> {
         // get all the unique buyer names
-        let buyers: HashSet<_> = sales.iter().map(|b| &b.buyer_name).collect();
-        Ok(try_join_all(buyers.into_iter().map(|name| async move {
-            let buyer = unknown_final_fantasy_character::Entity::find()
-                .filter(unknown_final_fantasy_character::Column::Name.eq(name))
-                .one(&self.db)
-                .await?;
-            let buyer = match buyer {
-                Some(buyer) => buyer,
-                None => {
-                    let result = unknown_final_fantasy_character::ActiveModel {
-                        name: ActiveValue::Set(name.to_string()),
-                        ..Default::default()
-                    }
-                    .insert(&self.db)
-                    .await;
-                    match result {
-                        Ok(m) => m,
-                        // the most common error here is a duplicate key, in this case we can just look them up now.
-                        Err(e) => unknown_final_fantasy_character::Entity::find()
-                            .filter(unknown_final_fantasy_character::Column::Name.eq(name))
-                            .one(&self.db)
-                            .await?
-                            .ok_or(e)?,
-                    }
+        let buyers: Vec<String> = sales.iter().map(|b| b.buyer_name.clone()).unique().collect();
+        let existing_buyers = unknown_final_fantasy_character::Entity::find()
+            .filter(unknown_final_fantasy_character::Column::Name.is_in(buyers.clone()))
+            .all(&self.db)
+            .await?;
+        let mut buyer_map: HashMap<String, unknown_final_fantasy_character::Model> =
+            existing_buyers
+                .into_iter()
+                .map(|buyer| (buyer.name.clone(), buyer))
+                .collect();
+        let missing_buyers: Vec<String> = buyers
+            .into_iter()
+            .filter(|name| !buyer_map.contains_key(name))
+            .collect();
+
+        if !missing_buyers.is_empty() {
+            let new_buyers = try_join_all(missing_buyers.into_iter().map(|name| async move {
+                let result = unknown_final_fantasy_character::ActiveModel {
+                    name: ActiveValue::Set(name.to_string()),
+                    ..Default::default()
                 }
-            };
-            Ok::<_, anyhow::Error>((buyer.name.clone(), buyer))
-        }))
-        .await?
-        .into_iter()
-        .collect())
+                .insert(&self.db)
+                .await;
+                let buyer = match result {
+                    Ok(m) => m,
+                    // the most common error here is a duplicate key, in this case we can just look them up now.
+                    Err(e) => unknown_final_fantasy_character::Entity::find()
+                        .filter(unknown_final_fantasy_character::Column::Name.eq(name))
+                        .one(&self.db)
+                        .await?
+                        .ok_or(e)?,
+                };
+                Ok::<_, anyhow::Error>(buyer)
+            }))
+            .await?;
+            for buyer in new_buyers {
+                buyer_map.insert(buyer.name.clone(), buyer);
+            }
+        }
+        Ok(buyer_map)
     }
 
     pub async fn get_sale_history_for_item(
