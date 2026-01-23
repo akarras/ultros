@@ -724,12 +724,12 @@ impl AnalyzerService {
                 // Let's stick to the previous logic but maybe make it a bit more statistically sound if possible.
                 // For now, I'll stick to the requested improvement: Use Standard Deviation.
 
-                // If price is > 1 standard deviation above average, and at least 20% higher.
-                if (cheapest.price as f32 > avg_price + std_dev) && price_diff_ratio > 1.2 {
+                // If price is > 2 standard deviations above average, and at least 20% higher.
+                if (cheapest.price as f32 > avg_price + std_dev * 2.0) && price_diff_ratio > 1.2 {
                     rising_price.push(trend_item.clone());
                 }
-                // Falling: Price < 1 SD below average, and at least 20% lower.
-                else if (cheapest.price as f32) < (avg_price - std_dev) && price_diff_ratio < 0.8
+                // Falling: Price < 2 SD below average, and at least 20% lower.
+                else if (cheapest.price as f32) < (avg_price - std_dev * 2.0) && price_diff_ratio < 0.8
                 {
                     falling_price.push(trend_item.clone());
                 }
@@ -835,12 +835,11 @@ impl AnalyzerService {
             .iter()
             .flat_map(|(item_key, cheapest_price)| {
                 let (cheapest_history, sold_within) = *sale_history.get(item_key)?;
-                let current_cheapest_on_sale_world = sale_world_listings
-                    .item_map
-                    .get(item_key)
-                    .map(|l| l.price)
-                    .unwrap_or(cheapest_history);
-                let est_sale_price = (cheapest_history).min(current_cheapest_on_sale_world);
+                let est_sale_price = if let Some(listing) = sale_world_listings.item_map.get(item_key) {
+                    (cheapest_history).min(listing.price - 1).max(1)
+                } else {
+                    (cheapest_history as f32 * 1.2) as i32
+                };
                 let profit = est_sale_price - cheapest_price.price;
                 Some(ResaleStats {
                     profit,
@@ -1535,5 +1534,158 @@ mod tests {
             count += 1;
         }
         assert_eq!(count, 4);
+    }
+}
+
+#[cfg(test)]
+mod valuation_tests {
+    use super::*;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+    use std::collections::BTreeMap;
+    use tokio::sync::RwLock;
+    use chrono::Utc;
+    use ultros_db::listings::ListingSummary;
+    use ultros_db::world_cache::WorldCache;
+    use ultros_db::entity::{world, datacenter, region};
+
+    #[tokio::test]
+    async fn test_valuation_logic() {
+        // Setup World Cache
+        let region = region::Model { id: 1, name: "Region".to_string() };
+        let dc = datacenter::Model { id: 1, region_id: 1, name: "Datacenter".to_string() };
+        let world1 = world::Model { id: 1, datacenter_id: 1, name: "World1".to_string() };
+        let world2 = world::Model { id: 2, datacenter_id: 1, name: "World2".to_string() };
+
+        let world_cache = Arc::new(WorldCache::new_from_parts(
+            vec![world1.clone(), world2.clone()],
+            vec![dc],
+            vec![region]
+        ));
+
+        let mut cheapest_items = BTreeMap::new();
+        let mut recent_sale_history = BTreeMap::new();
+
+        // Setup Sale History (Median = 200)
+        let mut sale_history = SaleHistory::default();
+        // Add 3 sales of 200 to make median 200
+        for _ in 0..3 {
+            sale_history.add_sale(&ultros_api_types::SaleHistory {
+                id: 0,
+                hq: true,
+                price_per_item: 200,
+                quantity: 1,
+                buyer_name: None,
+                buying_character_id: 0,
+                sold_date: Utc::now().naive_utc(),
+                world_id: 1,
+                sold_item_id: 1,
+            });
+        }
+        recent_sale_history.insert(1, RwLock::new(sale_history));
+
+        // Setup Region Listings (Cheapest on Region)
+        let mut region_listings = CheapestListings::default();
+        // Item 1: Listing on World 1 (Existing listing case)
+        region_listings.add_listing(&ListingSummary {
+            item_id: 1,
+            world_id: 1,
+            price_per_unit: 100, // Cheap
+            hq: true,
+        });
+        // Item 2: No listing on World 1 (No listing case)
+        region_listings.add_listing(&ListingSummary {
+            item_id: 2,
+            world_id: 2,
+            price_per_unit: 50, // Base price to buy from
+            hq: true,
+        });
+         // Item 3: Expensive listing on World 1
+        region_listings.add_listing(&ListingSummary {
+            item_id: 3,
+            world_id: 1,
+            price_per_unit: 300,
+            hq: true,
+        });
+
+        cheapest_items.insert(AnySelector::Region(1), RwLock::new(region_listings));
+
+        // Setup World 1 Listings
+        let mut world_listings_1 = CheapestListings::default();
+        // Item 1
+        world_listings_1.add_listing(&ListingSummary {
+            item_id: 1,
+            world_id: 1,
+            price_per_unit: 100,
+            hq: true,
+        });
+        // Item 2: NOT in World 1 listings (Empty market on target world)
+
+        // Item 3: Expensive
+        world_listings_1.add_listing(&ListingSummary {
+            item_id: 3,
+            world_id: 1,
+            price_per_unit: 300,
+            hq: true,
+        });
+
+        cheapest_items.insert(AnySelector::World(1), RwLock::new(world_listings_1));
+
+        let mut sale_history_rw = recent_sale_history.get(&1).unwrap().write().await;
+        // Item 2
+        for _ in 0..3 {
+             sale_history_rw.add_sale(&ultros_api_types::SaleHistory {
+                id: 0,
+                hq: true,
+                price_per_item: 200,
+                quantity: 1,
+                buyer_name: None,
+                buying_character_id: 0,
+                sold_date: Utc::now().naive_utc(),
+                world_id: 1,
+                sold_item_id: 2,
+            });
+        }
+        // Item 3
+        for _ in 0..3 {
+             sale_history_rw.add_sale(&ultros_api_types::SaleHistory {
+                id: 0,
+                hq: true,
+                price_per_item: 200,
+                quantity: 1,
+                buyer_name: None,
+                buying_character_id: 0,
+                sold_date: Utc::now().naive_utc(),
+                world_id: 1,
+                sold_item_id: 3,
+            });
+        }
+        drop(sale_history_rw);
+
+        let analyzer_service = AnalyzerService {
+            recent_sale_history: Arc::new(recent_sale_history),
+            cheapest_items: Arc::new(cheapest_items),
+            initiated: Arc::new(AtomicBool::new(true)),
+        };
+
+        let stats = analyzer_service.get_best_resale(1, 1, ResaleOptions::default(), &world_cache).await.unwrap();
+
+        // Check Item 1
+        let item1 = stats.iter().find(|s| s.item_id == 1).expect("Item 1 not found");
+        // New Logic: min(Median, Listing - 1) = min(200, 99) = 99.
+        // Profit = 99 - 100 = -1.
+        assert_eq!(item1.profit, -1, "Item 1 profit mismatch (New Logic)");
+
+        // Check Item 2 (No listing on World 1)
+        let item2 = stats.iter().find(|s| s.item_id == 2).expect("Item 2 not found");
+        // New Logic: Median * 1.2 = 200 * 1.2 = 240.
+        // Profit = 240 - 50 = 190.
+        assert_eq!(item2.profit, 190, "Item 2 profit mismatch (New Logic)");
+
+        // Check Item 3 (Expensive listing on World 1)
+        let item3 = stats.iter().find(|s| s.item_id == 3).expect("Item 3 not found");
+        // New Logic: min(Median, Listing - 1) = min(200, 299) = 200.
+        // Profit = 200 - 300 = -100.
+        assert_eq!(item3.profit, -100, "Item 3 profit mismatch (New Logic)");
     }
 }
