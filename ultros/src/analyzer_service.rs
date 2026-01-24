@@ -326,6 +326,14 @@ struct AnalyzerState {
     cheapest_items: BTreeMap<AnySelector, CheapestListings>,
 }
 
+fn estimate_sale_price(median_sale_price: i32, current_listing_price: Option<i32>) -> i32 {
+    if let Some(listing_price) = current_listing_price {
+        median_sale_price.min(listing_price - 1)
+    } else {
+        (median_sale_price as f32 * 1.2) as i32
+    }
+}
+
 /// Build a short list of all the items in the game that we think would sell well.
 /// Implemented as an easily cloneable Arc monster
 #[derive(Debug, Clone)]
@@ -835,12 +843,10 @@ impl AnalyzerService {
             .iter()
             .flat_map(|(item_key, cheapest_price)| {
                 let (cheapest_history, sold_within) = *sale_history.get(item_key)?;
-                let current_cheapest_on_sale_world = sale_world_listings
-                    .item_map
-                    .get(item_key)
-                    .map(|l| l.price)
-                    .unwrap_or(cheapest_history);
-                let est_sale_price = (cheapest_history).min(current_cheapest_on_sale_world);
+                let current_cheapest_on_sale_world =
+                    sale_world_listings.item_map.get(item_key).map(|l| l.price);
+                let est_sale_price =
+                    estimate_sale_price(cheapest_history, current_cheapest_on_sale_world);
                 let profit = est_sale_price - cheapest_price.price;
                 Some(ResaleStats {
                     profit,
@@ -1238,6 +1244,34 @@ mod test {
             .unwrap();
         assert_eq!(map[0].price_per_item, 9);
         assert_eq!(map[1].price_per_item, 8);
+    }
+
+    #[test]
+    fn test_estimate_sale_price() {
+        // Test Case 1: Listing exists and is lower than median.
+        // Median = 100, Listing = 90.
+        // Expect min(100, 90 - 1) = 89.
+        assert_eq!(super::estimate_sale_price(100, Some(90)), 89);
+
+        // Test Case 2: Listing exists and is higher than median.
+        // Median = 100, Listing = 110.
+        // Expect min(100, 110 - 1) = 100.
+        assert_eq!(super::estimate_sale_price(100, Some(110)), 100);
+
+        // Test Case 3: No listing exists.
+        // Median = 100.
+        // Expect 100 * 1.2 = 120.
+        assert_eq!(super::estimate_sale_price(100, None), 120);
+
+        // Test Case 4: Listing is 1.
+        // Median = 100, Listing = 1.
+        // Expect min(100, 0) = 0.
+        assert_eq!(super::estimate_sale_price(100, Some(1)), 0);
+
+        // Test Case 5: Listing equal to median
+        // Median = 100, Listing = 100
+        // Expect min(100, 99) = 99
+        assert_eq!(super::estimate_sale_price(100, Some(100)), 99);
     }
 
     #[test]
