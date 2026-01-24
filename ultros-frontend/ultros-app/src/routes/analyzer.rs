@@ -31,7 +31,7 @@ use ultros_api_types::{
 use xiv_gen::ItemId;
 
 /// Computed sale stats
-#[derive(Hash, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct SaleSummary {
     item_id: i32,
     hq: bool,
@@ -39,6 +39,7 @@ struct SaleSummary {
     num_sold: usize,
     /// Represents the average time between sales within the `num_sold`
     avg_sale_duration: Option<Duration>,
+    sales_per_day: f32,
     max_price: i32,
     avg_price: i32,
     min_price: i32,
@@ -63,6 +64,7 @@ struct CalculatedProfitData {
     inner: Arc<ProfitData>,
     profit: i32,
     return_on_investment: i32,
+    profit_margin: i32,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -131,11 +133,18 @@ fn compute_summary(
         .last()
         .map(|last| (last.sale_date - now).num_milliseconds().abs() / sales.len() as i64);
     let avg_sale_duration = t.map(Duration::milliseconds);
+    let sales_per_day = avg_sale_duration
+        .and_then(|d| d.to_std().ok())
+        .map(|d| d.as_secs_f64())
+        .map(|secs| if secs > 0.0 { 86400.0 / secs } else { 0.0 })
+        .unwrap_or(0.0) as f32;
+
     SaleSummary {
         item_id,
         hq,
         num_sold: sales.len(),
         avg_sale_duration,
+        sales_per_day,
         max_price,
         avg_price,
         min_price,
@@ -321,10 +330,17 @@ fn AnalyzerTable(
                 } else {
                     0
                 };
+                let profit_margin = if estimated > 0 {
+                    ((profit as f32 / estimated as f32) * 100.0) as i32
+                } else {
+                    0
+                };
+
                 CalculatedProfitData {
                     inner: data.clone(),
                     profit,
                     return_on_investment,
+                    profit_margin,
                 }
             })
             .filter(move |data| {
@@ -749,6 +765,9 @@ fn AnalyzerTable(
                                 <div role="columnheader" class="w-30 p-4 hidden md:block">
                                     "Avg Sale Time"
                                 </div>
+                                <div role="columnheader" class="w-30 p-4 hidden md:block">
+                                    "Sales/Day"
+                                </div>
                             </div>
                         }.into_any()
                         each=sorted_data.into()
@@ -761,6 +780,7 @@ fn AnalyzerTable(
                         )
                         view=move |(index, data): (usize, CalculatedProfitData)| {
                             let data_clone = data.clone();
+                            let data_margin = data.clone();
                             let world = worlds
                                 .lookup_selector(AnySelector::World(data.inner.cheapest_world_id));
                             let datacenter = world
@@ -815,6 +835,9 @@ fn AnalyzerTable(
                                         <Gil amount=data.profit />
                                     </div>
                                     <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
+                                        <Tooltip tooltip_text=Signal::derive(move || {
+                                                format!("Margin: {}%", data_margin.profit_margin)
+                                            })>
                                         <span class={
                                             let data = data_clone.clone();
                                             move || {
@@ -837,6 +860,7 @@ fn AnalyzerTable(
                                         }>
                                             {format!("{}%", data.return_on_investment)}
                                         </span>
+                                        </Tooltip>
                                     </div>
                                     <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
                                         <Gil amount=data.inner.cheapest_price />
@@ -890,6 +914,9 @@ fn AnalyzerTable(
                                                 if parts.is_empty() { "0s".to_string() } else { parts[..parts.len().min(2)].join(" ") }
                                             })
                                             .unwrap_or_else(|| "---".to_string())}
+                                    </div>
+                                    <div role="cell" class="px-4 py-2 w-30 truncate hidden md:block flex items-center">
+                                        {format!("{:.1}/day", data.inner.sale_summary.sales_per_day)}
                                     </div>
                                 </div>
                             }
