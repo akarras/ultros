@@ -12,18 +12,19 @@ use ultros_api_types::{SaleHistory, world_helper::AnySelector};
 #[component]
 pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
     let (show_more, set_show_more) = signal(false);
-    // Optimization: Avoid cloning the entire sales vector when we only need a slice.
-    // Using `sales.with` allows us to inspect the vector without cloning it.
-    // If show_more is false, we only clone the first 10 items.
-    let sale_history = Memo::new(move |_| {
-        sales.with(|sales| {
-            if show_more() {
-                sales.clone()
-            } else {
-                sales.iter().take(10).cloned().collect()
-            }
-        })
+
+    // Optimization: Iterate over indices to avoid cloning the `SaleHistory` vector.
+    // This makes toggling "Show more" extremely cheap even for large lists,
+    // as we only pass an integer range and key by index.
+    let displayed_indices = Memo::new(move |_| {
+        let count = sales.with(|s| s.len());
+        if show_more() {
+            0..count
+        } else {
+            0..count.min(10)
+        }
     });
+
     view! {
         <div class="overflow-x-auto max-h-[60vh] overflow-y-auto rounded-lg">
             <table class="w-full text-sm min-w-[720px]">
@@ -41,39 +42,52 @@ pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
             </thead>
             <tbody class="divide-y divide-[color:var(--color-outline)]">
                 <For
-                    each=sale_history
-                    key=move |sale| sale.sold_date.and_utc().timestamp()
-                    children=move |sale| {
-                        let total = sale.price_per_item * sale.quantity;
+                    each=displayed_indices
+                    key=move |i| *i
+                    children=move |i| {
+                        // We access fields directly from the signal to avoid cloning the whole SaleHistory struct.
+                        // `get(i)` is used for safety, though `i` should always be valid given the range.
                         view! {
                             <tr>
                                 <td>
-                                    {sale
-                                        .hq
-                                        .then(|| {
+                                    {move || {
+                                        let hq = sales.with(|s| s.get(i).map(|x| x.hq).unwrap_or(false));
+                                        hq.then(|| {
                                             view! {
                                                 <span class="sr-only">"High Quality"</span>
                                                 <Icon icon=i::BsCheck aria_hidden=true />
                                             }
                                             .into_view()
-                                        })}
+                                        })
+                                    }}
                                 </td>
                                 <td>
-                                    <Gil amount=sale.price_per_item />
+                                    <Gil amount=Signal::derive(move || sales.with(|s| s.get(i).map(|x| x.price_per_item).unwrap_or_default())) />
                                 </td>
-                                <td>{sale.quantity}</td>
+                                <td>{move || sales.with(|s| s.get(i).map(|x| x.quantity).unwrap_or_default())}</td>
                                 <td>
-                                    <Gil amount=total />
+                                    <Gil amount=Signal::derive(move || sales.with(|s| {
+                                        s.get(i).map(|x| x.price_per_item.wrapping_mul(x.quantity)).unwrap_or_default()
+                                    })) />
                                 </td>
-                                <td>{sale.buyer_name}</td>
+                                <td>{move || sales.with(|s| s.get(i).and_then(|x| x.buyer_name.clone()))}</td>
                                 <td>
-                                    <WorldName id=AnySelector::World(sale.world_id) />
+                                    {move || {
+                                        let id = sales.with(|s| s.get(i).map(|x| x.world_id).unwrap_or_default());
+                                        view! { <WorldName id=AnySelector::World(id) /> }
+                                    }}
                                 </td>
                                 <td>
-                                    <DatacenterName world_id=sale.world_id />
+                                    {move || {
+                                        let id = sales.with(|s| s.get(i).map(|x| x.world_id).unwrap_or_default());
+                                        view! { <DatacenterName world_id=id /> }
+                                    }}
                                 </td>
                                 <td>
-                                    <RelativeToNow timestamp=sale.sold_date />
+                                    {move || {
+                                         let date = sales.with(|s| s.get(i).map(|x| x.sold_date).unwrap_or_default());
+                                         view! { <RelativeToNow timestamp=date /> }
+                                    }}
                                 </td>
                             </tr>
                         }
