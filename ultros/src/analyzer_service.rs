@@ -337,6 +337,32 @@ pub(crate) struct AnalyzerService {
     initiated: Arc<AtomicBool>,
 }
 
+fn calculate_potential_flip(
+    item_key: &ItemKey,
+    cheapest_price: &CheapestListingValue,
+    cheapest_history: i32,
+    sold_within: SoldWithin,
+    sale_world_listings: &CheapestListings,
+) -> Option<ResaleStats> {
+    let current_cheapest_on_sale_world = sale_world_listings
+        .item_map
+        .get(item_key)
+        .map(|l| l.price)
+        .unwrap_or(cheapest_history);
+    let est_sale_price = (cheapest_history).min(current_cheapest_on_sale_world);
+    let est_sale_price_after_tax = (est_sale_price as f32 * 0.95) as i32;
+    let profit = est_sale_price_after_tax - cheapest_price.price;
+    Some(ResaleStats {
+        profit,
+        item_id: item_key.item_id,
+        return_on_investment: ((est_sale_price_after_tax as f32) / (cheapest_price.price as f32)
+            * 100.0)
+            - 100.0,
+        world_id: cheapest_price.world_id,
+        sold_within,
+    })
+}
+
 impl AnalyzerService {
     /// Creates a task that will feed the analyzer and returns Self so that data can be read externally
     pub async fn start_analyzer(
@@ -835,22 +861,13 @@ impl AnalyzerService {
             .iter()
             .flat_map(|(item_key, cheapest_price)| {
                 let (cheapest_history, sold_within) = *sale_history.get(item_key)?;
-                let current_cheapest_on_sale_world = sale_world_listings
-                    .item_map
-                    .get(item_key)
-                    .map(|l| l.price)
-                    .unwrap_or(cheapest_history);
-                let est_sale_price = (cheapest_history).min(current_cheapest_on_sale_world);
-                let profit = est_sale_price - cheapest_price.price;
-                Some(ResaleStats {
-                    profit,
-                    item_id: item_key.item_id,
-                    return_on_investment: ((est_sale_price as f32) / (cheapest_price.price as f32)
-                        * 100.0)
-                        - 100.0,
-                    world_id: cheapest_price.world_id,
+                calculate_potential_flip(
+                    item_key,
+                    cheapest_price,
+                    cheapest_history,
                     sold_within,
-                })
+                    &sale_world_listings,
+                )
             })
             .filter(|w| {
                 resale_options
@@ -1535,5 +1552,42 @@ mod tests {
             count += 1;
         }
         assert_eq!(count, 4);
+    }
+}
+
+#[cfg(test)]
+mod test_math {
+    use super::*;
+
+    #[test]
+    fn test_calculate_potential_flip_with_tax() {
+        // Setup
+        let item_key = ItemKey { item_id: 101, hq: false };
+        let cheapest_price = CheapestListingValue { price: 1000, world_id: 10 };
+        let cheapest_history = 2000;
+        let sold_within = SoldWithin::Today(crate::analyzer_service::SoldAmount(10));
+        let mut sale_world_listings = CheapestListings::default();
+
+        // Case 1: No listings on sale world, should use history price
+        // Est sale price = 2000. Taxed 5% = 1900.
+        // Profit = 1900 - 1000 = 900
+        // ROI = (1900 / 1000 * 100) - 100 = 90%
+        let result = calculate_potential_flip(&item_key, &cheapest_price, cheapest_history, sold_within, &sale_world_listings).unwrap();
+        assert_eq!(result.profit, 900);
+        assert!((result.return_on_investment - 90.0).abs() < 0.1);
+
+        // Case 2: Listing on sale world is cheaper than history
+        sale_world_listings.add_listing(&ultros_db::listings::ListingSummary {
+            item_id: 101,
+            hq: false,
+            price_per_unit: 1500,
+            world_id: 11,
+        });
+        // Est sale price = min(2000, 1500) = 1500. Taxed 5% = 1425.
+        // Profit = 1425 - 1000 = 425
+        // ROI = (1425 / 1000 * 100) - 100 = 42.5%
+        let result = calculate_potential_flip(&item_key, &cheapest_price, cheapest_history, sold_within, &sale_world_listings).unwrap();
+        assert_eq!(result.profit, 425);
+        assert!((result.return_on_investment - 42.5).abs() < 0.1);
     }
 }
