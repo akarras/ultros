@@ -841,11 +841,12 @@ impl AnalyzerService {
                     .map(|l| l.price)
                     .unwrap_or(cheapest_history);
                 let est_sale_price = (cheapest_history).min(current_cheapest_on_sale_world);
-                let profit = est_sale_price - cheapest_price.price;
+                let taxed_sale_price = (est_sale_price as f32 * 0.95) as i32;
+                let profit = taxed_sale_price - cheapest_price.price;
                 Some(ResaleStats {
                     profit,
                     item_id: item_key.item_id,
-                    return_on_investment: ((est_sale_price as f32) / (cheapest_price.price as f32)
+                    return_on_investment: ((taxed_sale_price as f32) / (cheapest_price.price as f32)
                         * 100.0)
                         - 100.0,
                     world_id: cheapest_price.world_id,
