@@ -10,6 +10,7 @@ members = [
     "ultros-frontend/ultros-client",
     "ultros-frontend/ultros-app",
     "ultros-frontend/ultros-xiv-icons",
+    "ultros-frontend/ultros-charts",
     "proc-macros/dumb-csv-macros",
     "proc-macros/field-iterator-macros",
     "dumb-csv",
