@@ -1,4 +1,5 @@
 use std::ops::RangeInclusive;
+use std::sync::Arc;
 
 use super::{datacenter_name::*, gil::*, relative_time::*, world_name::*};
 use crate::components::icon::Icon;
@@ -10,11 +11,13 @@ use log::{error, info};
 use ultros_api_types::{SaleHistory, world_helper::AnySelector};
 
 #[component]
-pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
+pub fn SaleHistoryTable(sales: Signal<Vec<Arc<SaleHistory>>>) -> impl IntoView {
     let (show_more, set_show_more) = signal(false);
     // Optimization: Avoid cloning the entire sales vector when we only need a slice.
     // Using `sales.with` allows us to inspect the vector without cloning it.
     // If show_more is false, we only clone the first 10 items.
+    // Using Arc<SaleHistory> means cloning is cheap (ref count increment)
+    // instead of deep cloning potentially long strings (buyer_name).
     let sale_history = Memo::new(move |_| {
         sales.with(|sales| {
             if show_more() {
@@ -65,7 +68,7 @@ pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
                                 <td>
                                     <Gil amount=total />
                                 </td>
-                                <td>{sale.buyer_name}</td>
+                                <td>{sale.buyer_name.clone()}</td>
                                 <td>
                                     <WorldName id=AnySelector::World(sale.world_id) />
                                 </td>
@@ -120,7 +123,10 @@ struct SalesWindow {
 }
 
 impl SalesWindow {
-    fn try_new(date_range: RangeInclusive<NaiveDateTime>, sales: &[SaleHistory]) -> Option<Self> {
+    fn try_new(
+        date_range: RangeInclusive<NaiveDateTime>,
+        sales: &[Arc<SaleHistory>],
+    ) -> Option<Self> {
         let sales = find_date_range(date_range.clone(), sales)?;
         let count = sales.len();
         if count == 0 {
@@ -218,8 +224,8 @@ struct SalesSummaryData {
 
 fn find_date_range(
     date_range: RangeInclusive<NaiveDateTime>,
-    sales: &[SaleHistory],
-) -> Option<&[SaleHistory]> {
+    sales: &[Arc<SaleHistory>],
+) -> Option<&[Arc<SaleHistory>]> {
     let (start, _) = sales
         .iter()
         .enumerate()
@@ -233,7 +239,7 @@ fn find_date_range(
 }
 
 impl SalesSummaryData {
-    fn new(sale_history: &[SaleHistory]) -> Self {
+    fn new(sale_history: &[Arc<SaleHistory>]) -> Self {
         let now = Utc::now().naive_utc();
         let yesterday = now - TimeDelta::days(1);
         let day_range = yesterday..=now;
@@ -322,7 +328,7 @@ fn WindowStats(#[prop(into)] sales: Signal<SalesWindow>) -> impl IntoView {
 }
 
 #[component]
-pub fn SalesInsights(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
+pub fn SalesInsights(sales: Signal<Vec<Arc<SaleHistory>>>) -> impl IntoView {
     let sales = Memo::new(move |_| sales.with(|sales| SalesSummaryData::new(sales)));
     let day_sales = Memo::new(move |_| sales.with(|s| s.past_day.clone()).unwrap_or_default());
     let month_sales = Memo::new(move |_| sales.with(|s| s.month.clone()).unwrap_or_default());
@@ -340,4 +346,64 @@ pub fn SalesInsights(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
         </div>
     }
     .into_any()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use std::sync::Arc;
+    use ultros_api_types::SaleHistory;
+
+    #[test]
+    fn test_sales_summary_data_with_arc() {
+        use chrono::Duration;
+        let now = Utc::now().naive_utc();
+        let sale1 = SaleHistory {
+            id: 1,
+            quantity: 1,
+            price_per_item: 100,
+            buying_character_id: 1,
+            hq: false,
+            sold_item_id: 1,
+            sold_date: now,
+            world_id: 1,
+            buyer_name: Some("Buyer".to_string()),
+        };
+        // Add a second sale slightly earlier to allow regression calculation (needs >= 2 points usually)
+        let sale2 = SaleHistory {
+            id: 2,
+            quantity: 1,
+            price_per_item: 90,
+            buying_character_id: 1,
+            hq: false,
+            sold_item_id: 1,
+            sold_date: now - Duration::minutes(10),
+            world_id: 1,
+            buyer_name: Some("Buyer".to_string()),
+        };
+        let sale3 = SaleHistory {
+            id: 3,
+            quantity: 1,
+            price_per_item: 80,
+            buying_character_id: 1,
+            hq: false,
+            sold_item_id: 1,
+            sold_date: now - Duration::minutes(20),
+            world_id: 1,
+            buyer_name: Some("Buyer".to_string()),
+        };
+
+        let sales = vec![Arc::new(sale1), Arc::new(sale2), Arc::new(sale3)];
+
+        // Test that SalesSummaryData::new accepts &[Arc<SaleHistory>]
+        let summary = SalesSummaryData::new(&sales);
+
+        // Basic verification
+        assert!(summary.past_day.is_some());
+        if let Some(window) = summary.past_day {
+            assert_eq!(window.total_gil, 270);
+            assert_eq!(window.average_unit_price, 90.0);
+        }
+    }
 }
