@@ -1,5 +1,6 @@
 use crate::components::icon::Icon;
 use crate::components::loading::Loading;
+use crate::components::tooltip::Tooltip;
 use crate::components::virtual_scroller::*;
 use gloo_timers::future::TimeoutFuture;
 use icondata as i;
@@ -287,6 +288,7 @@ pub fn SearchBox() -> impl IntoView {
                     type="text"
                     prop:value=search
                     aria-label="Search items"
+                    aria-keyshortcuts="Meta+K Control+K"
                     aria-busy=move || loading().to_string()
                     aria-controls="search-results"
                     aria-expanded=move || active().to_string()
@@ -300,25 +302,27 @@ pub fn SearchBox() -> impl IntoView {
                     }
                 />
                 <div class="absolute left-3 top-1/2 -translate-y-1/2 text-[color:var(--color-text-muted)]">
-                    <Show when=loading fallback=|| view! { <Icon icon=i::AiSearchOutlined /> }>
+                    <Show when=loading fallback=|| view! { <Icon icon=i::AiSearchOutlined aria_hidden=true /> }>
                         <Loading />
                     </Show>
                 </div>
                 <div class="absolute right-3 top-1/2 -translate-y-1/2">
                     <Show when=move || !search.get().is_empty()>
-                        <button
-                            class="text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] transition-colors"
-                            on:click=move |_| {
-                                set_search("".to_string());
-                                if let Some(input) = text_input.get() {
-                                    let _ = input.focus();
+                        <Tooltip tooltip_text="Clear search">
+                            <button
+                                class="text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] transition-colors focus-visible:ring-2 focus-visible:ring-[color:var(--brand-ring)] focus:outline-none rounded-full"
+                                on:click=move |_| {
+                                    set_search("".to_string());
+                                    if let Some(input) = text_input.get() {
+                                        let _ = input.focus();
+                                    }
+                                    set_active(true);
                                 }
-                                set_active(true);
-                            }
-                            aria-label="Clear search"
-                        >
-                            <Icon icon=i::BsX width="1.5em" height="1.5em" aria_hidden=true />
-                        </button>
+                                aria-label="Clear search"
+                            >
+                                <Icon icon=i::BsX width="1.5em" height="1.5em" aria_hidden=true />
+                            </button>
+                        </Tooltip>
                     </Show>
                 </div>
             </div>
