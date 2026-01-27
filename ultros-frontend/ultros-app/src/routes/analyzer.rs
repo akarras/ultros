@@ -7,7 +7,7 @@ use crate::{
     },
     error::AppError,
     global_state::LocalWorldData,
-    math::filter_outliers_iqr,
+    math::{calculate_sales_velocity, calculate_volatility, filter_outliers_iqr},
 };
 use chrono::{Duration, Utc};
 use humantime::{format_duration, parse_duration};
@@ -31,7 +31,7 @@ use ultros_api_types::{
 use xiv_gen::ItemId;
 
 /// Computed sale stats
-#[derive(Hash, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct SaleSummary {
     item_id: i32,
     hq: bool,
@@ -39,6 +39,8 @@ struct SaleSummary {
     num_sold: usize,
     /// Represents the average time between sales within the `num_sold`
     avg_sale_duration: Option<Duration>,
+    sales_velocity: f64,
+    volatility: f64,
     max_price: i32,
     avg_price: i32,
     min_price: i32,
@@ -131,11 +133,25 @@ fn compute_summary(
         .last()
         .map(|last| (last.sale_date - now).num_milliseconds().abs() / sales.len() as i64);
     let avg_sale_duration = t.map(Duration::milliseconds);
+    let duration_seconds = sales
+        .last()
+        .map(|last| (last.sale_date - now).num_seconds().abs() as f64)
+        .unwrap_or(0.0);
+    let sales_velocity = calculate_sales_velocity(sales.len(), duration_seconds);
+    let volatility = calculate_volatility(
+        &sales
+            .iter()
+            .map(|s| s.price_per_unit)
+            .collect::<Vec<i32>>(),
+    );
+
     SaleSummary {
         item_id,
         hq,
         num_sold: sales.len(),
         avg_sale_duration,
+        sales_velocity,
+        volatility,
         max_price,
         avg_price,
         min_price,
@@ -274,7 +290,8 @@ fn AnalyzerTable(
     let (max_predicted_time, set_max_predicted_time) = query_signal::<String>("next-sale");
     let (world_filter, set_world_filter) = query_signal::<String>("world");
     let (datacenter_filter, set_datacenter_filter) = query_signal::<String>("datacenter");
-    let (tax_enabled, set_tax_enabled) = query_signal::<bool>("tax");
+    let (teleport_cost, set_teleport_cost) = query_signal::<i32>("teleport");
+    let (tax_rate, set_tax_rate) = query_signal::<f32>("tax-rate");
     let (minimum_sales, set_minimum_sales) = query_signal::<usize>("sales");
     let (category_filter, set_category_filter) = query_signal::<i32>("category");
 
@@ -305,19 +322,20 @@ fn AnalyzerTable(
     });
 
     let sorted_data = Memo::new(move |_| {
-        let include_tax = tax_enabled().unwrap_or(true);
+        let tax_pct = tax_rate().unwrap_or(5.0);
+        let tax_multiplier = 1.0 - (tax_pct / 100.0);
+        let teleport = teleport_cost().unwrap_or(0);
         let mut sorted_data = profits
             .0
             .iter()
             .map(|data| {
-                let estimated = if include_tax {
-                    (data.estimated_sale_price as f32 * 0.95) as i32
-                } else {
-                    data.estimated_sale_price
-                };
-                let profit = estimated - data.cheapest_price;
-                let return_on_investment = if data.cheapest_price > 0 {
-                    ((profit as f32 / data.cheapest_price as f32) * 100.0) as i32
+                let estimated_after_tax =
+                    (data.estimated_sale_price as f32 * tax_multiplier) as i32;
+                let cost = data.cheapest_price + teleport;
+                let profit = estimated_after_tax - cost;
+
+                let return_on_investment = if cost > 0 {
+                    ((profit as f32 / cost as f32) * 100.0) as i32
                 } else {
                     0
                 };
@@ -536,16 +554,58 @@ fn AnalyzerTable(
                     </div>
                 </FilterCard>
 
-                <FilterCard
-                    title="Tax Calculation"
-                    description="Include 5% market tax in profit calculations"
-                >
-                    <div class="flex items-center">
-                        <Toggle
-                            checked=Signal::derive(move || tax_enabled().unwrap_or(true))
-                            set_checked=SignalSetter::map(move |val: bool| set_tax_enabled(val.then_some(true)))
-                            checked_label=Oco::Borrowed("Tax enabled (5%)")
-                            unchecked_label=Oco::Borrowed("Tax disabled")
+                <FilterCard title="Tax Rate (%)" description="Market tax rate (default 5%)">
+                    <div class="flex flex-col gap-2">
+                        <div class="text-brand-300">
+                            {move || {
+                                tax_rate().map(|rate| format!("{}%", rate)).unwrap_or("5%".to_string())
+                            }}
+                        </div>
+                        <input
+                            class="input"
+                            min=0
+                            max=100
+                            step=1
+                            placeholder="5"
+                            type="number"
+                            prop:value=tax_rate
+                            on:input=move |input| {
+                                let value = event_target_value(&input);
+                                if let Ok(rate) = value.parse::<f32>() {
+                                    set_tax_rate(Some(rate))
+                                } else if value.is_empty() {
+                                    set_tax_rate(None)
+                                }
+                            }
+                        />
+                    </div>
+                </FilterCard>
+
+                <FilterCard title="Teleport Cost" description="Cost to travel to buy the item">
+                    <div class="flex flex-col gap-2">
+                        <div class="text-brand-300">
+                            {move || {
+                                teleport_cost()
+                                    .map(|cost| Either::Left(view! { <Gil amount=cost /> }))
+                                    .unwrap_or(Either::Right("---"))
+                            }}
+                        </div>
+                        <input
+                            class="input"
+                            min=0
+                            max=2000
+                            step=100
+                            placeholder="e.g. 500"
+                            type="number"
+                            prop:value=teleport_cost
+                            on:input=move |input| {
+                                let value = event_target_value(&input);
+                                if let Ok(cost) = value.parse::<i32>() {
+                                    set_teleport_cost(Some(cost))
+                                } else if value.is_empty() {
+                                    set_teleport_cost(None)
+                                }
+                            }
                         />
                     </div>
                 </FilterCard>
@@ -634,6 +694,26 @@ fn AnalyzerTable(
                                 </span>
                             }.into_any());
                         }
+                        if let Some(rate) = tax_rate() {
+                            chips.push(view! {
+                               <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
+                                   "Tax: " {rate} "%"
+                                   <button class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_tax_rate(None)>
+                                       <Icon icon=icondata::MdiClose />
+                                   </button>
+                               </span>
+                           }.into_any());
+                       }
+                       if let Some(cost) = teleport_cost() {
+                            chips.push(view! {
+                               <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
+                                   "Teleport: " <Gil amount=cost />
+                                   <button class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_teleport_cost(None)>
+                                       <Icon icon=icondata::MdiClose />
+                                   </button>
+                               </span>
+                           }.into_any());
+                       }
                         if chips.is_empty() {
                             Either::Left(view! { <span class="text-sm text-[color:var(--color-text-muted)]">"no active filters"</span> })
                         } else {
@@ -649,6 +729,8 @@ fn AnalyzerTable(
                     set_datacenter_filter(None);
                     set_minimum_sales(None);
                     set_category_filter(None);
+                    set_tax_rate(None);
+                    set_teleport_cost(None);
                 }>
                     "Clear all"
                 </button>
@@ -746,8 +828,11 @@ fn AnalyzerTable(
                                         }}
                                     </div>
                                 </div>
-                                <div role="columnheader" class="w-30 p-4 hidden md:block">
-                                    "Avg Sale Time"
+                                <div role="columnheader" class="w-24 p-4 hidden md:block">
+                                    "Velocity"
+                                </div>
+                                <div role="columnheader" class="w-24 p-4 hidden md:block">
+                                    "Risk"
                                 </div>
                             </div>
                         }.into_any()
@@ -871,25 +956,14 @@ fn AnalyzerTable(
                                             </QueryButton>
                                         </Tooltip>
                                     </div>
-                                    <div role="cell" class="px-4 py-2 w-30 truncate hidden md:block flex items-center">
-                                        {data.inner
-                                            .sale_summary
-                                            .avg_sale_duration
-                                            .and_then(|duration| duration.to_std().ok())
-                                            .map(|duration| {
-                                                let secs = duration.as_secs();
-                                                let days = secs / 86_400;
-                                                let hours = (secs % 86_400) / 3_600;
-                                                let minutes = (secs % 3_600) / 60;
-                                                let seconds = secs % 60;
-                                                let mut parts = Vec::new();
-                                                if days > 0 { parts.push(format!("{}d", days)); }
-                                                if hours > 0 { parts.push(format!("{}h", hours)); }
-                                                if minutes > 0 && parts.len() < 2 { parts.push(format!("{}m", minutes)); }
-                                                if seconds > 0 && parts.len() < 2 { parts.push(format!("{}s", seconds)); }
-                                                if parts.is_empty() { "0s".to_string() } else { parts[..parts.len().min(2)].join(" ") }
-                                            })
-                                            .unwrap_or_else(|| "---".to_string())}
+                                    <div role="cell" class="px-4 py-2 w-24 truncate hidden md:block flex items-center">
+                                        {format!("{:.1}/day", data.inner.sale_summary.sales_velocity)}
+                                    </div>
+                                    <div role="cell" class="px-4 py-2 w-24 truncate hidden md:block flex items-center">
+                                        {format!(
+                                            "{:.0}%",
+                                            data.inner.sale_summary.volatility * 100.0
+                                        )}
                                     </div>
                                 </div>
                             }
