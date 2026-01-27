@@ -60,7 +60,7 @@ git-const.workspace = true
 percent-encoding = "2.3.0"
 async-trait = "0.1.77"
 linregress = "0.5.3"
-field-iterator = { path = "../../field-iterator" }
+field-iterator = { path = "../../crates/field-iterator" }
 # leptos_animation = "0.5.0"
 leptos_hotkeys = { git = "https://github.com/slowtec/leptos-hotkeys.git", branch = "leptos-0.8" }
 codee = {version = "0.3", features = ["json_serde"]}
