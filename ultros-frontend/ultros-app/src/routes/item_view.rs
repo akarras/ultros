@@ -244,7 +244,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
 
 #[component]
 fn SummaryCards(
-    listing_resource: Resource<Result<CurrentlyShownItem, AppError>>,
+    listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
     item_id: i32,
 ) -> impl IntoView {
     view! {
@@ -570,7 +570,7 @@ fn SummaryCards(
 
 #[component]
 pub fn ChartWrapper(
-    listing_resource: Resource<Result<CurrentlyShownItem, AppError>>,
+    listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
     item_id: Memo<i32>,
     world: Memo<String>,
 ) -> impl IntoView {
@@ -721,7 +721,7 @@ pub fn ChartWrapper(
 
 #[component]
 fn HighQualityTable(
-    listing_resource: Resource<Result<CurrentlyShownItem, AppError>>,
+    listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
 ) -> impl IntoView {
     view! {
         <div class="space-y-6">
@@ -767,7 +767,7 @@ fn HighQualityTable(
 
 #[component]
 fn LowQualityTable(
-    listing_resource: Resource<Result<CurrentlyShownItem, AppError>>,
+    listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
 ) -> impl IntoView {
     view! {
         <div class="space-y-6">
@@ -813,7 +813,9 @@ fn LowQualityTable(
 }
 
 #[component]
-fn SalesDetails(listing_resource: Resource<Result<CurrentlyShownItem, AppError>>) -> impl IntoView {
+fn SalesDetails(
+    listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
+) -> impl IntoView {
     view! {
         // Removed mt-8 and space-y-6 wrapper to let grid control layout
         <Transition fallback=move || {
@@ -856,6 +858,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
         |(item_id, world)| async move {
             get_listings(item_id, world.as_str())
                 .await
+                .map(Arc::new) // Optimization: Wrap in Arc to avoid deep cloning large datasets in SummaryCards
                 .inspect_err(|e| tracing::error!(error = ?e, "Error getting value"))
         },
     );
