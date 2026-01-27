@@ -10,10 +10,10 @@ members = [
     "ultros-frontend/ultros-client",
     "ultros-frontend/ultros-app",
     "ultros-frontend/ultros-xiv-icons",
-    "proc-macros/dumb-csv-macros",
-    "proc-macros/field-iterator-macros",
-    "dumb-csv",
-    "field-iterator",
+    "crates/proc-macros/dumb-csv-macros",
+    "crates/proc-macros/field-iterator-macros",
+    "crates/dumb-csv",
+    "crates/field-iterator",
 ]
 resolver = "2"
 
