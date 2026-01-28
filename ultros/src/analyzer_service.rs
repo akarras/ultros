@@ -664,15 +664,16 @@ impl AnalyzerService {
             }
 
             // Filter out sales older than 30 days to keep "trends" relevant
-            let recent_sales: Vec<_> = sales
+            let count = sales
                 .iter()
-                .filter(|s| (now - s.sale_date).num_days() < 30)
-                .collect();
+                .take_while(|s| (now - s.sale_date).num_days() < 30)
+                .count();
 
-            if recent_sales.len() < 2 {
+            if count < 2 {
                 continue;
             }
 
+            let recent_sales = &sales[0..count];
             let newest = recent_sales.first()?;
             let oldest = recent_sales.last()?;
             let days_diff = (newest.sale_date - oldest.sale_date).num_days().max(1) as f32;
