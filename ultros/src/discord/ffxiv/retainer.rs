@@ -1,4 +1,4 @@
-use crate::EventType;
+use crate::event::EventType;
 use itertools::Itertools;
 use poise::serenity_prelude::Color;
 use std::fmt::Write;

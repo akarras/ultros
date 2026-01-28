@@ -2,6 +2,7 @@
 #![recursion_limit = "256"]
 pub(crate) mod alerts;
 pub(crate) mod analyzer_service;
+mod db_init;
 mod discord;
 pub(crate) mod event;
 mod item_update_service;
@@ -9,14 +10,17 @@ pub mod leptos;
 #[cfg(feature = "profiling")]
 pub mod profiling;
 pub(crate) mod search_service;
+mod socket_listener;
 pub(crate) mod utils;
 mod web;
 mod web_metrics;
 
+use crate::db_init::init_db;
 use crate::item_update_service::UpdateService;
 #[cfg(feature = "profiling")]
 use crate::profiling::start_profiling_server;
 use crate::search_service::SearchService;
+use crate::socket_listener::run_socket_listener;
 use crate::web::WebState;
 use ::leptos::config::get_configuration;
 use analyzer_service::AnalyzerService;
@@ -24,22 +28,19 @@ use anyhow::Result;
 use axum_extra::extract::cookie::Key;
 use discord::start_discord;
 use dotenvy::dotenv;
-use event::{EventProducer, EventType, create_event_busses};
+use event::create_event_busses;
 use std::collections::HashSet;
 use std::sync::Arc;
 #[cfg(all(not(target_env = "msvc"), feature = "jemalloc"))]
 use tikv_jemallocator::Jemalloc;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::info;
 use tracing_subscriber::EnvFilter;
-use ultros_api_types::websocket::{ListingEventData, SaleEventData};
 use ultros_api_types::world::WorldData;
 use ultros_api_types::world_helper::WorldHelper;
 use ultros_db::UltrosDb;
 use ultros_db::world_cache::WorldCache;
-use universalis::websocket::SocketRx;
-use universalis::websocket::event_types::{EventChannel, SubscribeMode, WSMessage};
-use universalis::{DataCentersView, UniversalisClient, WebsocketClient, WorldId, WorldsView};
+use universalis::UniversalisClient;
 use web::character_verifier_service::CharacterVerifierService;
 use web::oauth::{AuthUserCache, DiscordAuthConfig, OAuthScope};
 #[cfg(all(not(target_env = "msvc"), feature = "jemalloc"))]
@@ -57,137 +58,6 @@ struct Config {
     discord_client_secret: String,
     key: String,
     discord_token: String,
-}
-
-async fn run_socket_listener(
-    db: UltrosDb,
-    listings_tx: EventProducer<ListingEventData>,
-    sales_tx: EventProducer<SaleEventData>,
-    token: CancellationToken,
-) {
-    let mut socket = WebsocketClient::connect().await;
-    socket
-        .update_subscription(SubscribeMode::Subscribe, EventChannel::ListingsAdd, None)
-        .await;
-    socket
-        .update_subscription(SubscribeMode::Subscribe, EventChannel::ListingsRemove, None)
-        .await;
-    socket
-        .update_subscription(SubscribeMode::Subscribe, EventChannel::SalesAdd, None)
-        .await;
-    let receiver = socket.get_receiver();
-    loop {
-        tokio::select! {
-            _ = token.cancelled() => {
-                info!("socket listener cancelled");
-                break;
-            }
-            msg = receiver.recv() => {
-                if let Some(msg) = msg {
-                    // create a new task for each message
-                    let db = db.clone();
-            // hopefully this is cheap to clone
-            let listings_tx = listings_tx.clone();
-            let sales_tx = sales_tx.clone();
-            if let SocketRx::Event(Ok(e)) = &msg {
-                let world_id = WorldId::from(e);
-                metrics::counter!("ultros_websocket_rx", "WorldId" => world_id.0.to_string())
-                    .increment(1);
-            }
-            tokio::spawn(async move {
-                let db = &db;
-                match msg {
-                    SocketRx::Event(Ok(WSMessage::ListingsAdd {
-                        item,
-                        world,
-                        listings,
-                    })) => match db.update_listings(listings.clone(), item, world).await {
-                        Ok((listings, removed)) => {
-                            let listings = Arc::new(ListingEventData {
-                                item_id: item.0,
-                                world_id: world.0,
-                                listings,
-                            });
-                            let removed = Arc::new(ListingEventData {
-                                item_id: item.0,
-                                world_id: world.0,
-                                listings: removed,
-                            });
-                            match listings_tx.send(EventType::Remove(removed)) {
-                                Ok(o) => info!(slack_remaining = o, "sent removed listings"),
-                                Err(e) => error!(error = ?e, "Error removing listings"),
-                            }
-                            match listings_tx.send(EventType::Add(listings)) {
-                                Ok(o) => info!(remaining_slack = o, "updated listings"),
-                                Err(e) => error!(error = ?e, "Error adding listings"),
-                            };
-                        }
-                        Err(e) => error!(error = ?e, listings = ?listings, "Listing add failed"),
-                    },
-                    SocketRx::Event(Ok(WSMessage::ListingsRemove {
-                        item,
-                        world,
-                        listings,
-                    })) => match db.remove_listings(listings.clone(), item, world).await {
-                        Ok(listings) => {
-                            info!(?listings, ?item, ?world, "Removed listings");
-                            if let Err(e) = listings_tx.send(EventType::removed(ListingEventData {
-                                item_id: item.0,
-                                world_id: world.0,
-                                listings,
-                            })) {
-                                error!(error = ?e, "Error sending remove listings");
-                            }
-                        }
-                        Err(e) => {
-                            error!(error = ?e, ?listings, ?item, ?world, "Error removing listings. Listings set")
-                        }
-                    },
-                    SocketRx::Event(Ok(WSMessage::SalesAdd { item, world, sales })) => {
-                        match db.update_sales(sales.clone(), item, world).await {
-                            Ok(added_sales) => {
-                                info!(?added_sales, ?item, ?world, "Stored sale data");
-                                match sales_tx
-                                    .send(EventType::added(SaleEventData { sales: added_sales }))
-                                {
-                                    Ok(o) => info!(slack_remaining = o, "Sent sale"),
-                                    Err(e) => error!(error = ?e, "Error sending sale update"),
-                                }
-                            }
-                            Err(e) => {
-                                error!(error = ?e, ?sales, ?item, ?world, "Error inserting sale.")
-                            }
-                        }
-                    }
-                    SocketRx::Event(Ok(WSMessage::SalesRemove { item, world, sales })) => {
-                        info!(?item, ?world, ?sales, "sales removed");
-                    }
-                    SocketRx::Event(Err(e)) => {
-                        error!(error = ?e, "Error");
-                    }
-                }
-            });
-                }
-            }
-        }
-    }
-}
-
-async fn init_db(
-    db: &UltrosDb,
-    worlds_view: Result<WorldsView, universalis::Error>,
-    datacenters: Result<DataCentersView, universalis::Error>,
-) -> Result<()> {
-    info!("db starting");
-
-    db.insert_default_retainer_cities().await.unwrap();
-    info!("DB connected & ffxiv world data primed");
-    {
-        if let (Ok(worlds), Ok(datacenters)) = (worlds_view, datacenters) {
-            db.update_datacenters(&datacenters, &worlds).await?;
-        }
-    }
-    Ok(())
 }
 
 // Bolt: Switched to multi-threaded runtime for better performance on multi-core systems
