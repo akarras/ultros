@@ -15,6 +15,7 @@ pub fn Select<T, EF, L, ViewOut>(
     children: EF,
     #[prop(optional)] class: Option<&'static str>,
     #[prop(optional)] dropdown_class: Option<&'static str>,
+    #[prop(optional, into)] id: Option<String>,
     // _view_out: PhantomData<ViewOut>,
 ) -> impl IntoView
 where
@@ -119,6 +120,14 @@ where
                 }
                 on:keydown=keydown
                 prop:value=current_input
+                role="combobox"
+                aria-autocomplete="list"
+                aria-expanded={
+                    let hovered = hovered.clone();
+                    move || (has_focus() || hovered()).to_string()
+                }
+                aria-controls=id.clone()
+                aria-label="Filter options"
             />
             <div
                 class="absolute top-1 left-1 select-none cursor flex items-center"
@@ -132,6 +141,8 @@ where
                 {current_choice_view}
             </div>
             <div
+                id=id
+                role="listbox"
                 node_ref=dropdown
                 class=move || format!("{} {}", default_dropdown_class, dropdown_class.unwrap_or(""))
                 class:hidden=move || !has_focus() && !hovered()
@@ -139,8 +150,11 @@ where
                 <For each=final_result key=move |(l, _)| *l let:data>
                     {
                         let is_selected_selector = is_selected_selector.clone();
+                        let is_selected_selector_aria = is_selected_selector.clone();
                         view! {
                     <button
+                        role="option"
+                        aria-selected=move || is_selected_selector_aria.selected(&Some(data.0)).to_string()
                         class="w-full text-left"
                         on:click=move |_| {
                             if let Some(item) = items.with(|i| i.get(data.0).cloned()) {
