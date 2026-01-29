@@ -18,11 +18,11 @@ pub fn ItemIcon(
     let (failed, set_failed) = signal(0);
     let failed_item = move || failed() == item_id();
     let data = xiv_gen_db::data();
+    // Optimization: Return &str instead of String to avoid allocation.
+    // xiv_gen_db::data() returns static data, so we can return a reference.
     let item_name = move || {
         let item = data.items.get(&ItemId(item_id()));
-        item.as_ref()
-            .map(|i| i.name.as_str().to_string())
-            .unwrap_or_default()
+        item.as_ref().map(|i| i.name.as_str()).unwrap_or("")
     };
     view! {
         <div

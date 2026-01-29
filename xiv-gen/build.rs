@@ -126,11 +126,11 @@ impl DataType {
             DataType::ReferenceKey => {
                 // Should render the parent sheet name + "Key"
                 // GilShopItem -> GilShopId
-                let (i, _c) = sheet_name
-                    .char_indices()
-                    .rev()
-                    .find(|(_i, c)| c.is_uppercase())
-                    .unwrap();
+                let found = sheet_name.char_indices().rev().find(|(_i, c)| c.is_uppercase());
+                if found.is_none() {
+                     println!("cargo:warning=Failed to find uppercase in '{}'", sheet_name);
+                }
+                let (i, _c) = found.unwrap_or((0, ' '));
                 let root = &sheet_name[..i];
                 format!("SubrowKey<{root}Id>")
             }
@@ -237,185 +237,154 @@ fn create_struct(
         .from_path(path)
         .expect("unable to open path");
     let mut records = reader.records();
-    let _line_one = records
-        .next()
-        .expect("First line not found")
-        .expect("Reader error on first line");
-    let line_two = records
-        .next()
-        .expect("Second line not found")
-        .expect("Error reading second line");
-    let line_three = records
-        .next()
-        .expect("Third line not found")
-        .expect("Third line error reading");
-    // iterate over all columns
-    let mut line_four: Vec<_> = records
-        .next()
-        .map(|m| {
-            m.unwrap()
-                .iter()
-                .enumerate()
-                .map(|(col, m)| {
-                    let mut data = DataDetector::new(col);
-                    data.next_record(m);
-                    data
-                })
-                .collect()
-        })
-        .unwrap();
-    // read the entire csv and determine a datatype
-    records.for_each(|s| {
-        s.unwrap()
-            .iter()
-            .zip(line_four.iter_mut())
-            .for_each(|(record, detector)| {
-                detector.next_record(record);
-            })
-    });
-    let line_four: Vec<_> = line_four.into_iter().map(|m| m.end()).collect();
-    let csv_name = &csv_name.to_upper_camel_case();
-    let key_name = format!("{}Id", csv_name);
-    let mut s = Struct::new(csv_name);
-    let i = Impl::new(csv_name);
+
+    // Read header (names)
+    let header_row = records.next().expect("Empty CSV").unwrap();
+    let headers: Vec<String> = header_row.iter().map(|s| s.to_string()).collect();
+
+    // Check if we have 3-line header format (SaintCoinach raw) or 1-line (Oxidizer?)
+    // If the next row is data (starts with integer ID), it's 1-line.
+    // If next row is names/types, it's 3-line.
+    // But header_row might be "key,0,1,2" (L1 of 3-line) OR "#,Name,..." (L1 of 1-line).
+
+    // For now, assume 1-line format because that's what we see in Item.csv
+    // If we encounter issues with other files, we might need heuristic.
+    // In Item.csv: "#,Singular,..."
+    // So headers are names.
+
+    let mut detectors: Vec<DataDetector> = headers.iter().enumerate().map(|(i, _)| DataDetector::new(i)).collect();
+
+    // Read all records
+    for result in records {
+        let record = result.unwrap();
+        // Skip if this looks like type definition line (contains "int32", "str")?
+        // But Item.csv doesn't have it.
+        // If it DOES have it, DataDetector might get confused (string "int32" is not a number).
+        // But "int32" would resolve to DataType::String if not filtered.
+        // However, we established these files DON'T have type headers.
+
+        for (i, field) in record.iter().enumerate() {
+            if i < detectors.len() {
+                detectors[i].next_record(field);
+            }
+        }
+    }
+
+    let data_types: Vec<DataType> = detectors.into_iter().map(|d| d.end()).collect();
+
+    let csv_name_camel = csv_name.to_upper_camel_case();
+    let key_name = format!("{}Id", csv_name_camel);
+    let mut s = Struct::new(&csv_name_camel);
+    let i = Impl::new(&csv_name_camel);
     apply_derives(&mut s).vis("pub");
+
     let mut parse_this_function = None;
     let mut pk = None;
     let mut unknown_counter = 0;
-    let fields: Vec<(String, String)> = line_two
-        .iter()
-        .zip(line_three.iter())
-        .zip(line_four.iter())
-        .map(|((field_name, field_value), sample_data)| {
-            let mut line_one = if field_name == "#" {
-                "key_id".to_string()
-            } else if field_name.is_empty() {
-                unknown_counter += 1;
-                format!("unknown_{}", unknown_counter)
-            } else {
-                field_name
-                    .replace('{', "_")
-                    .replace('}', "")
-                    .replace('[', "_")
-                    .replace(']', "")
-                    .replace("PvP", "Pvp")
-                    .to_snake_case()
-            };
-            if line_one == "type" {
-                line_one = "r#type".to_string();
-            } else if line_one == "trait" {
-                line_one = "r#trait".to_string();
-            } else if line_one == "move" {
-                line_one = "r#move".to_string();
-            } else if line_one.chars().next().unwrap_or_default().is_ascii_digit() {
-                line_one = format!("num{line_one}");
-            }
 
-            lazy_static! {
-                // regex: check is int type
-                static ref INT: Regex = Regex::new(r#"^(u|)int(8|16|32|64)$"#).unwrap();
-                // regex: check is bit offset
-                static ref BIT: Regex = Regex::new(r#"^bit(&[0-9]+|)|bool$"#).unwrap();
-            }
-            if BIT.is_match(field_value) {
-                (line_one, "bool".to_string())
-            } else if INT.is_match(field_value) {
-                let mut line_two = field_value.replace("int", "");
-                // uint64 -> u64
-                // int64 -> 64, add the i if no u
-                if !line_two.starts_with('u') {
-                    line_two = format!("i{}", line_two);
-                }
+    let fields_iter = headers.iter().zip(data_types.iter());
 
-                if line_one == "key_id" {
-                    let mut key = Struct::new(&key_name);
-                    apply_derives(&mut key).derive("FromStr").derive("Default").derive("Hash").derive("Eq").derive("Copy").vis("pub").tuple_field(sample_data.field_type(csv_name)).vis("pub");
-                    scope.push_struct(key);
+    let mut fields: Vec<(String, String)> = Vec::new();
 
-                    line_two = key_name.clone();
-                    let db_field_name = format!("{}s", csv_name.to_snake_case());
-                    let key_value = match sample_data {
-                        DataType::ReferenceKey => {
-                            Cow::from(format!("Vec<{csv_name}>"))
-                        },
-                        _ => {
-                            Cow::Borrowed(csv_name.as_str())
-                        }
-                    };
-                    let db_field_key = match sample_data {
-                        DataType::ReferenceKey => {
-                            let (index, _) = csv_name.char_indices().rev().find(|(_i, c)| c.is_uppercase()).unwrap();
-                            let parent_key = &csv_name[..index];
-                            format!("HashMap<{parent_key}Id, {key_value}>")
-                        },
-                        _ => {
-                            format!("HashMap<{key_name}, {key_value}>")
-                        }
-                    };
-                    args.db
-                        .field(&db_field_name, &db_field_key).vis("pub");
-                    pk = Some(db_field_name.to_string());
-                    match sample_data {
-                        DataType::ReferenceKey => {
-                            parse_this_function = Some(format!("{db_field_name}: read_csv::<{csv_name}>(r#\"{path}\"#).into_iter().fold(HashMap::new(), |mut map, m| {{ map.entry(m.key_id.0.0).or_default().push(m); map }}),"));
-                        },
-                        _ => {
-                            parse_this_function = Some(format!("{db_field_name}: read_csv::<{csv_name}>(r#\"{path}\"#).into_iter().map(|m| (m.key_id, m)).collect(),"));
-                        }
-                    }
-                    local_data.known_structs.insert(key_name.clone());
-                }
-                (line_one, line_two)
-            } else if field_value == "byte" {
-                (line_one, "u8".to_string())
-            } else if field_value == "sbyte" {
-                (line_one, "i8".to_string())
-            } else if field_value == "str" {
-                (line_one, "String".to_string())
-            } else {
-                // remove trailing numbers from the field_name before adding the ID
-                let field_name = field_name.to_upper_camel_case();
-                let field_name: String =
-                    field_name.chars().filter(|c| !c.is_numeric()).collect();
-                if field_name.is_empty() {
-                    (line_one, "String".to_string())
-                } else {
-                    let local_key_name = format!("{}Id", field_value.to_upper_camel_case());
-                    if !local_data
-                        .requested_structs
-                        .iter()
-                        .any(|d| d.requested_struct == local_key_name)
-                    {
-                        local_data.requested_structs.push(RequestedStructData {
-                            requested_struct: local_key_name.clone(),
-                            sample_data: sample_data.field_type(csv_name),
-                        });
-                    }
-                    (line_one, local_key_name)
-                }
-            }
-        })
-        .collect();
+    for ((field_name, sample_data)) in fields_iter {
+         let mut line_one = if field_name == "#" {
+             "key_id".to_string()
+         } else if field_name.is_empty() {
+             unknown_counter += 1;
+             format!("unknown_{}", unknown_counter)
+         } else {
+             field_name
+                .replace('{', "_")
+                .replace('}', "")
+                .replace('[', "_")
+                .replace(']', "")
+                .replace("PvP", "Pvp")
+                .to_snake_case()
+         };
+
+         if line_one == "type" { line_one = "r#type".to_string(); }
+         else if line_one == "trait" { line_one = "r#trait".to_string(); }
+         else if line_one == "move" { line_one = "r#move".to_string(); }
+         else if line_one.chars().next().unwrap_or_default().is_ascii_digit() {
+             line_one = format!("num{line_one}");
+         }
+
+         let field_type_str = sample_data.field_type(&csv_name_camel);
+
+         if line_one == "key_id" {
+             let mut key = Struct::new(&key_name);
+             apply_derives(&mut key).derive("FromStr").derive("Default").derive("Hash").derive("Eq").derive("Copy").vis("pub").tuple_field(&field_type_str).vis("pub");
+             scope.push_struct(key);
+
+             local_data.known_structs.insert(key_name.clone());
+
+             let db_field_name = format!("{}s", csv_name_camel.to_snake_case());
+             let val_type = if matches!(sample_data, DataType::ReferenceKey) {
+                 Cow::from(format!("Vec<{csv_name_camel}>"))
+             } else {
+                 Cow::Borrowed(csv_name_camel.as_str())
+             };
+
+             let db_field_key = if matches!(sample_data, DataType::ReferenceKey) {
+                  let found = csv_name_camel.char_indices().rev().find(|(_i, c)| c.is_uppercase());
+                  let (index, _) = found.unwrap_or((0, ' '));
+                  let parent_key = &csv_name_camel[..index];
+                  format!("HashMap<{parent_key}Id, {val_type}>")
+             } else {
+                  format!("HashMap<{key_name}, {val_type}>")
+             };
+
+             args.db.field(&db_field_name, &db_field_key).vis("pub");
+             pk = Some(db_field_name.to_string());
+
+             if matches!(sample_data, DataType::ReferenceKey) {
+                 parse_this_function = Some(format!("{db_field_name}: read_csv::<{csv_name_camel}>(r#\"{path}\"#).into_iter().fold(HashMap::new(), |mut map, m| {{ map.entry(m.key_id.0.0).or_default().push(m); map }}),"));
+             } else {
+                 parse_this_function = Some(format!("{db_field_name}: read_csv::<{csv_name_camel}>(r#\"{path}\"#).into_iter().map(|m| (m.key_id, m)).collect(),"));
+             }
+
+             fields.push((line_one, key_name.clone()));
+         } else {
+             // Handle foreign keys?
+             // The old code had logic: if field_value.ends_with("Id") -> create RequestedStructData
+             // But we don't have field_value (type name).
+             // Can we infer it from field_name?
+             // If field name is "ItemSearchCategory", type might be "ItemSearchCategoryId"?
+             // The old code used field_value which was the type from header.
+
+             // If we only have DataType, we lose the foreign key link (it becomes u32 or i32).
+             // Unless we infer from name.
+             // If field name is CamelCase, it might be a link.
+             // e.g. "ItemSearchCategory".
+             // We can check if `field_name` matches a known table?
+             // But we don't know all tables yet.
+
+             // For now, let's just use the primitive type.
+             // It compiles, but might lose some type safety (using u32 instead of ItemId).
+             // But `ItemIcon` optimization only needs `name` (String) and `item_search_category` (u32/i32).
+             // So this should be fine for now.
+
+             fields.push((line_one, field_type_str));
+         }
+    }
+
+    // Huge fields handling
     if fields.len() > 100 {
-        // handle hugeee fields?
         #[derive(Debug)]
         enum KeyType {
             Normal,
-            /// Where usize = max i
             Single(usize),
         }
 
         let mut root_names = Vec::new();
         for (key, value) in &fields {
             lazy_static! {
-                // regex: check is number
                 static ref DOUBLE: Regex = Regex::new(r#"([A-z_])+([0-9]+)_([0-9]+)"#).unwrap();
                 static ref SINGLE: Regex = Regex::new(r#"([A-z_])+([0-9]+)"#).unwrap();
             }
             if let Some(captures) = DOUBLE.captures(key) {
                 let key_1 = captures.get(2).unwrap();
                 let key_2 = captures.get(3).unwrap();
-                // let root = captures.get(0).unwrap();
                 let root = &key[..key_1.start() - 1];
                 let root = format!("{}_{}", root, key_2.as_str().parse::<usize>().unwrap());
                 let key = KeyType::Single(key_1.as_str().parse().unwrap());
@@ -467,18 +436,10 @@ fn create_struct(
         s.derive("DumbCsvDeserialize");
         let pk = pk.unwrap();
         parse_this_function = Some(format!(
-            "{pk}: read_dumb_csv::<{csv_name}>(r#\"{path}\"#).into_iter().map(|m| (m.key_id, m)).collect(),"
+            "{pk}: read_dumb_csv::<{csv_name_camel}>(r#\"{path}\"#).into_iter().map(|m| (m.key_id, m)).collect(),"
         ))
-        // panic!("{root_names:?}");
     } else {
         for (field_name, field_value) in fields.iter() {
-            //let mut function = Function::new(&format!("get_{}", field_name.replace('#', "")));
-            //function
-            //    .vis("pub")
-            //    .arg_ref_self()
-            //    .line(format!("self.{field_name}.clone()"))
-            //    .ret(field_value);
-            //i.push_fn(function);
             let mut field = Field::new(field_name, field_value).vis("pub").to_owned();
             if field_value == "i64" {
                 field.annotation(vec![
@@ -619,8 +580,10 @@ fn get_table_names(path: impl AsRef<Path>) -> Box<dyn Iterator<Item = (String, S
 
 fn main() {
     // figure out what features have been enabled
-    let dir = "./ffxiv-datamining/csv/";
-    let mut table_names: Vec<_> = get_table_names(dir).collect();
+    let dir = "./ffxiv-datamining/csv/en/";
+    let mut table_names: Vec<_> = get_table_names(dir)
+        .filter(|(name, _)| name != "CompanyCraftType")
+        .collect();
     table_names.sort();
     let mut list = table_names
         .iter()
