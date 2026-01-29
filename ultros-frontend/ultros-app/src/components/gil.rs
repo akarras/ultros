@@ -1,5 +1,6 @@
 use leptos::prelude::*;
 use thousands::Separable;
+use wasm_bindgen::JsCast;
 
 #[cfg(feature = "hydrate")]
 fn spawn_gil_party(x: f64, y: f64) {
@@ -60,19 +61,36 @@ fn spawn_gil_party(x: f64, y: f64) {
 pub fn Gil(#[prop(into)] amount: Signal<i32>) -> impl IntoView {
     view! {
         <div class="flex flex-row items-center">
-            <div
-                class="h-7 w-7 -m-1 aspect-square p-1 cursor-pointer hover:scale-110 transition-transform active:scale-90"
+            <button
+                type="button"
+                aria-label="Make it rain"
+                class="h-7 w-7 -m-1 aspect-square p-1 cursor-pointer hover:scale-110 transition-transform active:scale-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ring)] rounded-full"
                 on:click=move |ev| {
                     #[cfg(feature = "hydrate")]
-                    spawn_gil_party(ev.client_x() as f64, ev.client_y() as f64);
+                    {
+                        let x = ev.client_x() as f64;
+                        let y = ev.client_y() as f64;
+                        if x == 0.0 && y == 0.0 {
+                            if let Some(target) = ev.current_target() {
+                                if let Ok(el) = target.dyn_into::<web_sys::Element>() {
+                                    let rect = el.get_bounding_client_rect();
+                                    let center_x = rect.left() + rect.width() / 2.0;
+                                    let center_y = rect.top() + rect.height() / 2.0;
+                                    spawn_gil_party(center_x, center_y);
+                                }
+                            }
+                        } else {
+                            spawn_gil_party(x, y);
+                        }
+                    }
                     #[cfg(not(feature = "hydrate"))]
                     {
                         let _ = ev;
                     }
                 }
             >
-                <img alt="gil" src="/static/images/gil.webp" />
-            </div>
+                <img alt="" aria-hidden="true" src="/static/images/gil.webp" />
+            </button>
             <div>{move || amount().separate_with_commas()}</div>
         </div>
     }
@@ -85,19 +103,36 @@ where
 {
     view! {
         <div class="flex flex-row items-center">
-            <div
-                class="h-7 w-7 -m-1 aspect-square p-1 cursor-pointer hover:scale-110 transition-transform active:scale-90"
+            <button
+                type="button"
+                aria-label="Make it rain"
+                class="h-7 w-7 -m-1 aspect-square p-1 cursor-pointer hover:scale-110 transition-transform active:scale-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ring)] rounded-full"
                 on:click=move |ev| {
                     #[cfg(feature = "hydrate")]
-                    spawn_gil_party(ev.client_x() as f64, ev.client_y() as f64);
+                    {
+                        let x = ev.client_x() as f64;
+                        let y = ev.client_y() as f64;
+                        if x == 0.0 && y == 0.0 {
+                            if let Some(target) = ev.current_target() {
+                                if let Ok(el) = target.dyn_into::<web_sys::Element>() {
+                                    let rect = el.get_bounding_client_rect();
+                                    let center_x = rect.left() + rect.width() / 2.0;
+                                    let center_y = rect.top() + rect.height() / 2.0;
+                                    spawn_gil_party(center_x, center_y);
+                                }
+                            }
+                        } else {
+                            spawn_gil_party(x, y);
+                        }
+                    }
                     #[cfg(not(feature = "hydrate"))]
                     {
                         let _ = ev;
                     }
                 }
             >
-                <img alt="gil" src="/static/images/gil.webp" />
-            </div>
+                <img alt="" aria-hidden="true" src="/static/images/gil.webp" />
+            </button>
             <div>{move || amount().separate_with_commas()}</div>
         </div>
     }
