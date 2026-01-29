@@ -263,7 +263,11 @@ fn create_struct(
                 })
                 .collect()
         })
-        .unwrap();
+        .unwrap_or_else(|| {
+            // Panic if line 4 is missing, or return empty vec?
+            // Original code unwrap() panics.
+            panic!("Fourth line not found/error");
+        });
     // read the entire csv and determine a datatype
     records.for_each(|s| {
         s.unwrap()
@@ -563,13 +567,16 @@ fn read_dir<T: Container>(path: PathBuf, mut scope: T, args: &mut Args) -> T {
                     continue;
                 }
                 let path = file.path();
-                create_struct(
-                    &file_name,
-                    path.to_str().unwrap(),
-                    args,
-                    &mut scope,
-                    &mut local_data,
-                );
+                // Handle optional csv parsing
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    create_struct(
+                        &file_name,
+                        path.to_str().unwrap(),
+                        args,
+                        &mut scope,
+                        &mut local_data,
+                    );
+                }));
             }
         }
     }
@@ -619,7 +626,7 @@ fn get_table_names(path: impl AsRef<Path>) -> Box<dyn Iterator<Item = (String, S
 
 fn main() {
     // figure out what features have been enabled
-    let dir = "./ffxiv-datamining/csv/";
+    let dir = "./ffxiv-datamining/csv/en/";
     let mut table_names: Vec<_> = get_table_names(dir).collect();
     table_names.sort();
     let mut list = table_names
