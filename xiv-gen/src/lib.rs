@@ -10,8 +10,8 @@ use serde::{Deserialize, Deserializer};
 pub mod types {
     #![allow(clippy::all)]
     #![allow(unused_imports)]
-    use serde::{Deserialize, Serialize};
     use bincode::{Decode, Encode};
+    use serde::{Deserialize, Serialize};
 
     include!(concat!(env!("OUT_DIR"), "/types.rs"));
 }
