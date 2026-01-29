@@ -5,4 +5,4 @@ edition = "2024"
 license = "MIT"
 
 [dependencies]
-field-iterator-macros = {path = "../proc-macros/field-iterator-macros"}
+field-iterator-macros = {path = "../field-iterator-macros"}
