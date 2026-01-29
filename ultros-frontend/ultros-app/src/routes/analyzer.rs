@@ -39,6 +39,8 @@ struct SaleSummary {
     num_sold: usize,
     /// Represents the average time between sales within the `num_sold`
     avg_sale_duration: Option<Duration>,
+    /// Represents the number of sales per day
+    sales_per_day: f32,
     max_price: i32,
     avg_price: i32,
     min_price: i32,
@@ -131,11 +133,17 @@ fn compute_summary(
         .last()
         .map(|last| (last.sale_date - now).num_milliseconds().abs() / sales.len() as i64);
     let avg_sale_duration = t.map(Duration::milliseconds);
+    let sales_per_day = if let Some(last) = sales.last() {
+        crate::math::calculate_sales_per_day(now, last.sale_date, sales.len())
+    } else {
+        0.0
+    };
     SaleSummary {
         item_id,
         hq,
         num_sold: sales.len(),
         avg_sale_duration,
+        sales_per_day,
         max_price,
         avg_price,
         min_price,
@@ -276,6 +284,8 @@ fn AnalyzerTable(
     let (datacenter_filter, set_datacenter_filter) = query_signal::<String>("datacenter");
     let (tax_enabled, set_tax_enabled) = query_signal::<bool>("tax");
     let (minimum_sales, set_minimum_sales) = query_signal::<usize>("sales");
+    let (minimum_sales_velocity, set_minimum_sales_velocity) =
+        query_signal::<f32>("sales-velocity");
     let (category_filter, set_category_filter) = query_signal::<i32>("category");
 
     let world_clone = worlds.clone();
@@ -340,6 +350,11 @@ fn AnalyzerTable(
             .filter(move |data| {
                 minimum_sales()
                     .map(|sales| data.inner.sale_summary.num_sold >= sales)
+                    .unwrap_or(true)
+            })
+            .filter(move |data| {
+                minimum_sales_velocity()
+                    .map(|velocity| data.inner.sale_summary.sales_per_day >= velocity)
                     .unwrap_or(true)
             })
             .filter(move |data| {
@@ -486,6 +501,38 @@ fn AnalyzerTable(
                 </FilterCard>
 
                 <FilterCard
+                    title="Minimum Sales/Day"
+                    description="Filter by minimum sales per day (Velocity)"
+                >
+                    <div class="flex flex-col gap-2">
+                        <div class="text-brand-300">
+                            {move || {
+                                minimum_sales_velocity()
+                                    .map(|velocity| format!("{:.1} sales/day", velocity))
+                                    .unwrap_or("---".to_string())
+                            }}
+                        </div>
+                        <input
+                            class="input"
+                            min=0
+                            max=100
+                            step=0.1
+                            placeholder="e.g. 1.5"
+                            type="number"
+                            prop:value=minimum_sales_velocity
+                            on:input=move |input| {
+                                let value = event_target_value(&input);
+                                if let Ok(velocity) = value.parse::<f32>() {
+                                    set_minimum_sales_velocity(Some(velocity));
+                                } else if value.is_empty() {
+                                    set_minimum_sales_velocity(None);
+                                }
+                            }
+                        />
+                    </div>
+                </FilterCard>
+
+                <FilterCard
                     title="Minimum ROI"
                     description="Set the minimum return on investment percentage"
                 >
@@ -564,6 +611,16 @@ fn AnalyzerTable(
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
                                     "Profit ≥ " <Gil amount=p />
                                     <button class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_profit(None)>
+                                        <Icon icon=icondata::MdiClose />
+                                    </button>
+                                </span>
+                            }.into_any());
+                        }
+                        if let Some(velocity) = minimum_sales_velocity() {
+                            chips.push(view! {
+                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
+                                    "Velocity ≥ " {format!("{:.1}/day", velocity)}
+                                    <button class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_sales_velocity(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -648,6 +705,7 @@ fn AnalyzerTable(
                     set_world_filter(None);
                     set_datacenter_filter(None);
                     set_minimum_sales(None);
+                    set_minimum_sales_velocity(None);
                     set_category_filter(None);
                 }>
                     "Clear all"
@@ -747,7 +805,7 @@ fn AnalyzerTable(
                                     </div>
                                 </div>
                                 <div role="columnheader" class="w-30 p-4 hidden md:block">
-                                    "Avg Sale Time"
+                                    "Sales/Day"
                                 </div>
                             </div>
                         }.into_any()
@@ -872,24 +930,7 @@ fn AnalyzerTable(
                                         </Tooltip>
                                     </div>
                                     <div role="cell" class="px-4 py-2 w-30 truncate hidden md:block flex items-center">
-                                        {data.inner
-                                            .sale_summary
-                                            .avg_sale_duration
-                                            .and_then(|duration| duration.to_std().ok())
-                                            .map(|duration| {
-                                                let secs = duration.as_secs();
-                                                let days = secs / 86_400;
-                                                let hours = (secs % 86_400) / 3_600;
-                                                let minutes = (secs % 3_600) / 60;
-                                                let seconds = secs % 60;
-                                                let mut parts = Vec::new();
-                                                if days > 0 { parts.push(format!("{}d", days)); }
-                                                if hours > 0 { parts.push(format!("{}h", hours)); }
-                                                if minutes > 0 && parts.len() < 2 { parts.push(format!("{}m", minutes)); }
-                                                if seconds > 0 && parts.len() < 2 { parts.push(format!("{}s", seconds)); }
-                                                if parts.is_empty() { "0s".to_string() } else { parts[..parts.len().min(2)].join(" ") }
-                                            })
-                                            .unwrap_or_else(|| "---".to_string())}
+                                        {format!("{:.1}", data.inner.sale_summary.sales_per_day)}
                                     </div>
                                 </div>
                             }
