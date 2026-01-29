@@ -1,3 +1,19 @@
+use chrono::NaiveDateTime;
+
+pub fn calculate_sales_per_day(
+    now: NaiveDateTime,
+    oldest_sale_date: NaiveDateTime,
+    num_sales: usize,
+) -> f32 {
+    let duration_seconds = (now - oldest_sale_date).num_seconds().abs();
+    if duration_seconds == 0 {
+        0.0
+    } else {
+        let days = duration_seconds as f32 / 86400.0;
+        num_sales as f32 / days
+    }
+}
+
 pub fn filter_outliers_iqr(data: &[i32]) -> Vec<i32> {
     if data.len() < 4 {
         return data.to_vec();
@@ -26,6 +42,32 @@ pub fn filter_outliers_iqr(data: &[i32]) -> Vec<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Duration;
+
+    #[test]
+    fn test_calculate_sales_per_day() {
+        let now = NaiveDateTime::parse_from_str("2023-01-02 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+
+        // Case 1: 1 sale 1 day ago
+        let oldest = now - Duration::days(1);
+        let spd = calculate_sales_per_day(now, oldest, 1);
+        assert!((spd - 1.0).abs() < 0.001);
+
+        // Case 2: 2 sales 2 days ago
+        let oldest = now - Duration::days(2);
+        let spd = calculate_sales_per_day(now, oldest, 2);
+        assert!((spd - 1.0).abs() < 0.001);
+
+        // Case 3: 10 sales 2 days ago
+        let oldest = now - Duration::days(2);
+        let spd = calculate_sales_per_day(now, oldest, 10);
+        assert!((spd - 5.0).abs() < 0.001);
+
+        // Case 4: 1 sale 1 hour ago
+        let oldest = now - Duration::hours(1);
+        let spd = calculate_sales_per_day(now, oldest, 1);
+        assert!((spd - 24.0).abs() < 0.001);
+    }
 
     #[test]
     fn test_filter_outliers_iqr() {

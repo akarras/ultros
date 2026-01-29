@@ -1,0 +1,26 @@
+info: syncing channel updates for 'nightly-2026-01-06-x86_64-unknown-linux-gnu'
+info: latest update on 2026-01-06, rust version 1.94.0-nightly (4fa80a5e7 2026-01-05)
+info: downloading component 'cargo'
+info: downloading component 'clippy'
+info: downloading component 'rust-docs'
+info: downloading component 'rust-std' for 'wasm32-unknown-unknown'
+info: downloading component 'rust-std'
+info: downloading component 'rustc'
+info: downloading component 'rustfmt'
+info: installing component 'cargo'
+info: installing component 'clippy'
+info: installing component 'rust-docs'
+info: installing component 'rust-std' for 'wasm32-unknown-unknown'
+info: installing component 'rust-std'
+info: installing component 'rustc'
+info: installing component 'rustfmt'
+Diff in /app/ultros-frontend/ultros-app/src/routes/analyzer.rs:290:
+     let (datacenter_filter, set_datacenter_filter) = query_signal::<String>("datacenter");
+     let (tax_enabled, set_tax_enabled) = query_signal::<bool>("tax");
+     let (minimum_sales, set_minimum_sales) = query_signal::<usize>("sales");
+[31m-    let (minimum_sales_velocity, set_minimum_sales_velocity) = query_signal::<f32>("sales-velocity");
+[m[32m+    let (minimum_sales_velocity, set_minimum_sales_velocity) =
+[m[32m+        query_signal::<f32>("sales-velocity");
+[m     let (category_filter, set_category_filter) = query_signal::<i32>("category");
+
+     let world_clone = worlds.clone();

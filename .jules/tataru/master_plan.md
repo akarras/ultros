@@ -1,59 +1,58 @@
-# Tataru's Master Plan for Gil Maximization
+# Tataru's Master Plan for Infinite Gil
 
-Hello minions! This is your project manager Tataru. I have analyzed our current tools and found them... lacking. We are leaving too much gil on the table!
+Greetings, scions! As the Treasurer of the Scions of the Seventh Dawn, I, Tataru Taru, have devised a master plan to ensure our coffers are always overflowing! We must improve our investment tools to maximize efficiency and profit. Time is money, literally!
 
-Here is the specification for the next generation of investment tools.
+## Vision
 
-## 1. Smarter Valuation Logic (The "Greedy but Wise" Algorithm)
+To build the ultimate "Flip Finder" and market analysis tool that allows any adventurer to become a Gillionaire. We will use advanced investment mathematics and intuitive UI to identify the best opportunities.
 
-**Problem:** Our current "Flip Finder" (`get_best_resale`) is too cowardly. It estimates the sale price based on the *minimum* price of the last few sales. If one person got lucky and bought a `Golden Beaver` for 1 gil, we assume we can only sell it for 1 gil. This is unacceptable!
+## Proposed Improvements
 
-**Solution:**
-- We shall use the **Median** or **Weighted Average** of recent sales.
-- Specifically, we should look at the sale history (last 20 sales if possible, currently we store 6).
-- **Algorithm Update**:
-    - `EstimatedSalePrice = min(CurrentCheapestListing - 1, Median(RecentSales))`
-    - If `CurrentCheapestListing` doesn't exist (market is empty), use `Median(RecentSales) * 1.2` (Monopoly pricing!).
-    - If `RecentSales` is empty, ignore the item (too risky).
+### 1. Sales Velocity (Sales Per Day)
+**Status**: Planning / Implementation
+**Description**: Currently, we only show "Average Sale Duration". This is confusing! We should show "Sales Per Day". High sales velocity means quick turnover, which is crucial for flipping.
+**Math**: `Sales Per Day = Number of Sales / Time Range (Days)`
+**Action Item**:
+- [ ] Update `analyzer.rs` to calculate and display Sales Per Day.
+- [ ] Add a filter for "Minimum Sales Per Day".
 
-## 2. The "Tataru Score" (Investment Grading)
+### 2. Investment Confidence Score
+**Status**: Research
+**Description**: A single score (0-100) that rates how safe and profitable an investment is.
+**Math**: `Score = f(ROI, Sales Velocity, Price Stability, Market Saturation)`
+- High ROI + High Velocity = High Score
+- High ROI + Low Velocity = Medium Score (Risk of holding bag)
+- Low ROI + High Velocity = Low Score (Not worth the effort)
+**Action Item**:
+- [ ] Research a formula for this score.
+- [ ] Implement a "Confidence Score" column.
 
-**Problem:** Minions get confused by "Profit" vs "ROI". A 100% ROI on a 1 gil item is useless. A 1,000,000 gil profit on an item that sells once a year is a trap.
+### 3. Market Saturation
+**Status**: Future Work
+**Description**: We need to know supply vs. demand. Even if an item sells well, if there are 1000 listings, we will get undercut instantly.
+**Math**: `Saturation = Current Listings Count / Sales Per Day`
+- Low saturation is better.
+**Action Item**:
+- [ ] Need to fetch listing counts (currently we only get cheapest price).
+- [ ] Update API to provide listing counts in `CheapestListings`.
 
-**Solution:**
-- Introduce a composite score: `TataruScore`.
-- `TataruScore = Log10(Profit) * (SalesPerWeek ^ 0.5) * Reliability`
-- **Reliability**: A factor (0.0 to 1.0) based on price volatility.
-- Display this score in the UI and allow sorting by it. "Sort by Best Opportunity".
+### 4. Price Trend Analysis
+**Status**: Future Work
+**Description**: Is the price crashing or spiking?
+**Math**: Linear regression slope of the last N sales.
+- Positive slope: Price rising.
+- Negative slope: Price falling.
+**Action Item**:
+- [ ] Implement trend indicator (Arrow Up/Down) next to price.
 
-## 3. Advanced Market Trends
+### 5. Undercut Alerts
+**Status**: Future Work
+**Description**: Notify users when they are undercut.
+**Action Item**:
+- [ ] Requires user listing tracking (out of scope for public analyzer but good for user dashboard).
 
-**Problem:** "Rising Price" just means "Current > 1.5 * Average". This is too simple.
+## Immediate Next Steps
+1.  Implement **Sales Velocity** in the Flip Finder. This is the low-hanging fruit that yields the most gil!
+2.  Add a **Minimum Sales Per Day** filter so we can filter out items that never sell.
 
-**Solution:**
-- Implement **Standard Deviation** checks.
-- **Spike Detection**: Price > Average + 2 * StdDev.
-- **Crash Detection**: Price < Average - 2 * StdDev.
-- **Volatility Index**: High StdDev means high risk (or high reward for brave traders).
-
-## 4. Vendor Resale "Cash Flow"
-
-**Problem:** Vendor resale list is clogged with items that never sell.
-
-**Solution:**
-- Default sort by `WeeklyProfit = UnitProfit * SalesPerWeek`.
-- Highlight items that can be bought from a vendor in *housing districts* (Material Suppliers) vs those that require travel to obscure zones.
-
-## Implementation Plan
-
-1.  **Upgrade `analyzer_service.rs`**:
-    - Modify `get_best_resale` to calculate Median price instead of Min.
-    - Modify `get_trends` to include Standard Deviation calculation.
-2.  **Upgrade `analyzer.rs` (Frontend)**:
-    - Expose the new valuation in the UI.
-    - (Optional) Add the "Tataru Score" column.
-
----
-
-*Signed,*
-*Tataru Taru*
+Let's get to work! Chop chop!
