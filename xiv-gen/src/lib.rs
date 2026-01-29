@@ -1,3 +1,4 @@
+#![allow(unused)]
 #[cfg(feature = "csv_to_bincode")]
 pub mod csv_to_bincode;
 

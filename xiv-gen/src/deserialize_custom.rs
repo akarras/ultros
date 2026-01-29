@@ -1,3 +1,4 @@
+#![allow(unused)]
 use serde::{Deserialize, Deserializer};
 
 pub fn deserialize_i64_from_u8_array<'de, D>(deserializer: D) -> Result<i64, D::Error>
