@@ -7,7 +7,7 @@ use crate::{
     },
     error::AppError,
     global_state::LocalWorldData,
-    math::filter_outliers_iqr,
+    math::{coefficient_of_variation, filter_outliers_iqr},
 };
 use chrono::{Duration, Utc};
 use humantime::{format_duration, parse_duration};
@@ -42,6 +42,8 @@ struct SaleSummary {
     max_price: i32,
     avg_price: i32,
     min_price: i32,
+    daily_velocity: f32,
+    volatility: f32,
 }
 
 #[derive(Hash, Clone, Debug, PartialEq, Eq)]
@@ -63,12 +65,15 @@ struct CalculatedProfitData {
     inner: Arc<ProfitData>,
     profit: i32,
     return_on_investment: i32,
+    profit_per_day: i32,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum SortMode {
     Roi,
     Profit,
+    ProfitPerDay,
+    Risk,
 }
 
 #[derive(Clone, Debug)]
@@ -131,6 +136,20 @@ fn compute_summary(
         .last()
         .map(|last| (last.sale_date - now).num_milliseconds().abs() / sales.len() as i64);
     let avg_sale_duration = t.map(Duration::milliseconds);
+    let daily_velocity = avg_sale_duration
+        .map(|d| {
+            let ms = d.num_milliseconds();
+            if ms == 0 {
+                0.0
+            } else {
+                86_400_000.0 / ms as f32
+            }
+        })
+        .unwrap_or(0.0);
+
+    let prices: Vec<i32> = sales.iter().map(|s| s.price_per_unit).collect();
+    let volatility = coefficient_of_variation(&prices) as f32;
+
     SaleSummary {
         item_id,
         hq,
@@ -139,6 +158,8 @@ fn compute_summary(
         max_price,
         avg_price,
         min_price,
+        daily_velocity,
+        volatility,
     }
 }
 
@@ -150,6 +171,8 @@ impl FromStr for SortMode {
         match s {
             "roi" => Ok(SortMode::Roi),
             "profit" => Ok(SortMode::Profit),
+            "ppd" => Ok(SortMode::ProfitPerDay),
+            "risk" => Ok(SortMode::Risk),
             _ => Err(()),
         }
     }
@@ -160,6 +183,8 @@ impl std::fmt::Display for SortMode {
         let val = match self {
             SortMode::Roi => "roi",
             SortMode::Profit => "profit",
+            SortMode::ProfitPerDay => "ppd",
+            SortMode::Risk => "risk",
         };
         f.write_str(val)
     }
@@ -277,6 +302,7 @@ fn AnalyzerTable(
     let (tax_enabled, set_tax_enabled) = query_signal::<bool>("tax");
     let (minimum_sales, set_minimum_sales) = query_signal::<usize>("sales");
     let (category_filter, set_category_filter) = query_signal::<i32>("category");
+    let (min_daily_velocity, set_min_daily_velocity) = query_signal::<f32>("velocity");
 
     let world_clone = worlds.clone();
     let world_filter_list = Memo::new(move |_| {
@@ -321,10 +347,12 @@ fn AnalyzerTable(
                 } else {
                     0
                 };
+                let profit_per_day = (profit as f32 * data.sale_summary.daily_velocity) as i32;
                 CalculatedProfitData {
                     inner: data.clone(),
                     profit,
                     return_on_investment,
+                    profit_per_day,
                 }
             })
             .filter(move |data| {
@@ -340,6 +368,11 @@ fn AnalyzerTable(
             .filter(move |data| {
                 minimum_sales()
                     .map(|sales| data.inner.sale_summary.num_sold >= sales)
+                    .unwrap_or(true)
+            })
+            .filter(move |data| {
+                min_daily_velocity()
+                    .map(|min| data.inner.sale_summary.daily_velocity >= min)
                     .unwrap_or(true)
             })
             .filter(move |data| {
@@ -379,6 +412,14 @@ fn AnalyzerTable(
         match sort_mode().unwrap_or(SortMode::Roi) {
             SortMode::Roi => sorted_data.sort_by_key(|data| Reverse(data.return_on_investment)),
             SortMode::Profit => sorted_data.sort_by_key(|data| Reverse(data.profit)),
+            SortMode::ProfitPerDay => sorted_data.sort_by_key(|data| Reverse(data.profit_per_day)),
+            SortMode::Risk => sorted_data.sort_by(|a, b| {
+                a.inner
+                    .sale_summary
+                    .volatility
+                    .partial_cmp(&b.inner.sale_summary.volatility)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            }),
         }
         sorted_data
             .into_iter()
@@ -479,6 +520,37 @@ fn AnalyzerTable(
                                     set_minimum_sales(Some(sales));
                                 } else if value.is_empty() {
                                     set_minimum_sales(None);
+                                }
+                            }
+                        />
+                    </div>
+                </FilterCard>
+
+                <FilterCard
+                    title="Minimum Sales/Day"
+                    description="Filter by average sales per day (Velocity)"
+                >
+                    <div class="flex flex-col gap-2">
+                        <div class="text-brand-300">
+                            {move || {
+                                min_daily_velocity()
+                                    .map(|v| format!("{:.1} / day", v))
+                                    .unwrap_or("---".to_string())
+                            }}
+                        </div>
+                        <input
+                            class="input"
+                            min=0
+                            step=0.1
+                            placeholder="e.g. 1.0"
+                            type="number"
+                            prop:value=min_daily_velocity
+                            on:input=move |input| {
+                                let value = event_target_value(&input);
+                                if let Ok(v) = value.parse::<f32>() {
+                                    set_min_daily_velocity(Some(v));
+                                } else if value.is_empty() {
+                                    set_min_daily_velocity(None);
                                 }
                             }
                         />
@@ -594,6 +666,16 @@ fn AnalyzerTable(
                                 </span>
                             }.into_any());
                         }
+                        if let Some(vel) = min_daily_velocity() {
+                            chips.push(view! {
+                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
+                                    "Sales/Day ≥ " {format!("{:.1}", vel)}
+                                    <button class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_min_daily_velocity(None)>
+                                        <Icon icon=icondata::MdiClose />
+                                    </button>
+                                </span>
+                            }.into_any());
+                        }
                         if let Some(roi) = minimum_roi() {
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
@@ -649,6 +731,7 @@ fn AnalyzerTable(
                     set_datacenter_filter(None);
                     set_minimum_sales(None);
                     set_category_filter(None);
+                    set_min_daily_velocity(None);
                 }>
                     "Clear all"
                 </button>
@@ -702,6 +785,41 @@ fn AnalyzerTable(
                                             }}
                                         </div>
                                     </QueryButton>
+                                </div>
+                                <div role="columnheader" class="w-30 p-4">
+                                    <QueryButton
+                                        class="!text-brand-300 hover:text-brand-200"
+                                        active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
+                                        key="sort"
+                                        value="ppd"
+                                    >
+                                        <div class="flex items-center gap-2">
+                                            "Profit/Day"
+                                            {move || {
+                                                (sort_mode() == Some(SortMode::ProfitPerDay))
+                                                    .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
+                                            }}
+                                        </div>
+                                    </QueryButton>
+                                </div>
+                                <div role="columnheader" class="w-20 p-4">
+                                    <QueryButton
+                                        class="!text-brand-300 hover:text-brand-200"
+                                        active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
+                                        key="sort"
+                                        value="risk"
+                                    >
+                                        <div class="flex items-center gap-2">
+                                            "Risk"
+                                            {move || {
+                                                (sort_mode() == Some(SortMode::Risk))
+                                                    .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
+                                            }}
+                                        </div>
+                                    </QueryButton>
+                                </div>
+                                <div role="columnheader" class="w-20 p-4">
+                                    "Sales/Day"
                                 </div>
                                 <div role="columnheader" class="w-30 p-4">
                                     "Buy Price"
@@ -837,6 +955,30 @@ fn AnalyzerTable(
                                         }>
                                             {format!("{}%", data.return_on_investment)}
                                         </span>
+                                    </div>
+                                    <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
+                                        <Gil amount=data.profit_per_day />
+                                    </div>
+                                    <div role="cell" class="px-4 py-2 w-20 text-right flex items-center justify-end">
+                                        <span class={
+                                            let data = data_clone.clone();
+                                            move || {
+                                                let vol = data.inner.sale_summary.volatility * 100.0;
+                                                let color = if vol < 10.0 {
+                                                    "text-green-400"
+                                                } else if vol < 30.0 {
+                                                    "text-yellow-400"
+                                                } else {
+                                                    "text-red-400"
+                                                };
+                                                format!("{} font-semibold", color)
+                                            }
+                                        }>
+                                            {format!("{:.0}%", data.inner.sale_summary.volatility * 100.0)}
+                                        </span>
+                                    </div>
+                                    <div role="cell" class="px-4 py-2 w-20 text-right flex items-center justify-end">
+                                        {format!("{:.1}", data.inner.sale_summary.daily_velocity)}
                                     </div>
                                     <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
                                         <Gil amount=data.inner.cheapest_price />
