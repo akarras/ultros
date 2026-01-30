@@ -834,11 +834,12 @@ impl AnalyzerService {
             .iter()
             .flat_map(|(item_key, cheapest_price)| {
                 let (cheapest_history, sold_within) = *sale_history.get(item_key)?;
-                let est_sale_price = if let Some(listing) = sale_world_listings.item_map.get(item_key) {
-                    (listing.price - 1).max(1).min(cheapest_history)
-                } else {
-                    (cheapest_history as f32 * 1.2) as i32
-                };
+                let est_sale_price =
+                    if let Some(listing) = sale_world_listings.item_map.get(item_key) {
+                        (listing.price - 1).max(1).min(cheapest_history)
+                    } else {
+                        (cheapest_history as f32 * 1.2) as i32
+                    };
                 let profit = est_sale_price - cheapest_price.price;
                 Some(ResaleStats {
                     profit,
