@@ -19,7 +19,44 @@ once_cell = "1"
 anyhow.workspace = true
 
 [build-dependencies]
-xiv-gen = {workspace = true, features = ["csv_to_bincode"]}
 serde = {version = "1.0.143", features = ["derive"]}
 bincode = {version = "2.0.0-rc.3"}
 flate2 = "1.0.24"
+xiv-gen = {workspace = true, features = [
+    "csv_to_bincode",
+    "item",
+    "item_ui_category",
+    "item_search_category",
+    "class_job",
+    "recipe",
+    "recipe_level_table",
+    "class_job_category",
+    "base_param",
+    "item_sort_category",
+    "gil_shop",
+    "gil_shop_item",
+    "e_npc_base",
+    "e_npc_resident",
+    "special_shop",
+    "leve",
+    "craft_leve",
+    "leve_reward_item",
+    "leve_reward_item_group",
+    "retainer_task",
+    "retainer_task_normal",
+    "retainer_task_random",
+    "retainer_task_lv_range",
+    "retainer_task_parameter",
+    "collectables_shop",
+    "collectables_shop_item",
+    "collectables_shop_reward_scrip",
+    "topic_select",
+    "pre_handler",
+    "company_craft_sequence",
+    "company_craft_part",
+    "company_craft_process",
+    "company_craft_supply_item",
+    "company_craft_draft_category",
+    "company_craft_type",
+    "company_craft_draft",
+]}
