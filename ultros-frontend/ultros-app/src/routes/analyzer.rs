@@ -41,6 +41,7 @@ struct SaleSummary {
     avg_sale_duration: Option<Duration>,
     max_price: i32,
     avg_price: i32,
+    median_price: i32,
     min_price: i32,
 }
 
@@ -127,6 +128,14 @@ fn compute_summary(
             / sales.len() as i64) as i32
     };
 
+    let median_price = if sales.is_empty() {
+        0
+    } else {
+        let mut prices: Vec<i32> = sales.iter().map(|s| s.price_per_unit).collect();
+        prices.sort_unstable();
+        prices[prices.len() / 2]
+    };
+
     let t = sales
         .last()
         .map(|last| (last.sale_date - now).num_milliseconds().abs() / sales.len() as i64);
@@ -138,6 +147,7 @@ fn compute_summary(
         avg_sale_duration,
         max_price,
         avg_price,
+        median_price,
         min_price,
     }
 }
@@ -218,9 +228,9 @@ impl ProfitTable {
                 // Use the world's price as estimated sale price
                 let estimated_sale_price =
                     if let Some((world_cheapest, _)) = world_cheapest.get(&key) {
-                        summary.min_price.min(*world_cheapest)
+                        summary.median_price.min((*world_cheapest - 1).max(1))
                     } else {
-                        summary.min_price
+                        (summary.median_price as f32 * 1.2) as i32
                     };
 
                 Some(ProfitData {
