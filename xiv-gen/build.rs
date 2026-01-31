@@ -669,10 +669,10 @@ fn main() {
     apply_derives(&mut args.db).vis("pub").derive("Default");
     scope.push_struct(args.db);
     scope.push_impl(args.db_impl);
-    scope.import("std::collections", "HashMap");
-    scope.import("crate::subrow_key", "SubrowKey");
-    scope.import("derive_more", "FromStr");
-    scope.import("dumb_csv", "DumbCsvDeserialize");
+    scope.raw("#[allow(unused_imports)] use std::collections::HashMap;");
+    scope.raw("#[allow(unused_imports)] use crate::subrow_key::SubrowKey;");
+    scope.raw("#[allow(unused_imports)] use derive_more::FromStr;");
+    scope.raw("#[allow(unused_imports)] use dumb_csv::DumbCsvDeserialize;");
     write(dest_path, scope.to_string()).unwrap();
 
     let conversion_files = Path::new(&out_dir).join("deserialization.rs");
