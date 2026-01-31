@@ -100,7 +100,11 @@ pub fn AddRecipeToCurrentListModal(
             <div class="space-y-4 h-[80vh] flex flex-col">
                 <div class="flex items-center justify-between shrink-0">
                     <h2 class="text-xl font-bold">"Add Recipe to List"</h2>
-                    <button class="btn-ghost p-2" on:click=move |_| set_visible(false)>
+                    <button
+                        class="btn-ghost p-2"
+                        on:click=move |_| set_visible(false)
+                        aria-label="Close"
+                    >
                         <Icon icon=i::BsX width="24" height="24" />
                     </button>
                 </div>
@@ -109,6 +113,7 @@ pub fn AddRecipeToCurrentListModal(
                     <input
                         class="input w-full"
                         placeholder="Search for a recipe..."
+                        aria-label="Search recipes"
                         autofocus
                         prop:value=search
                         on:input=move |e| set_search(event_target_value(&e))
@@ -178,14 +183,22 @@ pub fn AddRecipeToCurrentListModal(
 
                                         <button
                                             class="btn-primary h-8 min-h-0 px-3 text-sm"
+                                            disabled=add_action.pending()
                                             on:click=move |_| {
                                                 add_action.dispatch((recipe, quantity(), hq(), no_crystals()));
                                             }
                                         >
-                                            <div class="flex items-center gap-1">
-                                                <Icon icon=i::BiPlusRegular />
-                                                "Add"
-                                            </div>
+                                            <Show
+                                                when=add_action.pending()
+                                                fallback=|| view! {
+                                                    <div class="flex items-center gap-1">
+                                                        <Icon icon=i::BiPlusRegular />
+                                                        "Add"
+                                                    </div>
+                                                }
+                                            >
+                                                "Adding..."
+                                            </Show>
                                         </button>
                                     </div>
                                 </div>
