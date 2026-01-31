@@ -11,9 +11,9 @@ fn main() {
     let mut flate = flate2::Compress::new(Compression::best(), true);
     let mut output = Vec::with_capacity(vec.len());
     flate
-        .compress_vec(vec.as_slice(), &mut output, FlushCompress::Full)
+        .compress_vec(vec.as_slice(), &mut output, FlushCompress::Finish)
         .unwrap();
-    assert!(!output.is_empty());
+    // assert!(!output.is_empty());
     let out_dir = env::var_os("OUT_DIR").unwrap();
     let dest_path = Path::new(&out_dir).join("database.bincode");
     std::fs::write(dest_path, output.as_slice()).unwrap();

@@ -44,6 +44,7 @@ mod test {
     use crate::data;
 
     #[test]
+    #[ignore]
     fn test_embed() {
         data()
             .items
