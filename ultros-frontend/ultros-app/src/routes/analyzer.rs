@@ -129,10 +129,7 @@ fn compute_summary(
             / sales.len() as i64) as i32
     };
 
-    let oldest_date = sales
-        .last()
-        .map(|last| last.sale_date)
-        .unwrap_or(now);
+    let oldest_date = sales.last().map(|last| last.sale_date).unwrap_or(now);
 
     let t = sales
         .last()
