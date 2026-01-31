@@ -7,7 +7,7 @@ use crate::{
     },
     error::AppError,
     global_state::LocalWorldData,
-    math::filter_outliers_iqr,
+    math::{calculate_coefficient_of_variation, filter_outliers_iqr},
 };
 use chrono::{Duration, Utc};
 use humantime::{format_duration, parse_duration};
@@ -42,6 +42,8 @@ struct SaleSummary {
     max_price: i32,
     avg_price: i32,
     min_price: i32,
+    daily_sales: f32,
+    volatility: f32,
 }
 
 #[derive(Hash, Clone, Debug, PartialEq, Eq)]
@@ -127,10 +129,26 @@ fn compute_summary(
             / sales.len() as i64) as i32
     };
 
+    let oldest_date = sales
+        .last()
+        .map(|last| last.sale_date)
+        .unwrap_or(now);
+
     let t = sales
         .last()
         .map(|last| (last.sale_date - now).num_milliseconds().abs() / sales.len() as i64);
     let avg_sale_duration = t.map(Duration::milliseconds);
+
+    let duration_millis = (now - oldest_date).num_milliseconds().abs();
+    // Clamp to at least 1 hour to prevent huge numbers for very recent single sales
+    let duration_hours = (duration_millis as f64 / 1000.0 / 3600.0).max(1.0);
+    let days_in_sample = duration_hours / 24.0;
+
+    let daily_sales = sales.len() as f32 / days_in_sample as f32;
+
+    let prices: Vec<i32> = sales.iter().map(|s| s.price_per_unit).collect();
+    let volatility = calculate_coefficient_of_variation(&prices) as f32;
+
     SaleSummary {
         item_id,
         hq,
@@ -139,6 +157,8 @@ fn compute_summary(
         max_price,
         avg_price,
         min_price,
+        daily_sales,
+        volatility,
     }
 }
 
@@ -276,6 +296,7 @@ fn AnalyzerTable(
     let (datacenter_filter, set_datacenter_filter) = query_signal::<String>("datacenter");
     let (tax_enabled, set_tax_enabled) = query_signal::<bool>("tax");
     let (minimum_sales, set_minimum_sales) = query_signal::<usize>("sales");
+    let (min_daily_sales, set_min_daily_sales) = query_signal::<f32>("min-daily-sales");
     let (category_filter, set_category_filter) = query_signal::<i32>("category");
 
     let world_clone = worlds.clone();
@@ -340,6 +361,11 @@ fn AnalyzerTable(
             .filter(move |data| {
                 minimum_sales()
                     .map(|sales| data.inner.sale_summary.num_sold >= sales)
+                    .unwrap_or(true)
+            })
+            .filter(move |data| {
+                min_daily_sales()
+                    .map(|sales| data.inner.sale_summary.daily_sales >= sales)
                     .unwrap_or(true)
             })
             .filter(move |data| {
@@ -414,6 +440,37 @@ fn AnalyzerTable(
                                     set_minimum_profit(Some(profit))
                                 } else if value.is_empty() {
                                     set_minimum_profit(None);
+                                }
+                            }
+                        />
+                    </div>
+                </FilterCard>
+
+                <FilterCard
+                    title="Minimum Daily Sales"
+                    description="Filter by sales velocity (sales/day)"
+                >
+                    <div class="flex flex-col gap-2">
+                        <div class="text-brand-300">
+                             {move || {
+                                min_daily_sales()
+                                    .map(|s| format!("{:.1} / day", s))
+                                    .unwrap_or("---".to_string())
+                            }}
+                        </div>
+                        <input
+                            class="input"
+                            type="number"
+                            min="0"
+                            step="0.1"
+                            placeholder="e.g. 1.0"
+                            prop:value=min_daily_sales
+                            on:input=move |input| {
+                                let value = event_target_value(&input);
+                                if let Ok(s) = value.parse::<f32>() {
+                                    set_min_daily_sales(Some(s));
+                                } else if value.is_empty() {
+                                    set_min_daily_sales(None);
                                 }
                             }
                         />
@@ -594,6 +651,16 @@ fn AnalyzerTable(
                                 </span>
                             }.into_any());
                         }
+                        if let Some(sales) = min_daily_sales() {
+                            chips.push(view! {
+                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
+                                    "Daily Sales ≥ " {format!("{:.1}", sales)}
+                                    <button class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_min_daily_sales(None)>
+                                        <Icon icon=icondata::MdiClose />
+                                    </button>
+                                </span>
+                            }.into_any());
+                        }
                         if let Some(roi) = minimum_roi() {
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
@@ -648,6 +715,7 @@ fn AnalyzerTable(
                     set_world_filter(None);
                     set_datacenter_filter(None);
                     set_minimum_sales(None);
+                    set_min_daily_sales(None);
                     set_category_filter(None);
                 }>
                     "Clear all"
@@ -747,7 +815,7 @@ fn AnalyzerTable(
                                     </div>
                                 </div>
                                 <div role="columnheader" class="w-30 p-4 hidden md:block">
-                                    "Avg Sale Time"
+                                    "Daily Sales"
                                 </div>
                             </div>
                         }.into_any()
@@ -871,25 +939,17 @@ fn AnalyzerTable(
                                             </QueryButton>
                                         </Tooltip>
                                     </div>
-                                    <div role="cell" class="px-4 py-2 w-30 truncate hidden md:block flex items-center">
-                                        {data.inner
-                                            .sale_summary
-                                            .avg_sale_duration
-                                            .and_then(|duration| duration.to_std().ok())
-                                            .map(|duration| {
-                                                let secs = duration.as_secs();
-                                                let days = secs / 86_400;
-                                                let hours = (secs % 86_400) / 3_600;
-                                                let minutes = (secs % 3_600) / 60;
-                                                let seconds = secs % 60;
-                                                let mut parts = Vec::new();
-                                                if days > 0 { parts.push(format!("{}d", days)); }
-                                                if hours > 0 { parts.push(format!("{}h", hours)); }
-                                                if minutes > 0 && parts.len() < 2 { parts.push(format!("{}m", minutes)); }
-                                                if seconds > 0 && parts.len() < 2 { parts.push(format!("{}s", seconds)); }
-                                                if parts.is_empty() { "0s".to_string() } else { parts[..parts.len().min(2)].join(" ") }
-                                            })
-                                            .unwrap_or_else(|| "---".to_string())}
+                                    <div role="cell" class="px-4 py-2 w-30 truncate hidden md:block flex flex-col justify-center items-end">
+                                        <div class="text-sm">
+                                            {format!("{:.1} / day", data.inner.sale_summary.daily_sales)}
+                                        </div>
+                                        <div class="text-xs text-[color:var(--color-text-muted)]" title="Price Volatility (Coefficient of Variation)">
+                                            {
+                                                let v = data.inner.sale_summary.volatility;
+                                                let color = if v < 0.2 { "text-green-400" } else if v < 0.5 { "text-yellow-400" } else { "text-red-400" };
+                                                view! { <span class=color>{format!("CV: {:.2}", v)}</span> }
+                                            }
+                                        </div>
                                     </div>
                                 </div>
                             }
