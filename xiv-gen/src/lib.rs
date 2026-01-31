@@ -18,6 +18,5 @@ pub fn data_version() -> &'static str {
     env!("GIT_HASH")
 }
 
-
 #[cfg(test)]
 mod tests {}
