@@ -763,6 +763,41 @@ impl AnalyzerService {
         })
     }
 
+    fn calculate_metrics(recent_sales: &[SaleSummary]) -> (f32, f32, f32) {
+        if recent_sales.len() < 2 {
+            return (0.0, 0.0, 0.0);
+        }
+
+        let newest = recent_sales.first().unwrap();
+        let oldest = recent_sales.last().unwrap();
+        let days_diff = (newest.sale_date - oldest.sale_date).num_days().max(1) as f32;
+        let sales_count = recent_sales.len() as f32;
+        let sales_per_week = (sales_count / days_diff) * 7.0;
+
+        let avg_price = recent_sales
+            .iter()
+            .map(|s| s.price_per_item as f32)
+            .sum::<f32>()
+            / sales_count;
+
+        let variance = recent_sales
+            .iter()
+            .map(|s| {
+                let diff = s.price_per_item as f32 - avg_price;
+                diff * diff
+            })
+            .sum::<f32>()
+            / sales_count;
+        let std_dev = variance.sqrt();
+        (sales_per_week, std_dev, avg_price)
+    }
+
+    fn calculate_tataru_score(profit: i32, sales_per_week: f32, reliability: f32) -> f32 {
+        let log_profit = (profit as f32).max(1.0).log10();
+        let sales_factor = sales_per_week.powf(0.5);
+        log_profit * sales_factor * reliability
+    }
+
     pub(crate) async fn get_best_resale(
         &self,
         world_id: i32,
@@ -788,7 +823,7 @@ impl AnalyzerService {
             .iter()
             .map(|(i, values)| (i, values, values.iter().collect::<SoldWithin>()))
             .flat_map(|(item, values, sold_within)| {
-                let mut prices: smallvec::SmallVec<[i32; SALE_HISTORY_SIZE]> = values
+                let filtered_sales: smallvec::SmallVec<[SaleSummary; SALE_HISTORY_SIZE]> = values
                     .iter()
                     .filter(|sale| {
                         resale_options
@@ -803,20 +838,26 @@ impl AnalyzerService {
                             })
                             .unwrap_or(true)
                     })
-                    .map(|sale| sale.price_per_item)
+                    .copied()
                     .collect();
-                if prices.is_empty() {
+
+                if filtered_sales.is_empty() {
                     return None;
                 }
+
+                let (sales_per_week, std_dev, avg_price) = Self::calculate_metrics(&filtered_sales);
+                let reliability = if avg_price > 0.0 {
+                    1.0 / (1.0 + (std_dev / avg_price))
+                } else {
+                    0.0
+                };
+
+                let mut prices: smallvec::SmallVec<[i32; SALE_HISTORY_SIZE]> = filtered_sales.iter().map(|s| s.price_per_item).collect();
                 prices.sort_unstable();
                 let len = prices.len();
-                // Get median. If even, pick the lower one to be conservative?
-                // Actually, let's pick the one at len / 2.
-                // 1 item: idx 0. 2 items: idx 1. 3 items: idx 1. 4 items: idx 2.
-                // This essentially picks the slightly higher one in even cases, or middle in odd.
-                // Let's pick len / 2.
+                // Get median.
                 let price = prices[len / 2];
-                Some((*item, (price, sold_within)))
+                Some((*item, (price, sold_within, sales_per_week, reliability)))
             })
             .collect();
 
@@ -834,14 +875,19 @@ impl AnalyzerService {
             .item_map
             .iter()
             .flat_map(|(item_key, cheapest_price)| {
-                let (cheapest_history, sold_within) = *sale_history.get(item_key)?;
-                let current_cheapest_on_sale_world = sale_world_listings
-                    .item_map
-                    .get(item_key)
-                    .map(|l| l.price)
-                    .unwrap_or(cheapest_history);
-                let est_sale_price = (cheapest_history).min(current_cheapest_on_sale_world);
+                let (median_price, sold_within, sales_per_week, reliability) = *sale_history.get(item_key)?;
+
+                let current_listing = sale_world_listings.item_map.get(item_key);
+                // "Greedy but Wise" Algorithm
+                let est_sale_price = if let Some(listing) = current_listing {
+                    (listing.price - 1).min(median_price)
+                } else {
+                    (median_price as f32 * 1.2) as i32
+                };
+
                 let profit = est_sale_price - cheapest_price.price;
+                let tataru_score = Self::calculate_tataru_score(profit, sales_per_week, reliability);
+
                 Some(ResaleStats {
                     profit,
                     item_id: item_key.item_id,
@@ -850,6 +896,7 @@ impl AnalyzerService {
                         - 100.0,
                     world_id: cheapest_price.world_id,
                     sold_within,
+                    tataru_score,
                 })
             })
             .filter(|w| {
@@ -1194,6 +1241,7 @@ pub(crate) struct ResaleStats {
     pub(crate) item_id: i32,
     pub(crate) sold_within: SoldWithin,
     pub(crate) return_on_investment: f32,
+    pub(crate) tataru_score: f32,
     pub(crate) world_id: i32,
 }
 
@@ -1212,7 +1260,62 @@ mod test {
 
     use crate::analyzer_service::ItemKey;
 
-    use super::{SaleHistory, SaleSummary, SoldAmount, SoldWithin};
+    use super::{AnalyzerService, SaleHistory, SaleSummary, SoldAmount, SoldWithin};
+
+    #[test]
+    fn test_tataru_score() {
+        // High profit, high sales, high reliability
+        let score_high = AnalyzerService::calculate_tataru_score(1000000, 10.0, 1.0);
+        // Log10(1,000,000) = 6. sqrt(10) ~= 3.16. 6 * 3.16 * 1 = 18.97
+        assert!(score_high > 18.0);
+
+        // Low profit, high sales
+        let score_low_profit = AnalyzerService::calculate_tataru_score(10, 10.0, 1.0);
+        // Log10(10) = 1. 1 * 3.16 * 1 = 3.16
+        assert!(score_low_profit < score_high);
+
+        // High profit, low sales
+        let score_low_sales = AnalyzerService::calculate_tataru_score(1000000, 1.0, 1.0);
+        // 6 * 1 * 1 = 6.
+        assert!(score_low_sales < score_high);
+        assert!(score_low_sales > score_low_profit);
+
+        // High profit, high sales, low reliability
+        let score_low_reliability = AnalyzerService::calculate_tataru_score(1000000, 10.0, 0.5);
+        // 18.97 * 0.5 = 9.48
+        assert!(score_low_reliability < score_high);
+    }
+
+    #[test]
+    fn test_metrics_calculation() {
+        let now = Utc::now().naive_utc();
+        let sales = vec![
+            SaleSummary {
+                price_per_item: 100,
+                sale_date: now,
+            },
+            SaleSummary {
+                price_per_item: 110,
+                sale_date: now - Duration::days(1),
+            },
+            SaleSummary {
+                price_per_item: 90,
+                sale_date: now - Duration::days(2),
+            },
+        ];
+
+        let (sales_per_week, std_dev, avg_price) = AnalyzerService::calculate_metrics(&sales);
+
+        // 3 sales over 2 days. 1.5 sales/day. 10.5 sales/week.
+        assert!((sales_per_week - 10.5).abs() < 0.1);
+
+        // Avg price = 100.
+        assert!((avg_price - 100.0).abs() < 0.1);
+
+        // Variance: (0 + 100 + 100) / 3 = 66.66
+        // StdDev: sqrt(66.66) ~= 8.16
+        assert!((std_dev - 8.16).abs() < 0.1);
+    }
 
     #[test]
     fn test_sale_history_sort() {

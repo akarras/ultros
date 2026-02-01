@@ -22,6 +22,7 @@ pub(crate) struct ResaleStatsDto {
     pub(crate) item_id: i32,
     pub(crate) sold_within: String,
     pub(crate) return_on_investment: f32,
+    pub(crate) tataru_score: f32,
     pub(crate) world_id: i32,
 }
 
@@ -32,6 +33,7 @@ impl From<ResaleStats> for ResaleStatsDto {
             item_id: stats.item_id,
             sold_within: stats.sold_within.to_string(),
             return_on_investment: stats.return_on_investment,
+            tataru_score: stats.tataru_score,
             world_id: stats.world_id,
         }
     }
