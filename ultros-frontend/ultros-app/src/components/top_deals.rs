@@ -35,6 +35,10 @@ fn DealItem(deal: ResaleStatsDto, home_world_name: String) -> impl IntoView {
                             <span class="text-xs">"ROI"</span>
                             <span class="font-mono">{format!("{:.0}%", deal.return_on_investment)}</span>
                         </div>
+                        <div class="flex items-center gap-1 text-[color:var(--brand-fg)] font-bold" title="Tataru Score">
+                            <span class="text-xs">"Score"</span>
+                            <span class="font-mono">{format!("{:.1}", deal.tataru_score)}</span>
+                        </div>
                     </div>
                 </div>
             </div>

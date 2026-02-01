@@ -33,7 +33,7 @@ use tokio_util::sync::CancellationToken;
 use ultros_api_types::trends::{TrendItem, TrendsData};
 use ultros_db::world_cache::{AnySelector, WorldCache};
 
-pub const SALE_HISTORY_SIZE: usize = 6;
+pub const SALE_HISTORY_SIZE: usize = 20;
 
 #[derive(Debug, Error)]
 pub enum AnalyzerError {
@@ -697,8 +697,6 @@ impl AnalyzerService {
             let std_dev = variance.sqrt();
 
             if let Some(cheapest) = cheapest_listings.item_map.get(key) {
-                let price_diff_ratio = cheapest.price as f32 / avg_price;
-
                 let trend_item = TrendItem {
                     item_id: key.item_id,
                     hq: key.hq,
@@ -724,13 +722,12 @@ impl AnalyzerService {
                 // Let's stick to the previous logic but maybe make it a bit more statistically sound if possible.
                 // For now, I'll stick to the requested improvement: Use Standard Deviation.
 
-                // If price is > 1 standard deviation above average, and at least 20% higher.
-                if (cheapest.price as f32 > avg_price + std_dev) && price_diff_ratio > 1.2 {
+                // If price is > 2 standard deviation above average
+                if cheapest.price as f32 > avg_price + 2.0 * std_dev {
                     rising_price.push(trend_item.clone());
                 }
-                // Falling: Price < 1 SD below average, and at least 20% lower.
-                else if (cheapest.price as f32) < (avg_price - std_dev) && price_diff_ratio < 0.8
-                {
+                // Falling: Price < 2 SD below average
+                else if (cheapest.price as f32) < (avg_price - 2.0 * std_dev) {
                     falling_price.push(trend_item.clone());
                 }
             }
@@ -788,6 +785,47 @@ impl AnalyzerService {
             .iter()
             .map(|(i, values)| (i, values, values.iter().collect::<SoldWithin>()))
             .flat_map(|(item, values, sold_within)| {
+                let now = Utc::now().naive_utc();
+                // Calculate stats based on recent history (last 30 days) to match trends logic
+                let recent_sales_for_stats: Vec<_> = values
+                    .iter()
+                    .filter(|s| (now - s.sale_date).num_days() < 30)
+                    .collect();
+
+                let (sales_per_week, reliability) = if recent_sales_for_stats.len() >= 2 {
+                    let newest = recent_sales_for_stats.first().unwrap();
+                    let oldest = recent_sales_for_stats.last().unwrap();
+                    let days_diff = (newest.sale_date - oldest.sale_date).num_days().max(1) as f32;
+                    let count = recent_sales_for_stats.len() as f32;
+                    let spw = (count / days_diff) * 7.0;
+
+                    let avg_price = recent_sales_for_stats
+                        .iter()
+                        .map(|s| s.price_per_item as f32)
+                        .sum::<f32>()
+                        / count;
+                    let variance = recent_sales_for_stats
+                        .iter()
+                        .map(|s| {
+                            let diff = s.price_per_item as f32 - avg_price;
+                            diff * diff
+                        })
+                        .sum::<f32>()
+                        / count;
+                    let std_dev = variance.sqrt();
+                    let cv = if avg_price > 0.0 {
+                        std_dev / avg_price
+                    } else {
+                        0.0
+                    };
+                    let rel = 1.0 / (1.0 + cv);
+                    (spw, rel)
+                } else if !recent_sales_for_stats.is_empty() {
+                    (1.0, 0.5) // Fallback for single sale
+                } else {
+                    (0.0, 0.0)
+                };
+
                 let mut prices: smallvec::SmallVec<[i32; SALE_HISTORY_SIZE]> = values
                     .iter()
                     .filter(|sale| {
@@ -816,7 +854,7 @@ impl AnalyzerService {
                 // This essentially picks the slightly higher one in even cases, or middle in odd.
                 // Let's pick len / 2.
                 let price = prices[len / 2];
-                Some((*item, (price, sold_within)))
+                Some((*item, (price, sold_within, sales_per_week, reliability)))
             })
             .collect();
 
@@ -834,14 +872,24 @@ impl AnalyzerService {
             .item_map
             .iter()
             .flat_map(|(item_key, cheapest_price)| {
-                let (cheapest_history, sold_within) = *sale_history.get(item_key)?;
-                let current_cheapest_on_sale_world = sale_world_listings
-                    .item_map
-                    .get(item_key)
-                    .map(|l| l.price)
-                    .unwrap_or(cheapest_history);
-                let est_sale_price = (cheapest_history).min(current_cheapest_on_sale_world);
+                let (cheapest_history, sold_within, sales_per_week, reliability) =
+                    *sale_history.get(item_key)?;
+                let current_cheapest_on_sale_world =
+                    sale_world_listings.item_map.get(item_key).map(|l| l.price);
+
+                let est_sale_price = match current_cheapest_on_sale_world {
+                    Some(listing_price) => cheapest_history.min(listing_price - 1),
+                    None => (cheapest_history as f32 * 1.2) as i32,
+                };
+
                 let profit = est_sale_price - cheapest_price.price;
+
+                let tataru_score = if profit > 0 {
+                    (profit as f32).log10() * sales_per_week.sqrt() * reliability
+                } else {
+                    0.0
+                };
+
                 Some(ResaleStats {
                     profit,
                     item_id: item_key.item_id,
@@ -1195,6 +1243,7 @@ pub(crate) struct ResaleStats {
     pub(crate) sold_within: SoldWithin,
     pub(crate) return_on_investment: f32,
     pub(crate) world_id: i32,
+    pub(crate) tataru_score: f32,
 }
 
 #[derive(Default)]

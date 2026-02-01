@@ -52,6 +52,7 @@ pub(crate) struct ResaleStatsDto {
     pub(crate) sold_within: String,
     pub(crate) return_on_investment: f32,
     pub(crate) world_id: i32,
+    pub(crate) tataru_score: f32,
 }
 
 pub(crate) async fn get_best_deals(world_name: &str) -> AppResult<Vec<ResaleStatsDto>> {
