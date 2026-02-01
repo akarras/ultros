@@ -282,6 +282,7 @@ fn create_struct(
     let mut parse_this_function = None;
     let mut pk = None;
     let mut unknown_counter = 0;
+    let mut used_field_names = HashSet::new();
     let fields: Vec<(String, String)> = line_two
         .iter()
         .zip(line_three.iter())
@@ -307,9 +308,26 @@ fn create_struct(
                 line_one = "r#trait".to_string();
             } else if line_one == "move" {
                 line_one = "r#move".to_string();
+            } else if line_one == "false" {
+                line_one = "r#false".to_string();
+            } else if line_one == "true" {
+                line_one = "r#true".to_string();
             } else if line_one.chars().next().unwrap_or_default().is_ascii_digit() {
                 line_one = format!("num{line_one}");
             }
+
+            if used_field_names.contains(&line_one) {
+                let mut i = 2;
+                loop {
+                    let new_name = format!("{}_{}", line_one, i);
+                    if !used_field_names.contains(&new_name) {
+                        line_one = new_name;
+                        break;
+                    }
+                    i += 1;
+                }
+            }
+            used_field_names.insert(line_one.clone());
 
             lazy_static! {
                 // regex: check is int type
@@ -465,10 +483,11 @@ fn create_struct(
             }
         }
         s.derive("DumbCsvDeserialize");
-        let pk = pk.unwrap();
-        parse_this_function = Some(format!(
-            "{pk}: read_dumb_csv::<{csv_name}>(r#\"{path}\"#).into_iter().map(|m| (m.key_id, m)).collect(),"
-        ))
+        if let Some(pk) = pk {
+            parse_this_function = Some(format!(
+                "{pk}: read_dumb_csv::<{csv_name}>(r#\"{path}\"#).into_iter().map(|m| (m.key_id, m)).collect(),"
+            ));
+        }
         // panic!("{root_names:?}");
     } else {
         for (field_name, field_value) in fields.iter() {
@@ -496,8 +515,9 @@ fn create_struct(
             s.push_field(field);
         }
     }
-    let function = parse_this_function.unwrap();
-    args.read_data.line(function);
+    if let Some(function) = parse_this_function {
+        args.read_data.line(function);
+    }
 
     scope.push_struct(s);
     scope.push_impl(i);
