@@ -138,6 +138,9 @@ impl SalesWindow {
 
         let start_timestamp = date_range.start().and_utc().timestamp();
 
+        let mut min_unit_price = i32::MAX;
+        let mut max_unit_price = i32::MIN;
+
         for sale in sales {
             let price = sale.price_per_item;
             let qty = sale.quantity;
@@ -147,6 +150,13 @@ impl SalesWindow {
             total_sale_price += price as i64;
             if sale.hq {
                 hq_count += 1;
+            }
+
+            if price < min_unit_price {
+                min_unit_price = price;
+            }
+            if price > max_unit_price {
+                max_unit_price = price;
             }
 
             unit_prices.push(price);
@@ -170,12 +180,11 @@ impl SalesWindow {
             })
             .ok()?;
 
-        unit_prices.sort_unstable();
-        let median_unit_price = unit_prices[count / 2];
+        // Optimization: Use select_nth_unstable instead of full sort (O(N) vs O(N log N))
+        let median_unit_price = *unit_prices.select_nth_unstable(count / 2).1;
         let avg_sale_price = total_sale_price as f64 / count as f64;
 
-        stack_sizes.sort_unstable();
-        let median_stack_size = stack_sizes[count / 2];
+        let median_stack_size = *stack_sizes.select_nth_unstable(count / 2).1;
 
         let duration = *date_range.start() - *date_range.end();
         let avg_duration = duration / count as i32;
@@ -197,8 +206,8 @@ impl SalesWindow {
         Some(Self {
             total_gil,
             average_unit_price: avg_sale_price,
-            max_unit_price: *unit_prices.last()?,
-            min_unit_price: *unit_prices.first()?,
+            max_unit_price,
+            min_unit_price,
             median_stack_size,
             hq_percent: ((hq_count as f64 / count as f64) * 100.0).round() as i32,
             guessed_next_sale_price: next,
