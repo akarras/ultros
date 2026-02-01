@@ -47,6 +47,7 @@ pub fn ListItemRow(
                             <td class:hidden=move || !edit_list_mode()>
                                 <input
                                     type="checkbox"
+                                    aria-label="Select item"
                                     on:click=move |_| {
                                         selected_items
                                             .update(|u| {
@@ -80,7 +81,7 @@ pub fn ListItemRow(
                                             view! {
                                                 <div>
                                                     <Tooltip tooltip_text="This item is not available on the market board">
-                                                        <Icon icon=i::BiTrashSolid />
+                                                        <Icon icon=i::AiExclamationOutlined />
                                                     </Tooltip>
                                                 </div>
                                             }
@@ -130,6 +131,7 @@ pub fn ListItemRow(
                                 <div class="flex gap-1">
                                     <button
                                         class="btn"
+                                        aria-label="Delete item"
                                         on:click=move |_| {
                                             let _ = delete_item.dispatch(item.with(|i| i.id));
                                         }
@@ -138,6 +140,7 @@ pub fn ListItemRow(
                                     </button>
                                     <button
                                         class="btn"
+                                        aria-label=move || if edit() { "Save changes" } else { "Edit item" }
                                         on:click=move |_| {
                                             if temp_item() != item() {
                                                 let _ = edit_item.dispatch(temp_item());
@@ -152,6 +155,7 @@ pub fn ListItemRow(
                                     <Tooltip tooltip_text="Mark as acquired">
                                         <button
                                             class="btn"
+                                            aria-label="Mark as acquired"
                                             on:click=move |_| {
                                                 item.update(|i| {
                                                     i.acquired = i.quantity;
@@ -256,6 +260,7 @@ pub fn ListItemRow(
                             <td>
                                 <button
                                     class="btn"
+                                    aria-label="Delete item"
                                     on:click=move |_| {
                                         let _ = delete_item.dispatch(item.id);
                                     }
@@ -264,6 +269,7 @@ pub fn ListItemRow(
                                 </button>
                                 <button
                                     class="btn"
+                                    aria-label=move || if edit() { "Save changes" } else { "Edit item" }
                                     on:click=move |_| {
                                         if temp_item() != item {
                                             let _ = edit_item.dispatch(temp_item());
