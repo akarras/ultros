@@ -852,7 +852,8 @@ impl AnalyzerService {
                     0.0
                 };
 
-                let mut prices: smallvec::SmallVec<[i32; SALE_HISTORY_SIZE]> = filtered_sales.iter().map(|s| s.price_per_item).collect();
+                let mut prices: smallvec::SmallVec<[i32; SALE_HISTORY_SIZE]> =
+                    filtered_sales.iter().map(|s| s.price_per_item).collect();
                 prices.sort_unstable();
                 let len = prices.len();
                 // Get median.
@@ -875,7 +876,8 @@ impl AnalyzerService {
             .item_map
             .iter()
             .flat_map(|(item_key, cheapest_price)| {
-                let (median_price, sold_within, sales_per_week, reliability) = *sale_history.get(item_key)?;
+                let (median_price, sold_within, sales_per_week, reliability) =
+                    *sale_history.get(item_key)?;
 
                 let current_listing = sale_world_listings.item_map.get(item_key);
                 // "Greedy but Wise" Algorithm
@@ -886,7 +888,8 @@ impl AnalyzerService {
                 };
 
                 let profit = est_sale_price - cheapest_price.price;
-                let tataru_score = Self::calculate_tataru_score(profit, sales_per_week, reliability);
+                let tataru_score =
+                    Self::calculate_tataru_score(profit, sales_per_week, reliability);
 
                 Some(ResaleStats {
                     profit,
@@ -1261,6 +1264,7 @@ mod test {
     use crate::analyzer_service::ItemKey;
 
     use super::{AnalyzerService, SaleHistory, SaleSummary, SoldAmount, SoldWithin};
+    use chrono::{Duration, Utc};
 
     #[test]
     fn test_tataru_score() {
