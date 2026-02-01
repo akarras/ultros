@@ -264,7 +264,11 @@ fn create_struct(
     let field_names: Vec<String> = header_row.iter().map(|s| s.to_string()).collect();
 
     // Initialize detectors
-    let mut detectors: Vec<DataDetector> = field_names.iter().enumerate().map(|(i, _)| DataDetector::new(i)).collect();
+    let mut detectors: Vec<DataDetector> = field_names
+        .iter()
+        .enumerate()
+        .map(|(i, _)| DataDetector::new(i))
+        .collect();
 
     // Read all data rows to detect types
     for result in records {
