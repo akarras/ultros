@@ -197,6 +197,7 @@ fn FilterModal(filter_name: &'static str) -> impl IntoView {
                                     <div class="flex items-center justify-between">
                                         <span class="text-[color:var(--color-text)]">"Max"</span>
                                         <ParseableInputBox
+                                            aria_label=format!("Maximum {}", filter_name.replace("_", " "))
                                             input=Signal::derive(max)
                                             set_value=SignalSetter::map(set_max)
                                         />
@@ -204,6 +205,7 @@ fn FilterModal(filter_name: &'static str) -> impl IntoView {
                                     <div class="flex items-center justify-between">
                                         <span class="text-[color:var(--color-text)]">"Min"</span>
                                         <ParseableInputBox
+                                            aria_label=format!("Minimum {}", filter_name.replace("_", " "))
                                             input=Signal::derive(min)
                                             set_value=SignalSetter::map(set_min)
                                         />
@@ -436,6 +438,7 @@ pub fn ExchangeItem() -> impl IntoView {
                                     <div class="flex items-center justify-between">
                                         <span class="text-[color:var(--color-text)]">"Min"</span>
                                         <ParseableInputBox
+                                            aria_label="Minimum price per item"
                                             input=Signal::derive(min)
                                             set_value=SignalSetter::map(set_min)
                                         />
@@ -443,6 +446,7 @@ pub fn ExchangeItem() -> impl IntoView {
                                     <div class="flex items-center justify-between">
                                         <span class="text-[color:var(--color-text)]">"Max"</span>
                                         <ParseableInputBox
+                                            aria_label="Maximum price per item"
                                             input=Signal::derive(max)
                                             set_value=SignalSetter::map(set_max)
                                         />
@@ -464,6 +468,7 @@ pub fn ExchangeItem() -> impl IntoView {
                                     <div class="flex items-center justify-between">
                                         <span class="text-[color:var(--color-text)]">"Min"</span>
                                         <ParseableInputBox
+                                            aria_label="Minimum quantity received"
                                             input=Signal::derive(min)
                                             set_value=SignalSetter::map(set_min)
                                         />
@@ -471,6 +476,7 @@ pub fn ExchangeItem() -> impl IntoView {
                                     <div class="flex items-center justify-between">
                                         <span class="text-[color:var(--color-text)]">"Max"</span>
                                         <ParseableInputBox
+                                            aria_label="Maximum quantity received"
                                             input=Signal::derive(max)
                                             set_value=SignalSetter::map(set_max)
                                         />
@@ -492,6 +498,7 @@ pub fn ExchangeItem() -> impl IntoView {
                                     <div class="flex items-center justify-between">
                                         <span class="text-[color:var(--color-text)]">"Min"</span>
                                         <ParseableInputBox
+                                            aria_label="Minimum profit"
                                             input=Signal::derive(min)
                                             set_value=SignalSetter::map(set_min)
                                         />
@@ -499,6 +506,7 @@ pub fn ExchangeItem() -> impl IntoView {
                                     <div class="flex items-center justify-between">
                                         <span class="text-[color:var(--color-text)]">"Max"</span>
                                         <ParseableInputBox
+                                            aria_label="Maximum profit"
                                             input=Signal::derive(max)
                                             set_value=SignalSetter::map(set_max)
                                         />
@@ -520,6 +528,7 @@ pub fn ExchangeItem() -> impl IntoView {
                                     <div class="flex items-center justify-between">
                                         <span class="text-[color:var(--color-text)]">"Min"</span>
                                         <ParseableInputBox
+                                            aria_label="Minimum hours between sales"
                                             input=Signal::derive(min)
                                             set_value=SignalSetter::map(set_min)
                                         />
@@ -527,6 +536,7 @@ pub fn ExchangeItem() -> impl IntoView {
                                     <div class="flex items-center justify-between">
                                         <span class="text-[color:var(--color-text)]">"Max"</span>
                                         <ParseableInputBox
+                                            aria_label="Maximum hours between sales"
                                             input=Signal::derive(max)
                                             set_value=SignalSetter::map(set_max)
                                         />

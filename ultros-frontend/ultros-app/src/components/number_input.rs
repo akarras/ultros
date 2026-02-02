@@ -9,6 +9,7 @@ use web_sys::wasm_bindgen::JsValue;
 pub fn ParseableInputBox<T>(
     #[prop(into)] input: Signal<Option<T>>,
     #[prop(into)] set_value: SignalSetter<Option<T>>,
+    #[prop(into, optional)] aria_label: Option<String>,
 ) -> impl IntoView
 where
     T: FromStr + IntoProperty + Clone + Into<JsValue> + Send + Sync + 'static,
@@ -23,7 +24,8 @@ where
                     "input w-full"
                 }
             }
-
+            aria-label=aria_label
+            aria-invalid=move || failed_to_parse().to_string()
             prop:value=move || input().map(|value| value.into()).unwrap_or(JsValue::NULL)
             on:input=move |e| {
                 let value = event_target_value(&e);
