@@ -237,18 +237,25 @@ fn create_struct(
         .from_path(path)
         .expect("unable to open path");
     let mut records = reader.records();
-    let _line_one = records
+    let first_record = records
         .next()
         .expect("First line not found")
         .expect("Reader error on first line");
-    let line_two = records
-        .next()
-        .expect("Second line not found")
-        .expect("Error reading second line");
-    let line_three = records
-        .next()
-        .expect("Third line not found")
-        .expect("Third line error reading");
+
+    let (line_two, line_three_opt) = if first_record.get(0) == Some("#") {
+        (first_record, None)
+    } else {
+        let line_two = records
+            .next()
+            .expect("Second line not found")
+            .expect("Error reading second line");
+        let line_three = records
+            .next()
+            .expect("Third line not found")
+            .expect("Third line error reading");
+        (line_two, Some(line_three))
+    };
+
     // iterate over all columns
     let mut line_four: Vec<_> = records
         .next()
@@ -282,11 +289,12 @@ fn create_struct(
     let mut parse_this_function = None;
     let mut pk = None;
     let mut unknown_counter = 0;
+
     let fields: Vec<(String, String)> = line_two
         .iter()
-        .zip(line_three.iter())
         .zip(line_four.iter())
-        .map(|((field_name, field_value), sample_data)| {
+        .enumerate()
+        .map(|(idx, (field_name, sample_data))| {
             let mut line_one = if field_name == "#" {
                 "key_id".to_string()
             } else if field_name.is_empty() {
@@ -311,15 +319,42 @@ fn create_struct(
                 line_one = format!("num{line_one}");
             }
 
+            // Infer type
+            let field_value = if let Some(ref l3) = line_three_opt {
+                l3.get(idx).unwrap().to_string()
+            } else {
+                 match sample_data {
+                     DataType::String => "str".to_string(),
+                     DataType::Bool => "bool".to_string(),
+                     DataType::Float => "float".to_string(),
+                     _ => {
+                         if field_name == "#" { "int32".to_string() }
+                         else if field_name.chars().all(|c| c.is_numeric()) {
+                             match sample_data {
+                                 DataType::UnsignedInt8 => "byte".to_string(),
+                                 DataType::SignedInt8 => "sbyte".to_string(),
+                                 DataType::UnsignedInt16 => "uint16".to_string(),
+                                 DataType::SignedInt16 => "int16".to_string(),
+                                 DataType::UnsignedInt64 => "uint64".to_string(),
+                                 DataType::SignedInt64 => "int64".to_string(),
+                                 _ => "int32".to_string(),
+                             }
+                         } else {
+                             field_name.replace(|c: char| !c.is_alphanumeric(), "")
+                         }
+                     }
+                 }
+            };
+
             lazy_static! {
                 // regex: check is int type
                 static ref INT: Regex = Regex::new(r#"^(u|)int(8|16|32|64)$"#).unwrap();
                 // regex: check is bit offset
                 static ref BIT: Regex = Regex::new(r#"^bit(&[0-9]+|)|bool$"#).unwrap();
             }
-            if BIT.is_match(field_value) {
+            if BIT.is_match(&field_value) {
                 (line_one, "bool".to_string())
-            } else if INT.is_match(field_value) {
+            } else if INT.is_match(&field_value) {
                 let mut line_two = field_value.replace("int", "");
                 // uint64 -> u64
                 // int64 -> 64, add the i if no u
@@ -619,7 +654,7 @@ fn get_table_names(path: impl AsRef<Path>) -> Box<dyn Iterator<Item = (String, S
 
 fn main() {
     // figure out what features have been enabled
-    let dir = "./ffxiv-datamining/csv/";
+    let dir = "./ffxiv-datamining/csv/en/";
     let mut table_names: Vec<_> = get_table_names(dir).collect();
     table_names.sort();
     let mut list = table_names
@@ -636,13 +671,14 @@ fn main() {
             .collect::<Vec<String>>()
             .join(",")
     );
-    println!("available features: \n{}\n{}", all_features_str, list_str);
+    // println!("available features: \n{}\n{}", all_features_str, list_str);
     let list_filter: Vec<_> = table_names
         .into_iter()
         .flat_map(|(csv_name, feature)| {
             env::var(format!("CARGO_FEATURE_{}", feature.to_uppercase())).map(|_| csv_name)
         })
         .collect();
+
     write(
         "./extra.toml",
         format!("{}\n{}", all_features_str, list_str).as_bytes(),
