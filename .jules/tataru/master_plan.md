@@ -1,59 +1,42 @@
 # Tataru's Master Plan for Gil Maximization
 
-Hello minions! This is your project manager Tataru. I have analyzed our current tools and found them... lacking. We are leaving too much gil on the table!
+## Objective
+To improve the investment tools in Ultros (Flip Finder) to allow for smarter investment decisions, focusing on sales velocity and accurate profit prediction.
 
-Here is the specification for the next generation of investment tools.
+## Strategy
 
-## 1. Smarter Valuation Logic (The "Greedy but Wise" Algorithm)
-
-**Problem:** Our current "Flip Finder" (`get_best_resale`) is too cowardly. It estimates the sale price based on the *minimum* price of the last few sales. If one person got lucky and bought a `Golden Beaver` for 1 gil, we assume we can only sell it for 1 gil. This is unacceptable!
-
+### 1. Sales Velocity Tracking
+**Problem:** Currently, the "Flip Finder" predicts sales based on `avg_sale_duration` which is derived from the time between the last few transactions. This ignores the *volume* of items sold. A single transaction of 99 items is treated the same as a single transaction of 1 item.
 **Solution:**
-- We shall use the **Median** or **Weighted Average** of recent sales.
-- Specifically, we should look at the sale history (last 20 sales if possible, currently we store 6).
-- **Algorithm Update**:
-    - `EstimatedSalePrice = min(CurrentCheapestListing - 1, Median(RecentSales))`
-    - If `CurrentCheapestListing` doesn't exist (market is empty), use `Median(RecentSales) * 1.2` (Monopoly pricing!).
-    - If `RecentSales` is empty, ignore the item (too risky).
+- Track `quantity` in `SaleSummary` and `SaleHistory`.
+- Increase `SALE_HISTORY_SIZE` from 6 to 20 to get a better statistical sample.
+- Calculate `sales_per_day` (velocity) based on total items sold over the time period.
+- Expose this velocity to the frontend.
 
-## 2. The "Tataru Score" (Investment Grading)
-
-**Problem:** Minions get confused by "Profit" vs "ROI". A 100% ROI on a 1 gil item is useless. A 1,000,000 gil profit on an item that sells once a year is a trap.
-
+### 2. Frontend Enhancements
+**Problem:** The frontend only shows "Avg Sale Time" which can be misleading for high-volume items.
 **Solution:**
-- Introduce a composite score: `TataruScore`.
-- `TataruScore = Log10(Profit) * (SalesPerWeek ^ 0.5) * Reliability`
-- **Reliability**: A factor (0.0 to 1.0) based on price volatility.
-- Display this score in the UI and allow sorting by it. "Sort by Best Opportunity".
+- Add "Sales/Day" column to the Flip Finder table.
+- Allow sorting by "Sales/Day".
+- This allows investors to find high-velocity items that might have lower margins but faster turnover.
 
-## 3. Advanced Market Trends
+## Implementation Details
 
-**Problem:** "Rising Price" just means "Current > 1.5 * Average". This is too simple.
+### Backend (`ultros`)
+- `ultros-api-types/src/recent_sales.rs`: Add `quantity` field.
+- `ultros/src/analyzer_service.rs`:
+    - Update `SaleSummary` to store `quantity`.
+    - Increase history size.
+    - Update `get_trends` to use quantity-based velocity.
+- `ultros/src/web/api/recent_sales.rs`: Populate `quantity` in API response.
 
-**Solution:**
-- Implement **Standard Deviation** checks.
-- **Spike Detection**: Price > Average + 2 * StdDev.
-- **Crash Detection**: Price < Average - 2 * StdDev.
-- **Volatility Index**: High StdDev means high risk (or high reward for brave traders).
+### Frontend (`ultros-frontend`)
+- `ultros-frontend/ultros-app/src/routes/analyzer.rs`:
+    - Update client-side `SaleSummary`.
+    - Calculate `items_per_day`.
+    - Add column and sorting logic.
 
-## 4. Vendor Resale "Cash Flow"
-
-**Problem:** Vendor resale list is clogged with items that never sell.
-
-**Solution:**
-- Default sort by `WeeklyProfit = UnitProfit * SalesPerWeek`.
-- Highlight items that can be bought from a vendor in *housing districts* (Material Suppliers) vs those that require travel to obscure zones.
-
-## Implementation Plan
-
-1.  **Upgrade `analyzer_service.rs`**:
-    - Modify `get_best_resale` to calculate Median price instead of Min.
-    - Modify `get_trends` to include Standard Deviation calculation.
-2.  **Upgrade `analyzer.rs` (Frontend)**:
-    - Expose the new valuation in the UI.
-    - (Optional) Add the "Tataru Score" column.
-
----
-
-*Signed,*
-*Tataru Taru*
+## Future Plans (To be implemented later)
+- **Volatility Score:** Calculate price standard deviation to warn about risky investments.
+- **Undercut Alert:** Estimate probability of being undercut based on listing velocity.
+- **Tax Optimization:** Factor in retainer city tax (if data available).

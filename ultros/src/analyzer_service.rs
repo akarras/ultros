@@ -33,7 +33,7 @@ use tokio_util::sync::CancellationToken;
 use ultros_api_types::trends::{TrendItem, TrendsData};
 use ultros_db::world_cache::{AnySelector, WorldCache};
 
-pub const SALE_HISTORY_SIZE: usize = 6;
+pub const SALE_HISTORY_SIZE: usize = 20;
 
 #[derive(Debug, Error)]
 pub enum AnalyzerError {
@@ -145,6 +145,7 @@ impl From<&ultros_db::listings::ListingSummary> for ItemKey {
 pub(crate) struct SaleSummary {
     pub(crate) price_per_item: i32,
     pub(crate) sale_date: NaiveDateTime,
+    pub(crate) quantity: i32,
 }
 
 impl From<&ultros_db::sales::AbbreviatedSaleData> for SaleSummary {
@@ -152,6 +153,7 @@ impl From<&ultros_db::sales::AbbreviatedSaleData> for SaleSummary {
         Self {
             sale_date: sale.sold_date,
             price_per_item: sale.price_per_item,
+            quantity: sale.quantity,
         }
     }
 }
@@ -161,6 +163,7 @@ impl From<&ultros_db::entity::sale_history::Model> for SaleSummary {
         Self {
             sale_date: sale.sold_date,
             price_per_item: sale.price_per_item,
+            quantity: sale.quantity,
         }
     }
 }
@@ -170,6 +173,7 @@ impl From<&ultros_api_types::SaleHistory> for SaleSummary {
         Self {
             price_per_item: value.price_per_item,
             sale_date: value.sold_date,
+            quantity: value.quantity,
         }
     }
 }
@@ -676,14 +680,15 @@ impl AnalyzerService {
             let newest = recent_sales.first()?;
             let oldest = recent_sales.last()?;
             let days_diff = (newest.sale_date - oldest.sale_date).num_days().max(1) as f32;
-            let sales_count = recent_sales.len() as f32;
-            let sales_per_week = (sales_count / days_diff) * 7.0;
+            let total_quantity = recent_sales.iter().map(|s| s.quantity).sum::<i32>() as f32;
+            let sales_per_week = (total_quantity / days_diff) * 7.0;
+            let num_transactions = recent_sales.len() as f32;
 
             let avg_price = recent_sales
                 .iter()
                 .map(|s| s.price_per_item as f32)
                 .sum::<f32>()
-                / sales_count;
+                / num_transactions;
 
             // Calculate Standard Deviation
             let variance = recent_sales
@@ -693,7 +698,7 @@ impl AnalyzerService {
                     diff * diff
                 })
                 .sum::<f32>()
-                / sales_count;
+                / num_transactions;
             let std_dev = variance.sqrt();
 
             if let Some(cheapest) = cheapest_listings.item_map.get(key) {

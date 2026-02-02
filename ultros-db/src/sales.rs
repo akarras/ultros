@@ -203,7 +203,7 @@ impl UltrosDb {
     ) -> Result<impl Stream<Item = Result<AbbreviatedSaleData, DbErr>> + '_, DbErr> {
         AbbreviatedSaleData::find_by_statement(Statement::from_sql_and_values(
                 DbBackend::Postgres,
-                r#"SELECT filter.* FROM (SELECT h.sold_item_id, h.hq, h.price_per_item, h.sold_date, h.world_id,
+                r#"SELECT filter.* FROM (SELECT h.sold_item_id, h.hq, h.price_per_item, h.sold_date, h.world_id, h.quantity,
                 RANK() OVER (PARTITION BY h.sold_item_id, h.hq, h.world_id ORDER BY h.sold_date DESC) sale_rank
                 FROM sale_history h) filter
                 WHERE filter.sale_rank <= $1
@@ -235,4 +235,5 @@ pub struct AbbreviatedSaleData {
     pub price_per_item: i32,
     pub sold_date: NaiveDateTime,
     pub world_id: i32,
+    pub quantity: i32,
 }

@@ -31,6 +31,7 @@ pub(crate) async fn recent_sales(
                             .map(|sale| Sales {
                                 price_per_unit: sale.price_per_item,
                                 sale_date: sale.sale_date,
+                                quantity: sale.quantity,
                             })
                             .collect(),
                     })

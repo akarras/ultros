@@ -42,6 +42,7 @@ struct SaleSummary {
     max_price: i32,
     avg_price: i32,
     min_price: i32,
+    items_per_day: f32,
 }
 
 #[derive(Hash, Clone, Debug, PartialEq, Eq)]
@@ -131,6 +132,16 @@ fn compute_summary(
         .last()
         .map(|last| (last.sale_date - now).num_milliseconds().abs() / sales.len() as i64);
     let avg_sale_duration = t.map(Duration::milliseconds);
+
+    // Calculate items per day
+    let items_per_day = if let Some(last_sale) = sales.last() {
+        let days_diff = (now - last_sale.sale_date).num_days().max(1).abs() as f32;
+        let total_quantity = sales.iter().map(|s| s.quantity).sum::<i32>() as f32;
+        total_quantity / days_diff
+    } else {
+        0.0
+    };
+
     SaleSummary {
         item_id,
         hq,
@@ -139,6 +150,7 @@ fn compute_summary(
         max_price,
         avg_price,
         min_price,
+        items_per_day,
     }
 }
 
@@ -150,6 +162,7 @@ impl FromStr for SortMode {
         match s {
             "roi" => Ok(SortMode::Roi),
             "profit" => Ok(SortMode::Profit),
+            "velocity" => Ok(SortMode::Velocity),
             _ => Err(()),
         }
     }
@@ -160,6 +173,7 @@ impl std::fmt::Display for SortMode {
         let val = match self {
             SortMode::Roi => "roi",
             SortMode::Profit => "profit",
+            SortMode::Velocity => "velocity",
         };
         f.write_str(val)
     }
@@ -379,6 +393,13 @@ fn AnalyzerTable(
         match sort_mode().unwrap_or(SortMode::Roi) {
             SortMode::Roi => sorted_data.sort_by_key(|data| Reverse(data.return_on_investment)),
             SortMode::Profit => sorted_data.sort_by_key(|data| Reverse(data.profit)),
+            SortMode::Velocity => sorted_data.sort_by(|a, b| {
+                b.inner
+                    .sale_summary
+                    .items_per_day
+                    .partial_cmp(&a.inner.sale_summary.items_per_day)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            }),
         }
         sorted_data
             .into_iter()
@@ -704,6 +725,22 @@ fn AnalyzerTable(
                                     </QueryButton>
                                 </div>
                                 <div role="columnheader" class="w-30 p-4">
+                                    <QueryButton
+                                        class="!text-brand-300 hover:text-brand-200"
+                                        active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
+                                        key="sort"
+                                        value="velocity"
+                                    >
+                                        <div class="flex items-center gap-2">
+                                            "Sales/Day"
+                                            {move || {
+                                                (sort_mode() == Some(SortMode::Velocity))
+                                                    .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
+                                            }}
+                                        </div>
+                                    </QueryButton>
+                                </div>
+                                <div role="columnheader" class="w-30 p-4">
                                     "Buy Price"
                                 </div>
                                 <div role="columnheader" class="w-30 p-4 flex flex-row gap-2 hidden lg:flex">
@@ -837,6 +874,9 @@ fn AnalyzerTable(
                                         }>
                                             {format!("{}%", data.return_on_investment)}
                                         </span>
+                                    </div>
+                                    <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
+                                        {format!("{:.1}", data.inner.sale_summary.items_per_day)}
                                     </div>
                                     <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
                                         <Gil amount=data.inner.cheapest_price />

@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 pub struct Sales {
     pub price_per_unit: i32,
     pub sale_date: NaiveDateTime,
+    #[serde(default)]
+    pub quantity: i32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
