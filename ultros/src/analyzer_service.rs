@@ -763,6 +763,16 @@ impl AnalyzerService {
         })
     }
 
+    fn calculate_estimated_sale_price(
+        median_price: i32,
+        current_listing_price: Option<i32>,
+    ) -> i32 {
+        match current_listing_price {
+            Some(p) => std::cmp::min(median_price, p - 1),
+            None => (median_price as f32 * 1.2) as i32,
+        }
+    }
+
     pub(crate) async fn get_best_resale(
         &self,
         world_id: i32,
@@ -838,9 +848,11 @@ impl AnalyzerService {
                 let current_cheapest_on_sale_world = sale_world_listings
                     .item_map
                     .get(item_key)
-                    .map(|l| l.price)
-                    .unwrap_or(cheapest_history);
-                let est_sale_price = (cheapest_history).min(current_cheapest_on_sale_world);
+                    .map(|l| l.price);
+                let est_sale_price = Self::calculate_estimated_sale_price(
+                    cheapest_history,
+                    current_cheapest_on_sale_world,
+                );
                 let profit = est_sale_price - cheapest_price.price;
                 Some(ResaleStats {
                     profit,
@@ -1535,5 +1547,48 @@ mod tests {
             count += 1;
         }
         assert_eq!(count, 4);
+    }
+
+    #[test]
+    fn test_calculate_estimated_sale_price() {
+        use crate::analyzer_service::AnalyzerService;
+
+        // Case 1: Listing exists, Median < Listing - 1.
+        // Median = 100, Listing = 120. min(100, 119) = 100.
+        assert_eq!(
+            AnalyzerService::calculate_estimated_sale_price(100, Some(120)),
+            100
+        );
+
+        // Case 2: Listing exists, Median > Listing - 1.
+        // Median = 100, Listing = 90. min(100, 89) = 89.
+        assert_eq!(
+            AnalyzerService::calculate_estimated_sale_price(100, Some(90)),
+            89
+        );
+
+        // Case 3: Listing exists, Median == Listing - 1.
+        // Median = 100, Listing = 101. min(100, 100) = 100.
+        assert_eq!(
+            AnalyzerService::calculate_estimated_sale_price(100, Some(101)),
+            100
+        );
+
+        // Case 3b: Listing exists, Median == Listing
+        // Median = 100, Listing = 100. min(100, 99) = 99.
+        assert_eq!(
+            AnalyzerService::calculate_estimated_sale_price(100, Some(100)),
+            99
+        );
+
+        // Case 4: Listing missing (None).
+        // Median = 100. 100 * 1.2 = 120.
+        assert_eq!(AnalyzerService::calculate_estimated_sale_price(100, None), 120);
+
+        // Case 5: Rounding check
+        // Median = 10. 10 * 1.2 = 12.
+        assert_eq!(AnalyzerService::calculate_estimated_sale_price(10, None), 12);
+        // Median = 11. 11 * 1.2 = 13.2 -> 13.
+        assert_eq!(AnalyzerService::calculate_estimated_sale_price(11, None), 13);
     }
 }
