@@ -624,6 +624,9 @@ fn read_dir<T: Container>(path: PathBuf, mut scope: T, args: &mut Args) -> T {
             .vis("pub")
             .derive("FromStr")
             .derive("Default")
+            .derive("Eq")
+            .derive("Hash")
+            .derive("Copy")
             .tuple_field(sample_data)
             .vis("pub");
         scope.push_struct(s);
