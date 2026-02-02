@@ -333,7 +333,7 @@ impl<'a> WorldHelper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::{Region, Datacenter, World};
+    use crate::world::{Datacenter, Region, World};
 
     #[test]
     fn test_lookup_selector() {
@@ -392,5 +392,4 @@ mod tests {
         // Test Non-existent
         assert!(helper.lookup_selector(AnySelector::World(999)).is_none());
     }
-
 }
