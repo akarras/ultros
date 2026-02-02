@@ -845,10 +845,8 @@ impl AnalyzerService {
             .iter()
             .flat_map(|(item_key, cheapest_price)| {
                 let (cheapest_history, sold_within) = *sale_history.get(item_key)?;
-                let current_cheapest_on_sale_world = sale_world_listings
-                    .item_map
-                    .get(item_key)
-                    .map(|l| l.price);
+                let current_cheapest_on_sale_world =
+                    sale_world_listings.item_map.get(item_key).map(|l| l.price);
                 let est_sale_price = Self::calculate_estimated_sale_price(
                     cheapest_history,
                     current_cheapest_on_sale_world,
@@ -1583,12 +1581,21 @@ mod tests {
 
         // Case 4: Listing missing (None).
         // Median = 100. 100 * 1.2 = 120.
-        assert_eq!(AnalyzerService::calculate_estimated_sale_price(100, None), 120);
+        assert_eq!(
+            AnalyzerService::calculate_estimated_sale_price(100, None),
+            120
+        );
 
         // Case 5: Rounding check
         // Median = 10. 10 * 1.2 = 12.
-        assert_eq!(AnalyzerService::calculate_estimated_sale_price(10, None), 12);
+        assert_eq!(
+            AnalyzerService::calculate_estimated_sale_price(10, None),
+            12
+        );
         // Median = 11. 11 * 1.2 = 13.2 -> 13.
-        assert_eq!(AnalyzerService::calculate_estimated_sale_price(11, None), 13);
+        assert_eq!(
+            AnalyzerService::calculate_estimated_sale_price(11, None),
+            13
+        );
     }
 }
