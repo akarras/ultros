@@ -1,15 +1,42 @@
 use crate::world::{Datacenter, Region, World, WorldData};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+use std::collections::HashMap;
 
 /// Like world_cache but built for use in wasm
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Clone)]
 pub struct WorldHelper {
     world_data: WorldData,
+    #[serde(skip)]
+    region_lookup: HashMap<i32, usize>,
+    #[serde(skip)]
+    dc_lookup: HashMap<i32, (usize, usize)>,
+    #[serde(skip)]
+    world_lookup: HashMap<i32, (usize, usize, usize)>,
+}
+
+impl<'de> Deserialize<'de> for WorldHelper {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Helper {
+            world_data: WorldData,
+        }
+        let helper = Helper::deserialize(deserializer)?;
+        Ok(WorldHelper::from(helper.world_data))
+    }
 }
 
 impl From<WorldData> for WorldHelper {
     fn from(world_data: WorldData) -> Self {
-        Self { world_data }
+        let (region_lookup, dc_lookup, world_lookup) = Self::build_indices(&world_data);
+        Self {
+            world_data,
+            region_lookup,
+            dc_lookup,
+            world_lookup,
+        }
     }
 }
 
@@ -173,8 +200,38 @@ impl<'a> From<&'a Region> for AnyResult<'a> {
 }
 
 impl WorldHelper {
+    #[allow(clippy::type_complexity)]
+    fn build_indices(
+        world_data: &WorldData,
+    ) -> (
+        HashMap<i32, usize>,
+        HashMap<i32, (usize, usize)>,
+        HashMap<i32, (usize, usize, usize)>,
+    ) {
+        let mut region_lookup = HashMap::new();
+        let mut dc_lookup = HashMap::new();
+        let mut world_lookup = HashMap::new();
+
+        for (r_idx, region) in world_data.regions.iter().enumerate() {
+            region_lookup.insert(region.id, r_idx);
+            for (d_idx, datacenter) in region.datacenters.iter().enumerate() {
+                dc_lookup.insert(datacenter.id, (r_idx, d_idx));
+                for (w_idx, world) in datacenter.worlds.iter().enumerate() {
+                    world_lookup.insert(world.id, (r_idx, d_idx, w_idx));
+                }
+            }
+        }
+        (region_lookup, dc_lookup, world_lookup)
+    }
+
     pub fn new(world_data: WorldData) -> Self {
-        Self { world_data }
+        let (region_lookup, dc_lookup, world_lookup) = Self::build_indices(&world_data);
+        Self {
+            world_data,
+            region_lookup,
+            dc_lookup,
+            world_lookup,
+        }
     }
 
     /// Ignores case and looks up the world name
@@ -195,26 +252,22 @@ impl WorldHelper {
 impl<'a> WorldHelper {
     pub fn lookup_selector(&'a self, selector: AnySelector) -> Option<AnyResult<'a>> {
         match selector {
-            AnySelector::Region(r) => self
-                .world_data
-                .regions
-                .iter()
-                .find(|region| region.id == r)
-                .map(AnyResult::Region),
-            AnySelector::Datacenter(dc) => self
-                .world_data
-                .regions
-                .iter()
-                .flat_map(|r| r.datacenters.iter())
-                .find(|d| d.id == dc)
-                .map(AnyResult::Datacenter),
-            AnySelector::World(w) => self
-                .world_data
-                .regions
-                .iter()
-                .flat_map(|r| r.datacenters.iter().flat_map(|dc| dc.worlds.iter()))
-                .find(|world| world.id == w)
-                .map(AnyResult::World),
+            AnySelector::Region(r) => {
+                let idx = self.region_lookup.get(&r)?;
+                Some(AnyResult::Region(&self.world_data.regions[*idx]))
+            }
+            AnySelector::Datacenter(dc) => {
+                let (r_idx, d_idx) = self.dc_lookup.get(&dc)?;
+                Some(AnyResult::Datacenter(
+                    &self.world_data.regions[*r_idx].datacenters[*d_idx],
+                ))
+            }
+            AnySelector::World(w) => {
+                let (r_idx, d_idx, w_idx) = self.world_lookup.get(&w)?;
+                Some(AnyResult::World(
+                    &self.world_data.regions[*r_idx].datacenters[*d_idx].worlds[*w_idx],
+                ))
+            }
         }
     }
 
@@ -275,4 +328,69 @@ impl<'a> WorldHelper {
     pub fn get_cloned(&self) -> WorldData {
         self.world_data.clone()
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::world::{Region, Datacenter, World};
+
+    #[test]
+    fn test_lookup_selector() {
+        let world = World {
+            id: 101,
+            name: "TestWorld".to_string(),
+            datacenter_id: 11,
+        };
+        let datacenter = Datacenter {
+            id: 11,
+            name: "TestDC".to_string(),
+            region_id: 1,
+            worlds: vec![world],
+        };
+        let region = Region {
+            id: 1,
+            name: "TestRegion".to_string(),
+            datacenters: vec![datacenter],
+        };
+        let world_data = WorldData {
+            regions: vec![region],
+        };
+
+        let helper = WorldHelper::new(world_data);
+
+        // Test World Lookup
+        let result = helper.lookup_selector(AnySelector::World(101));
+        assert!(result.is_some());
+        if let Some(AnyResult::World(w)) = result {
+            assert_eq!(w.id, 101);
+            assert_eq!(w.name, "TestWorld");
+        } else {
+            panic!("Expected World result");
+        }
+
+        // Test Datacenter Lookup
+        let result = helper.lookup_selector(AnySelector::Datacenter(11));
+        assert!(result.is_some());
+        if let Some(AnyResult::Datacenter(d)) = result {
+            assert_eq!(d.id, 11);
+            assert_eq!(d.name, "TestDC");
+        } else {
+            panic!("Expected Datacenter result");
+        }
+
+        // Test Region Lookup
+        let result = helper.lookup_selector(AnySelector::Region(1));
+        assert!(result.is_some());
+        if let Some(AnyResult::Region(r)) = result {
+            assert_eq!(r.id, 1);
+            assert_eq!(r.name, "TestRegion");
+        } else {
+            panic!("Expected Region result");
+        }
+
+        // Test Non-existent
+        assert!(helper.lookup_selector(AnySelector::World(999)).is_none());
+    }
+
 }
