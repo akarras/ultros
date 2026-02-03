@@ -248,6 +248,7 @@ impl UltrosDb {
             .find_also_related(retainer::Entity)
             .all(&self.db)
             .await?;
+        let existing_ids: HashSet<i32> = existing_items.iter().map(|(l, _)| l.id).collect();
         existing_items.sort_by(|(listinga, retainera), (listingb, retainerb)| {
             let retainer_name_a = retainera
                 .as_ref()
@@ -319,36 +320,74 @@ impl UltrosDb {
                 }
             }
         }
-        let remove_iter = removed.iter();
-        let added = added.iter().map(|m| {
-            let retainer_id = retainers
-                .get(&m.retainer_name)
-                .expect("Should always have a retainer at this point.")
-                .id;
-            self.create_listing(m, item_id, world_id, Some(retainer_id))
-        });
-        let (added, _removed_result) =
-            futures::future::join(futures::future::join_all(added), async move {
-                let remove_result = futures::future::try_join_all(
-                    remove_iter
-                        .map(|(l, _)| active_listing::Entity::delete_by_id(l.id).exec(&self.db)),
-                )
-                .await?;
-                Result::<usize>::Ok(remove_result.len())
+        let added_models: Vec<active_listing::ActiveModel> = added
+            .iter()
+            .map(|listing| {
+                let retainer_id = retainers
+                    .get(&listing.retainer_name)
+                    .expect("Should always have a retainer at this point.")
+                    .id;
+                let price_per_unit = listing.price_per_unit.unwrap_or(listing.total) as i32;
+                let quantity = listing.quantity.unwrap_or(1) as i32;
+
+                active_listing::ActiveModel {
+                    world_id: sea_orm::Set(world_id.0),
+                    item_id: sea_orm::Set(item_id.0),
+                    retainer_id: sea_orm::Set(retainer_id),
+                    price_per_unit: sea_orm::Set(price_per_unit),
+                    quantity: sea_orm::Set(quantity),
+                    hq: sea_orm::Set(listing.hq),
+                    timestamp: sea_orm::Set(listing.last_review_time.naive_utc()),
+                    ..Default::default()
+                }
             })
-            .await;
-        let added: Vec<_> = added
+            .collect();
+
+        let removed_ids: Vec<i32> = removed.iter().map(|(l, _)| l.id).collect();
+        let kept_ids: HashSet<i32> = existing_ids
+            .difference(&removed_ids.iter().cloned().collect())
+            .cloned()
+            .collect();
+
+        let added_future = async {
+            if !added_models.is_empty() {
+                active_listing::Entity::insert_many(added_models)
+                    .exec(&self.db)
+                    .await?;
+            }
+            Ok::<_, DbErr>(())
+        };
+
+        let removed_future = async {
+            if !removed_ids.is_empty() {
+                active_listing::Entity::delete_many()
+                    .filter(active_listing::Column::Id.is_in(removed_ids))
+                    .exec(&self.db)
+                    .await?;
+            }
+            Ok::<_, DbErr>(())
+        };
+
+        futures::future::try_join(added_future, removed_future).await?;
+
+        // Refetch to get IDs for added items
+        let all_listings = active_listing::Entity::find()
+            .filter(active_listing::Column::ItemId.eq(item_id.0))
+            .filter(active_listing::Column::WorldId.eq(world_id.0))
+            .all(&self.db)
+            .await?;
+
+        let retainers_by_id: HashMap<i32, Retainer> = retainers
+            .values()
+            .map(|r| (r.id, r.clone().into()))
+            .collect();
+
+        let added: Vec<_> = all_listings
             .into_iter()
-            .flat_map(|l| {
-                l.ok().map(|l| {
-                    let retainer = retainers
-                        .values()
-                        .find(|r| r.id == l.retainer_id)
-                        .unwrap()
-                        .clone()
-                        .into();
-                    (l.into(), retainer)
-                })
+            .filter(|l| !kept_ids.contains(&l.id))
+            .filter_map(|l| {
+                let retainer = retainers_by_id.get(&l.retainer_id)?.clone();
+                Some((l.into(), retainer))
             })
             .collect();
         let removed: Vec<_> = removed
