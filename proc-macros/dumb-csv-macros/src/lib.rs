@@ -71,8 +71,8 @@ impl ToTokens for DumbCsvDeserializeReceiver {
                 let parse_body = match dummy.clone() {
                     DummyType::String => quote! { .to_string() },
                     DummyType::Bool => quote! { .parse_bool() },
-                    DummyType::Other(val) => {
-                        let ty= TokenStream::from_str(&val).unwrap();
+                    DummyType::Other(ref val) => {
+                        let ty= TokenStream::from_str(val).unwrap();
                         // let ty = Type::from(val);
                         if val.starts_with("i") || val.starts_with("u") || val.ends_with("Id") {
                             quote!{

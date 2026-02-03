@@ -76,8 +76,6 @@ fn apply_derives(s: &mut Struct) -> &mut Struct {
         .derive("Serialize")
         .derive("Deserialize")
         .derive("PartialEq")
-        .derive("Encode")
-        .derive("Decode")
 }
 
 /// Feed in a column, detect all the data. pronto muchacho.
@@ -375,7 +373,7 @@ fn create_struct(
                     pk = Some(db_field_name.to_string());
                     match sample_data {
                         DataType::ReferenceKey => {
-                            parse_this_function = Some(format!("{db_field_name}: read_csv::<{csv_name}>(r#\"{path}\"#).into_iter().fold(HashMap::new(), |mut map, m| {{ map.entry(m.key_id.0.0).or_default().push(m); map }}),"));
+                            parse_this_function = Some(format!("{db_field_name}: read_csv::<{csv_name}>(r#\"{path}\"#).into_iter().fold({db_field_key}::new(), |mut map, m| {{ map.entry(m.key_id.0.0).or_default().push(m); map }}),"));
                         },
                         _ => {
                             parse_this_function = Some(format!("{db_field_name}: read_csv::<{csv_name}>(r#\"{path}\"#).into_iter().map(|m| (m.key_id, m)).collect(),"));
@@ -447,9 +445,10 @@ fn create_struct(
                 let key_1 = captures.get(2).unwrap();
                 let root = &key[..key_1.start() - 1];
                 if root == "unknown" {
-                    let (_, _, skip) = root_names.last_mut().unwrap();
-                    *skip += 1;
-                    continue;
+                    if let Some((_, _, skip)) = root_names.last_mut() {
+                        *skip += 1;
+                        continue;
+                    }
                 }
                 let key = KeyType::Single(key_1.as_str().parse().unwrap());
                 if let Some((_, (k, _), _)) = root_names.iter_mut().find(|(key, _, _)| key == root)

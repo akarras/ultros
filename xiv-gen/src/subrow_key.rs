@@ -1,11 +1,10 @@
-use bincode::{Decode, Encode};
 use core::str::FromStr;
 use serde::Deserialize;
 use serde::Serialize;
 use serde::de::Error;
 use std::fmt::Debug;
 
-#[derive(Serialize, Hash, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Decode, Encode)]
+#[derive(Serialize, Hash, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SubrowKey<T>(pub T, pub i32);
 
 impl<T> Default for SubrowKey<T>

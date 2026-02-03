@@ -10,7 +10,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 serde = {version = "1.0.228", features = ["derive"]}
-bincode = {version = "2.0.1"}
+bincode = {version = "2.0.0-rc.3", features = ["serde"]}
 csv = {version = "1.4.0", optional = true}
 derive_more = {version = "1.0.0", features = ["from_str"]}
 dumb_csv = {path = "../dumb-csv"}
