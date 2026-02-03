@@ -26,23 +26,24 @@ struct DumbCsvDeserializeReceiver {
     data: ast::Data<(), DumbFieldReceiver>,
 }
 
-#[derive(Debug, PartialEq)]
-enum DummyType<'a> {
+#[derive(Debug, PartialEq, Clone)]
+enum DummyType {
     String,
     Bool,
-    Other(&'a str),
+    Other(String),
 }
 
-impl<'a> From<&'a str> for DummyType<'a> {
-    fn from(value: &'a str) -> Self {
+impl From<&str> for DummyType {
+    fn from(value: &str) -> Self {
+        let value = value.replace(" ", "");
         let value = value
-            .trim_start_matches("Vec <")
+            .trim_start_matches("Vec<")
             .trim_end_matches(">")
             .trim();
         match value {
             "String" => Self::String,
             "bool" => Self::Bool,
-            t => Self::Other(t),
+            t => Self::Other(t.to_string()),
         }
     }
 }
@@ -67,11 +68,11 @@ impl ToTokens for DumbCsvDeserializeReceiver {
                 let ty = &field.ty;
                 let d = ty.into_token_stream().to_string();
                 let dummy: DummyType = d.as_str().into();
-                let parse_body = match dummy {
-                    DummyType::String => quote! {},
+                let parse_body = match dummy.clone() {
+                    DummyType::String => quote! { .to_string() },
                     DummyType::Bool => quote! { .parse_bool() },
                     DummyType::Other(val) => {
-                        let ty= TokenStream::from_str(val).unwrap();
+                        let ty= TokenStream::from_str(&val).unwrap();
                         // let ty = Type::from(val);
                         if val.starts_with("i") || val.starts_with("u") || val.ends_with("Id") {
                             quote!{
