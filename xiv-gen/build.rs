@@ -237,18 +237,13 @@ fn create_struct(
         .from_path(path)
         .expect("unable to open path");
     let mut records = reader.records();
-    let _line_one = records
+    let line_two = records
         .next()
         .expect("First line not found")
         .expect("Reader error on first line");
-    let line_two = records
-        .next()
-        .expect("Second line not found")
-        .expect("Error reading second line");
-    let line_three = records
-        .next()
-        .expect("Third line not found")
-        .expect("Third line error reading");
+    let line_three: Vec<String> = std::iter::repeat(String::new())
+        .take(line_two.len())
+        .collect();
     // iterate over all columns
     let mut line_four: Vec<_> = records
         .next()
@@ -319,13 +314,30 @@ fn create_struct(
             }
             if BIT.is_match(field_value) {
                 (line_one, "bool".to_string())
-            } else if INT.is_match(field_value) {
-                let mut line_two = field_value.replace("int", "");
-                // uint64 -> u64
-                // int64 -> 64, add the i if no u
-                if !line_two.starts_with('u') {
-                    line_two = format!("i{}", line_two);
-                }
+            } else if INT.is_match(field_value)
+                || (line_one == "key_id" && field_value.is_empty())
+            {
+                let mut line_two = if field_value.is_empty() {
+                    match sample_data {
+                        DataType::UnsignedInt8 => "u8".to_string(),
+                        DataType::UnsignedInt16 => "u16".to_string(),
+                        DataType::UnsignedInt32 => "u32".to_string(),
+                        DataType::UnsignedInt64 => "u64".to_string(),
+                        DataType::SignedInt8 => "i8".to_string(),
+                        DataType::SignedInt16 => "i16".to_string(),
+                        DataType::SignedInt32 => "i32".to_string(),
+                        DataType::SignedInt64 => "i64".to_string(),
+                        _ => "i32".to_string(),
+                    }
+                } else {
+                    let mut s = field_value.replace("int", "");
+                    // uint64 -> u64
+                    // int64 -> 64, add the i if no u
+                    if !s.starts_with('u') {
+                        s = format!("i{}", s);
+                    }
+                    s
+                };
 
                 if line_one == "key_id" {
                     let mut key = Struct::new(&key_name);
@@ -372,6 +384,8 @@ fn create_struct(
                 (line_one, "i8".to_string())
             } else if field_value == "str" {
                 (line_one, "String".to_string())
+            } else if field_value.is_empty() {
+                (line_one, sample_data.field_type(csv_name))
             } else {
                 // remove trailing numbers from the field_name before adding the ID
                 let field_name = field_name.to_upper_camel_case();
