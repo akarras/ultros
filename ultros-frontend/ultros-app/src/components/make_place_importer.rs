@@ -81,12 +81,15 @@ where
         Ok(l) => Either::Left(view! { <span>{l.len()} " items ready to add"</span> }),
         Err(e) => Either::Right(view! { <span>{format!("{e:?}")}</span> }),
     };
+    let textarea_id = "make-place-import-textarea";
     view! {
         <div class="flex-column">
-            <label>
+            <label for=textarea_id>
                 "Copy+Paste a list with a bunch of items in it formatted as Item1: Quantity. Make place users can paste their furniture+dye lists here."
             </label>
             <textarea
+                id=textarea_id
+                placeholder="Eastern Indoor Pond: 2\nOut on a Limb Machine: 1\n..."
                 class="input h-96"
                 on:input=move |input| set_list(event_target_value(&input))
             ></textarea>
