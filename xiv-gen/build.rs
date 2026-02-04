@@ -282,7 +282,7 @@ fn create_struct(
         .iter()
         .zip(line_three.iter())
         .zip(line_four.iter())
-        .map(|((field_name, field_value), sample_data)| {
+        .map(|((field_name, _field_value), sample_data)| {
             let mut line_one = if field_name == "#" {
                 "key_id".to_string()
             } else if field_name.is_empty() {
