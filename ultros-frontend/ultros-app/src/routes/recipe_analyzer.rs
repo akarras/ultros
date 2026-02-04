@@ -296,6 +296,7 @@ fn RecipeAnalyzerTable(
                 SalesStats {
                     daily_sales: 0.0,
                     avg_price: 0,
+                    std_dev: 0.0,
                     total_sales: 0,
                 }
             };

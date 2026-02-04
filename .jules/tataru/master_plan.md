@@ -48,10 +48,12 @@ Here is the specification for the next generation of investment tools.
 
 1.  **Upgrade `analyzer_service.rs`**:
     - Modify `get_best_resale` to calculate Median price instead of Min.
-    - Modify `get_trends` to include Standard Deviation calculation.
+    - Modify `get_trends` to include Standard Deviation calculation. (Already partially implemented!)
 2.  **Upgrade `analyzer.rs` (Frontend)**:
-    - Expose the new valuation in the UI.
-    - (Optional) Add the "Tataru Score" column.
+    - [x] Implement Standard Deviation calculation in `math.rs`.
+    - [x] Expose `std_dev` in `SalesStats` in `analysis.rs`.
+    - [ ] Update UI to display Volatility/StdDev.
+    - [ ] Add the "Tataru Score" column.
 
 ---
 

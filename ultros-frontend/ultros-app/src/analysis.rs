@@ -1,4 +1,4 @@
-use crate::math::filter_outliers_iqr;
+use crate::math::{filter_outliers_iqr, standard_deviation};
 use chrono::Utc;
 use ultros_api_types::recent_sales::SaleData;
 
@@ -6,6 +6,7 @@ use ultros_api_types::recent_sales::SaleData;
 pub struct SalesStats {
     pub daily_sales: f32,
     pub avg_price: i32,
+    pub std_dev: f32,
     pub total_sales: usize,
 }
 
@@ -24,9 +25,7 @@ pub fn analyze_sales(sales_data: &[&SaleData], filter_outliers: bool) -> SalesSt
             if sale.sale_date < oldest_date {
                 oldest_date = sale.sale_date;
             }
-            if filter_outliers {
-                prices.push(sale.price_per_unit);
-            }
+            prices.push(sale.price_per_unit);
         }
     }
 
@@ -34,19 +33,24 @@ pub fn analyze_sales(sales_data: &[&SaleData], filter_outliers: bool) -> SalesSt
         return SalesStats {
             daily_sales: 0.0,
             avg_price: 0,
+            std_dev: 0.0,
             total_sales: 0,
         };
     }
 
-    let avg_price = if filter_outliers {
+    let (avg_price, std_dev) = if filter_outliers {
         let filtered = filter_outliers_iqr(&prices);
         if filtered.is_empty() {
-            0
+            (0, 0.0)
         } else {
-            (filtered.iter().map(|&p| p as i64).sum::<i64>() / filtered.len() as i64) as i32
+            let avg = (filtered.iter().map(|&p| p as i64).sum::<i64>() / filtered.len() as i64) as i32;
+            let std = standard_deviation(&filtered);
+            (avg, std)
         }
     } else {
-        (total_price / total_sales as i64) as i32
+        let avg = (total_price / total_sales as i64) as i32;
+        let std = standard_deviation(&prices);
+        (avg, std)
     };
 
     let duration_millis = (now - oldest_date).num_milliseconds().abs();
@@ -62,6 +66,7 @@ pub fn analyze_sales(sales_data: &[&SaleData], filter_outliers: bool) -> SalesSt
     SalesStats {
         daily_sales,
         avg_price,
+        std_dev,
         total_sales,
     }
 }

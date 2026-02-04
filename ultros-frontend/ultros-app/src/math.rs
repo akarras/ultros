@@ -23,6 +23,23 @@ pub fn filter_outliers_iqr(data: &[i32]) -> Vec<i32> {
         .collect()
 }
 
+pub fn standard_deviation(data: &[i32]) -> f32 {
+    if data.len() < 2 {
+        return 0.0;
+    }
+    let sum: i64 = data.iter().map(|&x| x as i64).sum();
+    let mean = sum as f32 / data.len() as f32;
+    let variance = data
+        .iter()
+        .map(|&value| {
+            let diff = mean - value as f32;
+            diff * diff
+        })
+        .sum::<f32>()
+        / (data.len() - 1) as f32;
+    variance.sqrt()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -40,5 +57,18 @@ mod tests {
         let data = vec![100, 1, 2, 3, 4, 5];
         let filtered = filter_outliers_iqr(&data);
         assert_eq!(filtered, vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn test_standard_deviation() {
+        let data = vec![10, 12, 23, 23, 16, 23, 21, 16];
+        let std_dev = standard_deviation(&data);
+        // Mean = 18.
+        // Variance = 26.
+        // Std Dev = sqrt(26) = 5.099
+        assert!((std_dev - 5.099).abs() < 0.001);
+
+        let data = vec![100];
+        assert_eq!(standard_deviation(&data), 0.0);
     }
 }
