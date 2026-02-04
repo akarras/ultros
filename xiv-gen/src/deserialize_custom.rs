@@ -1,6 +1,6 @@
-#![allow(dead_code)]
 use serde::{Deserialize, Deserializer};
 
+#[allow(dead_code)]
 pub fn deserialize_i64_from_u8_array<'de, D>(deserializer: D) -> Result<i64, D::Error>
 where
     D: Deserializer<'de>,
@@ -17,6 +17,7 @@ where
     Ok(0)
 }
 
+#[allow(dead_code)]
 pub fn deserialize_bool_from_anything_custom<'de, D>(deserializer: D) -> Result<bool, D::Error>
 where
     D: Deserializer<'de>,

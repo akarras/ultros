@@ -3,6 +3,7 @@
 use crate::*;
 use csv::ErrorKind;
 use serde::de::DeserializeOwned;
+use dumb_csv::DumbCsvDeserialize;
 
 include!(concat!(env!("OUT_DIR"), "/deserialization.rs"));
 
