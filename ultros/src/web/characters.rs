@@ -1,13 +1,15 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, State},
     Json,
+    extract::{Path, State},
 };
 use ultros_api_types::{FfxivCharacter, FfxivCharacterVerification};
-use ultros_db::{world_cache::WorldCache, UltrosDb};
+use ultros_db::{UltrosDb, world_cache::WorldCache};
 
-use crate::web::{character_verifier_service::CharacterVerifierService, error::ApiError, oauth::AuthDiscordUser};
+use crate::web::{
+    character_verifier_service::CharacterVerifierService, error::ApiError, oauth::AuthDiscordUser,
+};
 
 // #[debug_handler(state = WebState)]
 pub(crate) async fn user_characters(

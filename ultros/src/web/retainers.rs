@@ -1,13 +1,13 @@
 use axum::{
+    Json,
     extract::{Path, State},
     response::Redirect,
-    Json,
 };
 use futures::future::try_join_all;
 use ultros_api_types::{
+    ActiveListing, FfxivCharacter, Retainer,
     retainer::RetainerListings,
     user::{OwnedRetainer, UserRetainerListings, UserRetainers},
-    ActiveListing, FfxivCharacter, Retainer,
 };
 use ultros_db::{ActiveValue, UltrosDb};
 

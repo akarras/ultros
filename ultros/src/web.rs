@@ -22,21 +22,21 @@ use std::sync::Arc;
 
 use axum::extract::FromRef;
 use axum::routing::{delete, get, post};
-use axum::{middleware, Router};
+use axum::{Router, middleware};
 use axum_extra::extract::cookie::Key;
 use leptos::config::LeptosOptions;
 use leptos::prelude::provide_context;
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
-use tower_http::compression::predicate::{NotForContentType, SizeAbove};
 use tower_http::compression::CompressionLayer;
+use tower_http::compression::predicate::{NotForContentType, SizeAbove};
 use tower_http::trace::TraceLayer;
 use ultros_api_types::world_helper::WorldHelper;
-use ultros_app::{shell, LocalWorldData};
-use ultros_db::{world_cache::WorldCache, UltrosDb};
+use ultros_app::{LocalWorldData, shell};
+use ultros_db::{UltrosDb, world_cache::WorldCache};
 
 use self::character_verifier_service::CharacterVerifierService;
-use self::oauth::{begin_login, logout, AuthUserCache, DiscordAuthConfig, OAuthScope};
+use self::oauth::{AuthUserCache, DiscordAuthConfig, OAuthScope, begin_login, logout};
 use crate::analyzer_service::AnalyzerService;
 use crate::event::{EventReceivers, EventSenders};
 use crate::leptos::create_leptos_app;
@@ -163,32 +163,71 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/list/edit", post(lists::edit_list))
         .route("/api/v1/list/item/edit", post(lists::edit_list_item))
         .route("/api/v1/list/{id}", get(lists::get_list))
-        .route("/api/v1/list/{id}/listings", get(lists::get_list_with_listings))
+        .route(
+            "/api/v1/list/{id}/listings",
+            get(lists::get_list_with_listings),
+        )
         .route("/api/v1/list/{id}/add/item", post(lists::post_item_to_list))
-        .route("/api/v1/list/{id}/add/items", post(lists::post_items_to_list))
+        .route(
+            "/api/v1/list/{id}/add/items",
+            post(lists::post_items_to_list),
+        )
         .route("/api/v1/list/{id}/delete", delete(lists::delete_list))
-        .route("/api/v1/list/item/{id}/delete", delete(lists::delete_list_item))
-        .route("/api/v1/list/item/delete", post(lists::delete_multiple_list_items))
+        .route(
+            "/api/v1/list/item/{id}/delete",
+            delete(lists::delete_list_item),
+        )
+        .route(
+            "/api/v1/list/item/delete",
+            post(lists::delete_multiple_list_items),
+        )
         .route("/api/v1/world_data", get(world_data::world_data))
         .route("/api/v1/current_user", get(users::current_user))
         .route("/api/v1/user/retainer", get(retainers::user_retainers))
-        .route("/api/v1/retainer/reorder", post(retainers::reorder_retainer))
+        .route(
+            "/api/v1/retainer/reorder",
+            post(retainers::reorder_retainer),
+        )
         .route(
             "/api/v1/user/retainer/listings",
             get(retainers::user_retainer_listings),
         )
-        .route("/api/v1/retainer/search/{query}", get(retainers::retainer_search))
-        .route("/api/v1/retainer/claim/{id}", get(retainers::claim_retainer))
-        .route("/api/v1/retainer/unclaim/{id}", get(retainers::unclaim_retainer))
+        .route(
+            "/api/v1/retainer/search/{query}",
+            get(retainers::retainer_search),
+        )
+        .route(
+            "/api/v1/retainer/claim/{id}",
+            get(retainers::claim_retainer),
+        )
+        .route(
+            "/api/v1/retainer/unclaim/{id}",
+            get(retainers::unclaim_retainer),
+        )
         .route(
             "/item/refresh/{worldid}/{itemid}",
             get(listings::refresh_world_item_listings),
         )
-        .route("/api/v1/retainer/listings/{id}", get(retainers::retainer_listings))
-        .route("/api/v1/characters/search/{name}", get(characters::character_search))
-        .route("/api/v1/characters/claim/{id}", get(characters::claim_character))
-        .route("/api/v1/characters/unclaim/{id}", get(characters::unclaim_character))
-        .route("/api/v1/characters/verify/{id}", get(characters::verify_character))
+        .route(
+            "/api/v1/retainer/listings/{id}",
+            get(retainers::retainer_listings),
+        )
+        .route(
+            "/api/v1/characters/search/{name}",
+            get(characters::character_search),
+        )
+        .route(
+            "/api/v1/characters/claim/{id}",
+            get(characters::claim_character),
+        )
+        .route(
+            "/api/v1/characters/unclaim/{id}",
+            get(characters::unclaim_character),
+        )
+        .route(
+            "/api/v1/characters/verify/{id}",
+            get(characters::verify_character),
+        )
         .route("/api/v1/characters", get(characters::user_characters))
         .route(
             "/api/v1/characters/verifications",
@@ -196,9 +235,15 @@ pub(crate) async fn start_web(state: WebState) {
         )
         .route("/api/v1/detectregion", get(world_data::detect_region))
         .route("/retainers/add/{id}", get(retainers::add_retainer))
-        .route("/retainers/remove/{id}", get(retainers::remove_owned_retainer))
+        .route(
+            "/retainers/remove/{id}",
+            get(retainers::remove_owned_retainer),
+        )
         .route("/static/{*path}", get(static_files::static_path))
-        .route("/static/itemicon/fallback", get(static_files::fallback_item_icon))
+        .route(
+            "/static/itemicon/fallback",
+            get(static_files::fallback_item_icon),
+        )
         .route("/static/itemicon/{path}", get(static_files::get_item_icon))
         .route(
             &["/static/data/", xiv_gen::data_version(), ".bincode"].concat(),

@@ -6,19 +6,17 @@ use std::{
 
 use anyhow::Error;
 use axum::{
+    Json,
     extract::{Path, State},
     response::{IntoResponse, Redirect},
-    Json,
 };
 use futures::future::try_join;
 use futures::future::try_join_all;
 use itertools::Itertools;
 use tokio::time::timeout;
 use tracing::debug;
-use ultros_api_types::{
-    websocket::ListingEventData, ActiveListing, CurrentlyShownItem, Retainer,
-};
-use ultros_db::{world_cache::WorldCache, UltrosDb};
+use ultros_api_types::{ActiveListing, CurrentlyShownItem, Retainer, websocket::ListingEventData};
+use ultros_db::{UltrosDb, world_cache::WorldCache};
 use universalis::{ItemId, ListingView, UniversalisClient, WorldId};
 
 use crate::event::{EventSenders, EventType};

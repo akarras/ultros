@@ -1,5 +1,5 @@
-use axum::{extract::State, response::Redirect, Json};
-use axum_extra::extract::{cookie::Cookie, CookieJar};
+use axum::{Json, extract::State, response::Redirect};
+use axum_extra::extract::{CookieJar, cookie::Cookie};
 use ultros_api_types::user::UserData;
 use ultros_db::UltrosDb;
 

@@ -4,7 +4,7 @@ use axum::{
     http::{HeaderValue, Response, StatusCode},
     response::IntoResponse,
 };
-use axum_extra::{headers::ContentType, TypedHeader};
+use axum_extra::{TypedHeader, headers::ContentType};
 use hyper::header;
 use serde::Deserialize;
 use ultros_api_types::icon_size::IconSize;

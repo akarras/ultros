@@ -1,7 +1,7 @@
 use axum::{
+    Json,
     extract::{Query, State},
     response::Redirect,
-    Json,
 };
 use serde::Deserialize;
 
