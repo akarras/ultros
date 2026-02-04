@@ -1,32 +1,42 @@
+#![allow(unused_imports)]
 #[cfg(feature = "csv_to_bincode")]
 pub mod csv_to_bincode;
-
-mod deserialize_custom;
+pub mod deserialize_custom;
+#[cfg(feature = "csv_to_bincode")]
+pub mod dumb_csv_reader;
 pub mod subrow_key;
+#[cfg(feature = "csv_to_bincode")]
+pub mod util;
 
-use bincode::{Decode, Encode, config::Config};
 use deserialize_custom::*;
 use dumb_csv::ParseBool;
-use serde::{Deserialize, Deserializer, Serialize};
 
-include!(concat!(env!("OUT_DIR"), "/types.rs"));
+use serde::Deserialize;
+use serde::Serialize;
+use bincode::{Encode, Decode};
+use std::fmt::Display;
 
-pub fn bincode_config() -> impl Config {
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Hash, Deserialize)]
+pub struct ItemId(pub i32);
+
+impl Display for ItemId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+pub fn bincode_config() -> bincode::config::Configuration {
     bincode::config::standard()
 }
 
-pub fn data_version() -> &'static str {
-    // TODO somehow get a macro to get the HASH of ffxiv-datamining?
-    env!("GIT_HASH")
-}
-
+#[allow(dead_code)]
 fn ok_or_default<'de, T, D>(deserializer: D) -> Result<T, D::Error>
 where
     T: Deserialize<'de> + Default,
-    D: Deserializer<'de>,
+    D: serde::Deserializer<'de>,
 {
-    Ok(T::deserialize(deserializer).unwrap_or_default())
+    let v: Result<T, D::Error> = T::deserialize(deserializer);
+    Ok(v.unwrap_or_default())
 }
 
-#[cfg(test)]
-mod tests {}
+include!(concat!(env!("OUT_DIR"), "/types.rs"));
