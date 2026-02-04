@@ -15,6 +15,7 @@ pub fn Select<T, EF, L, ViewOut>(
     children: EF,
     #[prop(optional)] class: Option<&'static str>,
     #[prop(optional)] dropdown_class: Option<&'static str>,
+    #[prop(optional, into)] aria_label: Option<String>,
     // _view_out: PhantomData<ViewOut>,
 ) -> impl IntoView
 where
@@ -119,6 +120,11 @@ where
                 }
                 on:keydown=keydown
                 prop:value=current_input
+                role="combobox"
+                aria-autocomplete="list"
+                aria-haspopup="listbox"
+                aria-expanded=move || has_focus().to_string()
+                aria-label=aria_label
             />
             <div
                 class="absolute top-1 left-1 select-none cursor flex items-center"
@@ -135,6 +141,7 @@ where
                 node_ref=dropdown
                 class=move || format!("{} {}", default_dropdown_class, dropdown_class.unwrap_or(""))
                 class:hidden=move || !has_focus() && !hovered()
+                role="listbox"
             >
                 <For each=final_result key=move |(l, _)| *l let:data>
                     {
@@ -142,6 +149,8 @@ where
                         view! {
                     <button
                         class="w-full text-left"
+                        role="option"
+                        aria-selected=move || is_selected_selector.selected(&Some(data.0)).to_string()
                         on:click=move |_| {
                             if let Some(item) = items.with(|i| i.get(data.0).cloned()) {
                                 set_choice(Some(item));
