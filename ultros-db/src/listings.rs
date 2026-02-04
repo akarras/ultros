@@ -116,27 +116,13 @@ impl UltrosDb {
         item: ItemId,
     ) -> Result<Vec<(active_listing::Model, Option<retainer::Model>)>> {
         let instant = Instant::now();
-        // OPTIMIZATION: Fetch all listings in one query
-        let listings = active_listing::Entity::find()
+        // OPTIMIZATION: Fetch all listings and retainers in one query using JOIN
+        let data = active_listing::Entity::find()
             .filter(active_listing::Column::ItemId.eq(item.0))
             .filter(active_listing::Column::WorldId.is_in(worlds.to_vec()))
+            .find_also_related(retainer::Entity)
             .all(&self.db)
             .await?;
-
-        let retainers = retainer::Entity::find()
-            .filter(retainer::Column::Id.is_in(listings.iter().map(|l| l.retainer_id).unique()))
-            .all(&self.db)
-            .await?
-            .into_iter()
-            .map(|r| (r.id, r))
-            .collect::<HashMap<_, _>>();
-        let data = listings
-            .into_iter()
-            .map(|l| {
-                let retainer = retainers.get(&l.retainer_id).cloned();
-                (l, retainer)
-            })
-            .collect();
         histogram!("ultros_db_query_listings_all_world_with_retainers_duration_seconds")
             .record(instant.elapsed());
         Ok(data)
