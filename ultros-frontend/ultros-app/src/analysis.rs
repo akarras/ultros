@@ -43,7 +43,8 @@ pub fn analyze_sales(sales_data: &[&SaleData], filter_outliers: bool) -> SalesSt
         if filtered.is_empty() {
             (0, 0.0)
         } else {
-            let avg = (filtered.iter().map(|&p| p as i64).sum::<i64>() / filtered.len() as i64) as i32;
+            let avg =
+                (filtered.iter().map(|&p| p as i64).sum::<i64>() / filtered.len() as i64) as i32;
             let std = standard_deviation(&filtered);
             (avg, std)
         }

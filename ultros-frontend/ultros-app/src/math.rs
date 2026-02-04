@@ -64,9 +64,9 @@ mod tests {
         let data = vec![10, 12, 23, 23, 16, 23, 21, 16];
         let std_dev = standard_deviation(&data);
         // Mean = 18.
-        // Variance = 26.
-        // Std Dev = sqrt(26) = 5.099
-        assert!((std_dev - 5.099).abs() < 0.001);
+        // Variance = 192 / 7 = 27.42857
+        // Std Dev = sqrt(27.42857) = 5.2372
+        assert!((std_dev - 5.237).abs() < 0.001);
 
         let data = vec![100];
         assert_eq!(standard_deviation(&data), 0.0);
