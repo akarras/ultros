@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 #[cfg(feature = "csv_to_bincode")]
 pub mod csv_to_bincode;
 
@@ -6,7 +7,6 @@ pub mod subrow_key;
 
 use bincode::{Decode, Encode, config::Config};
 use deserialize_custom::*;
-use dumb_csv::ParseBool;
 use serde::{Deserialize, Deserializer, Serialize};
 
 include!(concat!(env!("OUT_DIR"), "/types.rs"));
