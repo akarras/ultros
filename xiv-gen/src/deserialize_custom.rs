@@ -1,5 +1,5 @@
-use serde::de::Error;
 use serde::Deserialize;
+use serde::de::Error;
 
 #[allow(dead_code)]
 pub fn deserialize_i64_from_u8_array<'de, D>(deserializer: D) -> Result<i64, D::Error>

@@ -5,15 +5,13 @@ pub mod deserialize_custom;
 #[cfg(feature = "csv_to_bincode")]
 pub mod dumb_csv_reader;
 pub mod subrow_key;
-#[cfg(feature = "csv_to_bincode")]
-pub mod util;
 
 use deserialize_custom::*;
 use dumb_csv::ParseBool;
 
+use bincode::{Decode, Encode};
 use serde::Deserialize;
 use serde::Serialize;
-use bincode::{Encode, Decode};
 use std::fmt::Display;
 
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Hash, Deserialize)]

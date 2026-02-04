@@ -15,7 +15,6 @@ pub fn read_dumb_csv<T: DumbCsvDeserialize>(path: &str) -> Vec<T> {
         .map(|s| s.to_string())
         .collect();
     dumb_csv::deserialize(csv).unwrap()
-    
 }
 
 #[cfg(test)]
