@@ -7,6 +7,7 @@ pub mod subrow_key;
 
 use bincode::{Decode, Encode, config::Config};
 use deserialize_custom::*;
+use dumb_csv::ParseBool;
 use serde::{Deserialize, Deserializer, Serialize};
 
 include!(concat!(env!("OUT_DIR"), "/types.rs"));
