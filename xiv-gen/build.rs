@@ -150,7 +150,7 @@ impl DataDetector {
         if let DataDetector::Detected(_) = self {
             return;
         }
-        if record == "TRUE" || record == "FALSE" {
+        if record == "TRUE" || record == "FALSE" || record == "True" || record == "False" {
             *self = DataDetector::Detected(DataType::Bool);
         }
         lazy_static! {
@@ -204,7 +204,7 @@ impl DataDetector {
                 if let Some((min, max)) = int_range {
                     // start small and expand the range.
                     [
-                        (0..=1, DataType::Bool),
+                        // removed 0..=1 bool detection to prefer u8/i8 for ID safety
                         (u8::MIN as i64..=u8::MAX as i64, DataType::UnsignedInt8),
                         (i8::MIN as i64..=i8::MAX as i64, DataType::SignedInt8),
                         (u16::MIN as i64..=u16::MAX as i64, DataType::UnsignedInt16),
@@ -305,7 +305,13 @@ fn create_struct(
                 line_one = format!("num{line_one}");
             }
 
-            let field_type = sample_data.field_type(csv_name);
+            let mut field_type = sample_data.field_type(csv_name);
+
+            // Force base_param_value to i16 because DataDetector might miss large values if they appear late or if sampled (though we iterate all here)
+            // or if the logic is flawed. Explicit is better for known types.
+            if line_one.contains("base_param_value") {
+                field_type = "i16".to_string();
+            }
 
             if line_one == "key_id" {
                 let mut key = Struct::new(&key_name);
@@ -315,6 +321,8 @@ fn create_struct(
                     .derive("Hash")
                     .derive("Eq")
                     .derive("Copy")
+                    .derive("PartialOrd")
+                    .derive("Ord")
                     .vis("pub")
                     .tuple_field(field_type.clone())
                     .vis("pub");
@@ -423,6 +431,8 @@ fn create_struct(
                     "Number",
                     "Scale",
                     "Height",
+                    "Percent",
+                    "Priority",
                 ];
                 if !scalars.iter().any(|s| name_part.contains(s)) {
                     let local_key_name = format!("{}Id", name_part.to_upper_camel_case());
@@ -636,6 +646,11 @@ fn read_dir<T: Container>(path: PathBuf, mut scope: T, args: &mut Args) -> T {
             .vis("pub")
             .derive("FromStr")
             .derive("Default")
+            .derive("Eq")         // Added Eq
+            .derive("Copy")       // Added Copy
+            .derive("Hash")       // Added Hash
+            .derive("PartialOrd") // Added PartialOrd
+            .derive("Ord")        // Added Ord
             .tuple_field(sample_data)
             .vis("pub");
         scope.push_struct(s);
