@@ -10,8 +10,8 @@ use serde::{Deserialize, Deserializer};
 #[allow(unused_imports)]
 mod generated {
     use super::*;
-    use bincode::{Decode, Encode};
     use crate::deserialize_custom::*;
+    use bincode::{Decode, Encode};
     use dumb_csv::ParseBool;
     use serde::{Deserialize, Serialize};
     include!(concat!(env!("OUT_DIR"), "/types.rs"));
