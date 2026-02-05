@@ -43,7 +43,10 @@ pub fn read_csv<T: DeserializeOwned>(path: &str) -> Vec<T> {
                     if let ErrorKind::Deserialize { err, .. } = e.kind()
                         && let Some(field) = err.field()
                     {
-                        let field_name = &headers.get(field as usize).map(|s| s.as_str()).unwrap_or("?");
+                        let field_name = &headers
+                            .get(field as usize)
+                            .map(|s| s.as_str())
+                            .unwrap_or("?");
                         eprintln!("Field {field}: {field_name}");
                     }
                     let byte = position.byte() as usize;

@@ -190,7 +190,7 @@ impl DataDetector {
                     *int_range = Some((value, value));
                 }
             } else {
-                 *self = DataDetector::Detected(DataType::String);
+                *self = DataDetector::Detected(DataType::String);
             }
         }
     }
@@ -266,7 +266,10 @@ fn create_struct(
         }
     });
 
-    let detected_types: Vec<DataType> = detectors.into_iter().map(|d: DataDetector| d.end()).collect();
+    let detected_types: Vec<DataType> = detectors
+        .into_iter()
+        .map(|d: DataDetector| d.end())
+        .collect();
 
     let csv_name_camel = &csv_name.to_upper_camel_case();
     let key_name = format!("{}Id", csv_name_camel);
@@ -346,11 +349,15 @@ fn create_struct(
                 }
                 local_data.known_structs.insert(key_name.clone());
             } else if !line_one.eq("key_id") && matches!(data_type, DataType::UnsignedInt8 | DataType::UnsignedInt16 | DataType::UnsignedInt32 | DataType::UnsignedInt64 | DataType::SignedInt8 | DataType::SignedInt16 | DataType::SignedInt32 | DataType::SignedInt64) {
-                 let name_camel = field_name.to_upper_camel_case();
-                 let name_root: String = name_camel.chars().filter(|c| !c.is_numeric()).collect();
+                let name_camel = field_name.to_upper_camel_case();
+                let name_root: String = name_camel.chars().filter(|c| !c.is_numeric()).collect();
 
-                 if !name_root.is_empty() && name_root != "Data" && name_root != "Unknown" && name_root != "Param" {
-                     let local_key_name = format!("{}Id", name_root);
+                if !name_root.is_empty()
+                    && name_root != "Data"
+                    && name_root != "Unknown"
+                    && name_root != "Param"
+                {
+                    let local_key_name = format!("{}Id", name_root);
                      if !local_data.requested_structs.iter().any(|d| d.requested_struct == local_key_name) {
                         local_data.requested_structs.push(RequestedStructData {
                             requested_struct: local_key_name.clone(),
@@ -366,15 +373,21 @@ fn create_struct(
         .collect();
 
     for (field_name, field_value) in fields.iter() {
-        let mut field = Field::new(field_name.as_str(), field_value.as_str()).vis("pub").to_owned();
+        let mut field = Field::new(field_name.as_str(), field_value.as_str())
+            .vis("pub")
+            .to_owned();
         if field_value == "i64" {
-             field.annotation(vec!["#[serde(deserialize_with = \"deserialize_i64_from_u8_array\")]"]);
+            field.annotation(vec![
+                "#[serde(deserialize_with = \"deserialize_i64_from_u8_array\")]",
+            ]);
         }
         if field_value == "bool" {
-             field.annotation(vec!["#[serde(deserialize_with = \"deserialize_bool_from_anything_custom\")]"]);
+            field.annotation(vec![
+                "#[serde(deserialize_with = \"deserialize_bool_from_anything_custom\")]",
+            ]);
         }
         if field_value.ends_with("Id") {
-             field.annotation(vec![r#"#[serde(deserialize_with = "ok_or_default")]"#]);
+            field.annotation(vec![r#"#[serde(deserialize_with = "ok_or_default")]"#]);
         }
         s.push_field(field);
     }
