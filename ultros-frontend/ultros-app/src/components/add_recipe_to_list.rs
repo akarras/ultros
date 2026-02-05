@@ -131,8 +131,11 @@ fn AddRecipeToListModal(
                 </div>
 
                 <div class="flex flex-wrap items-center gap-3">
-                    <label class="text-sm text-[color:var(--color-text-muted)]">"Number of crafts"</label>
+                    <label class="text-sm text-[color:var(--color-text-muted)]" attr:for="craft-qty">
+                        "Number of crafts"
+                    </label>
                     <input
+                        id="craft-qty"
                         type="number"
                         min="1"
                         class="input w-24"
@@ -169,6 +172,7 @@ fn AddRecipeToListModal(
                                         type="number"
                                         min="0"
                                         class="input w-24 ml-auto"
+                                        aria-label=move || format!("Quantity for {}", ingredient.item.name)
                                         prop:value=move || ingredient.quantity.get()
                                         on:input=move |e| {
                                             let Ok(q) = event_target_value(&e).parse::<i32>() else {
