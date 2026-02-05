@@ -33,7 +33,7 @@ use tokio_util::sync::CancellationToken;
 use ultros_api_types::trends::{TrendItem, TrendsData};
 use ultros_db::world_cache::{AnySelector, WorldCache};
 
-pub const SALE_HISTORY_SIZE: usize = 6;
+pub const SALE_HISTORY_SIZE: usize = 20;
 
 #[derive(Debug, Error)]
 pub enum AnalyzerError {
@@ -768,17 +768,11 @@ impl AnalyzerService {
         world_id: i32,
         region_id: i32,
         resale_options: ResaleOptions,
-        world_cache: &Arc<WorldCache>,
+        datacenter_allowed_worlds: Option<Vec<i32>>,
     ) -> Option<Vec<ResaleStats>> {
         if !self.initiated.load(Ordering::Relaxed) {
             return None;
         }
-        let datacenter_filters_worlds = resale_options.filter_datacenter.and_then(|w| {
-            world_cache
-                .lookup_selector(&AnySelector::Datacenter(w))
-                .ok()
-                .and_then(|w| world_cache.get_all_worlds_in(&w))
-        });
         // figure out what items are selling best on our world first, then figure out what items are available in the region that complement that.
         let sale = self.recent_sale_history.get(&world_id)?;
         let sale_history: BTreeMap<_, _> = sale
@@ -834,13 +828,13 @@ impl AnalyzerService {
             .item_map
             .iter()
             .flat_map(|(item_key, cheapest_price)| {
-                let (cheapest_history, sold_within) = *sale_history.get(item_key)?;
-                let current_cheapest_on_sale_world = sale_world_listings
-                    .item_map
-                    .get(item_key)
-                    .map(|l| l.price)
-                    .unwrap_or(cheapest_history);
-                let est_sale_price = (cheapest_history).min(current_cheapest_on_sale_world);
+                let (median_price, sold_within) = *sale_history.get(item_key)?;
+                let est_sale_price =
+                    if let Some(current_listing) = sale_world_listings.item_map.get(item_key) {
+                        (current_listing.price - 1).min(median_price)
+                    } else {
+                        ((median_price as f32) * 1.2) as i32
+                    };
                 let profit = est_sale_price - cheapest_price.price;
                 Some(ResaleStats {
                     profit,
@@ -865,7 +859,7 @@ impl AnalyzerService {
                     .unwrap_or(true)
             })
             .filter(|sale| {
-                datacenter_filters_worlds
+                datacenter_allowed_worlds
                     .as_ref()
                     .map(|dc| dc.contains(&sale.world_id))
                     .unwrap_or(true)
@@ -1535,5 +1529,141 @@ mod tests {
             count += 1;
         }
         assert_eq!(count, 4);
+    }
+
+    #[tokio::test]
+    async fn test_get_best_resale_logic() {
+        // Setup
+        let world_id = 10;
+        let region_id = 1;
+
+        let item_id_a = 1001; // Case A: Competition exists, price higher than median
+        let item_id_b = 1002; // Case B: Competition exists, price lower than median
+        let item_id_c = 1003; // Case C: No competition
+        let item_id_d = 1004; // Case D: Not enough history (should be filtered out)
+
+        let mut recent_sale_history_map = BTreeMap::new();
+        let mut sale_history = SaleHistory::default();
+
+        // 1. Setup Recent Sales (Median calculation test)
+        // Prices: 10, 20, 30, 40, 50, 60. Median (len/2 = 3) -> 40.
+        for item_id in [item_id_a, item_id_b, item_id_c] {
+            for price in [10, 20, 30, 40, 50, 60] {
+                sale_history.add_sale(&ultros_api_types::SaleHistory {
+                    id: 0,
+                    hq: false,
+                    price_per_item: price,
+                    quantity: 1,
+                    buyer_name: None,
+                    buying_character_id: 0,
+                    sold_date: Utc::now().naive_utc(),
+                    world_id,
+                    sold_item_id: item_id,
+                });
+            }
+        }
+
+        // Item D has only 1 sale
+        sale_history.add_sale(&ultros_api_types::SaleHistory {
+            id: 0,
+            hq: false,
+            price_per_item: 100,
+            quantity: 1,
+            buyer_name: None,
+            buying_character_id: 0,
+            sold_date: Utc::now().naive_utc(),
+            world_id,
+            sold_item_id: item_id_d,
+        });
+
+        recent_sale_history_map.insert(world_id, RwLock::new(sale_history));
+
+        // 2. Setup Cheapest Listings
+        let mut cheapest_items_map = BTreeMap::new();
+
+        // Region Listing (Cheapest available to buy anywhere in region)
+        // We set this low so profit is possible
+        let mut region_listings = CheapestListings::default();
+        for item_id in [item_id_a, item_id_b, item_id_c] {
+            region_listings.add_listing(&ultros_db::listings::ListingSummary {
+                item_id,
+                world_id: 99,
+                price_per_unit: 10,
+                hq: false,
+            });
+        }
+        cheapest_items_map.insert(AnySelector::Region(region_id), RwLock::new(region_listings));
+
+        // World Listing (Competition on target world)
+        let mut world_listings = CheapestListings::default();
+
+        // Case A: Competition exists, price higher than median (40). Listing is 50.
+        // Logic: min(Listing - 1, Median) -> min(49, 40) -> 40.
+        world_listings.add_listing(&ultros_db::listings::ListingSummary {
+            item_id: item_id_a,
+            world_id,
+            price_per_unit: 50,
+            hq: false,
+        });
+
+        // Case B: Competition exists, price lower than median (40). Listing is 30.
+        // Logic: min(Listing - 1, Median) -> min(29, 40) -> 29.
+        world_listings.add_listing(&ultros_db::listings::ListingSummary {
+            item_id: item_id_b,
+            world_id,
+            price_per_unit: 30,
+            hq: false,
+        });
+
+        // Case C: No listing on world.
+        // Logic: Median * 1.2 -> 40 * 1.2 = 48.
+
+        cheapest_items_map.insert(AnySelector::World(world_id), RwLock::new(world_listings));
+
+        let analyzer_service = AnalyzerService {
+            recent_sale_history: Arc::new(recent_sale_history_map),
+            cheapest_items: Arc::new(cheapest_items_map),
+            initiated: Arc::new(AtomicBool::new(true)),
+        };
+
+        let options = ResaleOptions::default();
+
+        // Execute
+        let results = analyzer_service
+            .get_best_resale(world_id, region_id, options, None)
+            .await
+            .unwrap();
+
+        // Verify
+        let get_profit = |id| {
+            results
+                .iter()
+                .find(|r| r.item_id == id)
+                .map(|r| r.profit + 10)
+        }; // Profit = SalePrice - BuyPrice(10). So SalePrice = Profit + 10.
+
+        // Case A: Expect 40
+        assert_eq!(
+            get_profit(item_id_a),
+            Some(40),
+            "Case A: Should use median (40) when listing (50) is higher"
+        );
+
+        // Case B: Expect 29
+        assert_eq!(
+            get_profit(item_id_b),
+            Some(29),
+            "Case B: Should undercut listing (30->29) when lower than median (40)"
+        );
+
+        // Case C: Expect 48
+        assert_eq!(
+            get_profit(item_id_c),
+            Some(48),
+            "Case C: Should use Median * 1.2 (48) when no listing"
+        );
+
+        // Case D: Should not appear if not buyable in region
+        assert!(results.iter().find(|r| r.item_id == item_id_d).is_none());
     }
 }
