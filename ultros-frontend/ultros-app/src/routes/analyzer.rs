@@ -39,6 +39,8 @@ struct SaleSummary {
     num_sold: usize,
     /// Represents the average time between sales within the `num_sold`
     avg_sale_duration: Option<Duration>,
+    /// Calculated sales per day
+    daily_sales: f32,
     max_price: i32,
     avg_price: i32,
     min_price: i32,
@@ -69,6 +71,7 @@ struct CalculatedProfitData {
 enum SortMode {
     Roi,
     Profit,
+    Velocity,
 }
 
 #[derive(Clone, Debug)]
@@ -131,11 +134,21 @@ fn compute_summary(
         .last()
         .map(|last| (last.sale_date - now).num_milliseconds().abs() / sales.len() as i64);
     let avg_sale_duration = t.map(Duration::milliseconds);
+
+    let duration_millis = sales
+        .last()
+        .map(|last| (now - last.sale_date).num_milliseconds().abs())
+        .unwrap_or(0);
+    // Clamp to at least 1 second to prevent huge numbers
+    let duration_days = (duration_millis as f64 / 86_400_000.0).max(0.00001);
+    let daily_sales = (sales.len() as f64 / duration_days) as f32;
+
     SaleSummary {
         item_id,
         hq,
         num_sold: sales.len(),
         avg_sale_duration,
+        daily_sales,
         max_price,
         avg_price,
         min_price,
@@ -150,6 +163,7 @@ impl FromStr for SortMode {
         match s {
             "roi" => Ok(SortMode::Roi),
             "profit" => Ok(SortMode::Profit),
+            "velocity" => Ok(SortMode::Velocity),
             _ => Err(()),
         }
     }
@@ -160,6 +174,7 @@ impl std::fmt::Display for SortMode {
         let val = match self {
             SortMode::Roi => "roi",
             SortMode::Profit => "profit",
+            SortMode::Velocity => "velocity",
         };
         f.write_str(val)
     }
@@ -276,6 +291,7 @@ fn AnalyzerTable(
     let (datacenter_filter, set_datacenter_filter) = query_signal::<String>("datacenter");
     let (tax_enabled, set_tax_enabled) = query_signal::<bool>("tax");
     let (minimum_sales, set_minimum_sales) = query_signal::<usize>("sales");
+    let (min_daily_sales, set_min_daily_sales) = query_signal::<f32>("min-sales");
     let (category_filter, set_category_filter) = query_signal::<i32>("category");
 
     let world_clone = worlds.clone();
@@ -343,6 +359,11 @@ fn AnalyzerTable(
                     .unwrap_or(true)
             })
             .filter(move |data| {
+                min_daily_sales()
+                    .map(|sales| data.inner.sale_summary.daily_sales >= sales)
+                    .unwrap_or(true)
+            })
+            .filter(move |data| {
                 category_filter()
                     .map(|cat_id| {
                         items
@@ -379,6 +400,13 @@ fn AnalyzerTable(
         match sort_mode().unwrap_or(SortMode::Roi) {
             SortMode::Roi => sorted_data.sort_by_key(|data| Reverse(data.return_on_investment)),
             SortMode::Profit => sorted_data.sort_by_key(|data| Reverse(data.profit)),
+            SortMode::Velocity => sorted_data.sort_by(|a, b| {
+                b.inner
+                    .sale_summary
+                    .daily_sales
+                    .partial_cmp(&a.inner.sale_summary.daily_sales)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            }),
         }
         sorted_data
             .into_iter()
@@ -414,6 +442,37 @@ fn AnalyzerTable(
                                     set_minimum_profit(Some(profit))
                                 } else if value.is_empty() {
                                     set_minimum_profit(None);
+                                }
+                            }
+                        />
+                    </div>
+                </FilterCard>
+
+                <FilterCard
+                    title="Minimum Daily Sales"
+                    description="Filter items by sales velocity (sales/day)"
+                >
+                    <div class="flex flex-col gap-2">
+                        <div class="text-brand-300">
+                             {move || {
+                                min_daily_sales()
+                                    .map(|s| format!("{:.1} / day", s))
+                                    .unwrap_or("---".to_string())
+                            }}
+                        </div>
+                        <input
+                            class="input"
+                            type="number"
+                            min="0"
+                            step="0.1"
+                            placeholder="e.g. 1.0"
+                            prop:value=min_daily_sales
+                            on:input=move |input| {
+                                let value = event_target_value(&input);
+                                if let Ok(s) = value.parse::<f32>() {
+                                    set_min_daily_sales(Some(s));
+                                } else if value.is_empty() {
+                                    set_min_daily_sales(None);
                                 }
                             }
                         />
@@ -594,6 +653,16 @@ fn AnalyzerTable(
                                 </span>
                             }.into_any());
                         }
+                        if let Some(sales) = min_daily_sales() {
+                            chips.push(view! {
+                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
+                                    "Daily Sales ≥ " {format!("{:.1}", sales)}
+                                    <button class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_min_daily_sales(None)>
+                                        <Icon icon=icondata::MdiClose />
+                                    </button>
+                                </span>
+                            }.into_any());
+                        }
                         if let Some(roi) = minimum_roi() {
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
@@ -648,6 +717,7 @@ fn AnalyzerTable(
                     set_world_filter(None);
                     set_datacenter_filter(None);
                     set_minimum_sales(None);
+                    set_min_daily_sales(None);
                     set_category_filter(None);
                 }>
                     "Clear all"
@@ -681,6 +751,22 @@ fn AnalyzerTable(
                                             "Profit"
                                             {move || {
                                                 (sort_mode() == Some(SortMode::Profit))
+                                                    .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
+                                            }}
+                                        </div>
+                                    </QueryButton>
+                                </div>
+                                <div role="columnheader" class="w-30 p-4">
+                                    <QueryButton
+                                        class="!text-brand-300 hover:text-brand-200"
+                                        active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
+                                        key="sort"
+                                        value="velocity"
+                                    >
+                                        <div class="flex items-center gap-2">
+                                            "Daily Sales"
+                                            {move || {
+                                                (sort_mode() == Some(SortMode::Velocity))
                                                     .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
                                             }}
                                         </div>
@@ -837,6 +923,9 @@ fn AnalyzerTable(
                                         }>
                                             {format!("{}%", data.return_on_investment)}
                                         </span>
+                                    </div>
+                                    <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
+                                        {format!("{:.1}", data.inner.sale_summary.daily_sales)}
                                     </div>
                                     <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
                                         <Gil amount=data.inner.cheapest_price />
