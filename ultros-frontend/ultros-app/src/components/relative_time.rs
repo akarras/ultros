@@ -19,5 +19,11 @@ pub fn RelativeToNow(timestamp: NaiveDateTime) -> impl IntoView {
             .map(|duration| Formatter::new().convert(duration))
             .unwrap_or("now".to_string())
     });
-    view! { <span>{time_display}</span> }.into_any()
+    let iso_string = timestamp.and_utc().to_rfc3339();
+    view! {
+        <time datetime=iso_string.clone() title=iso_string>
+            {time_display}
+        </time>
+    }
+    .into_any()
 }
