@@ -14,5 +14,6 @@ pub struct SaleHistory {
     pub sold_item_id: i32,
     pub sold_date: NaiveDateTime,
     pub world_id: i32,
+    // Bolt: Use Arc<str> to reduce allocation overhead when cloning SaleHistory vectors in frontend
     pub buyer_name: Option<Arc<str>>,
 }
