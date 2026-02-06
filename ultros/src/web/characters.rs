@@ -1,8 +1,8 @@
 use crate::web::character_verifier_service::CharacterVerifierService;
 use crate::web::error::ApiError;
 use crate::web::oauth::AuthDiscordUser;
-use axum::extract::{Path, State};
 use axum::Json;
+use axum::extract::{Path, State};
 use std::sync::Arc;
 use ultros_api_types::{FfxivCharacter, FfxivCharacterVerification};
 use ultros_db::UltrosDb;
