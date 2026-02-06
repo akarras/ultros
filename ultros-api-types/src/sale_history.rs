@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 
@@ -12,5 +14,5 @@ pub struct SaleHistory {
     pub sold_item_id: i32,
     pub sold_date: NaiveDateTime,
     pub world_id: i32,
-    pub buyer_name: Option<String>,
+    pub buyer_name: Option<Arc<str>>,
 }

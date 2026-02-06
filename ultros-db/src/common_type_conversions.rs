@@ -73,7 +73,7 @@ impl From<SaleHistoryReturn> for SaleHistory {
             sold_item_id,
             sold_date,
             world_id,
-            buyer_name: character.map(|c| c.name),
+            buyer_name: character.map(|c| c.name.into()),
         }
     }
 }

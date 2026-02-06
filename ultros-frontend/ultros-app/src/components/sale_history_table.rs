@@ -65,7 +65,7 @@ pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
                                 <td>
                                     <Gil amount=total />
                                 </td>
-                                <td>{sale.buyer_name}</td>
+                                <td>{sale.buyer_name.as_deref()}</td>
                                 <td>
                                     <WorldName id=AnySelector::World(sale.world_id) />
                                 </td>
