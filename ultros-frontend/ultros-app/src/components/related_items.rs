@@ -81,16 +81,16 @@ impl<'a> Iterator for IngredientsIter<'a> {
         loop {
             let counter = self.1;
             let id = match counter {
-                0 => (self.0.item_ingredient_0, self.0.amount_ingredient_0),
-                1 => (self.0.item_ingredient_1, self.0.amount_ingredient_1),
-                2 => (self.0.item_ingredient_2, self.0.amount_ingredient_2),
-                3 => (self.0.item_ingredient_3, self.0.amount_ingredient_3),
-                4 => (self.0.item_ingredient_4, self.0.amount_ingredient_4),
-                5 => (self.0.item_ingredient_5, self.0.amount_ingredient_5),
-                6 => (self.0.item_ingredient_6, self.0.amount_ingredient_6),
-                7 => (self.0.item_ingredient_7, self.0.amount_ingredient_7),
-                // 8 => (self.0.item_ingredient_8, self.0.amount_ingredient_8),
-                // 9 => (self.0.item_ingredient_9, self.0.amount_ingredient_9),
+                0 => (self.0.ingredient[0], self.0.amount_ingredient[0]),
+                1 => (self.0.ingredient[1], self.0.amount_ingredient[1]),
+                2 => (self.0.ingredient[2], self.0.amount_ingredient[2]),
+                3 => (self.0.ingredient[3], self.0.amount_ingredient[3]),
+                4 => (self.0.ingredient[4], self.0.amount_ingredient[4]),
+                5 => (self.0.ingredient[5], self.0.amount_ingredient[5]),
+                6 => (self.0.ingredient[6], self.0.amount_ingredient[6]),
+                7 => (self.0.ingredient[7], self.0.amount_ingredient[7]),
+                // 8 => (self.0.ingredient_8, self.0.amount_ingredient_8),
+                // 9 => (self.0.ingredient_9, self.0.amount_ingredient_9),
                 _ => return None,
             };
             self.1 += 1;
@@ -459,11 +459,11 @@ pub(crate) fn get_vendor_price(item_id: i32) -> Option<u32> {
 
 pub(crate) fn special_shop_has_item(shop: &SpecialShop, item_id: i32) -> bool {
     // Check first slot (vector)
-    if shop.item_receive_0.iter().any(|i| i.0 == item_id) {
+    if shop.item_0_item.iter().any(|i| i.0 == item_id) {
         return true;
     }
     // Check second slot (vector)
-    if shop.item_receive_1.iter().any(|i| i.0 == item_id) {
+    if shop.item_1_item.iter().any(|i| i.0 == item_id) {
         return true;
     }
     false
@@ -473,14 +473,14 @@ type Cost = (ItemId, u32);
 type TradeCosts = Vec<Cost>;
 
 fn get_trade_costs(shop: &SpecialShop, item_id: i32) -> Vec<TradeCosts> {
-    shop.item_receive_0
+    shop.item_0_item
         .iter()
         .enumerate()
         .filter_map(|(i, item)| {
             let matches_0 = item.0 == item_id;
             // Check receive_1 if it exists at this index
             let matches_1 = shop
-                .item_receive_1
+                .item_1_item
                 .get(i)
                 .map(|x| x.0 == item_id)
                 .unwrap_or(false);
@@ -492,9 +492,9 @@ fn get_trade_costs(shop: &SpecialShop, item_id: i32) -> Vec<TradeCosts> {
             }
         })
         .map(|i| {
-            let costs_0 = (shop.item_cost_0.get(i), shop.count_cost_0.get(i));
-            let costs_1 = (shop.item_cost_1.get(i), shop.count_cost_1.get(i));
-            let costs_2 = (shop.item_cost_2.get(i), shop.count_cost_2.get(i));
+            let costs_0 = (shop.item_0_item_cost.get(i), shop.item_0_currency_cost.get(i));
+            let costs_1 = (shop.item_1_item_cost.get(i), shop.item_1_currency_cost.get(i));
+            let costs_2 = (shop.item_2_item_cost.get(i), shop.item_2_currency_cost.get(i));
             [costs_0, costs_1, costs_2]
                 .into_iter()
                 .filter_map(|(item, count)| {
@@ -586,36 +586,24 @@ mod tests {
             name: "Test Shop".to_string(),
             complete_text: xiv_gen::DefaultTalkId(0),
             not_complete_text: xiv_gen::DefaultTalkId(0),
-            item_receive_0: vec![ItemId(100), ItemId(200), ItemId(100)],
-            count_receive_0: vec![1, 1, 1],
-            item_receive_1: vec![ItemId(0), ItemId(0), ItemId(0)],
-            count_receive_1: vec![0, 0, 0],
-            item_cost_0: vec![ItemId(10), ItemId(20), ItemId(30)],
-            count_cost_0: vec![5, 10, 15],
-            item_cost_1: vec![ItemId(0), ItemId(0), ItemId(0)],
-            count_cost_1: vec![0, 0, 0],
-            item_cost_2: vec![ItemId(0), ItemId(0), ItemId(0)],
-            count_cost_2: vec![0, 0, 0],
-            hq_receive_0: vec![false, false, false],
-            hq_receive_1: vec![false, false, false],
-            hq_cost_0: vec![0, 0, 0],
-            hq_cost_1: vec![0, 0, 0],
-            hq_cost_2: vec![0, 0, 0],
-            achievement_unlock: vec![
-                xiv_gen::AchievementId(0),
-                xiv_gen::AchievementId(0),
-                xiv_gen::AchievementId(0),
-            ],
+            item_0_item: vec![ItemId(100), ItemId(200), ItemId(100)],
+            item_0_receive_count: vec![1, 1, 1],
+            item_1_item: vec![ItemId(0), ItemId(0), ItemId(0)],
+            item_1_receive_count: vec![0, 0, 0],
+            item_0_item_cost: vec![ItemId(10), ItemId(20), ItemId(30)],
+            item_0_currency_cost: vec![5, 10, 15],
+            item_1_item_cost: vec![ItemId(0), ItemId(0), ItemId(0)],
+            item_1_currency_cost: vec![0, 0, 0],
+            item_2_item_cost: vec![ItemId(0), ItemId(0), ItemId(0)],
+            item_2_currency_cost: vec![0, 0, 0],
+            item_0_receive_hq: vec![false, false, false],
+            item_1_receive_hq: vec![false, false, false],
+            item_0_collectability_cost: vec![false; 3],
+            item_1_collectability_cost: vec![false; 3],
+            item_2_collectability_cost: vec![false; 3],
+            item_0_achievement_unlock: 0,
             use_currency_type: 0,
-            // Filling missing fields manually as Default is not implemented
-            special_shop_item_category_0: vec![xiv_gen::SpecialShopItemCategoryId(0); 3],
-            special_shop_item_category_1: vec![xiv_gen::SpecialShopItemCategoryId(0); 3],
-            collectability_rating_cost_0: vec![0; 3],
-            collectability_rating_cost_1: vec![0; 3],
-            collectability_rating_cost_2: vec![0; 3],
-            quest_item: vec![xiv_gen::QuestId(0); 3],
-            patch_number: vec![0; 3],
-            quest_unlock: xiv_gen::QuestId(0),
+            ..Default::default()
         };
 
         // Case 1: Searching for item 100. Should appear at indices 0 and 2.

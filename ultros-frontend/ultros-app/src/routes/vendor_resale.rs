@@ -133,8 +133,8 @@ impl VendorProfitTable {
         let mut vendor_prices = HashMap::new();
         for items in data.gil_shop_items.values() {
             for shop_item in items {
-                if let Some(item_def) = data.items.get(&shop_item.item) {
-                    vendor_prices.insert(shop_item.item.0, item_def.price_mid as i32);
+                if let Some(item_def) = data.items.get(&xiv_gen::ItemId(shop_item.item as i32)) {
+                    vendor_prices.insert(shop_item.item as i32, item_def.price_mid as i32);
                 }
             }
         }

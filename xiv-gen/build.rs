@@ -122,8 +122,9 @@ impl DataDetector {
         if let DataDetector::Detected(_) = self {
             return;
         }
-        if record == "TRUE" || record == "FALSE" {
+        if record.eq_ignore_ascii_case("TRUE") || record.eq_ignore_ascii_case("FALSE") {
             *self = DataDetector::Detected(DataType::Bool);
+            return;
         }
         lazy_static! {
             // regex: check is number
@@ -173,7 +174,6 @@ impl DataDetector {
                 if let Some((min, max)) = int_range {
                     // start small and expand the range.
                     [
-                        (0..=1, DataType::Bool),
                         (u8::MIN as i64..=u8::MAX as i64, DataType::UnsignedInt8),
                         (i8::MIN as i64..=i8::MAX as i64, DataType::SignedInt8),
                         (u16::MIN as i64..=u16::MAX as i64, DataType::UnsignedInt16),
@@ -328,14 +328,14 @@ fn create_struct(
         for (key, value) in &fields {
             lazy_static! {
                 // regex: check is number
-                static ref DOUBLE: Regex = Regex::new(r#"([A-z_])+([0-9]+)_([0-9]+)"#).unwrap();
-                static ref SINGLE: Regex = Regex::new(r#"([A-z_])+([0-9]+)"#).unwrap();
+                static ref DOUBLE: Regex = Regex::new(r#"^(.*?)(\d+)_(\d+)$"#).unwrap();
+                static ref SINGLE: Regex = Regex::new(r#"^(.*?)(\d+)$"#).unwrap();
             }
             if let Some(captures) = DOUBLE.captures(key) {
                 let key_1 = captures.get(2).unwrap();
                 let key_2 = captures.get(3).unwrap();
                 // let root = captures.get(0).unwrap();
-                let root = &key[..key_1.start() - 1];
+                let root = captures.get(1).unwrap().as_str().trim_end_matches('_');
                 let root = format!("{}_{}", root, key_2.as_str().parse::<usize>().unwrap());
                 let idx = key_1.as_str().parse().unwrap();
                 let key = KeyType::Single(idx);
@@ -349,7 +349,7 @@ fn create_struct(
                 }
             } else if let Some(captures) = SINGLE.captures(key) {
                 let key_1 = captures.get(2).unwrap();
-                let root = &key[..key_1.start() - 1];
+                let root = captures.get(1).unwrap().as_str().trim_end_matches('_');
                 let current_idx = key_1.as_str().parse::<usize>().unwrap();
 
                 let mut appended = false;
