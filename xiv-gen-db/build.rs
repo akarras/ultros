@@ -8,12 +8,14 @@ use xiv_gen::csv_to_bincode::read_data;
 fn main() {
     let data = read_data();
     let vec = bincode::encode_to_vec(data, xiv_gen::bincode_config()).unwrap();
+    println!("Data encoded size: {}", vec.len());
     let mut flate = flate2::Compress::new(Compression::best(), true);
     let mut output = Vec::with_capacity(vec.len());
     flate
         .compress_vec(vec.as_slice(), &mut output, FlushCompress::Full)
         .unwrap();
-    assert!(!output.is_empty());
+    println!("Compressed size: {}", output.len());
+    assert!(!output.is_empty(), "Output is empty! Input size: {}", vec.len());
     let out_dir = env::var_os("OUT_DIR").unwrap();
     let dest_path = Path::new(&out_dir).join("database.bincode");
     std::fs::write(dest_path, output.as_slice()).unwrap();
