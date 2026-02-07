@@ -358,11 +358,11 @@ mod tests {
         // Sales are sorted descending (newest first).
         // create_sale(10) is newer than create_sale(20).
         let sales = vec![
-            create_sale(10),  // index 0
-            create_sale(20),  // index 1
-            create_sale(30),  // index 2
-            create_sale(40),  // index 3
-            create_sale(50),  // index 4
+            create_sale(10), // index 0
+            create_sale(20), // index 1
+            create_sale(30), // index 2
+            create_sale(40), // index 3
+            create_sale(50), // index 4
         ];
 
         let now = Utc::now().naive_utc();
