@@ -11,15 +11,8 @@ pub fn read_dumb_csv<T: DumbCsvDeserialize>(path: &str) -> Vec<T> {
         .has_headers(false)
         .from_path(path)
         .expect("Failed to open csv");
-    let _headers: Vec<String> = csv
-        .records()
-        .nth(1)
-        .unwrap()
-        .unwrap()
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    let _ = csv.records().take(2).collect::<Vec<_>>();
+    // Skip header line
+    let _ = csv.records().next();
     dumb_csv::deserialize(csv).unwrap()
 }
 
@@ -29,25 +22,27 @@ pub fn read_csv<T: DeserializeOwned>(path: &str) -> Vec<T> {
         .from_path(path)
         .expect("Failed to open csv");
     let str = std::fs::read_to_string(path).unwrap();
+
+    // Read header manually for error reporting
     let headers: Vec<String> = csv
         .records()
-        .nth(1)
+        .next()
         .unwrap()
         .unwrap()
         .iter()
         .map(|s| s.to_string())
         .collect();
-    // line 2
+
+    // deserialize remaining records
     csv.deserialize()
-        .skip(2)
         .map(|m| {
             if let Err(e) = &m {
                 // try to pretty print this error a bit, otherwise it's hard to tell what went wrong
                 if let Some(position) = e.position() {
                     if let ErrorKind::Deserialize { err, .. } = e.kind()
                         && let Some(field) = err.field()
+                        && let Some(field_name) = headers.get(field as usize)
                     {
-                        let field_name = &headers[field as usize];
                         eprintln!("Field {field}: {field_name}");
                     }
                     let byte = position.byte() as usize;
