@@ -86,6 +86,7 @@ fn LeveAnalyzerTable(
     let (minimum_profit, set_minimum_profit) = query_signal::<i32>("profit");
     let (job_filter, set_job_filter) = query_signal::<String>("job");
     let (filter_outliers, set_filter_outliers) = query_signal::<bool>("filter-outliers");
+    let (hq_turnin, set_hq_turnin) = query_signal::<bool>("hq");
 
     let computed_data = Memo::new(move |_| {
         let mut results = Vec::new();
@@ -129,11 +130,10 @@ fn LeveAnalyzerTable(
                 .unwrap_or_default();
 
             // Filter by Job
-            if let Some(filter) = job_filter()
-                && !filter.is_empty()
-                && !job_category_name.contains(&filter)
-            {
-                continue;
+            if let Some(filter) = job_filter() {
+                if !filter.is_empty() && !job_category_name.contains(&filter) {
+                    continue;
+                }
             }
 
             // Calculate Cost
@@ -169,6 +169,11 @@ fn LeveAnalyzerTable(
 
             // Calculate Revenue
             let gil_reward = leve.gil_reward as i64;
+            let gil_reward = if hq_turnin().unwrap_or(false) {
+                gil_reward * 2
+            } else {
+                gil_reward
+            };
 
             // Calculate Item Rewards Expected Value
             let mut expected_item_value = 0.0;
@@ -267,10 +272,10 @@ fn LeveAnalyzerTable(
             let revenue = gil_reward + expected_item_value as i64;
             let profit = revenue - cost;
 
-            if let Some(min) = minimum_profit()
-                && (profit as i32) < min
-            {
-                continue;
+            if let Some(min) = minimum_profit() {
+                if (profit as i32) < min {
+                    continue;
+                }
             }
 
             results.push(LeveProfitData {
@@ -374,6 +379,18 @@ fn LeveAnalyzerTable(
                         />
                         <label for="filter-outliers">"Filter Outliers"</label>
                         <div class="text-brand-300 cursor-help" title="If enabled, sales outliers will be removed from the average price calculation using the Interquartile Range (IQR) method.">
+                            <Icon icon=i::AiQuestionCircleOutlined />
+                        </div>
+
+                        <input
+                            type="checkbox"
+                            id="hq-turnin"
+                            class="checkbox"
+                            prop:checked=move || hq_turnin().unwrap_or(false)
+                            on:change=move |ev| set_hq_turnin(Some(event_target_checked(&ev)))
+                        />
+                        <label for="hq-turnin">"HQ Turn-in"</label>
+                        <div class="text-brand-300 cursor-help" title="Calculate profit based on HQ turn-in rewards (2x Gil)">
                             <Icon icon=i::AiQuestionCircleOutlined />
                         </div>
                     </div>
