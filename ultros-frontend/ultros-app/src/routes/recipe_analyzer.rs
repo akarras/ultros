@@ -90,14 +90,14 @@ fn calculate_crafting_cost(
     let mut sub_crafts = Vec::new();
     // Helper to iterate ingredients
     let ingredients = [
-        (recipe.ingredient[0], recipe.amount_ingredient[0]),
-        (recipe.ingredient[1], recipe.amount_ingredient[1]),
-        (recipe.ingredient[2], recipe.amount_ingredient[2]),
-        (recipe.ingredient[3], recipe.amount_ingredient[3]),
-        (recipe.ingredient[4], recipe.amount_ingredient[4]),
-        (recipe.ingredient[5], recipe.amount_ingredient[5]),
-        (recipe.ingredient[6], recipe.amount_ingredient[6]),
-        (recipe.ingredient[7], recipe.amount_ingredient[7]),
+        (recipe.item_ingredient_0, recipe.amount_ingredient_0),
+        (recipe.item_ingredient_1, recipe.amount_ingredient_1),
+        (recipe.item_ingredient_2, recipe.amount_ingredient_2),
+        (recipe.item_ingredient_3, recipe.amount_ingredient_3),
+        (recipe.item_ingredient_4, recipe.amount_ingredient_4),
+        (recipe.item_ingredient_5, recipe.amount_ingredient_5),
+        (recipe.item_ingredient_6, recipe.amount_ingredient_6),
+        (recipe.item_ingredient_7, recipe.amount_ingredient_7),
     ];
 
     for (item_id, amount) in ingredients {

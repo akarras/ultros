@@ -28,7 +28,7 @@ impl From<(ItemId, bool)> for ItemSortKey {
             let sort_category = &data.item_sort_categorys;
             let item = items.get(&item_id)?;
             let sort_weight = sort_category
-                .get(&xiv_gen::ItemSortCategoryId(item.item_sort_category as i32))
+                .get(&item.item_sort_category)
                 .map(|category| category.param)?;
             Some(Self(sort_weight, item.key_id.0, hq))
         };

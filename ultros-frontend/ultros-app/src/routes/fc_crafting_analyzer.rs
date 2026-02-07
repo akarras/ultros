@@ -175,12 +175,14 @@ fn calculate_fc_project_cost(
                         if let Some(supply_item) =
                             data.company_craft_supply_items.get(supply_item_link)
                         {
-                            if supply_item.item == 0 {
+                            if supply_item.item.0 == 0 {
                                 continue;
                             }
 
                             let total_quantity = (quantity_per_set as i32) * (sets_required as i32);
-                            *materials_map.entry(ItemId(supply_item.item as i32)).or_default() += total_quantity;
+                            *materials_map
+                                .entry(xiv_gen::ItemId(supply_item.item as i32))
+                                .or_default() += total_quantity;
                         }
                     }
                 }

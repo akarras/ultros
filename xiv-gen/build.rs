@@ -122,9 +122,8 @@ impl DataDetector {
         if let DataDetector::Detected(_) = self {
             return;
         }
-        if record.eq_ignore_ascii_case("TRUE") || record.eq_ignore_ascii_case("FALSE") {
+        if record == "TRUE" || record == "FALSE" {
             *self = DataDetector::Detected(DataType::Bool);
-            return;
         }
         lazy_static! {
             // regex: check is number
