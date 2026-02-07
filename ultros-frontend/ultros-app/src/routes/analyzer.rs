@@ -136,11 +136,7 @@ fn compute_summary(
         let mut prices: Vec<i32> = sales.iter().map(|s| s.price_per_unit).collect();
         prices.sort_unstable();
         let len = prices.len();
-        if len > 0 {
-            prices[len / 2]
-        } else {
-            0
-        }
+        if len > 0 { prices[len / 2] } else { 0 }
     };
 
     let t = sales
@@ -437,7 +433,11 @@ fn AnalyzerTable(
         match sort_mode().unwrap_or(SortMode::Roi) {
             SortMode::Roi => sorted_data.sort_by_key(|data| Reverse(data.return_on_investment)),
             SortMode::Profit => sorted_data.sort_by_key(|data| Reverse(data.profit)),
-            SortMode::Score => sorted_data.sort_by(|a, b| b.tataru_score.partial_cmp(&a.tataru_score).unwrap_or(std::cmp::Ordering::Equal)),
+            SortMode::Score => sorted_data.sort_by(|a, b| {
+                b.tataru_score
+                    .partial_cmp(&a.tataru_score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            }),
         }
         sorted_data
             .into_iter()
