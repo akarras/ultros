@@ -282,7 +282,7 @@ fn create_struct(
     let mut parse_this_function = None;
     let mut pk = None;
     let mut unknown_counter = 0;
-    let fields: Vec<(String, String)> = line_two
+    let mut fields: Vec<(String, String)> = line_two
         .iter()
         .zip(line_three.iter())
         .zip(line_four.iter())
@@ -307,6 +307,10 @@ fn create_struct(
                 line_one = "r#trait".to_string();
             } else if line_one == "move" {
                 line_one = "r#move".to_string();
+            } else if line_one == "false" {
+                line_one = "r#false".to_string();
+            } else if line_one == "true" {
+                line_one = "r#true".to_string();
             } else if line_one.chars().next().unwrap_or_default().is_ascii_digit() {
                 line_one = format!("num{line_one}");
             }
@@ -344,7 +348,7 @@ fn create_struct(
                     };
                     let db_field_key = match sample_data {
                         DataType::ReferenceKey => {
-                            let (index, _) = csv_name.char_indices().rev().find(|(_i, c)| c.is_uppercase()).unwrap();
+                            let (index, _) = csv_name.char_indices().rev().find(|(_i, c)| c.is_uppercase()).expect(&format!("Failed to find uppercase char in {}", csv_name));
                             let parent_key = &csv_name[..index];
                             format!("HashMap<{parent_key}Id, {key_value}>")
                         },
@@ -396,6 +400,21 @@ fn create_struct(
             }
         })
         .collect();
+
+    let mut seen = HashSet::new();
+    for (name, _) in fields.iter_mut() {
+        if seen.contains(name) {
+            let mut i = 1;
+            let mut new_name = format!("{}{}", name, i);
+            while seen.contains(&new_name) {
+                i += 1;
+                new_name = format!("{}{}", name, i);
+            }
+            *name = new_name;
+        }
+        seen.insert(name.clone());
+    }
+
     if fields.len() > 100 {
         // handle hugeee fields?
         #[derive(Debug)]
@@ -465,10 +484,11 @@ fn create_struct(
             }
         }
         s.derive("DumbCsvDeserialize");
-        let pk = pk.unwrap();
-        parse_this_function = Some(format!(
-            "{pk}: read_dumb_csv::<{csv_name}>(r#\"{path}\"#).into_iter().map(|m| (m.key_id, m)).collect(),"
-        ))
+        if let Some(pk) = pk {
+            parse_this_function = Some(format!(
+                "{pk}: read_dumb_csv::<{csv_name}>(r#\"{path}\"#).into_iter().map(|m| (m.key_id, m)).collect(),"
+            ))
+        }
         // panic!("{root_names:?}");
     } else {
         for (field_name, field_value) in fields.iter() {
@@ -496,8 +516,9 @@ fn create_struct(
             s.push_field(field);
         }
     }
-    let function = parse_this_function.unwrap();
-    args.read_data.line(function);
+    if let Some(function) = parse_this_function {
+        args.read_data.line(function);
+    }
 
     scope.push_struct(s);
     scope.push_impl(i);
@@ -619,7 +640,7 @@ fn get_table_names(path: impl AsRef<Path>) -> Box<dyn Iterator<Item = (String, S
 
 fn main() {
     // figure out what features have been enabled
-    let dir = "./ffxiv-datamining/csv/";
+    let dir = "./ffxiv-datamining/csv/en/";
     let mut table_names: Vec<_> = get_table_names(dir).collect();
     table_names.sort();
     let mut list = table_names
