@@ -126,12 +126,12 @@ impl DataType {
             DataType::ReferenceKey => {
                 // Should render the parent sheet name + "Key"
                 // GilShopItem -> GilShopId
-                let (i, _c) = sheet_name
+                let root = sheet_name
                     .char_indices()
                     .rev()
                     .find(|(_i, c)| c.is_uppercase())
-                    .unwrap();
-                let root = &sheet_name[..i];
+                    .map(|(i, _)| &sheet_name[..i])
+                    .unwrap_or(sheet_name);
                 format!("SubrowKey<{root}Id>")
             }
         }
@@ -237,18 +237,14 @@ fn create_struct(
         .from_path(path)
         .expect("unable to open path");
     let mut records = reader.records();
-    let _line_one = records
+    let line_two = records
         .next()
         .expect("First line not found")
         .expect("Reader error on first line");
-    let line_two = records
+    let line_three = records
         .next()
         .expect("Second line not found")
         .expect("Error reading second line");
-    let line_three = records
-        .next()
-        .expect("Third line not found")
-        .expect("Third line error reading");
     // iterate over all columns
     let mut line_four: Vec<_> = records
         .next()
@@ -319,11 +315,15 @@ fn create_struct(
             }
             if BIT.is_match(field_value) {
                 (line_one, "bool".to_string())
-            } else if INT.is_match(field_value) {
-                let mut line_two = field_value.replace("int", "");
+            } else if INT.is_match(field_value) || line_one == "key_id" {
+                let mut line_two = if INT.is_match(field_value) {
+                    field_value.replace("int", "")
+                } else {
+                    "i32".to_string()
+                };
                 // uint64 -> u64
                 // int64 -> 64, add the i if no u
-                if !line_two.starts_with('u') {
+                if !line_two.starts_with('u') && !line_two.starts_with('i') {
                     line_two = format!("i{}", line_two);
                 }
 
@@ -344,8 +344,12 @@ fn create_struct(
                     };
                     let db_field_key = match sample_data {
                         DataType::ReferenceKey => {
-                            let (index, _) = csv_name.char_indices().rev().find(|(_i, c)| c.is_uppercase()).unwrap();
-                            let parent_key = &csv_name[..index];
+                            let parent_key = csv_name
+                                .char_indices()
+                                .rev()
+                                .find(|(_i, c)| c.is_uppercase())
+                                .map(|(i, _)| &csv_name[..i])
+                                .unwrap_or(csv_name);
                             format!("HashMap<{parent_key}Id, {key_value}>")
                         },
                         _ => {
@@ -619,7 +623,7 @@ fn get_table_names(path: impl AsRef<Path>) -> Box<dyn Iterator<Item = (String, S
 
 fn main() {
     // figure out what features have been enabled
-    let dir = "./ffxiv-datamining/csv/";
+    let dir = "./ffxiv-datamining/csv/en/";
     let mut table_names: Vec<_> = get_table_names(dir).collect();
     table_names.sort();
     let mut list = table_names

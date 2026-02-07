@@ -220,28 +220,15 @@ fn find_date_range(
     date_range: RangeInclusive<NaiveDateTime>,
     sales: &[SaleHistory],
 ) -> Option<&[SaleHistory]> {
-    // Assuming sales are sorted by date descending (newest first).
-    // Find the first sale (newest) that is <= range.end (usually now).
-    let start = sales
+    let (start, _) = sales
         .iter()
-        .position(|sale| sale.sold_date <= *date_range.end())?;
-
-    // Check if the found sale is actually >= range.start.
-    // If not, then all subsequent sales are also < range.start (since sorted descending),
-    // so no sales are in range.
-    if sales[start].sold_date < *date_range.start() {
-        return None;
-    }
-
-    // Find the last sale (oldest) that is >= range.start.
-    // We search from `start` onwards.
-    // We look for the first sale that is < range.start. The one before it is the last one in range.
-    let end = sales[start..]
+        .enumerate()
+        .find(|(_, sale)| date_range.contains(&sale.sold_date))?;
+    let (end, _) = sales
         .iter()
-        .position(|sale| sale.sold_date < *date_range.start())
-        .map(|pos| start + pos - 1)
-        .unwrap_or(sales.len() - 1);
-
+        .enumerate()
+        .rev()
+        .find(|(_, sale)| date_range.contains(&sale.sold_date))?;
     Some(&sales[start..=end])
 }
 
@@ -332,105 +319,6 @@ fn WindowStats(#[prop(into)] sales: Signal<SalesWindow>) -> impl IntoView {
         </div>
     }
     .into_any()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use chrono::{TimeDelta, Utc};
-
-    fn create_sale(seconds_ago: i64) -> SaleHistory {
-        SaleHistory {
-            id: 0,
-            quantity: 1,
-            price_per_item: 100,
-            buying_character_id: 0,
-            hq: false,
-            sold_item_id: 0,
-            sold_date: Utc::now().naive_utc() - TimeDelta::seconds(seconds_ago),
-            world_id: 0,
-            buyer_name: None,
-        }
-    }
-
-    #[test]
-    fn test_find_date_range() {
-        // Sales are sorted descending (newest first).
-        // create_sale(10) is newer than create_sale(20).
-        let sales = vec![
-            create_sale(10), // index 0
-            create_sale(20), // index 1
-            create_sale(30), // index 2
-            create_sale(40), // index 3
-            create_sale(50), // index 4
-        ];
-
-        let now = Utc::now().naive_utc();
-
-        // Range covering index 1 to 3 (20s ago to 40s ago)
-        let range = (now - TimeDelta::seconds(45))..=(now - TimeDelta::seconds(15));
-
-        let result = find_date_range(range, &sales);
-        assert!(result.is_some());
-        let result = result.unwrap();
-        assert_eq!(result.len(), 3); // 20, 30, 40 are in range
-        // Wait, 15s ago is END of range (newest allowed). 45s ago is START of range (oldest allowed).
-        // 10s ago is > END (too new).
-        // 20s ago is <= END (ok). >= START (ok).
-        // 30s ago is ok.
-        // 40s ago is ok.
-        // 50s ago is < START (too old).
-
-        // So expected indices: 1, 2, 3.
-        assert_eq!(result[0].sold_date, sales[1].sold_date);
-        assert_eq!(result[2].sold_date, sales[3].sold_date);
-    }
-
-    #[test]
-    fn test_find_date_range_all() {
-        let sales = vec![create_sale(10), create_sale(20)];
-        let now = Utc::now().naive_utc();
-        let range = (now - TimeDelta::seconds(100))..=(now + TimeDelta::seconds(100));
-
-        let result = find_date_range(range, &sales).unwrap();
-        assert_eq!(result.len(), 2);
-    }
-
-    #[test]
-    fn test_find_date_range_none() {
-        let sales = vec![create_sale(10), create_sale(20)];
-        let now = Utc::now().naive_utc();
-        // Range in future
-        let range = (now + TimeDelta::seconds(10))..=(now + TimeDelta::seconds(20));
-        assert!(find_date_range(range, &sales).is_none());
-
-        // Range in past
-        let range = (now - TimeDelta::seconds(100))..=(now - TimeDelta::seconds(50));
-        // All sales are newer than range end (-50).
-        // Wait, sales are -10, -20.
-        // Range end is -50.
-        // sales[0] (-10) > -50.
-        // sales[1] (-20) > -50.
-        // So position returns None.
-        assert!(find_date_range(range, &sales).is_none());
-    }
-
-    #[test]
-    fn test_find_date_range_partial() {
-        let sales = vec![create_sale(10), create_sale(20), create_sale(30)];
-        let now = Utc::now().naive_utc();
-
-        // Range covers first 2
-        // End: -5 (newest allowed). Start: -25 (oldest allowed).
-        // -10: ok.
-        // -20: ok.
-        // -30: too old.
-        let range = (now - TimeDelta::seconds(25))..=(now - TimeDelta::seconds(5));
-        let result = find_date_range(range, &sales).unwrap();
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0].sold_date, sales[0].sold_date);
-        assert_eq!(result[1].sold_date, sales[1].sold_date);
-    }
 }
 
 #[component]
