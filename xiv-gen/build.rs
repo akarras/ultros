@@ -673,7 +673,10 @@ fn main() {
     scope.import("crate::subrow_key", "SubrowKey");
     scope.import("derive_more", "FromStr");
     scope.import("dumb_csv", "DumbCsvDeserialize");
-    write(dest_path, scope.to_string()).unwrap();
+    let mut scope_string = scope.to_string();
+    // Add allow(unused_imports) to each line that is an import
+    scope_string = scope_string.replace("use ", "#[allow(unused_imports)]\nuse ");
+    write(dest_path, scope_string).unwrap();
 
     let conversion_files = Path::new(&out_dir).join("deserialization.rs");
 
