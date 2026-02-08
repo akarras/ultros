@@ -412,15 +412,19 @@ mod tests {
         let result_past = find_date_range(range_past, &sales);
         assert!(result_past.is_none());
 
-         // Test range partially overlapping end (oldest sales)
+        // Test range partially overlapping end (oldest sales)
         // History goes to 199 hours back.
         // Range: now - 205h to now - 195h.
         // Should catch indices 195 to 199.
         let range_overlap = (now - TimeDelta::hours(205))..=(now - TimeDelta::hours(195));
-        let result_overlap = find_date_range(range_overlap, &sales).expect("Should find partial overlap");
+        let result_overlap =
+            find_date_range(range_overlap, &sales).expect("Should find partial overlap");
         assert_eq!(result_overlap.len(), 5);
         assert_eq!(result_overlap[0].sold_date, now - TimeDelta::hours(195));
-        assert_eq!(result_overlap.last().unwrap().sold_date, now - TimeDelta::hours(199));
+        assert_eq!(
+            result_overlap.last().unwrap().sold_date,
+            now - TimeDelta::hours(199)
+        );
     }
 
     #[test]
