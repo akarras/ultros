@@ -619,7 +619,7 @@ fn get_table_names(path: impl AsRef<Path>) -> Box<dyn Iterator<Item = (String, S
 
 fn main() {
     // figure out what features have been enabled
-    let dir = "./ffxiv-datamining/csv/";
+    let dir = "./ffxiv-datamining/csv/en/";
     let mut table_names: Vec<_> = get_table_names(dir).collect();
     table_names.sort();
     let mut list = table_names
@@ -673,7 +673,28 @@ fn main() {
     scope.import("crate::subrow_key", "SubrowKey");
     scope.import("derive_more", "FromStr");
     scope.import("dumb_csv", "DumbCsvDeserialize");
-    write(dest_path, scope.to_string()).unwrap();
+    // Suppress unused imports in generated code
+    let mut code = scope.to_string();
+    // Wrap the generated code in a module to allow inner attributes or suppress at item level.
+    // Since we are including this file in lib.rs, it is effectively part of the module.
+    // Ideally, we should add #[allow(unused_imports)] to each use statement, but codegen-rs might not support it easily for imports.
+    //
+    // WORKAROUND: We will manually inject the allow attribute before the imports.
+    // However, as seen, inner attributes are picky about placement.
+    // But `include!` places the code *inside* the module.
+    //
+    // Let's try to remove the imports from `scope` and print them manually with the attribute.
+    // `codegen-rs` doesn't seem to expose removing imports.
+    //
+    // Alternative: We can define a dummy module in types.rs and put everything there? No, types need to be accessible.
+    //
+    // Let's rely on the fact that we are generating the file.
+    // We can't use #![allow(unused_imports)] because it's an included file, not a crate root or module root in a way that allows it easily if there are statements before it? No, it should work if it's the first thing.
+    // The error "an inner attribute is not permitted in this context" suggests `include!` might be the issue or how it's being parsed.
+    //
+    // Let's try to add `#[allow(unused_imports)]` to the `use` statements by text replacement.
+    code = code.replace("use ", "#[allow(unused_imports)]\nuse ");
+    write(dest_path, code).unwrap();
 
     let conversion_files = Path::new(&out_dir).join("deserialization.rs");
 
