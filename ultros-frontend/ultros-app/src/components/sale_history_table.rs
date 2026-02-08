@@ -220,15 +220,28 @@ fn find_date_range(
     date_range: RangeInclusive<NaiveDateTime>,
     sales: &[SaleHistory],
 ) -> Option<&[SaleHistory]> {
-    let (start, _) = sales
+    // Optimization: Assume sales are sorted by date descending (newest first),
+    // which is the standard format from Universalis API.
+
+    // Find the first sale that is <= range.end (newest possible sale in range)
+    let start = sales
         .iter()
-        .enumerate()
-        .find(|(_, sale)| date_range.contains(&sale.sold_date))?;
-    let (end, _) = sales
+        .position(|sale| sale.sold_date <= *date_range.end())?;
+
+    // If the newest sale <= end is already older than start, then no sale is in range.
+    if sales[start].sold_date < *date_range.start() {
+        return None;
+    }
+
+    // Find the last sale that is >= range.start (oldest possible sale in range)
+    // We search from `start` onwards.
+    // We look for the first sale that is < range.start. The one before it is the last one in range.
+    let end = sales[start..]
         .iter()
-        .enumerate()
-        .rev()
-        .find(|(_, sale)| date_range.contains(&sale.sold_date))?;
+        .position(|sale| sale.sold_date < *date_range.start())
+        .map(|pos| start + pos - 1)
+        .unwrap_or(sales.len() - 1);
+
     Some(&sales[start..=end])
 }
 
@@ -340,4 +353,112 @@ pub fn SalesInsights(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
         </div>
     }
     .into_any()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{NaiveDate, NaiveTime};
+
+    #[test]
+    fn test_find_date_range_sorted() {
+        let now = NaiveDateTime::new(
+            NaiveDate::from_ymd_opt(2023, 1, 10).unwrap(),
+            NaiveTime::from_hms_opt(12, 0, 0).unwrap(),
+        );
+        let mut sales = Vec::new();
+        // Generate sales every hour: 10th 12:00, 10th 11:00, ... 1st 12:00
+        for i in 0..200 {
+            sales.push(SaleHistory {
+                id: i as i32,
+                quantity: 1,
+                price_per_item: 100,
+                buying_character_id: 1,
+                hq: false,
+                sold_item_id: 1,
+                sold_date: now - TimeDelta::hours(i as i64),
+                world_id: 1,
+                buyer_name: None,
+            });
+        }
+
+        // Test range: last 5 hours (indices 0 to 4)
+        // Range start: now - 4h
+        // Range is inclusive.
+        // Range: (now - 4h) ..= now
+        // This should include indices 0 (now), 1 (now-1h), 2 (now-2h), 3 (now-3h), 4 (now-4h).
+        let range = (now - TimeDelta::hours(4))..=now;
+
+        let result = find_date_range(range.clone(), &sales).expect("Should find range");
+        assert_eq!(result.len(), 5);
+        assert_eq!(result[0].sold_date, now);
+        assert_eq!(result[4].sold_date, now - TimeDelta::hours(4));
+
+        // Test range in the middle: now - 10h to now - 6h
+        // Indices 6, 7, 8, 9, 10.
+        let range_mid = (now - TimeDelta::hours(10))..=(now - TimeDelta::hours(6));
+        let result_mid = find_date_range(range_mid.clone(), &sales).expect("Should find range");
+        assert_eq!(result_mid.len(), 5);
+        assert_eq!(result_mid[0].sold_date, now - TimeDelta::hours(6));
+        assert_eq!(result_mid[4].sold_date, now - TimeDelta::hours(10));
+
+        // Test range with no match (future)
+        let range_future = (now + TimeDelta::hours(1))..=(now + TimeDelta::hours(5));
+        let result_future = find_date_range(range_future, &sales);
+        assert!(result_future.is_none());
+
+        // Test range with no match (past, older than history)
+        let range_past = (now - TimeDelta::hours(300))..=(now - TimeDelta::hours(250));
+        let result_past = find_date_range(range_past, &sales);
+        assert!(result_past.is_none());
+
+         // Test range partially overlapping end (oldest sales)
+        // History goes to 199 hours back.
+        // Range: now - 205h to now - 195h.
+        // Should catch indices 195 to 199.
+        let range_overlap = (now - TimeDelta::hours(205))..=(now - TimeDelta::hours(195));
+        let result_overlap = find_date_range(range_overlap, &sales).expect("Should find partial overlap");
+        assert_eq!(result_overlap.len(), 5);
+        assert_eq!(result_overlap[0].sold_date, now - TimeDelta::hours(195));
+        assert_eq!(result_overlap.last().unwrap().sold_date, now - TimeDelta::hours(199));
+    }
+
+    #[test]
+    fn test_find_date_range_empty() {
+        let now = NaiveDateTime::new(
+            NaiveDate::from_ymd_opt(2023, 1, 10).unwrap(),
+            NaiveTime::from_hms_opt(12, 0, 0).unwrap(),
+        );
+        let sales = Vec::new();
+        let range = (now - TimeDelta::hours(4))..=now;
+        assert!(find_date_range(range, &sales).is_none());
+    }
+
+    #[test]
+    fn test_find_date_range_single() {
+        let now = NaiveDateTime::new(
+            NaiveDate::from_ymd_opt(2023, 1, 10).unwrap(),
+            NaiveTime::from_hms_opt(12, 0, 0).unwrap(),
+        );
+        let sales = vec![SaleHistory {
+            id: 1,
+            quantity: 1,
+            price_per_item: 100,
+            buying_character_id: 1,
+            hq: false,
+            sold_item_id: 1,
+            sold_date: now,
+            world_id: 1,
+            buyer_name: None,
+        }];
+
+        // Match
+        let range = (now - TimeDelta::hours(1))..=now;
+        let result = find_date_range(range, &sales).expect("Should find");
+        assert_eq!(result.len(), 1);
+
+        // No match
+        let range_past = (now - TimeDelta::hours(2))..=(now - TimeDelta::hours(1));
+        assert!(find_date_range(range_past, &sales).is_none());
+    }
 }
