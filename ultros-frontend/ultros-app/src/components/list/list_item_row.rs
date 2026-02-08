@@ -47,6 +47,7 @@ pub fn ListItemRow(
                             <td class:hidden=move || !edit_list_mode()>
                                 <input
                                     type="checkbox"
+                                    aria-label="Select item"
                                     on:click=move |_| {
                                         selected_items
                                             .update(|u| {
@@ -130,6 +131,7 @@ pub fn ListItemRow(
                                 <div class="flex gap-1">
                                     <button
                                         class="btn"
+                                        aria-label="Delete item"
                                         on:click=move |_| {
                                             let _ = delete_item.dispatch(item.with(|i| i.id));
                                         }
@@ -138,6 +140,7 @@ pub fn ListItemRow(
                                     </button>
                                     <button
                                         class="btn"
+                                        aria-label=move || if edit() { "Save changes" } else { "Edit item" }
                                         on:click=move |_| {
                                             if temp_item() != item() {
                                                 let _ = edit_item.dispatch(temp_item());
@@ -152,6 +155,7 @@ pub fn ListItemRow(
                                     <Tooltip tooltip_text="Mark as acquired">
                                         <button
                                             class="btn"
+                                            aria-label="Mark as acquired"
                                             on:click=move |_| {
                                                 item.update(|i| {
                                                     i.acquired = i.quantity;
@@ -173,6 +177,7 @@ pub fn ListItemRow(
                             <td>
                                 <input
                                     type="checkbox"
+                                    aria-label="High Quality"
                                     prop:checked=move || temp_item.with(|i| i.hq)
                                     on:click=move |_| {
                                         temp_item.update(|w| w.hq = Some(!w.hq.unwrap_or_default()))
@@ -211,6 +216,7 @@ pub fn ListItemRow(
                                     <label class="text-xs">"Qty"</label>
                                     <input
                                         class="input w-20"
+                                        aria-label="Quantity"
                                         prop:value=move || temp_item.with(|i| i.quantity)
                                         on:input=move |e| {
                                             if let Ok(value) = event_target_value(&e).parse::<i32>() {
@@ -225,6 +231,7 @@ pub fn ListItemRow(
                                     <label class="text-xs">"Acquired"</label>
                                     <input
                                         class="input w-20"
+                                        aria-label="Acquired amount"
                                         prop:value=move || temp_item.with(|i| i.acquired.unwrap_or(0))
                                         on:input=move |e| {
                                             if let Ok(value) = event_target_value(&e).parse::<i32>() {
@@ -256,6 +263,7 @@ pub fn ListItemRow(
                             <td>
                                 <button
                                     class="btn"
+                                    aria-label="Delete item"
                                     on:click=move |_| {
                                         let _ = delete_item.dispatch(item.id);
                                     }
@@ -264,6 +272,7 @@ pub fn ListItemRow(
                                 </button>
                                 <button
                                     class="btn"
+                                    aria-label=move || if edit() { "Save changes" } else { "Edit item" }
                                     on:click=move |_| {
                                         if temp_item() != item {
                                             let _ = edit_item.dispatch(temp_item());
