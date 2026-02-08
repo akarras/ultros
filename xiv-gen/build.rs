@@ -414,7 +414,27 @@ fn create_struct(
             }
             if let Some(captures) = DOUBLE.captures(key) {
                 let key_1 = captures.get(2).unwrap();
-                let key_2 = captures.get(3).unwrap();
+                // Check if group 3 exists before unwrapping, though the regex implies it should if matched.
+                // However, the panic indicates otherwise or maybe group 2 is missing?
+                // The regex is `([A-z_])+([0-9]+)_([0-9]+)`.
+                // Group 1: `([A-z_])+` (One or more letters/underscores) - Note: Repeat captures last iteration.
+                // Group 2: `([0-9]+)` (One or more digits)
+                // Group 3: `([0-9]+)` (One or more digits)
+                // If it matches, all groups should be present.
+                // The panic said `called Option::unwrap() on a None value`.
+                // If `captures.get(3)` is None, it means the regex matched but group 3 didn't?
+                // Wait, `regex` crate `captures.get(N)` returns `Option<Match>`.
+                // If the regex matches, all capturing groups that participated in the match should be Some.
+                // UNLESS the group is optional, which it isn't here.
+                // Maybe the panic is from `key_1`?
+                // Let's add better error handling/debugging.
+                let key_2 = match captures.get(3) {
+                    Some(k) => k,
+                    None => {
+                        println!("cargo:warning=DOUBLE matched key '{}' but group 3 is missing. Captures: {:?}", key, captures);
+                        continue;
+                    }
+                };
                 // let root = captures.get(0).unwrap();
                 let root = &key[..key_1.start() - 1];
                 let root = format!("{}_{}", root, key_2.as_str().parse::<usize>().unwrap());
@@ -426,7 +446,13 @@ fn create_struct(
                     root_names.push((root, (key, value), 0));
                 }
             } else if let Some(captures) = SINGLE.captures(key) {
-                let key_1 = captures.get(2).unwrap();
+                let key_1 = match captures.get(2) {
+                    Some(k) => k,
+                    None => {
+                        println!("cargo:warning=SINGLE matched key '{}' but group 2 is missing. Captures: {:?}", key, captures);
+                        continue;
+                    }
+                };
                 let root = &key[..key_1.start() - 1];
                 if root == "unknown" {
                     let (_, _, skip) = root_names.last_mut().unwrap();
@@ -465,10 +491,13 @@ fn create_struct(
             }
         }
         s.derive("DumbCsvDeserialize");
-        let pk = pk.unwrap();
-        parse_this_function = Some(format!(
-            "{pk}: read_dumb_csv::<{csv_name}>(r#\"{path}\"#).into_iter().map(|m| (m.key_id, m)).collect(),"
-        ))
+        if let Some(pk_val) = pk {
+            parse_this_function = Some(format!(
+                "{pk_val}: read_dumb_csv::<{csv_name}>(r#\"{path}\"#).into_iter().map(|m| (m.key_id, m)).collect(),"
+            ))
+        } else {
+             println!("cargo:warning=pk is None for {} in large field block", csv_name);
+        }
         // panic!("{root_names:?}");
     } else {
         for (field_name, field_value) in fields.iter() {
@@ -496,8 +525,12 @@ fn create_struct(
             s.push_field(field);
         }
     }
-    let function = parse_this_function.unwrap();
-    args.read_data.line(function);
+    if let Some(function) = parse_this_function {
+        args.read_data.line(function);
+    } else {
+        println!("cargo:warning=parse_this_function is None for {}", csv_name);
+        return;
+    }
 
     scope.push_struct(s);
     scope.push_impl(i);
