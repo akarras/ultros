@@ -724,13 +724,12 @@ impl AnalyzerService {
                 // Let's stick to the previous logic but maybe make it a bit more statistically sound if possible.
                 // For now, I'll stick to the requested improvement: Use Standard Deviation.
 
-                // If price is > 1 standard deviation above average, and at least 20% higher.
-                if (cheapest.price as f32 > avg_price + std_dev) && price_diff_ratio > 1.2 {
+                // Spike Detection: Price > Average + 2 * StdDev.
+                if (cheapest.price as f32) > (avg_price + 2.0 * std_dev) {
                     rising_price.push(trend_item.clone());
                 }
-                // Falling: Price < 1 SD below average, and at least 20% lower.
-                else if (cheapest.price as f32) < (avg_price - std_dev) && price_diff_ratio < 0.8
-                {
+                // Crash Detection: Price < Average - 2 * StdDev.
+                else if (cheapest.price as f32) < (avg_price - 2.0 * std_dev) {
                     falling_price.push(trend_item.clone());
                 }
             }
@@ -835,12 +834,10 @@ impl AnalyzerService {
             .iter()
             .flat_map(|(item_key, cheapest_price)| {
                 let (cheapest_history, sold_within) = *sale_history.get(item_key)?;
-                let current_cheapest_on_sale_world = sale_world_listings
-                    .item_map
-                    .get(item_key)
-                    .map(|l| l.price)
-                    .unwrap_or(cheapest_history);
-                let est_sale_price = (cheapest_history).min(current_cheapest_on_sale_world);
+                let current_cheapest_on_sale_world =
+                    sale_world_listings.item_map.get(item_key).map(|l| l.price);
+                let est_sale_price =
+                    calculate_estimated_price(cheapest_history, current_cheapest_on_sale_world);
                 let profit = est_sale_price - cheapest_price.price;
                 Some(ResaleStats {
                     profit,
@@ -1205,6 +1202,14 @@ pub(crate) struct ResaleOptions {
     pub(crate) filter_sale: Option<SoldWithin>,
 }
 
+fn calculate_estimated_price(median_price: i32, current_cheapest_listing: Option<i32>) -> i32 {
+    if let Some(cheapest) = current_cheapest_listing {
+        std::cmp::min(cheapest - 1, median_price)
+    } else {
+        (median_price as f32 * 1.2) as i32
+    }
+}
+
 #[cfg(test)]
 mod test {
     use chrono::{Duration, Utc};
@@ -1213,6 +1218,24 @@ mod test {
     use crate::analyzer_service::ItemKey;
 
     use super::{SaleHistory, SaleSummary, SoldAmount, SoldWithin};
+
+    #[test]
+    fn test_calculate_estimated_price() {
+        // 1. Market Empty
+        assert_eq!(super::calculate_estimated_price(100, None), 120);
+
+        // 2. Market Present (Low)
+        assert_eq!(super::calculate_estimated_price(100, Some(90)), 89);
+
+        // 3. Market Present (High)
+        assert_eq!(super::calculate_estimated_price(100, Some(150)), 100);
+
+        // 4. Market Present (Equal)
+        assert_eq!(super::calculate_estimated_price(100, Some(100)), 99);
+
+        // 5. Market Present (Equal + 1)
+        assert_eq!(super::calculate_estimated_price(100, Some(101)), 100);
+    }
 
     #[test]
     fn test_sale_history_sort() {
