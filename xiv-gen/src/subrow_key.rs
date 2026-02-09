@@ -24,10 +24,10 @@ where
     type Err = ();
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-         let (primary_key, secondary) = s.split_once(".").ok_or(())?;
-         let primary_key = primary_key.parse().map_err(|_| ())?;
-         let secondary = secondary.parse().map_err(|_| ())?;
-         Ok(Self(primary_key, secondary))
+        let (primary_key, secondary) = s.split_once(".").ok_or(())?;
+        let primary_key = primary_key.parse().map_err(|_| ())?;
+        let secondary = secondary.parse().map_err(|_| ())?;
+        Ok(Self(primary_key, secondary))
     }
 }
 

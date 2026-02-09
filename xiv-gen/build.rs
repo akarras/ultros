@@ -425,7 +425,8 @@ fn create_struct(
         } else if let Some(captures) = SINGLE.captures(name) {
             let key_1 = captures.get(2).unwrap();
             let root = name[..key_1.start() - 1].to_string(); // e.g. Param
-            if root != "unknown" { // Skip unknown array detection? Original logic did.
+            if root != "unknown" {
+                // Skip unknown array detection? Original logic did.
                 let index = key_1.as_str().parse::<usize>().unwrap();
                 Some((root, index))
             } else {
@@ -446,7 +447,12 @@ fn create_struct(
                     // Flush existing
                     let count = *next_idx;
                     let vec_type = format!("Vec<{}>", curr_type);
-                    processed_fields.push((curr_root.clone(), vec_type, String::new(), Some(count)));
+                    processed_fields.push((
+                        curr_root.clone(),
+                        vec_type,
+                        String::new(),
+                        Some(count),
+                    ));
                     current_array = None;
                 }
             }
@@ -488,15 +494,15 @@ fn create_struct(
         let mut final_name = name.to_snake_case();
         // Handle numeric-only names which heck to_snake_case might return as is (e.g. "0" -> "0")
         if final_name.chars().next().map_or(false, |c| c.is_numeric()) {
-             final_name = format!("num_{}", final_name);
+            final_name = format!("num_{}", final_name);
         }
 
         if used_names.contains(&final_name) {
-             let mut i = 1;
-             while used_names.contains(&format!("{}_{}", final_name, i)) {
-                 i += 1;
-             }
-             final_name = format!("{}_{}", final_name, i);
+            let mut i = 1;
+            while used_names.contains(&format!("{}_{}", final_name, i)) {
+                i += 1;
+            }
+            final_name = format!("{}_{}", final_name, i);
         }
         used_names.insert(final_name.clone());
 
@@ -512,18 +518,22 @@ fn create_struct(
 
         // Add deserialize annotations
         if type_ == "i64" || (type_.starts_with("Vec<") && type_.contains("i64")) {
-             // i64 handling for vec? Original logic:
-             // if field_value == "i64" { ... }
-             // We should check inner type if vec
-             if type_.contains("i64") {
-                 field.annotation(vec!["#[serde(deserialize_with = \"deserialize_i64_from_u8_array\")]"]);
-             }
+            // i64 handling for vec? Original logic:
+            // if field_value == "i64" { ... }
+            // We should check inner type if vec
+            if type_.contains("i64") {
+                field.annotation(vec![
+                    "#[serde(deserialize_with = \"deserialize_i64_from_u8_array\")]",
+                ]);
+            }
         }
         if type_ == "bool" {
-             field.annotation(vec!["#[serde(deserialize_with = \"deserialize_bool_from_anything_custom\")]"]);
+            field.annotation(vec![
+                "#[serde(deserialize_with = \"deserialize_bool_from_anything_custom\")]",
+            ]);
         }
         if type_.ends_with("Id") && name != "key_id" {
-             field.annotation(vec![r#"#[serde(deserialize_with = "ok_or_default")]"#]);
+            field.annotation(vec![r#"#[serde(deserialize_with = "ok_or_default")]"#]);
         }
         s.push_field(field);
     }

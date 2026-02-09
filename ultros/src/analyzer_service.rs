@@ -729,7 +729,8 @@ impl AnalyzerService {
                     rising_price.push(trend_item.clone());
                 }
                 // Falling: Price < 2 SD below average, and at least 20% lower.
-                else if (cheapest.price as f32) < (avg_price - 2.0 * std_dev) && price_diff_ratio < 0.8
+                else if (cheapest.price as f32) < (avg_price - 2.0 * std_dev)
+                    && price_diff_ratio < 0.8
                 {
                     falling_price.push(trend_item.clone());
                 }
@@ -835,10 +836,8 @@ impl AnalyzerService {
             .iter()
             .flat_map(|(item_key, cheapest_price)| {
                 let (cheapest_history, sold_within) = *sale_history.get(item_key)?;
-                let current_listing_price = sale_world_listings
-                    .item_map
-                    .get(item_key)
-                    .map(|l| l.price);
+                let current_listing_price =
+                    sale_world_listings.item_map.get(item_key).map(|l| l.price);
 
                 let est_sale_price = if let Some(listing_price) = current_listing_price {
                     (cheapest_history).min(listing_price - 1)
