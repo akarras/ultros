@@ -63,12 +63,14 @@ struct CalculatedProfitData {
     inner: Arc<ProfitData>,
     profit: i32,
     return_on_investment: i32,
+    daily_profit: i32,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum SortMode {
     Roi,
     Profit,
+    DailyProfit,
 }
 
 #[derive(Clone, Debug)]
@@ -150,6 +152,7 @@ impl FromStr for SortMode {
         match s {
             "roi" => Ok(SortMode::Roi),
             "profit" => Ok(SortMode::Profit),
+            "daily-profit" => Ok(SortMode::DailyProfit),
             _ => Err(()),
         }
     }
@@ -160,6 +163,7 @@ impl std::fmt::Display for SortMode {
         let val = match self {
             SortMode::Roi => "roi",
             SortMode::Profit => "profit",
+            SortMode::DailyProfit => "daily-profit",
         };
         f.write_str(val)
     }
@@ -321,10 +325,19 @@ fn AnalyzerTable(
                 } else {
                     0
                 };
+
+                let sales_per_day = data
+                    .sale_summary
+                    .avg_sale_duration
+                    .map(|d| 86400.0 / d.num_seconds() as f32)
+                    .unwrap_or(0.0);
+                let daily_profit = (profit as f32 * sales_per_day) as i32;
+
                 CalculatedProfitData {
                     inner: data.clone(),
                     profit,
                     return_on_investment,
+                    daily_profit,
                 }
             })
             .filter(move |data| {
@@ -379,6 +392,7 @@ fn AnalyzerTable(
         match sort_mode().unwrap_or(SortMode::Roi) {
             SortMode::Roi => sorted_data.sort_by_key(|data| Reverse(data.return_on_investment)),
             SortMode::Profit => sorted_data.sort_by_key(|data| Reverse(data.profit)),
+            SortMode::DailyProfit => sorted_data.sort_by_key(|data| Reverse(data.daily_profit)),
         }
         sorted_data
             .into_iter()
@@ -704,6 +718,22 @@ fn AnalyzerTable(
                                     </QueryButton>
                                 </div>
                                 <div role="columnheader" class="w-30 p-4">
+                                    <QueryButton
+                                        class="!text-brand-300 hover:text-brand-200"
+                                        active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
+                                        key="sort"
+                                        value="daily-profit"
+                                    >
+                                        <div class="flex items-center gap-2">
+                                            "Daily Profit"
+                                            {move || {
+                                                (sort_mode() == Some(SortMode::DailyProfit))
+                                                    .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
+                                            }}
+                                        </div>
+                                    </QueryButton>
+                                </div>
+                                <div role="columnheader" class="w-30 p-4">
                                     "Buy Price"
                                 </div>
                                 <div role="columnheader" class="w-30 p-4 flex flex-row gap-2 hidden lg:flex">
@@ -837,6 +867,9 @@ fn AnalyzerTable(
                                         }>
                                             {format!("{}%", data.return_on_investment)}
                                         </span>
+                                    </div>
+                                    <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
+                                        <Gil amount=data.daily_profit />
                                     </div>
                                     <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
                                         <Gil amount=data.inner.cheapest_price />
