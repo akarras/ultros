@@ -150,8 +150,9 @@ impl DataDetector {
         if let DataDetector::Detected(_) = self {
             return;
         }
-        if record == "TRUE" || record == "FALSE" {
+        if record == "TRUE" || record == "FALSE" || record == "True" || record == "False" {
             *self = DataDetector::Detected(DataType::Bool);
+            return;
         }
         lazy_static! {
             // regex: check is number
@@ -174,7 +175,10 @@ impl DataDetector {
                 }
             }
         }
-        if record.chars().any(|a| !a.is_numeric()) {
+        if record
+            .chars()
+            .any(|a| !a.is_numeric() && a != '-' && a != '+')
+        {
             *self = DataDetector::Detected(DataType::String)
         }
         if record.is_empty() {
@@ -201,7 +205,7 @@ impl DataDetector {
                 if let Some((min, max)) = int_range {
                     // start small and expand the range.
                     [
-                        (0..=1, DataType::Bool),
+                        // removed 0..=1 bool detection to prefer u8/i8 for ID safety
                         (u8::MIN as i64..=u8::MAX as i64, DataType::UnsignedInt8),
                         (i8::MIN as i64..=i8::MAX as i64, DataType::SignedInt8),
                         (u16::MIN as i64..=u16::MAX as i64, DataType::UnsignedInt16),
@@ -237,18 +241,10 @@ fn create_struct(
         .from_path(path)
         .expect("unable to open path");
     let mut records = reader.records();
-    let _line_one = records
+    let line_two = records
         .next()
         .expect("First line not found")
         .expect("Reader error on first line");
-    let line_two = records
-        .next()
-        .expect("Second line not found")
-        .expect("Error reading second line");
-    let line_three = records
-        .next()
-        .expect("Third line not found")
-        .expect("Third line error reading");
     // iterate over all columns
     let mut line_four: Vec<_> = records
         .next()
@@ -284,9 +280,8 @@ fn create_struct(
     let mut unknown_counter = 0;
     let fields: Vec<(String, String)> = line_two
         .iter()
-        .zip(line_three.iter())
         .zip(line_four.iter())
-        .map(|((field_name, field_value), sample_data)| {
+        .map(|(field_name, sample_data)| {
             let mut line_one = if field_name == "#" {
                 "key_id".to_string()
             } else if field_name.is_empty() {
@@ -311,76 +306,139 @@ fn create_struct(
                 line_one = format!("num{line_one}");
             }
 
-            lazy_static! {
-                // regex: check is int type
-                static ref INT: Regex = Regex::new(r#"^(u|)int(8|16|32|64)$"#).unwrap();
-                // regex: check is bit offset
-                static ref BIT: Regex = Regex::new(r#"^bit(&[0-9]+|)|bool$"#).unwrap();
+            let mut field_type = sample_data.field_type(csv_name);
+
+            // Force base_param_value to i16 because DataDetector might miss large values if they appear late or if sampled (though we iterate all here)
+            // or if the logic is flawed. Explicit is better for known types.
+            if line_one.contains("base_param_value") {
+                field_type = "i16".to_string();
             }
-            if BIT.is_match(field_value) {
-                (line_one, "bool".to_string())
-            } else if INT.is_match(field_value) {
-                let mut line_two = field_value.replace("int", "");
-                // uint64 -> u64
-                // int64 -> 64, add the i if no u
-                if !line_two.starts_with('u') {
-                    line_two = format!("i{}", line_two);
-                }
 
-                if line_one == "key_id" {
-                    let mut key = Struct::new(&key_name);
-                    apply_derives(&mut key).derive("FromStr").derive("Default").derive("Hash").derive("Eq").derive("Copy").vis("pub").tuple_field(sample_data.field_type(csv_name)).vis("pub");
-                    scope.push_struct(key);
+            if line_one == "key_id" {
+                let mut key = Struct::new(&key_name);
+                apply_derives(&mut key)
+                    .derive("FromStr")
+                    .derive("Default")
+                    .derive("Hash")
+                    .derive("Eq")
+                    .derive("Copy")
+                    .derive("PartialOrd")
+                    .derive("Ord")
+                    .vis("pub")
+                    .tuple_field(field_type.clone())
+                    .vis("pub");
+                scope.push_struct(key);
 
-                    line_two = key_name.clone();
-                    let db_field_name = format!("{}s", csv_name.to_snake_case());
-                    let key_value = match sample_data {
-                        DataType::ReferenceKey => {
-                            Cow::from(format!("Vec<{csv_name}>"))
-                        },
-                        _ => {
-                            Cow::Borrowed(csv_name.as_str())
-                        }
-                    };
-                    let db_field_key = match sample_data {
-                        DataType::ReferenceKey => {
-                            let (index, _) = csv_name.char_indices().rev().find(|(_i, c)| c.is_uppercase()).unwrap();
-                            let parent_key = &csv_name[..index];
-                            format!("HashMap<{parent_key}Id, {key_value}>")
-                        },
-                        _ => {
-                            format!("HashMap<{key_name}, {key_value}>")
-                        }
-                    };
-                    args.db
-                        .field(&db_field_name, &db_field_key).vis("pub");
-                    pk = Some(db_field_name.to_string());
-                    match sample_data {
-                        DataType::ReferenceKey => {
-                            parse_this_function = Some(format!("{db_field_name}: read_csv::<{csv_name}>(r#\"{path}\"#).into_iter().fold(HashMap::new(), |mut map, m| {{ map.entry(m.key_id.0.0).or_default().push(m); map }}),"));
-                        },
-                        _ => {
-                            parse_this_function = Some(format!("{db_field_name}: read_csv::<{csv_name}>(r#\"{path}\"#).into_iter().map(|m| (m.key_id, m)).collect(),"));
-                        }
+                let db_field_name = format!("{}s", csv_name.to_snake_case());
+                let key_value = match sample_data {
+                    DataType::ReferenceKey => Cow::from(format!("Vec<{csv_name}>")),
+                    _ => Cow::Borrowed(csv_name.as_str()),
+                };
+                let db_field_key = match sample_data {
+                    DataType::ReferenceKey => {
+                        let (index, _) = csv_name
+                            .char_indices()
+                            .rev()
+                            .find(|(_i, c)| c.is_uppercase())
+                            .unwrap();
+                        let parent_key = &csv_name[..index];
+                        format!("HashMap<{parent_key}Id, {key_value}>")
                     }
-                    local_data.known_structs.insert(key_name.clone());
+                    _ => {
+                        format!("HashMap<{key_name}, {key_value}>")
+                    }
+                };
+                args.db.field(&db_field_name, &db_field_key).vis("pub");
+                pk = Some(db_field_name.to_string());
+                match sample_data {
+                    DataType::ReferenceKey => {
+                        parse_this_function = Some(format!("{db_field_name}: read_csv::<{csv_name}>(r#\"{path}\"#).into_iter().fold(HashMap::new(), |mut map, m| {{ map.entry(m.key_id.0.0).or_default().push(m); map }}),"));
+                    }
+                    _ => {
+                        parse_this_function = Some(format!("{db_field_name}: read_csv::<{csv_name}>(r#\"{path}\"#).into_iter().map(|m| (m.key_id, m)).collect(),"));
+                    }
                 }
-                (line_one, line_two)
-            } else if field_value == "byte" {
-                (line_one, "u8".to_string())
-            } else if field_value == "sbyte" {
-                (line_one, "i8".to_string())
-            } else if field_value == "str" {
-                (line_one, "String".to_string())
-            } else {
-                // remove trailing numbers from the field_name before adding the ID
-                let field_name = field_name.to_upper_camel_case();
-                let field_name: String =
-                    field_name.chars().filter(|c| !c.is_numeric()).collect();
-                if field_name.is_empty() {
-                    (line_one, "String".to_string())
-                } else {
-                    let local_key_name = format!("{}Id", field_value.to_upper_camel_case());
+                local_data.known_structs.insert(key_name.clone());
+                return (line_one, key_name.clone());
+            }
+
+            if matches!(
+                sample_data,
+                DataType::UnsignedInt8
+                    | DataType::UnsignedInt16
+                    | DataType::UnsignedInt32
+                    | DataType::UnsignedInt64
+                    | DataType::SignedInt8
+                    | DataType::SignedInt16
+                    | DataType::SignedInt32
+                    | DataType::SignedInt64
+            ) && field_name != "#"
+                && !field_name.is_empty()
+                && !field_name.starts_with("Unknown")
+                && !field_name.chars().all(char::is_numeric)
+            {
+                let name_part: String = field_name.chars().filter(|c| !c.is_numeric()).collect();
+                let scalars = [
+                    "Amount",
+                    "Quantity",
+                    "Count",
+                    "Rate",
+                    "Index",
+                    "Value",
+                    "Param",
+                    "Price",
+                    "Exp",
+                    "Hp",
+                    "Mp",
+                    "Cp",
+                    "Gp",
+                    "Time",
+                    "Score",
+                    "Bonus",
+                    "Cap",
+                    "Limit",
+                    "Damage",
+                    "Defense",
+                    "Strength",
+                    "Dexterity",
+                    "Vitality",
+                    "Intelligence",
+                    "Mind",
+                    "Piety",
+                    "Tenacity",
+                    "DirectHitRate",
+                    "CriticalHit",
+                    "Determination",
+                    "SkillSpeed",
+                    "SpellSpeed",
+                    "SetsRequired",
+                    "CraftType",
+                    "Element",
+                    "PatchNumber",
+                    "DifficultyFactor",
+                    "QualityFactor",
+                    "DurabilityFactor",
+                    "RequiredCraftsmanship",
+                    "RequiredControl",
+                    "QuickSynthCraftsmanship",
+                    "QuickSynthControl",
+                    "MaterialQualityFactor",
+                    "CanQuickSynth",
+                    "CanHq",
+                    "IsSpecializationRequired",
+                    "IsExpert",
+                    "IsSecondary",
+                    "RequiredQuality",
+                    "Number",
+                    "Scale",
+                    "Height",
+                    "Percent",
+                    "Priority",
+                    "CollectabilityCost",
+                    "CurrencyCost",
+                ];
+                if !scalars.iter().any(|s| name_part.contains(s)) {
+                    let local_key_name = format!("{}Id", name_part.to_upper_camel_case());
                     if !local_data
                         .requested_structs
                         .iter()
@@ -388,12 +446,14 @@ fn create_struct(
                     {
                         local_data.requested_structs.push(RequestedStructData {
                             requested_struct: local_key_name.clone(),
-                            sample_data: sample_data.field_type(csv_name),
+                            sample_data: field_type.clone(),
                         });
                     }
-                    (line_one, local_key_name)
+                    return (line_one, local_key_name);
                 }
             }
+
+            (line_one, field_type)
         })
         .collect();
     if fields.len() > 100 {
@@ -409,36 +469,25 @@ fn create_struct(
         for (key, value) in &fields {
             lazy_static! {
                 // regex: check is number
-                static ref DOUBLE: Regex = Regex::new(r#"([A-z_])+([0-9]+)_([0-9]+)"#).unwrap();
-                static ref SINGLE: Regex = Regex::new(r#"([A-z_])+([0-9]+)"#).unwrap();
+                static ref SUFFIX: Regex = Regex::new(r#"^(.+)_([0-9]+)$"#).unwrap();
             }
-            if let Some(captures) = DOUBLE.captures(key) {
-                let key_1 = captures.get(2).unwrap();
-                let key_2 = captures.get(3).unwrap();
-                // let root = captures.get(0).unwrap();
-                let root = &key[..key_1.start() - 1];
-                let root = format!("{}_{}", root, key_2.as_str().parse::<usize>().unwrap());
-                let key = KeyType::Single(key_1.as_str().parse().unwrap());
+            if let Some(captures) = SUFFIX.captures(key) {
+                let root = captures.get(1).unwrap().as_str().to_string();
+                let key_val = captures.get(2).unwrap().as_str().parse::<usize>().unwrap();
+                if root == "unknown" {
+                    if let Some((last_root, _, skip)) = root_names.last_mut() {
+                        if last_root == "unknown" {
+                            *skip += 1;
+                            continue;
+                        }
+                    }
+                }
+                let key_type = KeyType::Single(key_val);
                 if let Some((_, (k, _), _)) = root_names.iter_mut().find(|(key, _, _)| key == &root)
                 {
-                    *k = key;
+                    *k = key_type;
                 } else {
-                    root_names.push((root, (key, value), 0));
-                }
-            } else if let Some(captures) = SINGLE.captures(key) {
-                let key_1 = captures.get(2).unwrap();
-                let root = &key[..key_1.start() - 1];
-                if root == "unknown" {
-                    let (_, _, skip) = root_names.last_mut().unwrap();
-                    *skip += 1;
-                    continue;
-                }
-                let key = KeyType::Single(key_1.as_str().parse().unwrap());
-                if let Some((_, (k, _), _)) = root_names.iter_mut().find(|(key, _, _)| key == root)
-                {
-                    *k = key;
-                } else {
-                    root_names.push((root.to_string(), (key, value), 0));
+                    root_names.push((root, (key_type, value), 0));
                 }
             } else {
                 root_names.push((key.as_str().to_string(), (KeyType::Normal, value), 0));
@@ -589,6 +638,11 @@ fn read_dir<T: Container>(path: PathBuf, mut scope: T, args: &mut Args) -> T {
             .vis("pub")
             .derive("FromStr")
             .derive("Default")
+            .derive("Eq") // Added Eq
+            .derive("Copy") // Added Copy
+            .derive("Hash") // Added Hash
+            .derive("PartialOrd") // Added PartialOrd
+            .derive("Ord") // Added Ord
             .tuple_field(sample_data)
             .vis("pub");
         scope.push_struct(s);
@@ -619,7 +673,7 @@ fn get_table_names(path: impl AsRef<Path>) -> Box<dyn Iterator<Item = (String, S
 
 fn main() {
     // figure out what features have been enabled
-    let dir = "./ffxiv-datamining/csv/";
+    let dir = "./ffxiv-datamining/csv/en/";
     let mut table_names: Vec<_> = get_table_names(dir).collect();
     table_names.sort();
     let mut list = table_names

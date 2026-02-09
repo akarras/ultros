@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use super::tooltip::*;
 use leptos::prelude::*;
-use xiv_gen::{BaseParam, Item, ItemId};
+use xiv_gen::{BaseParam, BaseParamId, Item, ItemId};
 
 struct ParamData {
     base_param: &'static BaseParam,
@@ -43,7 +43,9 @@ impl Iterator for ParamIterator {
                 _ => return None,
             };
             self.index += 1;
-            if let Some(base_param) = xiv_gen_db::data().base_params.get(&param) {
+            if let Some(base_param) =
+                xiv_gen_db::data().base_params.get(&BaseParamId(param as i32))
+            {
                 return Some((base_param, self.index > 5, value));
             }
         }

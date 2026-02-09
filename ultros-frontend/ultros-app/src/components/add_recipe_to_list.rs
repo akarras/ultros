@@ -26,7 +26,7 @@ struct IngredientState {
 pub fn AddRecipeToList(recipe: &'static Recipe) -> impl IntoView {
     let (modal_visible, set_modal_visible) = signal(false);
     let items = &xiv_gen_db::data().items;
-    let result_item = items.get(&recipe.item_result);
+    let result_item = items.get(&ItemId(recipe.item_result.0 as i32));
     view! {
         <Tooltip tooltip_text="Add recipe ingredients to a list">
             <button
@@ -57,7 +57,7 @@ fn AddRecipeToListModal(
 ) -> impl IntoView {
     let data = xiv_gen_db::data();
     let items = &data.items;
-    let result_item = move || items.get(&recipe.item_result);
+    let result_item = move || items.get(&ItemId(recipe.item_result.0 as i32));
     let lists = Resource::new(move || {}, move |_| get_lists());
     let (hq, set_hq) = signal(false);
     let (craft_quantity, set_craft_quantity) = signal(1);
@@ -115,7 +115,7 @@ fn AddRecipeToListModal(
             <div class="panel p-6 rounded-xl space-y-4">
                 <div class="flex items-start gap-3">
                     <div class="shrink-0">
-                        <ItemIcon item_id=recipe.item_result.0 icon_size=IconSize::Medium />
+                        <ItemIcon item_id={recipe.item_result.0 as i32} icon_size=IconSize::Medium />
                     </div>
                     <div class="min-w-0 flex-1">
                         <div class="text-xl font-extrabold text-[color:var(--brand-fg)]">

@@ -283,7 +283,7 @@ fn LeveAnalyzerTable(
                 cheapest_world_id,
                 item_id,
                 item_count,
-                class_job_level: leve.class_job_level,
+                class_job_level: leve.class_job_level.0,
                 job_category_name,
                 avg_price: sales_stats.avg_price,
                 daily_sales: sales_stats.daily_sales,

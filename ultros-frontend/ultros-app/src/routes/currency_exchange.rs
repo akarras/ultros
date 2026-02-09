@@ -28,6 +28,7 @@ use field_iterator::field_iter;
 use itertools::Itertools;
 use leptos::either::Either;
 use leptos::prelude::*;
+use paste::paste;
 use leptos::reactive::wrappers::write::SignalSetter;
 use leptos_router::components::A;
 use leptos_router::components::Outlet;
@@ -114,42 +115,71 @@ fn from_lists(
 }
 
 fn shop_items(special_shop: &SpecialShop) -> impl Iterator<Item = ShopItems> + '_ {
-    let SpecialShop {
-        item_receive_0,
-        count_receive_0,
-        item_receive_1,
-        count_receive_1,
-        item_cost_0,
-        count_cost_0,
-        item_cost_1,
-        count_cost_1,
-        item_cost_2,
-        count_cost_2,
-        ..
-    } = special_shop;
+    let mut trades = Vec::new();
+    let items_db = &xiv_gen_db::data().items;
 
-    let recv_0 = from_lists(
-        item_receive_0.iter().copied(),
-        count_receive_0.iter().copied(),
+    macro_rules! extract {
+        ($($i:literal),*) => {
+            $(
+                paste! {
+                    let recv_items = &special_shop.[<item_ $i _item>];
+                    let recv_counts = &special_shop.[<item_ $i _receive_count>];
+                    let cost_items = &special_shop.[<item_ $i _item_cost>];
+                    let cost_counts = &special_shop.[<item_ $i _collectability_cost>];
+
+                    let mut recvs = Vec::new();
+                    for (id, count) in recv_items.iter().zip(recv_counts.iter()) {
+                        if id.0 != 0 {
+                            if let Some(item) = items_db.get(id) {
+                                recvs.push(ItemAmount { item, amount: *count as u32 });
+                            }
+                        }
+                    }
+
+                    let mut costs = Vec::new();
+                    // Cost 0
+                    let cost_id_0 = special_shop.[<item_ $i _item_cost_0>];
+                    let cost_count_0 = special_shop.[<item_ $i _collectability_cost_0>];
+                    if cost_id_0.0 != 0 {
+                        let amount = if cost_count_0 == 0 { 1 } else { cost_count_0 as u32 };
+                        if let Some(item) = items_db.get(&cost_id_0) {
+                            costs.push(ItemAmount { item, amount });
+                        }
+                    }
+                    // Cost 1
+                    let cost_id_1 = special_shop.[<item_ $i _item_cost_1>];
+                    let cost_count_1 = special_shop.[<item_ $i _collectability_cost_1>];
+                    if cost_id_1.0 != 0 {
+                        let amount = if cost_count_1 == 0 { 1 } else { cost_count_1 as u32 };
+                        if let Some(item) = items_db.get(&cost_id_1) {
+                            costs.push(ItemAmount { item, amount });
+                        }
+                    }
+                    // Cost 2
+                    let cost_id_2 = special_shop.[<item_ $i _item_cost_2>];
+                    let cost_count_2 = special_shop.[<item_ $i _collectability_cost_2>];
+                    if cost_id_2.0 != 0 {
+                        let amount = if cost_count_2 == 0 { 1 } else { cost_count_2 as u32 };
+                        if let Some(item) = items_db.get(&cost_id_2) {
+                            costs.push(ItemAmount { item, amount });
+                        }
+                    }
+
+                    if !recvs.is_empty() && !costs.is_empty() {
+                        trades.push(ShopItems { recv: recvs, cost: costs });
+                    }
+                }
+            )*
+        }
+    }
+
+    extract!(
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+        25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
+        48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59
     );
-    let recv_1 = from_lists(
-        item_receive_1.iter().copied(),
-        count_receive_1.iter().copied(),
-    );
-    let cost_0 = from_lists(item_cost_0.iter().copied(), count_cost_0.iter().copied());
-    let cost_1 = from_lists(item_cost_1.iter().copied(), count_cost_1.iter().copied());
-    let cost_2 = from_lists(item_cost_2.iter().copied(), count_cost_2.iter().copied());
-    recv_0
-        .zip(recv_1)
-        .zip(
-            cost_0
-                .zip(cost_1.zip(cost_2))
-                .map(|(cost_0, (cost_1, cost_2))| (cost_0, cost_1, cost_2)),
-        )
-        .map(|((recv_0, recv_1), (cost_0, cost_1, cost_2))| ShopItems {
-            recv: [recv_0, recv_1].into_iter().flatten().collect(),
-            cost: [cost_0, cost_1, cost_2].into_iter().flatten().collect(),
-        })
+
+    trades.into_iter()
 }
 
 #[component]

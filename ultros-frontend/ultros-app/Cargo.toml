@@ -67,6 +67,7 @@ codee = {version = "0.3", features = ["json_serde"]}
 send_wrapper = "0.6"
 flume = { version = "0.11.1", features = ["async"] }
 icondata_core.workspace = true
+paste = "1.0.15"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 reqwest = { version = "0.12", default-features = false, features = [

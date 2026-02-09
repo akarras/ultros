@@ -16,7 +16,7 @@ use ultros_api_types::{
     recent_sales::{RecentSales, SaleData},
     world_helper::AnyResult,
 };
-use xiv_gen::{CompanyCraftSequence, ItemId};
+use xiv_gen::{CompanyCraftSequence, CompanyCraftSupplyItemId, ItemId};
 
 #[derive(Clone, Debug, PartialEq)]
 struct MaterialInfo {
@@ -172,8 +172,11 @@ fn calculate_fc_project_cost(
                             continue;
                         }
 
+                        // Cast SupplyItemId to CompanyCraftSupplyItemId
+                        let supply_item_id = CompanyCraftSupplyItemId(supply_item_link.0 as i32);
+
                         if let Some(supply_item) =
-                            data.company_craft_supply_items.get(supply_item_link)
+                            data.company_craft_supply_items.get(&supply_item_id)
                         {
                             if supply_item.item.0 == 0 {
                                 continue;
