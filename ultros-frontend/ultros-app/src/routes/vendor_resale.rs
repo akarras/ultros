@@ -133,8 +133,8 @@ impl VendorProfitTable {
         let mut vendor_prices = HashMap::new();
         for items in data.gil_shop_items.values() {
             for shop_item in items {
-                if let Some(item_def) = data.items.get(&shop_item.item) {
-                    vendor_prices.insert(shop_item.item.0, item_def.price_mid as i32);
+                if let Some(item_def) = data.items.get(&ItemId(shop_item.item as i32)) {
+                    vendor_prices.insert(shop_item.item as i32, item_def.price_mid as i32);
                 }
             }
         }
@@ -264,8 +264,8 @@ fn VendorResaleTable(
                 category_filter()
                     .map(|cat_id| {
                         items
-                            .get(&ItemId(data.inner.item_id))
-                            .map(|item| item.item_search_category.0 == cat_id)
+                            .get(&ItemId(data.inner.item_id as u16))
+                            .map(|item| item.item_search_category as i32 == cat_id)
                             .unwrap_or(false)
                     })
                     .unwrap_or(true)
@@ -481,7 +481,7 @@ fn VendorResaleTable(
                         if let Some(cat_id) = category_filter() {
                              let cat_name = xiv_gen_db::data()
                                 .item_search_categorys
-                                .get(&xiv_gen::ItemSearchCategoryId(cat_id))
+                                .get(&xiv_gen::ItemSearchCategoryId(cat_id as u16))
                                 .map(|c| c.name.clone())
                                 .unwrap_or_else(|| format!("Category {}", cat_id));
                             chips.push(view! {
@@ -611,7 +611,7 @@ fn VendorResaleTable(
                             let world = Signal::derive(move || world().to_string());
                             let item_id = data.inner.item_id;
                             let item = items
-                                .get(&ItemId(item_id))
+                                .get(&ItemId(item_id as u16))
                                 .map(|item| item.name.as_str())
                                 .unwrap_or_default();
                             let icon_loading = if index < 20 { "eager" } else { "" };

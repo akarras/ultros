@@ -90,14 +90,38 @@ fn calculate_crafting_cost(
     let mut sub_crafts = Vec::new();
     // Helper to iterate ingredients
     let ingredients = [
-        (recipe.item_ingredient_0, recipe.amount_ingredient_0),
-        (recipe.item_ingredient_1, recipe.amount_ingredient_1),
-        (recipe.item_ingredient_2, recipe.amount_ingredient_2),
-        (recipe.item_ingredient_3, recipe.amount_ingredient_3),
-        (recipe.item_ingredient_4, recipe.amount_ingredient_4),
-        (recipe.item_ingredient_5, recipe.amount_ingredient_5),
-        (recipe.item_ingredient_6, recipe.amount_ingredient_6),
-        (recipe.item_ingredient_7, recipe.amount_ingredient_7),
+        (
+            ItemId(recipe.ingredient_0 as i32),
+            recipe.amount_ingredient_0,
+        ),
+        (
+            ItemId(recipe.ingredient_1 as i32),
+            recipe.amount_ingredient_1,
+        ),
+        (
+            ItemId(recipe.ingredient_2 as i32),
+            recipe.amount_ingredient_2,
+        ),
+        (
+            ItemId(recipe.ingredient_3 as i32),
+            recipe.amount_ingredient_3,
+        ),
+        (
+            ItemId(recipe.ingredient_4 as i32),
+            recipe.amount_ingredient_4,
+        ),
+        (
+            ItemId(recipe.ingredient_5 as i32),
+            recipe.amount_ingredient_5,
+        ),
+        (
+            ItemId(recipe.ingredient_6.parse().unwrap_or(0)),
+            recipe.amount_ingredient_6,
+        ),
+        (
+            ItemId(recipe.ingredient_7.parse().unwrap_or(0)),
+            recipe.amount_ingredient_7,
+        ),
     ];
 
     for (item_id, amount) in ingredients {
@@ -105,7 +129,7 @@ fn calculate_crafting_cost(
             continue;
         }
 
-        let price_summary = prices.find_matching_listings(item_id.0);
+        let price_summary = prices.find_matching_listings(item_id.0 as i32);
         let market_price = if require_hq {
             price_summary.price_preferring_hq().unwrap_or(999_999_999) as i64
         } else {
@@ -201,7 +225,10 @@ fn RecipeAnalyzerTable(
     let recipes_by_output = Memo::new(move |_| {
         let mut map: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
         for recipe in recipes.values() {
-            map.entry(recipe.item_result).or_default().push(recipe);
+            map
+                .entry(ItemId(recipe.item_result))
+                .or_default()
+                .push(recipe);
         }
         map
     });
@@ -290,7 +317,7 @@ fn RecipeAnalyzerTable(
                 continue;
             }
 
-            let sales_stats = if let Some(item_sales) = sales_map.get(&recipe.item_result.0) {
+            let sales_stats = if let Some(item_sales) = sales_map.get(&(recipe.item_result as i32)) {
                 analyze_sales(item_sales, filter_outliers)
             } else {
                 SalesStats {
@@ -300,7 +327,7 @@ fn RecipeAnalyzerTable(
                 }
             };
 
-            let market_price_summary = prices.find_matching_listings(recipe.item_result.0);
+            let market_price_summary = prices.find_matching_listings(recipe.item_result as i32);
             let market_price = market_price_summary.lowest_gil().unwrap_or(0);
 
             if market_price == 0 {
@@ -608,8 +635,14 @@ fn RecipeAnalyzerTable(
                         // Clone data for use in closures to avoid moving the Arc
                         let data_clone = data.clone();
                         let item_id = data.recipe.item_result;
-                        let item = items.get(&item_id).map(|i| i.name.as_str()).unwrap_or("Unknown");
-                        let item_level = items.get(&item_id).map(|i| i.level_item.0).unwrap_or(0);
+                        let item = items
+                            .get(&ItemId(item_id))
+                            .map(|i| i.name.as_str())
+                            .unwrap_or("Unknown");
+                        let item_level = items
+                            .get(&ItemId(item_id))
+                            .map(|i| i.level_item)
+                            .unwrap_or(0);
                         let classes = if (index % 2) == 0 {
                             "flex flex-row items-center flex-nowrap h-15 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_6%,transparent)] transition-colors"
                         } else {
@@ -639,10 +672,10 @@ fn RecipeAnalyzerTable(
                                 <div role="cell" class="px-4 py-2 flex flex-row w-84 items-center gap-2">
                                      <a
                                         class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip w-full"
-                                        href=format!("/item/{}/{}", world(), item_id.0)
+                                        href=format!("/item/{}/{}", world(), item_id)
                                     >
                                         <div class="shrink-0">
-                                            <ItemIcon item_id=item_id.0 icon_size=IconSize::Small />
+                                            <ItemIcon item_id=item_id as i32 icon_size=IconSize::Small />
                                         </div>
                                         <div class="flex flex-col">
                                             <span>{item}</span>

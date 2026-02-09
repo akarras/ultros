@@ -130,50 +130,51 @@ fn job_category_lookup(class_job_category: &ClassJobCategory, job_acronym: &str)
         pct,
         ..
     } = class_job_category;
+    let parse_bool = |s: &str| s == "1" || s.eq_ignore_ascii_case("true");
     match lower_case.as_str() {
-        "adv" => *adv,
-        "gla" => *gla,
-        "pgl" => *pgl,
-        "mrd" => *mrd,
-        "lnc" => *lnc,
-        "arc" => *arc,
-        "cnj" => *cnj,
-        "thm" => *thm,
-        "crp" => *crp,
-        "bsm" => *bsm,
-        "arm" => *arm,
-        "gsm" => *gsm,
-        "ltw" => *ltw,
-        "wvr" => *wvr,
-        "alc" => *alc,
-        "cul" => *cul,
-        "min" => *min,
-        "btn" => *btn,
-        "fsh" => *fsh,
-        "pld" => *pld,
-        "mnk" => *mnk,
-        "war" => *war,
-        "drg" => *drg,
-        "brd" => *brd,
-        "whm" => *whm,
-        "blm" => *blm,
-        "acn" => *acn,
-        "smn" => *smn,
-        "sch" => *sch,
-        "rog" => *rog,
-        "nin" => *nin,
-        "mch" => *mch,
-        "drk" => *drk,
-        "ast" => *ast,
-        "sam" => *sam,
-        "rdm" => *rdm,
-        "blu" => *blu,
-        "gnb" => *gnb,
-        "dnc" => *dnc,
-        "rpr" => *rpr,
-        "sge" => *sge,
-        "vpr" => *vpr,
-        "pct" => *pct,
+        "adv" => parse_bool(adv),
+        "gla" => parse_bool(gla),
+        "pgl" => parse_bool(pgl),
+        "mrd" => parse_bool(mrd),
+        "lnc" => parse_bool(lnc),
+        "arc" => parse_bool(arc),
+        "cnj" => parse_bool(cnj),
+        "thm" => parse_bool(thm),
+        "crp" => parse_bool(crp),
+        "bsm" => parse_bool(bsm),
+        "arm" => parse_bool(arm),
+        "gsm" => parse_bool(gsm),
+        "ltw" => parse_bool(ltw),
+        "wvr" => parse_bool(wvr),
+        "alc" => parse_bool(alc),
+        "cul" => parse_bool(cul),
+        "min" => parse_bool(min),
+        "btn" => parse_bool(btn),
+        "fsh" => parse_bool(fsh),
+        "pld" => parse_bool(pld),
+        "mnk" => parse_bool(mnk),
+        "war" => parse_bool(war),
+        "drg" => parse_bool(drg),
+        "brd" => parse_bool(brd),
+        "whm" => parse_bool(whm),
+        "blm" => parse_bool(blm),
+        "acn" => parse_bool(acn),
+        "smn" => parse_bool(smn),
+        "sch" => parse_bool(sch),
+        "rog" => parse_bool(rog),
+        "nin" => parse_bool(nin),
+        "mch" => parse_bool(mch),
+        "drk" => parse_bool(drk),
+        "ast" => parse_bool(ast),
+        "sam" => parse_bool(sam),
+        "rdm" => parse_bool(rdm),
+        "blu" => parse_bool(blu),
+        "gnb" => parse_bool(gnb),
+        "dnc" => parse_bool(dnc),
+        "rpr" => parse_bool(rpr),
+        "sge" => parse_bool(sge),
+        "vpr" => parse_bool(vpr),
+        "pct" => parse_bool(pct),
         _ => {
             tracing::warn!(job_acronym, "Unknown job acronym");
             false
@@ -294,8 +295,10 @@ pub fn JobItems() -> impl IntoView {
         let job_items: Vec<_> = data
             .items
             .iter()
-            .filter(|(_id, item)| job_categories.contains(&item.class_job_category))
-            .filter(|(_id, item)| !market_only || item.item_search_category.0 > 0)
+            .filter(|(_id, item)| {
+                job_categories.contains(&xiv_gen::ClassJobCategoryId(item.class_job_category))
+            })
+            .filter(|(_id, item)| !market_only || item.item_search_category > 0)
             .collect();
         job_items
     });
@@ -468,22 +471,22 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                     SortDirection::Desc => (b, a),
                 };
                 match item_property {
-                    ItemSortOption::ItemLevel => item_a.level_item.0.cmp(&item_b.level_item.0),
+                    ItemSortOption::ItemLevel => item_a.level_item.cmp(&item_b.level_item),
                     ItemSortOption::Name => item_a.name.cmp(&item_b.name),
                     ItemSortOption::Price => {
                         if let Some(price_map) = &price_map {
                             let price_a = price_map
-                                .find_matching_listings(item_a.key_id.0)
+                                .find_matching_listings(item_a.key_id as i32)
                                 .lowest_gil();
                             let price_b = price_map
-                                .find_matching_listings(item_b.key_id.0)
+                                .find_matching_listings(item_b.key_id as i32)
                                 .lowest_gil();
                             price_a.cmp(&price_b)
                         } else {
-                            item_a.level_item.0.cmp(&item_b.level_item.0)
+                            item_a.level_item.cmp(&item_b.level_item)
                         }
                     }
-                    ItemSortOption::Key => item_a.key_id.0.cmp(&item_b.key_id.0),
+                    ItemSortOption::Key => item_a.key_id.cmp(&item_b.key_id),
                 }
             })
             .collect::<Vec<_>>()
@@ -581,15 +584,15 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                     <div class="shrink-0 relative">
                                          <A href=move || format!("/item/{}/{}",
                                             price_zone.get().as_ref().map(|z| z.get_name()).unwrap_or("North-America"),
-                                            item.key_id.0)
+                                            item.key_id)
                                          >
-                                            <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
+                                            <ItemIcon item_id=item.key_id as i32 icon_size=IconSize::Medium />
                                          </A>
                                     </div>
                                     <div class="flex flex-col min-w-0 pt-0.5">
                                         <div class="flex items-center gap-2 mb-1.5 flex-wrap">
                                             <span class="text-xs font-bold px-1.5 py-0.5 rounded bg-white/10 text-[color:var(--color-text-muted)] whitespace-nowrap">
-                                                "iLvl "{item.level_item.0}
+                                                "iLvl "{item.level_item}
                                             </span>
                                              {if item.level_equip > 1 {
                                                 view! {
@@ -603,7 +606,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                         </div>
                                         <A href=move || format!("/item/{}/{}",
                                             price_zone.get().as_ref().map(|z| z.get_name()).unwrap_or("North-America"),
-                                            item.key_id.0)
+                                            item.key_id)
                                             attr:class="font-bold text-base leading-snug text-[color:var(--color-text)] \
                                                        group-hover:text-brand-300 transition-colors line-clamp-2 \
                                                        hover:underline decoration-brand-300/30 underline-offset-4"

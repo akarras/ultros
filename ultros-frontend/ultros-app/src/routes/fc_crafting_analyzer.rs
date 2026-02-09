@@ -107,63 +107,63 @@ fn calculate_fc_project_cost(
                     let items = [
                         (
                             &process.supply_item_0,
-                            process.set_quantity_0,
-                            process.sets_required_0,
+                            process.set_quantity_0 as i32,
+                            process.sets_required_0 as i32,
                         ),
                         (
                             &process.supply_item_1,
-                            process.set_quantity_1,
-                            process.sets_required_1,
+                            process.set_quantity_1 as i32,
+                            process.sets_required_1 as i32,
                         ),
                         (
                             &process.supply_item_2,
-                            process.set_quantity_2,
-                            process.sets_required_2,
+                            process.set_quantity_2 as i32,
+                            process.sets_required_2 as i32,
                         ),
                         (
                             &process.supply_item_3,
-                            process.set_quantity_3,
-                            process.sets_required_3,
+                            process.set_quantity_3 as i32,
+                            process.sets_required_3 as i32,
                         ),
                         (
                             &process.supply_item_4,
-                            process.set_quantity_4,
-                            process.sets_required_4,
+                            process.set_quantity_4 as i32,
+                            process.sets_required_4 as i32,
                         ),
                         (
                             &process.supply_item_5,
-                            process.set_quantity_5,
-                            process.sets_required_5,
+                            process.set_quantity_5 as i32,
+                            process.sets_required_5 as i32,
                         ),
                         (
                             &process.supply_item_6,
-                            process.set_quantity_6,
-                            process.sets_required_6,
+                            process.set_quantity_6 as i32,
+                            process.sets_required_6 as i32,
                         ),
                         (
                             &process.supply_item_7,
-                            process.set_quantity_7,
-                            process.sets_required_7,
+                            process.set_quantity_7 as i32,
+                            process.sets_required_7 as i32,
                         ),
                         (
                             &process.supply_item_8,
-                            process.set_quantity_8,
-                            process.sets_required_8,
+                            process.set_quantity_8 as i32,
+                            process.sets_required_8 as i32,
                         ),
                         (
                             &process.supply_item_9,
-                            process.set_quantity_9,
-                            process.sets_required_9,
+                            process.set_quantity_9 as i32,
+                            process.sets_required_9 as i32,
                         ),
                         (
                             &process.supply_item_10,
-                            process.set_quantity_10,
-                            process.sets_required_10,
+                            process.set_quantity_10 as i32,
+                            process.sets_required_10 as i32,
                         ),
                         (
                             &process.supply_item_11,
-                            process.set_quantity_11,
-                            process.sets_required_11,
+                            process.set_quantity_11 as i32,
+                            process.sets_required_11 as i32,
                         ),
                     ];
 
@@ -172,15 +172,18 @@ fn calculate_fc_project_cost(
                             continue;
                         }
 
-                        if let Some(supply_item) =
-                            data.company_craft_supply_items.get(supply_item_link)
+                        if let Some(supply_item) = data
+                            .company_craft_supply_items
+                            .get(&xiv_gen::CompanyCraftSupplyItemId(*supply_item_link as i32))
                         {
-                            if supply_item.item.0 == 0 {
+                            if supply_item.item == 0 {
                                 continue;
                             }
 
                             let total_quantity = (quantity_per_set as i32) * (sets_required as i32);
-                            *materials_map.entry(supply_item.item).or_default() += total_quantity;
+                            *materials_map
+                                .entry(ItemId(supply_item.item as i32))
+                                .or_default() += total_quantity;
                         }
                     }
                 }
@@ -190,7 +193,7 @@ fn calculate_fc_project_cost(
 
     let mut material_infos = Vec::new();
     for (item_id, quantity) in materials_map {
-        let price_summary = prices.find_matching_listings(item_id.0);
+        let price_summary = prices.find_matching_listings(item_id.0 as i32);
         let unit_cost = price_summary.lowest_gil().unwrap_or(999_999_999) as i64;
 
         // Cost calc
@@ -287,7 +290,7 @@ fn FCCraftingAnalyzerTable(
 
         for sequence in sequences.values() {
             // result_item can be 0 for some incomplete data, skip those
-            if sequence.result_item.0 == 0 {
+            if sequence.result_item == 0 {
                 continue;
             }
 
@@ -297,7 +300,7 @@ fn FCCraftingAnalyzerTable(
             // But we can pre-check if the key is 0/invalid?
             // The generated code uses keys, let's assume valid keys if present.
 
-            let sales_stats = if let Some(item_sales) = sales_map.get(&sequence.result_item.0) {
+            let sales_stats = if let Some(item_sales) = sales_map.get(&(sequence.result_item as i32)) {
                 analyze_sales(item_sales)
             } else {
                 SalesStats {
@@ -307,7 +310,7 @@ fn FCCraftingAnalyzerTable(
                 }
             };
 
-            let market_price_summary = prices.find_matching_listings(sequence.result_item.0);
+            let market_price_summary = prices.find_matching_listings(sequence.result_item as i32);
             let market_price = market_price_summary.lowest_gil().unwrap_or(0);
 
             if market_price == 0 {

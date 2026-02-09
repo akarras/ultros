@@ -237,18 +237,11 @@ fn create_struct(
         .from_path(path)
         .expect("unable to open path");
     let mut records = reader.records();
-    let _line_one = records
+    let line_two = records
         .next()
         .expect("First line not found")
         .expect("Reader error on first line");
-    let line_two = records
-        .next()
-        .expect("Second line not found")
-        .expect("Error reading second line");
-    let line_three = records
-        .next()
-        .expect("Third line not found")
-        .expect("Third line error reading");
+    let line_three: Vec<String> = std::iter::repeat_n(String::new(), line_two.len()).collect();
     // iterate over all columns
     let mut line_four: Vec<_> = records
         .next()
@@ -319,13 +312,30 @@ fn create_struct(
             }
             if BIT.is_match(field_value) {
                 (line_one, "bool".to_string())
-            } else if INT.is_match(field_value) {
-                let mut line_two = field_value.replace("int", "");
-                // uint64 -> u64
-                // int64 -> 64, add the i if no u
-                if !line_two.starts_with('u') {
-                    line_two = format!("i{}", line_two);
-                }
+            } else if INT.is_match(field_value)
+                || (line_one == "key_id" && field_value.is_empty())
+            {
+                let mut line_two = if field_value.is_empty() {
+                    match sample_data {
+                        DataType::UnsignedInt8 => "u8".to_string(),
+                        DataType::UnsignedInt16 => "u16".to_string(),
+                        DataType::UnsignedInt32 => "u32".to_string(),
+                        DataType::UnsignedInt64 => "u64".to_string(),
+                        DataType::SignedInt8 => "i8".to_string(),
+                        DataType::SignedInt16 => "i16".to_string(),
+                        DataType::SignedInt32 => "i32".to_string(),
+                        DataType::SignedInt64 => "i64".to_string(),
+                        _ => "i32".to_string(),
+                    }
+                } else {
+                    let mut s = field_value.replace("int", "");
+                    // uint64 -> u64
+                    // int64 -> 64, add the i if no u
+                    if !s.starts_with('u') {
+                        s = format!("i{}", s);
+                    }
+                    s
+                };
 
                 if line_one == "key_id" {
                     let mut key = Struct::new(&key_name);
@@ -372,6 +382,8 @@ fn create_struct(
                 (line_one, "i8".to_string())
             } else if field_value == "str" {
                 (line_one, "String".to_string())
+            } else if field_value.is_empty() {
+                (line_one, sample_data.field_type(csv_name))
             } else {
                 // remove trailing numbers from the field_name before adding the ID
                 let field_name = field_name.to_upper_camel_case();
@@ -409,14 +421,24 @@ fn create_struct(
         for (key, value) in &fields {
             lazy_static! {
                 // regex: check is number
-                static ref DOUBLE: Regex = Regex::new(r#"([A-z_])+([0-9]+)_([0-9]+)"#).unwrap();
-                static ref SINGLE: Regex = Regex::new(r#"([A-z_])+([0-9]+)"#).unwrap();
+                static ref DOUBLE: Regex = Regex::new(r#"^([A-z_]+)([0-9]+)_([0-9]+)$"#).unwrap();
+                static ref SINGLE: Regex = Regex::new(r#"^([A-z_]+)([0-9]+)$"#).unwrap();
             }
             if let Some(captures) = DOUBLE.captures(key) {
                 let key_1 = captures.get(2).unwrap();
                 let key_2 = captures.get(3).unwrap();
                 // let root = captures.get(0).unwrap();
-                let root = &key[..key_1.start() - 1];
+                let split_idx = key_1.start();
+                let root = if key.as_bytes()[split_idx - 1] == b'_' {
+                    &key[..split_idx - 1]
+                } else {
+                    &key[..split_idx]
+                };
+                if root == "unknown" {
+                    let (_, _, skip) = root_names.last_mut().unwrap();
+                    *skip += 1;
+                    continue;
+                }
                 let root = format!("{}_{}", root, key_2.as_str().parse::<usize>().unwrap());
                 let key = KeyType::Single(key_1.as_str().parse().unwrap());
                 if let Some((_, (k, _), _)) = root_names.iter_mut().find(|(key, _, _)| key == &root)
@@ -427,18 +449,26 @@ fn create_struct(
                 }
             } else if let Some(captures) = SINGLE.captures(key) {
                 let key_1 = captures.get(2).unwrap();
-                let root = &key[..key_1.start() - 1];
+                let split_idx = key_1.start();
+                let root = if key.as_bytes()[split_idx - 1] == b'_' {
+                    &key[..split_idx - 1]
+                } else {
+                    &key[..split_idx]
+                };
                 if root == "unknown" {
                     let (_, _, skip) = root_names.last_mut().unwrap();
                     *skip += 1;
                     continue;
                 }
-                let key = KeyType::Single(key_1.as_str().parse().unwrap());
+                let idx = key_1.as_str().parse::<usize>().unwrap();
+                let key_type = KeyType::Single(idx);
                 if let Some((_, (k, _), _)) = root_names.iter_mut().find(|(key, _, _)| key == root)
                 {
-                    *k = key;
+                    *k = key_type;
+                } else if idx == 0 {
+                    root_names.push((root.to_string(), (key_type, value), 0));
                 } else {
-                    root_names.push((root.to_string(), (key, value), 0));
+                    root_names.push((key.as_str().to_string(), (KeyType::Normal, value), 0));
                 }
             } else {
                 root_names.push((key.as_str().to_string(), (KeyType::Normal, value), 0));
@@ -448,6 +478,9 @@ fn create_struct(
             match multi {
                 KeyType::Normal => {
                     let mut field = Field::new(name, datatype.as_str());
+                    if *skip > 0 {
+                        field.annotation(vec![&format!("#[dumb_csv(skip = {skip})]").to_string()]);
+                    }
                     field.vis("pub");
                     s.push_field(field);
                 }
@@ -619,7 +652,7 @@ fn get_table_names(path: impl AsRef<Path>) -> Box<dyn Iterator<Item = (String, S
 
 fn main() {
     // figure out what features have been enabled
-    let dir = "./ffxiv-datamining/csv/";
+    let dir = "./ffxiv-datamining/csv/en/";
     let mut table_names: Vec<_> = get_table_names(dir).collect();
     table_names.sort();
     let mut list = table_names

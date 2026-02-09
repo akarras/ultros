@@ -100,18 +100,21 @@ impl ToTokens for DumbCsvDeserializeReceiver {
                             list.next().expect(#error).to_string()
                         }
                         }, DummyType::Bool => {
+                            let error = format!("Error reading value {}", field_name);
                             quote! {
-                                list.next().expect("There to be a value").parse_bool()
+                                list.next().expect(#error).parse_bool()
                             }
                         }, DummyType::Other(val) => {
                             if val.starts_with("i") || val.starts_with("u") || val.ends_with("Id") {
+                                let error = format!("Error reading value {}", field_name);
                                 quote!{
-                                    list.next().expect("There to be a value").parse::<#ty>().unwrap_or_default()
+                                    list.next().expect(#error).parse::<#ty>().unwrap_or_default()
                                 }
                             } else {
                                 let error = format!("DUMBCSV OTHER {val}: Error parsing value {}", field_name);
+                                let error_val = format!("Error reading value {}", field_name);
                                 quote!{
-                                    list.next().expect("There to be a value").parse::<#ty>().expect(#error)
+                                    list.next().expect(#error_val).parse::<#ty>().expect(#error)
                                 }
                             }
                         },

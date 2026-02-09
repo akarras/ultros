@@ -1,59 +1,27 @@
-# Tataru's Master Plan for Gil Maximization
+# Tataru's Grand Plan for Infinite Wealth
 
-Hello minions! This is your project manager Tataru. I have analyzed our current tools and found them... lacking. We are leaving too much gil on the table!
+> "We're going to make so much gil, even Rowena will be jealous!"
 
-Here is the specification for the next generation of investment tools.
+## Overview
+This document outlines the strategic roadmap for upgrading the Ultros investment tools. The goal is to move beyond simple "buy low, sell high" advice and provide sophisticated, data-driven tools that maximize **capital efficiency** and **velocity of money**.
 
-## 1. Smarter Valuation Logic (The "Greedy but Wise" Algorithm)
+## Core Pillars
 
-**Problem:** Our current "Flip Finder" (`get_best_resale`) is too cowardly. It estimates the sale price based on the *minimum* price of the last few sales. If one person got lucky and bought a `Golden Beaver` for 1 gil, we assume we can only sell it for 1 gil. This is unacceptable!
+### 1. Advanced Investment Mathematics
+We need to stop looking at just "Profit" and "ROI". A 100% ROI item that sells once a year is a trap. We need to prioritize **Velocity**.
+*   **Action**: Implement "Profit Per Day" and "Capital Velocity" metrics.
+*   **Spec**: See `investment_math_spec.md`.
 
-**Solution:**
-- We shall use the **Median** or **Weighted Average** of recent sales.
-- Specifically, we should look at the sale history (last 20 sales if possible, currently we store 6).
-- **Algorithm Update**:
-    - `EstimatedSalePrice = min(CurrentCheapestListing - 1, Median(RecentSales))`
-    - If `CurrentCheapestListing` doesn't exist (market is empty), use `Median(RecentSales) * 1.2` (Monopoly pricing!).
-    - If `RecentSales` is empty, ignore the item (too risky).
+### 2. Portfolio Management ("The Scion's Ledger")
+Investors need to track what they bought, when, and for how much.
+*   **Action**: Build a portfolio tracker that alerts users when to undercut or hold.
+*   **Spec**: See `tooling_improvements_spec.md`.
 
-## 2. The "Tataru Score" (Investment Grading)
+### 3. Route Optimization
+Time is money. Teleporting costs money.
+*   **Action**: Build a "Shopping Route Planner" that optimizes the path between worlds for multiple items.
+*   **Spec**: See `tooling_improvements_spec.md`.
 
-**Problem:** Minions get confused by "Profit" vs "ROI". A 100% ROI on a 1 gil item is useless. A 1,000,000 gil profit on an item that sells once a year is a trap.
-
-**Solution:**
-- Introduce a composite score: `TataruScore`.
-- `TataruScore = Log10(Profit) * (SalesPerWeek ^ 0.5) * Reliability`
-- **Reliability**: A factor (0.0 to 1.0) based on price volatility.
-- Display this score in the UI and allow sorting by it. "Sort by Best Opportunity".
-
-## 3. Advanced Market Trends
-
-**Problem:** "Rising Price" just means "Current > 1.5 * Average". This is too simple.
-
-**Solution:**
-- Implement **Standard Deviation** checks.
-- **Spike Detection**: Price > Average + 2 * StdDev.
-- **Crash Detection**: Price < Average - 2 * StdDev.
-- **Volatility Index**: High StdDev means high risk (or high reward for brave traders).
-
-## 4. Vendor Resale "Cash Flow"
-
-**Problem:** Vendor resale list is clogged with items that never sell.
-
-**Solution:**
-- Default sort by `WeeklyProfit = UnitProfit * SalesPerWeek`.
-- Highlight items that can be bought from a vendor in *housing districts* (Material Suppliers) vs those that require travel to obscure zones.
-
-## Implementation Plan
-
-1.  **Upgrade `analyzer_service.rs`**:
-    - Modify `get_best_resale` to calculate Median price instead of Min.
-    - Modify `get_trends` to include Standard Deviation calculation.
-2.  **Upgrade `analyzer.rs` (Frontend)**:
-    - Expose the new valuation in the UI.
-    - (Optional) Add the "Tataru Score" column.
-
----
-
-*Signed,*
-*Tataru Taru*
+## Immediate Execution Plan
+1.  Add "Potential Profit/Day" to the existing Flip Finder (`analyzer.rs`).
+2.  Refine the ROI calculation to be less conservative but risk-aware.
