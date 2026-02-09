@@ -76,8 +76,6 @@ fn apply_derives(s: &mut Struct) -> &mut Struct {
         .derive("Serialize")
         .derive("Deserialize")
         .derive("PartialEq")
-        .derive("Encode")
-        .derive("Decode")
 }
 
 /// Feed in a column, detect all the data. pronto muchacho.
@@ -237,19 +235,17 @@ fn create_struct(
         .from_path(path)
         .expect("unable to open path");
     let mut records = reader.records();
-    let _line_one = records
+    // In current ffxiv-datamining CSVs (in en/ directory):
+    // Line 1: Field Names (was line_two)
+    // Line 2: First Data Row (was line_four)
+    // No explicit types row (line_three). We must infer types.
+
+    let line_two = records
         .next()
         .expect("First line not found")
         .expect("Reader error on first line");
-    let line_two = records
-        .next()
-        .expect("Second line not found")
-        .expect("Error reading second line");
-    let line_three = records
-        .next()
-        .expect("Third line not found")
-        .expect("Third line error reading");
-    // iterate over all columns
+
+    // Initialize detection with first data row
     let mut line_four: Vec<_> = records
         .next()
         .map(|m| {
@@ -264,7 +260,8 @@ fn create_struct(
                 .collect()
         })
         .unwrap();
-    // read the entire csv and determine a datatype
+
+    // read the rest of csv and determine a datatype
     records.for_each(|s| {
         s.unwrap()
             .iter()
@@ -274,6 +271,25 @@ fn create_struct(
             })
     });
     let line_four: Vec<_> = line_four.into_iter().map(|m| m.end()).collect();
+
+    // Fabricate line_three (types) from detected types
+    let line_three: Vec<String> = line_four
+        .iter()
+        .map(|dt| match dt {
+            DataType::String => "str".to_string(),
+            DataType::UnsignedInt8 => "byte".to_string(),
+            DataType::UnsignedInt16 => "uint16".to_string(),
+            DataType::UnsignedInt32 => "uint32".to_string(),
+            DataType::UnsignedInt64 => "uint64".to_string(),
+            DataType::SignedInt8 => "sbyte".to_string(),
+            DataType::SignedInt16 => "int16".to_string(),
+            DataType::SignedInt32 => "int32".to_string(),
+            DataType::SignedInt64 => "int64".to_string(),
+            DataType::Float => "float".to_string(),
+            DataType::Bool => "bool".to_string(),
+            DataType::ReferenceKey => "int32".to_string(), // Treat reference key as int for type matching
+        })
+        .collect();
     let csv_name = &csv_name.to_upper_camel_case();
     let key_name = format!("{}Id", csv_name);
     let mut s = Struct::new(csv_name);
@@ -357,7 +373,7 @@ fn create_struct(
                     pk = Some(db_field_name.to_string());
                     match sample_data {
                         DataType::ReferenceKey => {
-                            parse_this_function = Some(format!("{db_field_name}: read_csv::<{csv_name}>(r#\"{path}\"#).into_iter().fold(HashMap::new(), |mut map, m| {{ map.entry(m.key_id.0.0).or_default().push(m); map }}),"));
+                            parse_this_function = Some(format!("{db_field_name}: read_csv::<{csv_name}>(r#\"{path}\"#).into_iter().fold({db_field_key}::new(), |mut map: {db_field_key}, m| {{ map.entry(m.key_id.0.0).or_default().push(m); map }}),"));
                         },
                         _ => {
                             parse_this_function = Some(format!("{db_field_name}: read_csv::<{csv_name}>(r#\"{path}\"#).into_iter().map(|m| (m.key_id, m)).collect(),"));
@@ -428,8 +444,9 @@ fn create_struct(
             } else if let Some(captures) = SINGLE.captures(key) {
                 let key_1 = captures.get(2).unwrap();
                 let root = &key[..key_1.start() - 1];
-                if root == "unknown" {
-                    let (_, _, skip) = root_names.last_mut().unwrap();
+                if root == "unknown"
+                    && let Some((_, _, skip)) = root_names.last_mut()
+                {
                     *skip += 1;
                     continue;
                 }
@@ -619,7 +636,7 @@ fn get_table_names(path: impl AsRef<Path>) -> Box<dyn Iterator<Item = (String, S
 
 fn main() {
     // figure out what features have been enabled
-    let dir = "./ffxiv-datamining/csv/";
+    let dir = "./ffxiv-datamining/csv/en/";
     let mut table_names: Vec<_> = get_table_names(dir).collect();
     table_names.sort();
     let mut list = table_names

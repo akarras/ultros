@@ -1,10 +1,13 @@
+#![allow(unused_imports)]
+#![allow(dead_code)]
+
 #[cfg(feature = "csv_to_bincode")]
 pub mod csv_to_bincode;
 
 mod deserialize_custom;
 pub mod subrow_key;
 
-use bincode::{Decode, Encode, config::Config};
+use bincode::config::Config;
 use deserialize_custom::*;
 use dumb_csv::ParseBool;
 use serde::{Deserialize, Deserializer, Serialize};
