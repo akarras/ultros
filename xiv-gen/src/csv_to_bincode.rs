@@ -7,19 +7,13 @@ use serde::de::DeserializeOwned;
 include!(concat!(env!("OUT_DIR"), "/deserialization.rs"));
 
 pub fn read_dumb_csv<T: DumbCsvDeserialize>(path: &str) -> Vec<T> {
+    // Legacy support or for huge structs if needed, but currently not used by default
     let mut csv = csv::ReaderBuilder::new()
         .has_headers(false)
         .from_path(path)
         .expect("Failed to open csv");
-    let _headers: Vec<String> = csv
-        .records()
-        .nth(1)
-        .unwrap()
-        .unwrap()
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    let _ = csv.records().take(2).collect::<Vec<_>>();
+    // Skip header line
+    let _ = csv.records().next();
     dumb_csv::deserialize(csv).unwrap()
 }
 
@@ -29,17 +23,19 @@ pub fn read_csv<T: DeserializeOwned>(path: &str) -> Vec<T> {
         .from_path(path)
         .expect("Failed to open csv");
     let str = std::fs::read_to_string(path).unwrap();
+
+    // Read header names (Line 1)
     let headers: Vec<String> = csv
         .records()
-        .nth(1)
+        .next()
         .unwrap()
         .unwrap()
         .iter()
         .map(|s| s.to_string())
         .collect();
-    // line 2
+
+    // Deserialize remaining records (Data)
     csv.deserialize()
-        .skip(2)
         .map(|m| {
             if let Err(e) = &m {
                 // try to pretty print this error a bit, otherwise it's hard to tell what went wrong
@@ -47,7 +43,10 @@ pub fn read_csv<T: DeserializeOwned>(path: &str) -> Vec<T> {
                     if let ErrorKind::Deserialize { err, .. } = e.kind()
                         && let Some(field) = err.field()
                     {
-                        let field_name = &headers[field as usize];
+                        let field_name = &headers
+                            .get(field as usize)
+                            .map(|s| s.as_str())
+                            .unwrap_or("?");
                         eprintln!("Field {field}: {field_name}");
                     }
                     let byte = position.byte() as usize;

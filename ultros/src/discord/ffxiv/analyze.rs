@@ -3,6 +3,7 @@ use std::fmt::Write;
 use xiv_gen::ItemId;
 
 use crate::analyzer_service::{ResaleOptions, SoldAmount, SoldWithin};
+use ultros_db::world_cache::AnySelector;
 
 use super::{Context, Error};
 
@@ -52,10 +53,17 @@ pub(crate) async fn profit(
         filter_sale: Some(filter_sale),
         ..Default::default()
     };
+    let datacenter_allowed_worlds = resale.filter_datacenter.and_then(|w| {
+        ctx.data()
+            .world_cache
+            .lookup_selector(&AnySelector::Datacenter(w))
+            .ok()
+            .and_then(|w| ctx.data().world_cache.get_all_worlds_in(&w))
+    });
     let mut sales = ctx
         .data()
         .analyzer_service
-        .get_best_resale(world_id, region_id, resale, &ctx.data().world_cache)
+        .get_best_resale(world_id, region_id, resale, datacenter_allowed_worlds)
         .await
         .ok_or(anyhow::anyhow!("Unable to get resale results"))?;
     sales.sort_by_key(|s| std::cmp::Reverse(s.profit));

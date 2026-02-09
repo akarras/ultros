@@ -8,7 +8,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use ultros_db::world_cache::WorldCache;
+use ultros_db::world_cache::{AnySelector, WorldCache};
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct BestDealsQuery {
@@ -63,8 +63,15 @@ pub(crate) async fn get_best_deals(
         filter_sale,
     };
 
+    let datacenter_allowed_worlds = options.filter_datacenter.and_then(|w| {
+        world_cache
+            .lookup_selector(&AnySelector::Datacenter(w))
+            .ok()
+            .and_then(|w| world_cache.get_all_worlds_in(&w))
+    });
+
     let stats = analyzer
-        .get_best_resale(world_id, region.id, options, &world_cache)
+        .get_best_resale(world_id, region.id, options, datacenter_allowed_worlds)
         .await;
 
     let dtos = stats
