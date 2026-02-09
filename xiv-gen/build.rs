@@ -77,7 +77,9 @@ fn apply_derives(s: &mut Struct) -> &mut Struct {
         .derive("Deserialize")
         .derive("PartialEq")
         .derive("Encode")
-        .derive("Decode")
+        .derive("Decode");
+    s.allow("unreachable_patterns");
+    s
 }
 
 /// Feed in a column, detect all the data. pronto muchacho.
@@ -130,7 +132,7 @@ impl DataType {
                     .char_indices()
                     .rev()
                     .find(|(_i, c)| c.is_uppercase())
-                    .unwrap();
+                    .unwrap_or_else(|| panic!("No uppercase in sheet_name: {}", sheet_name));
                 let root = &sheet_name[..i];
                 format!("SubrowKey<{root}Id>")
             }
@@ -277,6 +279,7 @@ fn create_struct(
     let csv_name = &csv_name.to_upper_camel_case();
     let key_name = format!("{}Id", csv_name);
     let mut s = Struct::new(csv_name);
+    s.allow("unreachable_patterns");
     let i = Impl::new(csv_name);
     apply_derives(&mut s).vis("pub");
     let mut parse_this_function = None;
@@ -344,7 +347,7 @@ fn create_struct(
                     };
                     let db_field_key = match sample_data {
                         DataType::ReferenceKey => {
-                            let (index, _) = csv_name.char_indices().rev().find(|(_i, c)| c.is_uppercase()).unwrap();
+                            let index = csv_name.char_indices().rev().find(|(_i, c)| c.is_uppercase()).map(|(i, _)| i).unwrap_or(0);
                             let parent_key = &csv_name[..index];
                             format!("HashMap<{parent_key}Id, {key_value}>")
                         },
@@ -465,10 +468,11 @@ fn create_struct(
             }
         }
         s.derive("DumbCsvDeserialize");
-        let pk = pk.unwrap();
-        parse_this_function = Some(format!(
-            "{pk}: read_dumb_csv::<{csv_name}>(r#\"{path}\"#).into_iter().map(|m| (m.key_id, m)).collect(),"
-        ))
+        if let Some(pk) = pk {
+            parse_this_function = Some(format!(
+                "{pk}: read_dumb_csv::<{csv_name}>(r#\"{path}\"#).into_iter().map(|m| (m.key_id, m)).collect(),"
+            ));
+        }
         // panic!("{root_names:?}");
     } else {
         for (field_name, field_value) in fields.iter() {
@@ -496,8 +500,9 @@ fn create_struct(
             s.push_field(field);
         }
     }
-    let function = parse_this_function.unwrap();
-    args.read_data.line(function);
+    if let Some(function) = parse_this_function {
+        args.read_data.line(function);
+    }
 
     scope.push_struct(s);
     scope.push_impl(i);
@@ -619,7 +624,7 @@ fn get_table_names(path: impl AsRef<Path>) -> Box<dyn Iterator<Item = (String, S
 
 fn main() {
     // figure out what features have been enabled
-    let dir = "./ffxiv-datamining/csv/";
+    let dir = "./ffxiv-datamining/csv/en/";
     let mut table_names: Vec<_> = get_table_names(dir).collect();
     table_names.sort();
     let mut list = table_names
