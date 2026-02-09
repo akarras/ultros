@@ -87,7 +87,7 @@ fn VentureAnalyzerTable(
     let categories = Memo::new(move |_| {
         retainer_tasks
             .values()
-            .filter(|t| !t.is_random)
+            .filter(|t| t.is_random != "True")
             .map(|t| t.class_job_category)
             .unique()
             .filter_map(|id| {
@@ -160,7 +160,7 @@ fn VentureAnalyzerTable(
 
         // Iterate over RetainerTasks to find normal ventures
         for (_task_id, task) in retainer_tasks.iter() {
-            if task.is_random {
+            if task.is_random == "True" {
                 continue;
             }
 
@@ -174,7 +174,7 @@ fn VentureAnalyzerTable(
             // Check if `task.task` (RowId) corresponds to a RetainerTaskNormal
             // We need to cast RowId to RetainerTaskNormalId?
             // Since RowId is just u16 wrapper, and RetainerTaskNormalId is i32 wrapper.
-            let normal_id = xiv_gen::RetainerTaskNormalId(task.task.0 as i32);
+            let normal_id = xiv_gen::RetainerTaskNormalId(task.task as i32);
 
             if let Some(normal_task) = retainer_task_normals.get(&normal_id) {
                 let item_id = normal_task.item;
@@ -187,7 +187,7 @@ fn VentureAnalyzerTable(
                     continue;
                 }
 
-                let task_level = task.retainer_level as i32;
+                let task_level = task.retainer_level.0 as i32;
 
                 // Market Price
                 let market_price_summary = prices.find_matching_listings(item_id.0);

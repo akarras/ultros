@@ -90,7 +90,7 @@ fn calculate_fc_project_cost(
     ];
 
     for part_link in parts {
-        if let Some(part) = data.company_craft_parts.get(part_link) {
+        if let Some(part) = data.company_craft_parts.get(&xiv_gen::CompanyCraftPartId(*part_link as i32)) {
             let processes = [
                 &part.company_craft_process_0,
                 &part.company_craft_process_1,
@@ -98,7 +98,7 @@ fn calculate_fc_project_cost(
             ];
 
             for process_link in processes {
-                if let Some(process) = data.company_craft_processs.get(process_link) {
+                if let Some(process) = data.company_craft_processs.get(&xiv_gen::CompanyCraftProcessId(*process_link as i32)) {
                     // Iterate through the 12 possible supply items
                     // Based on the JSON, these are flattened as supply_item_0, etc.
                     // I'll create a helper macro or just list them out.
@@ -173,7 +173,7 @@ fn calculate_fc_project_cost(
                         }
 
                         if let Some(supply_item) =
-                            data.company_craft_supply_items.get(supply_item_link)
+                            data.company_craft_supply_items.get(&xiv_gen::CompanyCraftSupplyItemId(supply_item_link.0))
                         {
                             if supply_item.item.0 == 0 {
                                 continue;

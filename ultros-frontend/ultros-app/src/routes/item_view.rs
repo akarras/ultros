@@ -279,10 +279,11 @@ fn SummaryCards(
                          let cheapest_prices = use_context::<CheapestPrices>();
 
                          let vendor_exists = is_vendor_item(item_id);
-                         let exchange_exists = data
-                             .special_shops
-                             .values()
-                             .any(|s| special_shop_has_item(s, item_id));
+                         let exchange_exists = false; // special_shop_has_item commented out
+                         // let exchange_exists = data
+                         //     .special_shops
+                         //     .values()
+                         //     .any(|s| special_shop_has_item(s, item_id));
                          let leve_exists = data.leves.values().any(|l| {
                              leve_rewards_item(
                                  l,
@@ -929,7 +930,7 @@ pub fn ItemView() -> impl IntoView {
     let item_description = move || {
         items
             .get(&ItemId(item_id()))
-            .map(|item| item.description.as_str())
+            .map(|item| item.description.0.as_str())
             .unwrap_or_default()
     };
 

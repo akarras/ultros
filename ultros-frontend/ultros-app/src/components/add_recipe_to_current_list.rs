@@ -66,13 +66,13 @@ pub fn AddRecipeToCurrentListModal(
                     }
 
                     let total_amount = quantity * amount;
-                    let can_be_hq = item.can_be_hq;
+                    let can_be_hq = item.can_be_hq.clone();
 
                     Some(ListItem {
                         id: 0,
                         item_id: id.0,
                         list_id,
-                        hq: Some(hq && can_be_hq),
+                        hq: Some(hq && can_be_hq == "True"),
                         quantity: Some(total_amount),
                         acquired: None,
                     })

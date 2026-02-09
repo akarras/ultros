@@ -90,14 +90,14 @@ fn calculate_crafting_cost(
     let mut sub_crafts = Vec::new();
     // Helper to iterate ingredients
     let ingredients = [
-        (recipe.item_ingredient_0, recipe.amount_ingredient_0),
-        (recipe.item_ingredient_1, recipe.amount_ingredient_1),
-        (recipe.item_ingredient_2, recipe.amount_ingredient_2),
-        (recipe.item_ingredient_3, recipe.amount_ingredient_3),
-        (recipe.item_ingredient_4, recipe.amount_ingredient_4),
-        (recipe.item_ingredient_5, recipe.amount_ingredient_5),
-        (recipe.item_ingredient_6, recipe.amount_ingredient_6),
-        (recipe.item_ingredient_7, recipe.amount_ingredient_7),
+        (recipe.ingredient_0, recipe.amount_ingredient_0),
+        (recipe.ingredient_1, recipe.amount_ingredient_1),
+        (recipe.ingredient_2, recipe.amount_ingredient_2),
+        (recipe.ingredient_3, recipe.amount_ingredient_3),
+        (recipe.ingredient_4, recipe.amount_ingredient_4),
+        (recipe.ingredient_5, recipe.amount_ingredient_5),
+        (recipe.ingredient_6, recipe.amount_ingredient_6),
+        (recipe.ingredient_7, recipe.amount_ingredient_7),
     ];
 
     for (item_id, amount) in ingredients {
@@ -258,7 +258,7 @@ fn RecipeAnalyzerTable(
             // Filter by job and level
             let required_level = recipe_level_tables
                 .get(&recipe.recipe_level_table)
-                .map(|t| t.class_job_level as i32)
+                .map(|t| t.class_job_level.0 as i32)
                 .unwrap_or(0);
 
             // Job mapping: 0=CRP, 1=BSM, 2=ARM, 3=GSM, 4=LTW, 5=WVR, 6=ALC, 7=CUL

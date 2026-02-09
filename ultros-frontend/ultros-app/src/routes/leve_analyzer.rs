@@ -176,47 +176,35 @@ fn LeveAnalyzerTable(
 
             if let Some(reward_item_entry) = leve_reward_items.get(&reward_item_id) {
                 // Iterate over the 8 groups
-                let groups = [
-                    (
-                        reward_item_entry.leve_reward_item_group_0,
-                        reward_item_entry.probability_0,
-                    ),
-                    (
-                        reward_item_entry.leve_reward_item_group_1,
-                        reward_item_entry.probability_1,
-                    ),
-                    (
-                        reward_item_entry.leve_reward_item_group_2,
-                        reward_item_entry.probability_2,
-                    ),
-                    (
-                        reward_item_entry.leve_reward_item_group_3,
-                        reward_item_entry.probability_3,
-                    ),
-                    (
-                        reward_item_entry.leve_reward_item_group_4,
-                        reward_item_entry.probability_4,
-                    ),
-                    (
-                        reward_item_entry.leve_reward_item_group_5,
-                        reward_item_entry.probability_5,
-                    ),
-                    (
-                        reward_item_entry.leve_reward_item_group_6,
-                        reward_item_entry.probability_6,
-                    ),
-                    (
-                        reward_item_entry.leve_reward_item_group_7,
-                        reward_item_entry.probability_7,
-                    ),
-                ];
+                for i in 0..8 {
+                    let group_id = match i {
+                        0 => reward_item_entry.leve_reward_item_group_0,
+                        1 => reward_item_entry.leve_reward_item_group_1,
+                        2 => reward_item_entry.leve_reward_item_group_2,
+                        3 => reward_item_entry.leve_reward_item_group_3,
+                        4 => reward_item_entry.leve_reward_item_group_4,
+                        5 => reward_item_entry.leve_reward_item_group_5,
+                        6 => reward_item_entry.leve_reward_item_group_6,
+                        7 => reward_item_entry.leve_reward_item_group_7,
+                        _ => continue,
+                    };
+                    let probability = match i {
+                        0 => reward_item_entry.probability_percent_0,
+                        1 => reward_item_entry.probability_percent_1,
+                        2 => reward_item_entry.probability_percent_2,
+                        3 => reward_item_entry.probability_percent_3,
+                        4 => reward_item_entry.probability_percent_4,
+                        5 => reward_item_entry.probability_percent_5,
+                        6 => reward_item_entry.probability_percent_6,
+                        7 => reward_item_entry.probability_percent_7,
+                        _ => continue,
+                    };
 
-                for (group_id, probability) in groups {
                     if group_id.0 == 0 || probability == 0 {
                         continue;
                     }
 
-                    if let Some(group) = leve_reward_item_groups.get(&group_id) {
+                    if let Some(group) = leve_reward_item_groups.get(&xiv_gen::LeveRewardItemGroupId(group_id.0)) {
                         // A group can give ONE of the items listed? Or all?
                         // LeveRewardItemGroup usually picks one.
                         // But usually these groups have 1 item with 100% chance relative to the group selection?
@@ -283,7 +271,7 @@ fn LeveAnalyzerTable(
                 cheapest_world_id,
                 item_id,
                 item_count,
-                class_job_level: leve.class_job_level,
+                class_job_level: leve.class_job_level.0 as u16,
                 job_category_name,
                 avg_price: sales_stats.avg_price,
                 daily_sales: sales_stats.daily_sales,

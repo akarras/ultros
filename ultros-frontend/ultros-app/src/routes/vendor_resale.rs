@@ -57,12 +57,14 @@ struct CalculatedVendorProfitData {
     inner: Arc<VendorProfitData>,
     profit: i32,
     return_on_investment: i32,
+    daily_profit: i32,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum SortMode {
     Roi,
     Profit,
+    DailyProfit,
 }
 
 #[derive(Clone, Debug)]
@@ -109,6 +111,7 @@ impl FromStr for SortMode {
         match s {
             "roi" => Ok(SortMode::Roi),
             "profit" => Ok(SortMode::Profit),
+            "daily-profit" => Ok(SortMode::DailyProfit),
             _ => Err(()),
         }
     }
@@ -119,6 +122,7 @@ impl std::fmt::Display for SortMode {
         let val = match self {
             SortMode::Roi => "roi",
             SortMode::Profit => "profit",
+            SortMode::DailyProfit => "daily-profit",
         };
         f.write_str(val)
     }
@@ -133,6 +137,7 @@ impl VendorProfitTable {
         let mut vendor_prices = HashMap::new();
         for items in data.gil_shop_items.values() {
             for shop_item in items {
+                // shop_item.item is now ItemId
                 if let Some(item_def) = data.items.get(&shop_item.item) {
                     vendor_prices.insert(shop_item.item.0, item_def.price_mid as i32);
                 }
@@ -154,18 +159,6 @@ impl VendorProfitTable {
 
         for listing in world_cheapest_listings.cheapest_listings {
             if let Some(&vendor_price) = vendor_prices.get(&listing.item_id) {
-                // If the item is sold by a vendor
-                // Note: Vendor items are always NQ when bought, but can be sold as NQ.
-                // If listing is HQ, we can compare, but usually vendor resale is NQ -> NQ.
-                // However, sometimes people buy NQ from vendor and sell as HQ? No, that's crafting.
-                // We strictly look for Vendor -> Market.
-                // If the market listing is HQ, we shouldn't compare directly unless we want to compete with HQ?
-                // Usually vendor resale competes with NQ.
-                // Let's filter to only NQ listings for simplicity and correctness,
-                // OR we can include HQ listings if the user wants to see if they can undercut HQ with NQ (unlikely to work well).
-                // "Flip Finder" logic usually matches HQ to HQ.
-                // Vendor items are NQ. So we should compare with NQ market prices.
-
                 if listing.hq {
                     continue;
                 }
@@ -233,10 +226,24 @@ fn VendorResaleTable(
                 } else {
                     0
                 };
+                let daily_profit = data
+                    .sale_summary
+                    .as_ref()
+                    .and_then(|s| s.avg_sale_duration)
+                    .map(|dur| {
+                        let days = dur.num_seconds() as f32 / 86400.0;
+                        if days > 0.0 {
+                            (profit as f32 / days) as i32
+                        } else {
+                            0
+                        }
+                    })
+                    .unwrap_or(0);
                 CalculatedVendorProfitData {
                     inner: data.clone(),
                     profit,
                     return_on_investment,
+                    daily_profit,
                 }
             })
             .filter(move |data| {
@@ -287,6 +294,7 @@ fn VendorResaleTable(
         match sort_mode().unwrap_or(SortMode::Roi) {
             SortMode::Roi => sorted_data.sort_by_key(|data| Reverse(data.return_on_investment)),
             SortMode::Profit => sorted_data.sort_by_key(|data| Reverse(data.profit)),
+            SortMode::DailyProfit => sorted_data.sort_by_key(|data| Reverse(data.daily_profit)),
         }
         sorted_data
             .into_iter()
@@ -591,6 +599,22 @@ fn VendorResaleTable(
                                     </QueryButton>
                                 </div>
                                 <div role="columnheader" class="w-30 p-4">
+                                    <QueryButton
+                                        class="!text-brand-300 hover:text-brand-200"
+                                        active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
+                                        key="sort"
+                                        value="daily-profit"
+                                    >
+                                        <div class="flex items-center gap-2">
+                                            "Daily Profit"
+                                            {move || {
+                                                (sort_mode() == Some(SortMode::DailyProfit))
+                                                    .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
+                                            }}
+                                        </div>
+                                    </QueryButton>
+                                </div>
+                                <div role="columnheader" class="w-30 p-4">
                                     "Vendor Price"
                                 </div>
                                 <div role="columnheader" class="w-30 p-4">
@@ -664,6 +688,9 @@ fn VendorResaleTable(
                                         }>
                                             {format!("{}%", data.return_on_investment)}
                                         </span>
+                                    </div>
+                                    <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
+                                        <Gil amount=data.daily_profit />
                                     </div>
                                     <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
                                         <Gil amount=data.inner.vendor_price />

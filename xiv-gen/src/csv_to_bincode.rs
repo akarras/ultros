@@ -11,15 +11,18 @@ pub fn read_dumb_csv<T: DumbCsvDeserialize>(path: &str) -> Vec<T> {
         .has_headers(false)
         .from_path(path)
         .expect("Failed to open csv");
-    let _headers: Vec<String> = csv
-        .records()
-        .nth(1)
-        .unwrap()
-        .unwrap()
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    let _ = csv.records().take(2).collect::<Vec<_>>();
+
+    let mut records = csv.records();
+    let row_0 = records.next().expect("Empty CSV").expect("Failed to read CSV");
+    let is_simplified = row_0.get(0).map_or(false, |s| s == "#");
+
+    if !is_simplified {
+        // Standard format: Skip rows 1, 2, 3 (Row 0 is already skipped)
+        let _ = records.next();
+        let _ = records.next();
+        let _ = records.next();
+    }
+
     dumb_csv::deserialize(csv).unwrap()
 }
 
@@ -29,17 +32,26 @@ pub fn read_csv<T: DeserializeOwned>(path: &str) -> Vec<T> {
         .from_path(path)
         .expect("Failed to open csv");
     let str = std::fs::read_to_string(path).unwrap();
-    let headers: Vec<String> = csv
-        .records()
-        .nth(1)
-        .unwrap()
-        .unwrap()
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    // line 2
+
+    let mut records = csv.records();
+    // Headers logic in original code was using nth(1) to get headers from row 1.
+    // Here we just want to skip correctly.
+    // If we need headers for error reporting, we should grab them.
+
+    let row_0 = records.next().expect("Empty CSV").expect("Failed to read CSV");
+    let is_simplified = row_0.get(0).map_or(false, |s| s == "#");
+
+    let headers: Vec<String> = if is_simplified {
+        row_0.iter().map(|s| s.to_string()).collect()
+    } else {
+        let row_1 = records.next().expect("Missing row 1").expect("Failed to read CSV");
+        // Skip 2 and 3
+        let _ = records.next();
+        let _ = records.next();
+        row_1.iter().map(|s| s.to_string()).collect()
+    };
+
     csv.deserialize()
-        .skip(2)
         .map(|m| {
             if let Err(e) = &m {
                 // try to pretty print this error a bit, otherwise it's hard to tell what went wrong
@@ -47,7 +59,7 @@ pub fn read_csv<T: DeserializeOwned>(path: &str) -> Vec<T> {
                     if let ErrorKind::Deserialize { err, .. } = e.kind()
                         && let Some(field) = err.field()
                     {
-                        let field_name = &headers[field as usize];
+                        let field_name = headers.get(field as usize).map(|s| s.as_str()).unwrap_or("?");
                         eprintln!("Field {field}: {field_name}");
                     }
                     let byte = position.byte() as usize;

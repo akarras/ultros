@@ -228,14 +228,14 @@ fn ScripSourceTable(
                 if let Some(r) = recipe {
                     // Sum ingredients
                     let ingredients = [
-                        (r.item_ingredient_0, r.amount_ingredient_0),
-                        (r.item_ingredient_1, r.amount_ingredient_1),
-                        (r.item_ingredient_2, r.amount_ingredient_2),
-                        (r.item_ingredient_3, r.amount_ingredient_3),
-                        (r.item_ingredient_4, r.amount_ingredient_4),
-                        (r.item_ingredient_5, r.amount_ingredient_5),
-                        (r.item_ingredient_6, r.amount_ingredient_6),
-                        (r.item_ingredient_7, r.amount_ingredient_7),
+                        (r.ingredient_0, r.amount_ingredient_0),
+                        (r.ingredient_1, r.amount_ingredient_1),
+                        (r.ingredient_2, r.amount_ingredient_2),
+                        (r.ingredient_3, r.amount_ingredient_3),
+                        (r.ingredient_4, r.amount_ingredient_4),
+                        (r.ingredient_5, r.amount_ingredient_5),
+                        (r.ingredient_6, r.amount_ingredient_6),
+                        (r.ingredient_7, r.amount_ingredient_7),
                     ];
 
                     for (ing_id, amount) in ingredients {
@@ -260,7 +260,7 @@ fn ScripSourceTable(
                 results.push(ScripSourceData {
                     item_id,
                     item_name: item_def.name.to_string(),
-                    level: item_def.level_item.0,
+                    level: item_def.level_item.0 as u16,
                     job_category_name: if let Some(r) = recipe {
                         match r.craft_type.0 {
                             0 => "Carpenter".to_string(),

@@ -131,49 +131,49 @@ fn job_category_lookup(class_job_category: &ClassJobCategory, job_acronym: &str)
         ..
     } = class_job_category;
     match lower_case.as_str() {
-        "adv" => *adv,
-        "gla" => *gla,
-        "pgl" => *pgl,
-        "mrd" => *mrd,
-        "lnc" => *lnc,
-        "arc" => *arc,
-        "cnj" => *cnj,
-        "thm" => *thm,
-        "crp" => *crp,
-        "bsm" => *bsm,
-        "arm" => *arm,
-        "gsm" => *gsm,
-        "ltw" => *ltw,
-        "wvr" => *wvr,
-        "alc" => *alc,
-        "cul" => *cul,
-        "min" => *min,
-        "btn" => *btn,
-        "fsh" => *fsh,
-        "pld" => *pld,
-        "mnk" => *mnk,
-        "war" => *war,
-        "drg" => *drg,
-        "brd" => *brd,
-        "whm" => *whm,
-        "blm" => *blm,
-        "acn" => *acn,
-        "smn" => *smn,
-        "sch" => *sch,
-        "rog" => *rog,
-        "nin" => *nin,
-        "mch" => *mch,
-        "drk" => *drk,
-        "ast" => *ast,
-        "sam" => *sam,
-        "rdm" => *rdm,
-        "blu" => *blu,
-        "gnb" => *gnb,
-        "dnc" => *dnc,
-        "rpr" => *rpr,
-        "sge" => *sge,
-        "vpr" => *vpr,
-        "pct" => *pct,
+        "adv" => adv == "True",
+        "gla" => gla == "True",
+        "pgl" => pgl == "True",
+        "mrd" => mrd == "True",
+        "lnc" => lnc == "True",
+        "arc" => arc == "True",
+        "cnj" => cnj == "True",
+        "thm" => thm == "True",
+        "crp" => crp == "True",
+        "bsm" => bsm == "True",
+        "arm" => arm == "True",
+        "gsm" => gsm == "True",
+        "ltw" => ltw == "True",
+        "wvr" => wvr == "True",
+        "alc" => alc == "True",
+        "cul" => cul == "True",
+        "min" => min == "True",
+        "btn" => btn == "True",
+        "fsh" => fsh == "True",
+        "pld" => pld == "True",
+        "mnk" => mnk == "True",
+        "war" => war == "True",
+        "drg" => drg == "True",
+        "brd" => brd == "True",
+        "whm" => whm == "True",
+        "blm" => blm == "True",
+        "acn" => acn == "True",
+        "smn" => smn == "True",
+        "sch" => sch == "True",
+        "rog" => rog == "True",
+        "nin" => nin == "True",
+        "mch" => mch == "True",
+        "drk" => drk == "True",
+        "ast" => ast == "True",
+        "sam" => sam == "True",
+        "rdm" => rdm == "True",
+        "blu" => blu == "True",
+        "gnb" => gnb == "True",
+        "dnc" => dnc == "True",
+        "rpr" => rpr == "True",
+        "sge" => sge == "True",
+        "vpr" => vpr == "True",
+        "pct" => pct == "True",
         _ => {
             tracing::warn!(job_acronym, "Unknown job acronym");
             false
@@ -591,10 +591,10 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                             <span class="text-xs font-bold px-1.5 py-0.5 rounded bg-white/10 text-[color:var(--color-text-muted)] whitespace-nowrap">
                                                 "iLvl "{item.level_item.0}
                                             </span>
-                                             {if item.level_equip > 1 {
+                                             {if item.level_equip.0 > 1 {
                                                 view! {
                                                     <span class="text-xs px-1.5 py-0.5 rounded bg-white/5 text-[color:var(--color-text-muted)] whitespace-nowrap">
-                                                        "Lv "{item.level_equip}
+                                                        "Lv "{item.level_equip.0}
                                                     </span>
                                                 }.into_any()
                                             } else {
@@ -616,7 +616,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                 <div class="flex flex-col gap-3 mt-2 pt-3 border-t border-white/5">
                                     <div class="flex flex-col gap-2 text-sm">
                                         <CheapestPrice item_id=*id show_hq=false label="NQ" />
-                                        {if item.can_be_hq {
+                                        {if item.can_be_hq == "True" {
                                             view! {
                                                 <CheapestPrice item_id=*id show_hq=true label="HQ" />
                                             }.into_any()

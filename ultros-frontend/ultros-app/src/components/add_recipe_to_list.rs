@@ -223,12 +223,12 @@ fn AddRecipeToListModal(
                                                                     if quantity == 0 {
                                                                         return None;
                                                                     }
-                                                                    let can_be_hq = i.item.can_be_hq;
+                                                                    let can_be_hq = i.item.can_be_hq.clone();
                                                                     Some(ListItem {
                                                                         id: 0,
                                                                         item_id: i.item_id.0,
                                                                         list_id,
-                                                                        hq: Some(hq_only && can_be_hq),
+                                                                        hq: Some(hq_only && can_be_hq == "True"),
                                                                         quantity: Some(quantity),
                                                                         acquired: None,
                                                                     })
