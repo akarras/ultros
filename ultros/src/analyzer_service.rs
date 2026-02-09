@@ -724,12 +724,13 @@ impl AnalyzerService {
                 // Let's stick to the previous logic but maybe make it a bit more statistically sound if possible.
                 // For now, I'll stick to the requested improvement: Use Standard Deviation.
 
-                // If price is > 1 standard deviation above average, and at least 20% higher.
-                if (cheapest.price as f32 > avg_price + std_dev) && price_diff_ratio > 1.2 {
+                // If price is > 2 standard deviations above average, and at least 20% higher.
+                if (cheapest.price as f32 > avg_price + (std_dev * 2.0)) && price_diff_ratio > 1.2 {
                     rising_price.push(trend_item.clone());
                 }
-                // Falling: Price < 1 SD below average, and at least 20% lower.
-                else if (cheapest.price as f32) < (avg_price - std_dev) && price_diff_ratio < 0.8
+                // Falling: Price < 2 SD below average, and at least 20% lower.
+                else if (cheapest.price as f32) < (avg_price - (std_dev * 2.0))
+                    && price_diff_ratio < 0.8
                 {
                     falling_price.push(trend_item.clone());
                 }
@@ -816,7 +817,7 @@ impl AnalyzerService {
                 // This essentially picks the slightly higher one in even cases, or middle in odd.
                 // Let's pick len / 2.
                 let price = prices[len / 2];
-                Some((*item, (price, sold_within)))
+                Some((*item, (price, sold_within, prices)))
             })
             .collect();
 
@@ -834,14 +835,52 @@ impl AnalyzerService {
             .item_map
             .iter()
             .flat_map(|(item_key, cheapest_price)| {
-                let (cheapest_history, sold_within) = *sale_history.get(item_key)?;
-                let current_cheapest_on_sale_world = sale_world_listings
-                    .item_map
-                    .get(item_key)
-                    .map(|l| l.price)
-                    .unwrap_or(cheapest_history);
-                let est_sale_price = (cheapest_history).min(current_cheapest_on_sale_world);
+                let (cheapest_history, sold_within, prices) = sale_history.get(item_key)?;
+                let cheapest_history = *cheapest_history;
+                let sold_within = *sold_within;
+
+                let est_sale_price = if let Some(current) =
+                    sale_world_listings.item_map.get(item_key).map(|l| l.price)
+                {
+                    (current - 1).min(cheapest_history)
+                } else {
+                    (cheapest_history as f32 * 1.2) as i32
+                };
                 let profit = est_sale_price - cheapest_price.price;
+
+                // Tataru Score = Log10(Profit) * (SalesPerWeek ^ 0.5) * Reliability
+                // Reliability = 1.0 - (StdDev / AvgPrice). Clamped to 0.1-1.0
+                let tataru_score = {
+                    if prices.is_empty() || profit <= 0 {
+                        0.0
+                    } else {
+                        let avg_price =
+                            prices.iter().map(|&p| p as f32).sum::<f32>() / prices.len() as f32;
+                        let variance = prices
+                            .iter()
+                            .map(|&p| {
+                                let diff = p as f32 - avg_price;
+                                diff * diff
+                            })
+                            .sum::<f32>()
+                            / prices.len() as f32;
+                        let std_dev = variance.sqrt();
+                        let reliability = (1.0 - (std_dev / avg_price)).clamp(0.1, 1.0);
+
+                        // Estimate sales per week roughly from sold_within
+                        // This is an approximation as we don't have the raw dates easily accessible here without reparsing
+                        // But sold_within has buckets.
+                        let sales_per_week = match sold_within {
+                            SoldWithin::Today(SoldAmount(n)) => (n as f32) * 7.0,
+                            SoldWithin::Week(SoldAmount(n)) => n as f32,
+                            SoldWithin::Month(SoldAmount(n)) => n as f32 / 4.0,
+                            _ => 0.1, // Very low
+                        };
+
+                        (profit as f32).log10() * sales_per_week.sqrt() * reliability
+                    }
+                };
+
                 Some(ResaleStats {
                     profit,
                     item_id: item_key.item_id,
@@ -850,6 +889,7 @@ impl AnalyzerService {
                         - 100.0,
                     world_id: cheapest_price.world_id,
                     sold_within,
+                    tataru_score,
                 })
             })
             .filter(|w| {
@@ -1195,6 +1235,7 @@ pub(crate) struct ResaleStats {
     pub(crate) sold_within: SoldWithin,
     pub(crate) return_on_investment: f32,
     pub(crate) world_id: i32,
+    pub(crate) tataru_score: f32,
 }
 
 #[derive(Default)]
