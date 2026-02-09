@@ -68,7 +68,7 @@ impl ToTokens for DumbCsvDeserializeReceiver {
                 let d = ty.into_token_stream().to_string();
                 let dummy: DummyType = d.as_str().into();
                 let parse_body = match dummy {
-                    DummyType::String => quote! {},
+                    DummyType::String => quote! { .to_string() },
                     DummyType::Bool => quote! { .parse_bool() },
                     DummyType::Other(val) => {
                         let ty= TokenStream::from_str(val).unwrap();

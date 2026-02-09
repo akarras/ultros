@@ -237,20 +237,12 @@ fn create_struct(
         .from_path(path)
         .expect("unable to open path");
     let mut records = reader.records();
-    let _line_one = records
+    let header_row = records
         .next()
-        .expect("First line not found")
-        .expect("Reader error on first line");
-    let line_two = records
-        .next()
-        .expect("Second line not found")
-        .expect("Error reading second line");
-    let line_three = records
-        .next()
-        .expect("Third line not found")
-        .expect("Third line error reading");
+        .expect("Header row not found")
+        .expect("Reader error on header row");
     // iterate over all columns
-    let mut line_four: Vec<_> = records
+    let mut detected_types: Vec<_> = records
         .next()
         .map(|m| {
             m.unwrap()
@@ -268,12 +260,12 @@ fn create_struct(
     records.for_each(|s| {
         s.unwrap()
             .iter()
-            .zip(line_four.iter_mut())
+            .zip(detected_types.iter_mut())
             .for_each(|(record, detector)| {
                 detector.next_record(record);
             })
     });
-    let line_four: Vec<_> = line_four.into_iter().map(|m| m.end()).collect();
+    let detected_types: Vec<_> = detected_types.into_iter().map(|m| m.end()).collect();
     let csv_name = &csv_name.to_upper_camel_case();
     let key_name = format!("{}Id", csv_name);
     let mut s = Struct::new(csv_name);
@@ -282,11 +274,25 @@ fn create_struct(
     let mut parse_this_function = None;
     let mut pk = None;
     let mut unknown_counter = 0;
-    let fields: Vec<(String, String)> = line_two
+    let fields: Vec<(String, String, String)> = header_row
         .iter()
-        .zip(line_three.iter())
-        .zip(line_four.iter())
-        .map(|((field_name, field_value), sample_data)| {
+        .zip(detected_types.iter())
+        .map(|(field_name, sample_data)| {
+            let field_value = match sample_data {
+                DataType::String => "str".to_string(),
+                DataType::Bool => "bool".to_string(),
+                DataType::UnsignedInt8 => "byte".to_string(),
+                DataType::SignedInt8 => "sbyte".to_string(),
+                DataType::UnsignedInt16 => "uint16".to_string(),
+                DataType::UnsignedInt32 => "uint32".to_string(),
+                DataType::UnsignedInt64 => "uint64".to_string(),
+                DataType::SignedInt16 => "int16".to_string(),
+                DataType::SignedInt32 => "int32".to_string(),
+                DataType::SignedInt64 => "int64".to_string(),
+                DataType::Float => "float".to_string(),
+                DataType::ReferenceKey => "int32".to_string(),
+            };
+            let original_field_name = field_name.to_string();
             let mut line_one = if field_name == "#" {
                 "key_id".to_string()
             } else if field_name.is_empty() {
@@ -317,9 +323,9 @@ fn create_struct(
                 // regex: check is bit offset
                 static ref BIT: Regex = Regex::new(r#"^bit(&[0-9]+|)|bool$"#).unwrap();
             }
-            if BIT.is_match(field_value) {
-                (line_one, "bool".to_string())
-            } else if INT.is_match(field_value) {
+            if BIT.is_match(&field_value) {
+                (line_one, "bool".to_string(), original_field_name)
+            } else if INT.is_match(&field_value) {
                 let mut line_two = field_value.replace("int", "");
                 // uint64 -> u64
                 // int64 -> 64, add the i if no u
@@ -357,28 +363,28 @@ fn create_struct(
                     pk = Some(db_field_name.to_string());
                     match sample_data {
                         DataType::ReferenceKey => {
-                            parse_this_function = Some(format!("{db_field_name}: read_csv::<{csv_name}>(r#\"{path}\"#).into_iter().fold(HashMap::new(), |mut map, m| {{ map.entry(m.key_id.0.0).or_default().push(m); map }}),"));
+                            parse_this_function = Some(format!("{db_field_name}: read_dumb_csv::<{csv_name}>(r#\"{path}\"#).into_iter().fold(HashMap::new(), |mut map, m| {{ map.entry(m.key_id.0.0).or_default().push(m); map }}),"));
                         },
                         _ => {
-                            parse_this_function = Some(format!("{db_field_name}: read_csv::<{csv_name}>(r#\"{path}\"#).into_iter().map(|m| (m.key_id, m)).collect(),"));
+                            parse_this_function = Some(format!("{db_field_name}: read_dumb_csv::<{csv_name}>(r#\"{path}\"#).into_iter().map(|m| (m.key_id, m)).collect(),"));
                         }
                     }
                     local_data.known_structs.insert(key_name.clone());
                 }
-                (line_one, line_two)
+                (line_one, line_two, original_field_name)
             } else if field_value == "byte" {
-                (line_one, "u8".to_string())
+                (line_one, "u8".to_string(), original_field_name)
             } else if field_value == "sbyte" {
-                (line_one, "i8".to_string())
+                (line_one, "i8".to_string(), original_field_name)
             } else if field_value == "str" {
-                (line_one, "String".to_string())
+                (line_one, "String".to_string(), original_field_name)
             } else {
                 // remove trailing numbers from the field_name before adding the ID
                 let field_name = field_name.to_upper_camel_case();
                 let field_name: String =
                     field_name.chars().filter(|c| !c.is_numeric()).collect();
                 if field_name.is_empty() {
-                    (line_one, "String".to_string())
+                    (line_one, "String".to_string(), original_field_name)
                 } else {
                     let local_key_name = format!("{}Id", field_value.to_upper_camel_case());
                     if !local_data
@@ -391,111 +397,139 @@ fn create_struct(
                             sample_data: sample_data.field_type(csv_name),
                         });
                     }
-                    (line_one, local_key_name)
+                    (line_one, local_key_name, original_field_name)
                 }
             }
         })
         .collect();
-    if fields.len() > 100 {
-        // handle hugeee fields?
-        #[derive(Debug)]
-        enum KeyType {
-            Normal,
-            /// Where usize = max i
-            Single(usize),
+
+    let mut processed_fields = Vec::new(); // (field_name, field_type, original_name, array_count)
+    let mut current_array: Option<(String, usize, String)> = None; // (root, next_expected_index, type)
+
+    lazy_static! {
+        // regex: check is number
+        static ref DOUBLE: Regex = Regex::new(r#"([A-z_])+([0-9]+)_([0-9]+)"#).unwrap();
+        static ref SINGLE: Regex = Regex::new(r#"([A-z_])+([0-9]+)"#).unwrap();
+    }
+
+    for (name, type_, orig) in &fields {
+        let mut handled_as_array = false;
+
+        let parsed = if let Some(captures) = DOUBLE.captures(name) {
+            let key_1 = captures.get(2).unwrap();
+            let key_2 = captures.get(3).unwrap();
+            let root_prefix = &name[..key_1.start() - 1];
+            let root = format!("{}_{}", root_prefix, key_2.as_str()); // e.g. Name_0
+            let index = key_1.as_str().parse::<usize>().unwrap();
+            Some((root, index))
+        } else if let Some(captures) = SINGLE.captures(name) {
+            let key_1 = captures.get(2).unwrap();
+            let root = name[..key_1.start() - 1].to_string(); // e.g. Param
+            if root != "unknown" { // Skip unknown array detection? Original logic did.
+                let index = key_1.as_str().parse::<usize>().unwrap();
+                Some((root, index))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if let Some((root, index)) = parsed {
+            if let Some((curr_root, next_idx, curr_type)) = &mut current_array {
+                if *curr_root == root && index == *next_idx && *type_ == *curr_type {
+                    // Contiguous array
+                    *next_idx += 1;
+                    handled_as_array = true;
+                } else {
+                    // Array break
+                    // Flush existing
+                    let count = *next_idx;
+                    let vec_type = format!("Vec<{}>", curr_type);
+                    processed_fields.push((curr_root.clone(), vec_type, String::new(), Some(count)));
+                    current_array = None;
+                }
+            }
+
+            if !handled_as_array {
+                // If we are here, current_array is None (or just flushed)
+                if index == 0 {
+                    // Start new array
+                    current_array = Some((root, 1, type_.clone()));
+                    handled_as_array = true;
+                }
+            }
+        } else {
+            // Not array compatible
+            if let Some((curr_root, next_idx, curr_type)) = &mut current_array {
+                // Flush
+                let count = *next_idx;
+                let vec_type = format!("Vec<{}>", curr_type);
+                processed_fields.push((curr_root.clone(), vec_type, String::new(), Some(count)));
+                current_array = None;
+            }
         }
 
-        let mut root_names = Vec::new();
-        for (key, value) in &fields {
-            lazy_static! {
-                // regex: check is number
-                static ref DOUBLE: Regex = Regex::new(r#"([A-z_])+([0-9]+)_([0-9]+)"#).unwrap();
-                static ref SINGLE: Regex = Regex::new(r#"([A-z_])+([0-9]+)"#).unwrap();
-            }
-            if let Some(captures) = DOUBLE.captures(key) {
-                let key_1 = captures.get(2).unwrap();
-                let key_2 = captures.get(3).unwrap();
-                // let root = captures.get(0).unwrap();
-                let root = &key[..key_1.start() - 1];
-                let root = format!("{}_{}", root, key_2.as_str().parse::<usize>().unwrap());
-                let key = KeyType::Single(key_1.as_str().parse().unwrap());
-                if let Some((_, (k, _), _)) = root_names.iter_mut().find(|(key, _, _)| key == &root)
-                {
-                    *k = key;
-                } else {
-                    root_names.push((root, (key, value), 0));
-                }
-            } else if let Some(captures) = SINGLE.captures(key) {
-                let key_1 = captures.get(2).unwrap();
-                let root = &key[..key_1.start() - 1];
-                if root == "unknown" {
-                    let (_, _, skip) = root_names.last_mut().unwrap();
-                    *skip += 1;
-                    continue;
-                }
-                let key = KeyType::Single(key_1.as_str().parse().unwrap());
-                if let Some((_, (k, _), _)) = root_names.iter_mut().find(|(key, _, _)| key == root)
-                {
-                    *k = key;
-                } else {
-                    root_names.push((root.to_string(), (key, value), 0));
-                }
-            } else {
-                root_names.push((key.as_str().to_string(), (KeyType::Normal, value), 0));
-            }
-        }
-        for (name, (multi, datatype), skip) in root_names.iter() {
-            match multi {
-                KeyType::Normal => {
-                    let mut field = Field::new(name, datatype.as_str());
-                    field.vis("pub");
-                    s.push_field(field);
-                }
-                KeyType::Single(count) => {
-                    let mut field = Field::new(name, format!("Vec<{datatype}>"));
-                    let count = *count + 1;
-                    let skip = *skip;
-                    field
-                        .annotation(vec![&format!(
-                            "#[dumb_csv(count = {count}, skip = {skip})]"
-                        )])
-                        .vis("pub");
-                    s.push_field(field);
-                }
-            }
-        }
-        s.derive("DumbCsvDeserialize");
-        let pk = pk.unwrap();
-        parse_this_function = Some(format!(
-            "{pk}: read_dumb_csv::<{csv_name}>(r#\"{path}\"#).into_iter().map(|m| (m.key_id, m)).collect(),"
-        ))
-        // panic!("{root_names:?}");
-    } else {
-        for (field_name, field_value) in fields.iter() {
-            //let mut function = Function::new(&format!("get_{}", field_name.replace('#', "")));
-            //function
-            //    .vis("pub")
-            //    .arg_ref_self()
-            //    .line(format!("self.{field_name}.clone()"))
-            //    .ret(field_value);
-            //i.push_fn(function);
-            let mut field = Field::new(field_name, field_value).vis("pub").to_owned();
-            if field_value == "i64" {
-                field.annotation(vec![
-                    "#[serde(deserialize_with = \"deserialize_i64_from_u8_array\")]",
-                ]);
-            }
-            if field_value == "bool" {
-                field.annotation(vec![
-                    "#[serde(deserialize_with = \"deserialize_bool_from_anything_custom\")]",
-                ]);
-            }
-            if field_value.ends_with("Id") {
-                field.annotation(vec![r#"#[serde(deserialize_with = "ok_or_default")]"#]);
-            }
-            s.push_field(field);
+        if !handled_as_array {
+            // Emit as normal field
+            processed_fields.push((name.clone(), type_.clone(), orig.clone(), None));
         }
     }
+    // Final flush
+    if let Some((curr_root, next_idx, curr_type)) = current_array {
+        let count = next_idx;
+        let vec_type = format!("Vec<{}>", curr_type);
+        processed_fields.push((curr_root, vec_type, String::new(), Some(count)));
+    }
+
+    let mut used_names = HashSet::new();
+
+    for (name, type_, orig, count_opt) in processed_fields {
+        let mut final_name = name.to_snake_case();
+        // Handle numeric-only names which heck to_snake_case might return as is (e.g. "0" -> "0")
+        if final_name.chars().next().map_or(false, |c| c.is_numeric()) {
+             final_name = format!("num_{}", final_name);
+        }
+
+        if used_names.contains(&final_name) {
+             let mut i = 1;
+             while used_names.contains(&format!("{}_{}", final_name, i)) {
+                 i += 1;
+             }
+             final_name = format!("{}_{}", final_name, i);
+        }
+        used_names.insert(final_name.clone());
+
+        let mut field = Field::new(&final_name, &type_);
+        field.vis("pub");
+        if let Some(count) = count_opt {
+            field.annotation(vec![&format!("#[dumb_csv(count = {}, skip = 0)]", count)]);
+        } else {
+            // Serde rename just in case, though dumb_csv ignores it.
+            // But if we ever use Serde, it's there.
+            field.annotation(vec![&format!("#[serde(rename = \"{}\")]", orig)]);
+        }
+
+        // Add deserialize annotations
+        if type_ == "i64" || (type_.starts_with("Vec<") && type_.contains("i64")) {
+             // i64 handling for vec? Original logic:
+             // if field_value == "i64" { ... }
+             // We should check inner type if vec
+             if type_.contains("i64") {
+                 field.annotation(vec!["#[serde(deserialize_with = \"deserialize_i64_from_u8_array\")]"]);
+             }
+        }
+        if type_ == "bool" {
+             field.annotation(vec!["#[serde(deserialize_with = \"deserialize_bool_from_anything_custom\")]"]);
+        }
+        if type_.ends_with("Id") && name != "key_id" {
+             field.annotation(vec![r#"#[serde(deserialize_with = "ok_or_default")]"#]);
+        }
+        s.push_field(field);
+    }
+    s.derive("DumbCsvDeserialize");
+    let pk = pk.unwrap();
+    // parse_this_function already set to read_dumb_csv during key_id detection
     let function = parse_this_function.unwrap();
     args.read_data.line(function);
 
@@ -619,7 +653,7 @@ fn get_table_names(path: impl AsRef<Path>) -> Box<dyn Iterator<Item = (String, S
 
 fn main() {
     // figure out what features have been enabled
-    let dir = "./ffxiv-datamining/csv/";
+    let dir = "./ffxiv-datamining/csv/en/";
     let mut table_names: Vec<_> = get_table_names(dir).collect();
     table_names.sort();
     let mut list = table_names
