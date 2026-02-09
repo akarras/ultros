@@ -848,6 +848,12 @@ impl AnalyzerService {
                     return_on_investment: ((est_sale_price as f32) / (cheapest_price.price as f32)
                         * 100.0)
                         - 100.0,
+                    profit_per_day: {
+                        let duration = Duration::from(&sold_within);
+                        let days = duration.num_seconds() as f32 / 86400.0;
+                        let days = days.max(1.0);
+                        (profit as f32 / days) as i32
+                    },
                     world_id: cheapest_price.world_id,
                     sold_within,
                 })
@@ -1194,6 +1200,7 @@ pub(crate) struct ResaleStats {
     pub(crate) item_id: i32,
     pub(crate) sold_within: SoldWithin,
     pub(crate) return_on_investment: f32,
+    pub(crate) profit_per_day: i32,
     pub(crate) world_id: i32,
 }
 
