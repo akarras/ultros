@@ -57,12 +57,14 @@ struct CalculatedVendorProfitData {
     inner: Arc<VendorProfitData>,
     profit: i32,
     return_on_investment: i32,
+    daily_profit: i32,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum SortMode {
     Roi,
     Profit,
+    DailyProfit,
 }
 
 #[derive(Clone, Debug)]
@@ -109,6 +111,7 @@ impl FromStr for SortMode {
         match s {
             "roi" => Ok(SortMode::Roi),
             "profit" => Ok(SortMode::Profit),
+            "daily-profit" => Ok(SortMode::DailyProfit),
             _ => Err(()),
         }
     }
@@ -119,6 +122,7 @@ impl std::fmt::Display for SortMode {
         let val = match self {
             SortMode::Roi => "roi",
             SortMode::Profit => "profit",
+            SortMode::DailyProfit => "daily-profit",
         };
         f.write_str(val)
     }
@@ -233,10 +237,21 @@ fn VendorResaleTable(
                 } else {
                     0
                 };
+                let daily_profit = if let Some(summary) = &data.sale_summary {
+                    if let Some(duration) = summary.avg_sale_duration {
+                        let duration_secs = duration.num_seconds().max(3600) as f32;
+                        ((profit as f32) * (86400.0 / duration_secs)) as i32
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                };
                 CalculatedVendorProfitData {
                     inner: data.clone(),
                     profit,
                     return_on_investment,
+                    daily_profit,
                 }
             })
             .filter(move |data| {
@@ -287,6 +302,7 @@ fn VendorResaleTable(
         match sort_mode().unwrap_or(SortMode::Roi) {
             SortMode::Roi => sorted_data.sort_by_key(|data| Reverse(data.return_on_investment)),
             SortMode::Profit => sorted_data.sort_by_key(|data| Reverse(data.profit)),
+            SortMode::DailyProfit => sorted_data.sort_by_key(|data| Reverse(data.daily_profit)),
         }
         sorted_data
             .into_iter()
@@ -578,6 +594,22 @@ fn VendorResaleTable(
                                         class="!text-brand-300 hover:text-brand-200"
                                         active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
                                         key="sort"
+                                        value="daily-profit"
+                                    >
+                                        <div class="flex items-center gap-2">
+                                            "Daily Profit"
+                                            {move || {
+                                                (sort_mode() == Some(SortMode::DailyProfit))
+                                                    .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
+                                            }}
+                                        </div>
+                                    </QueryButton>
+                                </div>
+                                <div role="columnheader" class="w-30 p-4">
+                                    <QueryButton
+                                        class="!text-brand-300 hover:text-brand-200"
+                                        active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
+                                        key="sort"
                                         value="roi"
                                         default=true
                                     >
@@ -641,6 +673,9 @@ fn VendorResaleTable(
                                     </div>
                                     <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
                                         <Gil amount=data.profit />
+                                    </div>
+                                    <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
+                                        <Gil amount=data.daily_profit />
                                     </div>
                                     <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
                                         <span class={
