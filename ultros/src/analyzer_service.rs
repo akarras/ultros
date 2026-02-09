@@ -841,15 +841,18 @@ impl AnalyzerService {
                     .map(|l| l.price)
                     .unwrap_or(cheapest_history);
                 let est_sale_price = (cheapest_history).min(current_cheapest_on_sale_world);
-                let profit = est_sale_price - cheapest_price.price;
+                let revenue = (est_sale_price as f32 * 0.95) as i32;
+                let profit = revenue - cheapest_price.price;
+                let potential_profit_per_day = (profit as f32 * sold_within.sales_per_day()) as i32;
                 Some(ResaleStats {
                     profit,
                     item_id: item_key.item_id,
-                    return_on_investment: ((est_sale_price as f32) / (cheapest_price.price as f32)
+                    return_on_investment: ((revenue as f32) / (cheapest_price.price as f32)
                         * 100.0)
                         - 100.0,
                     world_id: cheapest_price.world_id,
                     sold_within,
+                    potential_profit_per_day,
                 })
             })
             .filter(|w| {
@@ -1131,6 +1134,17 @@ impl From<&SoldWithin> for Duration {
 }
 
 impl SoldWithin {
+    pub(crate) fn sales_per_day(&self) -> f32 {
+        match self {
+            SoldWithin::NoSales => 0.0,
+            SoldWithin::Today(n) => n.0 as f32,
+            SoldWithin::Week(n) => n.0 as f32 / 7.0,
+            SoldWithin::Month(n) => n.0 as f32 / 30.0,
+            SoldWithin::Year(n) => n.0 as f32 / 365.0,
+            SoldWithin::YearsAgo(_, _) => 0.0,
+        }
+    }
+
     fn calculate<'a>(iter: impl IntoIterator<Item = &'a SaleSummary>, now: NaiveDateTime) -> Self {
         let mut iter = iter.into_iter().peekable();
         let first_sale = match iter.peek() {
@@ -1195,6 +1209,7 @@ pub(crate) struct ResaleStats {
     pub(crate) sold_within: SoldWithin,
     pub(crate) return_on_investment: f32,
     pub(crate) world_id: i32,
+    pub(crate) potential_profit_per_day: i32,
 }
 
 #[derive(Default)]
@@ -1535,5 +1550,29 @@ mod tests {
             count += 1;
         }
         assert_eq!(count, 4);
+    }
+
+    #[test]
+    fn test_sales_per_day() {
+        assert_eq!(SoldWithin::NoSales.sales_per_day(), 0.0);
+        assert_eq!(SoldWithin::Today(SoldAmount(1)).sales_per_day(), 1.0);
+        assert_eq!(SoldWithin::Week(SoldAmount(7)).sales_per_day(), 1.0);
+        assert_eq!(SoldWithin::Month(SoldAmount(30)).sales_per_day(), 1.0);
+        assert_eq!(SoldWithin::Year(SoldAmount(182)).sales_per_day(), 182.0 / 365.0);
+    }
+
+    #[test]
+    fn test_profit_calculation_logic() {
+        let est_sale_price = 1000;
+        let purchase_price = 500;
+        // Tax is 5%
+        let revenue = (est_sale_price as f32 * 0.95) as i32;
+        assert_eq!(revenue, 950);
+        let profit = revenue - purchase_price;
+        assert_eq!(profit, 450);
+
+        let sales_per_day = 2.0;
+        let potential_profit = (profit as f32 * sales_per_day) as i32;
+        assert_eq!(potential_profit, 900);
     }
 }
