@@ -724,12 +724,13 @@ impl AnalyzerService {
                 // Let's stick to the previous logic but maybe make it a bit more statistically sound if possible.
                 // For now, I'll stick to the requested improvement: Use Standard Deviation.
 
-                // If price is > 1 standard deviation above average, and at least 20% higher.
-                if (cheapest.price as f32 > avg_price + std_dev) && price_diff_ratio > 1.2 {
+                // If price is > 2 standard deviation above average, and at least 20% higher.
+                if (cheapest.price as f32 > avg_price + (std_dev * 2.0)) && price_diff_ratio > 1.2 {
                     rising_price.push(trend_item.clone());
                 }
-                // Falling: Price < 1 SD below average, and at least 20% lower.
-                else if (cheapest.price as f32) < (avg_price - std_dev) && price_diff_ratio < 0.8
+                // Falling: Price < 2 SD below average, and at least 20% lower.
+                else if (cheapest.price as f32) < (avg_price - (std_dev * 2.0))
+                    && price_diff_ratio < 0.8
                 {
                     falling_price.push(trend_item.clone());
                 }
@@ -786,9 +787,9 @@ impl AnalyzerService {
             .await
             .item_map
             .iter()
-            .map(|(i, values)| (i, values, values.iter().collect::<SoldWithin>()))
-            .flat_map(|(item, values, sold_within)| {
-                let mut prices: smallvec::SmallVec<[i32; SALE_HISTORY_SIZE]> = values
+            .flat_map(|(item, values)| {
+                // Filter sales based on resale_options (sold_within)
+                let recent_sales: Vec<_> = values
                     .iter()
                     .filter(|sale| {
                         resale_options
@@ -803,20 +804,58 @@ impl AnalyzerService {
                             })
                             .unwrap_or(true)
                     })
-                    .map(|sale| sale.price_per_item)
                     .collect();
-                if prices.is_empty() {
+
+                if recent_sales.is_empty() {
                     return None;
                 }
+
+                let sold_within = recent_sales.iter().cloned().collect::<SoldWithin>();
+                let mut prices: smallvec::SmallVec<[i32; SALE_HISTORY_SIZE]> = recent_sales
+                    .iter()
+                    .map(|sale| sale.price_per_item)
+                    .collect();
                 prices.sort_unstable();
                 let len = prices.len();
-                // Get median. If even, pick the lower one to be conservative?
-                // Actually, let's pick the one at len / 2.
-                // 1 item: idx 0. 2 items: idx 1. 3 items: idx 1. 4 items: idx 2.
-                // This essentially picks the slightly higher one in even cases, or middle in odd.
-                // Let's pick len / 2.
-                let price = prices[len / 2];
-                Some((*item, (price, sold_within)))
+                let median_price = prices[len / 2];
+
+                // Calculate metrics for Tataru Score
+                // Sales Per Week
+                let newest = recent_sales.first()?;
+                let oldest = recent_sales.last()?;
+                let days_diff = (newest.sale_date - oldest.sale_date).num_days().max(1) as f32;
+                let sales_count = recent_sales.len() as f32;
+                let sales_per_week = (sales_count / days_diff) * 7.0;
+
+                // Average and StdDev
+                let avg_price = recent_sales
+                    .iter()
+                    .map(|s| s.price_per_item as f32)
+                    .sum::<f32>()
+                    / sales_count;
+
+                let variance = recent_sales
+                    .iter()
+                    .map(|s| {
+                        let diff = s.price_per_item as f32 - avg_price;
+                        diff * diff
+                    })
+                    .sum::<f32>()
+                    / sales_count;
+                let std_dev = variance.sqrt();
+
+                // Reliability: 1.0 / (1.0 + (StdDev / AvgPrice))
+                // If AvgPrice is 0 (shouldn't happen with sales), handle it.
+                let reliability = if avg_price > 0.0 {
+                    1.0 / (1.0 + (std_dev / avg_price))
+                } else {
+                    0.0
+                };
+
+                Some((
+                    *item,
+                    (median_price, sold_within, sales_per_week, reliability),
+                ))
             })
             .collect();
 
@@ -834,14 +873,31 @@ impl AnalyzerService {
             .item_map
             .iter()
             .flat_map(|(item_key, cheapest_price)| {
-                let (cheapest_history, sold_within) = *sale_history.get(item_key)?;
-                let current_cheapest_on_sale_world = sale_world_listings
-                    .item_map
-                    .get(item_key)
-                    .map(|l| l.price)
-                    .unwrap_or(cheapest_history);
-                let est_sale_price = (cheapest_history).min(current_cheapest_on_sale_world);
+                let (median_price, sold_within, sales_per_week, reliability) =
+                    *sale_history.get(item_key)?;
+
+                // Smarter Valuation Logic
+                let current_listing = sale_world_listings.item_map.get(item_key);
+
+                let est_sale_price = if let Some(listing) = current_listing {
+                    // Competitor exists: undercut them by 1, but don't go above median
+                    // Wait, Plan says: min(CurrentCheapestListing - 1, Median(RecentSales))
+                    (listing.price - 1).min(median_price)
+                } else {
+                    // Monopoly: Median * 1.2
+                    (median_price as f32 * 1.2) as i32
+                };
+
                 let profit = est_sale_price - cheapest_price.price;
+
+                // Tataru Score = Log10(Profit) * (SalesPerWeek ^ 0.5) * Reliability
+                // Ensure profit is positive for Log10
+                let tataru_score = if profit > 0 {
+                    (profit as f32).log10() * sales_per_week.sqrt() * reliability
+                } else {
+                    0.0
+                };
+
                 Some(ResaleStats {
                     profit,
                     item_id: item_key.item_id,
@@ -1195,6 +1251,7 @@ pub(crate) struct ResaleStats {
     pub(crate) sold_within: SoldWithin,
     pub(crate) return_on_investment: f32,
     pub(crate) world_id: i32,
+    pub(crate) tataru_score: f32,
 }
 
 #[derive(Default)]
@@ -1535,5 +1592,42 @@ mod tests {
             count += 1;
         }
         assert_eq!(count, 4);
+    }
+
+    #[test]
+    fn test_tataru_score_math() {
+        let profit = 10000; // 10k gil
+        let sales_per_week = 4.0;
+        let std_dev = 5000.0;
+        let avg_price = 20000.0;
+
+        let reliability = 1.0 / (1.0 + (std_dev / avg_price));
+        // Reliability = 1.0 / (1.0 + 0.25) = 1.0 / 1.25 = 0.8
+
+        let tataru_score = (profit as f32).log10() * sales_per_week.sqrt() * reliability;
+        // log10(10000) = 4.0
+        // sqrt(4.0) = 2.0
+        // score = 4.0 * 2.0 * 0.8 = 6.4
+
+        assert!((tataru_score - 6.4).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_valuation_logic() {
+        let median_price = 10000;
+
+        // Case 1: Competitor exists at 9000
+        let current_listing_price = 9000;
+        let est_sale_price_competitor = (current_listing_price - 1).min(median_price);
+        assert_eq!(est_sale_price_competitor, 8999);
+
+        // Case 2: Competitor exists at 12000 (above median)
+        let current_listing_price_high = 12000;
+        let est_sale_price_competitor_high = (current_listing_price_high - 1).min(median_price);
+        assert_eq!(est_sale_price_competitor_high, 10000); // Should be median
+
+        // Case 3: Monopoly
+        let est_sale_price_monopoly = (median_price as f32 * 1.2) as i32;
+        assert_eq!(est_sale_price_monopoly, 12000);
     }
 }

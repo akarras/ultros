@@ -42,6 +42,10 @@ struct SaleSummary {
     max_price: i32,
     avg_price: i32,
     min_price: i32,
+    median_price: i32,
+    std_dev: f32,
+    sales_per_week: f32,
+    reliability: f32,
 }
 
 #[derive(Hash, Clone, Debug, PartialEq, Eq)]
@@ -63,12 +67,14 @@ struct CalculatedProfitData {
     inner: Arc<ProfitData>,
     profit: i32,
     return_on_investment: i32,
+    tataru_score: f32,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum SortMode {
     Roi,
     Profit,
+    TataruScore,
 }
 
 #[derive(Clone, Debug)]
@@ -97,22 +103,32 @@ fn compute_summary(
 ) -> SaleSummary {
     let now = Utc::now().naive_utc();
     let SaleData { item_id, hq, sales } = sale;
-    let min_price = hq_data
-        .map(|sales| sales.sales.iter())
-        .into_iter()
-        .flatten()
-        .chain(sales.iter())
-        .map(|price| price.price_per_unit)
-        .min()
-        .unwrap_or_default();
-    let max_price = sales
-        .iter()
-        .map(|price| price.price_per_unit)
-        .max()
-        .unwrap_or_default();
 
-    let avg_price = if filter_outliers {
-        let prices: Vec<i32> = sales.iter().map(|s| s.price_per_unit).collect();
+    // Min, Max, Average (Legacy but kept for consistency if needed, but we rely on sales directly now)
+    // Actually min_price was used as estimated_sale_price before. Now we use median.
+
+    let mut prices: Vec<i32> = sales.iter().map(|s| s.price_per_unit).collect();
+    if prices.is_empty() {
+        return SaleSummary {
+            item_id,
+            hq,
+            num_sold: 0,
+            avg_sale_duration: None,
+            max_price: 0,
+            avg_price: 0,
+            min_price: 0,
+            median_price: 0,
+            std_dev: 0.0,
+            sales_per_week: 0.0,
+            reliability: 0.0,
+        };
+    }
+
+    let min_price = *prices.iter().min().unwrap_or(&0);
+    let max_price = *prices.iter().max().unwrap_or(&0);
+
+    // Filter outliers logic for Average calculation
+    let avg_price_val = if filter_outliers {
         let filtered = filter_outliers_iqr(&prices);
         if filtered.is_empty() {
             0
@@ -120,25 +136,56 @@ fn compute_summary(
             (filtered.iter().map(|&p| p as i64).sum::<i64>() / filtered.len() as i64) as i32
         }
     } else {
-        (sales
-            .iter()
-            .map(|price| price.price_per_unit as i64)
-            .sum::<i64>()
-            / sales.len() as i64) as i32
+        (prices.iter().map(|&p| p as i64).sum::<i64>() / prices.len() as i64) as i32
     };
 
+    // Median
+    prices.sort_unstable();
+    let median_price = prices[prices.len() / 2];
+
+    // Sales Metrics
     let t = sales
         .last()
         .map(|last| (last.sale_date - now).num_milliseconds().abs() / sales.len() as i64);
     let avg_sale_duration = t.map(Duration::milliseconds);
+
+    let newest = sales.first().map(|s| s.sale_date).unwrap_or(now);
+    let oldest = sales.last().map(|s| s.sale_date).unwrap_or(now);
+    let days_diff = (newest - oldest).num_days().max(1) as f32;
+    let sales_count = sales.len() as f32;
+    let sales_per_week = (sales_count / days_diff) * 7.0;
+
+    // StdDev
+    let avg_f32 = avg_price_val as f32;
+    let variance = sales
+        .iter()
+        .map(|s| {
+            let diff = s.price_per_unit as f32 - avg_f32;
+            diff * diff
+        })
+        .sum::<f32>()
+        / sales_count;
+    let std_dev = variance.sqrt();
+
+    // Reliability
+    let reliability = if avg_f32 > 0.0 {
+        1.0 / (1.0 + (std_dev / avg_f32))
+    } else {
+        0.0
+    };
+
     SaleSummary {
         item_id,
         hq,
         num_sold: sales.len(),
         avg_sale_duration,
         max_price,
-        avg_price,
+        avg_price: avg_price_val,
         min_price,
+        median_price,
+        std_dev,
+        sales_per_week,
+        reliability,
     }
 }
 
@@ -150,6 +197,7 @@ impl FromStr for SortMode {
         match s {
             "roi" => Ok(SortMode::Roi),
             "profit" => Ok(SortMode::Profit),
+            "tataru" => Ok(SortMode::TataruScore),
             _ => Err(()),
         }
     }
@@ -160,6 +208,7 @@ impl std::fmt::Display for SortMode {
         let val = match self {
             SortMode::Roi => "roi",
             SortMode::Profit => "profit",
+            SortMode::TataruScore => "tataru",
         };
         f.write_str(val)
     }
@@ -215,12 +264,13 @@ impl ProfitTable {
                     filter_outliers,
                 );
 
-                // Use the world's price as estimated sale price
+                // Use the world's price as estimated sale price (Smarter Valuation)
                 let estimated_sale_price =
-                    if let Some((world_cheapest, _)) = world_cheapest.get(&key) {
-                        summary.min_price.min(*world_cheapest)
+                    if let Some((world_cheapest_price, _)) = world_cheapest.get(&key) {
+                        (*world_cheapest_price - 1).min(summary.median_price)
                     } else {
-                        summary.min_price
+                        // Monopoly
+                        (summary.median_price as f32 * 1.2) as i32
                     };
 
                 Some(ProfitData {
@@ -321,10 +371,20 @@ fn AnalyzerTable(
                 } else {
                     0
                 };
+
+                let tataru_score = if profit > 0 {
+                    (profit as f32).log10()
+                        * data.inner.sale_summary.sales_per_week.sqrt()
+                        * data.inner.sale_summary.reliability
+                } else {
+                    0.0
+                };
+
                 CalculatedProfitData {
                     inner: data.clone(),
                     profit,
                     return_on_investment,
+                    tataru_score,
                 }
             })
             .filter(move |data| {
@@ -379,6 +439,11 @@ fn AnalyzerTable(
         match sort_mode().unwrap_or(SortMode::Roi) {
             SortMode::Roi => sorted_data.sort_by_key(|data| Reverse(data.return_on_investment)),
             SortMode::Profit => sorted_data.sort_by_key(|data| Reverse(data.profit)),
+            SortMode::TataruScore => sorted_data.sort_by(|a, b| {
+                b.tataru_score
+                    .partial_cmp(&a.tataru_score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            }),
         }
         sorted_data
             .into_iter()
@@ -704,6 +769,22 @@ fn AnalyzerTable(
                                     </QueryButton>
                                 </div>
                                 <div role="columnheader" class="w-30 p-4">
+                                    <QueryButton
+                                        class="!text-brand-300 hover:text-brand-200"
+                                        active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
+                                        key="sort"
+                                        value="tataru"
+                                    >
+                                        <div class="flex items-center gap-2">
+                                            "Score"
+                                            {move || {
+                                                (sort_mode() == Some(SortMode::TataruScore))
+                                                    .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
+                                            }}
+                                        </div>
+                                    </QueryButton>
+                                </div>
+                                <div role="columnheader" class="w-30 p-4">
                                     "Buy Price"
                                 </div>
                                 <div role="columnheader" class="w-30 p-4 flex flex-row gap-2 hidden lg:flex">
@@ -836,6 +917,11 @@ fn AnalyzerTable(
                                             }
                                         }>
                                             {format!("{}%", data.return_on_investment)}
+                                        </span>
+                                    </div>
+                                    <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
+                                        <span class="text-sm font-semibold text-brand-300">
+                                            {format!("{:.1}", data.tataru_score)}
                                         </span>
                                     </div>
                                     <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
