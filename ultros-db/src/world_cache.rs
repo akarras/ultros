@@ -415,4 +415,19 @@ impl WorldCache {
             .iter()
             .flat_map(|(_, d)| d.iter().flat_map(|(_, worlds)| worlds.iter()))
     }
+
+    pub fn empty() -> Self {
+        let raw_data = RawData {
+            worlds: HashMap::new(),
+            datacenters: HashMap::new(),
+            regions: HashMap::new(),
+        };
+        let yoke = yoke(Box::new(raw_data));
+        Self {
+            yoke,
+            name_map: HashMap::new(),
+            datacenter_to_world: HashMap::new(),
+            region_to_worlds: HashMap::new(),
+        }
+    }
 }
