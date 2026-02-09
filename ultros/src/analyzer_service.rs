@@ -697,8 +697,6 @@ impl AnalyzerService {
             let std_dev = variance.sqrt();
 
             if let Some(cheapest) = cheapest_listings.item_map.get(key) {
-                let price_diff_ratio = cheapest.price as f32 / avg_price;
-
                 let trend_item = TrendItem {
                     item_id: key.item_id,
                     hq: key.hq,
@@ -724,13 +722,12 @@ impl AnalyzerService {
                 // Let's stick to the previous logic but maybe make it a bit more statistically sound if possible.
                 // For now, I'll stick to the requested improvement: Use Standard Deviation.
 
-                // If price is > 1 standard deviation above average, and at least 20% higher.
-                if (cheapest.price as f32 > avg_price + std_dev) && price_diff_ratio > 1.2 {
+                // Spike: Price > Average + 2 * StdDev.
+                if (cheapest.price as f32) > (avg_price + 2.0 * std_dev) {
                     rising_price.push(trend_item.clone());
                 }
-                // Falling: Price < 1 SD below average, and at least 20% lower.
-                else if (cheapest.price as f32) < (avg_price - std_dev) && price_diff_ratio < 0.8
-                {
+                // Crash: Price < Average - 2 * StdDev.
+                else if (cheapest.price as f32) < (avg_price - 2.0 * std_dev) {
                     falling_price.push(trend_item.clone());
                 }
             }
@@ -834,13 +831,16 @@ impl AnalyzerService {
             .item_map
             .iter()
             .flat_map(|(item_key, cheapest_price)| {
-                let (cheapest_history, sold_within) = *sale_history.get(item_key)?;
-                let current_cheapest_on_sale_world = sale_world_listings
-                    .item_map
-                    .get(item_key)
-                    .map(|l| l.price)
-                    .unwrap_or(cheapest_history);
-                let est_sale_price = (cheapest_history).min(current_cheapest_on_sale_world);
+                let (median_price, sold_within) = *sale_history.get(item_key)?;
+                let listing = sale_world_listings.item_map.get(item_key).map(|l| l.price);
+                // Algorithm Update:
+                // EstimatedSalePrice = min(CurrentCheapestListing - 1, Median(RecentSales))
+                // If CurrentCheapestListing doesn't exist, use Median(RecentSales) * 1.2
+                let est_sale_price = match listing {
+                    Some(price) => (price - 1).min(median_price),
+                    None => (median_price as f32 * 1.2) as i32,
+                };
+
                 let profit = est_sale_price - cheapest_price.price;
                 Some(ResaleStats {
                     profit,
