@@ -13,7 +13,9 @@ fn main() {
     flate
         .compress_vec(vec.as_slice(), &mut output, FlushCompress::Full)
         .unwrap();
-    assert!(!output.is_empty());
+    if output.is_empty() {
+        panic!("Compressed output is empty! Input size: {}", vec.len());
+    }
     let out_dir = env::var_os("OUT_DIR").unwrap();
     let dest_path = Path::new(&out_dir).join("database.bincode");
     std::fs::write(dest_path, output.as_slice()).unwrap();

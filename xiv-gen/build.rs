@@ -237,18 +237,10 @@ fn create_struct(
         .from_path(path)
         .expect("unable to open path");
     let mut records = reader.records();
-    let _line_one = records
+    let line_two = records
         .next()
         .expect("First line not found")
         .expect("Reader error on first line");
-    let line_two = records
-        .next()
-        .expect("Second line not found")
-        .expect("Error reading second line");
-    let line_three = records
-        .next()
-        .expect("Third line not found")
-        .expect("Third line error reading");
     // iterate over all columns
     let mut line_four: Vec<_> = records
         .next()
@@ -284,9 +276,8 @@ fn create_struct(
     let mut unknown_counter = 0;
     let fields: Vec<(String, String)> = line_two
         .iter()
-        .zip(line_three.iter())
         .zip(line_four.iter())
-        .map(|((field_name, field_value), sample_data)| {
+        .map(|(field_name, sample_data)| {
             let mut line_one = if field_name == "#" {
                 "key_id".to_string()
             } else if field_name.is_empty() {
@@ -311,88 +302,46 @@ fn create_struct(
                 line_one = format!("num{line_one}");
             }
 
-            lazy_static! {
-                // regex: check is int type
-                static ref INT: Regex = Regex::new(r#"^(u|)int(8|16|32|64)$"#).unwrap();
-                // regex: check is bit offset
-                static ref BIT: Regex = Regex::new(r#"^bit(&[0-9]+|)|bool$"#).unwrap();
-            }
-            if BIT.is_match(field_value) {
-                (line_one, "bool".to_string())
-            } else if INT.is_match(field_value) {
-                let mut line_two = field_value.replace("int", "");
-                // uint64 -> u64
-                // int64 -> 64, add the i if no u
-                if !line_two.starts_with('u') {
-                    line_two = format!("i{}", line_two);
-                }
+            if line_one == "key_id" {
+                let mut key = Struct::new(&key_name);
+                apply_derives(&mut key).derive("FromStr").derive("Default").derive("Hash").derive("Eq").derive("Copy").vis("pub").tuple_field(sample_data.field_type(csv_name)).vis("pub");
+                scope.push_struct(key);
 
-                if line_one == "key_id" {
-                    let mut key = Struct::new(&key_name);
-                    apply_derives(&mut key).derive("FromStr").derive("Default").derive("Hash").derive("Eq").derive("Copy").vis("pub").tuple_field(sample_data.field_type(csv_name)).vis("pub");
-                    scope.push_struct(key);
-
-                    line_two = key_name.clone();
-                    let db_field_name = format!("{}s", csv_name.to_snake_case());
-                    let key_value = match sample_data {
-                        DataType::ReferenceKey => {
-                            Cow::from(format!("Vec<{csv_name}>"))
-                        },
-                        _ => {
-                            Cow::Borrowed(csv_name.as_str())
-                        }
-                    };
-                    let db_field_key = match sample_data {
-                        DataType::ReferenceKey => {
-                            let (index, _) = csv_name.char_indices().rev().find(|(_i, c)| c.is_uppercase()).unwrap();
-                            let parent_key = &csv_name[..index];
-                            format!("HashMap<{parent_key}Id, {key_value}>")
-                        },
-                        _ => {
-                            format!("HashMap<{key_name}, {key_value}>")
-                        }
-                    };
-                    args.db
-                        .field(&db_field_name, &db_field_key).vis("pub");
-                    pk = Some(db_field_name.to_string());
-                    match sample_data {
-                        DataType::ReferenceKey => {
-                            parse_this_function = Some(format!("{db_field_name}: read_csv::<{csv_name}>(r#\"{path}\"#).into_iter().fold(HashMap::new(), |mut map, m| {{ map.entry(m.key_id.0.0).or_default().push(m); map }}),"));
-                        },
-                        _ => {
-                            parse_this_function = Some(format!("{db_field_name}: read_csv::<{csv_name}>(r#\"{path}\"#).into_iter().map(|m| (m.key_id, m)).collect(),"));
-                        }
+                let line_two = key_name.clone();
+                let db_field_name = format!("{}s", csv_name.to_snake_case());
+                let key_value = match sample_data {
+                    DataType::ReferenceKey => {
+                        Cow::from(format!("Vec<{csv_name}>"))
+                    },
+                    _ => {
+                        Cow::Borrowed(csv_name.as_str())
                     }
-                    local_data.known_structs.insert(key_name.clone());
+                };
+                let db_field_key = match sample_data {
+                    DataType::ReferenceKey => {
+                        let (index, _) = csv_name.char_indices().rev().find(|(_i, c)| c.is_uppercase()).unwrap();
+                        let parent_key = &csv_name[..index];
+                        format!("HashMap<{parent_key}Id, {key_value}>")
+                    },
+                    _ => {
+                        format!("HashMap<{key_name}, {key_value}>")
+                    }
+                };
+                args.db
+                    .field(&db_field_name, &db_field_key).vis("pub");
+                pk = Some(db_field_name.to_string());
+                match sample_data {
+                    DataType::ReferenceKey => {
+                        parse_this_function = Some(format!("{db_field_name}: read_csv::<{csv_name}>(r#\"{path}\"#).into_iter().fold(HashMap::new(), |mut map, m| {{ map.entry(m.key_id.0.0).or_default().push(m); map }}),"));
+                    },
+                    _ => {
+                        parse_this_function = Some(format!("{db_field_name}: read_csv::<{csv_name}>(r#\"{path}\"#).into_iter().map(|m| (m.key_id, m)).collect(),"));
+                    }
                 }
+                local_data.known_structs.insert(key_name.clone());
                 (line_one, line_two)
-            } else if field_value == "byte" {
-                (line_one, "u8".to_string())
-            } else if field_value == "sbyte" {
-                (line_one, "i8".to_string())
-            } else if field_value == "str" {
-                (line_one, "String".to_string())
             } else {
-                // remove trailing numbers from the field_name before adding the ID
-                let field_name = field_name.to_upper_camel_case();
-                let field_name: String =
-                    field_name.chars().filter(|c| !c.is_numeric()).collect();
-                if field_name.is_empty() {
-                    (line_one, "String".to_string())
-                } else {
-                    let local_key_name = format!("{}Id", field_value.to_upper_camel_case());
-                    if !local_data
-                        .requested_structs
-                        .iter()
-                        .any(|d| d.requested_struct == local_key_name)
-                    {
-                        local_data.requested_structs.push(RequestedStructData {
-                            requested_struct: local_key_name.clone(),
-                            sample_data: sample_data.field_type(csv_name),
-                        });
-                    }
-                    (line_one, local_key_name)
-                }
+                (line_one, sample_data.field_type(csv_name))
             }
         })
         .collect();
@@ -407,42 +356,7 @@ fn create_struct(
 
         let mut root_names = Vec::new();
         for (key, value) in &fields {
-            lazy_static! {
-                // regex: check is number
-                static ref DOUBLE: Regex = Regex::new(r#"([A-z_])+([0-9]+)_([0-9]+)"#).unwrap();
-                static ref SINGLE: Regex = Regex::new(r#"([A-z_])+([0-9]+)"#).unwrap();
-            }
-            if let Some(captures) = DOUBLE.captures(key) {
-                let key_1 = captures.get(2).unwrap();
-                let key_2 = captures.get(3).unwrap();
-                // let root = captures.get(0).unwrap();
-                let root = &key[..key_1.start() - 1];
-                let root = format!("{}_{}", root, key_2.as_str().parse::<usize>().unwrap());
-                let key = KeyType::Single(key_1.as_str().parse().unwrap());
-                if let Some((_, (k, _), _)) = root_names.iter_mut().find(|(key, _, _)| key == &root)
-                {
-                    *k = key;
-                } else {
-                    root_names.push((root, (key, value), 0));
-                }
-            } else if let Some(captures) = SINGLE.captures(key) {
-                let key_1 = captures.get(2).unwrap();
-                let root = &key[..key_1.start() - 1];
-                if root == "unknown" {
-                    let (_, _, skip) = root_names.last_mut().unwrap();
-                    *skip += 1;
-                    continue;
-                }
-                let key = KeyType::Single(key_1.as_str().parse().unwrap());
-                if let Some((_, (k, _), _)) = root_names.iter_mut().find(|(key, _, _)| key == root)
-                {
-                    *k = key;
-                } else {
-                    root_names.push((root.to_string(), (key, value), 0));
-                }
-            } else {
-                root_names.push((key.as_str().to_string(), (KeyType::Normal, value), 0));
-            }
+            root_names.push((key.as_str().to_string(), (KeyType::Normal, value), 0));
         }
         for (name, (multi, datatype), skip) in root_names.iter() {
             match multi {
@@ -619,7 +533,7 @@ fn get_table_names(path: impl AsRef<Path>) -> Box<dyn Iterator<Item = (String, S
 
 fn main() {
     // figure out what features have been enabled
-    let dir = "./ffxiv-datamining/csv/";
+    let dir = "./ffxiv-datamining/csv/en/";
     let mut table_names: Vec<_> = get_table_names(dir).collect();
     table_names.sort();
     let mut list = table_names
