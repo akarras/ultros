@@ -8,7 +8,7 @@ use leptos::prelude::*;
 use leptos::reactive::wrappers::write::SignalSetter;
 use std::cmp::Reverse;
 use ultros_api_types::list::ListItem;
-use xiv_gen::{Item, Recipe};
+use xiv_gen::{Item, ItemId, Recipe};
 
 #[component]
 pub fn AddRecipeToCurrentListModal(
@@ -25,7 +25,7 @@ pub fn AddRecipeToCurrentListModal(
     let recipe_list = StoredValue::new(
         recipes
             .values()
-            .filter_map(|r| items.get(&r.item_result).map(|i| (i, r)))
+            .filter_map(|r| items.get(&ItemId(r.item_result as i32)).map(|i| (i, r)))
             .collect::<Vec<_>>(),
     );
 
@@ -43,7 +43,7 @@ pub fn AddRecipeToCurrentListModal(
                     .collect::<Vec<(&Item, &Recipe)>>()
             });
             // Sort by level descending
-            results.sort_by_key(|(i, _)| Reverse(i.level_item.0));
+            results.sort_by_key(|(i, _)| Reverse(i.level_item));
             results
         })
     });
@@ -61,7 +61,7 @@ pub fn AddRecipeToCurrentListModal(
                     let item = items.get(&id)?;
                     // Check for crystals if ignore_crystals is true
                     // Crystal category is 59
-                    if ignore_crystals && item.item_search_category.0 == 59 {
+                    if ignore_crystals && item.item_search_category == 59 {
                         return None;
                     }
 
@@ -131,7 +131,7 @@ pub fn AddRecipeToCurrentListModal(
                                         <div class="flex flex-col min-w-0">
                                             <span class="font-bold whitespace-normal">{item.name.as_str()}</span>
                                             <span class="text-xs text-[color:var(--color-text-muted)]">
-                                                "Lvl " {item.level_item.0}
+                                                "Lvl " {item.level_item}
                                             </span>
                                         </div>
                                     </div>

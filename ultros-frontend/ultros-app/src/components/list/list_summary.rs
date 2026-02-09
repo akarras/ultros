@@ -120,7 +120,7 @@ pub fn ListSummary(items: Vec<(ListItem, Vec<ActiveListing>)>) -> impl IntoView 
         .filter(|(item, _)| {
             game_items
                 .get(&ItemId(item.item_id))
-                .map(|i| i.item_search_category.0 > 1)
+                .map(|i| i.item_search_category > 1)
                 .unwrap_or(false)
         })
         .collect();

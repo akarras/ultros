@@ -22,7 +22,7 @@ use std::sync::Arc;
 use ultros_api_types::CurrentlyShownItem;
 use ultros_api_types::world_helper::AnySelector;
 use ultros_api_types::world_helper::{AnyResult, OwnedResult};
-use xiv_gen::ItemId;
+use xiv_gen::{ItemId, ItemSearchCategoryId, ItemUiCategoryId};
 
 #[component]
 fn WorldButton(
@@ -335,18 +335,18 @@ fn SummaryCards(
                                                  // Actually, recipe_tree_iter returns recipes *related* to the item.
                                                  // It could be the item ITSELF (craftable), or it could be an ingredient.
                                                  // We only want to show "Craft for ~" if the item itself is the result.
-                                                 if recipe.item_result.0 == item_id {
+                                                 if recipe.item_result as i32 == item_id {
                                                      view! { <span>"Craft for ~" <Gil amount=min_cost /></span> }
                                                          .into_any()
                                                  } else {
                                                      "Used in Crafting".into_any()
                                                  }
-                                             } else if recipe.item_result.0 == item_id {
+                                             } else if recipe.item_result as i32 == item_id {
                                                                  "Craftable".into_any()
                                              } else {
                                                  "Used in Crafting".into_any()
                                                              }
-                                         } else if recipe.item_result.0 == item_id {
+                                         } else if recipe.item_result as i32 == item_id {
                                                              "Craftable".into_any()
                                          } else {
                                              "Used in Crafting".into_any()
@@ -936,13 +936,13 @@ pub fn ItemView() -> impl IntoView {
     let item_category = move || {
         items
             .get(&ItemId(item_id()))
-            .and_then(|item| categories.get(&item.item_ui_category))
+            .and_then(|item| categories.get(&ItemUiCategoryId(item.item_ui_category as i32)))
     };
 
     let item_search_category = move || {
         items
             .get(&ItemId(item_id()))
-            .and_then(|item| search_categories.get(&item.item_search_category))
+            .and_then(|item| search_categories.get(&ItemSearchCategoryId(item.item_search_category as i32)))
     };
 
     let description = Memo::new(move |_| {
@@ -1025,7 +1025,7 @@ pub fn ItemView() -> impl IntoView {
                         <div class="flex items-center gap-2">
                             <span class="text-brand-300 font-medium tracking-wide text-sm uppercase">Item Level</span>
                             <span class="bg-brand-900/40 text-brand-100 px-2 py-0.5 rounded text-sm font-bold border border-brand-700/50">
-                                {move || item().map(|item| item.level_item.0).unwrap_or_default()}
+                                {move || item().map(|item| item.level_item).unwrap_or_default()}
                             </span>
                             <div class="flex-grow"></div>
                              <div>{move || view! { <ItemStats item_id=ItemId(item_id()) /> }}</div>

@@ -17,7 +17,7 @@ use ultros_api_types::{
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     world_helper::AnyResult,
 };
-use xiv_gen::{ItemId, Recipe};
+use xiv_gen::{CollectablesShopRewardScripId, ItemId, Recipe};
 
 #[derive(Clone, Debug, PartialEq)]
 struct ScripSourceData {
@@ -143,11 +143,11 @@ fn ScripSourceTable(
         for item_vec in data.collectables_shop_items.values() {
             for item_entry in item_vec {
                 let reward_scrip_id = item_entry.collectables_shop_reward_scrip;
-                if reward_scrip_id.0 == 0 {
+                if reward_scrip_id == 0 {
                     continue;
                 }
 
-                let reward = match data.collectables_shop_reward_scrips.get(&reward_scrip_id) {
+                let reward = match data.collectables_shop_reward_scrips.get(&CollectablesShopRewardScripId(reward_scrip_id as i32)) {
                     Some(r) => r,
                     None => continue,
                 };
@@ -190,7 +190,7 @@ fn ScripSourceTable(
                 }
 
                 let item_id = item_entry.item;
-                let item_def = match items.get(&item_id) {
+                let item_def = match items.get(&ItemId(item_id as i32)) {
                     Some(i) => i,
                     None => continue,
                 };
@@ -201,7 +201,7 @@ fn ScripSourceTable(
                 // Filter Job
                 if let Some(ref j_filter) = job_filter_val {
                     if let Some(r) = recipe {
-                        let job_abbrev = match r.craft_type.0 {
+                        let job_abbrev = match r.craft_type {
                             0 => "Carpenter",
                             1 => "Blacksmith",
                             2 => "Armorer",
@@ -228,21 +228,21 @@ fn ScripSourceTable(
                 if let Some(r) = recipe {
                     // Sum ingredients
                     let ingredients = [
-                        (r.item_ingredient_0, r.amount_ingredient_0),
-                        (r.item_ingredient_1, r.amount_ingredient_1),
-                        (r.item_ingredient_2, r.amount_ingredient_2),
-                        (r.item_ingredient_3, r.amount_ingredient_3),
-                        (r.item_ingredient_4, r.amount_ingredient_4),
-                        (r.item_ingredient_5, r.amount_ingredient_5),
-                        (r.item_ingredient_6, r.amount_ingredient_6),
-                        (r.item_ingredient_7, r.amount_ingredient_7),
+                        (r.ingredient_0, r.amount_ingredient_0),
+                        (r.ingredient_1, r.amount_ingredient_1),
+                        (r.ingredient_2, r.amount_ingredient_2),
+                        (r.ingredient_3, r.amount_ingredient_3),
+                        (r.ingredient_4, r.amount_ingredient_4),
+                        (r.ingredient_5, r.amount_ingredient_5),
+                        (r.ingredient_6 as u16, r.amount_ingredient_6),
+                        (r.ingredient_7 as u16, r.amount_ingredient_7),
                     ];
 
                     for (ing_id, amount) in ingredients {
-                        if ing_id.0 == 0 || amount == 0 {
+                        if ing_id == 0 || amount == 0 {
                             continue;
                         }
-                        let price_summary = prices.find_matching_listings(ing_id.0);
+                        let price_summary = prices.find_matching_listings(ing_id as i32);
                         let price = price_summary.lowest_gil().unwrap_or(0); // If no price, assume 0? Or skip?
                         cost += price * amount as i32;
                     }
@@ -258,11 +258,11 @@ fn ScripSourceTable(
                 let cost_per_scrip = cost as f32 / scrip_amount as f32;
 
                 results.push(ScripSourceData {
-                    item_id,
+                    item_id: ItemId(item_id as i32),
                     item_name: item_def.name.to_string(),
-                    level: item_def.level_item.0,
+                    level: item_def.level_item,
                     job_category_name: if let Some(r) = recipe {
-                        match r.craft_type.0 {
+                        match r.craft_type {
                             0 => "Carpenter".to_string(),
                             1 => "Blacksmith".to_string(),
                             2 => "Armorer".to_string(),

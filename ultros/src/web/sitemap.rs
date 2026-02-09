@@ -209,7 +209,7 @@ pub(crate) async fn item_sitemap(
         xiv_gen_db::data()
             .items
             .iter()
-            .filter(|(_, item)| item.item_search_category.0 > 0)
+            .filter(|(_, item)| item.item_search_category > 0)
             .map(|(key, _)| key.0)
             .sorted()
             .map(|id| {

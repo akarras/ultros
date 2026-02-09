@@ -151,7 +151,7 @@ pub fn ListView() -> impl IntoView {
                                     let s_lower = s.to_lowercase();
                                     let mut score = items
                                         .iter()
-                                        .filter(|(_, i)| i.item_search_category.0 > 0)
+                                        .filter(|(_, i)| i.item_search_category > 0)
                                         .filter(|_| !s.is_empty())
                                         .filter_map(|(id, i)| {
                                             if i.name.to_lowercase().contains(&s_lower) {
@@ -163,7 +163,7 @@ pub fn ListView() -> impl IntoView {
                                         .collect::<Vec<_>>();
                                     score
                                         .sort_by_key(|(_, i)| (
-                                            Reverse(i.level_item.0),
+                                            Reverse(i.level_item),
                                         ));
                                     score
                                         .into_iter()

@@ -22,7 +22,7 @@ use leptos_router::hooks::{query_signal, use_location, use_params_map};
 use leptos_router::location::Url;
 use paginate::Pages;
 use percent_encoding::percent_decode_str;
-use xiv_gen::{ClassJobCategory, Item, ItemId};
+use xiv_gen::{ClassJobCategory, ClassJobCategoryId, Item, ItemId};
 
 #[component]
 fn SideMenuButton<T>(href: String, children: TypedChildrenFn<T>) -> impl IntoView
@@ -223,7 +223,7 @@ pub fn CategoryItems() -> impl IntoView {
             .map(|(id, _)| {
                 data.items
                     .iter()
-                    .filter(|(_, item)| item.item_search_category == *id)
+                    .filter(|(_, item)| item.item_search_category as i32 == id.0)
                     .collect::<Vec<_>>()
             });
         cat.unwrap_or_default()
@@ -294,8 +294,8 @@ pub fn JobItems() -> impl IntoView {
         let job_items: Vec<_> = data
             .items
             .iter()
-            .filter(|(_id, item)| job_categories.contains(&item.class_job_category))
-            .filter(|(_id, item)| !market_only || item.item_search_category.0 > 0)
+            .filter(|(_id, item)| job_categories.contains(&ClassJobCategoryId(item.class_job_category as i32)))
+            .filter(|(_id, item)| !market_only || item.item_search_category > 0)
             .collect();
         job_items
     });
@@ -468,7 +468,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                     SortDirection::Desc => (b, a),
                 };
                 match item_property {
-                    ItemSortOption::ItemLevel => item_a.level_item.0.cmp(&item_b.level_item.0),
+                    ItemSortOption::ItemLevel => item_a.level_item.cmp(&item_b.level_item),
                     ItemSortOption::Name => item_a.name.cmp(&item_b.name),
                     ItemSortOption::Price => {
                         if let Some(price_map) = &price_map {
@@ -480,7 +480,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                 .lowest_gil();
                             price_a.cmp(&price_b)
                         } else {
-                            item_a.level_item.0.cmp(&item_b.level_item.0)
+                            item_a.level_item.cmp(&item_b.level_item)
                         }
                     }
                     ItemSortOption::Key => item_a.key_id.0.cmp(&item_b.key_id.0),
@@ -589,7 +589,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                     <div class="flex flex-col min-w-0 pt-0.5">
                                         <div class="flex items-center gap-2 mb-1.5 flex-wrap">
                                             <span class="text-xs font-bold px-1.5 py-0.5 rounded bg-white/10 text-[color:var(--color-text-muted)] whitespace-nowrap">
-                                                "iLvl "{item.level_item.0}
+                                                "iLvl "{item.level_item}
                                             </span>
                                              {if item.level_equip > 1 {
                                                 view! {

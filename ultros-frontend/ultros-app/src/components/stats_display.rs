@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use super::tooltip::*;
 use leptos::prelude::*;
-use xiv_gen::{BaseParam, Item, ItemId};
+use xiv_gen::{BaseParam, BaseParamId, Item, ItemId};
 
 struct ParamData {
     base_param: &'static BaseParam,
@@ -27,23 +27,23 @@ impl Iterator for ParamIterator {
     fn next(&mut self) -> Option<Self::Item> {
         let item = self.item;
         loop {
-            let (param, value) = match self.index {
-                0 => (item.base_param_0, item.base_param_value_0),
-                1 => (item.base_param_1, item.base_param_value_1),
-                2 => (item.base_param_2, item.base_param_value_2),
-                3 => (item.base_param_3, item.base_param_value_3),
-                4 => (item.base_param_4, item.base_param_value_4),
-                5 => (item.base_param_5, item.base_param_value_5),
+            let (param, value): (u8, i16) = match self.index {
+                0 => (item.base_param_0, item.base_param_value_0 as i16),
+                1 => (item.base_param_1, item.base_param_value_1 as i16),
+                2 => (item.base_param_2, item.base_param_value_2 as i16),
+                3 => (item.base_param_3, item.base_param_value_3 as i16),
+                4 => (item.base_param_4, item.base_param_value_4 as i16),
+                5 => (item.base_param_5, item.base_param_value_5 as i16),
                 6 => (item.base_param_special_0, item.base_param_value_special_0),
                 7 => (item.base_param_special_1, item.base_param_value_special_1),
-                8 => (item.base_param_special_2, item.base_param_value_special_2),
-                9 => (item.base_param_special_3, item.base_param_value_special_3),
-                10 => (item.base_param_special_4, item.base_param_value_special_4),
-                11 => (item.base_param_special_5, item.base_param_value_special_5),
+                8 => (item.base_param_special_2, item.base_param_value_special_2 as i16),
+                9 => (item.base_param_special_3, item.base_param_value_special_3 as i16),
+                10 => (item.base_param_special_4, item.base_param_value_special_4 as i16),
+                11 => (item.base_param_special_5, item.base_param_value_special_5 as i16),
                 _ => return None,
             };
             self.index += 1;
-            if let Some(base_param) = xiv_gen_db::data().base_params.get(&param) {
+            if let Some(base_param) = xiv_gen_db::data().base_params.get(&BaseParamId(param as i32)) {
                 return Some((base_param, self.index > 5, value));
             }
         }

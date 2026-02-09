@@ -5,6 +5,7 @@ use tantivy::schema::{STORED, Schema, TextOptions, Value};
 use tantivy::{Index, IndexReader, ReloadPolicy, doc};
 use tracing::{error, info, warn};
 use ultros_api_types::search::SearchResult;
+use xiv_gen::{ItemId, ItemSearchCategoryId, ItemUiCategoryId};
 
 #[derive(Clone)]
 pub struct SearchService {
@@ -47,10 +48,10 @@ impl SearchService {
 
         // Index Items
         for (id, item) in &data.items {
-            if item.item_search_category.0 > 0 {
+            if item.item_search_category > 0 {
                 let category_name = data
                     .item_search_categorys
-                    .get(&item.item_search_category)
+                    .get(&ItemSearchCategoryId(item.item_search_category as i32))
                     .map(|c| c.name.as_str())
                     .unwrap_or("");
 
@@ -109,27 +110,23 @@ impl SearchService {
 
         let mut currency_ids = std::collections::HashSet::new();
 
-        // Helper to extract cost items from special shop
+        // Extract currency items from special shops
+        // The SpecialShop struct now has a flat `item: Vec<u16>` containing all item IDs.
+        // We check if any items in the shop are marketable, and if so, collect all non-zero
+        // item IDs as potential currencies (filtered later by UI category).
         for shop in data.special_shops.values() {
-            let mut has_marketable_reward = false;
-            for item_id in shop.item_receive_0.iter().chain(shop.item_receive_1.iter()) {
-                if let Some(item) = data.items.get(item_id)
-                    && item.item_search_category.0 > 0
-                {
-                    has_marketable_reward = true;
-                    break;
-                }
-            }
+            let has_marketable_item = shop.item.iter().any(|&item_id| {
+                item_id != 0
+                    && data
+                        .items
+                        .get(&ItemId(item_id as i32))
+                        .is_some_and(|item| item.item_search_category > 0)
+            });
 
-            if has_marketable_reward {
-                for item_id in shop
-                    .item_cost_0
-                    .iter()
-                    .chain(shop.item_cost_1.iter())
-                    .chain(shop.item_cost_2.iter())
-                {
-                    if item_id.0 != 0 {
-                        currency_ids.insert(item_id);
+            if has_marketable_item {
+                for &item_id in &shop.item {
+                    if item_id != 0 {
+                        currency_ids.insert(ItemId(item_id as i32));
                     }
                 }
             }
@@ -137,13 +134,13 @@ impl SearchService {
 
         for item in data.items.values() {
             if item.name == "Gil" || item.name == "MGP" {
-                currency_ids.insert(&item.key_id);
+                currency_ids.insert(item.key_id);
             }
         }
 
         for id in currency_ids {
-            if let Some(item) = data.items.get(id)
-                && (allowed_item_ui_categories.contains(&item.item_ui_category)
+            if let Some(item) = data.items.get(&id)
+                && (allowed_item_ui_categories.contains(&ItemUiCategoryId(item.item_ui_category as i32))
                     || item.name == "Gil"
                     || item.name == "MGP")
             {
