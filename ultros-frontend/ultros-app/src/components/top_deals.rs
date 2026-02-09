@@ -93,12 +93,16 @@ pub fn TopDeals() -> impl IntoView {
                     deals.get().flatten().map(|data| {
                         if data.is_empty() {
                             view! {
-                                <div class="text-center py-8 text-[color:var(--color-text-muted)] bg-[color:var(--surface-color-alt)] rounded-xl border border-dashed border-[color:var(--separator-color)]">
+                                <div class="text-center py-8 text-[color:var(--color-text-muted)] bg-[color:var(--surface-color-alt)] rounded-xl border border-dashed border-[color:var(--separator-color)] flex flex-col items-center gap-2">
                                     <div class="mb-2 opacity-50 mx-auto w-8 h-8 flex items-center justify-center">
                                         <Icon icon=i::FaBoxOpenSolid width="2em" height="2em" />
                                     </div>
-                                    <p>"No hot deals found right now."</p>
-                                    <p class="text-sm">"Check back later or try the full Flip Finder."</p>
+                                    <p class="font-bold">"No hot deals found right now."</p>
+                                    <p class="text-sm max-w-xs mx-auto mb-2">"Check back later or try the full Flip Finder for more options."</p>
+                                    <a href="/flip-finder" class="btn-primary text-sm px-4 py-2 rounded-lg inline-flex items-center gap-2 transition-transform hover:scale-105">
+                                        <Icon icon=i::AiSearchOutlined />
+                                        "Open Flip Finder"
+                                    </a>
                                 </div>
                             }.into_any()
                         } else {
