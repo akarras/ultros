@@ -679,21 +679,21 @@ impl AnalyzerService {
             let sales_count = recent_sales.len() as f32;
             let sales_per_week = (sales_count / days_diff) * 7.0;
 
-            let avg_price = recent_sales
-                .iter()
-                .map(|s| s.price_per_item as f32)
-                .sum::<f32>()
-                / sales_count;
+            let prices: Vec<i32> = recent_sales.iter().map(|s| s.price_per_item).collect();
+            let filtered_prices = filter_outliers_iqr(&prices);
+            let filtered_count = filtered_prices.len() as f32;
+
+            let avg_price = filtered_prices.iter().map(|&p| p as f32).sum::<f32>() / filtered_count;
 
             // Calculate Standard Deviation
-            let variance = recent_sales
+            let variance = filtered_prices
                 .iter()
-                .map(|s| {
-                    let diff = s.price_per_item as f32 - avg_price;
+                .map(|&p| {
+                    let diff = p as f32 - avg_price;
                     diff * diff
                 })
                 .sum::<f32>()
-                / sales_count;
+                / filtered_count;
             let std_dev = variance.sqrt();
 
             if let Some(cheapest) = cheapest_listings.item_map.get(key) {
@@ -841,13 +841,18 @@ impl AnalyzerService {
                     .map(|l| l.price)
                     .unwrap_or(cheapest_history);
                 let est_sale_price = (cheapest_history).min(current_cheapest_on_sale_world);
-                let profit = est_sale_price - cheapest_price.price;
+                let after_tax_return = calculate_after_tax_return(est_sale_price);
+                let profit = after_tax_return - cheapest_price.price;
+                let return_on_investment = if cheapest_price.price == 0 {
+                    0.0
+                } else {
+                    (profit as f32 / cheapest_price.price as f32) * 100.0
+                };
+
                 Some(ResaleStats {
                     profit,
                     item_id: item_key.item_id,
-                    return_on_investment: ((est_sale_price as f32) / (cheapest_price.price as f32)
-                        * 100.0)
-                        - 100.0,
+                    return_on_investment,
                     world_id: cheapest_price.world_id,
                     sold_within,
                 })
@@ -1203,6 +1208,32 @@ pub(crate) struct ResaleOptions {
     pub(crate) filter_world: Option<i32>,
     pub(crate) filter_datacenter: Option<i32>,
     pub(crate) filter_sale: Option<SoldWithin>,
+}
+
+fn filter_outliers_iqr(data: &[i32]) -> Vec<i32> {
+    if data.len() < 4 {
+        return data.to_vec();
+    }
+
+    let mut sorted = data.to_vec();
+    sorted.sort_unstable();
+
+    let n = sorted.len();
+    let q1 = sorted[n / 4];
+    let q3 = sorted[n * 3 / 4];
+    let iqr = q3 - q1;
+
+    let lower_bound = q1 as f64 - 1.5 * iqr as f64;
+    let upper_bound = q3 as f64 + 1.5 * iqr as f64;
+
+    data.iter()
+        .filter(|&&x| (x as f64) >= lower_bound && (x as f64) <= upper_bound)
+        .cloned()
+        .collect()
+}
+
+fn calculate_after_tax_return(price: i32) -> i32 {
+    price - (price * 5 / 100)
 }
 
 #[cfg(test)]
