@@ -42,6 +42,9 @@ struct SaleSummary {
     max_price: i32,
     avg_price: i32,
     min_price: i32,
+    median_price: i32,
+    sales_per_day: f32,
+    reliability: f32,
 }
 
 #[derive(Hash, Clone, Debug, PartialEq, Eq)]
@@ -63,12 +66,14 @@ struct CalculatedProfitData {
     inner: Arc<ProfitData>,
     profit: i32,
     return_on_investment: i32,
+    tataru_score: f32,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum SortMode {
     Roi,
     Profit,
+    Score,
 }
 
 #[derive(Clone, Debug)]
@@ -127,10 +132,45 @@ fn compute_summary(
             / sales.len() as i64) as i32
     };
 
+    let median_price = {
+        let mut prices: Vec<i32> = sales.iter().map(|s| s.price_per_unit).collect();
+        prices.sort_unstable();
+        let len = prices.len();
+        if len > 0 { prices[len / 2] } else { 0 }
+    };
+
     let t = sales
         .last()
         .map(|last| (last.sale_date - now).num_milliseconds().abs() / sales.len() as i64);
     let avg_sale_duration = t.map(Duration::milliseconds);
+
+    let sales_per_day = if let (Some(last), Some(first)) = (sales.last(), sales.first()) {
+        let duration = (first.sale_date - last.sale_date).num_seconds().abs();
+        if duration > 0 {
+            (sales.len() as f32 / duration as f32) * 86400.0
+        } else {
+            sales.len() as f32 // All in one second?
+        }
+    } else {
+        0.0
+    };
+
+    let variance = sales
+        .iter()
+        .map(|s| {
+            let diff = s.price_per_item as f32 - avg_price as f32;
+            diff * diff
+        })
+        .sum::<f32>()
+        / sales.len() as f32;
+    let std_dev = variance.sqrt();
+    let cv = if avg_price > 0 {
+        std_dev / avg_price as f32
+    } else {
+        0.0
+    };
+    let reliability = 1.0 / (1.0 + cv);
+
     SaleSummary {
         item_id,
         hq,
@@ -139,6 +179,9 @@ fn compute_summary(
         max_price,
         avg_price,
         min_price,
+        median_price,
+        sales_per_day,
+        reliability,
     }
 }
 
@@ -150,6 +193,7 @@ impl FromStr for SortMode {
         match s {
             "roi" => Ok(SortMode::Roi),
             "profit" => Ok(SortMode::Profit),
+            "score" => Ok(SortMode::Score),
             _ => Err(()),
         }
     }
@@ -160,6 +204,7 @@ impl std::fmt::Display for SortMode {
         let val = match self {
             SortMode::Roi => "roi",
             SortMode::Profit => "profit",
+            SortMode::Score => "score",
         };
         f.write_str(val)
     }
@@ -218,9 +263,11 @@ impl ProfitTable {
                 // Use the world's price as estimated sale price
                 let estimated_sale_price =
                     if let Some((world_cheapest, _)) = world_cheapest.get(&key) {
-                        summary.min_price.min(*world_cheapest)
+                        // Undercut by 1 gil, but cap at median price to be safe
+                        (summary.median_price.min(*world_cheapest - 1)).max(1)
                     } else {
-                        summary.min_price
+                        // If no competition, assume we can sell for a bit more than median
+                        (summary.median_price as f32 * 1.2) as i32
                     };
 
                 Some(ProfitData {
@@ -321,10 +368,17 @@ fn AnalyzerTable(
                 } else {
                     0
                 };
+                let tataru_score = {
+                    let log_profit = (profit as f32).max(1.0).log10();
+                    let sales_factor = data.sale_summary.sales_per_day.sqrt();
+                    let reliability = data.sale_summary.reliability;
+                    log_profit * sales_factor * reliability
+                };
                 CalculatedProfitData {
                     inner: data.clone(),
                     profit,
                     return_on_investment,
+                    tataru_score,
                 }
             })
             .filter(move |data| {
@@ -379,6 +433,11 @@ fn AnalyzerTable(
         match sort_mode().unwrap_or(SortMode::Roi) {
             SortMode::Roi => sorted_data.sort_by_key(|data| Reverse(data.return_on_investment)),
             SortMode::Profit => sorted_data.sort_by_key(|data| Reverse(data.profit)),
+            SortMode::Score => sorted_data.sort_by(|a, b| {
+                b.tataru_score
+                    .partial_cmp(&a.tataru_score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            }),
         }
         sorted_data
             .into_iter()
@@ -704,6 +763,22 @@ fn AnalyzerTable(
                                     </QueryButton>
                                 </div>
                                 <div role="columnheader" class="w-30 p-4">
+                                    <QueryButton
+                                        class="!text-brand-300 hover:text-brand-200"
+                                        active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
+                                        key="sort"
+                                        value="score"
+                                    >
+                                        <div class="flex items-center gap-2">
+                                            "Score"
+                                            {move || {
+                                                (sort_mode() == Some(SortMode::Score))
+                                                    .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
+                                            }}
+                                        </div>
+                                    </QueryButton>
+                                </div>
+                                <div role="columnheader" class="w-30 p-4">
                                     "Buy Price"
                                 </div>
                                 <div role="columnheader" class="w-30 p-4 flex flex-row gap-2 hidden lg:flex">
@@ -839,6 +914,9 @@ fn AnalyzerTable(
                                         </span>
                                     </div>
                                     <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
+                                        {format!("{:.1}", data.tataru_score)}
+                                    </div>
+                                    <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
                                         <Gil amount=data.inner.cheapest_price />
                                     </div>
                                     <div role="cell" class="px-4 py-2 w-30 hidden lg:block flex items-center">
@@ -871,25 +949,28 @@ fn AnalyzerTable(
                                             </QueryButton>
                                         </Tooltip>
                                     </div>
-                                    <div role="cell" class="px-4 py-2 w-30 truncate hidden md:block flex items-center">
-                                        {data.inner
-                                            .sale_summary
-                                            .avg_sale_duration
-                                            .and_then(|duration| duration.to_std().ok())
-                                            .map(|duration| {
-                                                let secs = duration.as_secs();
-                                                let days = secs / 86_400;
-                                                let hours = (secs % 86_400) / 3_600;
-                                                let minutes = (secs % 3_600) / 60;
-                                                let seconds = secs % 60;
-                                                let mut parts = Vec::new();
-                                                if days > 0 { parts.push(format!("{}d", days)); }
-                                                if hours > 0 { parts.push(format!("{}h", hours)); }
-                                                if minutes > 0 && parts.len() < 2 { parts.push(format!("{}m", minutes)); }
-                                                if seconds > 0 && parts.len() < 2 { parts.push(format!("{}s", seconds)); }
-                                                if parts.is_empty() { "0s".to_string() } else { parts[..parts.len().min(2)].join(" ") }
-                                            })
-                                            .unwrap_or_else(|| "---".to_string())}
+                                    <div role="cell" class="px-4 py-2 w-30 truncate hidden md:block flex flex-col items-end justify-center">
+                                        <span class="text-xs font-semibold">{format!("{:.1}/day", data.inner.sale_summary.sales_per_day)}</span>
+                                        <span class="text-xs text-[color:var(--color-text-muted)]">
+                                            {data.inner
+                                                .sale_summary
+                                                .avg_sale_duration
+                                                .and_then(|duration| duration.to_std().ok())
+                                                .map(|duration| {
+                                                    let secs = duration.as_secs();
+                                                    let days = secs / 86_400;
+                                                    let hours = (secs % 86_400) / 3_600;
+                                                    let minutes = (secs % 3_600) / 60;
+                                                    let seconds = secs % 60;
+                                                    let mut parts = Vec::new();
+                                                    if days > 0 { parts.push(format!("{}d", days)); }
+                                                    if hours > 0 { parts.push(format!("{}h", hours)); }
+                                                    if minutes > 0 && parts.len() < 2 { parts.push(format!("{}m", minutes)); }
+                                                    if seconds > 0 && parts.len() < 2 { parts.push(format!("{}s", seconds)); }
+                                                    if parts.is_empty() { "0s".to_string() } else { parts[..parts.len().min(2)].join(" ") }
+                                                })
+                                                .unwrap_or_else(|| "---".to_string())}
+                                        </span>
                                     </div>
                                 </div>
                             }

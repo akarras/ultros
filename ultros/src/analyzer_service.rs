@@ -33,7 +33,7 @@ use tokio_util::sync::CancellationToken;
 use ultros_api_types::trends::{TrendItem, TrendsData};
 use ultros_db::world_cache::{AnySelector, WorldCache};
 
-pub const SALE_HISTORY_SIZE: usize = 6;
+pub const SALE_HISTORY_SIZE: usize = 20;
 
 #[derive(Debug, Error)]
 pub enum AnalyzerError {
