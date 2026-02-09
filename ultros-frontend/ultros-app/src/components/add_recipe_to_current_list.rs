@@ -100,7 +100,7 @@ pub fn AddRecipeToCurrentListModal(
             <div class="space-y-4 h-[80vh] flex flex-col">
                 <div class="flex items-center justify-between shrink-0">
                     <h2 class="text-xl font-bold">"Add Recipe to List"</h2>
-                    <button class="btn-ghost p-2" on:click=move |_| set_visible(false)>
+                    <button class="btn-ghost p-2" on:click=move |_| set_visible(false) aria-label="Close modal">
                         <Icon icon=i::BsX width="24" height="24" />
                     </button>
                 </div>
@@ -111,6 +111,7 @@ pub fn AddRecipeToCurrentListModal(
                         placeholder="Search for a recipe..."
                         autofocus
                         prop:value=search
+                        aria-label="Search for a recipe"
                         on:input=move |e| set_search(event_target_value(&e))
                     />
                 </div>
