@@ -45,10 +45,9 @@ where
     R: std::io::Read,
 {
     let mut data = vec![];
+    let mut record = csv::StringRecord::new();
 
-    for record in rdr.records() {
-        let record = record?;
-
+    while rdr.read_record(&mut record)? {
         data.push(T::from_str_list(record.iter()));
     }
     Ok(data)
@@ -94,5 +93,21 @@ mod tests {
                 c: vec![10949, 40202]
             }
         );
+    }
+
+    #[test]
+    fn test_deserialize() {
+        let csv_data = "0,1,2,3,4\n5,6,7,8,9\n";
+
+        let reader = csv::ReaderBuilder::new()
+            .has_headers(false)
+            .from_reader(csv_data.as_bytes());
+
+        let result: Vec<SomeType> = deserialize(reader).unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].a, 0);
+        assert_eq!(result[1].a, 5);
+        assert_eq!(result[1].b, vec![6, 7]);
+        assert_eq!(result[1].c, vec![8, 9]);
     }
 }
