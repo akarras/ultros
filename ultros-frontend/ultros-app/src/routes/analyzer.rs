@@ -42,6 +42,7 @@ struct SaleSummary {
     max_price: i32,
     avg_price: i32,
     min_price: i32,
+    median_price: i32,
 }
 
 #[derive(Hash, Clone, Debug, PartialEq, Eq)]
@@ -111,6 +112,11 @@ fn compute_summary(
         .max()
         .unwrap_or_default();
 
+    let mut prices: Vec<i32> = sales.iter().map(|s| s.price_per_unit).collect();
+    prices.sort_unstable();
+    let len = prices.len();
+    let median_price = if len > 0 { prices[len / 2] } else { 0 };
+
     let avg_price = if filter_outliers {
         let prices: Vec<i32> = sales.iter().map(|s| s.price_per_unit).collect();
         let filtered = filter_outliers_iqr(&prices);
@@ -139,6 +145,7 @@ fn compute_summary(
         max_price,
         avg_price,
         min_price,
+        median_price,
     }
 }
 
@@ -218,9 +225,9 @@ impl ProfitTable {
                 // Use the world's price as estimated sale price
                 let estimated_sale_price =
                     if let Some((world_cheapest, _)) = world_cheapest.get(&key) {
-                        summary.min_price.min(*world_cheapest)
+                        (*world_cheapest - 1).min(summary.median_price)
                     } else {
-                        summary.min_price
+                        (summary.median_price as f32 * 1.2) as i32
                     };
 
                 Some(ProfitData {
@@ -703,6 +710,9 @@ fn AnalyzerTable(
                                         </div>
                                     </QueryButton>
                                 </div>
+                                <div role="columnheader" class="w-30 p-4 hidden lg:block">
+                                    "Est. Sell Price"
+                                </div>
                                 <div role="columnheader" class="w-30 p-4">
                                     "Buy Price"
                                 </div>
@@ -837,6 +847,9 @@ fn AnalyzerTable(
                                         }>
                                             {format!("{}%", data.return_on_investment)}
                                         </span>
+                                    </div>
+                                    <div role="cell" class="px-4 py-2 w-30 text-right hidden lg:flex items-center justify-end">
+                                        <Gil amount=data.inner.estimated_sale_price />
                                     </div>
                                     <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
                                         <Gil amount=data.inner.cheapest_price />
