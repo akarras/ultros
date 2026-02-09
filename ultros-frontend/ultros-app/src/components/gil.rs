@@ -60,8 +60,10 @@ fn spawn_gil_party(x: f64, y: f64) {
 pub fn Gil(#[prop(into)] amount: Signal<i32>) -> impl IntoView {
     view! {
         <div class="flex flex-row items-center">
-            <div
-                class="h-7 w-7 -m-1 aspect-square p-1 cursor-pointer hover:scale-110 transition-transform active:scale-90"
+            <button
+                type="button"
+                aria-label="Spawn gil party"
+                class="h-7 w-7 -m-1 aspect-square p-1 cursor-pointer hover:scale-110 transition-transform active:scale-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--brand-ring)] rounded-full"
                 on:click=move |ev| {
                     #[cfg(feature = "hydrate")]
                     spawn_gil_party(ev.client_x() as f64, ev.client_y() as f64);
@@ -72,7 +74,7 @@ pub fn Gil(#[prop(into)] amount: Signal<i32>) -> impl IntoView {
                 }
             >
                 <img alt="gil" src="/static/images/gil.webp" />
-            </div>
+            </button>
             <div>{move || amount().separate_with_commas()}</div>
         </div>
     }
@@ -85,8 +87,10 @@ where
 {
     view! {
         <div class="flex flex-row items-center">
-            <div
-                class="h-7 w-7 -m-1 aspect-square p-1 cursor-pointer hover:scale-110 transition-transform active:scale-90"
+            <button
+                type="button"
+                aria-label="Spawn gil party"
+                class="h-7 w-7 -m-1 aspect-square p-1 cursor-pointer hover:scale-110 transition-transform active:scale-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--brand-ring)] rounded-full"
                 on:click=move |ev| {
                     #[cfg(feature = "hydrate")]
                     spawn_gil_party(ev.client_x() as f64, ev.client_y() as f64);
@@ -97,7 +101,7 @@ where
                 }
             >
                 <img alt="gil" src="/static/images/gil.webp" />
-            </div>
+            </button>
             <div>{move || amount().separate_with_commas()}</div>
         </div>
     }
