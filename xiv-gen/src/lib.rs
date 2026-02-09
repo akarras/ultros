@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 #[cfg(feature = "csv_to_bincode")]
 pub mod csv_to_bincode;
 
@@ -20,6 +21,7 @@ pub fn data_version() -> &'static str {
     env!("GIT_HASH")
 }
 
+#[allow(dead_code)]
 fn ok_or_default<'de, T, D>(deserializer: D) -> Result<T, D::Error>
 where
     T: Deserialize<'de> + Default,
