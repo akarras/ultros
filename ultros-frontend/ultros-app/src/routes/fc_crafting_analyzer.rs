@@ -16,7 +16,10 @@ use ultros_api_types::{
     recent_sales::{RecentSales, SaleData},
     world_helper::AnyResult,
 };
-use xiv_gen::{CompanyCraftPartId, CompanyCraftProcessId, CompanyCraftSequence, CompanyCraftSupplyItemId, ItemId};
+use xiv_gen::{
+    CompanyCraftPartId, CompanyCraftProcessId, CompanyCraftSequence, CompanyCraftSupplyItemId,
+    ItemId,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 struct MaterialInfo {
@@ -90,7 +93,10 @@ fn calculate_fc_project_cost(
     ];
 
     for part_link in parts {
-        if let Some(part) = data.company_craft_parts.get(&CompanyCraftPartId(part_link as i32)) {
+        if let Some(part) = data
+            .company_craft_parts
+            .get(&CompanyCraftPartId(part_link as i32))
+        {
             let processes = [
                 part.company_craft_process_0,
                 part.company_craft_process_1,
@@ -98,7 +104,10 @@ fn calculate_fc_project_cost(
             ];
 
             for process_link in processes {
-                if let Some(process) = data.company_craft_processs.get(&CompanyCraftProcessId(process_link as i32)) {
+                if let Some(process) = data
+                    .company_craft_processs
+                    .get(&CompanyCraftProcessId(process_link as i32))
+                {
                     // Iterate through the 12 possible supply items
                     // Based on the JSON, these are flattened as supply_item_0, etc.
                     // I'll create a helper macro or just list them out.
@@ -172,15 +181,18 @@ fn calculate_fc_project_cost(
                             continue;
                         }
 
-                        if let Some(supply_item) =
-                            data.company_craft_supply_items.get(&CompanyCraftSupplyItemId(supply_item_link as i32))
+                        if let Some(supply_item) = data
+                            .company_craft_supply_items
+                            .get(&CompanyCraftSupplyItemId(supply_item_link as i32))
                         {
                             if supply_item.item == 0 {
                                 continue;
                             }
 
                             let total_quantity = (quantity_per_set as i32) * (sets_required as i32);
-                            *materials_map.entry(ItemId(supply_item.item as i32)).or_default() += total_quantity;
+                            *materials_map
+                                .entry(ItemId(supply_item.item as i32))
+                                .or_default() += total_quantity;
                         }
                     }
                 }
@@ -297,15 +309,16 @@ fn FCCraftingAnalyzerTable(
             // But we can pre-check if the key is 0/invalid?
             // The generated code uses keys, let's assume valid keys if present.
 
-            let sales_stats = if let Some(item_sales) = sales_map.get(&(sequence.result_item as i32)) {
-                analyze_sales(item_sales)
-            } else {
-                SalesStats {
-                    daily_sales: 0.0,
-                    avg_price: 0,
-                    total_sales: 0,
-                }
-            };
+            let sales_stats =
+                if let Some(item_sales) = sales_map.get(&(sequence.result_item as i32)) {
+                    analyze_sales(item_sales)
+                } else {
+                    SalesStats {
+                        daily_sales: 0.0,
+                        avg_price: 0,
+                        total_sales: 0,
+                    }
+                };
 
             let market_price_summary = prices.find_matching_listings(sequence.result_item as i32);
             let market_price = market_price_summary.lowest_gil().unwrap_or(0);

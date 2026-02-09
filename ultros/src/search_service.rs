@@ -140,7 +140,8 @@ impl SearchService {
 
         for id in currency_ids {
             if let Some(item) = data.items.get(&id)
-                && (allowed_item_ui_categories.contains(&ItemUiCategoryId(item.item_ui_category as i32))
+                && (allowed_item_ui_categories
+                    .contains(&ItemUiCategoryId(item.item_ui_category as i32))
                     || item.name == "Gil"
                     || item.name == "MGP")
             {

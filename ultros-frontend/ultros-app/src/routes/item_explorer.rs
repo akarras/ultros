@@ -294,7 +294,9 @@ pub fn JobItems() -> impl IntoView {
         let job_items: Vec<_> = data
             .items
             .iter()
-            .filter(|(_id, item)| job_categories.contains(&ClassJobCategoryId(item.class_job_category as i32)))
+            .filter(|(_id, item)| {
+                job_categories.contains(&ClassJobCategoryId(item.class_job_category as i32))
+            })
             .filter(|(_id, item)| !market_only || item.item_search_category > 0)
             .collect();
         job_items

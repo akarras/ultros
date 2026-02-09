@@ -263,12 +263,9 @@ fn create_struct(
                 );
             }
             Some(dets) => {
-                record
-                    .iter()
-                    .zip(dets.iter_mut())
-                    .for_each(|(val, d)| {
-                        d.next_record(val);
-                    });
+                record.iter().zip(dets.iter_mut()).for_each(|(val, d)| {
+                    d.next_record(val);
+                });
             }
         }
     }
@@ -389,7 +386,8 @@ fn create_struct(
                     let root = &key[..key_1.start() - 1];
                     let root = format!("{}_{}", root, key_2.as_str().parse::<usize>().unwrap());
                     let key = KeyType::Single(key_1.as_str().parse().unwrap());
-                    if let Some((_, (k, _), _)) = root_names.iter_mut().find(|(key, _, _)| key == &root)
+                    if let Some((_, (k, _), _)) =
+                        root_names.iter_mut().find(|(key, _, _)| key == &root)
                     {
                         *k = key;
                     } else {
@@ -404,7 +402,8 @@ fn create_struct(
                         continue;
                     }
                     let key = KeyType::Single(key_1.as_str().parse().unwrap());
-                    if let Some((_, (k, _), _)) = root_names.iter_mut().find(|(key, _, _)| key == root)
+                    if let Some((_, (k, _), _)) =
+                        root_names.iter_mut().find(|(key, _, _)| key == root)
                     {
                         *k = key;
                     } else {

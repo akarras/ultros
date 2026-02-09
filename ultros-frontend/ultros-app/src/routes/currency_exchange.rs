@@ -250,10 +250,7 @@ pub fn ExchangeItem() -> impl IntoView {
                     .filter(move |items| {
                         // make sure the item is valid on the marketboard before we lookup prices for it
                         items.cost.iter().any(|i| i.item.key_id.0 == item.0)
-                            && items
-                                .recv
-                                .iter()
-                                .any(|i| i.item.item_search_category != 0)
+                            && items.recv.iter().any(|i| i.item.item_search_category != 0)
                     })
                     .map(move |items| (items, shop))
             })
@@ -285,10 +282,7 @@ pub fn ExchangeItem() -> impl IntoView {
                 .iter()
                 .filter_map(|(item, shop)| {
                     let cost = item.cost[0];
-                    let recv = item
-                        .recv
-                        .iter()
-                        .find(|i| i.item.item_search_category > 0)?;
+                    let recv = item.recv.iter().find(|i| i.item.item_search_category > 0)?;
                     let item_key = (false, recv.item.key_id.0);
                     let sales = &sales.get(&item_key)?.sales;
                     let recent = sales.first()?;
@@ -880,12 +874,7 @@ pub fn CurrencySelection() -> impl IntoView {
         .iter()
         .flat_map(|(_shops, special_shop)| {
             shop_items(special_shop)
-                .filter(|items| {
-                    items
-                        .recv
-                        .iter()
-                        .any(|i| i.item.item_search_category != 0)
-                })
+                .filter(|items| items.recv.iter().any(|i| i.item.item_search_category != 0))
                 .flat_map(|f| f.cost.into_iter().map(|i| i.item.key_id))
         })
         .filter(|f| {

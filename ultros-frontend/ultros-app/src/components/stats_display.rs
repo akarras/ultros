@@ -36,14 +36,29 @@ impl Iterator for ParamIterator {
                 5 => (item.base_param_5, item.base_param_value_5 as i16),
                 6 => (item.base_param_special_0, item.base_param_value_special_0),
                 7 => (item.base_param_special_1, item.base_param_value_special_1),
-                8 => (item.base_param_special_2, item.base_param_value_special_2 as i16),
-                9 => (item.base_param_special_3, item.base_param_value_special_3 as i16),
-                10 => (item.base_param_special_4, item.base_param_value_special_4 as i16),
-                11 => (item.base_param_special_5, item.base_param_value_special_5 as i16),
+                8 => (
+                    item.base_param_special_2,
+                    item.base_param_value_special_2 as i16,
+                ),
+                9 => (
+                    item.base_param_special_3,
+                    item.base_param_value_special_3 as i16,
+                ),
+                10 => (
+                    item.base_param_special_4,
+                    item.base_param_value_special_4 as i16,
+                ),
+                11 => (
+                    item.base_param_special_5,
+                    item.base_param_value_special_5 as i16,
+                ),
                 _ => return None,
             };
             self.index += 1;
-            if let Some(base_param) = xiv_gen_db::data().base_params.get(&BaseParamId(param as i32)) {
+            if let Some(base_param) = xiv_gen_db::data()
+                .base_params
+                .get(&BaseParamId(param as i32))
+            {
                 return Some((base_param, self.index > 5, value));
             }
         }

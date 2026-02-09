@@ -81,14 +81,38 @@ impl<'a> Iterator for IngredientsIter<'a> {
         loop {
             let counter = self.1;
             let (raw_id, amount) = match counter {
-                0 => (self.0.ingredient_0 as i32, self.0.amount_ingredient_0 as i32),
-                1 => (self.0.ingredient_1 as i32, self.0.amount_ingredient_1 as i32),
-                2 => (self.0.ingredient_2 as i32, self.0.amount_ingredient_2 as i32),
-                3 => (self.0.ingredient_3 as i32, self.0.amount_ingredient_3 as i32),
-                4 => (self.0.ingredient_4 as i32, self.0.amount_ingredient_4 as i32),
-                5 => (self.0.ingredient_5 as i32, self.0.amount_ingredient_5 as i32),
-                6 => (self.0.ingredient_6 as i32, self.0.amount_ingredient_6 as i32),
-                7 => (self.0.ingredient_7 as i32, self.0.amount_ingredient_7 as i32),
+                0 => (
+                    self.0.ingredient_0 as i32,
+                    self.0.amount_ingredient_0 as i32,
+                ),
+                1 => (
+                    self.0.ingredient_1 as i32,
+                    self.0.amount_ingredient_1 as i32,
+                ),
+                2 => (
+                    self.0.ingredient_2 as i32,
+                    self.0.amount_ingredient_2 as i32,
+                ),
+                3 => (
+                    self.0.ingredient_3 as i32,
+                    self.0.amount_ingredient_3 as i32,
+                ),
+                4 => (
+                    self.0.ingredient_4 as i32,
+                    self.0.amount_ingredient_4 as i32,
+                ),
+                5 => (
+                    self.0.ingredient_5 as i32,
+                    self.0.amount_ingredient_5 as i32,
+                ),
+                6 => (
+                    self.0.ingredient_6 as i32,
+                    self.0.amount_ingredient_6 as i32,
+                ),
+                7 => (
+                    self.0.ingredient_7 as i32,
+                    self.0.amount_ingredient_7 as i32,
+                ),
                 _ => return None,
             };
             self.1 += 1;
@@ -375,7 +399,11 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
         let gil_shops = data
             .gil_shop_items
             .iter()
-            .filter(|(_shop_id, items)| items.iter().any(|shop_item| shop_item.item as i32 == item_id))
+            .filter(|(_shop_id, items)| {
+                items
+                    .iter()
+                    .any(|shop_item| shop_item.item as i32 == item_id)
+            })
             .flat_map(|(shop_id, _)| data.gil_shops.get(shop_id))
             .collect::<Vec<_>>();
         let shop_ids = gil_shops.iter().map(|shop| shop.key_id).collect::<Vec<_>>();
@@ -568,7 +596,8 @@ pub fn leve_rewards_item(
     reward_items: &std::collections::HashMap<xiv_gen::LeveRewardItemId, LeveRewardItem>,
     groups: &std::collections::HashMap<xiv_gen::LeveRewardItemGroupId, LeveRewardItemGroup>,
 ) -> bool {
-    if let Some(reward) = reward_items.get(&xiv_gen::LeveRewardItemId(leve.leve_reward_item as i32)) {
+    if let Some(reward) = reward_items.get(&xiv_gen::LeveRewardItemId(leve.leve_reward_item as i32))
+    {
         // Check all 8 groups
         let group_ids: [u16; 8] = [
             reward.leve_reward_item_group_0,

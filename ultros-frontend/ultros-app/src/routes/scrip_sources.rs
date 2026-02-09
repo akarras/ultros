@@ -147,7 +147,10 @@ fn ScripSourceTable(
                     continue;
                 }
 
-                let reward = match data.collectables_shop_reward_scrips.get(&CollectablesShopRewardScripId(reward_scrip_id as i32)) {
+                let reward = match data
+                    .collectables_shop_reward_scrips
+                    .get(&CollectablesShopRewardScripId(reward_scrip_id as i32))
+                {
                     Some(r) => r,
                     None => continue,
                 };

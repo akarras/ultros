@@ -20,7 +20,9 @@ use ultros_api_types::{
     recent_sales::{RecentSales, SaleData},
     world_helper::AnyResult,
 };
-use xiv_gen::{ClassJobCategoryId, CraftLeve, ItemId, LeveId, LeveRewardItemGroupId, LeveRewardItemId, Leve};
+use xiv_gen::{
+    ClassJobCategoryId, CraftLeve, ItemId, Leve, LeveId, LeveRewardItemGroupId, LeveRewardItemId,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 struct LeveProfitData {
@@ -123,7 +125,8 @@ fn LeveAnalyzerTable(
             }
 
             // Job Category (for filtering)
-            let job_category = class_job_categories.get(&ClassJobCategoryId(leve.class_job_category as i32));
+            let job_category =
+                class_job_categories.get(&ClassJobCategoryId(leve.class_job_category as i32));
             let job_category_name = job_category
                 .map(|cj| cj.name.to_string())
                 .unwrap_or_default();
@@ -174,7 +177,9 @@ fn LeveAnalyzerTable(
             let mut expected_item_value = 0.0;
             let reward_item_id = leve.leve_reward_item;
 
-            if let Some(reward_item_entry) = leve_reward_items.get(&LeveRewardItemId(reward_item_id as i32)) {
+            if let Some(reward_item_entry) =
+                leve_reward_items.get(&LeveRewardItemId(reward_item_id as i32))
+            {
                 // Iterate over the 8 groups
                 let groups = [
                     (
@@ -216,7 +221,9 @@ fn LeveAnalyzerTable(
                         continue;
                     }
 
-                    if let Some(group) = leve_reward_item_groups.get(&LeveRewardItemGroupId(group_id as i32)) {
+                    if let Some(group) =
+                        leve_reward_item_groups.get(&LeveRewardItemGroupId(group_id as i32))
+                    {
                         // A group can give ONE of the items listed? Or all?
                         // LeveRewardItemGroup usually picks one.
                         // But usually these groups have 1 item with 100% chance relative to the group selection?
@@ -250,7 +257,8 @@ fn LeveAnalyzerTable(
                                 continue;
                             }
 
-                            let reward_price_summary = prices.find_matching_listings(g_item_id as i32);
+                            let reward_price_summary =
+                                prices.find_matching_listings(g_item_id as i32);
                             let reward_price = reward_price_summary.lowest_gil().unwrap_or(0);
 
                             // Probability is for the GROUP.

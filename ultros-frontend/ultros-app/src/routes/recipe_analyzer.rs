@@ -90,14 +90,38 @@ fn calculate_crafting_cost(
     let mut sub_crafts = Vec::new();
     // Helper to iterate ingredients
     let ingredients = [
-        (ItemId(recipe.ingredient_0 as i32), recipe.amount_ingredient_0),
-        (ItemId(recipe.ingredient_1 as i32), recipe.amount_ingredient_1),
-        (ItemId(recipe.ingredient_2 as i32), recipe.amount_ingredient_2),
-        (ItemId(recipe.ingredient_3 as i32), recipe.amount_ingredient_3),
-        (ItemId(recipe.ingredient_4 as i32), recipe.amount_ingredient_4),
-        (ItemId(recipe.ingredient_5 as i32), recipe.amount_ingredient_5),
-        (ItemId(recipe.ingredient_6 as i32), recipe.amount_ingredient_6),
-        (ItemId(recipe.ingredient_7 as i32), recipe.amount_ingredient_7),
+        (
+            ItemId(recipe.ingredient_0 as i32),
+            recipe.amount_ingredient_0,
+        ),
+        (
+            ItemId(recipe.ingredient_1 as i32),
+            recipe.amount_ingredient_1,
+        ),
+        (
+            ItemId(recipe.ingredient_2 as i32),
+            recipe.amount_ingredient_2,
+        ),
+        (
+            ItemId(recipe.ingredient_3 as i32),
+            recipe.amount_ingredient_3,
+        ),
+        (
+            ItemId(recipe.ingredient_4 as i32),
+            recipe.amount_ingredient_4,
+        ),
+        (
+            ItemId(recipe.ingredient_5 as i32),
+            recipe.amount_ingredient_5,
+        ),
+        (
+            ItemId(recipe.ingredient_6 as i32),
+            recipe.amount_ingredient_6,
+        ),
+        (
+            ItemId(recipe.ingredient_7 as i32),
+            recipe.amount_ingredient_7,
+        ),
     ];
 
     for (item_id, amount) in ingredients {
@@ -201,7 +225,9 @@ fn RecipeAnalyzerTable(
     let recipes_by_output = Memo::new(move |_| {
         let mut map: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
         for recipe in recipes.values() {
-            map.entry(ItemId(recipe.item_result as i32)).or_default().push(recipe);
+            map.entry(ItemId(recipe.item_result as i32))
+                .or_default()
+                .push(recipe);
         }
         map
     });
@@ -290,7 +316,8 @@ fn RecipeAnalyzerTable(
                 continue;
             }
 
-            let sales_stats = if let Some(item_sales) = sales_map.get(&(recipe.item_result as i32)) {
+            let sales_stats = if let Some(item_sales) = sales_map.get(&(recipe.item_result as i32))
+            {
                 analyze_sales(item_sales, filter_outliers)
             } else {
                 SalesStats {
