@@ -940,9 +940,9 @@ pub fn ItemView() -> impl IntoView {
     };
 
     let item_search_category = move || {
-        items
-            .get(&ItemId(item_id()))
-            .and_then(|item| search_categories.get(&ItemSearchCategoryId(item.item_search_category as i32)))
+        items.get(&ItemId(item_id())).and_then(|item| {
+            search_categories.get(&ItemSearchCategoryId(item.item_search_category as i32))
+        })
     };
 
     let description = Memo::new(move |_| {
