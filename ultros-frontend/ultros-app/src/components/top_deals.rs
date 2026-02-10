@@ -6,6 +6,7 @@ use crate::components::skeleton::BoxSkeleton;
 use crate::global_state::home_world::use_home_world;
 use icondata as i;
 use leptos::prelude::*;
+use leptos_router::components::A;
 use xiv_gen::ItemId;
 
 #[component]
@@ -73,12 +74,12 @@ pub fn TopDeals() -> impl IntoView {
                         </p>
                     </div>
                 </div>
-                <a
+                <A
                     href="/flip-finder"
-                    class="text-sm font-medium text-[color:var(--brand-fg)] hover:text-[color:var(--brand-fg-hover)] hover:underline flex items-center gap-1 transition-colors"
+                    attr:class="text-sm font-medium text-[color:var(--brand-fg)] hover:text-[color:var(--brand-fg-hover)] hover:underline flex items-center gap-1 transition-colors"
                 >
                     "View All" <span class="text-xs flex items-center"><Icon icon=i::FaArrowRightSolid /></span>
-                </a>
+                </A>
             </div>
 
             <Suspense fallback=move || view! {
@@ -93,12 +94,19 @@ pub fn TopDeals() -> impl IntoView {
                     deals.get().flatten().map(|data| {
                         if data.is_empty() {
                             view! {
-                                <div class="text-center py-8 text-[color:var(--color-text-muted)] bg-[color:var(--surface-color-alt)] rounded-xl border border-dashed border-[color:var(--separator-color)]">
+                                <div class="text-center py-8 text-[color:var(--color-text-muted)] bg-[color:var(--surface-color-alt)] rounded-xl border border-dashed border-[color:var(--separator-color)] flex flex-col items-center gap-2">
                                     <div class="mb-2 opacity-50 mx-auto w-8 h-8 flex items-center justify-center">
                                         <Icon icon=i::FaBoxOpenSolid width="2em" height="2em" />
                                     </div>
-                                    <p>"No hot deals found right now."</p>
-                                    <p class="text-sm">"Check back later or try the full Flip Finder."</p>
+                                    <p class="font-medium">"No hot deals found right now."</p>
+                                    <p class="text-sm max-w-xs mx-auto mb-2">"Check back later or try the full Flip Finder for more options."</p>
+                                    <A
+                                        href="/flip-finder"
+                                        attr:class="btn-primary text-sm px-4 py-2 rounded-lg inline-flex items-center gap-2 transition-transform hover:scale-105"
+                                    >
+                                        <Icon icon=i::FaSearchSolid />
+                                        "Open Flip Finder"
+                                    </A>
                                 </div>
                             }.into_any()
                         } else {
