@@ -5,7 +5,6 @@ pub fn read_dumb_csv<T: DumbCsvDeserialize>(path: &str) -> Vec<T> {
         .has_headers(false)
         .from_path(path)
         .expect("Failed to open csv");
-    let str = std::fs::read_to_string(path).unwrap();
     let headers: Vec<String> = csv
         .records()
         .nth(1)
