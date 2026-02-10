@@ -2,7 +2,9 @@
 /// Recommended to just let xiv-gen-db handle this unless you need a different backing store.
 use crate::*;
 use csv::ErrorKind;
+use dumb_csv::DumbCsvDeserialize;
 use serde::de::DeserializeOwned;
+use std::collections::HashMap;
 
 include!(concat!(env!("OUT_DIR"), "/deserialization.rs"));
 

@@ -71,15 +71,16 @@ impl ToTokens for DumbCsvDeserializeReceiver {
                     DummyType::String => quote! {},
                     DummyType::Bool => quote! { .parse_bool() },
                     DummyType::Other(val) => {
-                        let ty= TokenStream::from_str(val).unwrap();
+                        let ty = TokenStream::from_str(val).unwrap();
                         // let ty = Type::from(val);
                         if val.starts_with("i") || val.starts_with("u") || val.ends_with("Id") {
-                            quote!{
+                            quote! {
                                 .parse::<#ty>().unwrap_or_default()
                             }
                         } else {
-                            let error = format!("DUMBCSV OTHER {val}: Error parsing value {}", field_name);
-                            quote!{
+                            let error =
+                                format!("DUMBCSV OTHER {val}: Error parsing value {}", field_name);
+                            quote! {
                                 .parse::<#ty>().expect(#error)
                             }
                         }
@@ -94,27 +95,32 @@ impl ToTokens for DumbCsvDeserializeReceiver {
                         }).collect()
                     }
                 } else {
-                    match dummy { DummyType::String => {
-                        let error = format!("Error reading value {}", field_name);
-                        quote! {
-                            list.next().expect(#error).to_string()
-                        }
-                        }, DummyType::Bool => {
+                    match dummy {
+                        DummyType::String => {
                             quote! {
-                                list.next().expect("There to be a value").parse_bool()
-                            }
-                        }, DummyType::Other(val) => {
+                            list.next().unwrap_or_default().to_string()
+                                        }
+                        }
+                        DummyType::Bool => {
+                            quote! {
+                            list.next().unwrap_or_default().parse_bool()
+                                        }
+                        }
+                        DummyType::Other(val) => {
                             if val.starts_with("i") || val.starts_with("u") || val.ends_with("Id") {
-                                quote!{
-                                    list.next().expect("There to be a value").parse::<#ty>().unwrap_or_default()
-                                }
+                                quote! {
+                                list.next().unwrap_or_default().parse::<#ty>().unwrap_or_default()
+                                            }
                             } else {
-                                let error = format!("DUMBCSV OTHER {val}: Error parsing value {}", field_name);
-                                quote!{
-                                    list.next().expect("There to be a value").parse::<#ty>().expect(#error)
-                                }
+                                let error = format!(
+                                    "DUMBCSV OTHER {val}: Error parsing value {}",
+                                    field_name
+                                );
+                                quote! {
+                                list.next().unwrap_or_default().parse::<#ty>().expect(#error)
+                                            }
                             }
-                        },
+                        }
                     }
                 };
                 if let Some(skip) = field.skip {
