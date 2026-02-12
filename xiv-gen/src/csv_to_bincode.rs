@@ -14,13 +14,13 @@ pub fn read_dumb_csv<T: DumbCsvDeserialize>(path: &str) -> Vec<T> {
         .expect("Failed to open csv");
     let _headers: Vec<String> = csv
         .records()
-        .nth(1)
+        .nth(0)
         .unwrap()
         .unwrap()
         .iter()
         .map(|s| s.to_string())
         .collect();
-    let _ = csv.records().take(2).collect::<Vec<_>>();
+    let _ = csv.records().take(1).collect::<Vec<_>>();
     dumb_csv::deserialize(csv).unwrap()
 }
 
@@ -32,7 +32,7 @@ pub fn read_csv<T: DeserializeOwned>(path: &str) -> Vec<T> {
     let str = std::fs::read_to_string(path).unwrap();
     let headers: Vec<String> = csv
         .records()
-        .nth(1)
+        .nth(0)
         .unwrap()
         .unwrap()
         .iter()
@@ -40,7 +40,7 @@ pub fn read_csv<T: DeserializeOwned>(path: &str) -> Vec<T> {
         .collect();
     // line 2
     csv.deserialize()
-        .skip(2)
+        .skip(1)
         .map(|m| {
             if let Err(e) = &m {
                 // try to pretty print this error a bit, otherwise it's hard to tell what went wrong

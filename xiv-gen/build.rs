@@ -21,39 +21,14 @@ struct Args {
     list_filter: Vec<String>,
 
     /// Parent data struct for all data types
-    ///
-    /// generated example:
-    /// ```
-    /// #[derive(Default, Debug)]
-    /// struct Data {
-    ///    recipes: HashMap<RecipeId, Recipe>,
-    ///    items: HashMap<ItemId, Item>
-    /// }
-    ///
-    /// impl Data {
-    ///   fn set_recipes(&mut self, recipes: HashMap<RecipeId, Recipe>) {
-    ///
-    ///   }
-    /// }
-    /// ```
     db: Struct,
     db_impl: Impl,
 
     /// Contains the code to create the db. Only exists in local binary
-    ///
-    /// generated example:
-    /// ```
-    /// fn convert_csv(csv: &str) -> _ {
-    ///     // parses csv and converts
-    /// }
-    ///
-    /// fn read_data() -> Data {
-    ///   Data {
-    ///     recipes: convert_csv("Recipe.csv")
-    ///   }
-    /// }
-    /// ```
     read_data: Function,
+
+    /// Set of known table names for type inference
+    known_tables: HashSet<String>,
 }
 
 #[derive(Debug, Default)]
@@ -237,33 +212,62 @@ fn create_struct(
         .from_path(path)
         .expect("unable to open path");
     let mut records = reader.records();
-    let _line_one = records
+    let line_one = records
         .next()
         .expect("First line not found")
         .expect("Reader error on first line");
-    let line_two = records
+    let line_two_raw = records
         .next()
         .expect("Second line not found")
         .expect("Error reading second line");
-    let line_three = records
-        .next()
-        .expect("Third line not found")
-        .expect("Third line error reading");
+
+    // Heuristic: Check if line_two_raw looks like type definitions.
+    // Standard types: int32, str, bit&, byte, sbyte, or TableName (PascalCase).
+    // Data usually: numbers, empty, or specific strings.
+    // If line 2 is data, it often contains "0" or "1" or empty fields in early columns.
+
+    // Check if line_two_raw is types (3-line format) or data (1-line format).
+    // In 3-line format:
+    // Line 1: key,0,1...
+    // Line 2: #,Name...
+    // Line 3: int32,str...
+
+    // In 1-line format:
+    // Line 1: #,Name...
+    // Line 2: 0,,... (Data)
+
+    // If first element of line_one is "key", it's likely 3-line format.
+    // If first element is "#", it's likely 1-line format.
+
+    let is_3_line = line_one.get(0).map(|s| s == "key").unwrap_or(false);
+
+    let (field_names, field_types_opt) = if is_3_line {
+        let line_three = records.next().expect("Third line not found").expect("Error reading third line");
+        (line_two_raw.clone(), Some(line_three))
+    } else {
+        // 1-line format. line_one is headers. line_two_raw is data.
+        // We need to feed line_two_raw to detector.
+        (line_one, None)
+    };
+
     // iterate over all columns
-    let mut line_four: Vec<_> = records
-        .next()
-        .map(|m| {
-            m.unwrap()
-                .iter()
-                .enumerate()
-                .map(|(col, m)| {
-                    let mut data = DataDetector::new(col);
-                    data.next_record(m);
-                    data
-                })
-                .collect()
-        })
-        .unwrap();
+    let mut line_four: Vec<_> = if is_3_line {
+        records.next().map(|m| {
+            m.unwrap().iter().enumerate().map(|(col, m)| {
+                let mut data = DataDetector::new(col);
+                data.next_record(m);
+                data
+            }).collect()
+        }).unwrap()
+    } else {
+        // Initialize detector with line_two_raw (which is data)
+        line_two_raw.iter().enumerate().map(|(col, m)| {
+            let mut data = DataDetector::new(col);
+            data.next_record(m);
+            data
+        }).collect()
+    };
+
     // read the entire csv and determine a datatype
     records.for_each(|s| {
         s.unwrap()
@@ -282,9 +286,40 @@ fn create_struct(
     let mut parse_this_function = None;
     let mut pk = None;
     let mut unknown_counter = 0;
-    let fields: Vec<(String, String)> = line_two
+
+    // Prepare field types vector
+    let field_types_vec: Vec<String> = if let Some(types) = &field_types_opt {
+        types.iter().map(|s| s.to_string()).collect()
+    } else {
+        // Infer types
+        field_names.iter().zip(line_four.iter()).map(|(name, inferred)| {
+            if name == "#" {
+                "int32".to_string()
+            } else if args.known_tables.contains(name) {
+                name.to_string() // Assume reference
+            } else {
+                // Fallback to inferred type, but we need to map DataType to something our loop understands
+                match inferred {
+                    DataType::Bool => "bool".to_string(),
+                    DataType::String => "str".to_string(),
+                    DataType::SignedInt8 => "sbyte".to_string(),
+                    DataType::UnsignedInt8 => "byte".to_string(),
+                    DataType::SignedInt16 => "int16".to_string(),
+                    DataType::UnsignedInt16 => "uint16".to_string(),
+                    DataType::SignedInt32 => "int32".to_string(),
+                    DataType::UnsignedInt32 => "uint32".to_string(),
+                    DataType::SignedInt64 => "int64".to_string(),
+                    DataType::UnsignedInt64 => "uint64".to_string(),
+                    DataType::Float => "float".to_string(), // handled via regex match later? No, regex checks for int/bool.
+                    DataType::ReferenceKey => "int32".to_string(), // fallback for key
+                }
+            }
+        }).collect()
+    };
+
+    let fields: Vec<(String, String)> = field_names
         .iter()
-        .zip(line_three.iter())
+        .zip(field_types_vec.iter())
         .zip(line_four.iter())
         .map(|((field_name, field_value), sample_data)| {
             let mut line_one = if field_name == "#" {
@@ -317,9 +352,9 @@ fn create_struct(
                 // regex: check is bit offset
                 static ref BIT: Regex = Regex::new(r#"^bit(&[0-9]+|)|bool$"#).unwrap();
             }
-            if BIT.is_match(field_value) {
+            if BIT.is_match(&field_value) {
                 (line_one, "bool".to_string())
-            } else if INT.is_match(field_value) {
+            } else if INT.is_match(&field_value) {
                 let mut line_two = field_value.replace("int", "");
                 // uint64 -> u64
                 // int64 -> 64, add the i if no u
@@ -396,6 +431,7 @@ fn create_struct(
             }
         })
         .collect();
+    // ... rest is same
     if fields.len() > 100 {
         // handle hugeee fields?
         #[derive(Debug)]
@@ -412,7 +448,7 @@ fn create_struct(
                 static ref DOUBLE: Regex = Regex::new(r#"([A-z_])+([0-9]+)_([0-9]+)"#).unwrap();
                 static ref SINGLE: Regex = Regex::new(r#"([A-z_])+([0-9]+)"#).unwrap();
             }
-            if let Some(captures) = DOUBLE.captures(key) {
+            if let Some(captures) = DOUBLE.captures(key).filter(|_| !key.starts_with("unknown")) {
                 let key_1 = captures.get(2).unwrap();
                 let key_2 = captures.get(3).unwrap();
                 // let root = captures.get(0).unwrap();
@@ -428,7 +464,7 @@ fn create_struct(
             } else if let Some(captures) = SINGLE.captures(key) {
                 let key_1 = captures.get(2).unwrap();
                 let root = &key[..key_1.start() - 1];
-                if root == "unknown" {
+                if root.starts_with("unknown") {
                     let (_, _, skip) = root_names.last_mut().unwrap();
                     *skip += 1;
                     continue;
@@ -472,13 +508,6 @@ fn create_struct(
         // panic!("{root_names:?}");
     } else {
         for (field_name, field_value) in fields.iter() {
-            //let mut function = Function::new(&format!("get_{}", field_name.replace('#', "")));
-            //function
-            //    .vis("pub")
-            //    .arg_ref_self()
-            //    .line(format!("self.{field_name}.clone()"))
-            //    .ret(field_value);
-            //i.push_fn(function);
             let mut field = Field::new(field_name, field_value).vis("pub").to_owned();
             if field_value == "i64" {
                 field.annotation(vec![
@@ -619,9 +648,13 @@ fn get_table_names(path: impl AsRef<Path>) -> Box<dyn Iterator<Item = (String, S
 
 fn main() {
     // figure out what features have been enabled
-    let dir = "./ffxiv-datamining/csv/";
+    let dir = "./ffxiv-datamining/csv/en/";
     let mut table_names: Vec<_> = get_table_names(dir).collect();
     table_names.sort();
+
+    // Collect known table names for type inference
+    let known_tables: HashSet<String> = table_names.iter().map(|(name, _)| name.clone()).collect();
+
     let mut list = table_names
         .iter()
         .map(|(_, feature_name)| format!("{} = []", feature_name))
@@ -656,6 +689,7 @@ fn main() {
         db: Struct::new("Data"),
         db_impl: Impl::new("Data"),
         read_data: Function::new("read_data"),
+        known_tables,
     };
 
     // Start the read function with the data header
@@ -680,6 +714,7 @@ fn main() {
     args.read_data.line("}").ret("Data").vis("pub");
 
     let mut ser_scope = Scope::new();
+    ser_scope.import("std::collections", "HashMap");
     ser_scope.push_fn(args.read_data);
     write(conversion_files, ser_scope.to_string()).unwrap();
 
