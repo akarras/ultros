@@ -10,7 +10,7 @@ pub fn ItemSearchCategoryIcon(id: ItemSearchCategoryId) -> impl IntoView {
     let class_jobs = &data.class_jobs;
     categories.get(&id).map(|category| {
         let class_job = category.class_job;
-        if let Some(class_job) = class_jobs.get(&class_job) {
+        if let Some(class_job) = class_jobs.get(&ClassJobId(class_job as i32)) {
             // view! {<i class=format!("icon xiv-ItemCategory_{}", class_job.abbreviation)></i>}
             Either::Left(view! { <ClassJobIcon id=class_job.key_id /> })
         } else {

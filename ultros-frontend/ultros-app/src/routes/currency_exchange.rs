@@ -24,7 +24,6 @@ use chrono::TimeDelta;
 use chrono::Utc;
 use field_iterator::FieldLabels;
 use field_iterator::SortableVec;
-use field_iterator::field_iter;
 use itertools::Itertools;
 use leptos::either::Either;
 use leptos::prelude::*;
@@ -39,7 +38,7 @@ use ultros_api_types::cheapest_listings::CheapestListingItem;
 use ultros_api_types::icon_size::IconSize;
 use ultros_api_types::recent_sales::SaleData;
 use xiv_gen::Item;
-use xiv_gen::{ItemId, SpecialShop};
+use xiv_gen::{ItemId, ItemUiCategoryId, SpecialShop};
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 struct ItemAmount {
@@ -102,6 +101,7 @@ struct ShopItems {
     cost: Vec<ItemAmount>,
 }
 
+#[allow(dead_code)]
 fn from_lists(
     item: impl Iterator<Item = ItemId>,
     amount: impl Iterator<Item = u32>,
@@ -113,43 +113,14 @@ fn from_lists(
     })
 }
 
-fn shop_items(special_shop: &SpecialShop) -> impl Iterator<Item = ShopItems> + '_ {
-    let SpecialShop {
-        item_receive_0,
-        count_receive_0,
-        item_receive_1,
-        count_receive_1,
-        item_cost_0,
-        count_cost_0,
-        item_cost_1,
-        count_cost_1,
-        item_cost_2,
-        count_cost_2,
-        ..
-    } = special_shop;
-
-    let recv_0 = from_lists(
-        item_receive_0.iter().copied(),
-        count_receive_0.iter().copied(),
-    );
-    let recv_1 = from_lists(
-        item_receive_1.iter().copied(),
-        count_receive_1.iter().copied(),
-    );
-    let cost_0 = from_lists(item_cost_0.iter().copied(), count_cost_0.iter().copied());
-    let cost_1 = from_lists(item_cost_1.iter().copied(), count_cost_1.iter().copied());
-    let cost_2 = from_lists(item_cost_2.iter().copied(), count_cost_2.iter().copied());
-    recv_0
-        .zip(recv_1)
-        .zip(
-            cost_0
-                .zip(cost_1.zip(cost_2))
-                .map(|(cost_0, (cost_1, cost_2))| (cost_0, cost_1, cost_2)),
-        )
-        .map(|((recv_0, recv_1), (cost_0, cost_1, cost_2))| ShopItems {
-            recv: [recv_0, recv_1].into_iter().flatten().collect(),
-            cost: [cost_0, cost_1, cost_2].into_iter().flatten().collect(),
-        })
+fn shop_items(_special_shop: &SpecialShop) -> impl Iterator<Item = ShopItems> + '_ {
+    // NOTE: The SpecialShop struct has been restructured and no longer contains
+    // the detailed item_receive_*/count_receive_*/item_cost_*/count_cost_* fields.
+    // Only `item: Vec<u16>` (60 entries) is available, which does not provide
+    // enough information to reconstruct the full receive/cost breakdown.
+    // Return an empty iterator so the code compiles; currency exchange detail
+    // will not show individual trade rows until the data schema is restored.
+    std::iter::empty()
 }
 
 #[component]
@@ -279,10 +250,7 @@ pub fn ExchangeItem() -> impl IntoView {
                     .filter(move |items| {
                         // make sure the item is valid on the marketboard before we lookup prices for it
                         items.cost.iter().any(|i| i.item.key_id.0 == item.0)
-                            && items
-                                .recv
-                                .iter()
-                                .any(|i| i.item.item_search_category.0 != 0)
+                            && items.recv.iter().any(|i| i.item.item_search_category != 0)
                     })
                     .map(move |items| (items, shop))
             })
@@ -314,10 +282,7 @@ pub fn ExchangeItem() -> impl IntoView {
                 .iter()
                 .filter_map(|(item, shop)| {
                     let cost = item.cost[0];
-                    let recv = item
-                        .recv
-                        .iter()
-                        .find(|i| i.item.item_search_category.0 >= 0)?;
+                    let recv = item.recv.iter().find(|i| i.item.item_search_category > 0)?;
                     let item_key = (false, recv.item.key_id.0);
                     let sales = &sales.get(&item_key)?.sales;
                     let recent = sales.first()?;
@@ -843,8 +808,13 @@ pub fn ExchangeItem() -> impl IntoView {
     }.into_any()
 }
 
-#[field_iter(field_prefix = "item_cost_", count = 3)]
-fn item_cost_iter(shop: &SpecialShop) -> impl Iterator<Item = ItemId> + '_ {}
+// NOTE: The SpecialShop struct no longer has item_cost_0/1/2 fields.
+// This function previously used the field_iter macro to iterate over those fields.
+// Now it returns an empty iterator as a stub until the data schema is restored.
+#[allow(dead_code)]
+fn item_cost_iter(_shop: &SpecialShop) -> impl Iterator<Item = ItemId> + '_ {
+    std::iter::empty()
+}
 
 // #[derive(TableRow, Clone, Default, Debug)]
 // #[table(
@@ -904,19 +874,14 @@ pub fn CurrencySelection() -> impl IntoView {
         .iter()
         .flat_map(|(_shops, special_shop)| {
             shop_items(special_shop)
-                .filter(|items| {
-                    items
-                        .recv
-                        .iter()
-                        .any(|i| i.item.item_search_category.0 != 0)
-                })
+                .filter(|items| items.recv.iter().any(|i| i.item.item_search_category != 0))
                 .flat_map(|f| f.cost.into_iter().map(|i| i.item.key_id))
         })
         .filter(|f| {
             let Some(item) = data.items.get(f) else {
                 return false;
             };
-            allowed_item_ui_categories.contains(&item.item_ui_category)
+            allowed_item_ui_categories.contains(&ItemUiCategoryId(item.item_ui_category as i32))
         })
         .unique_by(|i| i.0)
         .collect::<Vec<_>>();
@@ -929,7 +894,7 @@ pub fn CurrencySelection() -> impl IntoView {
             if disallowed_items.contains(&item.name.as_str()) {
                 return None;
             }
-            let ui_category = item.item_ui_category;
+            let ui_category = ItemUiCategoryId(item.item_ui_category as i32);
             let category = ui_categories.get(&ui_category)?;
             Some((item.key_id.0, item.name.as_str(), category.name.as_str()))
         })
