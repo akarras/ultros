@@ -68,7 +68,7 @@ impl ToTokens for DumbCsvDeserializeReceiver {
                 let d = ty.into_token_stream().to_string();
                 let dummy: DummyType = d.as_str().into();
                 let parse_body = match dummy {
-                    DummyType::String => quote! {},
+                    DummyType::String => quote! { .to_string() },
                     DummyType::Bool => quote! { .parse_bool() },
                     DummyType::Other(val) => {
                         let ty= TokenStream::from_str(val).unwrap();
@@ -105,13 +105,15 @@ impl ToTokens for DumbCsvDeserializeReceiver {
                             }
                         }, DummyType::Other(val) => {
                             if val.starts_with("i") || val.starts_with("u") || val.ends_with("Id") {
+                                let error = format!("DUMBCSV ID {val}: Error reading value {}", field_name);
                                 quote!{
-                                    list.next().expect("There to be a value").parse::<#ty>().unwrap_or_default()
+                                    list.next().expect(#error).parse::<#ty>().unwrap_or_default()
                                 }
                             } else {
                                 let error = format!("DUMBCSV OTHER {val}: Error parsing value {}", field_name);
+                                let read_error = format!("DUMBCSV OTHER {val}: Error reading value {}", field_name);
                                 quote!{
-                                    list.next().expect("There to be a value").parse::<#ty>().expect(#error)
+                                    list.next().expect(#read_error).parse::<#ty>().expect(#error)
                                 }
                             }
                         },
