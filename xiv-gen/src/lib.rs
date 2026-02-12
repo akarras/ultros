@@ -5,11 +5,18 @@ mod deserialize_custom;
 pub mod subrow_key;
 
 use bincode::{Decode, Encode, config::Config};
+#[allow(unused_imports)]
 use deserialize_custom::*;
+#[allow(unused_imports)]
 use dumb_csv::ParseBool;
 use serde::{Deserialize, Deserializer, Serialize};
 
-include!(concat!(env!("OUT_DIR"), "/types.rs"));
+#[allow(unused_imports)]
+mod types {
+    use super::*;
+    include!(concat!(env!("OUT_DIR"), "/types.rs"));
+}
+pub use types::*;
 
 pub fn bincode_config() -> impl Config {
     bincode::config::standard()
@@ -20,6 +27,7 @@ pub fn data_version() -> &'static str {
     env!("GIT_HASH")
 }
 
+#[allow(dead_code)]
 fn ok_or_default<'de, T, D>(deserializer: D) -> Result<T, D::Error>
 where
     T: Deserialize<'de> + Default,
