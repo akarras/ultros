@@ -46,9 +46,9 @@ where
 {
     let mut data = vec![];
 
-    for record in rdr.records() {
-        let record = record?;
-
+    // Reuse the StringRecord buffer to avoid allocating a new one for each row
+    let mut record = csv::StringRecord::new();
+    while rdr.read_record(&mut record)? {
         data.push(T::from_str_list(record.iter()));
     }
     Ok(data)
