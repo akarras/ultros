@@ -45,10 +45,11 @@ where
     R: std::io::Read,
 {
     let mut data = vec![];
+    // Reusing the same StringRecord buffer for each row avoids allocating a new one
+    // for every record, which significantly improves performance.
+    let mut record = csv::StringRecord::new();
 
-    for record in rdr.records() {
-        let record = record?;
-
+    while rdr.read_record(&mut record)? {
         data.push(T::from_str_list(record.iter()));
     }
     Ok(data)
