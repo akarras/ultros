@@ -220,16 +220,23 @@ fn find_date_range(
     date_range: RangeInclusive<NaiveDateTime>,
     sales: &[SaleHistory],
 ) -> Option<&[SaleHistory]> {
-    let (start, _) = sales
-        .iter()
-        .enumerate()
-        .find(|(_, sale)| date_range.contains(&sale.sold_date))?;
-    let (end, _) = sales
-        .iter()
-        .enumerate()
-        .rev()
-        .find(|(_, sale)| date_range.contains(&sale.sold_date))?;
-    Some(&sales[start..=end])
+    if sales.is_empty() {
+        return None;
+    }
+    // Optimization: Use binary search (partition_point) for O(log N) lookup instead of O(N) linear scan.
+    // Relies on sales being sorted by date descending (Newest -> Oldest).
+
+    // Find first sale that is <= end_date (i.e. skip newer sales)
+    let start_idx = sales.partition_point(|s| s.sold_date > *date_range.end());
+
+    // Find first sale that is < start_date (i.e. this is the exclusive end index of sales >= start_date)
+    let end_idx = sales.partition_point(|s| s.sold_date >= *date_range.start());
+
+    if start_idx >= end_idx {
+        return None;
+    }
+
+    Some(&sales[start_idx..end_idx])
 }
 
 impl SalesSummaryData {
