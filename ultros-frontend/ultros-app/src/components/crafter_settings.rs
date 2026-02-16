@@ -40,13 +40,18 @@ pub fn CrafterSettings() -> impl IntoView {
             <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {jobs.into_iter()
                     .map(|(code, name, getter)| {
+                        let id = format!("crafter-level-{}", code.to_lowercase());
                         view! {
                             <div class="space-y-1">
-                                <label class="text-sm font-medium text-[color:var(--color-text-muted)]">
+                                <label
+                                    for=id.clone()
+                                    class="text-sm font-medium text-[color:var(--color-text-muted)]"
+                                >
                                     {name}
                                 </label>
                                 <div class="relative">
                                     <input
+                                        id=id
                                         type="number"
                                         min="0"
                                         max="100"
