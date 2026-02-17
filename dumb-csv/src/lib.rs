@@ -45,10 +45,9 @@ where
     R: std::io::Read,
 {
     let mut data = vec![];
+    let mut record = csv::StringRecord::new();
 
-    for record in rdr.records() {
-        let record = record?;
-
+    while rdr.read_record(&mut record)? {
         data.push(T::from_str_list(record.iter()));
     }
     Ok(data)
@@ -95,4 +94,5 @@ mod tests {
             }
         );
     }
+
 }

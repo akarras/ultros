@@ -12,14 +12,10 @@ pub fn read_dumb_csv<T: DumbCsvDeserialize>(path: &str) -> Vec<T> {
         .from_path(path)
         .expect("Failed to open csv");
     // New format: line 1 is field names, line 2+ is data
-    let _headers: Vec<String> = csv
-        .records()
-        .next()
-        .unwrap()
-        .unwrap()
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    let mut record = csv::StringRecord::new();
+    if !csv.read_record(&mut record).expect("Failed to read CSV") {
+        panic!("File empty, expected headers");
+    }
     dumb_csv::deserialize(csv).unwrap()
 }
 

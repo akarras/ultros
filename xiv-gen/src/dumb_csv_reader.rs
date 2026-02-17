@@ -5,15 +5,14 @@ pub fn read_dumb_csv<T: DumbCsvDeserialize>(path: &str) -> Vec<T> {
         .has_headers(false)
         .from_path(path)
         .expect("Failed to open csv");
-    let str = std::fs::read_to_string(path).unwrap();
-    let headers: Vec<String> = csv
-        .records()
-        .nth(1)
-        .unwrap()
-        .unwrap()
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    // Skip the first two rows (metadata/headers)
+    let mut record = csv::StringRecord::new();
+    if !csv.read_record(&mut record).expect("Failed to read CSV") {
+        panic!("File empty, expected headers");
+    }
+    if !csv.read_record(&mut record).expect("Failed to read CSV") {
+        panic!("File too short, expected headers");
+    }
     dumb_csv::deserialize(csv).unwrap()
     
 }
