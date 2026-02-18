@@ -45,10 +45,12 @@ where
     R: std::io::Read,
 {
     let mut data = vec![];
+    // Optimization: reuse the same StringRecord buffer for each row to avoid
+    // allocating a new Vec<String> for every record. This significantly reduces
+    // memory allocations during deserialization.
+    let mut record = csv::StringRecord::new();
 
-    for record in rdr.records() {
-        let record = record?;
-
+    while rdr.read_record(&mut record)? {
         data.push(T::from_str_list(record.iter()));
     }
     Ok(data)
