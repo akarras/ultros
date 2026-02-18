@@ -4,6 +4,7 @@ use thousands::Separable;
 #[cfg(feature = "hydrate")]
 fn spawn_gil_party(mut x: f64, mut y: f64) {
     // If coordinates are 0,0 (e.g. keyboard event), spawn at center of screen
+    #[allow(clippy::collapsible_if)]
     if x == 0.0 && y == 0.0 {
         if let Some(window) = web_sys::window() {
             x = window
