@@ -367,7 +367,7 @@ pub fn SalesInsights(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::NaiveDate;
+    use chrono::{Duration, NaiveDate};
 
     fn create_sale(date: NaiveDateTime) -> SaleHistory {
         SaleHistory {
@@ -385,7 +385,10 @@ mod tests {
 
     #[test]
     fn test_find_date_range() {
-        let base_date = NaiveDate::from_ymd_opt(2023, 1, 1).unwrap().and_hms_opt(12, 0, 0).unwrap();
+        let base_date = NaiveDate::from_ymd_opt(2023, 1, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
         let one_hour = Duration::hours(1);
 
         // Create sales: Newest first (descending)
@@ -402,7 +405,7 @@ mod tests {
         // Range: 09:00 to 11:00
         // Should include indices 1 (11:00), 2 (10:00), 3 (09:00)
         let start_range = base_date - Duration::hours(3); // 09:00
-        let end_range = base_date - Duration::hours(1);   // 11:00
+        let end_range = base_date - Duration::hours(1); // 11:00
         let range = start_range..=end_range;
 
         let result = find_date_range(range, &sales);
@@ -422,7 +425,10 @@ mod tests {
 
     #[test]
     fn test_find_date_range_no_match() {
-        let base_date = NaiveDate::from_ymd_opt(2023, 1, 1).unwrap().and_hms_opt(12, 0, 0).unwrap();
+        let base_date = NaiveDate::from_ymd_opt(2023, 1, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
         let sales = vec![create_sale(base_date)];
 
         let range = (base_date - Duration::hours(2))..=(base_date - Duration::hours(1));
