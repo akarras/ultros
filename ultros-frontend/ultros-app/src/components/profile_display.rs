@@ -33,11 +33,11 @@ pub fn ProfileDisplay() -> impl IntoView {
                                             class="nav-link"
                                             href="/login"
                                         >
-                                            <Icon height="1.2em" width="1.2em" icon=i::BsDiscord />
+                                            <Icon height="1.2em" width="1.2em" icon=i::BsDiscord aria_hidden=true />
                                             <span>"Login"</span>
                                         </a>
                                         <A href="/settings" attr:class="nav-link">
-                                            <Icon height="2em" width="2em" icon=i::IoSettingsSharp />
+                                            <Icon height="2em" width="2em" icon=i::IoSettingsSharp aria_hidden=true />
                                             <span class="sr-only">Settings</span>
                                         </A>
                                     </div>
