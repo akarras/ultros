@@ -2,7 +2,7 @@ use crate::EventType;
 use itertools::Itertools;
 use poise::serenity_prelude::Color;
 use std::fmt::Write;
-use ultros_db::{entity::active_listing, world_cache::AnySelector};
+use ultros_db::{entity::active_listing, world_data::world_cache::AnySelector};
 use xiv_gen::ItemId;
 
 use super::{Context, Error};

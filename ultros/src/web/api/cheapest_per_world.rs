@@ -7,7 +7,7 @@ use axum::{
 };
 use axum_extra::headers::{CacheControl, HeaderMapExt};
 use serde::Serialize;
-use ultros_db::world_cache::{AnySelector, WorldCache};
+use ultros_db::world_data::world_cache::{AnySelector, WorldCache};
 
 use crate::{analyzer_service::AnalyzerService, web::error::WebError};
 

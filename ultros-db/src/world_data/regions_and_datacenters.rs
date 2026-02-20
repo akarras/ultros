@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
 
 use crate::UltrosDb;
+use crate::common::partial_diff_iterator::PartialDiffIterator;
 use crate::entity::*;
-use crate::partial_diff_iterator::PartialDiffIterator;
 use anyhow::Result;
 use itertools::Itertools;
 use sea_orm::{ActiveValue, EntityTrait, Set};
@@ -65,10 +65,12 @@ impl UltrosDb {
             let diff = PartialDiffIterator::from((new_regions.iter(), current_regions.iter()));
             let added_regions: Vec<_> = diff
                 .flat_map(|m| match m {
-                    crate::partial_diff_iterator::DiffItem::Left(l) => Some(region::ActiveModel {
-                        id: ActiveValue::default(),
-                        name: Set(l.0.clone()),
-                    }),
+                    crate::common::partial_diff_iterator::DiffItem::Left(l) => {
+                        Some(region::ActiveModel {
+                            id: ActiveValue::default(),
+                            name: Set(l.0.clone()),
+                        })
+                    }
                     _ => None,
                 })
                 .collect();
@@ -98,8 +100,8 @@ impl UltrosDb {
                 existing_datacenters.iter().sorted_by_key(|d| &d.name),
             ))
             .flat_map(|m| match m {
-                crate::partial_diff_iterator::DiffItem::Same(_, _) => None,
-                crate::partial_diff_iterator::DiffItem::Left(datacenter) => {
+                crate::common::partial_diff_iterator::DiffItem::Same(_, _) => None,
+                crate::common::partial_diff_iterator::DiffItem::Left(datacenter) => {
                     Some(datacenter::ActiveModel {
                         id: ActiveValue::default(),
                         name: Set(datacenter.name.0.clone()),
@@ -110,7 +112,7 @@ impl UltrosDb {
                             .expect("We should have all regions stored at this point.")),
                     })
                 }
-                crate::partial_diff_iterator::DiffItem::Right(_) => None,
+                crate::common::partial_diff_iterator::DiffItem::Right(_) => None,
             })
             .collect();
             if !new_datacenters.is_empty() {
@@ -137,8 +139,8 @@ impl UltrosDb {
             existing_worlds.sort_by(|a, b| a.name.cmp(&b.name));
             let worlds: Vec<_> = PartialDiffIterator::from((worlds.iter(), existing_worlds.iter()))
                 .flat_map(|m| match m {
-                    crate::partial_diff_iterator::DiffItem::Same(_, _) => None,
-                    crate::partial_diff_iterator::DiffItem::Left(left) => {
+                    crate::common::partial_diff_iterator::DiffItem::Same(_, _) => None,
+                    crate::common::partial_diff_iterator::DiffItem::Left(left) => {
                         Some(world::ActiveModel {
                             id: Set(left.id.0),
                             name: Set(left.name.0.clone()),
@@ -155,7 +157,7 @@ impl UltrosDb {
                                 .expect("Should have a valid datacenter id available")),
                         })
                     }
-                    crate::partial_diff_iterator::DiffItem::Right(_right) => None,
+                    crate::common::partial_diff_iterator::DiffItem::Right(_right) => None,
                 })
                 .collect();
             if !worlds.is_empty() {

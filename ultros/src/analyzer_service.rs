@@ -31,7 +31,7 @@ use thiserror::Error;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use ultros_api_types::trends::{TrendItem, TrendsData};
-use ultros_db::world_cache::{AnySelector, WorldCache};
+use ultros_db::world_data::world_cache::{AnySelector, WorldCache};
 
 pub const SALE_HISTORY_SIZE: usize = 6;
 

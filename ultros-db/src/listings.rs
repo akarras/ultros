@@ -14,8 +14,8 @@ use universalis::{ItemId, ListingView, WorldId};
 
 use crate::{
     UltrosDb,
+    common::partial_diff_iterator::PartialDiffIterator,
     entity::{active_listing, retainer},
-    partial_diff_iterator::PartialDiffIterator,
 };
 
 impl PartialEq<ListingView> for ListingData {
@@ -84,7 +84,7 @@ impl UltrosDb {
                 remove_listings.into_iter(),
             )
             .flat_map(|listing| match listing {
-                crate::partial_diff_iterator::DiffItem::Same(listing, _) => Some(listing.0),
+                crate::common::partial_diff_iterator::DiffItem::Same(listing, _) => Some(listing.0),
                 _ => None,
             })
             .map(|listing| async move {
