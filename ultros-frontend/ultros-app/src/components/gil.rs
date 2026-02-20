@@ -7,7 +7,10 @@ fn spawn_gil_party(x: f64, y: f64) {
     let mut y = y;
 
     // If coordinates are 0,0, assume keyboard activation and center on screen
-    if x == 0.0 && y == 0.0 && let Some(window) = web_sys::window() {
+    if x == 0.0
+        && y == 0.0
+        && let Some(window) = web_sys::window()
+    {
         x = window
             .inner_width()
             .ok()
