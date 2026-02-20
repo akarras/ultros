@@ -3,6 +3,27 @@ use thousands::Separable;
 
 #[cfg(feature = "hydrate")]
 fn spawn_gil_party(x: f64, y: f64) {
+    let mut x = x;
+    let mut y = y;
+
+    // If coordinates are 0,0, assume keyboard activation and center on screen
+    if x == 0.0 && y == 0.0 {
+        if let Some(window) = web_sys::window() {
+            x = window
+                .inner_width()
+                .ok()
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0)
+                / 2.0;
+            y = window
+                .inner_height()
+                .ok()
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0)
+                / 2.0;
+        }
+    }
+
     let document = document();
     let body = document.body().expect("body");
 
@@ -57,22 +78,36 @@ fn spawn_gil_party(x: f64, y: f64) {
 }
 
 #[component]
+fn GilIcon() -> impl IntoView {
+    view! {
+        <button
+            type="button"
+            class="h-7 w-7 -m-1 aspect-square p-1 cursor-pointer hover:scale-110 transition-transform active:scale-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-[var(--brand-ring)] rounded-full bg-transparent border-none appearance-none"
+            aria-label="Spawn gil party"
+            on:click=move |ev| {
+                #[cfg(feature = "hydrate")]
+                spawn_gil_party(ev.client_x() as f64, ev.client_y() as f64);
+                #[cfg(not(feature = "hydrate"))]
+                {
+                    let _ = ev;
+                }
+            }
+        >
+            <img
+                alt=""
+                src="/static/images/gil.webp"
+                aria-hidden="true"
+                class="w-full h-full object-contain pointer-events-none"
+            />
+        </button>
+    }
+}
+
+#[component]
 pub fn Gil(#[prop(into)] amount: Signal<i32>) -> impl IntoView {
     view! {
         <div class="flex flex-row items-center">
-            <div
-                class="h-7 w-7 -m-1 aspect-square p-1 cursor-pointer hover:scale-110 transition-transform active:scale-90"
-                on:click=move |ev| {
-                    #[cfg(feature = "hydrate")]
-                    spawn_gil_party(ev.client_x() as f64, ev.client_y() as f64);
-                    #[cfg(not(feature = "hydrate"))]
-                    {
-                        let _ = ev;
-                    }
-                }
-            >
-                <img alt="gil" src="/static/images/gil.webp" />
-            </div>
+            <GilIcon />
             <div>{move || amount().separate_with_commas()}</div>
         </div>
     }
@@ -85,19 +120,7 @@ where
 {
     view! {
         <div class="flex flex-row items-center">
-            <div
-                class="h-7 w-7 -m-1 aspect-square p-1 cursor-pointer hover:scale-110 transition-transform active:scale-90"
-                on:click=move |ev| {
-                    #[cfg(feature = "hydrate")]
-                    spawn_gil_party(ev.client_x() as f64, ev.client_y() as f64);
-                    #[cfg(not(feature = "hydrate"))]
-                    {
-                        let _ = ev;
-                    }
-                }
-            >
-                <img alt="gil" src="/static/images/gil.webp" />
-            </div>
+            <GilIcon />
             <div>{move || amount().separate_with_commas()}</div>
         </div>
     }
