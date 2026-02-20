@@ -7,21 +7,19 @@ fn spawn_gil_party(x: f64, y: f64) {
     let mut y = y;
 
     // If coordinates are 0,0, assume keyboard activation and center on screen
-    if x == 0.0 && y == 0.0 {
-        if let Some(window) = web_sys::window() {
-            x = window
-                .inner_width()
-                .ok()
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.0)
-                / 2.0;
-            y = window
-                .inner_height()
-                .ok()
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.0)
-                / 2.0;
-        }
+    if x == 0.0 && y == 0.0 && let Some(window) = web_sys::window() {
+        x = window
+            .inner_width()
+            .ok()
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0)
+            / 2.0;
+        y = window
+            .inner_height()
+            .ok()
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0)
+            / 2.0;
     }
 
     let document = document();
