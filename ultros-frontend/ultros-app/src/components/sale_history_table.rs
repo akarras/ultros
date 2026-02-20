@@ -220,16 +220,38 @@ fn find_date_range(
     date_range: RangeInclusive<NaiveDateTime>,
     sales: &[SaleHistory],
 ) -> Option<&[SaleHistory]> {
-    let (start, _) = sales
-        .iter()
-        .enumerate()
-        .find(|(_, sale)| date_range.contains(&sale.sold_date))?;
-    let (end, _) = sales
-        .iter()
-        .enumerate()
-        .rev()
-        .find(|(_, sale)| date_range.contains(&sale.sold_date))?;
-    Some(&sales[start..=end])
+    if sales.is_empty() {
+        return None;
+    }
+
+    // Optimization: Assume sales are sorted descending (newest first).
+    // This allows using binary search (partition_point) for O(log N) instead of O(N).
+
+    // Find start index: first element where date <= range.end
+    // Elements before start are > range.end (too new)
+    let start = sales.partition_point(|s| s.sold_date > *date_range.end());
+
+    if start >= sales.len() {
+        return None;
+    }
+
+    // Check if the start element is actually within range
+    // Since we know it is <= end, we just need to check if it is >= start
+    if sales[start].sold_date < *date_range.start() {
+        return None;
+    }
+
+    // Find length of the slice: elements starting from `start` that are >= range.start
+    // sales[start..] contains elements <= range.end.
+    // We want elements where date >= range.start.
+    // Since sorted descending, these elements are at the beginning of the slice.
+    let length = sales[start..].partition_point(|s| s.sold_date >= *date_range.start());
+
+    if length == 0 {
+        return None;
+    }
+
+    Some(&sales[start..start + length])
 }
 
 impl SalesSummaryData {
@@ -340,4 +362,76 @@ pub fn SalesInsights(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
         </div>
     }
     .into_any()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{Duration, NaiveDate};
+
+    fn create_sale(date: NaiveDateTime) -> SaleHistory {
+        SaleHistory {
+            id: 0,
+            quantity: 1,
+            price_per_item: 100,
+            buying_character_id: 0,
+            hq: false,
+            sold_item_id: 0,
+            sold_date: date,
+            world_id: 0,
+            buyer_name: None,
+        }
+    }
+
+    #[test]
+    fn test_find_date_range() {
+        let base_date = NaiveDate::from_ymd_opt(2023, 1, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let one_hour = Duration::hours(1);
+
+        // Create sales: Newest first (descending)
+        let sales: Vec<SaleHistory> = (0..10)
+            .map(|i| create_sale(base_date - (one_hour * i)))
+            .collect();
+
+        // Sales dates:
+        // 0: 12:00 (Newest)
+        // 1: 11:00
+        // ...
+        // 9: 03:00 (Oldest)
+
+        // Range: 09:00 to 11:00
+        // Should include indices 1 (11:00), 2 (10:00), 3 (09:00)
+        let start_range = base_date - Duration::hours(3); // 09:00
+        let end_range = base_date - Duration::hours(1); // 11:00
+        let range = start_range..=end_range;
+
+        let result = find_date_range(range, &sales);
+        assert!(result.is_some());
+        let slice = result.unwrap();
+        assert_eq!(slice.len(), 3);
+        assert_eq!(slice[0].sold_date, end_range); // 11:00
+        assert_eq!(slice.last().unwrap().sold_date, start_range); // 09:00
+    }
+
+    #[test]
+    fn test_find_date_range_empty() {
+        let range = NaiveDateTime::default()..=NaiveDateTime::default();
+        let sales = vec![];
+        assert!(find_date_range(range, &sales).is_none());
+    }
+
+    #[test]
+    fn test_find_date_range_no_match() {
+        let base_date = NaiveDate::from_ymd_opt(2023, 1, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let sales = vec![create_sale(base_date)];
+
+        let range = (base_date - Duration::hours(2))..=(base_date - Duration::hours(1));
+        assert!(find_date_range(range, &sales).is_none());
+    }
 }
