@@ -329,12 +329,15 @@ impl UltrosDb {
         });
         let (added, _removed_result) =
             futures::future::join(futures::future::join_all(added), async move {
-                let remove_result = futures::future::try_join_all(
-                    remove_iter
-                        .map(|(l, _)| active_listing::Entity::delete_by_id(l.id).exec(&self.db)),
-                )
-                .await?;
-                Result::<usize>::Ok(remove_result.len())
+                let ids_to_remove: Vec<i32> = remove_iter.map(|(l, _)| l.id).collect();
+                if ids_to_remove.is_empty() {
+                    return Result::<usize>::Ok(0);
+                }
+                let res = active_listing::Entity::delete_many()
+                    .filter(active_listing::Column::Id.is_in(ids_to_remove))
+                    .exec(&self.db)
+                    .await?;
+                Result::<usize>::Ok(res.rows_affected as usize)
             })
             .await;
         let added: Vec<_> = added
