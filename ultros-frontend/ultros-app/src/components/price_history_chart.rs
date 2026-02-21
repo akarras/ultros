@@ -135,6 +135,8 @@ pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl 
                     format!("width: {}px; height: {}px", width.get(), height.get().min(480.0))
                 }
                 node_ref=canvas
+                role="img"
+                aria-label="Scatter plot showing price history over time"
             ></canvas>
             <Toggle
                 checked=filter_outliers

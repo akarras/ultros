@@ -7,9 +7,9 @@ use tracing::{info, instrument};
 use ultros_api_types::websocket::{ListingEventData, SaleEventData};
 use ultros_db::{
     UltrosDb,
+    common::partial_diff_iterator::PartialDiffIterator,
     entity::{listing_last_updated::Model, world},
-    partial_diff_iterator::PartialDiffIterator,
-    world_cache::WorldCache,
+    world_data::world_cache::WorldCache,
 };
 use universalis::{UniversalisClient, WorldId, WorldItemRecencyView};
 
@@ -71,7 +71,7 @@ impl UpdateService {
         let all_marketable_items: Box<[i32]> = xiv_gen_db::data()
             .items
             .values()
-            .filter(|i| i.item_search_category.0 != 0)
+            .filter(|i| i.item_search_category != 0)
             .map(|i| i.key_id.0)
             .collect();
         for world in self.world_cache.get_all_worlds() {

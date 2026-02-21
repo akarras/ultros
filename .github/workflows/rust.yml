@@ -25,9 +25,10 @@ jobs:
               # normally i do an apt upgrade here, but we install snap and firefox??
               run: sudo apt update && sudo apt install -y libfreetype6 libfreetype6-dev cmake build-essential curl sudo pkg-config libssl-dev fontconfig libfontconfig1-dev
             - name: Install Rust toolchain
-              uses: dtolnay/rust-toolchain@nightly
-            - name: Install rustfmt and clippy
-              run: rustup component add rustfmt clippy
+              uses: dtolnay/rust-toolchain@master
+              with:
+                  toolchain: nightly-2026-01-06
+                  components: rustfmt, clippy
             - name: Cache cargo registry and build artifacts
               uses: actions/cache@v4
               with:

@@ -50,8 +50,8 @@ use ultros_api_types::{
 use ultros_app::{LocalWorldData, shell};
 use ultros_db::ActiveValue;
 use ultros_db::common_type_conversions::ApiConversionError;
-use ultros_db::world_cache::AnySelector;
-use ultros_db::{UltrosDb, world_cache::WorldCache};
+use ultros_db::world_data::world_cache::AnySelector;
+use ultros_db::{UltrosDb, world_data::world_cache::WorldCache};
 use ultros_xiv_icons::get_item_image;
 use universalis::{ItemId, ListingView, UniversalisClient, WorldId};
 

@@ -12,7 +12,7 @@ pub fn ItemIcon(
         xiv_gen_db::data()
             .items
             .get(&ItemId(item_id()))
-            .map(|item| item.item_search_category.0 > 0)
+            .map(|item| item.item_search_category > 0)
             .unwrap_or_default()
     };
     let (failed, set_failed) = signal(0);

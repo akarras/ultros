@@ -8,7 +8,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use ultros_db::world_cache::WorldCache;
+use ultros_db::world_data::world_cache::WorldCache;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct BestDealsQuery {

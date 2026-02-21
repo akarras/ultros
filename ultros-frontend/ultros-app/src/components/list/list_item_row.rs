@@ -74,7 +74,7 @@ pub fn ListItemRow(
                                         .unwrap_or_default() />
                                     {game_items
                                         .get(&ItemId(item.with(|i| i.item_id)))
-                                        .map(|item| item.item_search_category.0 <= 1)
+                                        .map(|item| item.item_search_category <= 1)
                                         .unwrap_or_default()
                                         .then(move || {
                                             view! {
@@ -192,7 +192,7 @@ pub fn ListItemRow(
                                         .unwrap_or_default() />
                                     {game_items
                                         .get(&ItemId(item.item_id))
-                                        .map(|item| item.item_search_category.0 <= 1)
+                                        .map(|item| item.item_search_category <= 1)
                                         .unwrap_or_default()
                                         .then(move || {
                                             view! {

@@ -15,7 +15,7 @@ use leptos::either::Either;
 use leptos::prelude::*;
 use leptos_router::*;
 use ultros_api_types::{ActiveListing, FfxivCharacter, Retainer, world_helper::AnySelector};
-use xiv_gen::ItemId;
+use xiv_gen::{ItemId, ItemSortCategoryId};
 
 #[derive(PartialOrd, Ord, Eq, PartialEq, Debug)]
 struct ItemSortKey(u8, i32, bool);
@@ -28,7 +28,7 @@ impl From<(ItemId, bool)> for ItemSortKey {
             let sort_category = &data.item_sort_categorys;
             let item = items.get(&item_id)?;
             let sort_weight = sort_category
-                .get(&item.item_sort_category)
+                .get(&ItemSortCategoryId(item.item_sort_category as i32))
                 .map(|category| category.param)?;
             Some(Self(sort_weight, item.key_id.0, hq))
         };

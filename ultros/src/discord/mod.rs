@@ -5,7 +5,7 @@ use poise::{builtins::HelpConfiguration, serenity_prelude as serenity};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use ultros_api_types::world_helper::WorldHelper;
-use ultros_db::{UltrosDb, world_cache::WorldCache};
+use ultros_db::{UltrosDb, world_data::world_cache::WorldCache};
 
 use crate::{
     alerts::alert_manager::AlertManager,

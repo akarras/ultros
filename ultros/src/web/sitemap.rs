@@ -23,7 +23,7 @@ use std::{
     sync::Arc,
 };
 use ultros_api_types::world_helper::WorldHelper;
-use ultros_db::world_cache::{AnySelector, WorldCache};
+use ultros_db::world_data::world_cache::{AnySelector, WorldCache};
 
 pub(crate) struct Xml(Vec<u8>);
 
@@ -209,7 +209,7 @@ pub(crate) async fn item_sitemap(
         xiv_gen_db::data()
             .items
             .iter()
-            .filter(|(_, item)| item.item_search_category.0 > 0)
+            .filter(|(_, item)| item.item_search_category > 0)
             .map(|(key, _)| key.0)
             .sorted()
             .map(|id| {

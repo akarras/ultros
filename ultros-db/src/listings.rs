@@ -14,8 +14,8 @@ use universalis::{ItemId, ListingView, WorldId};
 
 use crate::{
     UltrosDb,
+    common::partial_diff_iterator::PartialDiffIterator,
     entity::{active_listing, retainer},
-    partial_diff_iterator::PartialDiffIterator,
 };
 
 impl PartialEq<ListingView> for ListingData {
@@ -84,7 +84,7 @@ impl UltrosDb {
                 remove_listings.into_iter(),
             )
             .flat_map(|listing| match listing {
-                crate::partial_diff_iterator::DiffItem::Same(listing, _) => Some(listing.0),
+                crate::common::partial_diff_iterator::DiffItem::Same(listing, _) => Some(listing.0),
                 _ => None,
             })
             .map(|listing| async move {
@@ -329,12 +329,15 @@ impl UltrosDb {
         });
         let (added, _removed_result) =
             futures::future::join(futures::future::join_all(added), async move {
-                let remove_result = futures::future::try_join_all(
-                    remove_iter
-                        .map(|(l, _)| active_listing::Entity::delete_by_id(l.id).exec(&self.db)),
-                )
-                .await?;
-                Result::<usize>::Ok(remove_result.len())
+                let ids_to_remove: Vec<i32> = remove_iter.map(|(l, _)| l.id).collect();
+                if ids_to_remove.is_empty() {
+                    return Result::<usize>::Ok(0);
+                }
+                let res = active_listing::Entity::delete_many()
+                    .filter(active_listing::Column::Id.is_in(ids_to_remove))
+                    .exec(&self.db)
+                    .await?;
+                Result::<usize>::Ok(res.rows_affected as usize)
             })
             .await;
         let added: Vec<_> = added
