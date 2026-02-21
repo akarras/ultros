@@ -347,7 +347,7 @@ fn AnalyzerTable(
                     .map(|cat_id| {
                         items
                             .get(&ItemId(data.inner.sale_summary.item_id))
-                            .map(|item| item.item_search_category as i32 == cat_id)
+                            .map(|item| item.item_search_category == cat_id)
                             .unwrap_or(false)
                     })
                     .unwrap_or(true)

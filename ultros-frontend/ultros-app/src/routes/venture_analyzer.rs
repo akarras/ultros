@@ -92,7 +92,7 @@ fn VentureAnalyzerTable(
             .unique()
             .filter_map(|id| {
                 data.class_job_categorys
-                    .get(&xiv_gen::ClassJobCategoryId(id as i32))
+                    .get(&xiv_gen::ClassJobCategoryId(id))
                     .map(|c| (id, c.name.as_str().to_string()))
             })
             .sorted_by(|a, b| a.1.cmp(&b.1))
@@ -174,7 +174,7 @@ fn VentureAnalyzerTable(
             // Check if `task.task` (RowId) corresponds to a RetainerTaskNormal
             // We need to cast RowId to RetainerTaskNormalId?
             // Since RowId is just u16 wrapper, and RetainerTaskNormalId is i32 wrapper.
-            let normal_id = xiv_gen::RetainerTaskNormalId(task.task as i32);
+            let normal_id = xiv_gen::RetainerTaskNormalId(task.task);
 
             if let Some(normal_task) = retainer_task_normals.get(&normal_id) {
                 let item_id = normal_task.item;
@@ -182,7 +182,7 @@ fn VentureAnalyzerTable(
                     continue;
                 }
 
-                let quantity = normal_task.quantity_0 as i32; // taking base quantity
+                let quantity = normal_task.quantity_0; // taking base quantity
                 if quantity == 0 {
                     continue;
                 }
@@ -190,14 +190,14 @@ fn VentureAnalyzerTable(
                 let task_level = task.retainer_level as i32;
 
                 // Market Price
-                let market_price_summary = prices.find_matching_listings(item_id as i32);
+                let market_price_summary = prices.find_matching_listings(item_id);
                 let market_price = market_price_summary.lowest_gil().unwrap_or(0);
 
                 if market_price == 0 {
                     continue;
                 }
 
-                let sales_stats = if let Some(item_sales) = sales_map.get(&(item_id as i32)) {
+                let sales_stats = if let Some(item_sales) = sales_map.get(&{ item_id }) {
                     analyze_sales(item_sales, filter_outliers)
                 } else {
                     SalesStats {
@@ -220,7 +220,7 @@ fn VentureAnalyzerTable(
 
                 results.push(VentureProfitData {
                     task_level,
-                    item_id: item_id as i32,
+                    item_id,
                     quantity,
                     market_price,
                     profit,

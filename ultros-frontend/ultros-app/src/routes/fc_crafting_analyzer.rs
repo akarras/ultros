@@ -82,14 +82,11 @@ fn calculate_fc_project_cost(
     let mut materials_map: HashMap<ItemId, i32> = HashMap::new();
 
     for part_id in sequence.company_craft_part {
-        if let Some(part) = data
-            .company_craft_parts
-            .get(&CompanyCraftPartId(part_id as i32))
-        {
+        if let Some(part) = data.company_craft_parts.get(&CompanyCraftPartId(part_id)) {
             for process_link in part.company_craft_process {
                 if let Some(process) = data
                     .company_craft_processs
-                    .get(&CompanyCraftProcessId(process_link as i32))
+                    .get(&CompanyCraftProcessId(process_link))
                 {
                     // Iterate through the 12 possible supply items
                     // Based on the JSON, these are flattened as supply_item_0, etc.
@@ -106,16 +103,15 @@ fn calculate_fc_project_cost(
 
                         if let Some(supply_item) = data
                             .company_craft_supply_items
-                            .get(&CompanyCraftSupplyItemId(supply_item_link as i32))
+                            .get(&CompanyCraftSupplyItemId(supply_item_link))
                         {
                             if supply_item.item == 0 {
                                 continue;
                             }
 
-                            let total_quantity = (quantity_per_set as i32) * (sets_required as i32);
-                            *materials_map
-                                .entry(ItemId(supply_item.item as i32))
-                                .or_default() += total_quantity;
+                            let total_quantity = quantity_per_set * sets_required;
+                            *materials_map.entry(ItemId(supply_item.item)).or_default() +=
+                                total_quantity;
                         }
                     }
                 }
@@ -232,18 +228,17 @@ fn FCCraftingAnalyzerTable(
             // But we can pre-check if the key is 0/invalid?
             // The generated code uses keys, let's assume valid keys if present.
 
-            let sales_stats =
-                if let Some(item_sales) = sales_map.get(&(sequence.result_item as i32)) {
-                    analyze_sales(item_sales)
-                } else {
-                    SalesStats {
-                        daily_sales: 0.0,
-                        avg_price: 0,
-                        total_sales: 0,
-                    }
-                };
+            let sales_stats = if let Some(item_sales) = sales_map.get(&{ sequence.result_item }) {
+                analyze_sales(item_sales)
+            } else {
+                SalesStats {
+                    daily_sales: 0.0,
+                    avg_price: 0,
+                    total_sales: 0,
+                }
+            };
 
-            let market_price_summary = prices.find_matching_listings(sequence.result_item as i32);
+            let market_price_summary = prices.find_matching_listings(sequence.result_item);
             let market_price = market_price_summary.lowest_gil().unwrap_or(0);
 
             if market_price == 0 {
@@ -461,7 +456,7 @@ fn FCCraftingAnalyzerTable(
                     key=move |(index, data): &(usize, Arc<FCCraftProfitData>)| (*index, data.sequence.key_id)
                     view=move |(index, data): (usize, Arc<FCCraftProfitData>)| {
                         let data_clone = data.clone();
-                        let item_id = ItemId(data.sequence.result_item as i32);
+                        let item_id = ItemId(data.sequence.result_item);
                         let item = items.get(&item_id).map(|i| i.name.as_str()).unwrap_or("Unknown");
                          let classes = if (index % 2) == 0 {
                             "flex flex-row items-center flex-nowrap h-15 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_6%,transparent)] transition-colors"

@@ -25,7 +25,7 @@ pub fn AddRecipeToCurrentListModal(
     let recipe_list = StoredValue::new(
         recipes
             .values()
-            .filter_map(|r| items.get(&ItemId(r.item_result as i32)).map(|i| (i, r)))
+            .filter_map(|r| items.get(&ItemId(r.item_result)).map(|i| (i, r)))
             .collect::<Vec<_>>(),
     );
 

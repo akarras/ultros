@@ -335,18 +335,18 @@ fn SummaryCards(
                                                  // Actually, recipe_tree_iter returns recipes *related* to the item.
                                                  // It could be the item ITSELF (craftable), or it could be an ingredient.
                                                  // We only want to show "Craft for ~" if the item itself is the result.
-                                                 if recipe.item_result as i32 == item_id {
+                                                 if recipe.item_result == item_id {
                                                      view! { <span>"Craft for ~" <Gil amount=min_cost /></span> }
                                                          .into_any()
                                                  } else {
                                                      "Used in Crafting".into_any()
                                                  }
-                                             } else if recipe.item_result as i32 == item_id {
+                                             } else if recipe.item_result == item_id {
                                                                  "Craftable".into_any()
                                              } else {
                                                  "Used in Crafting".into_any()
                                                              }
-                                         } else if recipe.item_result as i32 == item_id {
+                                         } else if recipe.item_result == item_id {
                                                              "Craftable".into_any()
                                          } else {
                                              "Used in Crafting".into_any()
@@ -936,12 +936,12 @@ pub fn ItemView() -> impl IntoView {
     let item_category = move || {
         items
             .get(&ItemId(item_id()))
-            .and_then(|item| categories.get(&ItemUiCategoryId(item.item_ui_category as i32)))
+            .and_then(|item| categories.get(&ItemUiCategoryId(item.item_ui_category)))
     };
 
     let item_search_category = move || {
         items.get(&ItemId(item_id())).and_then(|item| {
-            search_categories.get(&ItemSearchCategoryId(item.item_search_category as i32))
+            search_categories.get(&ItemSearchCategoryId(item.item_search_category))
         })
     };
 

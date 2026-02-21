@@ -29,10 +29,10 @@ where
             .ok_or_else(|| format!("Invalid SubrowKey: {}", s))?;
         let primary_key = primary_key
             .parse()
-            .map_err(|_| format!("Failed to parse primary key in SubrowKey"))?;
+            .map_err(|_| "Failed to parse primary key in SubrowKey".to_string())?;
         let secondary = secondary
             .parse()
-            .map_err(|_| format!("Failed to parse secondary key in SubrowKey"))?;
+            .map_err(|_| "Failed to parse secondary key in SubrowKey".to_string())?;
         Ok(Self(primary_key, secondary))
     }
 }

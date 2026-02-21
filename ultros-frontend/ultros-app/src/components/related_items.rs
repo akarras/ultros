@@ -97,7 +97,7 @@ pub(crate) fn recipe_tree_iter(item_id: ItemId) -> impl Iterator<Item = &'static
     recipes
         .values()
         .filter(move |filter| {
-            ItemId(filter.item_result as i32) == item_id
+            ItemId(filter.item_result) == item_id
                 || IngredientsIter::new(filter).any(|(i, _amount)| i.0 == item_id.0)
         })
         .sorted_by_key(|r| r.key_id.0)
@@ -175,9 +175,9 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
             }
         })
         .collect::<Vec<_>>();
-    let target_item = items.get(&ItemId(recipe.item_result as i32))?;
+    let target_item = items.get(&ItemId(recipe.item_result))?;
     // role chips
-    let is_target = ItemId(recipe.item_result as i32) == item_id;
+    let is_target = ItemId(recipe.item_result) == item_id;
     let is_ingredient = IngredientsIter::new(recipe).any(|(i, _)| i == item_id);
 
     Some(view! {
@@ -319,7 +319,7 @@ fn gil_shop_to_npc(gil_shops: &[GilShopId]) -> Vec<(GilShopId, &'static ENpcBase
 
                 if let Some(ts) = data.topic_selects.get(&xiv_gen::TopicSelectId(row_as_i32)) {
                     for shop in ts.shop {
-                        let shop_id = GilShopId(shop as i32);
+                        let shop_id = GilShopId(shop);
                         if gil_shops.contains(&shop_id) {
                             shops.push(shop_id);
                         }
@@ -328,12 +328,9 @@ fn gil_shop_to_npc(gil_shops: &[GilShopId]) -> Vec<(GilShopId, &'static ENpcBase
 
                 #[allow(clippy::collapsible_if)]
                 if let Some(ph) = data.pre_handlers.get(&xiv_gen::PreHandlerId(row_as_i32)) {
-                    if let Some(ts) = data
-                        .topic_selects
-                        .get(&xiv_gen::TopicSelectId(ph.target as i32))
-                    {
+                    if let Some(ts) = data.topic_selects.get(&xiv_gen::TopicSelectId(ph.target)) {
                         for shop in ts.shop {
-                            let shop_id = GilShopId(shop as i32);
+                            let shop_id = GilShopId(shop);
                             if gil_shops.contains(&shop_id) {
                                 shops.push(shop_id);
                             }
@@ -356,11 +353,7 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
         let gil_shops = data
             .gil_shop_items
             .iter()
-            .filter(|(_shop_id, items)| {
-                items
-                    .iter()
-                    .any(|shop_item| shop_item.item as i32 == item_id)
-            })
+            .filter(|(_shop_id, items)| items.iter().any(|shop_item| shop_item.item == item_id))
             .flat_map(|(shop_id, _)| data.gil_shops.get(shop_id))
             .collect::<Vec<_>>();
         let shop_ids = gil_shops.iter().map(|shop| shop.key_id).collect::<Vec<_>>();
@@ -413,7 +406,7 @@ static VENDOR_ITEM_IDS: LazyLock<HashSet<i32>> = LazyLock::new(|| {
     let mut set = HashSet::new();
     for items in data.gil_shop_items.values() {
         for shop_item in items {
-            set.insert(shop_item.item as i32);
+            set.insert(shop_item.item);
         }
     }
     set
@@ -553,8 +546,7 @@ pub fn leve_rewards_item(
     reward_items: &std::collections::HashMap<xiv_gen::LeveRewardItemId, LeveRewardItem>,
     groups: &std::collections::HashMap<xiv_gen::LeveRewardItemGroupId, LeveRewardItemGroup>,
 ) -> bool {
-    if let Some(reward) = reward_items.get(&xiv_gen::LeveRewardItemId(leve.leve_reward_item as i32))
-    {
+    if let Some(reward) = reward_items.get(&xiv_gen::LeveRewardItemId(leve.leve_reward_item)) {
         // Check all 8 groups
         let group_ids: [u16; 8] = [
             reward.leve_reward_item_group_0,
@@ -613,7 +605,7 @@ fn LeveSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
             leves
                 .iter()
                 .map(|leve| {
-                    let job_name = data.class_job_categorys.get(&xiv_gen::ClassJobCategoryId(leve.class_job_category as i32)).map(|c| c.name.as_str()).unwrap_or("Unknown");
+                    let job_name = data.class_job_categorys.get(&xiv_gen::ClassJobCategoryId(leve.class_job_category)).map(|c| c.name.as_str()).unwrap_or("Unknown");
                     view! {
                         <div class="group flex flex-col gap-2 rounded-lg card p-3 transition-all h-full hover:shadow-md border border-brand-700/30">
                              <div class="text-sm font-medium border-b border-[color:var(--color-outline)] pb-2 text-brand-100">{leve.name.as_str()}</div>

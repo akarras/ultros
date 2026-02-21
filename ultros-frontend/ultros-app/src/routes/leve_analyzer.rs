@@ -109,7 +109,7 @@ fn LeveAnalyzerTable(
             if leve_id == 0 {
                 continue;
             }
-            let leve = match leves.get(&LeveId(leve_id as i32)) {
+            let leve = match leves.get(&LeveId(leve_id)) {
                 Some(l) => l,
                 None => continue,
             };
@@ -140,7 +140,7 @@ fn LeveAnalyzerTable(
             }
 
             // Calculate Cost
-            let market_price_summary = prices.find_matching_listings(item_id as i32);
+            let market_price_summary = prices.find_matching_listings(item_id);
             // Default to high price if not found to discourage bad data
             let market_price = market_price_summary.lowest_gil().unwrap_or(0);
 
@@ -149,7 +149,7 @@ fn LeveAnalyzerTable(
                 continue;
             }
 
-            let sales_stats = if let Some(item_sales) = sales_map.get(&(item_id as i32)) {
+            let sales_stats = if let Some(item_sales) = sales_map.get(&{ item_id }) {
                 analyze_sales(item_sales, filter_outliers)
             } else {
                 SalesStats {
@@ -247,9 +247,9 @@ fn LeveAnalyzerTable(
                             (group.item_3, group.count_3),
                             (group.item_4, group.count_4),
                             (group.item_5, group.count_5),
-                            (group.item_6, group.count_6 as u8),
-                            (group.item_7, group.count_7 as u8),
-                            (group.item_8, group.count_8 as u8),
+                            (group.item_6, group.count_6),
+                            (group.item_7, group.count_7),
+                            (group.item_8, group.count_8),
                         ];
 
                         for (g_item_id, g_count) in group_items {
@@ -289,7 +289,7 @@ fn LeveAnalyzerTable(
                 revenue: revenue as i32,
                 market_price,
                 cheapest_world_id,
-                item_id: ItemId(item_id as i32),
+                item_id: ItemId(item_id),
                 item_count,
                 class_job_level: leve.class_job_level as u16,
                 job_category_name,
