@@ -867,7 +867,9 @@ async fn delete_user(
     Ok((cookie_jar, Redirect::to("/")))
 }
 
-async fn get_bincode(Path((_version, lang)): Path<(String, String)>) -> Result<&'static [u8], WebError> {
+async fn get_bincode(
+    Path((_version, lang)): Path<(String, String)>,
+) -> Result<&'static [u8], WebError> {
     let lang = match lang.strip_suffix(".bincode").unwrap_or(&lang) {
         "en" => xiv_gen::Language::En,
         "ja" => xiv_gen::Language::Ja,
@@ -958,10 +960,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/static/{*path}", get(static_path))
         .route("/static/itemicon/fallback", get(fallback_item_icon))
         .route("/static/itemicon/{path}", get(get_item_icon))
-        .route(
-            "/static/data/:version/:lang",
-            get(get_bincode),
-        )
+        .route("/static/data/:version/:lang", get(get_bincode))
         .route("/redirect", get(self::oauth::redirect))
         .route("/login", get(begin_login))
         .route("/logout", get(logout))
