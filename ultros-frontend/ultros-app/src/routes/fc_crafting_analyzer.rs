@@ -81,29 +81,12 @@ fn calculate_fc_project_cost(
     let mut total_cost: i64 = 0;
     let mut materials_map: HashMap<ItemId, i32> = HashMap::new();
 
-    let parts = [
-        sequence.company_craft_part_0,
-        sequence.company_craft_part_1,
-        sequence.company_craft_part_2,
-        sequence.company_craft_part_3,
-        sequence.company_craft_part_4,
-        sequence.company_craft_part_5,
-        sequence.company_craft_part_6,
-        sequence.company_craft_part_7,
-    ];
-
-    for part_link in parts {
+    for part_id in sequence.company_craft_part {
         if let Some(part) = data
             .company_craft_parts
-            .get(&CompanyCraftPartId(part_link as i32))
+            .get(&CompanyCraftPartId(part_id as i32))
         {
-            let processes = [
-                part.company_craft_process_0,
-                part.company_craft_process_1,
-                part.company_craft_process_2,
-            ];
-
-            for process_link in processes {
+            for process_link in part.company_craft_process {
                 if let Some(process) = data
                     .company_craft_processs
                     .get(&CompanyCraftProcessId(process_link as i32))
@@ -113,70 +96,10 @@ fn calculate_fc_project_cost(
                     // I'll create a helper macro or just list them out.
                     // Listing them out is safer for now.
 
-                    let items = [
-                        (
-                            process.supply_item_0,
-                            process.set_quantity_0,
-                            process.sets_required_0,
-                        ),
-                        (
-                            process.supply_item_1,
-                            process.set_quantity_1,
-                            process.sets_required_1,
-                        ),
-                        (
-                            process.supply_item_2,
-                            process.set_quantity_2,
-                            process.sets_required_2,
-                        ),
-                        (
-                            process.supply_item_3,
-                            process.set_quantity_3,
-                            process.sets_required_3,
-                        ),
-                        (
-                            process.supply_item_4,
-                            process.set_quantity_4,
-                            process.sets_required_4,
-                        ),
-                        (
-                            process.supply_item_5,
-                            process.set_quantity_5,
-                            process.sets_required_5,
-                        ),
-                        (
-                            process.supply_item_6,
-                            process.set_quantity_6,
-                            process.sets_required_6,
-                        ),
-                        (
-                            process.supply_item_7 as u16,
-                            process.set_quantity_7 as u8,
-                            process.sets_required_7 as u8,
-                        ),
-                        (
-                            process.supply_item_8 as u16,
-                            process.set_quantity_8 as u8,
-                            process.sets_required_8 as u8,
-                        ),
-                        (
-                            process.supply_item_9 as u16,
-                            process.set_quantity_9 as u8,
-                            process.sets_required_9 as u8,
-                        ),
-                        (
-                            process.supply_item_10 as u16,
-                            process.set_quantity_10 as u8,
-                            process.sets_required_10 as u8,
-                        ),
-                        (
-                            process.supply_item_11 as u16,
-                            process.set_quantity_11 as u8,
-                            process.sets_required_11 as u8,
-                        ),
-                    ];
-
-                    for (supply_item_link, quantity_per_set, sets_required) in items {
+                    for i in 0..12 {
+                        let supply_item_link = process.supply_item[i];
+                        let quantity_per_set = process.set_quantity[i];
+                        let sets_required = process.sets_required[i];
                         if quantity_per_set == 0 || sets_required == 0 {
                             continue;
                         }

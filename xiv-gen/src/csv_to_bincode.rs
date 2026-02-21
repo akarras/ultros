@@ -1,68 +1,98 @@
 /// Contains all the code needed to read a csv file and save it to a .bincode database
 /// Recommended to just let xiv-gen-db handle this unless you need a different backing store.
 use crate::*;
-use csv::ErrorKind;
-use serde::de::DeserializeOwned;
+use std::collections::HashMap;
 
-include!(concat!(env!("OUT_DIR"), "/deserialization.rs"));
-
-pub fn read_dumb_csv<T: DumbCsvDeserialize>(path: &str) -> Vec<T> {
-    let mut csv = csv::ReaderBuilder::new()
-        .has_headers(false)
-        .from_path(path)
-        .expect("Failed to open csv");
-    // New format: line 1 is field names, line 2+ is data
-    let _headers: Vec<String> = csv
-        .records()
-        .next()
-        .unwrap()
-        .unwrap()
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    dumb_csv::deserialize(csv).unwrap()
+pub fn read_data(lang: Language) -> Data {
+    let base_path = format!(
+        "{}/ffxiv-datamining/csv/{}/",
+        env!("CARGO_MANIFEST_DIR"),
+        lang.to_path_part()
+    );
+    Data {
+        items: read_csv_to_map(&format!("{}Item.csv", base_path)),
+        recipes: read_csv_to_map(&format!("{}Recipe.csv", base_path)),
+        class_jobs: read_csv_to_map(&format!("{}ClassJob.csv", base_path)),
+        class_job_categorys: read_csv_to_map(&format!("{}ClassJobCategory.csv", base_path)),
+        base_params: read_csv_to_map(&format!("{}BaseParam.csv", base_path)),
+        special_shops: read_csv_to_map(&format!("{}SpecialShop.csv", base_path)),
+        leves: read_csv_to_map(&format!("{}Leve.csv", base_path)),
+        leve_reward_items: read_csv_to_map(&format!("{}LeveRewardItem.csv", base_path)),
+        leve_reward_item_groups: read_csv_to_map(&format!("{}LeveRewardItemGroup.csv", base_path)),
+        e_npc_bases: read_csv_to_map(&format!("{}ENpcBase.csv", base_path)),
+        e_npc_residents: read_csv_to_map(&format!("{}ENpcResident.csv", base_path)),
+        gil_shops: read_csv_to_map(&format!("{}GilShop.csv", base_path)),
+        gil_shop_items: read_csv_vec::<GilShopItem>(&format!("{}GilShopItem.csv", base_path))
+            .into_iter()
+            .fold(HashMap::new(), |mut map, m| {
+                map.entry(m.key_id.0).or_default().push(m);
+                map
+            }),
+        topic_selects: read_csv_to_map(&format!("{}TopicSelect.csv", base_path)),
+        pre_handlers: read_csv_to_map(&format!("{}PreHandler.csv", base_path)),
+        item_search_categorys: read_csv_to_map(&format!("{}ItemSearchCategory.csv", base_path)),
+        item_ui_categorys: read_csv_to_map(&format!("{}ItemUICategory.csv", base_path)),
+        item_sort_categorys: read_csv_to_map(&format!("{}ItemSortCategory.csv", base_path)),
+        company_craft_sequences: read_csv_to_map(&format!("{}CompanyCraftSequence.csv", base_path)),
+        company_craft_parts: read_csv_to_map(&format!("{}CompanyCraftPart.csv", base_path)),
+        company_craft_processs: read_csv_to_map(&format!("{}CompanyCraftProcess.csv", base_path)),
+        company_craft_supply_items: read_csv_to_map(&format!(
+            "{}CompanyCraftSupplyItem.csv",
+            base_path
+        )),
+        company_craft_draft_categorys: read_csv_to_map(&format!(
+            "{}CompanyCraftDraftCategory.csv",
+            base_path
+        )),
+        company_craft_types: read_csv_to_map(&format!("{}CompanyCraftType.csv", base_path)),
+        company_craft_drafts: read_csv_to_map(&format!("{}CompanyCraftDraft.csv", base_path)),
+        retainer_tasks: read_csv_to_map(&format!("{}RetainerTask.csv", base_path)),
+        retainer_task_normals: read_csv_to_map(&format!("{}RetainerTaskNormal.csv", base_path)),
+        recipe_level_tables: read_csv_to_map(&format!("{}RecipeLevelTable.csv", base_path)),
+        collectables_shop_items: read_csv_vec::<CollectablesShopItem>(&format!(
+            "{}CollectablesShopItem.csv",
+            base_path
+        ))
+        .into_iter()
+        .fold(HashMap::new(), |mut map, m| {
+            map.entry(CollectablesShopItemId(m.key_id.0))
+                .or_default()
+                .push(m);
+            map
+        }),
+        collectables_shop_reward_scrips: read_csv_to_map(&format!(
+            "{}CollectablesShopRewardScrip.csv",
+            base_path
+        )),
+        craft_leves: read_csv_to_map(&format!("{}CraftLeve.csv", base_path)),
+    }
 }
 
-pub fn read_csv<T: DeserializeOwned>(path: &str) -> Vec<T> {
-    let mut csv = csv::ReaderBuilder::new()
+fn read_csv_vec<T: FromCsv>(path: &str) -> Vec<T> {
+    let mut reader = csv::ReaderBuilder::new()
         .has_headers(false)
         .from_path(path)
-        .expect("Failed to open csv");
-    let str = std::fs::read_to_string(path).unwrap();
-    // New format: line 1 is field names, line 2+ is data
-    let headers: Vec<String> = csv
-        .records()
+        .unwrap_or_else(|_| panic!("Failed to open csv at {}", path));
+    let mut records = reader.records();
+    let header: Vec<String> = records
         .next()
-        .unwrap()
+        .expect("Missing header")
         .unwrap()
         .iter()
         .map(|s| s.to_string())
         .collect();
-    csv.deserialize()
-        .map(|m| {
-            if let Err(e) = &m {
-                // try to pretty print this error a bit, otherwise it's hard to tell what went wrong
-                if let Some(position) = e.position() {
-                    if let ErrorKind::Deserialize { err, .. } = e.kind()
-                        && let Some(field) = err.field()
-                    {
-                        let field_name = &headers[field as usize];
-                        eprintln!("Field {field}: {field_name}");
-                    }
-                    let byte = position.byte() as usize;
-                    let start_index = str[0..byte].rfind('\n').unwrap_or(0);
-                    // let start_index = (byte - 10).clamp(0, str.len());
-                    let end_index = str[byte..].find('\n').unwrap_or(str.len()) + byte;
-                    // let end_index = (byte + 10).clamp(0, str.len());
-                    let value = &str[start_index..=end_index];
-                    let start_index = byte - start_index;
-                    eprintln!(
-                        "{e:?}error\nstring sample\n{value}\n{:>start_index$} {path}",
-                        "^".to_string()
-                    );
-                }
-            }
-            m.unwrap_or_else(|_| panic!("Failed to deserialize file {}", path))
-        })
+    records
+        .map(|r| T::from_csv_row(&header, &r.unwrap()))
+        .collect()
+}
+
+fn read_csv_to_map<K, T>(path: &str) -> HashMap<K, T>
+where
+    T: FromCsv + HasId<Id = K>,
+    K: std::hash::Hash + Eq,
+{
+    read_csv_vec::<T>(path)
+        .into_iter()
+        .map(|item| (item.get_id(), item))
         .collect()
 }

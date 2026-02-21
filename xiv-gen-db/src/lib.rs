@@ -1,11 +1,20 @@
 use flate2::FlushDecompress;
 use once_cell::sync::OnceCell;
+#[cfg(feature = "embed")]
+use xiv_gen::Language;
 
 pub static XIV_DATA: OnceCell<xiv_gen::Data> = OnceCell::new();
 
 #[cfg(feature = "embed")]
-pub fn bincode() -> &'static [u8] {
-    include_bytes!(concat!(env!("OUT_DIR"), "/database.bincode"))
+pub fn bincode(lang: Language) -> &'static [u8] {
+    match lang {
+        Language::En => include_bytes!(concat!(env!("OUT_DIR"), "/database_en.bincode")),
+        Language::Ja => include_bytes!(concat!(env!("OUT_DIR"), "/database_ja.bincode")),
+        Language::De => include_bytes!(concat!(env!("OUT_DIR"), "/database_de.bincode")),
+        Language::Fr => include_bytes!(concat!(env!("OUT_DIR"), "/database_fr.bincode")),
+        Language::Cn => &[], // Not yet supported
+        Language::Ko => &[], // Not yet supported
+    }
 }
 
 #[cfg(feature = "embed")]
@@ -13,7 +22,9 @@ pub fn data() -> &'static xiv_gen::Data {
     match XIV_DATA.get() {
         Some(d) => d,
         None => {
-            XIV_DATA.set(decompress_data(bincode()).unwrap()).unwrap();
+            XIV_DATA
+                .set(decompress_data(bincode(Language::En)).unwrap())
+                .unwrap();
             XIV_DATA.get().unwrap()
         }
     }
@@ -25,11 +36,14 @@ pub fn data() -> &'static xiv_gen::Data {
 }
 
 pub fn try_init(bytes: &[u8]) -> anyhow::Result<()> {
-    XIV_DATA.set(decompress_data(bytes)?).unwrap();
+    let _ = XIV_DATA.set(decompress_data(bytes)?);
     Ok(())
 }
 
 pub fn decompress_data(bytes: &[u8]) -> anyhow::Result<xiv_gen::Data> {
+    if bytes.is_empty() {
+        return Ok(xiv_gen::Data::default());
+    }
     let mut decompressor = flate2::Decompress::new(true);
     let mut data: Vec<u8> = Vec::with_capacity(bytes.len() * 5);
     decompressor

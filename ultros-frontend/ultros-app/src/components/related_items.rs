@@ -77,50 +77,16 @@ impl<'a> Iterator for IngredientsIter<'a> {
     type Item = (ItemId, i32);
 
     fn next(&mut self) -> Option<Self::Item> {
-        // I don't remember entirely if the ingredients all are in order.
-        loop {
-            let counter = self.1;
-            let (raw_id, amount) = match counter {
-                0 => (
-                    self.0.ingredient_0 as i32,
-                    self.0.amount_ingredient_0 as i32,
-                ),
-                1 => (
-                    self.0.ingredient_1 as i32,
-                    self.0.amount_ingredient_1 as i32,
-                ),
-                2 => (
-                    self.0.ingredient_2 as i32,
-                    self.0.amount_ingredient_2 as i32,
-                ),
-                3 => (
-                    self.0.ingredient_3 as i32,
-                    self.0.amount_ingredient_3 as i32,
-                ),
-                4 => (
-                    self.0.ingredient_4 as i32,
-                    self.0.amount_ingredient_4 as i32,
-                ),
-                5 => (
-                    self.0.ingredient_5 as i32,
-                    self.0.amount_ingredient_5 as i32,
-                ),
-                6 => (
-                    self.0.ingredient_6 as i32,
-                    self.0.amount_ingredient_6 as i32,
-                ),
-                7 => (
-                    self.0.ingredient_7 as i32,
-                    self.0.amount_ingredient_7 as i32,
-                ),
-                _ => return None,
-            };
+        while (self.1 as usize) < self.0.ingredient.len() {
+            let idx = self.1 as usize;
+            let raw_id = self.0.ingredient[idx];
+            let amount = self.0.amount_ingredient[idx];
             self.1 += 1;
-            // check if this is a valid id
             if raw_id != 0 {
                 return Some((ItemId(raw_id), amount));
             }
         }
+        None
     }
 }
 
@@ -335,7 +301,6 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
 }
 
 fn npc_rows(npc: &ENpcBase) -> impl Iterator<Item = u32> + '_ {
-    // TODO- can I just parse the csv into a vec?
     npc.e_npc_data.iter().copied()
 }
 
@@ -353,11 +318,7 @@ fn gil_shop_to_npc(gil_shops: &[GilShopId]) -> Vec<(GilShopId, &'static ENpcBase
                 }
 
                 if let Some(ts) = data.topic_selects.get(&xiv_gen::TopicSelectId(row_as_i32)) {
-                    let ts_shops = [
-                        ts.shop_0, ts.shop_1, ts.shop_2, ts.shop_3, ts.shop_4, ts.shop_5,
-                        ts.shop_6, ts.shop_7, ts.shop_8, ts.shop_9,
-                    ];
-                    for shop in ts_shops {
+                    for shop in ts.shop {
                         let shop_id = GilShopId(shop as i32);
                         if gil_shops.contains(&shop_id) {
                             shops.push(shop_id);
@@ -371,11 +332,7 @@ fn gil_shop_to_npc(gil_shops: &[GilShopId]) -> Vec<(GilShopId, &'static ENpcBase
                         .topic_selects
                         .get(&xiv_gen::TopicSelectId(ph.target as i32))
                     {
-                        let ts_shops = [
-                            ts.shop_0, ts.shop_1, ts.shop_2, ts.shop_3, ts.shop_4, ts.shop_5,
-                            ts.shop_6, ts.shop_7, ts.shop_8, ts.shop_9,
-                        ];
-                        for shop in ts_shops {
+                        for shop in ts.shop {
                             let shop_id = GilShopId(shop as i32);
                             if gil_shops.contains(&shop_id) {
                                 shops.push(shop_id);

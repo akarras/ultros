@@ -9880,6 +9880,7 @@ dependencies = [
  "lazy_static",
  "regex",
  "serde",
+ "xiv-gen-macros",
 ]
 
 [[package]]
@@ -9892,6 +9893,16 @@ dependencies = [
  "once_cell",
  "serde",
  "xiv-gen",
+]
+
+[[package]]
+name = "xiv-gen-macros"
+version = "0.1.0"
+dependencies = [
+ "darling 0.20.11",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.114",
 ]
 
 [[package]]

@@ -30,7 +30,7 @@ impl From<(ItemId, bool)> for ItemSortKey {
             let sort_weight = sort_category
                 .get(&ItemSortCategoryId(item.item_sort_category as i32))
                 .map(|category| category.param)?;
-            Some(Self(sort_weight, item.key_id.0, hq))
+            Some(Self(sort_weight as u8, item.key_id.0, hq))
         };
         inner().unwrap_or(Self(u8::MAX, i32::MAX, hq))
     }
