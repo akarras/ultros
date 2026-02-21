@@ -11,6 +11,7 @@ pub mod filter_card;
 pub mod fonts;
 pub mod gil;
 pub mod icon;
+pub mod language_picker;
 pub mod item_icon;
 pub mod list;
 pub mod listings_table;
