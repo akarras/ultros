@@ -22,7 +22,8 @@ use crate::global_state::{
 };
 use crate::{
     components::{
-        ad::Ad, apps_menu::*, language_picker::*, patreon::*, search_box::*, theme_picker::*, toast::*, tooltip::*,
+        ad::Ad, apps_menu::*, language_picker::*, patreon::*, search_box::*, theme_picker::*,
+        toast::*, tooltip::*,
     },
     routes::{
         about::*,

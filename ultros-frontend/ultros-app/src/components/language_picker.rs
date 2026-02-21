@@ -1,7 +1,7 @@
-use crate::i18n::*;
-use leptos::prelude::*;
 use crate::components::icon::Icon;
+use crate::i18n::*;
 use icondata as i;
+use leptos::prelude::*;
 
 #[component]
 pub fn LanguagePicker() -> impl IntoView {
