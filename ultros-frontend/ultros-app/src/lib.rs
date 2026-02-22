@@ -143,8 +143,7 @@ pub fn Footer() -> impl IntoView {
                 <div class="divider opacity-50"></div>
                 <div class="text-center space-y-3 muted text-sm max-w-3xl mx-auto opacity-75 hover:opacity-100 transition-opacity">
                     <p>
-                        "Ultros is still under constant development. If you have suggestions or feedback,
-                            feel free to leave suggestions in the discord."
+                        {t!(i18n, ultros_development_suggestion)}
                     </p>
                     <p>
                         "Made using "
@@ -155,10 +154,10 @@ pub fn Footer() -> impl IntoView {
                             <Icon icon=i::FaSpaghettiMonsterFlyingSolid width="1.2em" height="1.2em" attr:class="inline mr-1" />
                             "universalis"
                         </a>
-                        "' API. Please contribute to Universalis to help this site stay up to date."
+                        "' API. " {t!(i18n, made_using_universalis)}
                     </p>
                     <p>
-                        "Version: "
+                        {t!(i18n, version)} ": "
                         <a
                             href=format!("https://github.com/akarras/ultros/commit/{git_hash}")
                             class="text-brand-300 hover:text-[color:var(--brand-fg)] transition-colors font-mono"
@@ -167,7 +166,7 @@ pub fn Footer() -> impl IntoView {
                         </a>
                     </p>
                     <p class="text-xs pt-4 opacity-50">
-                        "FINAL FANTASY XIV © 2010 - 2020 SQUARE ENIX CO., LTD. All Rights Reserved."
+                        {t!(i18n, final_fantasy_copyright)}
                     </p>
                 </div>
             </div>
@@ -259,6 +258,24 @@ pub fn App() -> impl IntoView {
 
 #[component]
 pub fn AppInner(cookies: Cookies) -> impl IntoView {
+    let i18n = use_i18n();
+    let region = use_context::<GuessedRegion>();
+    Effect::new(move |_| {
+        if let Some(region) = region.as_ref() {
+            let current_locale = i18n.get_locale();
+            if current_locale == Locale::en {
+                let new_locale = match region.0.as_str() {
+                    "Japan" => Some(Locale::ja),
+                    "中国" => Some(Locale::cn),
+                    "한국" => Some(Locale::ko),
+                    _ => None,
+                };
+                if let Some(new_locale) = new_locale {
+                    i18n.set_locale(new_locale);
+                }
+            }
+        }
+    });
     provide_context(cookies);
     provide_context(CheapestPrices::new());
     provide_context(GlobalLastCopiedText(RwSignal::new(None)));

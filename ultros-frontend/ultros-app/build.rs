@@ -8,7 +8,12 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let i18n_mod_directory = PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("i18n");
 
-    let cfg = Config::new("en")?.add_locale("fr")?;
+    let cfg = Config::new("en")?
+        .add_locale("fr")?
+        .add_locale("de")?
+        .add_locale("ja")?
+        .add_locale("cn")?
+        .add_locale("ko")?;
 
     let translations_infos = TranslationsInfos::parse(cfg)?;
 

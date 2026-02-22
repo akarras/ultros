@@ -12,6 +12,7 @@ use crate::error::AppError;
 use crate::global_state::LocalWorldData;
 use crate::global_state::cheapest_prices::CheapestPrices;
 use crate::global_state::home_world::{get_price_zone, use_home_world};
+use crate::i18n::{t, t_string};
 use chrono::{TimeDelta, Utc};
 use leptos::prelude::*;
 use leptos_meta::{Link, Meta};
@@ -112,10 +113,11 @@ fn WorldGrouping(
 ) -> impl IntoView {
     let world_data = use_context::<LocalWorldData>().unwrap().0.unwrap();
     let datacenters = world_data.get_datacenters(&region.as_ref());
+    let i18n = crate::i18n::use_i18n();
     view! {
         <div class="flex flex-col gap-2 rounded-lg bg-brand-900/20 p-2">
             <h2 class="text-lg font-bold text-brand-200 px-2 py-1">
-                "Datacenter"
+                {t!(i18n, datacenter)}
             </h2>
             <div class="flex flex-wrap gap-1">
                 {datacenters
@@ -135,7 +137,7 @@ fn WorldGrouping(
                 .map(|dc| {
                     view! {
                         <h2 class="text-lg font-bold text-brand-200 px-2 py-1">
-                            "Worlds"
+                            {t!(i18n, worlds)}
                         </h2>
                         <div class="flex flex-wrap gap-1">
                             {dc
@@ -247,11 +249,13 @@ fn SummaryCards(
     listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
     item_id: i32,
 ) -> impl IntoView {
+    let i18n = crate::i18n::use_i18n();
     view! {
         <Transition fallback=move || view! { <BoxSkeleton /> }>
             {move || {
-                let data_ref = listing_resource.get();
+                listing_resource.with(|data_ref| {
                 if let Some(Ok(data)) = data_ref.as_ref() {
+                    let data = data.clone();
                     let cheapest_nq = data.listings
                         .iter()
                         .filter(|(l, _)| !l.hq)
@@ -264,7 +268,7 @@ fn SummaryCards(
                         .min_by_key(|(l, _)| l.price_per_unit)
                         .cloned();
 
-                    let recent_sales = &data.sales;
+                    let recent_sales = data.sales.clone();
                     let avg_price = if !recent_sales.is_empty() {
                         recent_sales.iter().map(|s| s.price_per_item as i64).sum::<i64>() / recent_sales.len() as i64
                     } else {
@@ -294,15 +298,15 @@ fn SummaryCards(
                          let recipe_exists = recipe_tree_iter(ItemId(item_id)).next().is_some();
 
                          if vendor_exists || exchange_exists || leve_exists || recipe_exists {
-                             let (title, summary, icon, href, color_class, border_color) = if vendor_exists {
+                             let (title, summary, icon, href, color_class, border_color): (String, AnyView, icondata::Icon, &str, &str, &str) = if vendor_exists {
                                  let price = data
                                      .items
                                      .get(&ItemId(item_id))
                                          .map(|i| if i.price_mid > 0 { i.price_mid } else { i.price_low })
                                      .unwrap_or(0);
                                  (
-                                     "Vendor Available",
-                                     view! { <span>"Sold for " <Gil amount=price as i32 /></span> }.into_any(),
+                                     t_string!(i18n, vendor_available).to_string(),
+                                     view! { <span>{t!(i18n, sells_for)} <Gil amount=price as i32 /></span> }.into_any(),
                                      icondata::FaShopSolid,
                                      "#vendor-sources",
                                      "from-amber-900/20",
@@ -310,8 +314,8 @@ fn SummaryCards(
                                  )
                              } else if exchange_exists {
                                  (
-                                     "Exchange Available",
-                                     view! { <span>"Exchange for items/currency"</span> }.into_any(),
+                                     t_string!(i18n, exchange_available).to_string(),
+                                     view! { <span>{t!(i18n, exchange_available)}</span> }.into_any(),
                                      icondata::BsArrowLeftRight,
                                      "#exchange-sources",
                                      "from-purple-900/20",
@@ -336,27 +340,27 @@ fn SummaryCards(
                                                  // It could be the item ITSELF (craftable), or it could be an ingredient.
                                                  // We only want to show "Craft for ~" if the item itself is the result.
                                                  if recipe.item_result == item_id {
-                                                     view! { <span>"Craft for ~" <Gil amount=min_cost /></span> }
+                                                     view! { <span>{t!(i18n, craft_for)} " ~" <Gil amount=min_cost /></span> }
                                                          .into_any()
                                                  } else {
-                                                     "Used in Crafting".into_any()
+                                                     t!(i18n, used_in_crafting).into_any()
                                                  }
                                              } else if recipe.item_result == item_id {
-                                                                 "Craftable".into_any()
+                                                                 t!(i18n, craftable).into_any()
                                              } else {
-                                                 "Used in Crafting".into_any()
+                                                 t!(i18n, used_in_crafting).into_any()
                                                              }
                                          } else if recipe.item_result == item_id {
-                                                             "Craftable".into_any()
+                                                             t!(i18n, craftable).into_any()
                                          } else {
-                                             "Used in Crafting".into_any()
+                                             t!(i18n, used_in_crafting).into_any()
                                                          }
                                                      })
                                                  } else {
-                                                     "Craftable".into_any()
+                                                     t!(i18n, craftable).into_any()
                                                  }
                                              } else {
-                                                 "Craftable".into_any()
+                                                 t!(i18n, craftable).into_any()
                                              }
                                          }}
                                      </Suspense>
@@ -364,7 +368,7 @@ fn SummaryCards(
                                  .into_any();
 
                                  (
-                                     "Crafting Recipe",
+                                     t_string!(i18n, crafting_recipe).to_string(),
                                      summary_view,
                                      icondata::FaHammerSolid,
                                      "#crafting-recipes",
@@ -373,8 +377,8 @@ fn SummaryCards(
                                  )
                              } else {
                                  (
-                                     "Levequest Reward",
-                                     view! { "Obtainable via Levequest" }.into_any(),
+                                     t_string!(i18n, levequest_reward).to_string(),
+                                     view! { t!(i18n, obtainable_via_levequest) }.into_any(),
                                      icondata::FaScrollSolid,
                                      "#leve-sources",
                                      "from-pink-900/20",
@@ -404,7 +408,7 @@ fn SummaryCards(
                                                      {summary}
                                                  </div>
                                                  <div class="text-xs opacity-80 mt-1 text-[color:var(--color-text-muted)]">
-                                                     "Click to view details"
+                                                     {t!(i18n, click_to_view_details)}
                                                  </div>
                                              </div>
                                              <Icon
@@ -436,7 +440,7 @@ fn SummaryCards(
                              <a href="#listings" class="panel p-4 border-l-4 border-l-brand-500 hover:scale-[1.02] transition-all cursor-pointer group bg-gradient-to-br from-brand-900/50 to-transparent">
                                  <div class="flex justify-between items-start">
                                      <div>
-                                         <div class="text-xs font-bold text-brand-300 uppercase tracking-wider mb-2">"Cheapest Found"</div>
+                                         <div class="text-xs font-bold text-brand-300 uppercase tracking-wider mb-2">{t!(i18n, cheapest_found)}</div>
                                          <div class="flex flex-col gap-3">
                                              // NQ Display
                                              {if let Some((listing, _retainer)) = cheapest_nq {
@@ -458,7 +462,7 @@ fn SummaryCards(
                                                  // Don't show "No NQ" if HQ exists to avoid clutter, or maybe small text?
                                                  // If ONLY HQ exists, it will pop.
                                                  match cheapest_hq {
-                                                    None => view! { <div class="text-lg text-gray-400 italic">"No listings"</div> }.into_any(),
+                                                    None => view! { <div class="text-lg text-gray-400 italic">{t!(i18n, no_listings)}</div> }.into_any(),
                                                     _ => ().into_any()
                                                  }
                                              }}
@@ -499,19 +503,23 @@ fn SummaryCards(
                             <a href="#history" class="panel p-4 border-l-4 border-l-blue-500 hover:scale-[1.02] transition-all cursor-pointer group bg-gradient-to-br from-blue-900/20 to-transparent">
                                  <div class="flex justify-between items-start">
                                      <div>
-                                    <div class="text-xs font-bold text-blue-700 dark:text-blue-300 uppercase tracking-wider mb-1">"Recent Average"</div>
+                                    <div class="text-xs font-bold text-blue-700 dark:text-blue-300 uppercase tracking-wider mb-1">{t!(i18n, recent_average)}</div>
                                     <div class="text-2xl font-bold text-[color:var(--color-text)]">
                                             {if avg_price > 0 {
                                                 view! { <Gil amount=avg_price as i32 /> }.into_any()
                                             } else {
-                                                view! { <span class="text-gray-400">"No Data"</span> }.into_any()
+                                                view! { <span class="text-gray-400">{t!(i18n, no_data)}</span> }.into_any()
                                             }}
                                          </div>
                                          <div class="text-sm text-blue-700 dark:text-blue-200 mt-1">
-                                             {format!("Based on {} sales", recent_sales.len())}
+                                             {
+                                                 let recent_sales = recent_sales.clone();
+                                                 move || t!(i18n, based_on_sales, count = recent_sales.len())
+                                             }
                                          </div>
                                          <div class="text-sm text-blue-700 dark:text-blue-200 mt-1">
                                              {
+                                                 let recent_sales = recent_sales.clone();
                                                  if recent_sales.len() > 1 {
                                                      let newest = recent_sales.first().unwrap().sold_date;
                                                      let oldest = recent_sales.last().unwrap().sold_date;
@@ -521,19 +529,19 @@ fn SummaryCards(
                                                      if seconds > 0 {
                                                          let seconds_per_sale = seconds as f64 / count as f64;
                                                          if seconds_per_sale < 60.0 {
-                                                             format!("Sells ~{:.1} times per minute", 60.0 / seconds_per_sale)
+                                                             t!(i18n, sells_per_minute, count = format!("{:.1}", 60.0 / seconds_per_sale)).into_any()
                                                          } else if seconds_per_sale < 3600.0 {
-                                                             format!("Sells ~{:.1} times per hour", 3600.0 / seconds_per_sale)
+                                                             t!(i18n, sells_per_hour, count = format!("{:.1}", 3600.0 / seconds_per_sale)).into_any()
                                                          } else if seconds_per_sale < 86400.0 {
-                                                             format!("Sells ~{:.1} times per day", 86400.0 / seconds_per_sale)
+                                                             t!(i18n, sells_per_day, count = format!("{:.1}", 86400.0 / seconds_per_sale)).into_any()
                                                          } else {
-                                                             format!("Sells ~1 every {:.1} days", seconds_per_sale / 86400.0)
+                                                             t!(i18n, sells_every_days, count = format!("{:.1}", seconds_per_sale / 86400.0)).into_any()
                                                          }
                                                      } else {
-                                                         "Very high frequency".to_string()
+                                                         t!(i18n, very_high_frequency).into_any()
                                                      }
                                                  } else {
-                                                     "Not enough data".to_string()
+                                                     t!(i18n, not_enough_data).into_any()
                                                  }
                                              }
                                          </div>
@@ -546,12 +554,12 @@ fn SummaryCards(
                             <a href="#listings" class="panel p-4 border-l-4 border-l-emerald-500 hover:scale-[1.02] transition-all cursor-pointer group bg-gradient-to-br from-emerald-900/20 to-transparent">
                                  <div class="flex justify-between items-start">
                                      <div>
-                                    <div class="text-xs font-bold text-emerald-700 dark:text-emerald-300 uppercase tracking-wider mb-1">"Active Listings"</div>
+                                    <div class="text-xs font-bold text-emerald-700 dark:text-emerald-300 uppercase tracking-wider mb-1">{t!(i18n, active_listings)}</div>
                                     <div class="text-2xl font-bold text-[color:var(--color-text)]">
                                              {listings_count}
                                          </div>
                                     <div class="text-sm text-emerald-700 dark:text-emerald-200 mt-1">
-                                             "Available now"
+                                             {t!(i18n, available_now)}
                                          </div>
                                      </div>
                                      <Icon icon=icondata::FaListSolid attr:class="text-3xl text-emerald-500/20 group-hover:text-emerald-500/40 transition-colors" />
@@ -563,6 +571,7 @@ fn SummaryCards(
                 } else {
                     ().into_any()
                 }
+                })
             }}
         </Transition>
     }.into_any()
@@ -574,6 +583,7 @@ pub fn ChartWrapper(
     item_id: Memo<i32>,
     world: Memo<String>,
 ) -> impl IntoView {
+    let i18n = crate::i18n::use_i18n();
     let (hq_only, set_hq_only) = signal(false);
     let (days_range, set_days_range) = signal(30i32); // 0 = All
 
@@ -595,9 +605,9 @@ pub fn ChartWrapper(
                 if let Some(msg) = error {
                     view! {
                         <div role="alert" class="bg-red-900/30 text-red-200 border border-red-700/40 rounded-xl p-4">
-                            <strong class="font-semibold">"Error:"</strong>
+                            <strong class="font-semibold">{move || t_string!(i18n, error).to_string()} ":"</strong>
                             <span class="ml-2">{msg}</span>
-                            <div class="text-sm text-red-300/80 mt-1">"Unable to load recent sales. Please try refreshing."</div>
+                            <div class="text-sm text-red-300/80 mt-1">{move || t_string!(i18n, unable_to_load_recent_sales).to_string()}</div>
                         </div>
                     }.into_any()
                 } else {
@@ -670,8 +680,8 @@ pub fn ChartWrapper(
                                             <Toggle
                                                 checked=hq_only
                                                 set_checked=set_hq_only
-                                                checked_label="HQ only"
-                                                unchecked_label="All qualities"
+                                                checked_label=t_string!(i18n, hq_only).to_string()
+                                                unchecked_label=t_string!(i18n, all_qualities).to_string()
                                             />
                                         </div>
                                     </div>
@@ -680,7 +690,7 @@ pub fn ChartWrapper(
                                         target="_blank"
                                         href=move || format!("/itemcard/{}/{}", world(), item_id())
                                     >
-                                        "Download PNG"
+                                        {move || t_string!(i18n, download_png).to_string()}
                                     </a>
                                 </div>
                             </div>
@@ -689,7 +699,7 @@ pub fn ChartWrapper(
                                 if filtered_sales.with(|s| s.is_empty()) {
                                     view! {
                                         <div role="status" class="bg-amber-900/30 text-amber-200 border border-amber-700/40 rounded-xl p-4">
-                                            "No sales found for the selected filters. Try expanding the time range or disabling HQ-only."
+                                            {move || t_string!(i18n, no_sales_found).to_string()}
                                         </div>
                                     }.into_any()
                                 } else {
@@ -707,7 +717,7 @@ pub fn ChartWrapper(
                                 });
                                 no_listings.then(|| view! {
                                     <div role="status" class="bg-amber-900/30 text-amber-200 border border-amber-700/40 rounded-xl p-4">
-                                        "No active listings found for this world. Try checking other worlds or come back later."
+                                        {move || t_string!(i18n, no_active_listings_found).to_string()}
                                     </div>
                                 })
                             }}
@@ -723,6 +733,7 @@ pub fn ChartWrapper(
 fn HighQualityTable(
     listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
 ) -> impl IntoView {
+    let i18n = crate::i18n::use_i18n();
     view! {
         <div class="space-y-6">
             <Transition fallback=move || {
@@ -753,7 +764,7 @@ fn HighQualityTable(
                             class:hidden=move || hq_listings.with(|l| l.is_empty())
                         >
                             <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
-                                "High Quality Listings"
+                                {move || t_string!(i18n, high_quality_listings).to_string()}
                             </h2>
                             <ListingsTable listings=hq_listings />
                         </div>
@@ -769,6 +780,7 @@ fn HighQualityTable(
 fn LowQualityTable(
     listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
 ) -> impl IntoView {
+    let i18n = crate::i18n::use_i18n();
     view! {
         <div class="space-y-6">
             <Transition fallback=move || {
@@ -799,7 +811,7 @@ fn LowQualityTable(
                             class:hidden=move || lq_listings.with(|l| l.is_empty())
                         >
                             <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
-                                "Low Quality Listings"
+                                {move || t_string!(i18n, low_quality_listings).to_string()}
                             </h2>
                             <ListingsTable listings=lq_listings />
                         </div>
@@ -816,6 +828,7 @@ fn LowQualityTable(
 fn SalesDetails(
     listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
 ) -> impl IntoView {
+    let i18n = crate::i18n::use_i18n();
     view! {
         // Removed mt-8 and space-y-6 wrapper to let grid control layout
         <Transition fallback=move || {
@@ -834,7 +847,7 @@ fn SalesDetails(
                     <div class="flex flex-col gap-6 h-full"> // Use flex col to stack table and insights
                         <div class="panel p-4 sm:p-6 flex-1">
                             <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
-                                "Sale History"
+                                {move || t_string!(i18n, sale_history).to_string()}
                             </h2>
                             <SaleHistoryTable sales=sales.into() />
                         </div>
@@ -890,6 +903,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
 
 #[component]
 pub fn ItemView() -> impl IntoView {
+    let i18n = crate::i18n::use_i18n();
     let params = use_params_map();
     let item_id = Memo::new(move |_| {
         params()
@@ -1026,7 +1040,7 @@ pub fn ItemView() -> impl IntoView {
                     // Moved Description and Item Level here
                     <div class="space-y-3 pt-4 border-t border-[color:var(--color-outline)] text-[color:var(--color-text)]/90">
                         <div class="flex items-center gap-2">
-                            <span class="text-brand-300 font-medium tracking-wide text-sm uppercase">Item Level</span>
+                            <span class="text-brand-300 font-medium tracking-wide text-sm uppercase">{move || t_string!(i18n, item_level).to_string()}</span>
                             <span class="bg-brand-900/40 text-brand-100 px-2 py-0.5 rounded text-sm font-bold border border-brand-700/50">
                                 {move || item().map(|item| item.level_item).unwrap_or_default()}
                             </span>

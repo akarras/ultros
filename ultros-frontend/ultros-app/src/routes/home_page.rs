@@ -1,4 +1,5 @@
 use crate::components::icon::Icon;
+use crate::i18n::{t, t_string};
 use icondata as i;
 use leptos::prelude::*;
 use leptos_router::components::A;
@@ -14,16 +15,15 @@ use crate::components::{
 #[component]
 fn FeatureCard(
     href: &'static str,
-    title: &'static str,
-    description: &'static str,
+    title: AnyView,
+    description: AnyView,
     #[prop(optional)] external: bool,
     #[prop(optional)] badge: Option<&'static str>,
     children: ChildrenFn,
 ) -> impl IntoView {
-    let aria = format!("{title} — {description}");
     let rel = if external { Some("external") } else { None };
     view! {
-        <A href=href attr:rel=rel attr:aria-label=aria attr:class="group focus:outline-none rounded-2xl">
+        <A href=href attr:rel=rel attr:class="group focus:outline-none rounded-2xl">
             <div class="feature-card w-full aspect-square flex flex-col items-center justify-center text-center gap-3">
                 <div aria-hidden="true">
                     {children().into_view()}
@@ -39,9 +39,10 @@ fn FeatureCard(
 
 #[component]
 pub fn HomePage() -> impl IntoView {
+    let i18n = crate::i18n::use_i18n();
     view! {
-        <MetaTitle title="Ultros - Home" />
-        <MetaDescription text="Ultros is a fast market board analysis tool, keep up to date with all of your retainers and ensure you've got the best prices!" />
+        <MetaTitle title=move || t_string!(i18n, meta_title).to_string() />
+        <MetaDescription text=move || t_string!(i18n, meta_description).to_string() />
         <div class="main-content p-2 sm:p-6">
             <div class="container flex flex-col gap-6 lg:flex-row-reverse mx-auto items-start max-w-7xl">
                 // Right sidebar
@@ -58,10 +59,10 @@ pub fn HomePage() -> impl IntoView {
                             <div class="flex-1 space-y-4 z-10">
                                 <h1 class="text-6xl sm:text-8xl font-extrabold leading-none tracking-tighter drop-shadow-2xl">
                                     <span class="bg-clip-text text-transparent bg-gradient-to-br from-brand-300 via-purple-400 to-pink-500 filter drop-shadow-sm animate-pulse">"Ultros"</span>
-                                    <span class="block text-brand-100 text-xl sm:text-2xl mt-4 font-medium tracking-normal opacity-90">"market board analytics for final fantasy xiv"</span>
+                                    <span class="block text-brand-100 text-xl sm:text-2xl mt-4 font-medium tracking-normal opacity-90">{move || t_string!(i18n, ultros_tagline)}</span>
                                 </h1>
                                 <p class="text-lg text-[color:var(--color-text-muted)] max-w-prose leading-relaxed">
-                                    "buy low, sell high, and track your retainers with a fast, modern ui."
+                                    {move || t_string!(i18n, ultros_description)}
                                 </p>
                                 <div class="flex flex-wrap items-center gap-3 pt-4">
                                     <a
@@ -69,11 +70,11 @@ pub fn HomePage() -> impl IntoView {
                                         href="https://book.ultros.app"
                                         class="btn-primary py-3 px-6 text-lg"
                                     >
-                                        "get started"
+                                        {move || t_string!(i18n, get_started)}
                                     </a>
                                     <A href="/flip-finder" attr:class="btn-primary py-3 px-6 text-lg">
                                         <Icon icon=i::FaMoneyBillTrendUpSolid width="1.25em" height="1.25em" />
-                                        <span>"open flip finder"</span>
+                                        <span>{move || t_string!(i18n, open_flip_finder)}</span>
                                     </A>
                                     <a
                                         rel="external"
@@ -81,7 +82,7 @@ pub fn HomePage() -> impl IntoView {
                                         class="btn-secondary py-3 px-6 text-lg"
                                     >
                                         <Icon icon=i::BsDiscord width="1.25em" height="1.25em" />
-                                        <span>"invite bot"</span>
+                                        <span>{move || t_string!(i18n, invite_bot)}</span>
                                     </a>
                                 </div>
                             </div>
@@ -95,7 +96,7 @@ pub fn HomePage() -> impl IntoView {
 
                     // Feature cards grid
                                         <div class="feature-grid">
-                        <FeatureCard href="/items?menu-open=true" title="Item Explorer" description="Explore all the items on the market board" badge="New">
+                        <FeatureCard href="/items?menu-open=true" title=t!(i18n, item_explorer).into_any() description=t!(i18n, item_explorer_desc).into_any() badge="New">
                             <Icon
                                 attr:class="feature-card-icon"
                                 width="3.5em"
@@ -103,7 +104,7 @@ pub fn HomePage() -> impl IntoView {
                                 icon=i::FaScrewdriverWrenchSolid
                             />
                         </FeatureCard>
-                        <FeatureCard href="/flip-finder" title="Flip Finder" description="Earn gil by buying low, selling high">
+                        <FeatureCard href="/flip-finder" title=t!(i18n, flip_finder).into_any() description=t!(i18n, flip_finder_desc).into_any()>
                             <Icon
                                 attr:class="feature-card-icon"
                                 width="3.5em"
@@ -111,7 +112,7 @@ pub fn HomePage() -> impl IntoView {
                                 icon=i::FaMoneyBillTrendUpSolid
                             />
                         </FeatureCard>
-                        <FeatureCard href="/vendor-resale" title="Vendor Resale" description="Buy from vendors, sell on market">
+                        <FeatureCard href="/vendor-resale" title=t!(i18n, vendor_resale).into_any() description=t!(i18n, vendor_resale_desc).into_any()>
                             <Icon
                                 attr:class="feature-card-icon"
                                 width="3.5em"
@@ -119,7 +120,7 @@ pub fn HomePage() -> impl IntoView {
                                 icon=i::FaShopSolid
                             />
                         </FeatureCard>
-                        <FeatureCard href="/recipe-analyzer" title="Recipe Analyzer" description="Profit calculator for crafting" badge="New">
+                        <FeatureCard href="/recipe-analyzer" title=t!(i18n, recipe_analyzer).into_any() description=t!(i18n, recipe_analyzer_desc).into_any() badge="New">
                             <Icon
                                 attr:class="feature-card-icon"
                                 width="3.5em"
@@ -127,7 +128,7 @@ pub fn HomePage() -> impl IntoView {
                                 icon=i::FaHammerSolid
                             />
                         </FeatureCard>
-                        <FeatureCard href="/leve-analyzer" title="Leve Analyzer" description="Levequest profit calculator" badge="New">
+                        <FeatureCard href="/leve-analyzer" title=t!(i18n, leve_analyzer).into_any() description=t!(i18n, leve_analyzer_desc).into_any() badge="New">
                             <Icon
                                 attr:class="feature-card-icon"
                                 width="3.5em"
@@ -135,7 +136,7 @@ pub fn HomePage() -> impl IntoView {
                                 icon=i::FaScrollSolid
                             />
                         </FeatureCard>
-                        <FeatureCard href="/trends" title="Market Trends" description="View top market movers" badge="New">
+                        <FeatureCard href="/trends" title=t!(i18n, market_trends).into_any() description=t!(i18n, market_trends_desc).into_any() badge="New">
                             <Icon
                                 attr:class="feature-card-icon"
                                 width="3.5em"
@@ -143,7 +144,7 @@ pub fn HomePage() -> impl IntoView {
                                 icon=i::FaChartLineSolid
                             />
                         </FeatureCard>
-                        <FeatureCard href="/retainers" title="Retainers" description="Track your retainers online">
+                        <FeatureCard href="/retainers" title=t!(i18n, retainers).into_any() description=t!(i18n, retainers_desc).into_any()>
                             <Icon
                                 attr:class="feature-card-icon"
                                 width="3.5em"
@@ -151,7 +152,7 @@ pub fn HomePage() -> impl IntoView {
                                 icon=i::BiGroupSolid
                             />
                         </FeatureCard>
-                        <FeatureCard href="/list" title="Lists" description="Create lists & buy the cheapest items">
+                        <FeatureCard href="/list" title=t!(i18n, lists).into_any() description=t!(i18n, lists_desc).into_any()>
                             <Icon
                                 attr:class="feature-card-icon"
                                 width="3.5em"
@@ -159,7 +160,7 @@ pub fn HomePage() -> impl IntoView {
                                 icon=i::AiOrderedListOutlined
                             />
                         </FeatureCard>
-                        <FeatureCard href="/invitebot" external=true title="Discord Bot" description="Get alerts when your retainer is undercut">
+                        <FeatureCard href="/invitebot" external=true title=t!(i18n, discord_bot).into_any() description=t!(i18n, discord_bot_desc).into_any()>
                             <Icon
                                 attr:class="feature-card-icon"
                                 width="3.5em"
@@ -167,7 +168,7 @@ pub fn HomePage() -> impl IntoView {
                                 icon=i::BsDiscord
                             />
                         </FeatureCard>
-                        <FeatureCard href="/currency-exchange" title="Currency Exchange" description="Spend tomestones, get gil">
+                        <FeatureCard href="/currency-exchange" title=t!(i18n, currency_exchange).into_any() description=t!(i18n, currency_exchange_desc).into_any()>
                             <Icon
                                 attr:class="feature-card-icon"
                                 width="3.5em"
