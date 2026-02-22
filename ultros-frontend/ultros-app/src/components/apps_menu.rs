@@ -2,6 +2,7 @@ use crate::api::get_login;
 use crate::components::icon::Icon;
 use crate::components::theme_picker::QuickThemeToggle;
 use crate::global_state::home_world::use_home_world;
+use crate::i18n::{t, t_string};
 use cfg_if::cfg_if;
 use icondata as i;
 use leptos::html;
@@ -13,6 +14,7 @@ use leptos_use::use_element_hover;
 /// An overflow menu for primary app destinations (Flip Finder, Explorer, Exchange).
 #[component]
 pub fn AppsMenu() -> impl IntoView {
+    let i18n = crate::i18n::use_i18n();
     // Focus/hover-driven open state (mirrors Select component behavior)
     let (has_focus, set_has_focus) = signal(false);
     let (force_close, set_force_close) = signal(false);
@@ -46,11 +48,11 @@ pub fn AppsMenu() -> impl IntoView {
                 class="nav-link"
                 aria-haspopup="menu"
                 aria-expanded=move || if is_open() { "true" } else { "false" }
-                aria-label="Apps"
+                aria_label=move || t_string!(i18n, apps)
                 // click naturally focuses the button; no explicit toggle required
             >
                 <Icon height="1.4em" width="1.4em" icon=i::MdiJellyfish />
-                <span class="hidden lg:inline ml-2">"Apps"</span>
+                <span class="hidden lg:inline ml-2">{t!(i18n, apps)}</span>
             </button>
 
             <Show when=move || is_open()>
@@ -72,7 +74,7 @@ pub fn AppsMenu() -> impl IntoView {
                             on:click=close_menu
                         >
                             <Icon height="1.1em" width="1.1em" icon=i::FaMoneyBillTrendUpSolid />
-                            <span class="ml-2">"Flip Finder"</span>
+                            <span class="ml-2">{t!(i18n, flip_finder)}</span>
                         </A>
 
                         <A
@@ -83,7 +85,7 @@ pub fn AppsMenu() -> impl IntoView {
                             on:click=close_menu
                         >
                             <Icon height="1.1em" width="1.1em" icon=i::FaShopSolid />
-                            <span class="ml-2">"Vendor Resale"</span>
+                            <span class="ml-2">{t!(i18n, vendor_resale)}</span>
                         </A>
 
                         <A
@@ -94,7 +96,7 @@ pub fn AppsMenu() -> impl IntoView {
                             on:click=close_menu
                         >
                             <Icon height="1.1em" width="1.1em" icon=i::FaHammerSolid />
-                            <span class="ml-2">"Recipe Analyzer"</span>
+                            <span class="ml-2">{t!(i18n, recipe_analyzer)}</span>
                         </A>
 
                         <A
@@ -105,7 +107,7 @@ pub fn AppsMenu() -> impl IntoView {
                             on:click=close_menu
                         >
                             <Icon height="1.1em" width="1.1em" icon=i::MdiSubmarine />
-                            <span class="ml-2">"FC Crafting"</span>
+                            <span class="ml-2">{t!(i18n, fc_crafting)}</span>
                         </A>
 
                         <A
@@ -116,7 +118,7 @@ pub fn AppsMenu() -> impl IntoView {
                             on:click=close_menu
                         >
                             <Icon height="1.1em" width="1.1em" icon=i::FaScrollSolid />
-                            <span class="ml-2">"Leve Analyzer"</span>
+                            <span class="ml-2">{t!(i18n, leve_analyzer)}</span>
                         </A>
 
                         <A
@@ -127,7 +129,7 @@ pub fn AppsMenu() -> impl IntoView {
                             on:click=close_menu
                         >
                             <Icon height="1.1em" width="1.1em" icon=i::FaChartLineSolid />
-                            <span class="ml-2">"Trends"</span>
+                            <span class="ml-2">{t!(i18n, market_trends)}</span>
                         </A>
                         <A
                             href=homeworld()
@@ -137,7 +139,7 @@ pub fn AppsMenu() -> impl IntoView {
                             on:click=close_menu
                         >
                             <Icon height="1.1em" width="1.1em" icon=i::FaCoinsSolid />
-                            <span class="ml-2">"Scrip Sources"</span>
+                            <span class="ml-2">{t!(i18n, scrip_sources)}</span>
                         </A>
 
                         <A
@@ -148,7 +150,7 @@ pub fn AppsMenu() -> impl IntoView {
                             on:click=move |_| set_has_focus(false)
                         >
                              <Icon height="1.1em" width="1.1em" icon=i::FaBriefcaseSolid />
-                            <span class="ml-2">"Venture Analyzer"</span>
+                            <span class="ml-2">{t!(i18n, venture_analyzer)}</span>
                         </A>
 
                         <A
@@ -157,7 +159,7 @@ pub fn AppsMenu() -> impl IntoView {
                             on:click=close_menu
                         >
                             <Icon height="1.1em" width="1.1em" icon=i::MdiJellyfish />
-                            <span class="ml-2">"Explorer"</span>
+                            <span class="ml-2">{t!(i18n, explorer)}</span>
                         </A>
 
                         <A
@@ -166,7 +168,7 @@ pub fn AppsMenu() -> impl IntoView {
                             on:click=close_menu
                         >
                             <Icon height="1.1em" width="1.1em" icon=i::BsArrowLeftRight />
-                            <span class="ml-2">"Exchange"</span>
+                            <span class="ml-2">{t!(i18n, exchange)}</span>
                         </A>
                     </div>
                 </div>
@@ -181,6 +183,7 @@ pub fn AppsMenu() -> impl IntoView {
 /// - When logged out: Login (Discord), Settings
 #[component]
 pub fn UserMenu() -> impl IntoView {
+    let i18n = crate::i18n::use_i18n();
     // Focus/hover-driven open state (mirrors Select component behavior)
     let (has_focus, set_has_focus) = signal(false);
     let (force_close, set_force_close) = signal(false);
@@ -217,7 +220,7 @@ pub fn UserMenu() -> impl IntoView {
             on:focusout=move |_| set_has_focus(false)
             on:mouseleave=move |_| set_force_close(false)
         >
-            <Suspense fallback=move || view! { <button class="nav-link opacity-70 cursor-wait"><Icon icon=i::BsPersonCircle /><span class="hidden lg:inline ml-2">"Account"</span></button> }>
+            <Suspense fallback=move || view! { <button class="nav-link opacity-70 cursor-wait"><Icon icon=i::BsPersonCircle /><span class="hidden lg:inline ml-2">{t!(i18n, account)}</span></button> }>
                 {move || {
                     let u = user.get().flatten();
                     match u {
@@ -237,7 +240,7 @@ pub fn UserMenu() -> impl IntoView {
                                     class="nav-link flex items-center gap-2"
                                     aria-haspopup="menu"
                                     aria-expanded=move || if is_open() { "true" } else { "false" }
-                                    aria-label="User menu"
+                                    aria_label=move || t_string!(i18n, account)
                                 >
                                     <Icon height="1.5em" width="1.5em" icon=i::BsPersonCircle />
                                     <Icon height="1em" width="1em" icon=i::BiChevronDownSolid />
@@ -259,7 +262,7 @@ pub fn UserMenu() -> impl IntoView {
                     tabindex="-1"
                 >
                     <div class="p-2 flex flex-col gap-1">
-                        <Suspense fallback=move || view! { <div class="px-3 py-2 text-sm muted">"Loading…"</div> }>
+                        <Suspense fallback=move || view! { <div class="px-3 py-2 text-sm muted">{t!(i18n, loading)}</div> }>
                             {move || {
                                 let u = user.get().flatten();
                                 match u {
@@ -267,29 +270,29 @@ pub fn UserMenu() -> impl IntoView {
                                         view! {
                                             <A href="/profile" attr:class="nav-link w-full justify-start" on:click=close_menu>
                                                 <Icon height="1.1em" width="1.1em" icon=i::BsPersonCircle />
-                                                <span class="ml-2">"Profile"</span>
+                                                <span class="ml-2">{t!(i18n, profile)}</span>
                                             </A>
                                             <A href="/settings" attr:class="nav-link w-full justify-start" on:click=close_menu>
                                                 <Icon height="1.1em" width="1.1em" icon=i::IoSettingsSharp />
-                                                <span class="ml-2">"Settings"</span>
+                                                <span class="ml-2">{t!(i18n, settings)}</span>
                                             </A>
 
                         <div class="divider my-1"></div>
 
                                             <A href="/list" attr:class="nav-link w-full justify-start" on:click=close_menu>
                                                 <Icon height="1.1em" width="1.1em" icon=i::AiOrderedListOutlined />
-                                                <span class="ml-2">"Lists"</span>
+                                                <span class="ml-2">{t!(i18n, lists)}</span>
                                             </A>
                                             <A href="/retainers/listings" attr:class="nav-link w-full justify-start" on:click=close_menu>
                                                 <Icon height="1.1em" width="1.1em" icon=i::BiGroupSolid />
-                                                <span class="ml-2">"Retainers"</span>
+                                                <span class="ml-2">{t!(i18n, retainers)}</span>
                                             </A>
 
                                             <div class="divider my-1"></div>
 
                                             <a rel="external" href="/invitebot" class="nav-link w-full justify-start" on:click=close_menu>
                                                 <Icon height="1.1em" width="1.1em" icon=i::BsDiscord />
-                                                <span class="ml-2">"Invite Bot"</span>
+                                                <span class="ml-2">{t!(i18n, invite_bot)}</span>
                                             </a>
 
                                             <div class="lg:hidden">
@@ -299,7 +302,7 @@ pub fn UserMenu() -> impl IntoView {
                                             <div class="divider my-1"></div>
 
                                             <a rel="external" href="/logout" class="nav-link w-full justify-start" on:click=close_menu>
-                                                <span class="ml-2">"Logout"</span>
+                                                <span class="ml-2">{t!(i18n, logout)}</span>
                                             </a>
                                         }.into_any()
                                     }
@@ -307,11 +310,11 @@ pub fn UserMenu() -> impl IntoView {
                                         view! {
                                             <a rel="external" href="/login" class="nav-link w-full justify-start" on:click=close_menu>
                                                 <Icon height="1.1em" width="1.1em" icon=i::BsDiscord />
-                                                <span class="ml-2">"Login with Discord"</span>
+                                                <span class="ml-2">{t!(i18n, login_with_discord)}</span>
                                             </a>
                                             <A href="/settings" attr:class="nav-link w-full justify-start" on:click=close_menu>
                                                 <Icon height="1.1em" width="1.1em" icon=i::IoSettingsSharp />
-                                                <span class="ml-2">"Settings"</span>
+                                                <span class="ml-2">{t!(i18n, settings)}</span>
                                             </A>
                                             <div class="divider my-1"></div>
                                             <div class="lg:hidden">

@@ -1,4 +1,5 @@
 use crate::components::icon::Icon;
+use crate::i18n::{t, t_string};
 use icondata as i;
 use leptos::either::Either;
 use leptos::prelude::*;
@@ -20,6 +21,7 @@ fn ListCard(
     // Local state for editing
     let (name, set_name) = signal(list.name.clone());
     let (current_world, set_current_world) = signal(Some(list.wdr_filter));
+    let i18n = crate::i18n::use_i18n();
 
     let list_clone_cancel = list.clone();
     let cancel_edit = move |_| {
@@ -38,7 +40,7 @@ fn ListCard(
                     Either::Left(view! {
                         <div class="flex flex-col gap-3 w-full">
                              <div>
-                                <label class="label text-sm font-semibold">"List Name"</label>
+                                <label class="label text-sm font-semibold">{t!(i18n, list_name)}</label>
                                 <input
                                     class="input w-full"
                                     prop:value=name
@@ -46,7 +48,7 @@ fn ListCard(
                                 />
                             </div>
                             <div>
-                                <label class="label text-sm font-semibold">"World/Region"</label>
+                                <label class="label text-sm font-semibold">{t!(i18n, world_region)}</label>
                                 <WorldPicker
                                     current_world=current_world.into()
                                     set_current_world=set_current_world.into()
@@ -54,7 +56,7 @@ fn ListCard(
                             </div>
                             <div class="flex gap-2 justify-end mt-2">
                                 <button class="btn-secondary btn-sm" on:click=cancel_edit.clone()>
-                                    <Icon icon=i::AiCloseOutlined /> "Cancel"
+                                    <Icon icon=i::AiCloseOutlined /> {t!(i18n, cancel)}
                                 </button>
                                 <button
                                     class="btn-primary btn-sm"
@@ -68,20 +70,20 @@ fn ListCard(
                                         set_is_edit(false);
                                     }
                                 >
-                                    <Icon icon=i::BiSaveSolid /> "Save"
+                                    <Icon icon=i::BiSaveSolid /> {t!(i18n, save)}
                                 </button>
                             </div>
                             <div class="border-t border-gray-600/50 my-2"></div>
                             <div class="flex justify-between items-center">
-                                <span class="text-red-400 text-sm font-semibold">"Danger Zone"</span>
-                                <Tooltip tooltip_text="Delete this list">
+                                <span class="text-red-400 text-sm font-semibold">{t!(i18n, danger_zone)}</span>
+                                <Tooltip tooltip_text=Signal::derive(move || t_string!(i18n, delete).to_string())>
                                     <button
                                         class="btn-danger btn-sm"
                                         on:click=move |_| {
                                             let _ = delete_list.dispatch(list_for_delete.id);
                                         }
                                     >
-                                        <Icon icon=i::BiTrashSolid /> "Delete"
+                                        <Icon icon=i::BiTrashSolid /> {t!(i18n, delete)}
                                     </button>
                                 </Tooltip>
                             </div>
@@ -100,15 +102,15 @@ fn ListCard(
                                          <WorldName id=list.wdr_filter />
                                     </div>
                                 </div>
-                                <Tooltip tooltip_text="Edit List">
-                                    <button class="btn-ghost btn-sm text-gray-400 hover:text-white" on:click=move |_| set_is_edit(true) aria_label="Edit List">
+                                <Tooltip tooltip_text=Signal::derive(move || t_string!(i18n, edit_list).to_string())>
+                                    <button class="btn-ghost btn-sm text-gray-400 hover:text-white" on:click=move |_| set_is_edit(true) aria_label=move || t_string!(i18n, edit_list).to_string()>
                                         <Icon icon=i::BsPencilFill />
                                     </button>
                                 </Tooltip>
                             </div>
                             <div class="mt-4 flex justify-end">
                                 <a href=format!("/list/{}", list.id) class="btn-secondary btn-sm">
-                                    "View Items" <Icon icon=i::AiArrowRightOutlined attr:class="ml-1"/>
+                                    {t!(i18n, view_items)} <Icon icon=i::AiArrowRightOutlined attr:class="ml-1"/>
                                 </a>
                             </div>
                         </>
@@ -121,6 +123,7 @@ fn ListCard(
 
 #[component]
 pub fn EditLists() -> impl IntoView {
+    let i18n = crate::i18n::use_i18n();
     let delete_list = Action::new(move |id: &i32| delete_list(*id));
     let edit_list = Action::new(move |list: &List| edit_list(list.clone()));
     let create_list = Action::new(move |list: &CreateList| create_list(list.clone()));
@@ -158,15 +161,15 @@ pub fn EditLists() -> impl IntoView {
             <div class="flex items-center gap-2 md:gap-3">
                 <A exact=true attr:class="nav-link" href="/list">
                     <Icon height="1.25em" width="1.25em" icon=i::AiOrderedListOutlined />
-                    <span>"Lists"</span>
+                    <span>{t!(i18n, lists)}</span>
                 </A>
             </div>
 
             <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">"My Lists"</h1>
+                <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, my_lists)}</h1>
                  <button class="btn-primary" on:click=move |_| set_creating(!creating())>
                     <Icon icon=if creating() { i::AiCloseOutlined } else { i::BiPlusRegular } />
-                    {move || if creating() { "Cancel Creation" } else { "Create New List" }}
+                    {move || if creating() { Either::Left(t!(i18n, cancel_creation)) } else { Either::Right(t!(i18n, create_new_list)) }}
                 </button>
             </div>
 
@@ -179,10 +182,10 @@ pub fn EditLists() -> impl IntoView {
                         let (wdr_filter, set_wdr_filter) = signal(selector);
                         view! {
                             <div class="panel p-6 rounded-xl animate-fade-in relative z-10">
-                                <h3 class="text-lg font-bold mb-4">"Create New List"</h3>
+                                <h3 class="text-lg font-bold mb-4">{t!(i18n, create_new_list)}</h3>
                                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     <div class="flex flex-col gap-1">
-                                        <label for="new-list-name" class="label font-semibold">"List name"</label>
+                                        <label for="new-list-name" class="label font-semibold">{t!(i18n, list_name)}</label>
                                         <input
                                             class="input w-full"
                                             id="new-list-name"
@@ -192,7 +195,7 @@ pub fn EditLists() -> impl IntoView {
                                         />
                                     </div>
                                     <div class="flex flex-col gap-1">
-                                        <label class="label font-semibold">"World/Region"</label>
+                                        <label class="label font-semibold">{t!(i18n, world_region)}</label>
                                         <WorldPicker
                                             current_world=wdr_filter.into()
                                             set_current_world=set_wdr_filter.into()
@@ -215,7 +218,7 @@ pub fn EditLists() -> impl IntoView {
                                             }
                                         }
                                     >
-                                        <Icon icon=i::BiSaveSolid /> "Create List"
+                                        <Icon icon=i::BiSaveSolid /> {t!(i18n, create_list)}
                                     </button>
                                 </div>
                             </div>
@@ -229,7 +232,7 @@ pub fn EditLists() -> impl IntoView {
                 </div>
                 <input
                     class="input w-full pl-10"
-                    placeholder="Search your lists..."
+                    placeholder=move || t_string!(i18n, search_your_lists).to_string()
                     prop:value=filter
                     on:input=move |ev| set_filter(event_target_value(&ev))
                 />
@@ -246,8 +249,8 @@ pub fn EditLists() -> impl IntoView {
                                         Either::Left(view! {
                                             <div class="flex flex-col items-center justify-center py-12 text-gray-400">
                                                 <Icon icon=i::AiOrderedListOutlined width="4em" height="4em" attr:class="mb-4 opacity-50"/>
-                                                <h3 class="text-xl font-semibold">"No lists found"</h3>
-                                                <p>"Create a new list to get started!"</p>
+                                                <h3 class="text-xl font-semibold">{t!(i18n, no_lists_found)}</h3>
+                                                <p>{t!(i18n, create_new_list_to_get_started)}</p>
                                             </div>
                                         }.into_any())
                                     } else {
@@ -273,7 +276,7 @@ pub fn EditLists() -> impl IntoView {
                                 Err(e) => {
                                     Either::Right(view! {
                                         <div class="alert alert-error">
-                                            {format!("Error loading lists: {e}")}
+                                            {move || t!(i18n, error_loading_lists, error = e.to_string())}
                                         </div>
                                     }.into_any())
                                 }
