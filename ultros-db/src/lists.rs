@@ -1,9 +1,7 @@
 use crate::{
     UltrosDb,
     common::try_update_value::ActiveValueCmpSet,
-    common_type_conversions::{
-        ListSharedGroupReturn, ListSharedUserReturn, UserGroupMemberReturn,
-    },
+    common_type_conversions::{ListSharedGroupReturn, ListSharedUserReturn, UserGroupMemberReturn},
     entity::{
         active_listing, discord_user, list, list_invite, list_item, list_shared_group,
         list_shared_user, retainer, user_group, user_group_member,

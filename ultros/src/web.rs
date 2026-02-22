@@ -883,7 +883,9 @@ pub(crate) async fn get_group_members(
     Path(id): Path<i32>,
 ) -> Result<Json<Vec<UserGroupMember>>, ApiError> {
     let members = db.get_group_members(id, user.id as i64).await?;
-    Ok(Json(members.into_iter().map(UserGroupMember::from).collect()))
+    Ok(Json(
+        members.into_iter().map(UserGroupMember::from).collect(),
+    ))
 }
 
 pub(crate) async fn add_group_member(
@@ -949,7 +951,8 @@ pub(crate) async fn unshare_list_user(
     user: AuthDiscordUser,
     Path((id, user_id)): Path<(i32, i64)>,
 ) -> Result<Json<()>, ApiError> {
-    db.unshare_list_from_user(id, user.id as i64, user_id).await?;
+    db.unshare_list_from_user(id, user.id as i64, user_id)
+        .await?;
     Ok(Json(()))
 }
 
@@ -1095,7 +1098,10 @@ pub(crate) async fn start_web(state: WebState) {
         )
         .route("/api/v1/list/{id}/invites", get(get_list_invites))
         .route("/api/v1/list/{id}/invite/create", post(create_list_invite))
-        .route("/api/v1/list/invite/{invite_id}", delete(delete_list_invite))
+        .route(
+            "/api/v1/list/invite/{invite_id}",
+            delete(delete_list_invite),
+        )
         .route("/api/v1/list/invite/use/{invite_id}", post(use_list_invite))
         .route("/api/v1/list/item/{id}/delete", delete(delete_list_item))
         .route("/api/v1/list/item/delete", post(delete_multiple_list_items))
