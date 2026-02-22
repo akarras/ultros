@@ -116,6 +116,7 @@ fn AddToListModal(
                                         let (running, set_running) = signal(false);
                                         let (error, set_error) = signal(Option::<String>::None);
                                         let toasts = use_toast();
+                                        let list_name = list.name.clone();
 
                                         view! {
                                             <div class="space-y-1">
@@ -123,6 +124,7 @@ fn AddToListModal(
                                                     <div class="font-semibold truncate">{list.name}</div>
                                                     <button
                                                         class="btn-primary"
+                                                        aria-label=move || format!("Add to list {}", list_name)
                                                         disabled=running
                                                         on:click=move |_| {
                                                             set_error(None);
