@@ -58,3 +58,37 @@ pub struct ListInvite {
     pub max_uses: Option<i32>,
     pub uses: i32,
 }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ListSharedUser {
+    pub list_id: i32,
+    pub user_id: i64,
+    pub username: String,
+    pub permission: ListPermission,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ListSharedGroup {
+    pub list_id: i32,
+    pub group_id: i32,
+    pub group_name: String,
+    pub permission: ListPermission,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ShareListUser {
+    pub user_id: i64,
+    pub permission: ListPermission,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ShareListGroup {
+    pub group_id: i32,
+    pub permission: ListPermission,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CreateInvite {
+    pub permission: ListPermission,
+    pub max_uses: Option<i32>,
+}
