@@ -1,4 +1,4 @@
-use crate::math::filter_outliers_iqr;
+use crate::math::filter_outliers_iqr_in_place;
 use chrono::Utc;
 use ultros_api_types::recent_sales::SaleData;
 
@@ -39,7 +39,7 @@ pub fn analyze_sales(sales_data: &[&SaleData], filter_outliers: bool) -> SalesSt
     }
 
     let avg_price = if filter_outliers {
-        let filtered = filter_outliers_iqr(&prices);
+        let filtered = filter_outliers_iqr_in_place(&mut prices);
         if filtered.is_empty() {
             0
         } else {

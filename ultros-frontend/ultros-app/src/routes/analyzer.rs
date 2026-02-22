@@ -7,7 +7,7 @@ use crate::{
     },
     error::AppError,
     global_state::LocalWorldData,
-    math::filter_outliers_iqr,
+    math::filter_outliers_iqr_in_place,
 };
 use chrono::{Duration, Utc};
 use humantime::{format_duration, parse_duration};
@@ -114,8 +114,8 @@ fn compute_summary(
         .unwrap_or_default();
 
     let avg_price = if filter_outliers {
-        let prices: Vec<i32> = sales.iter().map(|s| s.price_per_unit).collect();
-        let filtered = filter_outliers_iqr(&prices);
+        let mut prices: Vec<i32> = sales.iter().map(|s| s.price_per_unit).collect();
+        let filtered = filter_outliers_iqr_in_place(&mut prices);
         if filtered.is_empty() {
             0
         } else {

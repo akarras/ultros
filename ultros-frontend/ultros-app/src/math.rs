@@ -1,26 +1,24 @@
-pub fn filter_outliers_iqr(data: &[i32]) -> Vec<i32> {
+pub fn filter_outliers_iqr_in_place(data: &mut [i32]) -> &[i32] {
     if data.len() < 4 {
-        return data.to_vec();
+        return data;
     }
 
-    let mut sorted = data.to_vec();
-    sorted.sort_unstable();
+    data.sort_unstable();
 
-    let n = sorted.len();
-    let q1 = sorted[n / 4];
-    let q3 = sorted[n * 3 / 4];
+    let n = data.len();
+    let q1 = data[n / 4];
+    let q3 = data[n * 3 / 4];
     let iqr = q3 - q1;
 
-    // Using 1.5 * IQR is standard.
-    // We calculate bounds in f64 then cast back, or just use integer arithmetic carefully?
-    // Let's use f64 for the multiplier to be safe and accurate.
     let lower_bound = q1 as f64 - 1.5 * iqr as f64;
     let upper_bound = q3 as f64 + 1.5 * iqr as f64;
 
-    data.iter()
-        .filter(|&&x| (x as f64) >= lower_bound && (x as f64) <= upper_bound)
-        .cloned()
-        .collect()
+    // Find the first element >= lower_bound
+    let start_idx = data.partition_point(|&x| (x as f64) < lower_bound);
+    // Find the first element > upper_bound
+    let end_idx = data.partition_point(|&x| (x as f64) <= upper_bound);
+
+    &data[start_idx..end_idx]
 }
 
 #[cfg(test)]
@@ -28,17 +26,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_filter_outliers_iqr() {
-        let data = vec![1, 2, 3, 4, 5, 100];
-        let filtered = filter_outliers_iqr(&data);
-        assert_eq!(filtered, vec![1, 2, 3, 4, 5]);
+    fn test_filter_outliers_iqr_in_place() {
+        let mut data = vec![1, 2, 3, 4, 5, 100];
+        let filtered = filter_outliers_iqr_in_place(&mut data);
+        assert_eq!(filtered, &[1, 2, 3, 4, 5]);
 
-        let data = vec![1, 2, 3];
-        let filtered = filter_outliers_iqr(&data);
-        assert_eq!(filtered, vec![1, 2, 3]);
+        let mut data = vec![1, 2, 3];
+        let filtered = filter_outliers_iqr_in_place(&mut data);
+        assert_eq!(filtered, &[1, 2, 3]);
 
-        let data = vec![100, 1, 2, 3, 4, 5];
-        let filtered = filter_outliers_iqr(&data);
-        assert_eq!(filtered, vec![1, 2, 3, 4, 5]);
+        // Note: the function sorts the input array in place, so order is not preserved relative to input
+        // but the output slice is sorted.
+        let mut data = vec![100, 1, 2, 3, 4, 5];
+        let filtered = filter_outliers_iqr_in_place(&mut data);
+        assert_eq!(filtered, &[1, 2, 3, 4, 5]);
+
+        let mut data = vec![100, 5, 4, 3, 2, 1];
+        let filtered = filter_outliers_iqr_in_place(&mut data);
+        assert_eq!(filtered, &[1, 2, 3, 4, 5]);
     }
 }
