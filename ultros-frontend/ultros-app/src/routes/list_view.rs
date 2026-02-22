@@ -15,7 +15,10 @@ use crate::api::{
 use crate::components::{
     add_recipe_to_current_list::AddRecipeToCurrentListModal,
     item_icon::*,
-    list::{auto_mark_purchases::AutoMarkPurchases, list_item_row::ListItemRow, list_summary::*},
+    list::{
+        auto_mark_purchases::AutoMarkPurchases, buying_view::BuyingView,
+        list_item_row::ListItemRow, list_summary::*,
+    },
     loading::*,
     make_place_importer::*,
     tooltip::*,
@@ -73,6 +76,7 @@ pub fn ListView() -> impl IntoView {
 
     let (menu, set_menu) = signal(MenuState::None);
     let (recipe_modal_open, set_recipe_modal_open) = signal(false);
+    let (buying_view, set_buying_view) = signal(false);
 
     let edit_list_mode = RwSignal::new(false);
     let selected_items = RwSignal::new(HashSet::new());
@@ -123,6 +127,18 @@ pub fn ListView() -> impl IntoView {
                 >
 
                     "Make Place"
+                </button>
+            </Tooltip>
+            <Tooltip tooltip_text="Toggle purchasing view">
+                <button
+                    class="btn-secondary"
+                    class:active=buying_view
+                    on:click=move |_| set_buying_view.update(|v| *v = !*v)
+                >
+                    <i class="pr-1.5">
+                        <Icon icon=i::BiCartRegular />
+                    </i>
+                    <span>"Purchasing View"</span>
                 </button>
             </Tooltip>
 
@@ -287,99 +303,126 @@ pub fn ListView() -> impl IntoView {
                     .map(move |list| match list {
                         Ok((list, items)) => {
                             let items = StoredValue::new(items);
-                            Either::Left(
-                                view! {
-                                    <table></table>
-                                    <div class="content-well">
-                                        <div class="sticky top-0 flex-row justify-between">
-                                            <span class="content-title">{list.name}</span>
-                                            <div class="flex flex-row">
-                                                <button
-                                                    class="btn"
-                                                    class:bg-brand-950=edit_list_mode
-                                                    on:click=move |_| {
-                                                        edit_list_mode
-                                                            .update(|u| {
-                                                                *u = !*u;
-                                                            })
-                                                    }
-                                                >
-
-                                                    "bulk edit"
-                                                </button>
-                                                <div class:hidden=move || !edit_list_mode()>
-                                                    <button
-                                                        class="btn"
-                                                        on:click=move |_| {
-                                                            let items = selected_items
-                                                                .with_untracked(|s| s.iter().copied().collect::<Vec<_>>());
-                                                            selected_items.update(|i| i.clear());
-                                                            delete_items.dispatch(items);
-                                                        }
-                                                    >
-
-                                                        "DELETE"
-                                                    </button>
+                            Either::Left(move || {
+                                if buying_view() {
+                                    Either::Left(
+                                        view! {
+                                            <div class="content-well">
+                                                <div class="sticky top-0 flex-row justify-between">
+                                                    <span class="content-title">{list.name.clone()}</span>
                                                 </div>
-                                                <button
-                                                    class="btn"
-                                                    on:click=move |_| {
-                                                        selected_items
-                                                            .update(|i| {
-                                                                for (item, _) in items.get_value() {
-                                                                    i.insert(item.id);
-                                                                }
-                                                            })
-                                                    }
-                                                >
-
-                                                    "SELECT ALL"
-                                                </button>
-                                                <button
-                                                    class="btn"
-                                                    on:click=move |_| {
-                                                        selected_items.update(|i| i.clear());
-                                                    }
-                                                >
-
-                                                    "DESLECT ALL"
-                                                </button>
+                                                <BuyingView items=items.get_value() edit_item=edit_item />
                                             </div>
-                                        </div>
-                                        <table class="w-full">
-                                            <thead>
-                                                <tr>
-                                                    <th class="text-left p-2" class:hidden=move || !edit_list_mode()>"✅"</th>
-                                                    <th class="text-left p-2">"HQ"</th>
-                                                    <th class="text-left p-2">"Item"</th>
-                                                    <th class="text-left p-2">"Quantity"</th>
-                                                    <th class="text-left p-2">"Price"</th>
-                                                    <th class="text-left p-2" class:hidden=edit_list_mode>"Options"</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                <For
-                                                    each=move || items.get_value()
-                                                    key=|(item, _)| item.id
-                                                    children=move |(item, listings)| {
-                                                        view! {
-                                                            <ListItemRow
-                                                                item=item
-                                                                listings=listings
-                                                                edit_list_mode=edit_list_mode.into()
-                                                                selected_items=selected_items
-                                                                delete_item=delete_item
-                                                                edit_item=edit_item
-                                                            />
-                                                        }
-                                                    }
-                                                />
-                                            </tbody>
-                                        </table>
-                                        <ListSummary items=items.get_value() />
-                                    </div>
-                                },
-                            )
+                                        },
+                                    )
+                                } else {
+                                    Either::Right(
+                                        view! {
+                                            <div class="content-well">
+                                                <div class="sticky top-0 flex-row justify-between">
+                                                    <span class="content-title">{list.name.clone()}</span>
+                                                    <div class="flex flex-row">
+                                                        <button
+                                                            class="btn"
+                                                            class:bg-brand-950=edit_list_mode
+                                                            on:click=move |_| {
+                                                                edit_list_mode
+                                                                    .update(|u| {
+                                                                        *u = !*u;
+                                                                    })
+                                                            }
+                                                        >
+
+                                                            "bulk edit"
+                                                        </button>
+                                                        <div class:hidden=move || !edit_list_mode()>
+                                                            <button
+                                                                class="btn"
+                                                                on:click=move |_| {
+                                                                    let items = selected_items
+                                                                        .with_untracked(|s| {
+                                                                            s.iter().copied().collect::<Vec<_>>()
+                                                                        });
+                                                                    selected_items.update(|i| i.clear());
+                                                                    delete_items.dispatch(items);
+                                                                }
+                                                            >
+
+                                                                "DELETE"
+                                                            </button>
+                                                        </div>
+                                                        <button
+                                                            class="btn"
+                                                            on:click=move |_| {
+                                                                selected_items
+                                                                    .update(|i| {
+                                                                        for (item, _) in items.get_value() {
+                                                                            i.insert(item.id);
+                                                                        }
+                                                                    })
+                                                            }
+                                                        >
+
+                                                            "SELECT ALL"
+                                                        </button>
+                                                        <button
+                                                            class="btn"
+                                                            on:click=move |_| {
+                                                                selected_items.update(|i| i.clear());
+                                                            }
+                                                        >
+
+                                                            "DESLECT ALL"
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                                <table class="w-full">
+                                                    <thead>
+                                                        <tr>
+                                                            <th
+                                                                class="text-left p-2"
+                                                                class:hidden=move || !edit_list_mode()
+                                                            >
+                                                                "✅"
+                                                            </th>
+                                                            <th class="text-left p-2">"HQ"</th>
+                                                            <th class="text-left p-2">"Item"</th>
+                                                            <th class="text-left p-2">"Quantity"</th>
+                                                            <th class="text-left p-2">"Price"</th>
+                                                            <th
+                                                                class="text-left p-2"
+                                                                class:hidden=edit_list_mode
+                                                            >
+                                                                "Options"
+                                                            </th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        <For
+                                                            each=move || items.get_value()
+                                                            key=|(item, _)| item.id
+                                                            children=move |(item, listings)| {
+                                                                view! {
+                                                                    <ListItemRow
+                                                                        item=item
+                                                                        listings=listings
+                                                                        edit_list_mode=edit_list_mode.into()
+                                                                        selected_items=selected_items
+                                                                        delete_item=delete_item
+                                                                        edit_item=edit_item
+                                                                    />
+                                                                }
+                                                            }
+                                                        />
+
+                                                    </tbody>
+                                                </table>
+                                                <ListSummary items=items.get_value() />
+                                            </div>
+                                        },
+                                    )
+                                }
+                            })
                         }
                         Err(e) => {
                             Either::Right(
