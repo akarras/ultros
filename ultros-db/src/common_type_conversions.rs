@@ -1,16 +1,18 @@
 use crate::{
     entity::{
-        self, datacenter, final_fantasy_character, list, list_item, owned_retainers, region,
-        unknown_final_fantasy_character,
+        self, datacenter, discord_user, final_fantasy_character, list, list_invite, list_item,
+        list_shared_group, list_shared_user, owned_retainers, region,
+        unknown_final_fantasy_character, user_group, user_group_member,
     },
     world_data::world_cache::WorldCache,
 };
 use thiserror::Error;
 use ultros_api_types::{
     ActiveListing, FfxivCharacter, SaleHistory, UnknownCharacter,
-    list::{List, ListItem},
+    list::{List, ListInvite, ListItem, ListSharedGroup, ListSharedUser},
     retainer::Retainer,
     user::OwnedRetainer,
+    user::{UserGroup, UserGroupMember},
     world::{Datacenter, Region, World, WorldData},
     world_helper::AnySelector,
 };
@@ -42,6 +44,70 @@ impl From<entity::active_listing::Model> for ActiveListing {
             quantity,
             hq,
             timestamp,
+        }
+    }
+}
+
+impl From<list_invite::Model> for ListInvite {
+    fn from(value: list_invite::Model) -> Self {
+        let list_invite::Model {
+            id,
+            list_id,
+            permission,
+            max_uses,
+            uses,
+        } = value;
+        Self {
+            id,
+            list_id,
+            permission: permission.into(),
+            max_uses,
+            uses,
+        }
+    }
+}
+
+pub struct ListSharedUserReturn(pub list_shared_user::Model, pub discord_user::Model);
+
+impl From<ListSharedUserReturn> for ListSharedUser {
+    fn from(ListSharedUserReturn(shared, user): ListSharedUserReturn) -> Self {
+        Self {
+            list_id: shared.list_id,
+            user_id: shared.user_id,
+            username: user.username,
+            permission: shared.permission.into(),
+        }
+    }
+}
+
+pub struct ListSharedGroupReturn(pub list_shared_group::Model, pub user_group::Model);
+
+impl From<ListSharedGroupReturn> for ListSharedGroup {
+    fn from(ListSharedGroupReturn(shared, group): ListSharedGroupReturn) -> Self {
+        Self {
+            list_id: shared.list_id,
+            group_id: shared.group_id,
+            group_name: group.name,
+            permission: shared.permission.into(),
+        }
+    }
+}
+
+impl From<user_group::Model> for UserGroup {
+    fn from(value: user_group::Model) -> Self {
+        let user_group::Model { id, name, owner_id } = value;
+        Self { id, name, owner_id }
+    }
+}
+
+pub struct UserGroupMemberReturn(pub user_group_member::Model, pub discord_user::Model);
+
+impl From<UserGroupMemberReturn> for UserGroupMember {
+    fn from(UserGroupMemberReturn(member, user): UserGroupMemberReturn) -> Self {
+        Self {
+            group_id: member.group_id,
+            user_id: member.user_id,
+            username: user.username,
         }
     }
 }

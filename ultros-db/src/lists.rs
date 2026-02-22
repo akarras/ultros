@@ -1,6 +1,7 @@
 use crate::{
     UltrosDb,
     common::try_update_value::ActiveValueCmpSet,
+    common_type_conversions::{ListSharedGroupReturn, ListSharedUserReturn, UserGroupMemberReturn},
     entity::{
         active_listing, discord_user, list, list_invite, list_item, list_shared_group,
         list_shared_user, retainer, user_group, user_group_member,
@@ -508,12 +509,20 @@ impl UltrosDb {
         if current_perm < ListPermission::Owner {
             return Err(anyhow!("Only the owner can share the list"));
         }
-        list_shared_user::ActiveModel {
+        list_shared_user::Entity::insert(list_shared_user::ActiveModel {
             list_id: ActiveValue::Set(list_id),
             user_id: ActiveValue::Set(user_id),
             permission: ActiveValue::Set(permission as i16),
-        }
-        .insert(&self.db)
+        })
+        .on_conflict(
+            sea_orm::sea_query::OnConflict::columns([
+                list_shared_user::Column::ListId,
+                list_shared_user::Column::UserId,
+            ])
+            .update_column(list_shared_user::Column::Permission)
+            .to_owned(),
+        )
+        .exec(&self.db)
         .await?;
         Ok(())
     }
@@ -529,12 +538,20 @@ impl UltrosDb {
         if current_perm < ListPermission::Owner {
             return Err(anyhow!("Only the owner can share the list"));
         }
-        list_shared_group::ActiveModel {
+        list_shared_group::Entity::insert(list_shared_group::ActiveModel {
             list_id: ActiveValue::Set(list_id),
             group_id: ActiveValue::Set(group_id),
             permission: ActiveValue::Set(permission as i16),
-        }
-        .insert(&self.db)
+        })
+        .on_conflict(
+            sea_orm::sea_query::OnConflict::columns([
+                list_shared_group::Column::ListId,
+                list_shared_group::Column::GroupId,
+            ])
+            .update_column(list_shared_group::Column::Permission)
+            .to_owned(),
+        )
+        .exec(&self.db)
         .await?;
         Ok(())
     }
@@ -648,5 +665,92 @@ impl UltrosDb {
         }
         invite.delete(&self.db).await?;
         Ok(())
+    }
+
+    pub async fn get_list_invites(
+        &self,
+        list_id: i32,
+        user_id: i64,
+    ) -> Result<Vec<list_invite::Model>> {
+        let permission = self.get_permission(list_id, user_id).await?;
+        if permission < ListPermission::Owner {
+            return Err(anyhow!("Only the owner can view invites"));
+        }
+        Ok(list_invite::Entity::find()
+            .filter(list_invite::Column::ListId.eq(list_id))
+            .all(&self.db)
+            .await?)
+    }
+
+    pub async fn get_list_shared_users(
+        &self,
+        list_id: i32,
+        user_id: i64,
+    ) -> Result<Vec<ListSharedUserReturn>> {
+        let permission = self.get_permission(list_id, user_id).await?;
+        if permission < ListPermission::Owner {
+            return Err(anyhow!("Only the owner can view shares"));
+        }
+        Ok(list_shared_user::Entity::find()
+            .filter(list_shared_user::Column::ListId.eq(list_id))
+            .find_also_related(discord_user::Entity)
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .map(|(shared, user)| ListSharedUserReturn(shared, user.unwrap()))
+            .collect())
+    }
+
+    pub async fn get_list_shared_groups(
+        &self,
+        list_id: i32,
+        user_id: i64,
+    ) -> Result<Vec<ListSharedGroupReturn>> {
+        let permission = self.get_permission(list_id, user_id).await?;
+        if permission < ListPermission::Owner {
+            return Err(anyhow!("Only the owner can view shares"));
+        }
+        Ok(list_shared_group::Entity::find()
+            .filter(list_shared_group::Column::ListId.eq(list_id))
+            .find_also_related(user_group::Entity)
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .map(|(shared, group)| ListSharedGroupReturn(shared, group.unwrap()))
+            .collect())
+    }
+
+    pub async fn get_group_members(
+        &self,
+        group_id: i32,
+        user_id: i64,
+    ) -> Result<Vec<UserGroupMemberReturn>> {
+        let group = user_group::Entity::find_by_id(group_id)
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| anyhow!("Group not found"))?;
+
+        // check if user is member or owner
+        let is_member = user_group_member::Entity::find()
+            .filter(user_group_member::Column::GroupId.eq(group_id))
+            .filter(user_group_member::Column::UserId.eq(user_id))
+            .one(&self.db)
+            .await?
+            .is_some();
+
+        if group.owner_id != user_id && !is_member {
+            return Err(anyhow!(
+                "You must be a member of the group to see other members"
+            ));
+        }
+
+        Ok(user_group_member::Entity::find()
+            .filter(user_group_member::Column::GroupId.eq(group_id))
+            .find_also_related(discord_user::Entity)
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .map(|(member, user)| UserGroupMemberReturn(member, user.unwrap()))
+            .collect())
     }
 }
