@@ -610,7 +610,10 @@ impl UltrosDb {
             .await?
             .ok_or_else(|| anyhow!("Invite not found"))?;
 
-        if invite.max_uses.is_some_and(|max_uses| invite.uses >= max_uses) {
+        if invite
+            .max_uses
+            .is_some_and(|max_uses| invite.uses >= max_uses)
+        {
             return Err(anyhow!("Invite has reached max uses"));
         }
 
