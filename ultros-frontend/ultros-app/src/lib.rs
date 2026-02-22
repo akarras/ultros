@@ -8,6 +8,9 @@ pub(crate) mod math;
 pub(crate) mod routes;
 pub(crate) mod ws;
 
+include!(concat!(env!("OUT_DIR"), "/i18n/mod.rs"));
+use i18n::*;
+
 use crate::components::recently_viewed::RecentItems;
 pub use crate::global_state::{LocalWorldData, home_world::GuessedRegion};
 use crate::global_state::{
@@ -19,7 +22,8 @@ use crate::global_state::{
 };
 use crate::{
     components::{
-        ad::Ad, apps_menu::*, patreon::*, search_box::*, theme_picker::*, toast::*, tooltip::*,
+        ad::Ad, apps_menu::*, language_picker::*, patreon::*, search_box::*, theme_picker::*,
+        toast::*, tooltip::*,
     },
     routes::{
         about::*,
@@ -100,6 +104,7 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
 #[component]
 pub fn Footer() -> impl IntoView {
     let git_hash = git_short_hash!();
+    let i18n = use_i18n();
     view! {
         <footer class="bg-black/20 backdrop-blur-md border-t border-[color:var(--color-outline)] mt-12">
             <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-12 space-y-8">
@@ -108,31 +113,31 @@ pub fn Footer() -> impl IntoView {
                         href="https://discord.gg/pgdq9nGUP2"
                         class="btn-ghost opacity-80 hover:opacity-100"
                     >
-                        <Icon icon=i::BsDiscord width="1.2em" height="1.2em" /><span>"Discord"</span>
+                        <Icon icon=i::BsDiscord width="1.2em" height="1.2em" /><span>{t!(i18n, discord)}</span>
                     </a>
                     <a
                         href="https://github.com/akarras/ultros"
                         class="btn-ghost opacity-80 hover:opacity-100"
                     >
-                        <Icon icon=i::IoLogoGithub width="1.2em" height="1.2em" /><span>"GitHub"</span>
+                        <Icon icon=i::IoLogoGithub width="1.2em" height="1.2em" /><span>{t!(i18n, github)}</span>
                     </a>
                     <PatreonWrapper>
                         // nobody can tell it's not real.
                         <a class="btn-ghost cursor-pointer opacity-80 hover:opacity-100">
-                            <span>"Patreon"</span>
+                            <span>{t!(i18n, patreon)}</span>
                         </a>
                     </PatreonWrapper>
                     <a
                         href="https://book.ultros.app"
                         class="btn-ghost opacity-80 hover:opacity-100"
                     >
-                        <Icon icon=i::BsBook width="1.2em" height="1.2em" /><span>"Book"</span>
+                        <Icon icon=i::BsBook width="1.2em" height="1.2em" /><span>{t!(i18n, book)}</span>
                     </a>
                     <A
                         href="/about"
                         attr:class="btn-ghost opacity-80 hover:opacity-100"
                     >
-                        <Icon icon=i::BsInfoCircle width="1.2em" height="1.2em" /><span>"About"</span>
+                        <Icon icon=i::BsInfoCircle width="1.2em" height="1.2em" /><span>{t!(i18n, about)}</span>
                     </A>
                 </div>
                 <div class="divider opacity-50"></div>
@@ -173,6 +178,7 @@ pub fn Footer() -> impl IntoView {
 #[component]
 pub fn NavRow() -> impl IntoView {
     // Global hotkeys
+    let i18n = use_i18n();
     let settings = use_theme_settings();
     let mode = settings.mode;
 
@@ -199,7 +205,7 @@ pub fn NavRow() -> impl IntoView {
                         attr:class="nav-link"
                     >
                         <Icon icon=i::AiHomeFilled />
-                        <span class="hidden sm:inline">"Home"</span>
+                        <span class="hidden sm:inline">{t!(i18n, home)}</span>
                     </A>
 
                     <AppsMenu />
@@ -217,7 +223,7 @@ pub fn NavRow() -> impl IntoView {
                                     <div class="mt-2 flex items-center justify-between w-full">
                                         <A href="/" exact=true attr:class="nav-link">
                                             <Icon icon=i::AiHomeFilled />
-                                            <span class="hidden sm:inline">"Home"</span>
+                                            <span class="hidden sm:inline">{t!(i18n, home)}</span>
                                         </A>
                                         <AppsMenu />
                                         <UserMenu />
@@ -227,7 +233,10 @@ pub fn NavRow() -> impl IntoView {
                 // Right section
                                 <div class="hidden lg:flex items-center gap-3">
                     <div class="hidden lg:block">
-                        <QuickThemeToggle />
+                        <div class="flex items-center gap-2">
+                            <LanguagePicker />
+                            <QuickThemeToggle />
+                        </div>
                     </div>
                     <UserMenu />
                 </div>
@@ -241,6 +250,15 @@ pub fn App() -> impl IntoView {
     info!("app run!");
     let cookies = Cookies::new();
     provide_meta_context();
+    view! {
+        <I18nContextProvider>
+            <AppInner cookies />
+        </I18nContextProvider>
+    }
+}
+
+#[component]
+pub fn AppInner(cookies: Cookies) -> impl IntoView {
     provide_context(cookies);
     provide_context(CheapestPrices::new());
     provide_context(GlobalLastCopiedText(RwSignal::new(None)));

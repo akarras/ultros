@@ -67,6 +67,10 @@ codee = {version = "0.3", features = ["json_serde"]}
 send_wrapper = "0.6"
 flume = { version = "0.11.1", features = ["async"] }
 icondata_core.workspace = true
+leptos_i18n.workspace = true
+
+[build-dependencies]
+leptos_i18n_build.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 reqwest = { version = "0.12", default-features = false, features = [
@@ -93,6 +97,7 @@ hydrate = [
     "wasm-bindgen",
     "time/wasm-bindgen",
     "js-sys",
+    "leptos_i18n/hydrate",
 ]
 ssr = [
     "leptos/ssr",
@@ -105,4 +110,5 @@ ssr = [
     "leptos-use/ssr",
     "axum",
     "leptos_hotkeys/ssr",
+    "leptos_i18n/axum",
 ]
