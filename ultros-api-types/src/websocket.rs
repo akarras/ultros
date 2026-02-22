@@ -131,10 +131,17 @@ pub struct SaleEventData {
     pub sales: Vec<(SaleHistory, UnknownCharacter)>,
 }
 
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub enum ListEventData {
+    List(crate::list::List),
+    ListItem(crate::list::ListItem),
+}
+
 #[derive(Deserialize, Serialize, Debug)]
 pub enum ServerClient {
     Sales(EventType<SaleEventData>),
     Listings(EventType<ListingEventData>),
+    ListUpdate(EventType<ListEventData>),
     SubscriptionCreated,
     SocketConnected,
 }
@@ -150,6 +157,9 @@ pub enum ClientMessage {
     AddSubscribe {
         filter: FilterPredicate,
         msg_type: SocketMessageType,
+    },
+    SubscribeList {
+        list_id: i32,
     },
 }
 
