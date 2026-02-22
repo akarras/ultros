@@ -22,6 +22,7 @@ thiserror = "2.0.17"
 ultros-api-types = {path = "../ultros-api-types"}
 metrics = "0.24.3"
 dotenvy = "0.15.7"
+fastrand = "2.3.0"
 rkyv = { version = "0.7.42", features = ["validation", "size_64", "hashbrown"], default-features = false, optional = true }
 
 [features]

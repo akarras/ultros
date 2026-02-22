@@ -29,6 +29,12 @@ pub enum Relation {
     Datacenter,
     #[sea_orm(has_many = "super::list_item::Entity")]
     ListItem,
+    #[sea_orm(has_many = "super::list_shared_user::Entity")]
+    ListSharedUser,
+    #[sea_orm(has_many = "super::list_shared_group::Entity")]
+    ListSharedGroup,
+    #[sea_orm(has_many = "super::list_invite::Entity")]
+    ListInvite,
     #[sea_orm(
         belongs_to = "super::region::Entity",
         from = "Column::RegionId",
@@ -62,6 +68,24 @@ impl Related<super::datacenter::Entity> for Entity {
 impl Related<super::list_item::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::ListItem.def()
+    }
+}
+
+impl Related<super::list_shared_user::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::ListSharedUser.def()
+    }
+}
+
+impl Related<super::list_shared_group::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::ListSharedGroup.def()
+    }
+}
+
+impl Related<super::list_invite::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::ListInvite.def()
     }
 }
 

@@ -9600,6 +9600,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "dotenvy",
+ "fastrand 2.3.0",
  "futures",
  "itertools",
  "metrics",

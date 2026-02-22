@@ -21,6 +21,12 @@ pub enum Relation {
     OwnedFfxivCharacter,
     #[sea_orm(has_many = "super::owned_retainers::Entity")]
     OwnedRetainers,
+    #[sea_orm(has_many = "super::user_group::Entity")]
+    UserGroup,
+    #[sea_orm(has_many = "super::user_group_member::Entity")]
+    UserGroupMember,
+    #[sea_orm(has_many = "super::list_shared_user::Entity")]
+    ListSharedUser,
 }
 
 impl Related<super::alert::Entity> for Entity {
@@ -44,6 +50,24 @@ impl Related<super::owned_ffxiv_character::Entity> for Entity {
 impl Related<super::owned_retainers::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::OwnedRetainers.def()
+    }
+}
+
+impl Related<super::user_group::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::UserGroup.def()
+    }
+}
+
+impl Related<super::user_group_member::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::UserGroupMember.def()
+    }
+}
+
+impl Related<super::list_shared_user::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::ListSharedUser.def()
     }
 }
 
