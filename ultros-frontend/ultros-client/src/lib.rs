@@ -47,7 +47,8 @@ async fn open_transaction(rexie: &Rexie) -> Result<(Transaction, Store)> {
 
 async fn init_data() -> anyhow::Result<Vec<u8>> {
     let version = xiv_gen::data_version();
-    let response = Request::get(&["/static/data/", version, ".bincode"].concat())
+    let lang = "en"; // TODO: Support language selection in UI
+    let response = Request::get(&format!("/static/data/{}/{}.bincode", version, lang))
         .send()
         .await?
         .binary()

@@ -51,7 +51,7 @@ impl SearchService {
             if item.item_search_category > 0 {
                 let category_name = data
                     .item_search_categorys
-                    .get(&ItemSearchCategoryId(item.item_search_category as i32))
+                    .get(&ItemSearchCategoryId(item.item_search_category))
                     .map(|c| c.name.as_str())
                     .unwrap_or("");
 
@@ -140,8 +140,7 @@ impl SearchService {
 
         for id in currency_ids {
             if let Some(item) = data.items.get(&id)
-                && (allowed_item_ui_categories
-                    .contains(&ItemUiCategoryId(item.item_ui_category as i32))
+                && (allowed_item_ui_categories.contains(&ItemUiCategoryId(item.item_ui_category))
                     || item.name == "Gil"
                     || item.name == "MGP")
             {

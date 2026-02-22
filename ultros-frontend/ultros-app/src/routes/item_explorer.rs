@@ -223,7 +223,7 @@ pub fn CategoryItems() -> impl IntoView {
             .map(|(id, _)| {
                 data.items
                     .iter()
-                    .filter(|(_, item)| item.item_search_category as i32 == id.0)
+                    .filter(|(_, item)| item.item_search_category == id.0)
                     .collect::<Vec<_>>()
             });
         cat.unwrap_or_default()
@@ -295,7 +295,7 @@ pub fn JobItems() -> impl IntoView {
             .items
             .iter()
             .filter(|(_id, item)| {
-                job_categories.contains(&ClassJobCategoryId(item.class_job_category as i32))
+                job_categories.contains(&ClassJobCategoryId(item.class_job_category))
             })
             .filter(|(_id, item)| !market_only || item.item_search_category > 0)
             .collect();

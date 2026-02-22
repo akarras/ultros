@@ -881,7 +881,7 @@ pub fn CurrencySelection() -> impl IntoView {
             let Some(item) = data.items.get(f) else {
                 return false;
             };
-            allowed_item_ui_categories.contains(&ItemUiCategoryId(item.item_ui_category as i32))
+            allowed_item_ui_categories.contains(&ItemUiCategoryId(item.item_ui_category))
         })
         .unique_by(|i| i.0)
         .collect::<Vec<_>>();

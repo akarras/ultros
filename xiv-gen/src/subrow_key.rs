@@ -21,10 +21,19 @@ impl<T> FromStr for SubrowKey<T>
 where
     T: FromStr,
 {
-    type Err = ();
+    type Err = String;
 
-    fn from_str(_s: &str) -> Result<Self, Self::Err> {
-        panic!("Unused");
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (primary_key, secondary) = s
+            .split_once('.')
+            .ok_or_else(|| format!("Invalid SubrowKey: {}", s))?;
+        let primary_key = primary_key
+            .parse()
+            .map_err(|_| "Failed to parse primary key in SubrowKey".to_string())?;
+        let secondary = secondary
+            .parse()
+            .map_err(|_| "Failed to parse secondary key in SubrowKey".to_string())?;
+        Ok(Self(primary_key, secondary))
     }
 }
 
@@ -37,12 +46,6 @@ where
         D: serde::Deserializer<'de>,
     {
         let str = <&str>::deserialize(deserializer)?;
-
-        let (primary_key, secondary) = str.split_once(".").ok_or(Error::custom("Invalid str"))?;
-        let primary_key = match primary_key.parse() {
-            Ok(v) => v,
-            Err(_e) => panic!("Primary key failed to parse?"),
-        };
-        Ok(Self(primary_key, secondary.parse().unwrap()))
+        Self::from_str(str).map_err(D::Error::custom)
     }
 }

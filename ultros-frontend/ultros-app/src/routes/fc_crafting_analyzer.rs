@@ -81,118 +81,37 @@ fn calculate_fc_project_cost(
     let mut total_cost: i64 = 0;
     let mut materials_map: HashMap<ItemId, i32> = HashMap::new();
 
-    let parts = [
-        sequence.company_craft_part_0,
-        sequence.company_craft_part_1,
-        sequence.company_craft_part_2,
-        sequence.company_craft_part_3,
-        sequence.company_craft_part_4,
-        sequence.company_craft_part_5,
-        sequence.company_craft_part_6,
-        sequence.company_craft_part_7,
-    ];
-
-    for part_link in parts {
-        if let Some(part) = data
-            .company_craft_parts
-            .get(&CompanyCraftPartId(part_link as i32))
-        {
-            let processes = [
-                part.company_craft_process_0,
-                part.company_craft_process_1,
-                part.company_craft_process_2,
-            ];
-
-            for process_link in processes {
+    for part_id in sequence.company_craft_part {
+        if let Some(part) = data.company_craft_parts.get(&CompanyCraftPartId(part_id)) {
+            for process_link in part.company_craft_process {
                 if let Some(process) = data
                     .company_craft_processs
-                    .get(&CompanyCraftProcessId(process_link as i32))
+                    .get(&CompanyCraftProcessId(process_link))
                 {
                     // Iterate through the 12 possible supply items
                     // Based on the JSON, these are flattened as supply_item_0, etc.
                     // I'll create a helper macro or just list them out.
                     // Listing them out is safer for now.
 
-                    let items = [
-                        (
-                            process.supply_item_0,
-                            process.set_quantity_0,
-                            process.sets_required_0,
-                        ),
-                        (
-                            process.supply_item_1,
-                            process.set_quantity_1,
-                            process.sets_required_1,
-                        ),
-                        (
-                            process.supply_item_2,
-                            process.set_quantity_2,
-                            process.sets_required_2,
-                        ),
-                        (
-                            process.supply_item_3,
-                            process.set_quantity_3,
-                            process.sets_required_3,
-                        ),
-                        (
-                            process.supply_item_4,
-                            process.set_quantity_4,
-                            process.sets_required_4,
-                        ),
-                        (
-                            process.supply_item_5,
-                            process.set_quantity_5,
-                            process.sets_required_5,
-                        ),
-                        (
-                            process.supply_item_6,
-                            process.set_quantity_6,
-                            process.sets_required_6,
-                        ),
-                        (
-                            process.supply_item_7 as u16,
-                            process.set_quantity_7 as u8,
-                            process.sets_required_7 as u8,
-                        ),
-                        (
-                            process.supply_item_8 as u16,
-                            process.set_quantity_8 as u8,
-                            process.sets_required_8 as u8,
-                        ),
-                        (
-                            process.supply_item_9 as u16,
-                            process.set_quantity_9 as u8,
-                            process.sets_required_9 as u8,
-                        ),
-                        (
-                            process.supply_item_10 as u16,
-                            process.set_quantity_10 as u8,
-                            process.sets_required_10 as u8,
-                        ),
-                        (
-                            process.supply_item_11 as u16,
-                            process.set_quantity_11 as u8,
-                            process.sets_required_11 as u8,
-                        ),
-                    ];
-
-                    for (supply_item_link, quantity_per_set, sets_required) in items {
+                    for i in 0..12 {
+                        let supply_item_link = process.supply_item[i];
+                        let quantity_per_set = process.set_quantity[i];
+                        let sets_required = process.sets_required[i];
                         if quantity_per_set == 0 || sets_required == 0 {
                             continue;
                         }
 
                         if let Some(supply_item) = data
                             .company_craft_supply_items
-                            .get(&CompanyCraftSupplyItemId(supply_item_link as i32))
+                            .get(&CompanyCraftSupplyItemId(supply_item_link))
                         {
                             if supply_item.item == 0 {
                                 continue;
                             }
 
-                            let total_quantity = (quantity_per_set as i32) * (sets_required as i32);
-                            *materials_map
-                                .entry(ItemId(supply_item.item as i32))
-                                .or_default() += total_quantity;
+                            let total_quantity = quantity_per_set * sets_required;
+                            *materials_map.entry(ItemId(supply_item.item)).or_default() +=
+                                total_quantity;
                         }
                     }
                 }
@@ -309,18 +228,17 @@ fn FCCraftingAnalyzerTable(
             // But we can pre-check if the key is 0/invalid?
             // The generated code uses keys, let's assume valid keys if present.
 
-            let sales_stats =
-                if let Some(item_sales) = sales_map.get(&(sequence.result_item as i32)) {
-                    analyze_sales(item_sales)
-                } else {
-                    SalesStats {
-                        daily_sales: 0.0,
-                        avg_price: 0,
-                        total_sales: 0,
-                    }
-                };
+            let sales_stats = if let Some(item_sales) = sales_map.get(&{ sequence.result_item }) {
+                analyze_sales(item_sales)
+            } else {
+                SalesStats {
+                    daily_sales: 0.0,
+                    avg_price: 0,
+                    total_sales: 0,
+                }
+            };
 
-            let market_price_summary = prices.find_matching_listings(sequence.result_item as i32);
+            let market_price_summary = prices.find_matching_listings(sequence.result_item);
             let market_price = market_price_summary.lowest_gil().unwrap_or(0);
 
             if market_price == 0 {
@@ -538,7 +456,7 @@ fn FCCraftingAnalyzerTable(
                     key=move |(index, data): &(usize, Arc<FCCraftProfitData>)| (*index, data.sequence.key_id)
                     view=move |(index, data): (usize, Arc<FCCraftProfitData>)| {
                         let data_clone = data.clone();
-                        let item_id = ItemId(data.sequence.result_item as i32);
+                        let item_id = ItemId(data.sequence.result_item);
                         let item = items.get(&item_id).map(|i| i.name.as_str()).unwrap_or("Unknown");
                          let classes = if (index % 2) == 0 {
                             "flex flex-row items-center flex-nowrap h-15 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_6%,transparent)] transition-colors"

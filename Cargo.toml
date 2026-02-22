@@ -12,6 +12,7 @@ members = [
     "ultros-frontend/ultros-xiv-icons",
     "proc-macros/dumb-csv-macros",
     "proc-macros/field-iterator-macros",
+    "proc-macros/xiv-gen-macros",
     "dumb-csv",
     "field-iterator",
 ]

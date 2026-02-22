@@ -149,7 +149,7 @@ fn ScripSourceTable(
 
                 let reward = match data
                     .collectables_shop_reward_scrips
-                    .get(&CollectablesShopRewardScripId(reward_scrip_id as i32))
+                    .get(&CollectablesShopRewardScripId(reward_scrip_id))
                 {
                     Some(r) => r,
                     None => continue,
@@ -193,7 +193,7 @@ fn ScripSourceTable(
                 }
 
                 let item_id = item_entry.item;
-                let item_def = match items.get(&ItemId(item_id as i32)) {
+                let item_def = match items.get(&ItemId(item_id)) {
                     Some(i) => i,
                     None => continue,
                 };
@@ -230,24 +230,15 @@ fn ScripSourceTable(
 
                 if let Some(r) = recipe {
                     // Sum ingredients
-                    let ingredients = [
-                        (r.ingredient_0, r.amount_ingredient_0),
-                        (r.ingredient_1, r.amount_ingredient_1),
-                        (r.ingredient_2, r.amount_ingredient_2),
-                        (r.ingredient_3, r.amount_ingredient_3),
-                        (r.ingredient_4, r.amount_ingredient_4),
-                        (r.ingredient_5, r.amount_ingredient_5),
-                        (r.ingredient_6 as u16, r.amount_ingredient_6),
-                        (r.ingredient_7 as u16, r.amount_ingredient_7),
-                    ];
-
-                    for (ing_id, amount) in ingredients {
+                    for i in 0..8 {
+                        let ing_id = r.ingredient[i];
+                        let amount = r.amount_ingredient[i];
                         if ing_id == 0 || amount == 0 {
                             continue;
                         }
-                        let price_summary = prices.find_matching_listings(ing_id as i32);
+                        let price_summary = prices.find_matching_listings(ing_id);
                         let price = price_summary.lowest_gil().unwrap_or(0); // If no price, assume 0? Or skip?
-                        cost += price * amount as i32;
+                        cost += price * amount;
                     }
                 } else {
                     // Skip non-craftables for now
@@ -261,9 +252,9 @@ fn ScripSourceTable(
                 let cost_per_scrip = cost as f32 / scrip_amount as f32;
 
                 results.push(ScripSourceData {
-                    item_id: ItemId(item_id as i32),
+                    item_id: ItemId(item_id),
                     item_name: item_def.name.to_string(),
-                    level: item_def.level_item,
+                    level: item_def.level_item as u16,
                     job_category_name: if let Some(r) = recipe {
                         match r.craft_type {
                             0 => "Carpenter".to_string(),

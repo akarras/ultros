@@ -88,43 +88,10 @@ fn calculate_crafting_cost(
     // Use 64-bit intermediates with saturating math to avoid overflow in debug builds.
     let mut cost: i64 = 0;
     let mut sub_crafts = Vec::new();
-    // Helper to iterate ingredients
-    let ingredients = [
-        (
-            ItemId(recipe.ingredient_0 as i32),
-            recipe.amount_ingredient_0,
-        ),
-        (
-            ItemId(recipe.ingredient_1 as i32),
-            recipe.amount_ingredient_1,
-        ),
-        (
-            ItemId(recipe.ingredient_2 as i32),
-            recipe.amount_ingredient_2,
-        ),
-        (
-            ItemId(recipe.ingredient_3 as i32),
-            recipe.amount_ingredient_3,
-        ),
-        (
-            ItemId(recipe.ingredient_4 as i32),
-            recipe.amount_ingredient_4,
-        ),
-        (
-            ItemId(recipe.ingredient_5 as i32),
-            recipe.amount_ingredient_5,
-        ),
-        (
-            ItemId(recipe.ingredient_6 as i32),
-            recipe.amount_ingredient_6,
-        ),
-        (
-            ItemId(recipe.ingredient_7 as i32),
-            recipe.amount_ingredient_7,
-        ),
-    ];
 
-    for (item_id, amount) in ingredients {
+    for i in 0..8 {
+        let item_id = ItemId(recipe.ingredient[i]);
+        let amount = recipe.amount_ingredient[i];
         if item_id.0 == 0 || amount == 0 {
             continue;
         }
@@ -171,7 +138,7 @@ fn calculate_crafting_cost(
         if item_cost < market_price {
             // Scale subcrafts by the amount needed
             for mut sub in best_sub_crafts {
-                sub.amount *= amount as i32;
+                sub.amount *= amount;
                 sub_crafts.push(sub);
             }
         }
@@ -225,7 +192,7 @@ fn RecipeAnalyzerTable(
     let recipes_by_output = Memo::new(move |_| {
         let mut map: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
         for recipe in recipes.values() {
-            map.entry(ItemId(recipe.item_result as i32))
+            map.entry(ItemId(recipe.item_result))
                 .or_default()
                 .push(recipe);
         }
@@ -283,7 +250,7 @@ fn RecipeAnalyzerTable(
         for recipe in recipes.values() {
             // Filter by job and level
             let required_level = recipe_level_tables
-                .get(&RecipeLevelTableId(recipe.recipe_level_table as i32))
+                .get(&RecipeLevelTableId(recipe.recipe_level_table))
                 .map(|t| t.class_job_level as i32)
                 .unwrap_or(0);
 
@@ -316,8 +283,7 @@ fn RecipeAnalyzerTable(
                 continue;
             }
 
-            let sales_stats = if let Some(item_sales) = sales_map.get(&(recipe.item_result as i32))
-            {
+            let sales_stats = if let Some(item_sales) = sales_map.get(&{ recipe.item_result }) {
                 analyze_sales(item_sales, filter_outliers)
             } else {
                 SalesStats {
@@ -327,7 +293,7 @@ fn RecipeAnalyzerTable(
                 }
             };
 
-            let market_price_summary = prices.find_matching_listings(recipe.item_result as i32);
+            let market_price_summary = prices.find_matching_listings(recipe.item_result);
             let market_price = market_price_summary.lowest_gil().unwrap_or(0);
 
             if market_price == 0 {
@@ -634,7 +600,7 @@ fn RecipeAnalyzerTable(
                     view=move |(index, data): (usize, Arc<RecipeProfitData>)| {
                         // Clone data for use in closures to avoid moving the Arc
                         let data_clone = data.clone();
-                        let item_id = ItemId(data.recipe.item_result as i32);
+                        let item_id = ItemId(data.recipe.item_result);
                         let item = items.get(&item_id).map(|i| i.name.as_str()).unwrap_or("Unknown");
                         let item_level = items.get(&item_id).map(|i| i.level_item).unwrap_or(0);
                         let classes = if (index % 2) == 0 {
