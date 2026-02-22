@@ -1,18 +1,22 @@
 use crate::{
     UltrosDb,
     common::try_update_value::ActiveValueCmpSet,
-    entity::{active_listing, discord_user, list, list_item, retainer},
+    entity::{
+        active_listing, discord_user, list, list_invite, list_item, list_shared_group,
+        list_shared_user, retainer, user_group, user_group_member,
+    },
     world_data::world_cache::{AnySelector, WorldCache},
 };
 use anyhow::Result;
 use anyhow::anyhow;
 use futures::future::try_join_all;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, IntoActiveModel, ModelTrait,
-    QueryFilter, TransactionTrait,
+    ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, IntoActiveModel, JoinType, ModelTrait,
+    QueryFilter, QuerySelect, RelationTrait, TransactionTrait,
 };
 use std::{collections::HashMap, sync::Arc};
 use tracing::instrument;
+use ultros_api_types::list::ListPermission;
 use universalis::ItemId;
 
 impl TryFrom<&list::Model> for AnySelector {
@@ -35,6 +39,57 @@ impl TryFrom<&list::Model> for AnySelector {
 }
 
 impl UltrosDb {
+    pub async fn get_permission(&self, list_id: i32, user_id: i64) -> Result<ListPermission> {
+        let list = list::Entity::find_by_id(list_id)
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| anyhow!("List not found"))?;
+
+        if list.owner == user_id {
+            return Ok(ListPermission::Owner);
+        }
+
+        // Check shared users
+        let shared_user = list_shared_user::Entity::find()
+            .filter(list_shared_user::Column::ListId.eq(list_id))
+            .filter(list_shared_user::Column::UserId.eq(user_id))
+            .one(&self.db)
+            .await?;
+
+        let mut max_permission = shared_user
+            .map(|s| ListPermission::from(s.permission))
+            .unwrap_or(ListPermission::None);
+
+        if max_permission == ListPermission::Owner {
+            return Ok(ListPermission::Owner);
+        }
+
+        // Check shared groups
+        let shared_groups = list_shared_group::Entity::find()
+            .filter(list_shared_group::Column::ListId.eq(list_id))
+            .all(&self.db)
+            .await?;
+
+        for shared_group in shared_groups {
+            // check if user is in group
+            let is_member = user_group_member::Entity::find()
+                .filter(user_group_member::Column::GroupId.eq(shared_group.group_id))
+                .filter(user_group_member::Column::UserId.eq(user_id))
+                .one(&self.db)
+                .await?
+                .is_some();
+
+            if is_member {
+                let perm = ListPermission::from(shared_group.permission);
+                if perm > max_permission {
+                    max_permission = perm;
+                }
+            }
+        }
+
+        Ok(max_permission)
+    }
+
     /// Creates a list for the given Discord user with the given name
     #[instrument(skip(self))]
     pub async fn create_list(
@@ -74,13 +129,14 @@ impl UltrosDb {
     where
         T: FnOnce(&mut list::ActiveModel),
     {
+        let permission = self.get_permission(list_id, discord_user).await?;
+        if permission < ListPermission::Write {
+            return Err(anyhow!("Insufficient permissions to update list"));
+        }
         let list = list::Entity::find_by_id(list_id)
             .one(&self.db)
             .await?
             .ok_or(anyhow!("Unable to find list"))?;
-        if list.owner != discord_user {
-            return Err(anyhow!("List not owned by Discord user"));
-        }
         let mut model = list.into_active_model();
         update(&mut model);
         Ok(model.update(&self.db).await?)
@@ -89,13 +145,14 @@ impl UltrosDb {
     /// Deletes the given list assuming that it is owned by the Discord user
     #[instrument(skip(self))]
     pub async fn delete_list(&self, list_id: i32, discord_user: i64) -> Result<()> {
+        let permission = self.get_permission(list_id, discord_user).await?;
+        if permission < ListPermission::Owner {
+            return Err(anyhow!("Insufficient permissions to delete list"));
+        }
         let list = list::Entity::find_by_id(list_id)
             .one(&self.db)
             .await?
             .ok_or(anyhow::anyhow!("Failed to find list with that ID"))?;
-        if list.owner != discord_user {
-            return Err(anyhow::anyhow!("List not owned by that user"));
-        }
         let txn = self.db.begin().await?;
         let _items = list_item::Entity::delete_many()
             .filter(list_item::Column::ListId.eq(list.id))
@@ -107,37 +164,64 @@ impl UltrosDb {
     }
 
     pub async fn get_lists_for_user(&self, discord_user: i64) -> Result<Vec<list::Model>> {
-        Ok(list::Entity::find()
+        // This should probably also include lists shared with the user
+        let owned_lists = list::Entity::find()
             .filter(list::Column::Owner.eq(discord_user))
             .all(&self.db)
-            .await?)
+            .await?;
+
+        let shared_lists = list::Entity::find()
+            .inner_join(list_shared_user::Entity)
+            .filter(list_shared_user::Column::UserId.eq(discord_user))
+            .all(&self.db)
+            .await?;
+
+        let group_lists = list::Entity::find()
+            .inner_join(list_shared_group::Entity)
+            .join(
+                JoinType::InnerJoin,
+                list_shared_group::Relation::UserGroup.def(),
+            )
+            .join(
+                JoinType::InnerJoin,
+                user_group::Relation::UserGroupMember.def(),
+            )
+            .filter(user_group_member::Column::UserId.eq(discord_user))
+            .all(&self.db)
+            .await?;
+
+        let mut all_lists = owned_lists;
+        all_lists.extend(shared_lists);
+        all_lists.extend(group_lists);
+        all_lists.sort_by_key(|l| l.id);
+        all_lists.dedup_by_key(|l| l.id);
+
+        Ok(all_lists)
     }
 
     pub async fn get_list(&self, list_id: i32, discord_user: i64) -> Result<list::Model> {
+        let permission = self.get_permission(list_id, discord_user).await?;
+        if permission < ListPermission::Read {
+            return Err(anyhow!("Insufficient permissions to read list"));
+        }
         let list = list::Entity::find_by_id(list_id)
             .one(&self.db)
             .await?
             .ok_or(anyhow!("List not found"))?;
-        if list.owner != discord_user {
-            return Err(anyhow!("List not owned by user"));
-        }
         Ok(list)
     }
 
     pub async fn get_list_items(
         &self,
-        list: i32,
+        list_id: i32,
         discord_user: i64,
     ) -> Result<Vec<list_item::Model>> {
-        let list = list::Entity::find_by_id(list)
-            .one(&self.db)
-            .await?
-            .ok_or(anyhow!("List not found"))?;
-        if list.owner != discord_user {
-            return Err(anyhow!("Discord user doesn't own that list"));
+        let permission = self.get_permission(list_id, discord_user).await?;
+        if permission < ListPermission::Read {
+            return Err(anyhow!("Insufficient permissions to read list items"));
         }
         Ok(list_item::Entity::find()
-            .filter(list_item::Column::ListId.eq(list.id))
+            .filter(list_item::Column::ListId.eq(list_id))
             .all(&self.db)
             .await?)
     }
@@ -153,8 +237,11 @@ impl UltrosDb {
         quantity: Option<i32>,
         acquired: Option<i32>,
     ) -> Result<list_item::Model> {
-        if list.owner != discord_user {
-            return Err(anyhow::anyhow!("Failed to add item to list"));
+        let permission = self.get_permission(list.id, discord_user).await?;
+        if permission < ListPermission::Write {
+            return Err(anyhow::anyhow!(
+                "Insufficient permissions to add item to list"
+            ));
         }
         // if the item already exists in the list, just update the existing list
         let existing = list_item::Entity::find()
@@ -189,7 +276,12 @@ impl UltrosDb {
         updated_item: list_item::Model,
         discord_user: i64,
     ) -> Result<list_item::Model> {
-        let _list = self.get_list(updated_item.list_id, discord_user).await?; // this should give an error if the user doesn't own the list
+        let permission = self
+            .get_permission(updated_item.list_id, discord_user)
+            .await?;
+        if permission < ListPermission::Write {
+            return Err(anyhow!("Insufficient permissions to update list item"));
+        }
         let mut item = list_item::Entity::find_by_id(updated_item.id)
             .one(&self.db)
             .await?
@@ -211,8 +303,11 @@ impl UltrosDb {
         discord_user: i64,
         items: impl Iterator<Item = list_item::Model>,
     ) -> Result<u64> {
-        if list.owner != discord_user {
-            return Err(anyhow::anyhow!("Failed to add item to list"));
+        let permission = self.get_permission(list.id, discord_user).await?;
+        if permission < ListPermission::Write {
+            return Err(anyhow::anyhow!(
+                "Insufficient permissions to add items to list"
+            ));
         }
         // for items that are already matching our list, we should update and insert
         let mut existing_list_items: HashMap<_, _> = list
@@ -276,12 +371,9 @@ impl UltrosDb {
             .one(&self.db)
             .await?
             .ok_or(anyhow!("No list item"))?;
-        let list = list::Entity::find_by_id(list_item.list_id)
-            .one(&self.db)
-            .await?
-            .ok_or(anyhow!("List not found"))?;
-        if discord_user != list.owner {
-            return Err(anyhow!("User doesn't own item"));
+        let permission = self.get_permission(list_item.list_id, discord_user).await?;
+        if permission < ListPermission::Write {
+            return Err(anyhow!("Insufficient permissions to remove item from list"));
         }
         list_item.clone().delete(&self.db).await?;
         Ok(list_item)
@@ -302,14 +394,15 @@ impl UltrosDb {
             .one(&self.db)
             .await?
             .ok_or(anyhow!("List not found"))?;
+        let permission = self.get_permission(list_id, discord_user).await?;
+        if permission < ListPermission::Read {
+            return Err(anyhow!("Insufficient permissions to read list"));
+        }
         let selector = AnySelector::try_from(&list)?;
         let result = world_cache.lookup_selector(&selector)?;
         let worlds = world_cache
             .get_all_worlds_in(&result)
             .ok_or(anyhow!("Unable to get worlds for list"))?;
-        if list.owner != discord_user {
-            return Err(anyhow!("List not owned by user"));
-        }
         let list_items = list_item::Entity::find()
             .filter(list_item::Column::ListId.eq(list_id))
             .all(&self.db)
@@ -321,5 +414,239 @@ impl UltrosDb {
                 .map(|listings| (item, listings))
         }))
         .await
+    }
+
+    // --- Group Management ---
+
+    pub async fn create_group(&self, name: String, owner_id: i64) -> Result<user_group::Model> {
+        Ok(user_group::ActiveModel {
+            id: Default::default(),
+            name: ActiveValue::Set(name),
+            owner_id: ActiveValue::Set(owner_id),
+        }
+        .insert(&self.db)
+        .await?)
+    }
+
+    pub async fn delete_group(&self, group_id: i32, owner_id: i64) -> Result<()> {
+        let group = user_group::Entity::find_by_id(group_id)
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| anyhow!("Group not found"))?;
+        if group.owner_id != owner_id {
+            return Err(anyhow!("Only the owner can delete the group"));
+        }
+        group.delete(&self.db).await?;
+        Ok(())
+    }
+
+    pub async fn add_group_member(&self, group_id: i32, owner_id: i64, user_id: i64) -> Result<()> {
+        let group = user_group::Entity::find_by_id(group_id)
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| anyhow!("Group not found"))?;
+        if group.owner_id != owner_id {
+            return Err(anyhow!("Only the owner can add members"));
+        }
+        user_group_member::ActiveModel {
+            group_id: ActiveValue::Set(group_id),
+            user_id: ActiveValue::Set(user_id),
+        }
+        .insert(&self.db)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn remove_group_member(
+        &self,
+        group_id: i32,
+        owner_id: i64,
+        user_id: i64,
+    ) -> Result<()> {
+        let group = user_group::Entity::find_by_id(group_id)
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| anyhow!("Group not found"))?;
+        if group.owner_id != owner_id && user_id != owner_id {
+            return Err(anyhow!(
+                "Only the owner or the user themselves can remove a member"
+            ));
+        }
+        user_group_member::Entity::delete_by_id((group_id, user_id))
+            .exec(&self.db)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn get_groups_for_user(&self, user_id: i64) -> Result<Vec<user_group::Model>> {
+        let owned_groups = user_group::Entity::find()
+            .filter(user_group::Column::OwnerId.eq(user_id))
+            .all(&self.db)
+            .await?;
+        let member_groups = user_group::Entity::find()
+            .inner_join(user_group_member::Entity)
+            .filter(user_group_member::Column::UserId.eq(user_id))
+            .all(&self.db)
+            .await?;
+        let mut all_groups = owned_groups;
+        all_groups.extend(member_groups);
+        all_groups.sort_by_key(|g| g.id);
+        all_groups.dedup_by_key(|g| g.id);
+        Ok(all_groups)
+    }
+
+    // --- Sharing Management ---
+
+    pub async fn share_list_with_user(
+        &self,
+        list_id: i32,
+        owner_id: i64,
+        user_id: i64,
+        permission: ListPermission,
+    ) -> Result<()> {
+        let current_perm = self.get_permission(list_id, owner_id).await?;
+        if current_perm < ListPermission::Owner {
+            return Err(anyhow!("Only the owner can share the list"));
+        }
+        list_shared_user::ActiveModel {
+            list_id: ActiveValue::Set(list_id),
+            user_id: ActiveValue::Set(user_id),
+            permission: ActiveValue::Set(permission as i16),
+        }
+        .insert(&self.db)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn share_list_with_group(
+        &self,
+        list_id: i32,
+        owner_id: i64,
+        group_id: i32,
+        permission: ListPermission,
+    ) -> Result<()> {
+        let current_perm = self.get_permission(list_id, owner_id).await?;
+        if current_perm < ListPermission::Owner {
+            return Err(anyhow!("Only the owner can share the list"));
+        }
+        list_shared_group::ActiveModel {
+            list_id: ActiveValue::Set(list_id),
+            group_id: ActiveValue::Set(group_id),
+            permission: ActiveValue::Set(permission as i16),
+        }
+        .insert(&self.db)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn unshare_list_from_user(
+        &self,
+        list_id: i32,
+        owner_id: i64,
+        user_id: i64,
+    ) -> Result<()> {
+        let current_perm = self.get_permission(list_id, owner_id).await?;
+        if current_perm < ListPermission::Owner && owner_id != user_id {
+            return Err(anyhow!("Only the owner can unshare the list"));
+        }
+        list_shared_user::Entity::delete_by_id((list_id, user_id))
+            .exec(&self.db)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn unshare_list_from_group(
+        &self,
+        list_id: i32,
+        owner_id: i64,
+        group_id: i32,
+    ) -> Result<()> {
+        let current_perm = self.get_permission(list_id, owner_id).await?;
+        if current_perm < ListPermission::Owner {
+            return Err(anyhow!("Only the owner can unshare the list"));
+        }
+        list_shared_group::Entity::delete_by_id((list_id, group_id))
+            .exec(&self.db)
+            .await?;
+        Ok(())
+    }
+
+    // --- Invite Management ---
+
+    pub async fn create_invite(
+        &self,
+        list_id: i32,
+        owner_id: i64,
+        permission: ListPermission,
+        max_uses: Option<i32>,
+    ) -> Result<list_invite::Model> {
+        let current_perm = self.get_permission(list_id, owner_id).await?;
+        if current_perm < ListPermission::Owner {
+            return Err(anyhow!("Only the owner can create invites"));
+        }
+        // generate a random 16-char string for the invite ID
+        let id: String = std::iter::repeat_with(fastrand::alphanumeric)
+            .take(16)
+            .collect();
+
+        Ok(list_invite::ActiveModel {
+            id: ActiveValue::Set(id),
+            list_id: ActiveValue::Set(list_id),
+            permission: ActiveValue::Set(permission as i16),
+            max_uses: ActiveValue::Set(max_uses),
+            uses: ActiveValue::Set(0),
+        }
+        .insert(&self.db)
+        .await?)
+    }
+
+    pub async fn use_invite(
+        &self,
+        invite_id: String,
+        user_id: i64,
+    ) -> Result<list_shared_user::Model> {
+        let invite = list_invite::Entity::find_by_id(invite_id.clone())
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| anyhow!("Invite not found"))?;
+
+        if invite
+            .max_uses
+            .is_some_and(|max_uses| invite.uses >= max_uses)
+        {
+            return Err(anyhow!("Invite has reached max uses"));
+        }
+
+        let txn = self.db.begin().await?;
+
+        // increment uses
+        let mut invite_active: list_invite::ActiveModel = invite.clone().into_active_model();
+        invite_active.uses = ActiveValue::Set(invite.uses + 1);
+        invite_active.update(&txn).await?;
+
+        // share list
+        let shared = list_shared_user::ActiveModel {
+            list_id: ActiveValue::Set(invite.list_id),
+            user_id: ActiveValue::Set(user_id),
+            permission: ActiveValue::Set(invite.permission),
+        }
+        .insert(&txn)
+        .await?;
+
+        txn.commit().await?;
+        Ok(shared)
+    }
+
+    pub async fn delete_invite(&self, invite_id: String, owner_id: i64) -> Result<()> {
+        let invite = list_invite::Entity::find_by_id(invite_id)
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| anyhow!("Invite not found"))?;
+        let permission = self.get_permission(invite.list_id, owner_id).await?;
+        if permission < ListPermission::Owner {
+            return Err(anyhow!("Only the owner can delete invites"));
+        }
+        invite.delete(&self.db).await?;
+        Ok(())
     }
 }
