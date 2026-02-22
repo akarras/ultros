@@ -7,7 +7,8 @@ use leptos::either::Either;
 use leptos::prelude::*;
 use std::collections::HashMap;
 use ultros_api_types::{
-    ActiveListing, list::ListItem,
+    ActiveListing,
+    list::ListItem,
     world_helper::{AnyResult, AnySelector},
 };
 use xiv_gen::ItemId;
