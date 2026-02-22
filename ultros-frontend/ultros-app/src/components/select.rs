@@ -119,6 +119,13 @@ where
                 }
                 on:keydown=keydown
                 prop:value=current_input
+                role="combobox"
+                aria-autocomplete="list"
+                aria-expanded={
+                    #[cfg(not(feature = "hydrate"))]
+                    let hovered = hovered.clone();
+                    move || (has_focus() || hovered()).to_string()
+                }
             />
             <div
                 class="absolute top-1 left-1 select-none cursor flex items-center"
@@ -135,6 +142,7 @@ where
                 node_ref=dropdown
                 class=move || format!("{} {}", default_dropdown_class, dropdown_class.unwrap_or(""))
                 class:hidden=move || !has_focus() && !hovered()
+                role="listbox"
             >
                 <For each=final_result key=move |(l, _)| *l let:data>
                     {
@@ -142,6 +150,8 @@ where
                         view! {
                     <button
                         class="w-full text-left"
+                        role="option"
+                        aria-selected=move || is_selected_selector.selected(&Some(data.0)).to_string()
                         on:click=move |_| {
                             if let Some(item) = items.with(|i| i.get(data.0).cloned()) {
                                 set_choice(Some(item));
@@ -156,12 +166,15 @@ where
                             }
                         }
                     >
-                        <div class=move || {
-                            let is_selected = is_selected_selector.selected(&Some(data.0));
-                            if is_selected {
-                                "flex items-center rounded-lg p-2 transition-colors duration-200 bg-[color:color-mix(in_srgb,var(--brand-ring)_18%,transparent)]"
-                            } else {
-                                "flex items-center rounded-lg p-2 transition-colors duration-200 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)]"
+                        <div class={
+                            let is_selected_selector = is_selected_selector.clone();
+                            move || {
+                                let is_selected = is_selected_selector.selected(&Some(data.0));
+                                if is_selected {
+                                    "flex items-center rounded-lg p-2 transition-colors duration-200 bg-[color:color-mix(in_srgb,var(--brand-ring)_18%,transparent)]"
+                                } else {
+                                    "flex items-center rounded-lg p-2 transition-colors duration-200 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)]"
+                                }
                             }
                         }>
                             {move || items
