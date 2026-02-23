@@ -330,19 +330,33 @@ pub fn SearchBox() -> impl IntoView {
             // Search Results
             <div
                 id="search-results"
-                role="listbox"
                 class="absolute w-full mt-2 z-50 content-visible contain-content forced-layer"
                 class:hidden=move || !active() || search().is_empty()
             >
-                <div class="scroll-panel content-auto contain-layout contain-paint will-change-scroll forced-layer cis-42">
-                    <VirtualScroller
-                        each=search_results.into()
-                        key={move |result: &Arc<SearchResult>| result.url.clone()}
-                        view={move |result: Arc<SearchResult>| {
-                            let url = result.url.clone();
-                            let navigate = navigate.clone();
+                <Show when=move || !loading() && search_results.with(|v| v.is_empty())>
+                    <div
+                        role="status"
+                        class="p-4 text-center text-[color:var(--color-text-muted)] bg-[color:var(--color-background-elevated)] border border-[color:var(--color-outline)] rounded-md shadow-lg"
+                    >
+                        <Icon icon=i::AiSearchOutlined attr:class="w-8 h-8 mx-auto mb-2 opacity-50" />
+                        <p>"No results found for \"" {search} "\""</p>
+                    </div>
+                </Show>
+                <Show when=move || !search_results.with(|v| v.is_empty())>
+                    <div
+                        role="listbox"
+                        class="scroll-panel content-auto contain-layout contain-paint will-change-scroll forced-layer cis-42"
+                    >
+                        <VirtualScroller
+                            each=search_results.into()
+                            key={move |result: &Arc<SearchResult>| result.url.clone()}
+                            view={
+                                let navigate = navigate.clone();
+                                move |result: Arc<SearchResult>| {
+                                let url = result.url.clone();
+                                let navigate = navigate.clone();
 
-                            // Clone URL for different closures to satisfy borrow checker
+                                // Clone URL for different closures to satisfy borrow checker
                             let url_for_class = url.clone();
                             let url_for_aria = url.clone();
                             let url_for_click = url.clone();
@@ -441,16 +455,16 @@ pub fn SearchBox() -> impl IntoView {
                                     </div>
                                 </div>
                             }
-                        }}
-                        viewport_height=528.0
-                        row_height=60.0
-                        overscan=10
-                        header_height=0.0
-                        variable_height=false
-                        scroll_to_index=Signal::derive(move || focused_index.get())
-
-                    />
-                </div>
+                            }}
+                            viewport_height=528.0
+                            row_height=60.0
+                            overscan=10
+                            header_height=0.0
+                            variable_height=false
+                            scroll_to_index=Signal::derive(move || focused_index.get())
+                        />
+                    </div>
+                </Show>
             </div>
         </div>
     }
