@@ -350,11 +350,13 @@ pub fn SearchBox() -> impl IntoView {
                         <VirtualScroller
                             each=search_results.into()
                             key={move |result: &Arc<SearchResult>| result.url.clone()}
-                            view={move |result: Arc<SearchResult>| {
-                            let url = result.url.clone();
-                            let navigate = navigate.clone();
+                            view={
+                                let navigate = navigate.clone();
+                                move |result: Arc<SearchResult>| {
+                                let url = result.url.clone();
+                                let navigate = navigate.clone();
 
-                            // Clone URL for different closures to satisfy borrow checker
+                                // Clone URL for different closures to satisfy borrow checker
                             let url_for_class = url.clone();
                             let url_for_aria = url.clone();
                             let url_for_click = url.clone();

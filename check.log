@@ -74,3 +74,104 @@
     Checking radium v0.7.0
     Checking leptos_meta v0.8.5
     Checking safe_arch v0.7.4
+   Compiling sea-schema-derive v0.3.0
+   Compiling elsa v1.11.2
+   Compiling matrixmultiply v0.3.10
+   Compiling cookie v0.18.1
+    Checking strum v0.26.3
+    Checking siphasher v1.0.2
+   Compiling font-kit v0.14.3
+    Checking weezl v0.1.12
+   Compiling twox-hash v2.1.2
+    Checking glob v0.3.3
+    Checking base64 v0.21.7
+    Checking unty v0.0.4
+   Compiling parse-zoneinfo v0.5.0
+    Checking jpeg-decoder v0.3.2
+    Checking funty v2.0.0
+    Checking bitvec v1.0.1
+    Checking image v0.24.9
+    Checking sea-schema v0.16.2
+   Compiling icu_provider_source v2.1.2
+    Checking bincode v2.0.1
+    Checking rustls-pemfile v1.0.4
+    Checking sea-orm-cli v1.1.19
+    Checking gif v0.12.0
+    Checking phf_shared v0.11.3
+    Checking wide v0.7.33
+   Compiling xiv-gen-db v0.1.0 (/app/xiv-gen-db)
+    Checking leptos_integration_utils v0.8.7
+   Compiling serde_with_macros v3.16.1
+    Checking sea-orm v1.1.19
+    Checking pathfinder_geometry v0.5.1
+    Checking hyper-rustls v0.24.2
+   Compiling icu_provider_export v2.1.1
+    Checking yeslogic-fontconfig-sys v6.0.0
+    Checking dirs v6.0.0
+    Checking tungstenite v0.21.0
+    Checking tokio-rustls v0.25.0
+    Checking freetype-sys v0.20.1
+    Checking approx v0.5.1
+    Checking unic-langid-impl v0.9.6
+    Checking serde_bytes v0.11.19
+    Checking rawpointer v0.2.1
+   Compiling leptos-use v0.17.0
+    Checking float-ord v0.3.2
+    Checking sync_wrapper v0.1.2
+    Checking webpki-roots v0.25.4
+    Checking reqwest v0.11.27
+    Checking bson v2.15.0
+    Checking unic-langid v0.9.6
+    Checking simba v0.9.1
+   Compiling leptos_i18n_build v0.6.0
+    Checking async-tungstenite v0.24.0
+    Checking sea-orm-migration v1.1.19
+    Checking serde_with v3.16.1
+    Checking leptos_axum v0.8.7
+    Checking phf v0.11.3
+    Checking plotters-bitmap v0.3.7
+    Checking plotters-svg v0.3.7
+    Checking tokio-rustls v0.26.4
+    Checking num-rational v0.4.2
+    Checking ultros-api-types v0.1.0 (/app/ultros-api-types)
+   Compiling default-struct-builder v0.5.1
+    Checking gloo-timers v0.3.0
+    Checking ttf-parser v0.20.0
+    Checking plotters v0.3.7
+    Checking nalgebra v0.33.2
+    Checking hyper-rustls v0.27.7
+    Checking isolang v2.4.0
+    Checking universalis v0.1.0 (/app/universalis)
+    Checking migration v0.1.0 (/app/migration)
+    Checking metrics v0.24.3
+   Compiling leptos_i18n_macro v0.6.0
+    Checking icondata_hi v0.1.0
+    Checking icondata_wi v0.1.0
+    Checking icondata_ai v0.1.0
+    Checking icondata_im v0.1.0
+    Checking icondata_bi v0.1.0
+    Checking icondata_fa v0.1.0
+    Checking icondata_cg v0.1.0
+    Checking icondata_mdi v0.1.0
+    Checking icondata_oc v0.1.0
+    Checking icondata_lu v0.1.0
+    Checking icondata_ti v0.1.0
+    Checking icondata_si v0.1.0
+    Checking icondata_tb v0.1.0
+    Checking icondata_io v0.1.0
+    Checking icondata_fi v0.1.0
+    Checking icondata_bs v0.1.0
+    Checking icondata_ri v0.1.0
+    Checking icondata_vs v0.1.0
+    Checking icondata_ch v0.1.0
+   Compiling field-iterator-macros v0.1.0 (/app/proc-macros/field-iterator-macros)
+    Checking icu_locale v2.1.1
+    Checking nanorand v0.7.0
+    Checking fastrand v2.3.0
+    Checking flume v0.11.1
+    Checking ultros-db v0.1.0 (/app/ultros-db)
+    Checking leptos_i18n v0.6.0
+    Checking icondata v0.6.0
+    Checking ultros-charts v0.1.0 (/app/ultros-frontend/ultros-charts)
+    Checking timeago v0.4.2
+    Checking reqwest v0.12.28
