@@ -338,7 +338,7 @@ pub fn SearchBox() -> impl IntoView {
                         role="status"
                         class="p-4 text-center text-[color:var(--color-text-muted)] bg-[color:var(--color-background-elevated)] border border-[color:var(--color-outline)] rounded-md shadow-lg"
                     >
-                        <Icon icon=i::AiSearchOutlined class="w-8 h-8 mx-auto mb-2 opacity-50" />
+                        <Icon icon=i::AiSearchOutlined attr:class="w-8 h-8 mx-auto mb-2 opacity-50" />
                         <p>"No results found for \"" {search} "\""</p>
                     </div>
                 </Show>
