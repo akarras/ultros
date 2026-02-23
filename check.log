@@ -175,3 +175,15 @@
     Checking ultros-charts v0.1.0 (/app/ultros-frontend/ultros-charts)
     Checking timeago v0.4.2
     Checking reqwest v0.12.28
+    Checking linregress v0.5.4
+    Checking plotters-canvas v0.3.1
+    Checking leptos_hotkeys v0.3.0 (https://github.com/slowtec/leptos-hotkeys.git?branch=leptos-0.8#8ecd67c9)
+    Checking serde_qs v0.12.0
+    Checking thousands v0.2.0
+    Checking paginate v1.1.11
+    Checking colorsys v0.6.7
+    Checking humantime v2.3.0
+   Compiling git-const v1.1.0
+    Checking field-iterator v0.1.0 (/app/field-iterator)
+   Compiling ultros-app v0.1.0 (/app/ultros-frontend/ultros-app)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 6m 10s
