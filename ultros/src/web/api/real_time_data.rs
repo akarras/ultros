@@ -17,23 +17,29 @@ use futures::{
 use tokio_stream::wrappers::BroadcastStream;
 use tracing::{error, info};
 use ultros_api_types::websocket::{
-    ClientMessage, FilterPredicate, ListingEventData, SaleEventData, ServerClient,
+    ClientMessage, FilterPredicate, ListEventData, ListingEventData, SaleEventData, ServerClient,
     SocketMessageType,
 };
 use ultros_api_types::{websocket::EventType as WEvent, world_helper::WorldHelper};
 
 use crate::event::{EventReceivers, EventType};
+use crate::web::error::ApiError;
+use crate::web::oauth::AuthDiscordUser;
+use ultros_api_types::list::ListPermission;
+use ultros_db::UltrosDb;
 
-// #[axum::debug_handler]
 pub(crate) async fn real_time_data(
     ws: WebSocketUpgrade,
+    user: Result<AuthDiscordUser, ApiError>,
     State(events): State<EventReceivers>,
     State(worlds): State<Arc<WorldHelper>>,
+    State(db): State<UltrosDb>,
 ) -> Response {
+    let user = user.ok();
     info!("Handling websocket");
     ws.on_upgrade(move |websocket| async move {
         info!("Upgrading websocket");
-        if let Err(e) = handle_socket(websocket, events, worlds).await {
+        if let Err(e) = handle_socket(websocket, events, worlds, db, user).await {
             error!("{e:?}");
         }
     })
@@ -112,6 +118,8 @@ async fn handle_socket(
     socket: WebSocket,
     events: EventReceivers,
     world_cache: Arc<WorldHelper>,
+    db: UltrosDb,
+    user: Option<AuthDiscordUser>,
 ) -> Result<(), Box<dyn Error>> {
     let EventReceivers {
         retainers: _,
@@ -119,6 +127,7 @@ async fn handle_socket(
         alerts: _,
         retainer_undercut: _,
         history,
+        lists,
     } = events;
     let (mut sender, mut receiver) = socket.split();
     let mut subscriptions = SelectAll::<BoxStream<ServerClient>>::new();
@@ -171,6 +180,43 @@ async fn handle_socket(
 
                                             subscriptions.push(Box::pin(stream));
                                         }
+                                    }
+                                }
+                                ClientMessage::SubscribeList { list_id } => {
+                                    let user_id = user.as_ref().map(|u| u.id as i64).unwrap_or(0);
+                                    let permission = db.get_permission(list_id, user_id).await?;
+                                    if permission >= ListPermission::Read {
+                                        let stream = BroadcastStream::new(lists.resubscribe())
+                                            .filter_map(move |l| async move {
+                                                let l = l.ok()?;
+                                                let id = match &l {
+                                                    crate::event::EventType::Add(inner)
+                                                    | crate::event::EventType::Remove(inner)
+                                                    | crate::event::EventType::Update(inner) => {
+                                                        match inner.as_ref() {
+                                                            ListEventData::List(l) => l.id,
+                                                            ListEventData::ListItem(l) => l.list_id,
+                                                        }
+                                                    }
+                                                };
+                                                if id == list_id {
+                                                    let event = match l {
+                                                        EventType::Add(a) => {
+                                                            WEvent::Added((*a).clone())
+                                                        }
+                                                        EventType::Remove(r) => {
+                                                            WEvent::Removed((*r).clone())
+                                                        }
+                                                        EventType::Update(u) => {
+                                                            WEvent::Updated((*u).clone())
+                                                        }
+                                                    };
+                                                    Some(ServerClient::ListUpdate(event))
+                                                } else {
+                                                    None
+                                                }
+                                            });
+                                        subscriptions.push(Box::pin(stream));
                                     }
                                 }
                             }

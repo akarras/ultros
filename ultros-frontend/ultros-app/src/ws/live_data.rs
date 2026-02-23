@@ -90,3 +90,42 @@ pub(crate) async fn live_sales(
     }
     Ok(())
 }
+
+pub(crate) async fn subscribe_to_list(
+    list_id: i32,
+    on_update: impl Fn() + 'static,
+) -> Result<(), AppError> {
+    let window = web_sys::window().unwrap();
+    let location = window.location();
+    let protocol = location.protocol().unwrap();
+    let host = location.host().unwrap();
+    let ws_protocol = if protocol == "https:" { "wss" } else { "ws" };
+    let url = format!("{}://{}/api/v1/realtime/events", ws_protocol, host);
+
+    let socket = WebSocket::open(&url).unwrap();
+    let (mut write, mut read) = socket.split();
+    let client = ClientMessage::SubscribeList { list_id };
+    write
+        .send(Message::Text(serde_json::to_string(&client).unwrap()))
+        .await
+        .unwrap();
+    while let Some(msg) = read.next().await {
+        match msg {
+            Ok(o) => match o {
+                Message::Text(o) => {
+                    if let Ok(val) = serde_json::from_str::<ServerClient>(&o) {
+                        match val {
+                            ServerClient::ListUpdate(_) => {
+                                on_update();
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            },
+            Err(_) => break,
+        }
+    }
+    Ok(())
+}

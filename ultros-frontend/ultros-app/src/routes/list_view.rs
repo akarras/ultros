@@ -74,6 +74,22 @@ pub fn ListView() -> impl IntoView {
         move |(id, _)| get_list_items_with_listings(id),
     );
 
+    #[cfg(not(feature = "ssr"))]
+    {
+        use crate::ws::live_data::subscribe_to_list;
+        Effect::new(move |_| {
+            let id = list_id.get();
+            if id != 0 {
+                leptos::task::spawn_local(async move {
+                    let _ = subscribe_to_list(id, move || {
+                        list_view.refetch();
+                    })
+                    .await;
+                });
+            }
+        });
+    }
+
     let (menu, set_menu) = signal(MenuState::None);
     let (recipe_modal_open, set_recipe_modal_open) = signal(false);
     let (buying_view, set_buying_view) = signal(false);

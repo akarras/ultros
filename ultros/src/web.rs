@@ -38,10 +38,10 @@ use tower_http::compression::{CompressionLayer, Predicate};
 use tower_http::trace::TraceLayer;
 use tracing::{debug, warn};
 use ultros_api_types::icon_size::IconSize;
-use ultros_api_types::list::{CreateList, List, ListItem};
+use ultros_api_types::list::{CreateList, List, ListItem, ListPermission};
 use ultros_api_types::retainer::RetainerListings;
 use ultros_api_types::user::{OwnedRetainer, UserData, UserRetainerListings, UserRetainers};
-use ultros_api_types::websocket::ListingEventData;
+use ultros_api_types::websocket::{ListEventData, ListingEventData};
 use ultros_api_types::world::WorldData;
 use ultros_api_types::world_helper::WorldHelper;
 use ultros_api_types::{
@@ -575,50 +575,70 @@ pub(crate) async fn get_list_with_listings(
 
 pub(crate) async fn delete_list(
     State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
     Path(list_id): Path<i32>,
     user: AuthDiscordUser,
 ) -> Result<Json<()>, ApiError> {
+    let list = db.get_list(list_id, user.id as i64).await?;
     db.delete_list(list_id, user.id as i64).await?;
+    let _ = senders
+        .lists
+        .send(EventType::removed(ListEventData::List(List::try_from(
+            list,
+        )?)));
     Ok(Json(()))
 }
 
 pub(crate) async fn create_list(
     State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
     user: AuthDiscordUser,
     Json(list): Json<CreateList>,
 ) -> Result<Json<()>, ApiError> {
     let discord_user = db.get_or_create_discord_user(user.id, user.name).await?;
-    db.create_list(discord_user, list.name, Some(list.wdr_filter.into()))
+    let list = db
+        .create_list(discord_user, list.name, Some(list.wdr_filter.into()))
         .await?;
+    let _ = senders
+        .lists
+        .send(EventType::added(ListEventData::List(List::try_from(list)?)));
     Ok(Json(()))
 }
 
 pub(crate) async fn edit_list(
     State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
     user: AuthDiscordUser,
     Json(list): Json<List>,
 ) -> Result<Json<()>, ApiError> {
-    db.update_list(list.id, user.id as i64, |ulist| {
-        ulist.datacenter_id = ActiveValue::Set(match list.wdr_filter {
-            ultros_api_types::world_helper::AnySelector::Datacenter(dc) => Some(dc),
-            _ => None,
-        });
-        ulist.region_id = ActiveValue::Set(match list.wdr_filter {
-            ultros_api_types::world_helper::AnySelector::Region(region) => Some(region),
-            _ => None,
-        });
-        ulist.world_id = ActiveValue::Set(match list.wdr_filter {
-            ultros_api_types::world_helper::AnySelector::World(world) => Some(world),
-            _ => None,
-        });
-        ulist.name = ActiveValue::Set(list.name);
-    })
-    .await?;
+    let list = db
+        .update_list(list.id, user.id as i64, |ulist| {
+            ulist.datacenter_id = ActiveValue::Set(match list.wdr_filter {
+                ultros_api_types::world_helper::AnySelector::Datacenter(dc) => Some(dc),
+                _ => None,
+            });
+            ulist.region_id = ActiveValue::Set(match list.wdr_filter {
+                ultros_api_types::world_helper::AnySelector::Region(region) => Some(region),
+                _ => None,
+            });
+            ulist.world_id = ActiveValue::Set(match list.wdr_filter {
+                ultros_api_types::world_helper::AnySelector::World(world) => Some(world),
+                _ => None,
+            });
+            ulist.name = ActiveValue::Set(list.name);
+        })
+        .await?;
+    let _ = senders
+        .lists
+        .send(EventType::updated(ListEventData::List(List::try_from(
+            list,
+        )?)));
     Ok(Json(()))
 }
 
 pub(crate) async fn post_item_to_list(
     State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
     Path(id): Path<i32>,
     user: AuthDiscordUser,
     Json(item): Json<ListItem>,
@@ -631,13 +651,18 @@ pub(crate) async fn post_item_to_list(
         acquired,
         ..
     } = item;
-    db.add_item_to_list(&list, user.id as i64, item_id, hq, quantity, acquired)
+    let item = db
+        .add_item_to_list(&list, user.id as i64, item_id, hq, quantity, acquired)
         .await?;
+    let _ = senders
+        .lists
+        .send(EventType::added(ListEventData::ListItem(item.into())));
     Ok(Json(()))
 }
 
 pub(crate) async fn post_items_to_list(
     State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
     Path(id): Path<i32>,
     user: AuthDiscordUser,
     Json(items): Json<Vec<ListItem>>,
@@ -647,38 +672,61 @@ pub(crate) async fn post_items_to_list(
     let _list = db
         .add_items_to_list(&list, user.id as i64, items.into_iter().map(|i| i.into()))
         .await?;
+    // For bulk add, we might want to send a "refresh" event or all items.
+    // Given the current structure, maybe just sending a list update is enough if we want to be simple,
+    // but the task says synchronize buying.
+    // For now, let's just trigger a refetch by sending the List update.
+    let _ = senders
+        .lists
+        .send(EventType::updated(ListEventData::List(List::try_from(
+            list,
+        )?)));
     Ok(Json(()))
 }
 
 pub(crate) async fn edit_list_item(
     State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
     user: AuthDiscordUser,
     Json(item): Json<ListItem>,
 ) -> Result<Json<()>, ApiError> {
     let item = item.into();
-    db.update_list_item(item, user.id as i64).await?;
+    let item = db.update_list_item(item, user.id as i64).await?;
+    let _ = senders
+        .lists
+        .send(EventType::updated(ListEventData::ListItem(item.into())));
     Ok(Json(()))
 }
 
 pub(crate) async fn delete_list_item(
     State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
     Path(id): Path<i32>,
     user: AuthDiscordUser,
 ) -> Result<Json<()>, ApiError> {
-    db.remove_item_from_list(user.id as i64, id).await?;
+    let item = db.remove_item_from_list(user.id as i64, id).await?;
+    let _ = senders
+        .lists
+        .send(EventType::removed(ListEventData::ListItem(item.into())));
     Ok(Json(()))
 }
 
 pub(crate) async fn delete_multiple_list_items(
     State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
     user: AuthDiscordUser,
     Json(ids): Json<Vec<i32>>,
 ) -> Result<Json<()>, ApiError> {
-    try_join_all(
+    let deleted_items = try_join_all(
         ids.into_iter()
             .map(|id| db.remove_item_from_list(user.id as i64, id)),
     )
     .await?;
+    for item in deleted_items {
+        let _ = senders
+            .lists
+            .send(EventType::removed(ListEventData::ListItem(item.into())));
+    }
     Ok(Json(()))
 }
 
@@ -832,6 +880,144 @@ async fn unclaim_character(
     Ok(Json(()))
 }
 
+#[derive(Deserialize)]
+struct CreateInvite {
+    permission: ListPermission,
+    max_uses: Option<i32>,
+}
+
+async fn create_invite(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+    Json(data): Json<CreateInvite>,
+) -> Result<Json<String>, ApiError> {
+    let invite = db
+        .create_invite(id, user.id as i64, data.permission, data.max_uses)
+        .await?;
+    Ok(Json(invite.id))
+}
+
+async fn use_invite(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<String>,
+) -> Result<Json<i32>, ApiError> {
+    let shared = db.use_invite(id, user.id as i64).await?;
+    Ok(Json(shared.list_id))
+}
+
+async fn delete_invite(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<String>,
+) -> Result<Json<()>, ApiError> {
+    db.delete_invite(id, user.id as i64).await?;
+    Ok(Json(()))
+}
+
+#[derive(Deserialize)]
+struct CreateGroup {
+    name: String,
+}
+
+async fn create_group(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Json(data): Json<CreateGroup>,
+) -> Result<Json<i32>, ApiError> {
+    let group = db.create_group(data.name, user.id as i64).await?;
+    Ok(Json(group.id))
+}
+
+async fn delete_group(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+) -> Result<Json<()>, ApiError> {
+    db.delete_group(id, user.id as i64).await?;
+    Ok(Json(()))
+}
+
+#[derive(Deserialize)]
+struct AddMember {
+    user_id: i64,
+}
+
+async fn add_group_member(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+    Json(data): Json<AddMember>,
+) -> Result<Json<()>, ApiError> {
+    db.add_group_member(id, user.id as i64, data.user_id)
+        .await?;
+    Ok(Json(()))
+}
+
+async fn remove_group_member(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path((id, user_id)): Path<(i32, i64)>,
+) -> Result<Json<()>, ApiError> {
+    db.remove_group_member(id, user.id as i64, user_id).await?;
+    Ok(Json(()))
+}
+
+#[derive(Deserialize)]
+struct ShareUser {
+    user_id: i64,
+    permission: ListPermission,
+}
+
+#[derive(Deserialize)]
+struct ShareGroup {
+    group_id: i32,
+    permission: ListPermission,
+}
+
+async fn share_list_with_user(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+    Json(data): Json<ShareUser>,
+) -> Result<Json<()>, ApiError> {
+    db.share_list_with_user(id, user.id as i64, data.user_id, data.permission)
+        .await?;
+    Ok(Json(()))
+}
+
+async fn share_list_with_group(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+    Json(data): Json<ShareGroup>,
+) -> Result<Json<()>, ApiError> {
+    db.share_list_with_group(id, user.id as i64, data.group_id, data.permission)
+        .await?;
+    Ok(Json(()))
+}
+
+async fn unshare_list_from_user(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path((id, user_id)): Path<(i32, i64)>,
+) -> Result<Json<()>, ApiError> {
+    db.unshare_list_from_user(id, user.id as i64, user_id)
+        .await?;
+    Ok(Json(()))
+}
+
+async fn unshare_list_from_group(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path((id, group_id)): Path<(i32, i32)>,
+) -> Result<Json<()>, ApiError> {
+    db.unshare_list_from_group(id, user.id as i64, group_id)
+        .await?;
+    Ok(Json(()))
+}
+
 async fn reorder_retainer(
     user: AuthDiscordUser,
     State(db): State<UltrosDb>,
@@ -929,6 +1115,26 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/list/{id}/delete", delete(delete_list))
         .route("/api/v1/list/item/{id}/delete", delete(delete_list_item))
         .route("/api/v1/list/item/delete", post(delete_multiple_list_items))
+        .route("/api/v1/group/create", post(create_group))
+        .route("/api/v1/group/{id}", delete(delete_group))
+        .route("/api/v1/group/{id}/member/add", post(add_group_member))
+        .route(
+            "/api/v1/group/{id}/member/{user_id}",
+            delete(remove_group_member),
+        )
+        .route("/api/v1/list/{id}/share/user", post(share_list_with_user))
+        .route("/api/v1/list/{id}/share/group", post(share_list_with_group))
+        .route(
+            "/api/v1/list/{id}/share/user/{user_id}",
+            delete(unshare_list_from_user),
+        )
+        .route(
+            "/api/v1/list/{id}/share/group/{group_id}",
+            delete(unshare_list_from_group),
+        )
+        .route("/api/v1/list/{id}/invite/create", post(create_invite))
+        .route("/api/v1/invite/{id}/use", post(use_invite))
+        .route("/api/v1/invite/{id}", delete(delete_invite))
         .route("/api/v1/world_data", get(world_data))
         .route("/api/v1/current_user", get(current_user))
         .route("/api/v1/user/retainer", get(user_retainers))
