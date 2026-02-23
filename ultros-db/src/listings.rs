@@ -158,6 +158,21 @@ impl UltrosDb {
     }
 
     #[instrument(skip(self))]
+    pub async fn get_listings_for_items_in_worlds(
+        &self,
+        worlds: &[i32],
+        items: &[i32],
+    ) -> Result<Vec<active_listing::Model>> {
+        // OPTIMIZATION: Fetch all listings for all items in one query
+        let listings = active_listing::Entity::find()
+            .filter(active_listing::Column::ItemId.is_in(items.to_vec()))
+            .filter(active_listing::Column::WorldId.is_in(worlds.to_vec()))
+            .all(&self.db)
+            .await?;
+        Ok(listings)
+    }
+
+    #[instrument(skip(self))]
     pub async fn get_listings_for_world(
         &self,
         world: WorldId,
