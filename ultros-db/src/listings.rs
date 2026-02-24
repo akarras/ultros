@@ -34,6 +34,8 @@ pub type ListingUpdate = (
     Vec<(ActiveListing, Retainer)>,
 );
 
+pub type ListingsWithRetainers = Vec<(active_listing::Model, Option<retainer::Model>)>;
+
 struct ListingData(active_listing::Model, retainer::Model);
 
 impl PartialOrd<ListingView> for ListingData {
@@ -147,7 +149,7 @@ impl UltrosDb {
         &self,
         worlds: &[i32],
         items: &[i32],
-    ) -> Result<HashMap<i32, Vec<(active_listing::Model, Option<retainer::Model>)>>> {
+    ) -> Result<HashMap<i32, ListingsWithRetainers>> {
         let instant = Instant::now();
         // OPTIMIZATION: Fetch all listings in one query
         let listings = active_listing::Entity::find()
@@ -164,8 +166,7 @@ impl UltrosDb {
             .map(|r| (r.id, r))
             .collect::<HashMap<_, _>>();
 
-        let mut result: HashMap<i32, Vec<(active_listing::Model, Option<retainer::Model>)>> =
-            HashMap::new();
+        let mut result: HashMap<i32, ListingsWithRetainers> = HashMap::new();
 
         for listing in listings {
             let retainer = retainers.get(&listing.retainer_id).cloned();
