@@ -190,7 +190,10 @@ where
                                 id=format!("select-item-{}", render_idx)
                                 class="w-full text-left scroll-mt-2"
                                 role="option"
-                                aria-selected=move || is_selected_selector.selected(&Some(original_idx)).to_string()
+                                aria-selected={
+                                    let is_selected_selector = is_selected_selector.clone();
+                                    move || is_selected_selector.selected(&Some(original_idx)).to_string()
+                                }
                                 on:click=move |_| {
                                     if let Some(item) = items.with(|i| i.get(original_idx).cloned()) {
                                         set_choice(Some(item));
@@ -208,16 +211,19 @@ where
                                     set_highlighted_index(render_idx);
                                 }
                             >
-                                <div class=move || {
-                                    let is_selected = is_selected_selector.selected(&Some(original_idx));
-                                    let is_highlighted = highlighted_index() == render_idx;
+                                <div class={
+                                    let is_selected_selector = is_selected_selector.clone();
+                                    move || {
+                                        let is_selected = is_selected_selector.selected(&Some(original_idx));
+                                        let is_highlighted = highlighted_index() == render_idx;
 
-                                    if is_highlighted {
-                                         "flex items-center rounded-lg p-2 transition-colors duration-200 bg-[color:color-mix(in_srgb,var(--brand-ring)_18%,transparent)] ring-1 ring-[color:var(--brand-ring)]"
-                                    } else if is_selected {
-                                        "flex items-center rounded-lg p-2 transition-colors duration-200 bg-[color:color-mix(in_srgb,var(--brand-ring)_18%,transparent)]"
-                                    } else {
-                                        "flex items-center rounded-lg p-2 transition-colors duration-200 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)]"
+                                        if is_highlighted {
+                                             "flex items-center rounded-lg p-2 transition-colors duration-200 bg-[color:color-mix(in_srgb,var(--brand-ring)_18%,transparent)] ring-1 ring-[color:var(--brand-ring)]"
+                                        } else if is_selected {
+                                            "flex items-center rounded-lg p-2 transition-colors duration-200 bg-[color:color-mix(in_srgb,var(--brand-ring)_18%,transparent)]"
+                                        } else {
+                                            "flex items-center rounded-lg p-2 transition-colors duration-200 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)]"
+                                        }
                                     }
                                 }>
                                     {move || items
