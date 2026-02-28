@@ -82,7 +82,7 @@ where
     let raf_pending = RwSignal::new(false);
     // hybrid variable-height state: per-index delta from estimated row_height and prefix sums
     let children_len = Memo::new(move |_| each.with(|children| children.len()));
-    let (height_deltas, set_height_deltas) = signal(Vec::<f64>::new());
+    let height_deltas = StoredValue::new(Vec::<f64>::new());
     let initial_len = each.with_untracked(|children| children.len());
     let fenwick = RwSignal::new(Fenwick::new(initial_len));
 
@@ -91,7 +91,7 @@ where
         let len = children_len();
         // reset measurements on length change
         let v = vec![0.0; len];
-        set_height_deltas.set(v);
+        height_deltas.set_value(v);
         fenwick.update(|f| {
             f.reset(len);
         });
@@ -294,7 +294,6 @@ where
                         key=move |(_, t): &(usize, T)| key(t)
                         children=move |(idx, child)| {
                             let row = NodeRef::<leptos::html::Div>::new();
-                            let set_height_deltas = set_height_deltas;
                             let height_deltas = height_deltas;
                             let fenwick = fenwick;
                             if variable_height {
@@ -302,16 +301,16 @@ where
                                     if let Some(el) = row.get() {
                                         let measured = el.offset_height() as f64;
                                         let delta = measured - row_height;
-                                        let mut v = height_deltas.get_untracked();
-                                        if idx < v.len() {
-                                            let old = v[idx];
-                                            if (old - delta).abs() > 0.5 {
-                                                v[idx] = delta;
-                                                set_height_deltas.set(v.clone());
-                                                // O(log n) update instead of rebuilding prefix sums
-                                                fenwick.update(|f| f.add(idx, delta - old));
+                                        height_deltas.update_value(|v| {
+                                            if idx < v.len() {
+                                                let old = v[idx];
+                                                if (old - delta).abs() > 0.5 {
+                                                    v[idx] = delta;
+                                                    // O(log n) update instead of rebuilding prefix sums
+                                                    fenwick.update(|f| f.add(idx, delta - old));
+                                                }
                                             }
-                                        }
+                                        });
                                     }
                                 });
                             }
