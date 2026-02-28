@@ -557,7 +557,13 @@ pub fn LeveAnalyzer() -> impl IntoView {
                         query_string.push_str(&format!("&{}={}", k, v));
                     }
                 }
-                nav(&query_string, NavigateOptions::default());
+                nav(
+                    &query_string,
+                    NavigateOptions {
+                        scroll: false,
+                        ..Default::default()
+                    },
+                );
             }
         }
     });
