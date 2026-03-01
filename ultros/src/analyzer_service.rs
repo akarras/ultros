@@ -834,8 +834,37 @@ impl AnalyzerService {
         let possible_sales: Vec<_> = region
             .item_map
             .iter()
+            .filter(|(_, cheapest_price)| {
+                // Pre-filter by world and datacenter before doing any lookups or calculations
+                let matches_world = resale_options
+                    .filter_world
+                    .map(|w| cheapest_price.world_id == w)
+                    .unwrap_or(true);
+
+                let matches_dc = datacenter_filters_worlds
+                    .as_ref()
+                    .map(|dc| dc.contains(&cheapest_price.world_id))
+                    .unwrap_or(true);
+
+                matches_world && matches_dc
+            })
             .flat_map(|(item_key, cheapest_price)| {
                 let (cheapest_history, sold_within) = *sale_history.get(item_key)?;
+
+                // Pre-filter by sale velocity before further lookups
+                let matches_sale = resale_options
+                    .filter_sale
+                    .as_ref()
+                    .and_then(|sold| {
+                        sold.partial_cmp(&sold_within)
+                            .map(|c| c.is_gt() || c.is_eq())
+                    })
+                    .unwrap_or(true);
+
+                if !matches_sale {
+                    return None;
+                }
+
                 let current_cheapest_on_sale_world = sale_world_listings
                     .item_map
                     .get(item_key)
@@ -843,6 +872,17 @@ impl AnalyzerService {
                     .unwrap_or(cheapest_history);
                 let est_sale_price = (cheapest_history).min(current_cheapest_on_sale_world);
                 let profit = est_sale_price - cheapest_price.price;
+
+                // Pre-filter by profit before creating the struct
+                let matches_profit = resale_options
+                    .minimum_profit
+                    .map(|m| m < profit)
+                    .unwrap_or(true);
+
+                if !matches_profit {
+                    return None;
+                }
+
                 Some(ResaleStats {
                     profit,
                     item_id: item_key.item_id,
@@ -852,34 +892,6 @@ impl AnalyzerService {
                     world_id: cheapest_price.world_id,
                     sold_within,
                 })
-            })
-            .filter(|w| {
-                resale_options
-                    .minimum_profit
-                    .map(|m| m.lt(&w.profit))
-                    .unwrap_or(true)
-            })
-            .filter(|sale| {
-                resale_options
-                    .filter_world
-                    .map(|w| sale.world_id.eq(&w))
-                    .unwrap_or(true)
-            })
-            .filter(|sale| {
-                datacenter_filters_worlds
-                    .as_ref()
-                    .map(|dc| dc.contains(&sale.world_id))
-                    .unwrap_or(true)
-            })
-            .filter(|sale| {
-                resale_options
-                    .filter_sale
-                    .as_ref()
-                    .and_then(|sold| {
-                        sold.partial_cmp(&sale.sold_within)
-                            .map(|c| c.is_gt() || c.is_eq())
-                    })
-                    .unwrap_or(true)
             })
             .collect();
 

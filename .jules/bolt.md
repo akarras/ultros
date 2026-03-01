@@ -1,0 +1,3 @@
+## 2024-05-18 - [Iterator Optimization in Analyzer Service]
+**Learning:** Found an opportunity to optimize `get_best_resale` by moving `.filter()` operations to the earliest possible point in the iterator chain. The original code was performing expensive hash map lookups (`sale_history.get` and `sale_world_listings.item_map.get`) and constructing `ResaleStats` structs for all items before filtering them out.
+**Action:** Applied predicate pushdown manually. Pre-filter by `world_id` and `datacenter` before any lookups, and pre-filter by `sale velocity` and `profit` before constructing the `ResaleStats` struct. This pattern (moving filters up) should be applied whenever dealing with large data sets in iterators.
