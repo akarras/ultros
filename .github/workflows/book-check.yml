@@ -18,8 +18,12 @@ jobs:
             - name: Install latest mdBook
               run: |
                   set -euo pipefail
-                  tag=$(curl -sSL 'https://api.github.com/repos/rust-lang/mdbook/releases/latest' | jq -r '.tag_name')
-                  url="https://github.com/rust-lang/mdbook/releases/download/${tag}/mdbook-${tag}-x86_64-unknown-linux-gnu.tar.gz"
+                  tag=$(curl -sSL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" 'https://api.github.com/repos/rust-lang/mdBook/releases/latest' | jq -r '.tag_name')
+                  if [ "$tag" = "null" ] || [ -z "$tag" ]; then
+                      echo "Failed to get mdBook release tag"
+                      exit 1
+                  fi
+                  url="https://github.com/rust-lang/mdBook/releases/download/${tag}/mdbook-${tag}-x86_64-unknown-linux-gnu.tar.gz"
                   mkdir -p "$HOME/mdbook-bin"
                   curl -sSL "$url" | tar -xz --directory="$HOME/mdbook-bin"
                   echo "$HOME/mdbook-bin" >> "$GITHUB_PATH"
