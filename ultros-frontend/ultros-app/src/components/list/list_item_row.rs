@@ -130,6 +130,7 @@ pub fn ListItemRow(
                                 <div class="flex gap-1">
                                     <button
                                         class="btn"
+                                        aria-label="Delete item"
                                         on:click=move |_| {
                                             let _ = delete_item.dispatch(item.with(|i| i.id));
                                         }
@@ -138,6 +139,7 @@ pub fn ListItemRow(
                                     </button>
                                     <button
                                         class="btn"
+                                        aria-label=move || if edit() { "Save item" } else { "Edit item" }
                                         on:click=move |_| {
                                             if temp_item() != item() {
                                                 let _ = edit_item.dispatch(temp_item());
@@ -256,6 +258,7 @@ pub fn ListItemRow(
                             <td>
                                 <button
                                     class="btn"
+                                    aria-label="Delete item"
                                     on:click=move |_| {
                                         let _ = delete_item.dispatch(item.id);
                                     }
@@ -264,6 +267,7 @@ pub fn ListItemRow(
                                 </button>
                                 <button
                                     class="btn"
+                                    aria-label=move || if edit() { "Save item" } else { "Edit item" }
                                     on:click=move |_| {
                                         if temp_item() != item {
                                             let _ = edit_item.dispatch(temp_item());
