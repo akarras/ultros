@@ -76,6 +76,7 @@ pub(crate) async fn live_sales(
                             ServerClient::SocketConnected => {
                                 log::info!("Socket connected");
                             }
+                            ServerClient::ListUpdate(_) => {}
                         }
                     }
                 }
