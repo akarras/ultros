@@ -22,8 +22,7 @@ use crate::global_state::{
 };
 use crate::{
     components::{
-        ad::Ad, apps_menu::*, language_picker::*, patreon::*, search_box::*, theme_picker::*,
-        toast::*, tooltip::*,
+        ad::Ad, apps_menu::*, patreon::*, search_box::*, theme_picker::*, toast::*, tooltip::*,
     },
     routes::{
         about::*,
@@ -53,6 +52,9 @@ use git_const::git_short_hash;
 use icondata as i;
 use leptos::html::Div;
 use leptos::prelude::*;
+
+#[derive(Copy, Clone)]
+pub struct DataRevision(pub RwSignal<usize>);
 use leptos_hotkeys::use_hotkeys;
 #[cfg(feature = "hydrate")]
 use leptos_hotkeys::{provide_hotkeys_context, scopes};
@@ -233,7 +235,6 @@ pub fn NavRow() -> impl IntoView {
                                 <div class="hidden lg:flex items-center gap-3">
                     <div class="hidden lg:block">
                         <div class="flex items-center gap-2">
-                            <LanguagePicker />
                             <QuickThemeToggle />
                         </div>
                     </div>
@@ -288,6 +289,9 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
     {
         provide_hotkeys_context(root_node_ref, false, scopes!());
     }
+
+    let data_revision = RwSignal::new(0);
+    provide_context(DataRevision(data_revision));
 
     view! {
         <Title text="Ultros" />

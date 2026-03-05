@@ -7,6 +7,7 @@ use crate::{
     },
     error::AppError,
     global_state::LocalWorldData,
+    i18n::*,
 };
 use chrono::{Duration, Utc};
 use humantime::{format_duration, parse_duration};
@@ -197,6 +198,7 @@ fn VendorResaleTable(
     _worlds: Arc<WorldHelper>,
     world: Signal<String>,
 ) -> impl IntoView {
+    let i18n = use_i18n();
     let profits = VendorProfitTable::new(sales, world_cheapest_listings);
 
     let items = &xiv_gen_db::data().items;
@@ -298,8 +300,8 @@ fn VendorResaleTable(
         <div class="flex flex-col gap-6">
             <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                 <FilterCard
-                    title="Minimum Profit"
-                    description="Set the minimum profit margin you want to see"
+                    title=t_string!(i18n, vendor_resale_minimum_profit_title)
+                    description=t_string!(i18n, vendor_resale_minimum_profit_desc)
                 >
                     <div class="flex flex-col gap-2">
                         <div class="text-brand-300">
@@ -314,7 +316,7 @@ fn VendorResaleTable(
                             min=0
                             max=100000
                             step=1000
-                            placeholder="e.g. 10000"
+                            placeholder=t_string!(i18n, vendor_resale_placeholder_10000)
                             type="number"
                             prop:value=minimum_profit
                             on:input=move |input| {
@@ -330,8 +332,8 @@ fn VendorResaleTable(
                 </FilterCard>
 
                 <FilterCard
-                    title="Item Category"
-                    description="Filter by item category"
+                    title=t_string!(i18n, vendor_resale_item_category_title)
+                    description=t_string!(i18n, vendor_resale_item_category_desc)
                 >
                     <div class="flex flex-col gap-2">
                          <select
@@ -346,7 +348,7 @@ fn VendorResaleTable(
                             }
                             prop:value=move || category_filter().map(|c| c.to_string()).unwrap_or_default()
                         >
-                            <option value="">"All Categories"</option>
+                            <option value="">{t!(i18n, vendor_resale_all_categories)}</option>
                             {
                                 let mut categories = xiv_gen_db::data().item_search_categorys
                                     .iter()
@@ -363,8 +365,8 @@ fn VendorResaleTable(
                 </FilterCard>
 
                 <FilterCard
-                    title="Minimum Sales"
-                    description="Filter by minimum number of recent sales"
+                    title=t_string!(i18n, vendor_resale_minimum_sales_title)
+                    description=t_string!(i18n, vendor_resale_minimum_sales_desc)
                 >
                     <div class="flex flex-col gap-2">
                         <div class="text-brand-300">
@@ -379,7 +381,7 @@ fn VendorResaleTable(
                             min=0
                             max=1000
                             step=1
-                            placeholder="e.g. 5"
+                            placeholder=t_string!(i18n, vendor_resale_placeholder_5)
                             type="number"
                             prop:value=minimum_sales
                             on:input=move |input| {
@@ -395,8 +397,8 @@ fn VendorResaleTable(
                 </FilterCard>
 
                 <FilterCard
-                    title="Minimum ROI"
-                    description="Set the minimum return on investment percentage"
+                    title=t_string!(i18n, vendor_resale_minimum_roi_title)
+                    description=t_string!(i18n, vendor_resale_minimum_roi_desc)
                 >
                     <div class="flex flex-col gap-2">
                         <div class="text-brand-300">
@@ -411,7 +413,7 @@ fn VendorResaleTable(
                             min=0
                             max=100000
                             step=10
-                            placeholder="e.g. 50"
+                            placeholder=t_string!(i18n, vendor_resale_placeholder_50)
                             type="number"
                             prop:value=minimum_roi
                             on:input=move |input| {
@@ -427,15 +429,15 @@ fn VendorResaleTable(
                 </FilterCard>
 
                 <FilterCard
-                    title="Sale Time Prediction"
-                    description="Filter by predicted time to next sale (e.g., 1w 30m)"
+                    title=t_string!(i18n, vendor_resale_sale_time_prediction_title)
+                    description=t_string!(i18n, vendor_resale_sale_time_prediction_desc)
                 >
                     <div class="flex flex-col gap-2">
                         <div class="text-brand-300">{predicted_time_string}</div>
                         <input
                             class="input"
-                            placeholder="e.g. 7d 12h"
-                            title="Accepts formats like 1h 30m, 7d, 1M (month), etc."
+                            placeholder=t_string!(i18n, vendor_resale_placeholder_7d_12h)
+                            title=t_string!(i18n, vendor_resale_duration_format_title)
                             prop:value=move || max_predicted_time().unwrap_or_default()
                             on:input=move |input| {
                                 let value = event_target_value(&input);
@@ -446,15 +448,15 @@ fn VendorResaleTable(
                 </FilterCard>
 
                 <FilterCard
-                    title="Tax Calculation"
-                    description="Include 5% market tax in profit calculations"
+                    title=t_string!(i18n, vendor_resale_tax_calculation_title)
+                    description=t_string!(i18n, vendor_resale_tax_calculation_desc)
                 >
                     <div class="flex items-center">
                         <Toggle
                             checked=Signal::derive(move || tax_enabled().unwrap_or(true))
                             set_checked=SignalSetter::map(move |val: bool| set_tax_enabled(Some(val)))
-                            checked_label=Oco::Borrowed("Tax enabled (5%)")
-                            unchecked_label=Oco::Borrowed("Tax disabled")
+                            checked_label=t_string!(i18n, vendor_resale_tax_enabled).to_string()
+                            unchecked_label=t_string!(i18n, vendor_resale_tax_disabled).to_string()
                         />
                     </div>
                 </FilterCard>
@@ -463,7 +465,7 @@ fn VendorResaleTable(
             // Results summary
             <div class="panel px-4 py-3 flex flex-col md:flex-row md:items-center gap-3 md:gap-0 md:justify-between">
                 <div class="text-sm text-[color:var(--color-text)]">
-                    <span class="text-brand-300 font-semibold">{move || sorted_data().len()}</span> " results"
+                    <span class="text-brand-300 font-semibold">{move || sorted_data().len()}</span> " " {t!(i18n, vendor_resale_results)}
                 </div>
                 <div class="flex flex-wrap gap-2">
                     {move || {
@@ -471,7 +473,7 @@ fn VendorResaleTable(
                         if let Some(p) = minimum_profit() {
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    "Profit ≥ " <Gil amount=p />
+                                    {t!(i18n, vendor_resale_profit_gte)} <Gil amount=p />
                                     <button class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_profit(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
@@ -486,7 +488,7 @@ fn VendorResaleTable(
                                 .unwrap_or_else(|| format!("Category {}", cat_id));
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    "Category: " {cat_name}
+                                    {t!(i18n, vendor_resale_category_colon)} {cat_name}
                                     <button class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_category_filter(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
@@ -496,7 +498,7 @@ fn VendorResaleTable(
                         if let Some(sales) = minimum_sales() {
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    "Sales ≥ " {sales}
+                                    {t!(i18n, vendor_resale_sales_gte)} {sales}
                                     <button class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_sales(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
@@ -506,7 +508,7 @@ fn VendorResaleTable(
                         if let Some(roi) = minimum_roi() {
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    "ROI ≥ " {format!("{roi}%")}
+                                    {t!(i18n, vendor_resale_roi_gte)} {format!("{roi}%")}
                                     <button class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_roi(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
@@ -516,7 +518,7 @@ fn VendorResaleTable(
                         if let Some(_ns) = max_predicted_time() {
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    "Next Sale ≤ " {predicted_time_string()}
+                                    {t!(i18n, vendor_resale_next_sale_lte)} {predicted_time_string()}
                                     <button class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_max_predicted_time(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
@@ -524,7 +526,7 @@ fn VendorResaleTable(
                             }.into_any());
                         }
                         if chips.is_empty() {
-                            Either::Left(view! { <span class="text-sm text-[color:var(--color-text-muted)]">"no active filters"</span> })
+                            Either::Left(view! { <span class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, vendor_resale_no_active_filters)}</span> })
                         } else {
                             Either::Right(view! { <>{chips}</> })
                         }
@@ -537,7 +539,7 @@ fn VendorResaleTable(
                     set_minimum_sales(None);
                     set_category_filter(None);
                 }>
-                    "Clear all"
+                    {t!(i18n, vendor_resale_clear_all)}
                 </button>
             </div>
 
@@ -552,10 +554,10 @@ fn VendorResaleTable(
                         header=view! {
                             <div class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]" role="rowgroup">
                                 <div role="columnheader" class="w-[40px] p-4 text-center">
-                                    "HQ"
+                                    {t!(i18n, vendor_resale_hq)}
                                 </div>
                                 <div role="columnheader" class="w-84 p-4">
-                                    "Item"
+                                    {t!(i18n, vendor_resale_item)}
                                 </div>
                                 <div role="columnheader" class="w-30 p-4">
                                     <QueryButton
@@ -565,7 +567,7 @@ fn VendorResaleTable(
                                         value="profit"
                                     >
                                         <div class="flex items-center gap-2">
-                                            "Profit"
+                                            {t!(i18n, vendor_resale_profit)}
                                             {move || {
                                                 (sort_mode() == Some(SortMode::Profit))
                                                     .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
@@ -582,7 +584,7 @@ fn VendorResaleTable(
                                         default=true
                                     >
                                         <div class="flex items-center gap-2">
-                                            "ROI"
+                                            {t!(i18n, vendor_resale_roi)}
                                             {move || {
                                                 (sort_mode() == Some(SortMode::Roi))
                                                     .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
@@ -591,13 +593,13 @@ fn VendorResaleTable(
                                     </QueryButton>
                                 </div>
                                 <div role="columnheader" class="w-30 p-4">
-                                    "Vendor Price"
+                                    {t!(i18n, vendor_resale_vendor_price)}
                                 </div>
                                 <div role="columnheader" class="w-30 p-4">
-                                    "Market Price"
+                                    {t!(i18n, vendor_resale_market_price)}
                                 </div>
                                 <div role="columnheader" class="w-30 p-4 hidden md:block">
-                                    "Avg Sale Time"
+                                    {t!(i18n, vendor_resale_avg_sale_time)}
                                 </div>
                             </div>
                         }.into_any()
@@ -704,6 +706,7 @@ fn VendorResaleTable(
 
 #[component]
 pub fn VendorWorldView() -> impl IntoView {
+    let i18n = use_i18n();
     let params = use_params_map();
     let world = Memo::new(move |_| params.with(|p| p.get("world").clone()).unwrap_or_default());
 
@@ -729,20 +732,17 @@ pub fn VendorWorldView() -> impl IntoView {
 
     view! {
         <div class="main-content p-2 sm:p-6">
-            <MetaTitle title=move || format!("Vendor Resale - {}", world()) />
+            <MetaTitle title=move || format!("{} - {}", t_string!(i18n, vendor_resale_title).to_string(), world()) />
             <div class="container mx-auto max-w-7xl">
                 <div class="flex flex-col gap-8">
                     // Header Section
                     <div class="panel p-4 sm:p-8 rounded-2xl">
                         <h1 class="text-3xl font-bold text-[color:var(--brand-fg)] mb-4">
-                            "Vendor Resale for " {world}
+                            {t!(i18n, vendor_resale_for)} " " {world}
                         </h1>
                         <div class="flex flex-col gap-4">
                             <MetaDescription text=move || {
-                                format!(
-                                    "Find items sold by vendors that can be resold on the {} marketboard for a profit.",
-                                    world(),
-                                )
+                                t_string!(i18n, vendor_resale_meta_desc).to_string().replace("{{world}}", &world())
                             } />
 
                             // World Navigator
@@ -754,13 +754,13 @@ pub fn VendorWorldView() -> impl IntoView {
                             <div class="flex flex-wrap gap-4">
                                 <PresetFilterButton
                                     href="?next-sale=7d&roi=100&profit=1000&sort=profit&"
-                                    label="100% ROI - 1000 gil profit"
+                                    label=t_string!(i18n, vendor_resale_preset_100_roi).to_string()
                                 />
                                 <PresetFilterButton
                                     href="?next-sale=1M&roi=500&profit=5000&"
-                                    label="500% ROI - 5000 gil profit"
+                                    label=t_string!(i18n, vendor_resale_preset_500_roi).to_string()
                                 />
-                                <PresetFilterButton href="?profit=50000" label="50K+ profit" />
+                                <PresetFilterButton href="?profit=50000" label=t_string!(i18n, vendor_resale_preset_50k_profit).to_string() />
                             </div>
                         </div>
                     </div>
@@ -791,7 +791,7 @@ pub fn VendorWorldView() -> impl IntoView {
                                             view! {
                                                 <div class="text-xl text-[color:var(--color-text)] text-center p-8
                                                 bg-brand-900/20 rounded-2xl border border-white/10">
-                                                    "Loading data..."
+                                                    {t!(i18n, vendor_resale_loading_data)}
                                                 </div>
                                             },
                                         )
@@ -807,7 +807,7 @@ pub fn VendorWorldView() -> impl IntoView {
 }
 
 #[component]
-fn PresetFilterButton(href: &'static str, label: &'static str) -> impl IntoView {
+fn PresetFilterButton(href: &'static str, label: String) -> impl IntoView {
     view! {
         <a
             href=href
@@ -820,6 +820,7 @@ fn PresetFilterButton(href: &'static str, label: &'static str) -> impl IntoView 
 
 #[component]
 fn VendorWorldNavigator() -> impl IntoView {
+    let i18n = use_i18n();
     let nav = use_navigate();
     let params = use_params_map();
     let worlds = use_context::<LocalWorldData>()
@@ -851,7 +852,7 @@ fn VendorWorldNavigator() -> impl IntoView {
 
     view! {
         <div class="flex flex-col md:flex-row items-center gap-2">
-            <label class="text-[color:var(--brand-fg)] font-semibold">"Select World:"</label>
+            <label class="text-[color:var(--brand-fg)] font-semibold">{t!(i18n, vendor_resale_select_world)}</label>
             <div class="w-full md:w-auto">
                 <WorldOnlyPicker
                     current_world=current_world.into()
@@ -864,9 +865,10 @@ fn VendorWorldNavigator() -> impl IntoView {
 
 #[component]
 pub fn VendorResale() -> impl IntoView {
+    let i18n = use_i18n();
     view! {
-        <MetaTitle title="Vendor Resale - Ultros" />
-        <MetaDescription text="Find items sold by vendors that can be resold on the marketboard for a profit." />
+        <MetaTitle title=t_string!(i18n, vendor_resale_meta_title_ultros) />
+        <MetaDescription text=t_string!(i18n, vendor_resale_meta_desc_default) />
 
         <div class="main-content p-2 sm:p-6">
             <div class="container mx-auto max-w-7xl">
@@ -874,20 +876,19 @@ pub fn VendorResale() -> impl IntoView {
                     // Hero Section
                     <div class="panel p-4 sm:p-8 rounded-2xl">
                         <h1 class="text-3xl font-bold text-[color:var(--brand-fg)] mb-4">
-                            "Vendor Resale Tool"
+                            {t!(i18n, vendor_resale_tool_title)}
                         </h1>
                         <p class="text-xl text-[color:var(--color-text)] leading-relaxed mb-6">
-                            "This tool helps you find items that are sold by NPCs (vendors) for less than they are currently selling for on the market board.
-                             Buy low from vendors, sell high to players!"
+                            {t!(i18n, vendor_resale_tool_desc)}
                         </p>
                         <p class="text-lg text-[color:var(--color-text)]/90 mb-8">
-                            "Select your world below to see profitable vendor resale opportunities."
+                            {t!(i18n, vendor_resale_tool_select_world)}
                         </p>
 
                         // World Selection
                         <div class="panel p-6 rounded-xl">
                             <h2 class="text-xl font-semibold text-[color:var(--brand-fg)] mb-4">
-                                "Choose a world to get started:"
+                                {t!(i18n, vendor_resale_choose_world)}
                             </h2>
                             <VendorWorldNavigator />
                         </div>
@@ -902,9 +903,9 @@ pub fn VendorResale() -> impl IntoView {
                                 height="2.5em"
                                 icon=i::FaMoneyBillTrendUpSolid
                             />
-                            <h3 class="text-xl font-bold text-brand-300 mb-2">"Arbitrage"</h3>
+                            <h3 class="text-xl font-bold text-brand-300 mb-2">{t!(i18n, vendor_resale_arbitrage)}</h3>
                             <p class="text-gray-300">
-                                "Profit from price differences between NPC vendors and the market board."
+                                {t!(i18n, vendor_resale_arbitrage_desc)}
                             </p>
                         </div>
 
@@ -915,9 +916,9 @@ pub fn VendorResale() -> impl IntoView {
                                 height="2.5em"
                                 icon=i::FaShopSolid
                             />
-                            <h3 class="text-xl font-bold text-brand-300 mb-2">"Vendor Data"</h3>
+                            <h3 class="text-xl font-bold text-brand-300 mb-2">{t!(i18n, vendor_resale_vendor_data)}</h3>
                             <p class="text-gray-300">
-                                "Automatically identifies items sold by vendors."
+                                {t!(i18n, vendor_resale_vendor_data_desc)}
                             </p>
                         </div>
 
@@ -928,9 +929,9 @@ pub fn VendorResale() -> impl IntoView {
                                 height="2.5em"
                                 icon=i::FaFilterSolid
                             />
-                            <h3 class="text-xl font-bold text-brand-300 mb-2">"Filters"</h3>
+                            <h3 class="text-xl font-bold text-brand-300 mb-2">{t!(i18n, vendor_resale_filters)}</h3>
                             <p class="text-gray-300">
-                                "Filter by profit, ROI, and sales velocity to find safe bets."
+                                {t!(i18n, vendor_resale_filters_desc)}
                             </p>
                         </div>
                     </div>

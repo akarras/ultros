@@ -1061,6 +1061,9 @@ async fn get_bincode(
         "ja" => xiv_gen::Language::Ja,
         "de" => xiv_gen::Language::De,
         "fr" => xiv_gen::Language::Fr,
+        "cn" => xiv_gen::Language::Cn,
+        "ko" => xiv_gen::Language::Ko,
+        "tc" => xiv_gen::Language::Tc,
         _ => return Err(anyhow::anyhow!("Unsupported language").into()),
     };
     Ok(xiv_gen_db::bincode(lang))

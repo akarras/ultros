@@ -1,4 +1,5 @@
 use crate::components::meta::{MetaDescription, MetaTitle};
+use crate::i18n::*;
 use crate::{
     analysis::{SalesStats, analyze_sales},
     api::{get_cheapest_listings, get_recent_sales_for_world},
@@ -71,6 +72,7 @@ fn VentureAnalyzerTable(
     recent_sales: Option<RecentSales>,
     world: Signal<String>,
 ) -> impl IntoView {
+    let i18n = use_i18n();
     let prices = CheapestListingsMap::from(global_cheapest_listings);
     let data = xiv_gen_db::data();
     let items = &data.items;
@@ -248,7 +250,7 @@ fn VentureAnalyzerTable(
         <div class="flex flex-col gap-6">
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 <div class="panel p-6 flex flex-col w-full bg-[color:var(--color-background-elevated)] bg-opacity-100 z-20">
-                    <h3 class="font-bold text-xl mb-2 text-[color:var(--brand-fg)]">"Filter by Job"</h3>
+                    <h3 class="font-bold text-xl mb-2 text-[color:var(--brand-fg)]">{t!(i18n, venture_analyzer_filter_by_job)}</h3>
                     <div class="flex flex-wrap gap-2">
                         {move || {
                             let selected = selected_jobs_set.get();
@@ -279,8 +281,8 @@ fn VentureAnalyzerTable(
                     </div>
                 </div>
                 <div class="panel p-6 flex flex-col w-full bg-[color:var(--color-background-elevated)] bg-opacity-100 z-20">
-                    <h3 class="font-bold text-xl mb-2 text-[color:var(--brand-fg)]">"Minimum Profit"</h3>
-                    <p class="mb-4 text-[color:var(--color-text-muted)]">"Set the minimum profit margin"</p>
+                    <h3 class="font-bold text-xl mb-2 text-[color:var(--brand-fg)]">{t!(i18n, venture_analyzer_minimum_profit)}</h3>
+                    <p class="mb-4 text-[color:var(--color-text-muted)]">{t!(i18n, venture_analyzer_minimum_profit_desc)}</p>
                     <div class="flex flex-col gap-2">
                         <div class="text-brand-300">
                             {move || {
@@ -308,7 +310,7 @@ fn VentureAnalyzerTable(
                 </div>
 
                 <div class="panel p-6 flex flex-col w-full bg-[color:var(--color-background-elevated)] bg-opacity-100 z-20">
-                    <h3 class="font-bold text-xl mb-2 text-[color:var(--brand-fg)]">"Options"</h3>
+                    <h3 class="font-bold text-xl mb-2 text-[color:var(--brand-fg)]">{t!(i18n, venture_analyzer_options)}</h3>
                     <div class="flex flex-row gap-4 flex-wrap">
                         <input
                             type="checkbox"
@@ -317,8 +319,8 @@ fn VentureAnalyzerTable(
                             prop:checked=move || filter_outliers().unwrap_or(false)
                             on:change=move |ev| set_filter_outliers(Some(event_target_checked(&ev)))
                         />
-                        <label for="filter-outliers">"Filter Outliers"</label>
-                        <div class="text-brand-300 cursor-help" title="If enabled, sales outliers will be removed from the average price calculation using the Interquartile Range (IQR) method.">
+                        <label for="filter-outliers">{t!(i18n, venture_analyzer_filter_outliers)}</label>
+                        <div class="text-brand-300 cursor-help" title=move || t_string!(i18n, venture_analyzer_filter_outliers_tooltip).to_string()>
                             <Icon icon=i::AiQuestionCircleOutlined />
                         </div>
                     </div>
@@ -334,7 +336,7 @@ fn VentureAnalyzerTable(
                     variable_height=false
                     header=view! {
                         <div class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]" role="rowgroup">
-                             <div role="columnheader" class="w-84 p-4">"Venture / Item"</div>
+                             <div role="columnheader" class="w-84 p-4">{t!(i18n, venture_analyzer_col_venture_item)}</div>
                              <div role="columnheader" class="w-30 p-4">
                                 <QueryButton
                                     class="!text-brand-300 hover:text-brand-200"
@@ -342,12 +344,12 @@ fn VentureAnalyzerTable(
                                     key="sort"
                                     value="profit"
                                 >
-                                    "Profit"
+                                    {t!(i18n, venture_analyzer_col_profit)}
                                 </QueryButton>
                              </div>
-                             <div role="columnheader" class="w-30 p-4">"Unit Price"</div>
-                             <div role="columnheader" class="w-30 p-4 hidden md:block">"Avg Price"</div>
-                             <div role="columnheader" class="w-30 p-4 hidden md:block">"Daily Sales"</div>
+                             <div role="columnheader" class="w-30 p-4">{t!(i18n, venture_analyzer_col_unit_price)}</div>
+                             <div role="columnheader" class="w-30 p-4 hidden md:block">{t!(i18n, venture_analyzer_col_avg_price)}</div>
+                             <div role="columnheader" class="w-30 p-4 hidden md:block">{t!(i18n, venture_analyzer_col_daily_sales)}</div>
                              <div role="columnheader" class="w-30 p-4 hidden md:block">
                                 <QueryButton
                                     class="!text-brand-300 hover:text-brand-200"
@@ -355,7 +357,7 @@ fn VentureAnalyzerTable(
                                     key="sort"
                                     value="level"
                                 >
-                                    "Level"
+                                    {t!(i18n, venture_analyzer_col_level)}
                                 </QueryButton>
                              </div>
                         </div>
@@ -364,7 +366,7 @@ fn VentureAnalyzerTable(
                     key=move |(index, data): &(usize, Arc<VentureProfitData>)| (*index, data.item_id)
                     view=move |(index, data): (usize, Arc<VentureProfitData>)| {
                         let item_id = data.item_id;
-                        let item = items.get(&xiv_gen::ItemId(item_id)).map(|i| i.name.as_str()).unwrap_or("Unknown");
+                        let item = items.get(&xiv_gen::ItemId(item_id)).map(|i| i.name.as_str().to_string()).unwrap_or_else(|| t_string!(i18n, venture_analyzer_unknown_item).to_string());
 
                         let classes = if (index % 2) == 0 {
                             "flex flex-row items-center flex-nowrap h-15 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_6%,transparent)] transition-colors"
@@ -385,7 +387,7 @@ fn VentureAnalyzerTable(
                                         <div class="flex flex-col truncate">
                                             <span class="font-semibold">{item}</span>
                                             <span class="text-xs text-[color:var(--color-text-muted)] truncate">
-                                                "x" {data.quantity}
+                                                {t!(i18n, venture_analyzer_quantity_x)} " " {data.quantity}
                                             </span>
                                         </div>
                                     </a>
@@ -401,12 +403,12 @@ fn VentureAnalyzerTable(
                                 </div>
                                 <div role="cell" class="px-4 py-2 w-30 text-right hidden md:block">
                                     <span class="text-xs text-[color:var(--color-text-muted)]">
-                                        {format!("{:.1} / day", data.daily_sales)}
+                                        {t!(i18n, venture_analyzer_sales_per_day, sales = format!("{:.1}", data.daily_sales))}
                                     </span>
                                 </div>
                                 <div role="cell" class="px-4 py-2 w-30 text-right hidden md:block">
                                     <span class="text-xs text-[color:var(--color-text-muted)]">
-                                        "Lv " {data.task_level}
+                                        {t!(i18n, venture_analyzer_lv)} " " {data.task_level}
                                     </span>
                                 </div>
                             </div>
@@ -420,6 +422,7 @@ fn VentureAnalyzerTable(
 
 #[component]
 pub fn VentureAnalyzer() -> impl IntoView {
+    let i18n = use_i18n();
     let query = use_query_map();
     let (home_world, _) = use_home_world();
     let nav = use_navigate();
@@ -505,26 +508,26 @@ pub fn VentureAnalyzer() -> impl IntoView {
     let recent_sales_clone = recent_sales.clone();
     view! {
         <div class="flex flex-col gap-4 h-full">
-            <MetaTitle title="Venture Analyzer - Ultros" />
-            <MetaDescription text="Analyze Retainer Ventures for profitability" />
+            <MetaTitle title=move || t_string!(i18n, venture_analyzer_meta_title).to_string() />
+            <MetaDescription text=move || t_string!(i18n, venture_analyzer_meta_desc).to_string() />
 
             <div class="flex flex-col gap-4 p-4 bg-brand-900/50 rounded-lg border border-brand-800">
                 <div class="flex flex-row justify-between items-center">
-                    <h1 class="text-2xl font-bold text-brand-100">"Venture Analyzer"</h1>
+                    <h1 class="text-2xl font-bold text-brand-100">{t!(i18n, venture_analyzer_title)}</h1>
                     <div class="flex flex-row gap-2 items-center">
-                        <Suspense fallback=|| view! { <div class="text-brand-300 text-sm animate-pulse">"Loading sales data..."</div> }>
+                        <Suspense fallback=move || view! { <div class="text-brand-300 text-sm animate-pulse">{t!(i18n, venture_analyzer_loading_sales)}</div> }>
                             {move || {
                                 recent_sales_clone
                                     .get()
                                     .and_then(|r| r.err())
-                                    .map(|_| view! { <div class="text-red-400 text-sm">"Error loading sales data"</div> })
+                                    .map(|_| view! { <div class="text-red-400 text-sm">{t!(i18n, venture_analyzer_error_sales)}</div> })
                             }}
                         </Suspense>
                     </div>
                 </div>
 
                 <div class="flex flex-col md:flex-row items-center gap-2">
-                    <label class="text-[color:var(--brand-fg)] font-semibold">"Select World for Prices:"</label>
+                    <label class="text-[color:var(--brand-fg)] font-semibold">{t!(i18n, venture_analyzer_select_world)}</label>
                     <div class="w-full md:w-auto">
                         <WorldOnlyPicker
                             current_world=selected_world.into()
@@ -559,7 +562,7 @@ pub fn VentureAnalyzer() -> impl IntoView {
                             (Some(Err(e)), _) => {
                                 view! {
                                     <div class="text-red-400">
-                                        "Error loading listings: " {e.to_string()}
+                                        {t!(i18n, venture_analyzer_error_listings)} {e.to_string()}
                                     </div>
                                 }.into_any()
                             }

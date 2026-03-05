@@ -1,3 +1,4 @@
+use crate::i18n::*;
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
@@ -242,7 +243,7 @@ impl ProfitTable {
 }
 
 #[component]
-fn PresetFilterButton(href: &'static str, label: &'static str) -> impl IntoView {
+fn PresetFilterButton(href: &'static str, #[prop(into)] label: String) -> impl IntoView {
     view! {
         <a
             href=href
@@ -263,6 +264,7 @@ fn AnalyzerTable(
     world: Signal<String>,
     filter_outliers: bool,
 ) -> impl IntoView {
+    let i18n = use_i18n();
     let profits = ProfitTable::new(
         sales,
         global_cheapest_listings,
@@ -410,8 +412,8 @@ fn AnalyzerTable(
         <div class="flex flex-col gap-6">
             <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                 <FilterCard
-                    title="Minimum Profit"
-                    description="Set the minimum profit margin you want to see"
+                    title=t_string!(i18n, analyzer_minimum_profit).to_string()
+                    description=t_string!(i18n, analyzer_minimum_profit_desc).to_string()
                 >
                     <div class="flex flex-col gap-2">
                         <div class="text-brand-300">
@@ -442,8 +444,8 @@ fn AnalyzerTable(
                 </FilterCard>
 
                 <FilterCard
-                    title="Profit / Day"
-                    description="Set the minimum profit per day (Profit / Sale Duration)"
+                    title=t_string!(i18n, analyzer_profit_per_day).to_string()
+                    description=t_string!(i18n, analyzer_profit_per_day_desc).to_string()
                 >
                     <div class="flex flex-col gap-2">
                         <div class="text-brand-300">
@@ -474,8 +476,8 @@ fn AnalyzerTable(
                 </FilterCard>
 
                 <FilterCard
-                    title="Item Category"
-                    description="Filter by item category"
+                    title=t_string!(i18n, analyzer_item_category).to_string()
+                    description=t_string!(i18n, analyzer_item_category_desc).to_string()
                 >
                     <div class="flex flex-col gap-2">
                          <select
@@ -490,7 +492,7 @@ fn AnalyzerTable(
                             }
                             prop:value=move || category_filter().map(|c| c.to_string()).unwrap_or_default()
                         >
-                            <option value="">"All Categories"</option>
+                            <option value="">{t!(i18n, analyzer_all_categories)}</option>
                             {
                                 let mut categories = xiv_gen_db::data().item_search_categorys
                                     .iter()
@@ -507,8 +509,8 @@ fn AnalyzerTable(
                 </FilterCard>
 
                 <FilterCard
-                    title="Minimum Sales"
-                    description="Filter by minimum number of recent sales"
+                    title=t_string!(i18n, analyzer_minimum_sales).to_string()
+                    description=t_string!(i18n, analyzer_minimum_sales_desc).to_string()
                 >
                     <div class="flex flex-col gap-2">
                         <div class="text-brand-300">
@@ -539,8 +541,8 @@ fn AnalyzerTable(
                 </FilterCard>
 
                 <FilterCard
-                    title="Minimum ROI"
-                    description="Set the minimum return on investment percentage"
+                    title=t_string!(i18n, analyzer_minimum_roi).to_string()
+                    description=t_string!(i18n, analyzer_minimum_roi_desc).to_string()
                 >
                     <div class="flex flex-col gap-2">
                         <div class="text-brand-300">
@@ -571,8 +573,8 @@ fn AnalyzerTable(
                 </FilterCard>
 
                 <FilterCard
-                    title="Sale Time Prediction"
-                    description="Filter by predicted time to next sale (e.g., 1w 30m)"
+                    title=t_string!(i18n, analyzer_sale_time_prediction).to_string()
+                    description=t_string!(i18n, analyzer_sale_time_prediction_desc).to_string()
                 >
                     <div class="flex flex-col gap-2">
                         <div class="text-brand-300">{predicted_time_string}</div>
@@ -590,15 +592,15 @@ fn AnalyzerTable(
                 </FilterCard>
 
                 <FilterCard
-                    title="Tax Calculation"
-                    description="Include 5% market tax in profit calculations"
+                    title=t_string!(i18n, analyzer_tax_calculation).to_string()
+                    description=t_string!(i18n, analyzer_tax_calculation_desc).to_string()
                 >
                     <div class="flex items-center">
                         <Toggle
                             checked=Signal::derive(move || tax_enabled().unwrap_or(true))
                             set_checked=SignalSetter::map(move |val: bool| set_tax_enabled(val.then_some(true)))
-                            checked_label=Oco::Borrowed("Tax enabled (5%)")
-                            unchecked_label=Oco::Borrowed("Tax disabled")
+                            checked_label=Oco::Owned(t_string!(i18n, analyzer_tax_enabled).to_string())
+                            unchecked_label=Oco::Owned(t_string!(i18n, analyzer_tax_disabled).to_string())
                         />
                     </div>
                 </FilterCard>
@@ -607,7 +609,7 @@ fn AnalyzerTable(
             // Results summary
             <div class="panel px-4 py-3 flex flex-col md:flex-row md:items-center gap-3 md:gap-0 md:justify-between">
                 <div class="text-sm text-[color:var(--color-text)]">
-                    <span class="text-brand-300 font-semibold">{move || sorted_data().len()}</span> " results"
+                    <span class="text-brand-300 font-semibold">{move || sorted_data().len()}</span> {t!(i18n, analyzer_results)}
                 </div>
                 <div class="flex flex-wrap gap-2">
                     {move || {
@@ -615,7 +617,7 @@ fn AnalyzerTable(
                         if let Some(p) = minimum_profit() {
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    "Profit ≥ " <Gil amount=p />
+                                    {t!(i18n, analyzer_profit_gte)} <Gil amount=p />
                                     <button class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_profit(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
@@ -625,7 +627,7 @@ fn AnalyzerTable(
                         if let Some(p) = minimum_profit_per_day() {
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    "Profit/Day ≥ " <Gil amount=p />
+                                    {t!(i18n, analyzer_profit_per_day_gte)} <Gil amount=p />
                                     <button class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_profit_per_day(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
@@ -640,7 +642,7 @@ fn AnalyzerTable(
                                 .unwrap_or_else(|| format!("Category {}", cat_id));
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    "Category: " {cat_name}
+                                    {t!(i18n, analyzer_category_label)} {cat_name}
                                     <button class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_category_filter(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
@@ -650,7 +652,7 @@ fn AnalyzerTable(
                         if let Some(sales) = minimum_sales() {
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    "Sales ≥ " {sales}
+                                    {t!(i18n, analyzer_sales_gte)} {sales}
                                     <button class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_sales(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
@@ -660,7 +662,7 @@ fn AnalyzerTable(
                         if let Some(roi) = minimum_roi() {
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    "ROI ≥ " {format!("{roi}%")}
+                                    {t!(i18n, analyzer_roi_gte)} {format!("{roi}%")}
                                     <button class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_roi(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
@@ -670,7 +672,7 @@ fn AnalyzerTable(
                         if let Some(_ns) = max_predicted_time() {
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    "Next Sale ≤ " {predicted_time_string()}
+                                    {t!(i18n, analyzer_next_sale_lte)} {predicted_time_string()}
                                     <button class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_max_predicted_time(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
@@ -680,7 +682,7 @@ fn AnalyzerTable(
                         if let Some(w) = world_filter() {
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    "World: " {w.clone()}
+                                    {t!(i18n, analyzer_world_label)} {w.clone()}
                                     <button class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_world_filter(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
@@ -690,7 +692,7 @@ fn AnalyzerTable(
                         if let Some(dc) = datacenter_filter() {
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    "Datacenter: " {dc.clone()}
+                                    {t!(i18n, analyzer_datacenter_label)} {dc.clone()}
                                     <button class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_datacenter_filter(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
@@ -698,7 +700,7 @@ fn AnalyzerTable(
                             }.into_any());
                         }
                         if chips.is_empty() {
-                            Either::Left(view! { <span class="text-sm text-[color:var(--color-text-muted)]">"no active filters"</span> })
+                            Either::Left(view! { <span class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, analyzer_no_active_filters)}</span> })
                         } else {
                             Either::Right(view! { <>{chips}</> })
                         }
@@ -714,7 +716,7 @@ fn AnalyzerTable(
                     set_minimum_sales(None);
                     set_category_filter(None);
                 }>
-                    "Clear all"
+                    {t!(i18n, analyzer_clear_all)}
                 </button>
             </div>
 
@@ -729,10 +731,10 @@ fn AnalyzerTable(
                         header=view! {
                             <div class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]" role="rowgroup">
                                 <div role="columnheader" class="w-[40px] p-4 text-center">
-                                    "HQ"
+                                    {t!(i18n, analyzer_col_hq)}
                                 </div>
                                 <div role="columnheader" class="w-84 p-4">
-                                    "Item"
+                                    {t!(i18n, analyzer_col_item)}
                                 </div>
                                 <div role="columnheader" class="w-30 p-4">
                                     <QueryButton
@@ -742,7 +744,7 @@ fn AnalyzerTable(
                                         value="profit"
                                     >
                                         <div class="flex items-center gap-2">
-                                            "Profit"
+                                            {t!(i18n, analyzer_col_profit)}
                                             {move || {
                                                 (sort_mode() == Some(SortMode::Profit))
                                                     .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
@@ -758,7 +760,7 @@ fn AnalyzerTable(
                                         value="profit-per-day"
                                     >
                                         <div class="flex items-center gap-2">
-                                            "Profit/Day"
+                                            {t!(i18n, analyzer_col_profit_per_day)}
                                             {move || {
                                                 (sort_mode() == Some(SortMode::ProfitPerDay))
                                                     .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
@@ -775,7 +777,7 @@ fn AnalyzerTable(
                                         default=true
                                     >
                                         <div class="flex items-center gap-2">
-                                            "ROI"
+                                            {t!(i18n, analyzer_col_roi)}
                                             {move || {
                                                 (sort_mode() == Some(SortMode::Roi))
                                                     .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
@@ -784,10 +786,10 @@ fn AnalyzerTable(
                                     </QueryButton>
                                 </div>
                                 <div role="columnheader" class="w-30 p-4">
-                                    "Buy Price"
+                                    {t!(i18n, analyzer_col_buy_price)}
                                 </div>
                                 <div role="columnheader" class="w-30 p-4 flex flex-row gap-2 hidden lg:flex">
-                                    "World"
+                                    {t!(i18n, analyzer_col_world)}
                                     <div>
                                         {move || {
                                             world_filter()
@@ -807,7 +809,7 @@ fn AnalyzerTable(
                                     </div>
                                 </div>
                                 <div role="columnheader" class="w-30 p-4 flex flex-row gap-2 hidden xl:flex">
-                                    "Datacenter"
+                                    {t!(i18n, analyzer_col_datacenter)}
                                     <div>
                                         {move || {
                                             datacenter_filter()
@@ -827,7 +829,7 @@ fn AnalyzerTable(
                                     </div>
                                 </div>
                                 <div role="columnheader" class="w-30 p-4 hidden md:block">
-                                    "Avg Sale Time"
+                                    {t!(i18n, analyzer_col_avg_sale_time)}
                                 </div>
                             </div>
                         }.into_any()
@@ -873,7 +875,7 @@ fn AnalyzerTable(
                                 <div class=classes role="row-group">
                                     <div role="cell" class="px-2 py-2 w-[40px] flex items-center justify-center">
                                         {if data.inner.sale_summary.hq {
-                                            Some(view! { <span class="px-2 py-0.5 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)]">"HQ"</span> })
+                                            Some(view! { <span class="px-2 py-0.5 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)]">{t!(i18n, analyzer_col_hq)}</span> })
                                         } else {
                                             None
                                         }}
@@ -926,7 +928,7 @@ fn AnalyzerTable(
                                     </div>
                                     <div role="cell" class="px-4 py-2 w-30 hidden lg:block flex items-center">
                                         <Tooltip tooltip_text=Signal::derive(move || {
-                                            format!("Only show {}", world())
+                                            t_string!(i18n, analyzer_only_show_world).to_string().replace("{{world}}", &world())
                                         })>
                                             <QueryButton
                                                 key="world"
@@ -941,7 +943,7 @@ fn AnalyzerTable(
                                     </div>
                                     <div role="cell" class="px-4 py-2 w-30 hidden xl:block flex items-center">
                                         <Tooltip tooltip_text=Signal::derive(move || {
-                                            format!("Only show {}", datacenter())
+                                            t_string!(i18n, analyzer_only_show_world).to_string().replace("{{world}}", &datacenter())
                                         })>
                                             <QueryButton
                                                 key="datacenter"
@@ -986,6 +988,7 @@ fn AnalyzerTable(
 
 #[component]
 pub fn AnalyzerWorldView() -> impl IntoView {
+    let i18n = use_i18n();
     let params = use_params_map();
     let world = Memo::new(move |_| params.with(|p| p.get("world").clone()).unwrap_or_default());
     let sales = ArcResource::new(
@@ -1061,20 +1064,17 @@ pub fn AnalyzerWorldView() -> impl IntoView {
 
     view! {
         <div class="main-content p-2 sm:p-6">
-            <MetaTitle title=move || format!("Flip Finder - {}", world()) />
+            <MetaTitle title=move || t_string!(i18n, analyzer_meta_title).to_string().replace("{{world}}", &world()) />
             <div class="container mx-auto max-w-7xl">
                 <div class="flex flex-col gap-8">
                     // Header Section
                     <div class="panel p-4 sm:p-8 rounded-2xl">
                         <h1 class="text-3xl font-bold text-[color:var(--brand-fg)] mb-4">
-                            "Flip Finder for " {world}
+                            {t!(i18n, analyzer_title_for)} {world}
                         </h1>
                         <div class="flex flex-col gap-4">
                             <MetaDescription text=move || {
-                                format!(
-                                    "The analyzer enables FFXIV merchants to find the best items to buy on other worlds and sell on {}. Filter for the best profits or return, make gil through market arbitrage.",
-                                    world(),
-                                )
+                                t_string!(i18n, analyzer_meta_desc).to_string().replace("{{world}}", &world())
                             } />
 
                             // World Navigator
@@ -1088,8 +1088,8 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                         set_checked=SignalSetter::map(move |val: bool| set_cross_region_enabled(
                                             val.then_some(true),
                                         ))
-                                        checked_label=Oco::Borrowed("Cross region enabled")
-                                        unchecked_label=Oco::Borrowed("Cross region disabled")
+                                        checked_label=Oco::Owned(t_string!(i18n, analyzer_cross_region_enabled).to_string())
+                                        unchecked_label=Oco::Owned(t_string!(i18n, analyzer_cross_region_disabled).to_string())
                                     />
                                     <Toggle
                                         checked=Signal::derive(move || {
@@ -1098,8 +1098,8 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                         set_checked=SignalSetter::map(move |val: bool| set_filter_outliers(
                                             val.then_some(true),
                                         ))
-                                        checked_label=Oco::Borrowed("Filter outliers enabled")
-                                        unchecked_label=Oco::Borrowed("Filter outliers disabled")
+                                        checked_label=Oco::Owned(t_string!(i18n, analyzer_filter_outliers_enabled).to_string())
+                                        unchecked_label=Oco::Owned(t_string!(i18n, analyzer_filter_outliers_disabled).to_string())
                                     />
 
                                     <div
@@ -1124,8 +1124,8 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                                                     set_checked=SignalSetter::map(move |checked: bool| {
                                                                         set_enabled(Some(checked));
                                                                     })
-                                                                    checked_label=format!("{} enabled", region)
-                                                                    unchecked_label=format!("{} disabled", region)
+                                                                    checked_label=t_string!(i18n, analyzer_region_enabled).to_string().replace("{{region}}", region)
+                                                                    unchecked_label=t_string!(i18n, analyzer_region_disabled).to_string().replace("{{region}}", region)
                                                                 />
                                                             }
                                                         })
@@ -1141,13 +1141,13 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                             <div class="flex flex-wrap gap-4">
                                 <PresetFilterButton
                                     href="?next-sale=7d&roi=300&profit=0&sort=profit&"
-                                    label="300% return - 7 days"
+                                    label=t_string!(i18n, analyzer_preset_300_return).to_string()
                                 />
                                 <PresetFilterButton
                                     href="?next-sale=1M&roi=500&profit=200000&"
-                                    label="500% return - 200K min profit - 1 month"
+                                    label=t_string!(i18n, analyzer_preset_500_return).to_string()
                                 />
-                                <PresetFilterButton href="?profit=100000" label="100K profit" />
+                                <PresetFilterButton href="?profit=100000" label=t_string!(i18n, analyzer_preset_100k_profit).to_string() />
                             </div>
                         </div>
                     </div>
@@ -1189,7 +1189,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                             view! {
                                                 <div class="text-xl text-[color:var(--color-text)] text-center p-8
                                                 bg-brand-900/20 rounded-2xl border border-white/10">
-                                                    "Failed to load analyzer - try again in 30 seconds"
+                                                    {t!(i18n, analyzer_failed_to_load)}
                                                 </div>
                                             },
                                         )
@@ -1206,6 +1206,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
 
 #[component]
 fn AnalyzerWorldNavigator() -> impl IntoView {
+    let i18n = use_i18n();
     let nav = use_navigate();
     let params = use_params_map();
     let worlds = use_context::<LocalWorldData>()
@@ -1237,7 +1238,7 @@ fn AnalyzerWorldNavigator() -> impl IntoView {
 
     view! {
         <div class="flex flex-col md:flex-row items-center gap-2">
-            <label class="text-[color:var(--brand-fg)] font-semibold">"Select World:"</label>
+            <label class="text-[color:var(--brand-fg)] font-semibold">{t!(i18n, analyzer_select_world)}</label>
             <div class="w-full md:w-auto">
                 <WorldOnlyPicker
                     current_world=current_world.into()
@@ -1250,9 +1251,10 @@ fn AnalyzerWorldNavigator() -> impl IntoView {
 
 #[component]
 pub fn Analyzer() -> impl IntoView {
+    let i18n = use_i18n();
     view! {
-        <MetaTitle title="Flip Finder - Ultros" />
-        <MetaDescription text="Find items on the Final Fantasy 14 marketboard that are great for resale. Used to earn gil quickly." />
+        <MetaTitle title=t_string!(i18n, analyzer_index_meta_title).to_string() />
+        <MetaDescription text=t_string!(i18n, analyzer_index_meta_desc).to_string() />
 
         <div class="main-content p-2 sm:p-6">
             <div class="container mx-auto max-w-7xl">
@@ -1260,21 +1262,19 @@ pub fn Analyzer() -> impl IntoView {
                     // Hero Section
                     <div class="panel p-4 sm:p-8 rounded-2xl">
                         <h1 class="text-3xl font-bold text-[color:var(--brand-fg)] mb-4">
-                            "Flip Finder"
+                            {t!(i18n, analyzer_index_title)}
                         </h1>
                         <p class="text-xl text-[color:var(--color-text)] leading-relaxed mb-6">
-                            "The analyzer helps find items on the Final Fantasy 14 marketboard that are
-                             cheaper on other worlds that sell for more on your world, enabling you to
-                             earn gil through market arbitrage."
+                            {t!(i18n, analyzer_index_desc_1)}
                         </p>
                         <p class="text-lg text-[color:var(--color-text)]/90 mb-8">
-                            "Adjust parameters to find items that sell well and maximize your profits."
+                            {t!(i18n, analyzer_index_desc_2)}
                         </p>
 
                         // World Selection
                         <div class="panel p-6 rounded-xl">
                             <h2 class="text-xl font-semibold text-[color:var(--brand-fg)] mb-4">
-                                "Choose a world to get started:"
+                                {t!(i18n, analyzer_index_choose_world)}
                             </h2>
                             <AnalyzerWorldNavigator />
                         </div>
@@ -1289,9 +1289,9 @@ pub fn Analyzer() -> impl IntoView {
                                 height="2.5em"
                                 icon=i::FaMoneyBillTrendUpSolid
                             />
-                            <h3 class="text-xl font-bold text-brand-300 mb-2">"Profit Tracking"</h3>
+                            <h3 class="text-xl font-bold text-brand-300 mb-2">{t!(i18n, analyzer_feature_profit_tracking)}</h3>
                             <p class="text-gray-300">
-                                "Monitor profit margins and ROI across different worlds"
+                                {t!(i18n, analyzer_feature_profit_tracking_desc)}
                             </p>
                         </div>
 
@@ -1302,9 +1302,9 @@ pub fn Analyzer() -> impl IntoView {
                                 height="2.5em"
                                 icon=i::FaChartLineSolid
                             />
-                            <h3 class="text-xl font-bold text-brand-300 mb-2">"Market Analysis"</h3>
+                            <h3 class="text-xl font-bold text-brand-300 mb-2">{t!(i18n, analyzer_feature_market_analysis)}</h3>
                             <p class="text-gray-300">
-                                "Track market trends and identify profitable opportunities"
+                                {t!(i18n, analyzer_feature_market_analysis_desc)}
                             </p>
                         </div>
 
@@ -1315,26 +1315,26 @@ pub fn Analyzer() -> impl IntoView {
                                 height="2.5em"
                                 icon=i::FaFilterSolid
                             />
-                            <h3 class="text-xl font-bold text-brand-300 mb-2">"Custom Filters"</h3>
+                            <h3 class="text-xl font-bold text-brand-300 mb-2">{t!(i18n, analyzer_feature_custom_filters)}</h3>
                             <p class="text-gray-300">
-                                "Set custom parameters to find your perfect trades"
+                                {t!(i18n, analyzer_feature_custom_filters_desc)}
                             </p>
                         </div>
                     </div>
 
                     // Tips Section
                     <div class="panel p-6 rounded-2xl">
-                        <h2 class="text-xl font-bold text-brand-300 mb-4">"Trading Tips"</h2>
+                        <h2 class="text-xl font-bold text-brand-300 mb-4">{t!(i18n, analyzer_tips_title)}</h2>
                         <ul class="list-disc list-inside text-gray-300 space-y-2">
                             <li>
-                                "Use the ROI filter to find items with the best return on investment"
+                                {t!(i18n, analyzer_tip_1)}
                             </li>
                             <li>
-                                "Check the sale frequency to ensure items will sell in a reasonable time"
+                                {t!(i18n, analyzer_tip_2)}
                             </li>
-                            <li>"Consider transportation costs when calculating profits"</li>
+                            <li>{t!(i18n, analyzer_tip_3)}</li>
                             <li>
-                                "Start with smaller investments until you understand the market"
+                                {t!(i18n, analyzer_tip_4)}
                             </li>
                         </ul>
                     </div>

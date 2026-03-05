@@ -1,3 +1,4 @@
+use crate::i18n::*;
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
@@ -193,6 +194,7 @@ fn FCCraftingAnalyzerTable(
     recent_sales: Option<RecentSales>,
     world: Signal<String>,
 ) -> impl IntoView {
+    let i18n = use_i18n();
     let prices = CheapestListingsMap::from(global_cheapest_listings);
     let data = xiv_gen_db::data();
     let items = &data.items;
@@ -317,8 +319,8 @@ fn FCCraftingAnalyzerTable(
         <div class="flex flex-col gap-6">
             <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                 <FilterCard
-                    title="Minimum Profit"
-                    description="Set the minimum profit margin"
+                    title=t_string!(i18n, fc_crafting_analyzer_minimum_profit).to_string()
+                    description=t_string!(i18n, fc_crafting_analyzer_minimum_profit_desc).to_string()
                 >
                      <div class="flex flex-col gap-2">
                         <div class="text-brand-300">
@@ -347,8 +349,8 @@ fn FCCraftingAnalyzerTable(
                 </FilterCard>
 
                  <FilterCard
-                    title="Minimum ROI"
-                    description="Set the minimum return on investment %"
+                    title=t_string!(i18n, fc_crafting_analyzer_minimum_roi).to_string()
+                    description=t_string!(i18n, fc_crafting_analyzer_minimum_roi_desc).to_string()
                 >
                     <div class="flex flex-col gap-2">
                          <div class="text-brand-300">
@@ -377,8 +379,8 @@ fn FCCraftingAnalyzerTable(
                 </FilterCard>
 
                 <FilterCard
-                    title="Minimum Daily Sales"
-                    description="Filter items by sales velocity (sales/day)"
+                    title=t_string!(i18n, fc_crafting_analyzer_minimum_daily_sales).to_string()
+                    description=t_string!(i18n, fc_crafting_analyzer_minimum_daily_sales_desc).to_string()
                 >
                     <div class="flex flex-col gap-2">
                         <div class="text-brand-300">
@@ -417,7 +419,7 @@ fn FCCraftingAnalyzerTable(
                     variable_height=false
                      header=view! {
                         <div class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]" role="rowgroup">
-                             <div role="columnheader" class="w-84 p-4">"Project Result"</div>
+                             <div role="columnheader" class="w-84 p-4">{t!(i18n, fc_crafting_analyzer_col_project_result)}</div>
                              <div role="columnheader" class="w-30 p-4">
                                 <QueryButton
                                     class="!text-brand-300 hover:text-brand-200"
@@ -425,7 +427,7 @@ fn FCCraftingAnalyzerTable(
                                     key="sort"
                                     value="profit"
                                 >
-                                    "Profit"
+                                    {t!(i18n, fc_crafting_analyzer_col_profit)}
                                 </QueryButton>
                              </div>
                              <div role="columnheader" class="w-30 p-4">
@@ -435,11 +437,11 @@ fn FCCraftingAnalyzerTable(
                                     key="sort"
                                     value="roi"
                                 >
-                                    "ROI"
+                                    {t!(i18n, fc_crafting_analyzer_col_roi)}
                                 </QueryButton>
                              </div>
-                             <div role="columnheader" class="w-30 p-4">"Total Cost"</div>
-                             <div role="columnheader" class="w-30 p-4">"Market Price"</div>
+                             <div role="columnheader" class="w-30 p-4">{t!(i18n, fc_crafting_analyzer_col_total_cost)}</div>
+                             <div role="columnheader" class="w-30 p-4">{t!(i18n, fc_crafting_analyzer_col_market_price)}</div>
                              <div role="columnheader" class="w-30 p-4 hidden md:block">
                                 <QueryButton
                                     class="!text-brand-300 hover:text-brand-200"
@@ -447,7 +449,7 @@ fn FCCraftingAnalyzerTable(
                                     key="sort"
                                     value="velocity"
                                 >
-                                    "Daily Sales"
+                                    {t!(i18n, fc_crafting_analyzer_col_daily_sales)}
                                 </QueryButton>
                              </div>
                         </div>
@@ -457,7 +459,7 @@ fn FCCraftingAnalyzerTable(
                     view=move |(index, data): (usize, Arc<FCCraftProfitData>)| {
                         let data_clone = data.clone();
                         let item_id = ItemId(data.sequence.result_item);
-                        let item = items.get(&item_id).map(|i| i.name.as_str()).unwrap_or("Unknown");
+                        let item = items.get(&item_id).map(|i| i.name.as_str().to_string()).unwrap_or_else(|| t_string!(i18n, fc_crafting_analyzer_unknown_item).to_string());
                          let classes = if (index % 2) == 0 {
                             "flex flex-row items-center flex-nowrap h-15 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_6%,transparent)] transition-colors"
                         } else {
@@ -505,7 +507,7 @@ fn FCCraftingAnalyzerTable(
                                 </div>
                                 <div role="cell" class="px-4 py-2 w-30 text-right hidden md:block">
                                     <span class="text-xs text-[color:var(--color-text-muted)]" title=sales_tooltip>
-                                        {format!("{:.1} / day", data.daily_sales)}
+                                        {t!(i18n, fc_crafting_analyzer_sales_per_day, sales = format!("{:.1}", data.daily_sales))}
                                     </span>
                                 </div>
                             </div>
@@ -519,6 +521,7 @@ fn FCCraftingAnalyzerTable(
 
 #[component]
 pub fn FCCraftingAnalyzer() -> impl IntoView {
+    let i18n = use_i18n();
     let params = use_params_map();
     let (home_world, _) = use_home_world();
 
@@ -567,19 +570,19 @@ pub fn FCCraftingAnalyzer() -> impl IntoView {
 
     view! {
         <div class="flex flex-col gap-4 h-full">
-            <Title text="FC Crafting Analyzer - Ultros" />
-            <Meta name="description" content="Analyze Free Company crafting projects (Airships, Submersibles) for profitability" />
+            <Title text=t_string!(i18n, fc_crafting_analyzer_meta_title).to_string() />
+            <Meta name="description" content=t_string!(i18n, fc_crafting_analyzer_meta_desc).to_string() />
 
              <div class="flex flex-col gap-4 p-4 bg-brand-900/50 rounded-lg border border-brand-800">
                  <div class="flex flex-row justify-between items-center">
-                    <h1 class="text-2xl font-bold text-brand-100">"FC Crafting Analyzer"</h1>
+                    <h1 class="text-2xl font-bold text-brand-100">{t!(i18n, fc_crafting_analyzer_title)}</h1>
                     <div class="flex flex-row gap-2 items-center">
-                        <Suspense fallback=|| view! { <div class="text-brand-300 text-sm animate-pulse">"Loading sales data..."</div> }>
+                        <Suspense fallback=move || view! { <div class="text-brand-300 text-sm animate-pulse">{t!(i18n, fc_crafting_analyzer_loading_sales)}</div> }>
                             {move || {
                                 recent_sales_clone
                                     .get()
                                     .and_then(|r| r.err())
-                                    .map(|_| view! { <div class="text-red-400 text-sm">"Error loading sales data"</div> })
+                                    .map(|_| view! { <div class="text-red-400 text-sm">{t!(i18n, fc_crafting_analyzer_error_sales)}</div> })
                             }}
                         </Suspense>
                     </div>
@@ -587,7 +590,7 @@ pub fn FCCraftingAnalyzer() -> impl IntoView {
 
                 <Show when=move || selected_world.get().is_some()>
                     <div class="flex flex-col md:flex-row items-center gap-2">
-                        <label class="text-[color:var(--brand-fg)] font-semibold">"Select World for Sales Data:"</label>
+                        <label class="text-[color:var(--brand-fg)] font-semibold">{t!(i18n, fc_crafting_analyzer_select_world)}</label>
                         <div class="w-full md:w-auto">
                             <WorldOnlyPicker
                                 current_world=selected_world.into()
@@ -623,7 +626,7 @@ pub fn FCCraftingAnalyzer() -> impl IntoView {
                             (Some(Err(e)), _) => {
                                 view! {
                                     <div class="text-red-400">
-                                        "Error loading listings: " {e.to_string()}
+                                        {t!(i18n, fc_crafting_analyzer_error_listings)} {e.to_string()}
                                     </div>
                                 }.into_any()
                             }

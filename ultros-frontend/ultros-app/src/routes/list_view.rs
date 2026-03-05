@@ -23,6 +23,7 @@ use crate::components::{
     make_place_importer::*,
     tooltip::*,
 };
+use crate::i18n::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum MenuState {
@@ -34,6 +35,7 @@ enum MenuState {
 
 #[component]
 pub fn ListView() -> impl IntoView {
+    let i18n = use_i18n();
     let params = use_params_map();
     let list_id = Memo::new(move |_| {
         params
@@ -102,7 +104,7 @@ pub fn ListView() -> impl IntoView {
     view! {
         <AutoMarkPurchases list_view=list_view />
         <div class="flex-row gap-2">
-            <Tooltip tooltip_text="Add an item to the list">
+            <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_add_item).to_string()>
                 <button
                     class="btn-primary"
                     class:active=move || menu() == MenuState::Item
@@ -117,20 +119,20 @@ pub fn ListView() -> impl IntoView {
                     <i class="pr-1.5">
                         <Icon icon=i::BiPlusRegular />
                     </i>
-                    <span>"Add Item"</span>
+                    <span>{t!(i18n, list_view_add_item)}</span>
                 </button>
             </Tooltip>
-            <Tooltip tooltip_text="Add a recipe's ingredients to the list">
+            <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_add_recipe).to_string()>
                 <button
                     class="btn-secondary"
                     class:active=move || recipe_modal_open()
                     on:click=move |_| set_recipe_modal_open(true)
                 >
 
-                    "Add Recipe"
+                    {t!(i18n, list_view_add_recipe)}
                 </button>
             </Tooltip>
-            <Tooltip tooltip_text="Import an item">
+            <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_import_item).to_string()>
                 <button
                     class="btn-secondary"
                     class:active=move || menu() == MenuState::MakePlace
@@ -142,10 +144,10 @@ pub fn ListView() -> impl IntoView {
                     )
                 >
 
-                    "Make Place"
+                    {t!(i18n, list_view_make_place)}
                 </button>
             </Tooltip>
-            <Tooltip tooltip_text="Toggle purchasing view">
+            <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_purchasing_view).to_string()>
                 <button
                     class="btn-secondary"
                     class:active=buying_view
@@ -154,7 +156,7 @@ pub fn ListView() -> impl IntoView {
                     <i class="pr-1.5">
                         <Icon icon=i::BiCartRegular />
                     </i>
-                    <span>"Purchasing View"</span>
+                    <span>{t!(i18n, list_view_purchasing_view)}</span>
                 </button>
             </Tooltip>
 
@@ -208,17 +210,17 @@ pub fn ListView() -> impl IntoView {
                         view! {
                             <div class="panel p-4 rounded-xl space-y-3">
                                 <div class="space-y-2">
-                                    <label class="text-sm font-semibold text-[color:var(--brand-fg)]">"add item to this list"</label>
+                                    <label class="text-sm font-semibold text-[color:var(--brand-fg)]">{t!(i18n, list_view_add_item_to_list)}</label>
                                     <input
                                         class="input w-full"
-                                        placeholder="search items..."
+                                        placeholder=t_string!(i18n, list_view_search_items).to_string()
                                         prop:value=search
                                         on:input=move |input| set_search(event_target_value(&input))
                                     />
                                     {move || add_result.get().map(|v| {
                                         let text = match v {
-                                            Ok(()) => "added to list ✔".to_string(),
-                                            Err(e) => format!("failed to add: {e}"),
+                                            Ok(()) => t_string!(i18n, list_view_added_to_list_success).to_string(),
+                                            Err(e) => format!("{} {e}", t_string!(i18n, list_view_failed_to_add)),
                                         };
                                         view! { <div class="text-sm">{text}</div> }.into_view()
                                     })}
@@ -238,7 +240,7 @@ pub fn ListView() -> impl IntoView {
                                                     <div class="card p-2 flex items-center gap-3">
                                                         <ItemIcon item_id=id.0 icon_size=IconSize::Medium />
                                                         <span class="flex-1 min-w-0 truncate">{item.name.as_str()}</span>
-                                                        <label class="text-sm text-[color:var(--color-text-muted)]">"qty"</label>
+                                                        <label class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, list_view_qty)}</label>
                                                         <input
                                                             type="number"
                                                             min="1"
@@ -264,12 +266,12 @@ pub fn ListView() -> impl IntoView {
                                                             }
                                                         >
                                                             {move || if adding() {
-                                                                Either::Left(view! { <span>"adding..."</span> })
+                                                                Either::Left(view! { <span>{t!(i18n, list_view_adding)}</span> })
                                                             } else {
                                                                 Either::Right(view! {
                                                                     <div class="flex items-center gap-1">
                                                                         <Icon icon=i::BiPlusRegular />
-                                                                        <span>"add"</span>
+                                                                        <span>{t!(i18n, list_view_add)}</span>
                                                                     </div>
                                                                 })
                                                             }}
@@ -349,7 +351,7 @@ pub fn ListView() -> impl IntoView {
                                                             }
                                                         >
 
-                                                            "bulk edit"
+                                                            {t!(i18n, list_view_bulk_edit)}
                                                         </button>
                                                         <div class:hidden=move || !edit_list_mode()>
                                                             <button
@@ -364,7 +366,7 @@ pub fn ListView() -> impl IntoView {
                                                                 }
                                                             >
 
-                                                                "DELETE"
+                                                                {t!(i18n, list_view_delete)}
                                                             </button>
                                                         </div>
                                                         <button
@@ -379,7 +381,7 @@ pub fn ListView() -> impl IntoView {
                                                             }
                                                         >
 
-                                                            "SELECT ALL"
+                                                            {t!(i18n, list_view_select_all)}
                                                         </button>
                                                         <button
                                                             class="btn"
@@ -388,7 +390,7 @@ pub fn ListView() -> impl IntoView {
                                                             }
                                                         >
 
-                                                            "DESLECT ALL"
+                                                            {t!(i18n, list_view_deselect_all)}
                                                         </button>
                                                     </div>
                                                 </div>
@@ -401,15 +403,15 @@ pub fn ListView() -> impl IntoView {
                                                             >
                                                                 "✅"
                                                             </th>
-                                                            <th class="text-left p-2">"HQ"</th>
-                                                            <th class="text-left p-2">"Item"</th>
-                                                            <th class="text-left p-2">"Quantity"</th>
-                                                            <th class="text-left p-2">"Price"</th>
+                                                            <th class="text-left p-2">{t!(i18n, list_view_hq)}</th>
+                                                            <th class="text-left p-2">{t!(i18n, list_view_item)}</th>
+                                                            <th class="text-left p-2">{t!(i18n, list_view_quantity)}</th>
+                                                            <th class="text-left p-2">{t!(i18n, list_view_price)}</th>
                                                             <th
                                                                 class="text-left p-2"
                                                                 class:hidden=edit_list_mode
                                                             >
-                                                                "Options"
+                                                                {t!(i18n, list_view_options)}
                                                             </th>
                                                         </tr>
                                                     </thead>
@@ -449,7 +451,7 @@ pub fn ListView() -> impl IntoView {
                                     // })).collect::<Vec<_>>();
                                     // <TableContent rows=price_view on_change=move |_| {} />
 
-                                    <div>{format!("Failed to get items\n{e}")}</div>
+                                    <div>{format!("{}\n{e}", t_string!(i18n, list_view_failed_to_get_items))}</div>
                                 },
                             )
                         }

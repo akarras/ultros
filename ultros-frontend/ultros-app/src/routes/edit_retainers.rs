@@ -8,9 +8,11 @@ use crate::api::{
     claim_retainer, get_retainers, search_retainers, unclaim_retainer, update_retainer_order,
 };
 use crate::components::{loading::*, meta::*, reorderable_list::*, world_name::*};
+use crate::i18n::*;
 
 #[component]
 pub fn EditRetainers() -> impl IntoView {
+    let i18n = use_i18n();
     // This page should let the user drag and drop retainers to reorder them
     // It should also support a search panel for retainers to the right that will allow the user to search for retainers
 
@@ -58,10 +60,10 @@ pub fn EditRetainers() -> impl IntoView {
 
     view! {
         <div class="container mx-auto p-4 flex flex-col lg:flex-row gap-6 items-start justify-center">
-            <MetaTitle title="Edit Retainers" />
+            <MetaTitle title=t_string!(i18n, retainers_edit_title).to_string() />
 
             <div class="retainer-list panel p-6 flex flex-col w-full lg:w-1/2 gap-4">
-                <h2 class="text-2xl font-bold mb-2">"Retainers"</h2>
+                <h2 class="text-2xl font-bold mb-2">{t!(i18n, retainers_title)}</h2>
                 <Transition fallback=move || {
                     view! { <div class="loading loading-spinner loading-lg"></div> }
                 }>
@@ -136,7 +138,7 @@ pub fn EditRetainers() -> impl IntoView {
                                                             } else {
                                                                 Either::Right(view! {
                                                                     <h3 class="text-xl font-bold mt-4 mb-2 text-gray-500">
-                                                                        "Unassigned"
+                                                                        {t!(i18n, retainers_unassigned)}
                                                                     </h3>
                                                                 })
                                                             }}
@@ -164,7 +166,7 @@ pub fn EditRetainers() -> impl IntoView {
                                                                                         let _ = remove_retainer.dispatch(owned_id);
                                                                                     }
                                                                                 >
-                                                                                    "Unclaim"
+                                                                                    {t!(i18n, retainers_unclaim)}
                                                                                 </button>
                                                                             </div>
                                                                         }
@@ -182,7 +184,7 @@ pub fn EditRetainers() -> impl IntoView {
                                         Either::Right(
                                             view! {
                                                 <div class="alert alert-error">
-                                                    <span>"Error loading retainers: " {e.to_string()}</span>
+                                                    <span>{t!(i18n, retainers_error_loading)} {e.to_string()}</span>
                                                 </div>
                                             },
                                         )
@@ -194,12 +196,12 @@ pub fn EditRetainers() -> impl IntoView {
                 </Transition>
             </div>
             <div class="retainer-search panel p-6 flex flex-col w-full lg:w-1/2 gap-4">
-                <h2 class="text-2xl font-bold mb-2">"Add Retainer"</h2>
+                <h2 class="text-2xl font-bold mb-2">{t!(i18n, retainers_add_title)}</h2>
                 <input
                     class="input w-full bg-base-200"
                     prop:value=retainer_search
                     on:input=move |input| set_retainer_search(event_target_value(&input))
-                    placeholder="Search for a retainer to add"
+                    placeholder=t_string!(i18n, retainers_search_placeholder).to_string()
                 />
                 <div class="retainer-results flex flex-col gap-2">
                     <Suspense fallback=move || {
@@ -235,8 +237,8 @@ pub fn EditRetainers() -> impl IntoView {
                                                                             }
                                                                         >
                                                                             {move || match is_retainer_owned(retainer.id) {
-                                                                                true => "Owned",
-                                                                                false => "Claim",
+                                                                                true => Either::Left(t!(i18n, retainers_owned)),
+                                                                                false => Either::Right(t!(i18n, retainers_claim)),
                                                                             }}
 
                                                                         </button>
@@ -251,7 +253,7 @@ pub fn EditRetainers() -> impl IntoView {
                                         }
                                         Err(e) => {
                                             Either::Right(
-                                                view! { <div class="text-center opacity-70 p-4">{format!("No retainers found\n{e}")}</div> },
+                                                view! { <div class="text-center opacity-70 p-4">{format!("{}\n{e}", t_string!(i18n, retainers_no_found))}</div> },
                                             )
                                         }
                                     }

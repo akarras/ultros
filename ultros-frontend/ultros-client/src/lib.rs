@@ -45,9 +45,35 @@ async fn open_transaction(rexie: &Rexie) -> Result<(Transaction, Store)> {
     Ok((transaction, game_data))
 }
 
+fn get_i18n_lang() -> String {
+    #[allow(unused_mut)]
+    let mut default_lang = "en".to_string();
+    #[cfg(target_arch = "wasm32")]
+    {
+        use wasm_bindgen::JsCast;
+        let window = leptos::prelude::window();
+        if let Some(document) = window.document() {
+            if let Some(html_doc) = document.dyn_ref::<web_sys::HtmlDocument>() {
+                if let Ok(cookie) = html_doc.cookie() {
+                    for part in cookie.split(';') {
+                        let part = part.trim();
+                        if let Some(stripped) = part.strip_prefix("i18n_pref_locale=") {
+                            default_lang = stripped.to_string();
+                        }
+                    }
+                }
+            }
+        }
+    }
+    match default_lang.as_str() {
+        "en" | "ja" | "de" | "fr" | "cn" | "ko" | "tc" => default_lang,
+        _ => "en".to_string(),
+    }
+}
+
 async fn init_data() -> anyhow::Result<Vec<u8>> {
     let version = xiv_gen::data_version();
-    let lang = "en"; // TODO: Support language selection in UI
+    let lang = get_i18n_lang();
     let response = Request::get(&format!("/static/data/{}/{}.bincode", version, lang))
         .send()
         .await?
@@ -57,12 +83,12 @@ async fn init_data() -> anyhow::Result<Vec<u8>> {
     Ok(response)
 }
 
-async fn try_populate_xiv_gen_data(rexie: &Rexie) -> anyhow::Result<()> {
+async fn try_populate_xiv_gen_data_internal(rexie: &Rexie) -> anyhow::Result<()> {
     // load local storage data for the current game version, if we don't have it get it from the server, store it, and init db
-    let version = xiv_gen::data_version();
+    let version = format!("{}-{}", xiv_gen::data_version(), get_i18n_lang());
     {
         let (transaction, game_data) = open_transaction(rexie).await?;
-        if let Ok(value) = game_data.get(&version.into()).await {
+        if let Ok(value) = game_data.get(&version.clone().into()).await {
             match serde_wasm_bindgen::from_value::<Data>(value) {
                 Ok(value) => match xiv_gen_db::try_init(&value.data) {
                     Ok(()) => return Ok(()),
@@ -73,7 +99,7 @@ async fn try_populate_xiv_gen_data(rexie: &Rexie) -> anyhow::Result<()> {
 
             error!("failed to deserialize data. removing {version}");
             game_data
-                .delete(&version.into())
+                .delete(&version.clone().into())
                 .await
                 .map_err(|_| anyhow!("error deleting?"))?;
             transaction
@@ -127,16 +153,22 @@ async fn try_build_db() -> Result<Rexie> {
         .map_err(|e| anyhow!("failed to build db {e}"))
 }
 
-async fn populate_xiv_gen_data() -> anyhow::Result<()> {
+pub async fn try_populate_xiv_gen_data() -> anyhow::Result<()> {
     if let Ok(rexie) = try_build_db().await {
-        if let Err(_e) = retry(|| try_populate_xiv_gen_data(&rexie), 3).await {
+        if let Err(_e) = retry(|| try_populate_xiv_gen_data_internal(&rexie), 3).await {
             let _ = init_data().await?;
         }
     } else {
         let _ = init_data().await?;
     }
-
+    // Need to trigger a reactive update here if data() changed
+    // In practice try_init already updates the atomic XIV_DATA state
+    // We should trigger a UI update.
     Ok(())
+}
+
+async fn populate_xiv_gen_data() -> anyhow::Result<()> {
+    try_populate_xiv_gen_data().await
 }
 
 async fn get_world_data() -> Arc<WorldHelper> {

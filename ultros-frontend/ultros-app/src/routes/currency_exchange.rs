@@ -20,6 +20,7 @@ use crate::components::number_input::ParseableInputBox;
 use crate::components::query_button::QueryButton;
 use crate::error::AppError;
 use crate::global_state::home_world::use_home_world;
+use crate::i18n::*;
 use chrono::TimeDelta;
 use chrono::Utc;
 use field_iterator::FieldLabels;
@@ -125,6 +126,7 @@ fn shop_items(_special_shop: &SpecialShop) -> impl Iterator<Item = ShopItems> + 
 
 #[component]
 fn FilterModal(filter_name: &'static str) -> impl IntoView {
+    let i18n = use_i18n();
     let (is_open, set_open) = signal(false);
 
     // highlight the filter icon when an active min/max is set for this column
@@ -160,20 +162,20 @@ fn FilterModal(filter_name: &'static str) -> impl IntoView {
                         let (max, set_max) = query_signal::<i32>(format!("{filter_name}_max"));
                         view! {
                             <Modal set_visible=set_open>
-                                <h3 class="text-2xl font-bold text-[color:var(--brand-fg)]">"Edit filter"</h3>
+                                <h3 class="text-2xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, currency_exchange_edit_filter)}</h3>
                                 <div class="text-sm text-[color:var(--color-text-muted)] mb-2">
                                     {filter_name.replace("_", " ")}
                                 </div>
                                 <div class="flex flex-col gap-3">
                                     <div class="flex items-center justify-between">
-                                        <span class="text-[color:var(--color-text)]">"Max"</span>
+                                        <span class="text-[color:var(--color-text)]">{t!(i18n, currency_exchange_max)}</span>
                                         <ParseableInputBox
                                             input=Signal::derive(max)
                                             set_value=SignalSetter::map(set_max)
                                         />
                                     </div>
                                     <div class="flex items-center justify-between">
-                                        <span class="text-[color:var(--color-text)]">"Min"</span>
+                                        <span class="text-[color:var(--color-text)]">{t!(i18n, currency_exchange_min)}</span>
                                         <ParseableInputBox
                                             input=Signal::derive(min)
                                             set_value=SignalSetter::map(set_min)
@@ -208,6 +210,7 @@ fn is_in_range(value: i32, field_label: &str, query_map: &ParamsMap) -> bool {
 
 #[component]
 pub fn ExchangeItem() -> impl IntoView {
+    let i18n = use_i18n();
     let params = use_params_map();
     let query = use_query_map();
     let (home_world, _) = use_home_world();
@@ -364,19 +367,16 @@ pub fn ExchangeItem() -> impl IntoView {
 
     view! {
         <div class="container mx-auto p-4">
-            <MetaTitle title=move || format!("Currency Exchange - {}", item_name()) />
+            <MetaTitle title=move || t_string!(i18n, currency_exchange_meta_title).replace("%item%", &item_name()) />
             <MetaDescription text=move || {
-                format!(
-                    "All items that can be exchanged for {} with how much you stand to earn",
-                    item_name(),
-                )
+                t_string!(i18n, currency_exchange_meta_desc).replace("%item%", &item_name())
             } />
             <div class="panel p-6 rounded-xl mb-6">
                 <h2 class="text-2xl font-bold mb-4 text-[color:var(--brand-fg)]">
-                    {move || item().map(|i| i.name.as_str())} " - Currency Exchange"
+                    {move || item().map(|i| i.name.as_str())} " - " {t!(i18n, currency_exchange_title)}
                 </h2>
                 <div class="flex items-center gap-4 mb-4">
-                    <label class="text-[color:var(--color-text-muted)]">How many of this currency do you have?</label>
+                    <label class="text-[color:var(--color-text-muted)]">{t!(i18n, currency_exchange_how_many)}</label>
                     <input
                         class="input w-24"
                         prop:value=currency_quantity
@@ -390,8 +390,8 @@ pub fn ExchangeItem() -> impl IntoView {
                 </div>
                 <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
                     <FilterCard
-                        title="Price Per Item"
-                        description="Filter items based on price per unit"
+                        title=t_string!(i18n, currency_exchange_price_per_item_title)
+                        description=t_string!(i18n, currency_exchange_price_per_item_desc)
                     >
                         {move || {
                             let (min, set_min) = query_signal::<i32>("price_per_item_min");
@@ -399,14 +399,14 @@ pub fn ExchangeItem() -> impl IntoView {
                             view! {
                                 <div class="flex flex-col gap-2">
                                     <div class="flex items-center justify-between">
-                                        <span class="text-[color:var(--color-text)]">"Min"</span>
+                                        <span class="text-[color:var(--color-text)]">{t!(i18n, currency_exchange_min)}</span>
                                         <ParseableInputBox
                                             input=Signal::derive(min)
                                             set_value=SignalSetter::map(set_min)
                                         />
                                     </div>
                                     <div class="flex items-center justify-between">
-                                        <span class="text-[color:var(--color-text)]">"Max"</span>
+                                        <span class="text-[color:var(--color-text)]">{t!(i18n, currency_exchange_max)}</span>
                                         <ParseableInputBox
                                             input=Signal::derive(max)
                                             set_value=SignalSetter::map(set_max)
@@ -418,8 +418,8 @@ pub fn ExchangeItem() -> impl IntoView {
                     </FilterCard>
 
                     <FilterCard
-                        title="Quantity Received"
-                        description="Filter by amount of items received"
+                        title=t_string!(i18n, currency_exchange_qty_received_title)
+                        description=t_string!(i18n, currency_exchange_qty_received_desc)
                     >
                         {move || {
                             let (min, set_min) = query_signal::<i32>("number_received_min");
@@ -427,14 +427,14 @@ pub fn ExchangeItem() -> impl IntoView {
                             view! {
                                 <div class="flex flex-col gap-2">
                                     <div class="flex items-center justify-between">
-                                        <span class="text-[color:var(--color-text)]">"Min"</span>
+                                        <span class="text-[color:var(--color-text)]">{t!(i18n, currency_exchange_min)}</span>
                                         <ParseableInputBox
                                             input=Signal::derive(min)
                                             set_value=SignalSetter::map(set_min)
                                         />
                                     </div>
                                     <div class="flex items-center justify-between">
-                                        <span class="text-[color:var(--color-text)]">"Max"</span>
+                                        <span class="text-[color:var(--color-text)]">{t!(i18n, currency_exchange_max)}</span>
                                         <ParseableInputBox
                                             input=Signal::derive(max)
                                             set_value=SignalSetter::map(set_max)
@@ -446,8 +446,8 @@ pub fn ExchangeItem() -> impl IntoView {
                     </FilterCard>
 
                     <FilterCard
-                        title="Profit"
-                        description="Filter based on total profit"
+                        title=t_string!(i18n, currency_exchange_profit_title)
+                        description=t_string!(i18n, currency_exchange_profit_desc)
                     >
                         {move || {
                             let (min, set_min) = query_signal::<i32>("total_profit_min");
@@ -455,14 +455,14 @@ pub fn ExchangeItem() -> impl IntoView {
                             view! {
                                 <div class="flex flex-col gap-2">
                                     <div class="flex items-center justify-between">
-                                        <span class="text-[color:var(--color-text)]">"Min"</span>
+                                        <span class="text-[color:var(--color-text)]">{t!(i18n, currency_exchange_min)}</span>
                                         <ParseableInputBox
                                             input=Signal::derive(min)
                                             set_value=SignalSetter::map(set_min)
                                         />
                                     </div>
                                     <div class="flex items-center justify-between">
-                                        <span class="text-[color:var(--color-text)]">"Max"</span>
+                                        <span class="text-[color:var(--color-text)]">{t!(i18n, currency_exchange_max)}</span>
                                         <ParseableInputBox
                                             input=Signal::derive(max)
                                             set_value=SignalSetter::map(set_max)
@@ -474,8 +474,8 @@ pub fn ExchangeItem() -> impl IntoView {
                     </FilterCard>
 
                     <FilterCard
-                        title="Sales Velocity"
-                        description="Filter by hours between sales"
+                        title=t_string!(i18n, currency_exchange_sales_velocity_title)
+                        description=t_string!(i18n, currency_exchange_sales_velocity_desc)
                     >
                         {move || {
                             let (min, set_min) = query_signal::<i32>("hours_between_sales_min");
@@ -483,14 +483,14 @@ pub fn ExchangeItem() -> impl IntoView {
                             view! {
                                 <div class="flex flex-col gap-2">
                                     <div class="flex items-center justify-between">
-                                        <span class="text-[color:var(--color-text)]">"Min"</span>
+                                        <span class="text-[color:var(--color-text)]">{t!(i18n, currency_exchange_min)}</span>
                                         <ParseableInputBox
                                             input=Signal::derive(min)
                                             set_value=SignalSetter::map(set_min)
                                         />
                                     </div>
                                     <div class="flex items-center justify-between">
-                                        <span class="text-[color:var(--color-text)]">"Max"</span>
+                                        <span class="text-[color:var(--color-text)]">{t!(i18n, currency_exchange_max)}</span>
                                         <ParseableInputBox
                                             input=Signal::derive(max)
                                             set_value=SignalSetter::map(set_max)
@@ -531,14 +531,14 @@ pub fn ExchangeItem() -> impl IntoView {
                             }
                         };
 
-                        push_chip("Price min", "price_per_item_min", get_i("price_per_item_min"));
-                        push_chip("Price max", "price_per_item_max", get_i("price_per_item_max"));
-                        push_chip("Qty min", "number_received_min", get_i("number_received_min"));
-                        push_chip("Qty max", "number_received_max", get_i("number_received_max"));
-                        push_chip("Profit min", "total_profit_min", get_i("total_profit_min"));
-                        push_chip("Profit max", "total_profit_max", get_i("total_profit_max"));
-                        push_chip("Hours min", "hours_between_sales_min", get_i("hours_between_sales_min"));
-                        push_chip("Hours max", "hours_between_sales_max", get_i("hours_between_sales_max"));
+                        push_chip(&t_string!(i18n, currency_exchange_chip_price_min), "price_per_item_min", get_i("price_per_item_min"));
+                        push_chip(&t_string!(i18n, currency_exchange_chip_price_max), "price_per_item_max", get_i("price_per_item_max"));
+                        push_chip(&t_string!(i18n, currency_exchange_chip_qty_min), "number_received_min", get_i("number_received_min"));
+                        push_chip(&t_string!(i18n, currency_exchange_chip_qty_max), "number_received_max", get_i("number_received_max"));
+                        push_chip(&t_string!(i18n, currency_exchange_chip_profit_min), "total_profit_min", get_i("total_profit_min"));
+                        push_chip(&t_string!(i18n, currency_exchange_chip_profit_max), "total_profit_max", get_i("total_profit_max"));
+                        push_chip(&t_string!(i18n, currency_exchange_chip_hours_min), "hours_between_sales_min", get_i("hours_between_sales_min"));
+                        push_chip(&t_string!(i18n, currency_exchange_chip_hours_max), "hours_between_sales_max", get_i("hours_between_sales_max"));
 
                         if !chips.is_empty() {
                             chips.push(view! {
@@ -564,7 +564,7 @@ pub fn ExchangeItem() -> impl IntoView {
                                     >
                                         <span class="inline-flex items-center gap-1">
                                             <Icon icon=icondata::MdiClose />
-                                            "Clear all"
+                                            {t!(i18n, currency_exchange_clear_all)}
                                         </span>
                                     </QueryButton>
                                 </span>
@@ -579,20 +579,20 @@ pub fn ExchangeItem() -> impl IntoView {
                     if home_world().is_none() {
                         let left = view! {
                             <div class="bg-red-900/50 p-4 rounded-lg text-white">
-                                "Home world is not set, go to the "
+                                {t!(i18n, currency_exchange_home_world_not_set_prefix)}
                                 <A
                                     href="/settings"
                                     attr:class="underline"
                                 >
-                                    "settings"
-                                </A> " page and set your home world to see prices on this page"
+                                    {t!(i18n, currency_exchange_settings)}
+                                </A> {t!(i18n, currency_exchange_home_world_not_set_suffix)}
                             </div>
                         };
                         Either::Left(left)
                     } else {
                         let right = view! {
                             <div class="text-xs text-[color:var(--color-text-muted)] mb-2">
-                                {move || home_world().map(|w| format!("Assuming sales on your home world: {}", w.name))}
+                                {move || home_world().map(|w| t!(i18n, currency_exchange_assuming_sales_on, world = w.name))}
                             </div>
                             {move || {
                                 let s_res = s_getter_1.get();
@@ -628,13 +628,13 @@ pub fn ExchangeItem() -> impl IntoView {
                                                             <ItemAmount item_amount=t.receive_item />
                                                         </div>
                                                         <div class="text-right">
-                                                            <div class="text-xs text-[color:var(--color-text-muted)]">"profit"</div>
+                                                            <div class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, currency_exchange_profit_label)}</div>
                                                             {t.total_profit}
                                                         </div>
                                                     </div>
                                                     <div class="mt-2 flex items-center justify-between gap-2 min-w-0 text-xs text-[color:var(--color-text-muted)]">
-                                                        <span class="truncate">{format!("{} items", t.number_received)}</span>
-                                                        <span class="truncate">{format!("{}h/sale", t.hours_between_sales)}</span>
+                                            <span class="truncate">{t!(i18n, currency_exchange_items_count, count = t.number_received)}</span>
+                                            <span class="truncate">{t!(i18n, currency_exchange_hours_per_sale, hours = t.hours_between_sales)}</span>
                                                     </div>
                                                 </div>
                                             }).collect_view()}
@@ -643,7 +643,7 @@ pub fn ExchangeItem() -> impl IntoView {
                                 })
                             }}
                             <div class="panel p-6 rounded-xl mb-6">
-                                <h3 class="text-xl font-bold text-[color:var(--brand-fg)] mb-2">"Full results"</h3>
+                                <h3 class="text-xl font-bold text-[color:var(--brand-fg)] mb-2">{t!(i18n, currency_exchange_full_results)}</h3>
                                 <Suspense fallback=Loading>
                                     {move || {
                                         let sort_label = sorted_by();
@@ -745,23 +745,20 @@ pub fn ExchangeItem() -> impl IntoView {
                                                                                     default="total_profit" == *l
                                                                                 >
                                                                                     {match *l {
-                                                                                        "shop_names" => "Shops".to_string(),
-                                                                                        "cost_item" => "Cost".to_string(),
-                                                                                        "receive_item" => "Item".to_string(),
-                                                                                        "price_per_item" => "Price/item".to_string(),
-                                                                                        "number_received" => "Qty recv".to_string(),
-                                                                                        "total_profit" => "Profit".to_string(),
-                                                                                        "hours_between_sales" => "Hours/sale".to_string(),
+                                                                                        "shop_names" => t_string!(i18n, currency_exchange_table_shops).to_string(),
+                                                                                        "cost_item" => t_string!(i18n, currency_exchange_table_cost).to_string(),
+                                                                                        "receive_item" => t_string!(i18n, currency_exchange_table_item).to_string(),
+                                                                                        "price_per_item" => t_string!(i18n, currency_exchange_table_price_per_item).to_string(),
+                                                                                        "number_received" => t_string!(i18n, currency_exchange_table_qty_recv).to_string(),
+                                                                                        "total_profit" => t_string!(i18n, currency_exchange_table_profit).to_string(),
+                                                                                        "hours_between_sales" => t_string!(i18n, currency_exchange_table_hours_per_sale).to_string(),
                                                                                         _ => l.replace("_", " "),
                                                                                     }}
                                                                                 </QueryButton>
                                                                                 {(i > 2)
                                                                                     .then(|| {
                                                                                         view! {
-                                                                                            <Tooltip tooltip_text=format!(
-                                                                                                "Filter {}",
-                                                                                                l.replace("_", " "),
-                                                                                            )>
+                                                                                            <Tooltip tooltip_text=t_string!(i18n, currency_exchange_filter_tooltip).to_string().replace("%column%", &l.replace("_", " "))>
                                                                                                 <FilterModal filter_name=l />
                                                                                             </Tooltip>
                                                                                         }
@@ -787,7 +784,7 @@ pub fn ExchangeItem() -> impl IntoView {
                                                 Either::Left(
                                                     view! {
                                                         <div class="bg-red-900/50 p-4 rounded-lg text-white mt-4">
-                                                            "Error loading, try again in 30 seconds!"<br />
+                                                            {t!(i18n, currency_exchange_error_loading)}<br />
                                                             {e.to_string()}
                                                         </div>
                                                     },
@@ -856,6 +853,7 @@ fn ShopNames(#[prop(into)] shop_names: ShopNames) -> impl IntoView {
 
 #[component]
 pub fn CurrencySelection() -> impl IntoView {
+    let i18n = use_i18n();
     let data = xiv_gen_db::data();
     let ui_categories = &data.item_ui_categorys;
     let disallowed_items = &["Gil", "MGP"];
@@ -918,14 +916,12 @@ pub fn CurrencySelection() -> impl IntoView {
             // Description Card
             <div class="panel p-6 rounded-xl">
                 <p class="text-[color:var(--color-text)] leading-relaxed">
-                    "Discover lucrative opportunities in Final Fantasy 14 with our Currency Exchange tool.
-                        Easily locate items purchasable with in-game currencies, such as Allied Seals or Wolf Marks, that can be resold for significant profits on the marketboard.
-                        Whether you're a seasoned trader or just starting out, maximize your earnings by identifying high-value items and optimizing your currency investments."
+                    {t!(i18n, currency_exchange_hero_desc)}
                 </p>
             </div>
 
-            <MetaTitle title="Currency Exchange - Ultros" />
-            <MetaDescription text="Find valuable items bought with in-game currency, sell for gil. Maximize earnings effortlessly. " />
+            <MetaTitle title=t_string!(i18n, currency_exchange_meta_title_ultros) />
+            <MetaDescription text=t_string!(i18n, currency_exchange_meta_desc_default) />
 
             // Search Section
             <div class="panel p-6 rounded-xl">
@@ -939,7 +935,7 @@ pub fn CurrencySelection() -> impl IntoView {
                         </div>
                         <input
                             type="text"
-                            placeholder="Search currencies..."
+                            placeholder=t_string!(i18n, currency_exchange_search_placeholder)
                             class="input w-full pl-10"
                             on:input=move |ev| set_search_text(event_target_value(&ev))
                         />
@@ -980,7 +976,7 @@ pub fn CurrencySelection() -> impl IntoView {
                     Either::Left(
                         view! {
                             <div class="text-center p-8 text-[color:var(--color-text-muted)]">
-                                "No currencies found matching your search."
+                                {t!(i18n, currency_exchange_no_currencies_found)}
                             </div>
                         },
                     )
@@ -994,12 +990,13 @@ pub fn CurrencySelection() -> impl IntoView {
 
 #[component]
 pub fn CurrencyExchange() -> impl IntoView {
+    let i18n = use_i18n();
     view! {
         <Ad class="w-full h-[100px]" />
         <div class="main-content">
             <A href="/currency-exchange">
                 <h3 class="text-2xl font-bold text-[color:var(--brand-fg)] hover:opacity-90 transition-all ease-in-out duration-500">
-                    "Currency Exchange"
+                    {t!(i18n, currency_exchange_title)}
                 </h3>
             </A>
             <Outlet />

@@ -14,6 +14,7 @@ use crate::components::icon::Icon;
 use crate::global_state::home_world::{
     get_price_zone, result_to_selector_read, selector_to_setter_signal, use_home_world,
 };
+use crate::i18n::*;
 use leptos::either::{Either, EitherOf3};
 use leptos::prelude::*;
 use leptos::reactive::wrappers::write::IntoSignalSetter;
@@ -28,6 +29,7 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
     let (is_open, set_is_open) = signal(false);
     let (character_search, set_character_search) = signal("".to_string());
     let search_action = Action::new(move |search: &String| search_characters(search.to_string()));
+    let i18n = use_i18n();
 
     view! {
         <button
@@ -38,7 +40,7 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
             on:click=move |_| set_is_open(!is_open())
         >
             <Icon icon=i::BiPlusRegular />
-            "Add Character"
+            {t!(i18n, add_character)}
         </button>
 
         {move || {
@@ -52,9 +54,9 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
                                     Either::Left(
                                         view! {
                                             <div class="text-green-400">
-                                                "Successfully started claim. Add "
+                                                {t!(i18n, claim_success_1)}
                                                 <span class="font-medium">{value}</span>
-                                                " to your lodestone profile"
+                                                {t!(i18n, claim_success_2)}
                                             </div>
                                         },
                                     )
@@ -63,7 +65,7 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
                                     Either::Right(
                                         view! {
                                             <div class="text-red-400">
-                                                "Error adding character to your profile: " {e.to_string()}
+                                                {t!(i18n, claim_error)} {e.to_string()}
                                             </div>
                                         },
                                     )
@@ -80,13 +82,13 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
                     view! {
                         <div class="mt-4 p-6 rounded-xl bg-brand-900/20 border border-white/10 ">
                             <h3 class="text-xl font-bold text-brand-300 mb-4">
-                                "Search Character"
+                                {t!(i18n, search_character)}
                             </h3>
                             <div class="flex gap-2">
                                 <input
                                     class="flex-grow p-2 rounded-lg bg-brand-950/50 border border-white/10
                                     focus:outline-none focus:border-brand-300/30 transition-colors"
-                                    placeholder="Enter character name..."
+                                    placeholder=move || t_string!(i18n, enter_character_name).to_string()
                                     prop:value=character_search
                                     on:input=move |input| set_character_search(
                                         event_target_value(&input),
@@ -114,13 +116,13 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
                                                 view! {
                                                     <div class="space-y-2">
                                                         <h4 class="text-lg font-medium text-brand-300">
-                                                            "Search Results"
+                                                            {t!(i18n, search_results)}
                                                         </h4>
                                                         {if characters.is_empty() {
                                                             Either::Left(
                                                                 view! {
                                                                     <div class="text-gray-400 italic">
-                                                                        "No characters found"
+                                                                        {t!(i18n, no_characters_found)}
                                                                     </div>
                                                                 },
                                                             )
@@ -151,7 +153,7 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
                                                                                                 claim_character.dispatch(character.id);
                                                                                             }
                                                                                         >
-                                                                                            "Claim"
+                                                                                            {t!(i18n, claim)}
                                                                                         </button>
                                                                                     </div>
                                                                                 }
@@ -169,7 +171,7 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
                                             Either::Right(
                                                 view! {
                                                     <div class="text-red-400">
-                                                        "Failed to load characters: " {e.to_string()}
+                                                        {t!(i18n, failed_to_load_characters)} {e.to_string()}
                                                     </div>
                                                 },
                                             )
@@ -189,30 +191,31 @@ fn HomeWorldPicker() -> impl IntoView {
     let (price_region, set_price_region) = get_price_zone();
     let price_region = result_to_selector_read(price_region);
     let set_price_region = selector_to_setter_signal(set_price_region);
+    let i18n = use_i18n();
 
     view! {
         <div class="panel p-6 rounded-xl">
-            <h3 class="text-2xl font-bold text-[color:var(--brand-fg)] mb-4">"World Settings"</h3>
+            <h3 class="text-2xl font-bold text-[color:var(--brand-fg)] mb-4">{t!(i18n, world_settings)}</h3>
             <div class="grid md:grid-cols-3 gap-6">
                 <div class="space-y-2">
-                    <label class="text-lg text-[color:var(--color-text)]">"Home World"</label>
+                    <label class="text-lg text-[color:var(--color-text)]">{t!(i18n, home_world)}</label>
                     <WorldOnlyPicker current_world=homeworld set_current_world=set_homeworld />
                     <p class="text-sm text-gray-400">
-                        "The home world will default for Flip Finder and several other pages"
+                        {t!(i18n, home_world_desc)}
                     </p>
                 </div>
 
                 <div class="space-y-2">
-                    <label class="text-lg text-[color:var(--color-text)]">"Default Price Zone"</label>
+                    <label class="text-lg text-[color:var(--color-text)]">{t!(i18n, default_price_zone)}</label>
                     <WorldPicker current_world=price_region set_current_world=set_price_region />
                     <p class="text-sm text-gray-400">
-                        "What world/region to show prices by default for within "
+                        {t!(i18n, default_price_zone_desc_1)}
                         <a
                             href="/items"
                             class="text-[color:var(--brand-fg)] hover:underline transition-colors"
                         >
-                            "items"
-                        </a> " pages"
+                            {t!(i18n, items)}
+                        </a> {t!(i18n, default_price_zone_desc_2)}
                     </p>
                 </div>
             </div>
@@ -225,19 +228,18 @@ fn HomeWorldPicker() -> impl IntoView {
 fn AdChoice() -> impl IntoView {
     let ad_choice = use_context::<Cookies>().unwrap();
     let (cookie, set_cookie) = ad_choice.use_cookie_typed::<_, bool>("HIDE_ADS");
+    let i18n = use_i18n();
 
     view! {
         <div class="panel p-6 rounded-xl">
-            <h3 class="text-2xl font-bold text-[color:var(--brand-fg)] mb-4">"Ad Settings"</h3>
+            <h3 class="text-2xl font-bold text-[color:var(--brand-fg)] mb-4">{t!(i18n, ad_settings)}</h3>
             <div class="grid md:grid-cols-3 gap-6">
                 <div class="col-span-2 space-y-2">
                     <p class="text-[color:var(--color-text)]">
-                        "If you do not wish to see ads, this toggle will remove them entirely from the site.
-                         Use of adblockers is fine as well. If you wish to support the site, do consider
-                         leaving this disabled."
+                        {t!(i18n, ad_settings_desc_1)}
                     </p>
                     <p class="text-sm italic text-[color:var(--color-text)]">
-                        "This is mostly an experiment for the time being."
+                        {t!(i18n, ad_settings_desc_2)}
                     </p>
                 </div>
 
@@ -250,8 +252,8 @@ fn AdChoice() -> impl IntoView {
                         })
                         set_checked=(move |checked: bool| set_cookie(checked.then_some(true)))
                             .into_signal_setter()
-                        checked_label="Ads Disabled"
-                        unchecked_label="Ads Enabled"
+                        checked_label=t_string!(i18n, ads_disabled)
+                        unchecked_label=t_string!(i18n, ads_enabled)
                     />
                 </div>
             </div>
@@ -266,20 +268,20 @@ fn AdChoice() -> impl IntoView {
 #[component]
 fn DeleteUser() -> impl IntoView {
     let (confirmed, set_confirmed) = signal(false);
+    let i18n = use_i18n();
 
     view! {
         <div class="p-6 rounded-xl bg-red-900/20 border border-red-800/30 ">
-            <h3 class="text-2xl font-bold text-red-400 mb-4">"Delete Account"</h3>
+            <h3 class="text-2xl font-bold text-red-400 mb-4">{t!(i18n, delete_account)}</h3>
             <p class="text-gray-300 mb-4">
-                "DANGER: If you wish to delete your account and all information associated with it,
-                 confirm with the toggle and then press the delete button"
+                {t!(i18n, delete_account_desc)}
             </p>
 
             <div class="space-y-4">
                 <Toggle
                     checked=confirmed
                     set_checked=set_confirmed
-                    checked_label="Yes, delete my account"
+                    checked_label=t_string!(i18n, delete_account_confirm)
                     unchecked_label=""
                 />
 
@@ -298,8 +300,30 @@ fn DeleteUser() -> impl IntoView {
                         }
                     }
                 >
-                    "Delete my account"
+                    {t!(i18n, delete_my_account)}
                 </button>
+            </div>
+        </div>
+    }
+    .into_any()
+}
+
+#[component]
+fn LanguageSettings() -> impl IntoView {
+    use crate::components::language_picker::LanguagePicker;
+    let i18n = use_i18n();
+    view! {
+        <div class="panel p-6 rounded-xl">
+            <h3 class="text-2xl font-bold text-[color:var(--brand-fg)] mb-4">{t!(i18n, language)}</h3>
+            <div class="grid md:grid-cols-3 gap-6">
+                <div class="space-y-2">
+                    <p class="text-[color:var(--color-text)]">
+                        {t!(i18n, language_desc)}
+                    </p>
+                </div>
+                <div>
+                    <LanguagePicker />
+                </div>
             </div>
         </div>
     }
@@ -309,13 +333,15 @@ fn DeleteUser() -> impl IntoView {
 #[component]
 pub fn Settings() -> impl IntoView {
     use crate::components::theme_picker::ThemePicker;
+    let i18n = use_i18n();
     view! {
         <div class="main-content p-6">
-            <MetaTitle title="Ultros settings page" />
-            <MetaDescription text="Manage settings such as homeworld or other for Ultros" />
+            <MetaTitle title=move || t_string!(i18n, settings_page_title).to_string() />
+            <MetaDescription text=move || t_string!(i18n, settings_page_desc).to_string() />
 
             <div class="container mx-auto max-w-7xl space-y-6">
-                <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">"Settings"</h1>
+                <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, settings)}</h1>
+                <LanguageSettings />
                 <HomeWorldPicker />
                 <CrafterSettings />
                 <ThemePicker />
@@ -330,6 +356,7 @@ pub fn Profile() -> impl IntoView {
     let claim_character = Action::new(move |id: &i32| claim_character(*id));
     let unclaim_character = Action::new(move |id: &i32| unclaim_character(*id));
     let check_verification = Action::new(move |id: &i32| check_character_verification(*id));
+    let i18n = use_i18n();
 
     let characters = Resource::new(
         move || {
@@ -349,7 +376,7 @@ pub fn Profile() -> impl IntoView {
         <div class="main-content p-6">
             <div class="container mx-auto max-w-7xl space-y-6">
                 <div class="flex items-center justify-between">
-                    <h1 class="text-3xl font-bold text-brand-300">"Profile Settings"</h1>
+                    <h1 class="text-3xl font-bold text-brand-300">{t!(i18n, profile_settings)}</h1>
                 </div>
 
                 <HomeWorldPicker />
@@ -359,7 +386,7 @@ pub fn Profile() -> impl IntoView {
                                 <div class="p-6 rounded-xl bg-gradient-to-br from-brand-950/10 to-black/20
                                 border border-white/10 ">
                     <div class="flex items-center justify-between mb-6">
-                        <h2 class="text-2xl font-bold text-brand-300">"Characters"</h2>
+                        <h2 class="text-2xl font-bold text-brand-300">{t!(i18n, characters)}</h2>
                         <AddCharacterMenu claim_character />
                     </div>
 
@@ -381,7 +408,7 @@ pub fn Profile() -> impl IntoView {
                                             view! {
                                                 <div class="mb-6 space-y-4">
                                                     <h3 class="text-xl font-semibold text-brand-200">
-                                                        "Pending Verifications"
+                                                        {t!(i18n, pending_verifications)}
                                                     </h3>
                                                     <div class="space-y-3">
                                                         {verifications
@@ -404,7 +431,7 @@ pub fn Profile() -> impl IntoView {
                                         EitherOf3::C(
                                             view! {
                                                 <div class="p-4 rounded-lg bg-red-900/20 border border-red-800/30 text-red-400">
-                                                    "Unable to fetch verifications: " {e.to_string()}
+                                                    {t!(i18n, unable_to_fetch_verifications)} {e.to_string()}
                                                 </div>
                                             },
                                         )
@@ -429,7 +456,7 @@ pub fn Profile() -> impl IntoView {
                                         EitherOf3::A(
                                             view! {
                                                 <div class="text-center p-8 text-gray-400">
-                                                    "No characters added yet. Add a character to get started."
+                                                    {t!(i18n, no_characters_added)}
                                                 </div>
                                             },
                                         )
@@ -477,7 +504,7 @@ pub fn Profile() -> impl IntoView {
                                         EitherOf3::C(
                                             view! {
                                                 <div class="p-4 rounded-lg bg-red-900/20 border border-red-800/30 text-red-400">
-                                                    "Unable to fetch characters: " {e.to_string()}
+                                                    {t!(i18n, unable_to_fetch_characters)} {e.to_string()}
                                                 </div>
                                             },
                                         )

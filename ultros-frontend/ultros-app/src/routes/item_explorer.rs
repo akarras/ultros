@@ -11,6 +11,7 @@ use crate::components::query_button::QueryButton;
 use crate::components::toggle::Toggle;
 use crate::components::{add_to_list::*, cheapest_price::*, fonts::*, item_icon::*, meta::*};
 use crate::global_state::home_world::get_price_zone;
+use crate::i18n::*;
 use icondata as i;
 use itertools::Itertools;
 use leptos::prelude::*;
@@ -209,6 +210,7 @@ fn JobsList() -> impl IntoView {
 
 #[component]
 pub fn CategoryItems() -> impl IntoView {
+    let i18n = crate::i18n::use_i18n();
     let params = use_params_map();
     let data = xiv_gen_db::data();
     let items = Memo::new(move |_| {
@@ -237,10 +239,8 @@ pub fn CategoryItems() -> impl IntoView {
             .to_string()
     });
     view! {
-        <MetaTitle title=move || format!("{} - Item Explorer", category_view_name()) />
-        <MetaDescription text=move || {
-            ["List of items for the item category ", &category_view_name()].concat()
-        } />
+        <MetaTitle title=move || crate::i18n::t_string!(i18n, item_explorer_title).to_string().replace("{{name}}", &category_view_name()) />
+        <MetaDescription text=move || crate::i18n::t_string!(i18n, category_list_desc).to_string().replace("{{category}}", &category_view_name()) />
         <h3 class="text-xl">{category_view_name}</h3>
         <ItemList items />
     }
@@ -249,6 +249,7 @@ pub fn CategoryItems() -> impl IntoView {
 
 #[component]
 pub fn JobItems() -> impl IntoView {
+    let i18n = crate::i18n::use_i18n();
     let params = use_params_map();
     let data = xiv_gen_db::data();
     let (non_market, set_non_market) = query_signal::<bool>("show-non-market");
@@ -310,15 +311,15 @@ pub fn JobItems() -> impl IntoView {
             .unwrap_or("Job Set".to_string())
     });
     view! {
-        <MetaTitle title=move || format!("{} - Item Explorer", job_set()) />
-        <MetaDescription text=move || ["All items equippable by ", &job_set()].concat() />
+        <MetaTitle title=move || crate::i18n::t_string!(i18n, item_explorer_title).to_string().replace("{{name}}", &job_set()) />
+        <MetaDescription text=move || crate::i18n::t_string!(i18n, job_set_list_desc).to_string().replace("{{job}}", &job_set()) />
         <h3 class="text-xl">{job_set}</h3>
         <div class="flex flex-row items-center gap-2">
             <Toggle
                 checked=market_only
                 set_checked=set_market_only
-                checked_label="Filtering Unmarketable Items"
-                unchecked_label="Showing all items"
+                checked_label=t_string!(i18n, item_explorer_filtering_unmarketable).to_string()
+                unchecked_label=t_string!(i18n, item_explorer_showing_all).to_string()
             />
         </div>
         <ItemList items />
@@ -328,17 +329,19 @@ pub fn JobItems() -> impl IntoView {
 
 #[component]
 pub fn DefaultItems() -> impl IntoView {
+    let i18n = use_i18n();
     view! {
-        <MetaTitle title="Items Explorer" />
-        <MetaDescription text="Lookup items by their category. Similar to the market board categories that are visible in Final Fantasy 14. Find the cheapest minions, or find that new piece of glamour for your Summoner." />
+        <MetaTitle title=t_string!(i18n, item_explorer_default_title).to_string() />
+        <MetaDescription text=t_string!(i18n, item_explorer_default_desc).to_string() />
         <div class="flex flex-col">
-            <div>"Choose a category from the menu to explore items."</div>
+            <div>{t!(i18n, item_explorer_default_instruction)}</div>
             <div>
-                "Once you choose a category, you will be able to sort the items by price, date added, alphabetically, or by item level."
+                {t!(i18n, item_explorer_default_sort_info)}
             </div>
             <div>""</div>
         </div>
-    }.into_any()
+    }
+    .into_any()
 }
 
 #[derive(PartialEq, PartialOrd, Copy, Clone)]
@@ -439,6 +442,7 @@ where
 
 #[component]
 fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView {
+    let i18n = use_i18n();
     let (page, _set_page) = query_signal::<i32>("page");
     let (direction, _set_direction) = query_signal::<SortDirection>("dir");
     let (sort, _set_sort) = query_signal::<ItemSortOption>("sort");
@@ -512,7 +516,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
             // Sort and Direction Controls - Floating / Sticky Bar
             <div class="flex flex-col sm:flex-row justify-between gap-4 p-4 rounded-xl panel items-center sticky top-[72px] lg:top-4 z-20 backdrop-blur-md bg-[color:var(--bg-panel)]/90 border border-white/5 shadow-lg">
                 <div class="flex flex-row flex-wrap gap-2 items-center">
-                    <span class="text-xs font-bold uppercase tracking-wider text-[color:var(--color-text-muted)] mr-2">"Sort By"</span>
+                    <span class="text-xs font-bold uppercase tracking-wider text-[color:var(--color-text-muted)] mr-2">{t!(i18n, item_explorer_sort_by)}</span>
                     <QueryButton
                         key="sort"
                         value="ilvl"
@@ -520,7 +524,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                         active_classes="px-3 py-1.5 rounded-lg text-sm font-medium !bg-brand-500/20 !text-brand-300 ring-1 ring-brand-500/50"
                         default=true
                     >
-                        "iLvl"
+                        {t!(i18n, item_explorer_ilvl)}
                     </QueryButton>
                     <QueryButton
                         key="sort"
@@ -528,7 +532,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                         class="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors text-[color:var(--color-text-muted)] hover:bg-white/5"
                         active_classes="px-3 py-1.5 rounded-lg text-sm font-medium !bg-brand-500/20 !text-brand-300 ring-1 ring-brand-500/50"
                     >
-                        "Price"
+                        {t!(i18n, item_explorer_price)}
                     </QueryButton>
                     <QueryButton
                         key="sort"
@@ -536,7 +540,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                         class="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors text-[color:var(--color-text-muted)] hover:bg-white/5"
                         active_classes="px-3 py-1.5 rounded-lg text-sm font-medium !bg-brand-500/20 !text-brand-300 ring-1 ring-brand-500/50"
                     >
-                        "Name"
+                        {t!(i18n, item_explorer_name)}
                     </QueryButton>
                     <QueryButton
                         key="sort"
@@ -544,7 +548,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                         class="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors text-[color:var(--color-text-muted)] hover:bg-white/5"
                         active_classes="px-3 py-1.5 rounded-lg text-sm font-medium !bg-brand-500/20 !text-brand-300 ring-1 ring-brand-500/50"
                     >
-                        "Added"
+                        {t!(i18n, item_explorer_added)}
                     </QueryButton>
                 </div>
                 <div class="flex flex-row gap-2 bg-black/20 p-1 rounded-lg">
@@ -591,12 +595,12 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                     <div class="flex flex-col min-w-0 pt-0.5">
                                         <div class="flex items-center gap-2 mb-1.5 flex-wrap">
                                             <span class="text-xs font-bold px-1.5 py-0.5 rounded bg-white/10 text-[color:var(--color-text-muted)] whitespace-nowrap">
-                                                "iLvl "{item.level_item}
+                                                {t!(i18n, item_explorer_ilvl_prefix)} " "{item.level_item}
                                             </span>
                                              {if item.level_equip > 1 {
                                                 view! {
                                                     <span class="text-xs px-1.5 py-0.5 rounded bg-white/5 text-[color:var(--color-text-muted)] whitespace-nowrap">
-                                                        "Lv "{item.level_equip}
+                                                        {t!(i18n, item_explorer_lv_prefix)} " "{item.level_equip}
                                                     </span>
                                                 }.into_any()
                                             } else {
@@ -630,7 +634,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                                 view! {
                                                     <div class="flex items-center gap-2">
                                                         <span class="text-xs font-bold px-1.5 py-0.5 rounded bg-white/10 text-[color:var(--color-text-muted)] whitespace-nowrap">
-                                                            "Vendor"
+                                                            {t!(i18n, item_explorer_vendor)}
                                                         </span>
                                                         <Gil amount=price as i32 />
                                                     </div>
@@ -647,7 +651,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                                 class="w-full flex items-center justify-center p-2 rounded hover:bg-white/10 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] transition-colors"
                                             />
                                         </div>
-                                        <div class="p-1 rounded hover:bg-white/10 text-[color:var(--color-text-muted)] cursor-pointer" title="Copy Name">
+                                        <div class="p-1 rounded hover:bg-white/10 text-[color:var(--color-text-muted)] cursor-pointer" title=t_string!(i18n, item_explorer_copy_name).to_string()>
                                              <Clipboard clipboard_text=item.name.clone() />
                                         </div>
                                     </div>
@@ -701,7 +705,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                 active_classes=""
             >
                 <div class="flex items-center justify-center gap-2">
-                    <span>"Load Next Page"</span>
+                    <span>{t!(i18n, item_explorer_load_next_page)}</span>
                     <Icon icon=i::BiChevronRightRegular attr:class="group-hover:translate-x-1 transition-transform" />
                 </div>
             </QueryButton>
@@ -737,6 +741,7 @@ fn CategorySection(
 
 #[component]
 pub fn ItemExplorer() -> impl IntoView {
+    let i18n = use_i18n();
     let params = use_params_map();
     let data = xiv_gen_db::data();
     let (menu_open, set_open) = query_signal("menu-open");
@@ -769,7 +774,7 @@ pub fn ItemExplorer() -> impl IntoView {
         <div class="flex flex-col min-h-[calc(100vh-64px)]">
             // Mobile Header / Toggle
             <div class="lg:hidden p-4 border-b border-white/5 bg-[color:var(--bg-panel)] sticky top-0 z-30 flex items-center justify-between">
-                <span class="font-bold text-lg">"Item Explorer"</span>
+                <span class="font-bold text-lg">{t!(i18n, item_explorer_title_main)}</span>
                 <A
                     href=move || if menu_open() { "?" } else { "?menu-open=true" }.to_string()
                     attr:class="btn-secondary !p-2"
@@ -790,18 +795,18 @@ pub fn ItemExplorer() -> impl IntoView {
                 >
                     <div class="h-full overflow-y-auto scrollbar-thin p-4 space-y-6">
                         <div class="flex items-center justify-between lg:hidden mb-6">
-                            <span class="font-bold text-xl">"Categories"</span>
+                            <span class="font-bold text-xl">{t!(i18n, item_explorer_categories)}</span>
                             <A href="?" attr:class="btn-ghost p-1">
                                 <Icon icon=i::BiXRegular width="24" height="24" />
                             </A>
                         </div>
 
                         <div class="space-y-1">
-                            <CategorySection title="Weapons" category=1 open=is_open(1) />
-                            <CategorySection title="Armor" category=2 open=is_open(2) />
-                            <CategorySection title="Items" category=3 open=is_open(3) />
-                            <CategorySection title="Housing" category=4 open=is_open(4) />
-                            <CategorySection title="Job Sets" open=is_open(5)>
+                            <CategorySection title=t_string!(i18n, item_explorer_weapons) category=1 open=is_open(1) />
+                            <CategorySection title=t_string!(i18n, item_explorer_armor) category=2 open=is_open(2) />
+                            <CategorySection title=t_string!(i18n, item_explorer_items) category=3 open=is_open(3) />
+                            <CategorySection title=t_string!(i18n, item_explorer_housing) category=4 open=is_open(4) />
+                            <CategorySection title=t_string!(i18n, item_explorer_job_sets) open=is_open(5)>
                                 <JobsList />
                             </CategorySection>
                         </div>

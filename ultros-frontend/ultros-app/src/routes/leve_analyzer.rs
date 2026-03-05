@@ -1,4 +1,5 @@
 use crate::components::meta::{MetaDescription, MetaTitle};
+use crate::i18n::*;
 use crate::{
     analysis::{SalesStats, analyze_sales},
     api::{get_cheapest_listings, get_recent_sales_for_world},
@@ -75,6 +76,7 @@ fn LeveAnalyzerTable(
     recent_sales: Option<RecentSales>,
     world: Signal<String>,
 ) -> impl IntoView {
+    let i18n = use_i18n();
     let prices = CheapestListingsMap::from(global_cheapest_listings);
     let data = xiv_gen_db::data();
     let items = &data.items;
@@ -316,8 +318,8 @@ fn LeveAnalyzerTable(
         <div class="flex flex-col gap-6">
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                  <div class="panel p-6 flex flex-col w-full bg-[color:var(--color-background-elevated)] bg-opacity-100 z-20">
-                    <h3 class="font-bold text-xl mb-2 text-[color:var(--brand-fg)]">"Minimum Profit"</h3>
-                    <p class="mb-4 text-[color:var(--color-text-muted)]">"Set the minimum profit margin"</p>
+                    <h3 class="font-bold text-xl mb-2 text-[color:var(--brand-fg)]">{t!(i18n, leve_analyzer_minimum_profit)}</h3>
+                    <p class="mb-4 text-[color:var(--color-text-muted)]">{t!(i18n, leve_analyzer_minimum_profit_desc)}</p>
                     <div class="flex flex-col gap-2">
                         <div class="text-brand-300">
                             {move || {
@@ -345,8 +347,8 @@ fn LeveAnalyzerTable(
                 </div>
 
                 <div class="panel p-6 flex flex-col w-full bg-[color:var(--color-background-elevated)] bg-opacity-100 z-20">
-                    <h3 class="font-bold text-xl mb-2 text-[color:var(--brand-fg)]">"Job Filter"</h3>
-                    <p class="mb-4 text-[color:var(--color-text-muted)]">"Filter by Crafting Job"</p>
+                    <h3 class="font-bold text-xl mb-2 text-[color:var(--brand-fg)]">{t!(i18n, leve_analyzer_job_filter)}</h3>
+                    <p class="mb-4 text-[color:var(--color-text-muted)]">{t!(i18n, leve_analyzer_job_filter_desc)}</p>
                      <select
                         class="input"
                         on:change=move |ev| {
@@ -358,20 +360,20 @@ fn LeveAnalyzerTable(
                             }
                         }
                     >
-                        <option value="">"All Jobs"</option>
-                        <option value="Carpenter" selected=move || job_filter() == Some("Carpenter".to_string())>"Carpenter"</option>
-                        <option value="Blacksmith" selected=move || job_filter() == Some("Blacksmith".to_string())>"Blacksmith"</option>
-                        <option value="Armorer" selected=move || job_filter() == Some("Armorer".to_string())>"Armorer"</option>
-                        <option value="Goldsmith" selected=move || job_filter() == Some("Goldsmith".to_string())>"Goldsmith"</option>
-                        <option value="Leatherworker" selected=move || job_filter() == Some("Leatherworker".to_string())>"Leatherworker"</option>
-                        <option value="Weaver" selected=move || job_filter() == Some("Weaver".to_string())>"Weaver"</option>
-                        <option value="Alchemist" selected=move || job_filter() == Some("Alchemist".to_string())>"Alchemist"</option>
-                        <option value="Culinarian" selected=move || job_filter() == Some("Culinarian".to_string())>"Culinarian"</option>
+                        <option value="">{t!(i18n, leve_analyzer_all_jobs)}</option>
+                        <option value="Carpenter" selected=move || job_filter() == Some("Carpenter".to_string())>{t!(i18n, leve_analyzer_job_carpenter)}</option>
+                        <option value="Blacksmith" selected=move || job_filter() == Some("Blacksmith".to_string())>{t!(i18n, leve_analyzer_job_blacksmith)}</option>
+                        <option value="Armorer" selected=move || job_filter() == Some("Armorer".to_string())>{t!(i18n, leve_analyzer_job_armorer)}</option>
+                        <option value="Goldsmith" selected=move || job_filter() == Some("Goldsmith".to_string())>{t!(i18n, leve_analyzer_job_goldsmith)}</option>
+                        <option value="Leatherworker" selected=move || job_filter() == Some("Leatherworker".to_string())>{t!(i18n, leve_analyzer_job_leatherworker)}</option>
+                        <option value="Weaver" selected=move || job_filter() == Some("Weaver".to_string())>{t!(i18n, leve_analyzer_job_weaver)}</option>
+                        <option value="Alchemist" selected=move || job_filter() == Some("Alchemist".to_string())>{t!(i18n, leve_analyzer_job_alchemist)}</option>
+                        <option value="Culinarian" selected=move || job_filter() == Some("Culinarian".to_string())>{t!(i18n, leve_analyzer_job_culinarian)}</option>
                     </select>
                 </div>
 
                 <div class="panel p-6 flex flex-col w-full bg-[color:var(--color-background-elevated)] bg-opacity-100 z-20">
-                    <h3 class="font-bold text-xl mb-2 text-[color:var(--brand-fg)]">"Options"</h3>
+                    <h3 class="font-bold text-xl mb-2 text-[color:var(--brand-fg)]">{t!(i18n, leve_analyzer_options)}</h3>
                     <div class="flex flex-row gap-4 flex-wrap">
                         <input
                             type="checkbox"
@@ -380,8 +382,8 @@ fn LeveAnalyzerTable(
                             prop:checked=move || filter_outliers().unwrap_or(false)
                             on:change=move |ev| set_filter_outliers(Some(event_target_checked(&ev)))
                         />
-                        <label for="filter-outliers">"Filter Outliers"</label>
-                        <div class="text-brand-300 cursor-help" title="If enabled, sales outliers will be removed from the average price calculation using the Interquartile Range (IQR) method.">
+                        <label for="filter-outliers">{t!(i18n, leve_analyzer_filter_outliers)}</label>
+                        <div class="text-brand-300 cursor-help" title=move || t_string!(i18n, leve_analyzer_filter_outliers_tooltip).to_string()>
                             <Icon icon=i::AiQuestionCircleOutlined />
                         </div>
                     </div>
@@ -397,7 +399,7 @@ fn LeveAnalyzerTable(
                     variable_height=false
                     header=view! {
                         <div class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]" role="rowgroup">
-                             <div role="columnheader" class="w-84 p-4">"Leve / Item"</div>
+                             <div role="columnheader" class="w-84 p-4">{t!(i18n, leve_analyzer_col_leve_item)}</div>
                              <div role="columnheader" class="w-30 p-4">
                                 <QueryButton
                                     class="!text-brand-300 hover:text-brand-200"
@@ -405,13 +407,13 @@ fn LeveAnalyzerTable(
                                     key="sort"
                                     value="profit"
                                 >
-                                    "Profit"
+                                    {t!(i18n, leve_analyzer_col_profit)}
                                 </QueryButton>
                              </div>
-                             <div role="columnheader" class="w-30 p-4">"Revenue"</div>
-                             <div role="columnheader" class="w-30 p-4">"Cost"</div>
-                             <div role="columnheader" class="w-30 p-4 hidden md:block">"Avg Price"</div>
-                             <div role="columnheader" class="w-30 p-4 hidden md:block">"Daily Sales"</div>
+                             <div role="columnheader" class="w-30 p-4">{t!(i18n, leve_analyzer_col_revenue)}</div>
+                             <div role="columnheader" class="w-30 p-4">{t!(i18n, leve_analyzer_col_cost)}</div>
+                             <div role="columnheader" class="w-30 p-4 hidden md:block">{t!(i18n, leve_analyzer_col_avg_price)}</div>
+                             <div role="columnheader" class="w-30 p-4 hidden md:block">{t!(i18n, leve_analyzer_col_daily_sales)}</div>
                              <div role="columnheader" class="w-40 p-4 hidden md:block">
                                 <QueryButton
                                     class="!text-brand-300 hover:text-brand-200"
@@ -419,7 +421,7 @@ fn LeveAnalyzerTable(
                                     key="sort"
                                     value="level"
                                 >
-                                    "Level"
+                                    {t!(i18n, leve_analyzer_col_level)}
                                 </QueryButton>
                              </div>
                         </div>
@@ -428,7 +430,7 @@ fn LeveAnalyzerTable(
                     key=move |(index, data): &(usize, Arc<LeveProfitData>)| (*index, data.leve.key_id)
                     view=move |(index, data): (usize, Arc<LeveProfitData>)| {
                         let item_id = data.item_id;
-                        let item = items.get(&item_id).map(|i| i.name.as_str()).unwrap_or("Unknown");
+                        let item = items.get(&item_id).map(|i| i.name.as_str().to_string()).unwrap_or_else(|| t_string!(i18n, leve_analyzer_unknown_item).to_string());
                         let leve_name = data.leve.name.as_str();
 
                         let classes = if (index % 2) == 0 {
@@ -450,7 +452,7 @@ fn LeveAnalyzerTable(
                                         <div class="flex flex-col truncate">
                                             <span class="font-semibold">{leve_name}</span>
                                             <span class="text-xs text-[color:var(--color-text-muted)] truncate">
-                                                {item} " x" {data.item_count}
+                                                {item} {t!(i18n, leve_analyzer_quantity_x)} {data.item_count}
                                             </span>
                                         </div>
                                     </a>
@@ -469,12 +471,12 @@ fn LeveAnalyzerTable(
                                 </div>
                                 <div role="cell" class="px-4 py-2 w-30 text-right hidden md:block">
                                     <span class="text-xs text-[color:var(--color-text-muted)]">
-                                        {format!("{:.1} / day", data.daily_sales)}
+                                        {t!(i18n, leve_analyzer_sales_per_day, sales = format!("{:.1}", data.daily_sales))}
                                     </span>
                                 </div>
                                 <div role="cell" class="px-4 py-2 w-40 text-right hidden md:block">
                                     <span class="text-xs text-[color:var(--color-text-muted)]">
-                                        "Lv " {data.class_job_level} " " {data.job_category_name.clone()}
+                                        {t!(i18n, leve_analyzer_lv)} {data.class_job_level} " " {data.job_category_name.clone()}
                                     </span>
                                 </div>
                             </div>
@@ -488,6 +490,7 @@ fn LeveAnalyzerTable(
 
 #[component]
 pub fn LeveAnalyzer() -> impl IntoView {
+    let i18n = use_i18n();
     let query = use_query_map();
     let (home_world, _) = use_home_world();
     let nav = use_navigate();
@@ -573,26 +576,26 @@ pub fn LeveAnalyzer() -> impl IntoView {
     let recent_sales_clone = recent_sales.clone();
     view! {
         <div class="flex flex-col gap-4 h-full">
-            <MetaTitle title="Leve Analyzer - Ultros" />
-            <MetaDescription text="Analyze Crafting Levequests for profitability" />
+            <MetaTitle title=move || t_string!(i18n, leve_analyzer_meta_title).to_string() />
+            <MetaDescription text=move || t_string!(i18n, leve_analyzer_meta_desc).to_string() />
 
             <div class="flex flex-col gap-4 p-4 bg-brand-900/50 rounded-lg border border-brand-800">
                 <div class="flex flex-row justify-between items-center">
-                    <h1 class="text-2xl font-bold text-brand-100">"Leve Analyzer"</h1>
+                    <h1 class="text-2xl font-bold text-brand-100">{t!(i18n, leve_analyzer_title)}</h1>
                     <div class="flex flex-row gap-2 items-center">
-                        <Suspense fallback=|| view! { <div class="text-brand-300 text-sm animate-pulse">"Loading sales data..."</div> }>
+                        <Suspense fallback=move || view! { <div class="text-brand-300 text-sm animate-pulse">{t!(i18n, leve_analyzer_loading_sales)}</div> }>
                             {move || {
                                 recent_sales_clone
                                     .get()
                                     .and_then(|r| r.err())
-                                    .map(|_| view! { <div class="text-red-400 text-sm">"Error loading sales data"</div> })
+                                    .map(|_| view! { <div class="text-red-400 text-sm">{t!(i18n, leve_analyzer_error_sales)}</div> })
                             }}
                         </Suspense>
                     </div>
                 </div>
 
                 <div class="flex flex-col md:flex-row items-center gap-2">
-                    <label class="text-[color:var(--brand-fg)] font-semibold">"Select World for Prices:"</label>
+                    <label class="text-[color:var(--brand-fg)] font-semibold">{t!(i18n, leve_analyzer_select_world)}</label>
                     <div class="w-full md:w-auto">
                         <WorldOnlyPicker
                             current_world=selected_world.into()
@@ -627,7 +630,7 @@ pub fn LeveAnalyzer() -> impl IntoView {
                             (Some(Err(e)), _) => {
                                 view! {
                                     <div class="text-red-400">
-                                        "Error loading listings: " {e.to_string()}
+                                        {t!(i18n, leve_analyzer_error_listings)} {e.to_string()}
                                     </div>
                                 }.into_any()
                             }
