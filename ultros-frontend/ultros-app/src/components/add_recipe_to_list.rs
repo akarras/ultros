@@ -110,6 +110,8 @@ fn AddRecipeToListModal(
         });
     });
 
+    let craft_quantity_id = move || format!("add-recipe-craft-qty-{}", recipe.item_result);
+
     view! {
         <Modal set_visible>
             <div class="panel p-6 rounded-xl space-y-4">
@@ -131,8 +133,14 @@ fn AddRecipeToListModal(
                 </div>
 
                 <div class="flex flex-wrap items-center gap-3">
-                    <label class="text-sm text-[color:var(--color-text-muted)]">"Number of crafts"</label>
+                    <label
+                        class="text-sm text-[color:var(--color-text-muted)]"
+                        for=craft_quantity_id
+                    >
+                        "Number of crafts"
+                    </label>
                     <input
+                        id=craft_quantity_id
                         type="number"
                         min="1"
                         class="input w-24"
@@ -169,6 +177,7 @@ fn AddRecipeToListModal(
                                         type="number"
                                         min="0"
                                         class="input w-24 ml-auto"
+                                        attr:aria-label=format!("Quantity for {}", ingredient.item.name)
                                         prop:value=move || ingredient.quantity.get()
                                         on:input=move |e| {
                                             let Ok(q) = event_target_value(&e).parse::<i32>() else {
