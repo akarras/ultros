@@ -600,10 +600,10 @@ pub fn ExchangeItem() -> impl IntoView {
                                 let s = s_res.as_ref().and_then(|r| r.as_ref().ok());
                                 let l = l_res.as_ref().and_then(|r| r.as_ref().ok());
                                 let q = currency_quantity.get();
-                                compute_prices(s, l, q).map(|p: Vec<CurrencyTrade>| {
-                                    let mut rows = p.clone();
+                                compute_prices(s, l, q).map(|mut rows: Vec<CurrencyTrade>| {
                                     rows.sort_by(|a, b| b.total_profit.cmp(&a.total_profit));
-                                    let top = rows.into_iter().take(5).collect::<Vec<_>>();
+                                    rows.truncate(5);
+                                    let top = rows;
                                     view! {
                                         <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-5 gap-3 mb-4 items-stretch">
                                             {top.into_iter().map(|t| view! {
