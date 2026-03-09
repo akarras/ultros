@@ -131,8 +131,9 @@ fn AddRecipeToListModal(
                 </div>
 
                 <div class="flex flex-wrap items-center gap-3">
-                    <label class="text-sm text-[color:var(--color-text-muted)]">"Number of crafts"</label>
+                    <label class="text-sm text-[color:var(--color-text-muted)]" for="craft-quantity-input">"Number of crafts"</label>
                     <input
+                        id="craft-quantity-input"
                         type="number"
                         min="1"
                         class="input w-24"
@@ -169,6 +170,7 @@ fn AddRecipeToListModal(
                                         type="number"
                                         min="0"
                                         class="input w-24 ml-auto"
+                                        attr:aria-label=move || format!("Quantity for {}", ingredient.item.name)
                                         prop:value=move || ingredient.quantity.get()
                                         on:input=move |e| {
                                             let Ok(q) = event_target_value(&e).parse::<i32>() else {
@@ -205,12 +207,14 @@ fn AddRecipeToListModal(
                                                 set_error(Some(e.to_string()));
                                             }
                                         });
+                                        let list_name = list.name.clone();
                                         view! {
                                             <div class="space-y-1">
                                                 <div class="flex items-center justify-between card p-2">
                                                     <div class="font-semibold truncate">{list.name}</div>
                                                     <button
                                                         class="btn-primary"
+                                                        attr:aria-label=move || format!("Add recipe to list {}", list_name)
                                                         disabled=add_bulk_action.pending()
                                                         on:click=move |_| {
                                                             let list_id = list.id;
