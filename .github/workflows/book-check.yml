@@ -16,13 +16,9 @@ jobs:
                   fetch-depth: 0
 
             - name: Install latest mdBook
-              run: |
-                  set -euo pipefail
-                  tag=$(curl -sSL 'https://api.github.com/repos/rust-lang/mdbook/releases/latest' | jq -r '.tag_name')
-                  url="https://github.com/rust-lang/mdbook/releases/download/${tag}/mdbook-${tag}-x86_64-unknown-linux-gnu.tar.gz"
-                  mkdir -p "$HOME/mdbook-bin"
-                  curl -sSL "$url" | tar -xz --directory="$HOME/mdbook-bin"
-                  echo "$HOME/mdbook-bin" >> "$GITHUB_PATH"
+              uses: peaceiris/actions-mdbook@v2
+              with:
+                  mdbook-version: "latest"
 
 
             - name: Build book
