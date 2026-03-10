@@ -1,0 +1,3 @@
+## 2024-03-10 - [Optimize Median Selection]
+**Learning:** Found a performance bottleneck calculating medians in `sale_history_table.rs`. The code was using `sort_unstable()` to fully sort the `unit_prices` and `stack_sizes` arrays `O(N log N)` just to extract the median, max, and min. We can replace this with `select_nth_unstable()` which finds the median in `O(N)` average time.
+**Action:** Always prefer `select_nth_unstable` when only a median (or arbitrary k-th element) is needed rather than fully sorting large datasets. Precompute max and min using `.iter().max()` and `.iter().min()` before partition mutation occurs.

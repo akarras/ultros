@@ -170,12 +170,15 @@ impl SalesWindow {
             })
             .ok()?;
 
-        unit_prices.sort_unstable();
-        let median_unit_price = unit_prices[count / 2];
+        // Optimization: Find min/max before finding median, because select_nth_unstable alters the slice order.
+        let min_unit_price = *unit_prices.iter().min()?;
+        let max_unit_price = *unit_prices.iter().max()?;
+
+        // Optimization: Replace sort_unstable (O(N log N)) with select_nth_unstable (O(N)) for finding medians
+        let (_, &mut median_unit_price, _) = unit_prices.select_nth_unstable(count / 2);
         let avg_sale_price = total_sale_price as f64 / count as f64;
 
-        stack_sizes.sort_unstable();
-        let median_stack_size = stack_sizes[count / 2];
+        let (_, &mut median_stack_size, _) = stack_sizes.select_nth_unstable(count / 2);
 
         let duration = *date_range.start() - *date_range.end();
         let avg_duration = duration / count as i32;
@@ -197,8 +200,8 @@ impl SalesWindow {
         Some(Self {
             total_gil,
             average_unit_price: avg_sale_price,
-            max_unit_price: *unit_prices.last()?,
-            min_unit_price: *unit_prices.first()?,
+            max_unit_price,
+            min_unit_price,
             median_stack_size,
             hq_percent: ((hq_count as f64 / count as f64) * 100.0).round() as i32,
             guessed_next_sale_price: next,
