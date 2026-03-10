@@ -741,21 +741,17 @@ pub(crate) async fn bulk_item_listings(
     let worlds = &world_cache
         .get_all_worlds_in(&world_lookup)
         .ok_or(anyhow::anyhow!("Invalid world"))?;
-    let db = &db;
     // get item ids
     let item_ids: HashSet<i32> = item_ids.split(',').map(|id| id.parse()).try_collect()?;
+    let item_vec: Vec<i32> = item_ids.iter().cloned().collect();
     // now perform lookups for all the listings for each world/item pair
-    let listings = try_join_all(item_ids.into_iter().map(|item| async move {
-        db.get_all_listings_in_worlds_with_retainers(worlds, ItemId(item))
-            .await
-            // map the result to have the item id at the front.
-            .map(|res| (item, res))
-    }))
-    .await?;
+    let mut listings_map = db.get_listings_for_items(worlds, &item_vec).await?;
+
     // now convert the database models to API types.
-    let listings = listings
+    let listings = item_ids
         .into_iter()
-        .map(|(id, l)| {
+        .map(|id| {
+            let l = listings_map.remove(&id).unwrap_or_default();
             (
                 id,
                 l.into_iter()
