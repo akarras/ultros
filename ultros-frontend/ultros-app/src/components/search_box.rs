@@ -330,11 +330,27 @@ pub fn SearchBox() -> impl IntoView {
             // Search Results
             <div
                 id="search-results"
-                role="listbox"
+                role=move || {
+                    if !loading.get() && search_results.with(|v| v.is_empty()) && !search.get().is_empty() {
+                        "status"
+                    } else {
+                        "listbox"
+                    }
+                }
                 class="absolute w-full mt-2 z-50 content-visible contain-content forced-layer"
                 class:hidden=move || !active() || search().is_empty()
             >
-                <div class="scroll-panel content-auto contain-layout contain-paint will-change-scroll forced-layer cis-42">
+                <Show when=move || !loading.get() && search_results.with(|v| v.is_empty()) && !search.get().is_empty()>
+                    <div class="p-8 text-center text-[color:var(--color-text-muted)] flex flex-col items-center gap-2 bg-[color:var(--color-background-elevated)] border border-[color:var(--color-outline)] rounded-md shadow-lg">
+                        <Icon icon=i::AiSearchOutlined attr:class="w-8 h-8 opacity-50" />
+                        <span>"No results found"</span>
+                    </div>
+                </Show>
+
+                <div
+                    class="scroll-panel content-auto contain-layout contain-paint will-change-scroll forced-layer cis-42"
+                    class:hidden=move || search_results.with(|v| v.is_empty())
+                >
                     <VirtualScroller
                         each=search_results.into()
                         key={move |result: &Arc<SearchResult>| result.url.clone()}
