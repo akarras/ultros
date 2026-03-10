@@ -39,6 +39,7 @@ use crate::{
         leve_analyzer::*,
         list_view::*,
         lists::*,
+        live_sales::*,
         not_found::NotFound,
         recipe_analyzer::*,
         retainers::*,
@@ -353,6 +354,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                             } />
                             <Route path=path!("trends/:world") view=Trends />
                             <Route path=path!("trends") view=Trends />
+                            <Route path=path!("live-sales") view=LiveSales />
                             <Route path=path!("settings") view=Settings />
                             <Route path=path!("profile") view=Profile />
                             <Route path=path!("privacy") view=PrivacyPolicy />
