@@ -15,12 +15,7 @@ pub fn analyze_sales(sales_data: &[&SaleData], filter_outliers: bool) -> SalesSt
     let mut total_price: i64 = 0;
     let mut oldest_date = now;
 
-    let mut prices = if filter_outliers {
-        let capacity = sales_data.iter().map(|d| d.sales.len()).sum();
-        Vec::with_capacity(capacity)
-    } else {
-        Vec::new()
-    };
+    let mut prices = Vec::new();
 
     for data in sales_data {
         for sale in &data.sales {
