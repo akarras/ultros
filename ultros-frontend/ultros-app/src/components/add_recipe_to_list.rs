@@ -62,6 +62,7 @@ fn AddRecipeToListModal(
     let (hq, set_hq) = signal(false);
     let (craft_quantity, set_craft_quantity) = signal(1);
     let (ignore_crystals, set_ignore_crystals) = signal(false);
+    let quantity_id = format!("add-recipe-qty-{:?}", recipe.key_id);
 
     let ingredients = StoredValue::new(
         IngredientsIter::new(recipe)
@@ -131,8 +132,11 @@ fn AddRecipeToListModal(
                 </div>
 
                 <div class="flex flex-wrap items-center gap-3">
-                    <label class="text-sm text-[color:var(--color-text-muted)]">"Number of crafts"</label>
+                    <label class="text-sm text-[color:var(--color-text-muted)]" for=quantity_id.clone()>
+                        "Number of crafts"
+                    </label>
                     <input
+                        id=quantity_id.clone()
                         type="number"
                         min="1"
                         class="input w-24"
@@ -166,6 +170,7 @@ fn AddRecipeToListModal(
                                 <div class="flex items-center gap-2">
                                     <SmallItemDisplay item=ingredient.item />
                                     <input
+                                        aria-label=format!("{} quantity", ingredient.item.name)
                                         type="number"
                                         min="0"
                                         class="input w-24 ml-auto"
