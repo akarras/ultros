@@ -69,7 +69,7 @@ fn AddToListModal(
                             {move || item().map(|i| i.name.as_str()).unwrap_or("unknown item")}
                         </div>
                     </div>
-                    <button class="btn-secondary" on:click=move |_| set_visible(false)>"close"</button>
+                    <button class="btn-secondary" aria-label="Close modal" on:click=move |_| set_visible(false)>"close"</button>
                 </div>
 
                 <div class="flex flex-wrap items-center gap-3">
