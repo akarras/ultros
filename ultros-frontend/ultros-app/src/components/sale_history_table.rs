@@ -104,7 +104,7 @@ pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
     }
 }
 
-#[derive(Clone, PartialEq, PartialOrd, Default)]
+#[derive(Copy, Clone, PartialEq, PartialOrd, Default)]
 struct SalesWindow {
     /// Total amount of gil sold in this window
     total_gil: u64,
@@ -121,7 +121,7 @@ struct SalesWindow {
 
 impl SalesWindow {
     fn try_new(date_range: RangeInclusive<NaiveDateTime>, sales: &[SaleHistory]) -> Option<Self> {
-        let sales = find_date_range(date_range.clone(), sales)?;
+        let sales = find_date_range(&date_range, sales)?;
         let count = sales.len();
         if count == 0 {
             return None;
@@ -216,10 +216,10 @@ struct SalesSummaryData {
     month: Option<SalesWindow>,
 }
 
-fn find_date_range(
-    date_range: RangeInclusive<NaiveDateTime>,
-    sales: &[SaleHistory],
-) -> Option<&[SaleHistory]> {
+fn find_date_range<'a>(
+    date_range: &RangeInclusive<NaiveDateTime>,
+    sales: &'a [SaleHistory],
+) -> Option<&'a [SaleHistory]> {
     if sales.is_empty() {
         return None;
     }
@@ -346,8 +346,8 @@ fn WindowStats(#[prop(into)] sales: Signal<SalesWindow>) -> impl IntoView {
 #[component]
 pub fn SalesInsights(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
     let sales = Memo::new(move |_| sales.with(|sales| SalesSummaryData::new(sales)));
-    let day_sales = Memo::new(move |_| sales.with(|s| s.past_day.clone()).unwrap_or_default());
-    let month_sales = Memo::new(move |_| sales.with(|s| s.month.clone()).unwrap_or_default());
+    let day_sales = Memo::new(move |_| sales.with(|s| s.past_day).unwrap_or_default());
+    let month_sales = Memo::new(move |_| sales.with(|s| s.month).unwrap_or_default());
     view! {
         <h3 class="text-xl font-bold text-[color:var(--brand-fg)] mb-2">"Sales at a glance"</h3>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -408,7 +408,7 @@ mod tests {
         let end_range = base_date - Duration::hours(1); // 11:00
         let range = start_range..=end_range;
 
-        let result = find_date_range(range, &sales);
+        let result = find_date_range(&range, &sales);
         assert!(result.is_some());
         let slice = result.unwrap();
         assert_eq!(slice.len(), 3);
@@ -420,7 +420,7 @@ mod tests {
     fn test_find_date_range_empty() {
         let range = NaiveDateTime::default()..=NaiveDateTime::default();
         let sales = vec![];
-        assert!(find_date_range(range, &sales).is_none());
+        assert!(find_date_range(&range, &sales).is_none());
     }
 
     #[test]
@@ -432,6 +432,6 @@ mod tests {
         let sales = vec![create_sale(base_date)];
 
         let range = (base_date - Duration::hours(2))..=(base_date - Duration::hours(1));
-        assert!(find_date_range(range, &sales).is_none());
+        assert!(find_date_range(&range, &sales).is_none());
     }
 }
