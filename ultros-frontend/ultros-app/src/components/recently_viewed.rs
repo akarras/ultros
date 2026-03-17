@@ -73,6 +73,8 @@ pub fn RecentlyViewed() -> impl IntoView {
                         <h4 class="text-xl font-bold text-[color:var(--color-text)]">"Recently Viewed"</h4>
                         <button
                             class="text-sm text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] transition-colors focus:outline-none focus:ring-2 focus:ring-[color:var(--brand-ring)] rounded px-2"
+                            aria-live="polite"
+                            aria-atomic="true"
                             on:click=move |_| {
                                 if confirm_clear.get_untracked() {
                                     item_data.clear_items();

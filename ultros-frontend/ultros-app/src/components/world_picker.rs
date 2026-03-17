@@ -27,6 +27,7 @@ pub fn WorldOnlyPicker(
             let left = view! {
                 <div class="relative">
                     <Select
+                        aria_label="Select a world"
                         items=data.into()
                         as_label=move |w| w.name.clone()
                         choice=current_world
@@ -87,6 +88,7 @@ pub fn WorldPicker(
             Either::Left(view! {
                 <div class="relative">
                     <Select
+                        aria_label="Select a world, region, or datacenter"
                         items=data.into()
                         choice=choice
                         set_choice=set_choice

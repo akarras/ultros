@@ -21,8 +21,8 @@ pub fn ItemIcon(
     let item_name = move || {
         let item = data.items.get(&ItemId(item_id()));
         item.as_ref()
-            .map(|i| i.name.as_str().to_string())
-            .unwrap_or_default()
+            .map(|i| format!("Icon for {}", i.name.as_str()))
+            .unwrap_or_else(|| "Icon".to_string())
     };
     view! {
         <div

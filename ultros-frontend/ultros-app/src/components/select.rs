@@ -15,6 +15,7 @@ pub fn Select<T, EF, L, ViewOut>(
     children: EF,
     #[prop(optional)] class: Option<&'static str>,
     #[prop(optional)] dropdown_class: Option<&'static str>,
+    #[prop(into, optional)] aria_label: Option<Oco<'static, str>>,
     // _view_out: PhantomData<ViewOut>,
 ) -> impl IntoView
 where
@@ -110,6 +111,7 @@ where
         <div class="relative">
             <input
                 node_ref=input
+                aria-label=move || aria_label.as_ref().map(|l| l.to_string())
                 class=move || format!("{} {}", default_input_class, class.unwrap_or(""))
                 class:cursor=move || !has_focus()
                 on:focus=move |_| set_focused(true)
