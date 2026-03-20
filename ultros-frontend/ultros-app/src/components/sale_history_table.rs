@@ -20,7 +20,7 @@ pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
             if show_more() {
                 sales.clone()
             } else {
-                sales.iter().take(10).cloned().collect()
+                sales[..10.min(sales.len())].to_vec()
             }
         })
     });

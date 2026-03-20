@@ -28,7 +28,7 @@ pub fn ListingsTable(
             if show_more() {
                 listings.clone()
             } else {
-                listings.iter().take(10).cloned().collect()
+                listings[..10.min(listings.len())].to_vec()
             }
         })
     });
