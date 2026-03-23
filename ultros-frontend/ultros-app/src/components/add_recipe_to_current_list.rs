@@ -100,8 +100,12 @@ pub fn AddRecipeToCurrentListModal(
             <div class="space-y-4 h-[80vh] flex flex-col">
                 <div class="flex items-center justify-between shrink-0">
                     <h2 class="text-xl font-bold">"Add Recipe to List"</h2>
-                    <button class="btn-ghost p-2" on:click=move |_| set_visible(false)>
-                        <Icon icon=i::BsX width="24" height="24" />
+                    <button
+                        class="btn-ghost p-2"
+                        on:click=move |_| set_visible(false)
+                        aria-label="Close"
+                    >
+                        <Icon icon=i::BsX width="24" height="24" aria_hidden=true />
                     </button>
                 </div>
 
@@ -109,6 +113,7 @@ pub fn AddRecipeToCurrentListModal(
                     <input
                         class="input w-full"
                         placeholder="Search for a recipe..."
+                        aria-label="Search for a recipe"
                         autofocus
                         prop:value=search
                         on:input=move |e| set_search(event_target_value(&e))
@@ -138,8 +143,14 @@ pub fn AddRecipeToCurrentListModal(
 
                                     <div class="flex flex-wrap items-center gap-4 shrink-0">
                                         <div class="flex items-center gap-2">
-                                            <label class="text-xs text-[color:var(--color-text-muted)]">"Count"</label>
+                                            <label
+                                                class="text-xs text-[color:var(--color-text-muted)]"
+                                                for=move || format!("add-recipe-qty-{}", item.key_id.0)
+                                            >
+                                                "Count"
+                                            </label>
                                             <input
+                                                id=move || format!("add-recipe-qty-{}", item.key_id.0)
                                                 type="number"
                                                 class="input w-16 h-8 text-sm"
                                                 min="1"
