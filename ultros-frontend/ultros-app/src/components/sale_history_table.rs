@@ -121,7 +121,7 @@ struct SalesWindow {
 
 impl SalesWindow {
     fn try_new(date_range: RangeInclusive<NaiveDateTime>, sales: &[SaleHistory]) -> Option<Self> {
-        let sales = find_date_range(date_range.clone(), sales)?;
+        let sales = find_date_range(&date_range, sales)?;
         let count = sales.len();
         if count == 0 {
             return None;
@@ -216,10 +216,10 @@ struct SalesSummaryData {
     month: Option<SalesWindow>,
 }
 
-fn find_date_range(
-    date_range: RangeInclusive<NaiveDateTime>,
-    sales: &[SaleHistory],
-) -> Option<&[SaleHistory]> {
+fn find_date_range<'a>(
+    date_range: &RangeInclusive<NaiveDateTime>,
+    sales: &'a [SaleHistory],
+) -> Option<&'a [SaleHistory]> {
     if sales.is_empty() {
         return None;
     }
@@ -408,7 +408,7 @@ mod tests {
         let end_range = base_date - Duration::hours(1); // 11:00
         let range = start_range..=end_range;
 
-        let result = find_date_range(range, &sales);
+        let result = find_date_range(&range, &sales);
         assert!(result.is_some());
         let slice = result.unwrap();
         assert_eq!(slice.len(), 3);
@@ -420,7 +420,7 @@ mod tests {
     fn test_find_date_range_empty() {
         let range = NaiveDateTime::default()..=NaiveDateTime::default();
         let sales = vec![];
-        assert!(find_date_range(range, &sales).is_none());
+        assert!(find_date_range(&range, &sales).is_none());
     }
 
     #[test]
@@ -432,6 +432,6 @@ mod tests {
         let sales = vec![create_sale(base_date)];
 
         let range = (base_date - Duration::hours(2))..=(base_date - Duration::hours(1));
-        assert!(find_date_range(range, &sales).is_none());
+        assert!(find_date_range(&range, &sales).is_none());
     }
 }
