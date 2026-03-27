@@ -320,9 +320,9 @@ where
                                     node_ref=row
                                     class=move || {
                                         if variable_height {
-                                            "content-auto contain-layout contain-paint will-change-transform".to_string()
+                                            "content-auto contain-layout contain-paint will-change-transform"
                                         } else {
-                                            "content-visible contain-layout contain-paint will-change-transform overflow-hidden".to_string()
+                                            "content-visible contain-layout contain-paint will-change-transform overflow-hidden"
                                         }
                                     }
                                     style=move || {

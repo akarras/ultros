@@ -572,7 +572,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4">
                 <For
                     each=move || filtered_items.get()
-                    key=|(id, item)| (id.0, item.name.clone())
+                    key=|(id, _item)| id.0
                     children=move |(id, item)| {
                         view! {
                             <div class="group relative flex flex-col p-4 rounded-xl panel
