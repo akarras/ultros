@@ -36,15 +36,28 @@ where
         ArcSignal::derive(move || false)
     };
 
-    let labels =
-        Memo::new(move |_| items.with(|i| i.iter().map(as_label).enumerate().collect::<Vec<_>>()));
+    // Optimization: Store both the original label and its lowercase version.
+    // This prevents re-allocating strings for `to_lowercase()` on every keystroke,
+    // which is expensive for large lists (e.g. recipes, items).
+    let labels = Memo::new(move |_| {
+        items.with(|i| {
+            i.iter()
+                .map(as_label)
+                .enumerate()
+                .map(|(i, label)| {
+                    let lower = label.to_lowercase();
+                    (i, label, lower)
+                })
+                .collect::<Vec<_>>()
+        })
+    });
     let search_results = Memo::new(move |_| {
         current_input.with(|input| {
             let input_lower = input.to_lowercase();
             labels.with(|s| {
                 s.iter()
-                    .filter_map(|(i, label)| {
-                        if label.to_lowercase().contains(&input_lower) {
+                    .filter_map(|(i, label, label_lower)| {
+                        if label_lower.contains(&input_lower) {
                             Some((*i, label.clone()))
                         } else {
                             None
@@ -57,7 +70,11 @@ where
     let final_result = Memo::new(move |_| {
         let search_results = search_results();
         if search_results.is_empty() {
-            labels()
+            labels.with(|l| {
+                l.iter()
+                    .map(|(i, label, _)| (*i, label.clone()))
+                    .collect::<Vec<_>>()
+            })
         } else {
             search_results
         }
