@@ -15,6 +15,7 @@ pub fn Select<T, EF, L, ViewOut>(
     children: EF,
     #[prop(optional)] class: Option<&'static str>,
     #[prop(optional)] dropdown_class: Option<&'static str>,
+    #[prop(optional)] aria_label: Option<&'static str>,
     // _view_out: PhantomData<ViewOut>,
 ) -> impl IntoView
 where
@@ -121,6 +122,7 @@ where
                 prop:value=current_input
                 role="combobox"
                 aria-autocomplete="list"
+                aria-label=aria_label.unwrap_or("Select an option")
                 aria-expanded={
                     #[cfg(not(feature = "hydrate"))]
                     let hovered = hovered.clone();
