@@ -25,6 +25,7 @@ pub fn LanguagePicker() -> impl IntoView {
             on:click=on_switch
             class="btn-ghost p-2 rounded-full hover:bg-black/20 transition-colors"
             title=move || t_string!(i18n, switch_language).to_string()
+            aria-label=move || t_string!(i18n, switch_language).to_string()
         >
             <Icon icon=i::IoLanguage width="1.2em" height="1.2em" />
             <span class="ml-1 uppercase text-xs font-bold">{move || i18n.get_locale().as_str()}</span>
