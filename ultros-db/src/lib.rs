@@ -206,12 +206,17 @@ impl UltrosDb {
         hq: bool,
         limit: u64,
     ) -> Result<Vec<active_listing::Model>> {
-        let join = futures::future::try_join_all(world_id.flat_map(|world| {
-            item.clone()
-                .map(move |i| self.get_listings_for_world(world, i))
-        }))
-        .await?;
-        Ok(join.into_iter().flat_map(|l| l.into_iter()).collect())
+        let worlds: Vec<i32> = world_id.map(|w| w.0).collect();
+        let items: Vec<i32> = item.map(|i| i.0).collect();
+
+        use crate::entity::active_listing::*;
+        let listings = Entity::find()
+            .filter(Column::ItemId.is_in(items))
+            .filter(Column::WorldId.is_in(worlds))
+            .filter(Column::Hq.eq(hq))
+            .all(&self.db)
+            .await?;
+        Ok(listings)
     }
 
     #[instrument(skip(self))]

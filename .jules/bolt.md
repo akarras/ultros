@@ -1,0 +1,3 @@
+## 2026-03-31 - [N+1 Query Issue in `get_multiple_listings_for_worlds_hq_sensitive`]
+**Learning:** `get_multiple_listings_for_worlds_hq_sensitive` previously suffered from an N+1 query issue. It used `futures::future::try_join_all` with a flat map over worlds and items to individually query for listings.
+**Action:** When querying for entities across multiple related IDs (like `WorldId` and `ItemId`), prefer aggregating the IDs and executing a single query utilizing `is_in`. In this case, `Entity::find().filter(Column::ItemId.is_in(items)).filter(Column::WorldId.is_in(worlds))` reduced multiple `SELECT`s down to just one.
