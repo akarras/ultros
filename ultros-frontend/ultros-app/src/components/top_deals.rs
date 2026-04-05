@@ -106,7 +106,10 @@ pub fn TopDeals() -> impl IntoView {
                             view! {
                                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     <For
-                                        each=move || data.clone().into_iter().take(6)
+                                        each=move || {
+                                            let top: Vec<_> = data.iter().take(6).cloned().collect();
+                                            top.into_iter()
+                                        }
                                         key=|deal| deal.item_id
                                         children=move |deal| {
                                             view! { <DealItem deal=deal home_world_name=world_name.clone() /> }

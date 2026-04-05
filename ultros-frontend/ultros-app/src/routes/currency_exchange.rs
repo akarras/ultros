@@ -657,9 +657,8 @@ pub fn ExchangeItem() -> impl IntoView {
                                             let trades = p.len();
                                             let sorted_and_filtered_rows = move || {
                                                 let query = query();
-                                                let mut p = p
-                                                    .clone()
-                                                    .into_iter()
+                                                let mut p: Vec<_> = p
+                                                    .iter()
                                                     .filter(|currency| {
                                                         let query = &query;
                                                         is_in_range(
@@ -683,6 +682,7 @@ pub fn ExchangeItem() -> impl IntoView {
                                                                 query,
                                                             )
                                                     })
+                                                    .cloned()
                                                     .collect::<Vec<_>>();
                                                 // surface best option at top by default (total_profit desc)
                                                 match sort_label.as_deref() {
