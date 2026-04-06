@@ -125,7 +125,7 @@ fn AddRecipeToListModal(
                             {move || result_item().map(|i| i.name.as_str()).unwrap_or("unknown item")}
                         </div>
                     </div>
-                    <button class="btn-secondary" on:click=move |_| set_visible(false)>
+                    <button class="btn-secondary" aria-label="Close modal" on:click=move |_| set_visible(false)>
                         "close"
                     </button>
                 </div>
@@ -211,6 +211,7 @@ fn AddRecipeToListModal(
                                                     <div class="font-semibold truncate">{list.name}</div>
                                                     <button
                                                         class="btn-primary"
+                                                        aria-label="Add this recipe to the list"
                                                         disabled=add_bulk_action.pending()
                                                         on:click=move |_| {
                                                             let list_id = list.id;

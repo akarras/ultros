@@ -645,6 +645,7 @@ pub fn ChartWrapper(
                                                     if days_range() == 7 { "bg-brand-600/25 text-brand-100" } else { "bg-brand-900/30 text-[color:var(--color-text)]" },
                                                 ].join(" ")
                                                 on:click=move |_| set_days_range(7)
+                                                aria-label="View last 7 days"
                                             >
                                                 "7d"
                                             </button>
@@ -654,6 +655,7 @@ pub fn ChartWrapper(
                                                     if days_range() == 30 { "bg-brand-600/25 text-brand-100" } else { "bg-brand-900/30 text-[color:var(--color-text)]" },
                                                 ].join(" ")
                                                 on:click=move |_| set_days_range(30)
+                                                aria-label="View last 30 days"
                                             >
                                                 "30d"
                                             </button>
@@ -663,6 +665,7 @@ pub fn ChartWrapper(
                                                     if days_range() == 90 { "bg-brand-600/25 text-brand-100" } else { "bg-brand-900/30 text-[color:var(--color-text)]" },
                                                 ].join(" ")
                                                 on:click=move |_| set_days_range(90)
+                                                aria-label="View last 90 days"
                                             >
                                                 "90d"
                                             </button>
@@ -672,6 +675,7 @@ pub fn ChartWrapper(
                                                     if days_range() == 0 { "bg-brand-600/25 text-brand-100" } else { "bg-brand-900/30 text-[color:var(--color-text)]" },
                                                 ].join(" ")
                                                 on:click=move |_| set_days_range(0)
+                                                aria-label="View all time"
                                             >
                                                 "All"
                                             </button>
