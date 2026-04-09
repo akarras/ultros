@@ -339,34 +339,32 @@ pub fn SearchBox() -> impl IntoView {
                         each=search_results.into()
                         key={move |result: &Arc<SearchResult>| result.url.clone()}
                         view={move |result: Arc<SearchResult>| {
-                            let url = result.url.clone();
                             let navigate = navigate.clone();
 
-                            // Clone URL for different closures to satisfy borrow checker
-                            let url_for_class = url.clone();
-                            let url_for_aria = url.clone();
-                            let url_for_click = url.clone();
-                            let url_for_id = url.clone();
+                            // Capture Arc clones instead of cloning Strings deeply to satisfy borrow checker
+                            let res_for_class = Arc::clone(&result);
+                            let res_for_aria = Arc::clone(&result);
+                            let res_for_click = Arc::clone(&result);
 
                             view! {
                                 <div
-                                    id=get_id_from_url(&url_for_id)
+                                    id=get_id_from_url(&result.url)
                                     role="option"
                                     aria-selected=move || {
                                         match focused_url.get() {
-                                            Some(f) if f == url_for_aria => "true",
+                                            Some(f) if f == res_for_aria.url => "true",
                                             _ => "false",
                                         }
                                     }
                                     class=move || {
                                         let hl = match focused_url.get() {
-                                            Some(f) if f == url_for_class => " bg-[color:var(--color-background-elevated)]",
+                                            Some(f) if f == res_for_class.url => " bg-[color:var(--color-background-elevated)]",
                                             _ => "",
                                         };
                                         format!("p-2 hover:bg-[color:var(--color-background-elevated)] cursor-pointer flex items-center gap-2{}", hl)
                                     }
                                     on:click=move |_| {
-                                        navigate(&url_for_click, NavigateOptions::default());
+                                        navigate(&res_for_click.url, NavigateOptions::default());
                                         set_search("".to_string());
                                         set_active(false);
                                         if let Some(input) = text_input.get() {
@@ -378,7 +376,7 @@ pub fn SearchBox() -> impl IntoView {
                                         if let Some(icon_id) = result.icon_id {
                                             if icon_id > 0 {
                                                 let (failed, set_failed) = signal(false);
-                                                let result_title = result.title.clone();
+                                                let res_for_alt = Arc::clone(&result);
                                                 view! {
                                                     <div class="w-8 h-8 flex-shrink-0">
                                                         <img
@@ -389,7 +387,7 @@ pub fn SearchBox() -> impl IntoView {
                                                                     format!("/static/itemicon/{}?size=Small", icon_id)
                                                                 }
                                                             }
-                                                            alt=move || format!("Icon for {}", result_title)
+                                                            alt=move || format!("Icon for {}", res_for_alt.title)
                                                             class="w-full h-full object-contain"
                                                             loading="lazy"
                                                             on:error=move |_| set_failed.set(true)
@@ -423,17 +421,16 @@ pub fn SearchBox() -> impl IntoView {
                                         <span class="font-medium">{result.title.clone()}</span>
                                         <span class="text-xs text-[color:var(--color-text-muted)]">
                                             {
-                                                let category = result.category.clone();
-                                                let result_type = result.result_type.clone();
+                                                let res_for_cat = Arc::clone(&result);
                                                 move || {
-                                                    if let Some(cat) = &category {
+                                                    if let Some(cat) = &res_for_cat.category {
                                                         if !cat.is_empty() {
-                                                            format!("{} - {}", result_type, cat)
+                                                            format!("{} - {}", res_for_cat.result_type, cat)
                                                         } else {
-                                                            result_type.clone()
+                                                            res_for_cat.result_type.clone()
                                                         }
                                                     } else {
-                                                        result_type.clone()
+                                                        res_for_cat.result_type.clone()
                                                     }
                                                 }
                                             }
