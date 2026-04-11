@@ -128,30 +128,37 @@ pub fn ListItemRow(
                             </td>
                             <td class:hidden=edit_list_mode>
                                 <div class="flex gap-1">
-                                    <button
-                                        class="btn"
-                                        on:click=move |_| {
-                                            let _ = delete_item.dispatch(item.with(|i| i.id));
-                                        }
-                                    >
-                                        <Icon icon=i::BiTrashSolid />
-                                    </button>
-                                    <button
-                                        class="btn"
-                                        on:click=move |_| {
-                                            if temp_item() != item() {
-                                                let _ = edit_item.dispatch(temp_item());
+                                    <Tooltip tooltip_text="Delete item">
+                                        <button
+                                            class="btn"
+                                            aria-label="Delete item"
+                                            on:click=move |_| {
+                                                let _ = delete_item.dispatch(item.with(|i| i.id));
                                             }
-                                            set_edit(!edit())
-                                        }
-                                    >
-                                        <Icon icon=Signal::derive(move || {
-                                            if edit() { i::BsCheck } else { i::BsPencilFill }
-                                        }) />
-                                    </button>
+                                        >
+                                            <Icon icon=i::BiTrashSolid />
+                                        </button>
+                                    </Tooltip>
+                                    <Tooltip tooltip_text=Signal::derive(move || if edit() { "Save item".to_string() } else { "Edit item".to_string() })>
+                                        <button
+                                            class="btn"
+                                            aria-label=move || if edit() { "Save item".to_string() } else { "Edit item".to_string() }
+                                            on:click=move |_| {
+                                                if temp_item() != item() {
+                                                    let _ = edit_item.dispatch(temp_item());
+                                                }
+                                                set_edit(!edit())
+                                            }
+                                        >
+                                            <Icon icon=Signal::derive(move || {
+                                                if edit() { i::BsCheck } else { i::BsPencilFill }
+                                            }) />
+                                        </button>
+                                    </Tooltip>
                                     <Tooltip tooltip_text="Mark as acquired">
                                         <button
                                             class="btn"
+                                            aria-label="Mark item as acquired"
                                             on:click=move |_| {
                                                 item.update(|i| {
                                                     i.acquired = i.quantity;
@@ -254,27 +261,38 @@ pub fn ListItemRow(
 
                             </td>
                             <td>
-                                <button
-                                    class="btn"
-                                    on:click=move |_| {
-                                        let _ = delete_item.dispatch(item.id);
-                                    }
-                                >
-                                    <Icon icon=i::BiTrashSolid />
-                                </button>
-                                <button
-                                    class="btn"
-                                    on:click=move |_| {
-                                        if temp_item() != item {
-                                            let _ = edit_item.dispatch(temp_item());
+                                <Tooltip tooltip_text="Delete item">
+                                    <button
+                                        class="btn"
+                                        aria-label="Delete item"
+                                        on:click=move |_| {
+                                            let _ = delete_item.dispatch(item.id);
                                         }
-                                        set_edit(!edit())
+                                    >
+                                        <Icon icon=i::BiTrashSolid />
+                                    </button>
+                                </Tooltip>
+                                <Tooltip tooltip_text=Signal::derive(move || if edit() { "Save item".to_string() } else { "Edit item".to_string() })>
+                                    {
+                                        let item = item.clone();
+                                        view! {
+                                            <button
+                                                class="btn"
+                                                aria-label=move || if edit() { "Save item".to_string() } else { "Edit item".to_string() }
+                                                on:click=move |_| {
+                                                    if temp_item() != item {
+                                                        let _ = edit_item.dispatch(temp_item());
+                                                    }
+                                                    set_edit(!edit())
+                                                }
+                                            >
+                                                <Icon icon=Signal::derive(move || {
+                                                    if edit() { i::BsCheck } else { i::BsPencilFill }
+                                                }) />
+                                            </button>
+                                        }
                                     }
-                                >
-                                    <Icon icon=Signal::derive(move || {
-                                        if edit() { i::BsCheck } else { i::BsPencilFill }
-                                    }) />
-                                </button>
+                                </Tooltip>
                             </td>
                         },
                     )

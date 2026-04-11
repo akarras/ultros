@@ -1,3 +1,3 @@
-## 2026-01-15 - Table Accessibility Pattern
-**Learning:** Multiple data tables (`ListingsTable`, `SaleHistoryTable`) were missing semantic `<thead>` wrappers and `scope` attributes, relying on browser auto-correction which is insufficient for accessibility.
-**Action:** Enforce `<thead>` and `scope="col"`/`scope="row"` in all table components during creation or refactor.
+## 2024-05-18 - Missing ARIA labels and Tooltips on List Action Buttons
+**Learning:** Found that list item action buttons (like Delete, Edit, and Mark as acquired) frequently use icon-only representations without `aria-label`s or `Tooltip`s. This makes them completely opaque to screen readers, and potentially confusing for users who may not immediately recognize the icon (e.g., distinguishing between a checkmark for "Save" vs "Mark as acquired"). Even when tooltips are present, `aria-label`s are still needed for screen readers.
+**Action:** When implementing lists with inline action buttons, always ensure each icon-only button is wrapped in a Tooltip (for sighted users who hover) AND includes an `aria-label` (for screen readers).
