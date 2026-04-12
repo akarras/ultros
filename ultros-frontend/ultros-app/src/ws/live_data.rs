@@ -112,19 +112,12 @@ pub(crate) async fn subscribe_to_list(
         .unwrap();
     while let Some(msg) = read.next().await {
         match msg {
-            Ok(o) => match o {
-                Message::Text(o) => {
-                    if let Ok(val) = serde_json::from_str::<ServerClient>(&o) {
-                        match val {
-                            ServerClient::ListUpdate(_) => {
-                                on_update();
-                            }
-                            _ => {}
-                        }
-                    }
+            Ok(Message::Text(o)) => {
+                if let Ok(ServerClient::ListUpdate(_)) = serde_json::from_str::<ServerClient>(&o) {
+                    on_update();
                 }
-                _ => {}
-            },
+            }
+            Ok(_) => {}
             Err(_) => break,
         }
     }

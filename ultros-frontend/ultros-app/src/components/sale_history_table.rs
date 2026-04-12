@@ -42,7 +42,10 @@ pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
             <tbody class="divide-y divide-[color:var(--color-outline)]">
                 <For
                     each=sale_history
-                    key=move |sale| sale.sold_date.and_utc().timestamp()
+                    // Optimization: Use `sale.id` as the key instead of computing a timestamp from `sale.sold_date`
+                    // on every iteration. This avoids unnecessary Date conversion overhead during DOM reconciliation
+                    // and ensures strict uniqueness (timestamps can collide if sales happen in the same second).
+                    key=move |sale| sale.id
                     children=move |sale| {
                         let total = sale.price_per_item * sale.quantity;
                         view! {
