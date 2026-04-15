@@ -1,3 +1,1 @@
-## 2026-01-15 - Table Accessibility Pattern
-**Learning:** Multiple data tables (`ListingsTable`, `SaleHistoryTable`) were missing semantic `<thead>` wrappers and `scope` attributes, relying on browser auto-correction which is insufficient for accessibility.
-**Action:** Enforce `<thead>` and `scope="col"`/`scope="row"` in all table components during creation or refactor.
+## 2026-04-15 - Add aria-labels to Filter Close Buttons\n**Learning:** In Leptos components that render dynamic lists of filters/tags, developers often use icon-only close buttons (like `<Icon icon=icondata::MdiClose />`) without screen reader text, creating an accessibility gap for interactive lists.\n**Action:** Add `aria-label="Remove filter"` to all such buttons to ensure proper announcement for screen reader users when managing their analysis views.
