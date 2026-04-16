@@ -96,6 +96,7 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
                                     class="px-4 py-2 rounded-lg bg-brand-900/30 hover:bg-brand-800/40
                                     border border-white/10 hover:border-brand-300/30
                                     transition-all duration-300 text-gray-200 hover:text-brand-300"
+                                    aria-label="Search characters"
                                     on:click=move |_| {
                                         let _ = search_action.dispatch(character_search());
                                     }
@@ -447,7 +448,7 @@ pub fn Profile() -> impl IntoView {
                                                                 group hover:border-white/10 transition-colors">
                                                                     <div class="flex items-center gap-4">
                                                                         <span class="text-brand-200">
-                                                                            {character.first_name} " " {character.last_name}
+                                                                            {character.first_name.clone()} " " {character.last_name.clone()}
                                                                         </span>
                                                                         <span class="text-gray-400">
                                                                             <WorldName id=AnySelector::World(character.world_id) />
@@ -459,6 +460,7 @@ pub fn Profile() -> impl IntoView {
                                                                         text-gray-400 hover:text-red-400
                                                                         opacity-0 group-hover:opacity-100
                                                                         transition-all duration-200"
+                                                                        aria-label=move || format!("Unclaim character {} {}", character.first_name, character.last_name)
                                                                         on:click=move |_| {
                                                                             let _ = unclaim_character.dispatch(character.id);
                                                                         }
