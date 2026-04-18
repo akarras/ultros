@@ -265,8 +265,11 @@ pub fn ListItemRow(
                                     <button
                                         class="btn"
                                         aria-label="Delete item"
-                                        on:click=move |_| {
-                                            let _ = delete_item.dispatch(item.id);
+                                        on:click={
+                                            let item_id = item.id;
+                                            move |_| {
+                                                let _ = delete_item.dispatch(item_id);
+                                            }
                                         }
                                     >
                                         <Icon icon=i::BiTrashSolid />
@@ -276,11 +279,14 @@ pub fn ListItemRow(
                                     <button
                                         class="btn"
                                         aria-label=move || if edit() { "Save item".to_string() } else { "Edit item".to_string() }
-                                        on:click=move |_| {
-                                            if temp_item() != item {
-                                                let _ = edit_item.dispatch(temp_item());
+                                        on:click={
+                                            let item = item.clone();
+                                            move |_| {
+                                                if temp_item.get_untracked() != item {
+                                                    let _ = edit_item.dispatch(temp_item.get_untracked());
+                                                }
+                                                set_edit(!edit.get_untracked())
                                             }
-                                            set_edit(!edit())
                                         }
                                     >
                                         <Icon icon=Signal::derive(move || {
