@@ -128,6 +128,7 @@ pub fn LiveSaleTicker() -> impl IntoView {
                     <button
                         class="text-sm text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] transition-colors
                         flex items-center gap-2"
+                        aria-label="Refresh live sales"
                         on:click=move |_| {
                             sales.update(|s| s.clear());
                             set_done_loading(false);
