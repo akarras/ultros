@@ -129,6 +129,7 @@ pub fn ListItemRow(
                             <td class:hidden=edit_list_mode>
                                 <div class="flex gap-1">
                                     <button
+                                        aria-label="Delete item"
                                         class="btn"
                                         on:click=move |_| {
                                             let _ = delete_item.dispatch(item.with(|i| i.id));
@@ -137,6 +138,7 @@ pub fn ListItemRow(
                                         <Icon icon=i::BiTrashSolid />
                                     </button>
                                     <button
+                                        aria-label=move || if edit() { "Save edit" } else { "Edit item" }
                                         class="btn"
                                         on:click=move |_| {
                                             if temp_item() != item() {
@@ -151,6 +153,7 @@ pub fn ListItemRow(
                                     </button>
                                     <Tooltip tooltip_text="Mark as acquired">
                                         <button
+                                        aria-label="Mark as acquired"
                                             class="btn"
                                             on:click=move |_| {
                                                 item.update(|i| {
@@ -255,6 +258,7 @@ pub fn ListItemRow(
                             </td>
                             <td>
                                 <button
+                                        aria-label="Delete item"
                                     class="btn"
                                     on:click=move |_| {
                                         let _ = delete_item.dispatch(item.id);
@@ -263,6 +267,7 @@ pub fn ListItemRow(
                                     <Icon icon=i::BiTrashSolid />
                                 </button>
                                 <button
+                                        aria-label=move || if edit() { "Save edit" } else { "Edit item" }
                                     class="btn"
                                     on:click=move |_| {
                                         if temp_item() != item {
