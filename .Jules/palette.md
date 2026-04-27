@@ -1,3 +1,3 @@
-## 2026-01-15 - Table Accessibility Pattern
-**Learning:** Multiple data tables (`ListingsTable`, `SaleHistoryTable`) were missing semantic `<thead>` wrappers and `scope` attributes, relying on browser auto-correction which is insufficient for accessibility.
-**Action:** Enforce `<thead>` and `scope="col"`/`scope="row"` in all table components during creation or refactor.
+## 2026-04-27 - Adding ARIA labels to Icon buttons
+**Learning:** Leptos components, unlike React, are strictly typed based on their generated `Props` struct. Therefore, we cannot just spread `aria_hidden=true` onto a leptos `<Icon>` component unless its `Props` struct specifically exposes it. If it is an `<Icon>` component, and it does not have the `aria_hidden` prop exposed, it is better to wrap it in a `span` with `aria-hidden='true'` or pass it as an `attr` if supported, but in this specific repository's `<Icon>` component, we must only use accepted properties.
+**Action:** Always verify leptos component props when adding attributes.
