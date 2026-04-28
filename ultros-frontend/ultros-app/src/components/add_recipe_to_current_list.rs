@@ -43,7 +43,7 @@ pub fn AddRecipeToCurrentListModal(
                     .collect::<Vec<(&Item, &Recipe)>>()
             });
             // Sort by level descending
-            results.sort_by_key(|(i, _)| Reverse(i.level_item));
+            results.sort_unstable_by_key(|(i, _)| Reverse(i.level_item));
             results
         })
     });

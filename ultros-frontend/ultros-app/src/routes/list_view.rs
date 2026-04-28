@@ -194,7 +194,7 @@ pub fn ListView() -> impl IntoView {
                                         })
                                         .collect::<Vec<_>>();
                                     score
-                                        .sort_by_key(|(_, i)| (
+                                        .sort_unstable_by_key(|(_, i)| (
                                             Reverse(i.level_item),
                                         ));
                                     score

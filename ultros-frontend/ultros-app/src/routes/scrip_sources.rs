@@ -282,11 +282,10 @@ fn ScripSourceTable(
 
         // Sort
         match sort_mode().unwrap_or(SortMode::CostPerScrip) {
-            SortMode::CostPerScrip => {
-                results.sort_by(|a, b| a.cost_per_scrip.partial_cmp(&b.cost_per_scrip).unwrap())
-            }
-            SortMode::ScripAmount => results.sort_by_key(|d| Reverse(d.scrip_amount)),
-            SortMode::Cost => results.sort_by_key(|d| d.cost),
+            SortMode::CostPerScrip => results
+                .sort_unstable_by(|a, b| a.cost_per_scrip.partial_cmp(&b.cost_per_scrip).unwrap()),
+            SortMode::ScripAmount => results.sort_unstable_by_key(|d| Reverse(d.scrip_amount)),
+            SortMode::Cost => results.sort_unstable_by_key(|d| d.cost),
         }
 
         // Deduplicate by item_id (since item may appear in multiple shop lists)

@@ -8,7 +8,7 @@ fn get_cheapest_listing(
     quantity: i32,
     hq: Option<bool>,
 ) -> Vec<ActiveListing> {
-    listings.sort_by_key(|listing| listing.price_per_unit);
+    listings.sort_unstable_by_key(|listing| listing.price_per_unit);
     let quantity_needed = quantity;
     let mut current_quantity = 0;
     listings

@@ -47,7 +47,7 @@ fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> imp
     let mut listings = listings;
     let data = xiv_gen_db::data();
     let items = &data.items;
-    listings.sort_by_key(|u| ItemSortKey::from(&u.current));
+    listings.sort_unstable_by_key(|u| ItemSortKey::from(&u.current));
     let worlds = use_context::<LocalWorldData>().unwrap().0.unwrap();
     let world = worlds.lookup_selector(AnySelector::World(retainer.world_id));
     let world_name = world.as_ref().map(|w| w.get_name()).unwrap_or_default();
@@ -129,7 +129,7 @@ fn RetainerTable(retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoV
     let data = xiv_gen_db::data();
     let items = &data.items;
     let mut listings = listings;
-    listings.sort_by_key(|u| ItemSortKey::from(u));
+    listings.sort_unstable_by_key(|u| ItemSortKey::from(u));
     let world_data = use_context::<LocalWorldData>().unwrap();
     let worlds = world_data.0.unwrap();
     let world = worlds.lookup_selector(AnySelector::World(retainer.world_id));
@@ -488,7 +488,7 @@ mod test {
             })
             .collect();
         let original = item_vec.clone();
-        item_vec.sort_by_key(|i| ItemSortKey::from(i));
+        item_vec.sort_unstable_by_key(|i| ItemSortKey::from(i));
         assert_eq!(original, item_vec);
     }
 
@@ -503,7 +503,7 @@ mod test {
             41517,
         ]; // rainbow corsage
         let mut rearranged = vec![41516, 41517, 41509];
-        rearranged.sort_by_key(|id| ItemSortKey::from((ItemId(*id), true)));
+        rearranged.sort_unstable_by_key(|id| ItemSortKey::from((ItemId(*id), true)));
         assert_eq!(expected_order, rearranged);
     }
 }

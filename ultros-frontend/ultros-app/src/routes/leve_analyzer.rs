@@ -300,8 +300,8 @@ fn LeveAnalyzerTable(
 
         // Sort
         match sort_mode().unwrap_or(SortMode::Profit) {
-            SortMode::Profit => results.sort_by_key(|d| Reverse(d.profit)),
-            SortMode::Level => results.sort_by_key(|d| Reverse(d.class_job_level)),
+            SortMode::Profit => results.sort_unstable_by_key(|d| Reverse(d.profit)),
+            SortMode::Level => results.sort_unstable_by_key(|d| Reverse(d.class_job_level)),
         }
 
         results

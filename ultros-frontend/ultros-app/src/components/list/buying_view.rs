@@ -46,7 +46,7 @@ pub fn BuyingView(
             continue;
         }
 
-        listings.sort_by_key(|l| l.price_per_unit);
+        listings.sort_unstable_by_key(|l| l.price_per_unit);
         let mut remaining = needed;
         for listing in listings {
             if remaining <= 0 {
@@ -107,11 +107,11 @@ pub fn BuyingView(
                 .into_iter()
                 .map(|(world_id, (world_name, listings))| (world_id, world_name, listings))
                 .collect();
-            sorted_worlds.sort_by(|a, b| a.1.cmp(&b.1));
+            sorted_worlds.sort_unstable_by(|a, b| a.1.cmp(&b.1));
             (dc_id, dc_name, sorted_worlds)
         })
         .collect();
-    sorted_dcs.sort_by(|a, b| a.1.cmp(&b.1));
+    sorted_dcs.sort_unstable_by(|a, b| a.1.cmp(&b.1));
 
     view! {
         <div class="flex flex-col gap-6">

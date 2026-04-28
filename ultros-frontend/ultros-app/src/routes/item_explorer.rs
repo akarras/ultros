@@ -59,7 +59,7 @@ fn CategoryView(category: u8) -> impl IntoView {
             (cat.order, &cat.name, id)
         })
         .collect::<Vec<_>>();
-    categories.sort_by_key(|(order, _, _)| *order);
+    categories.sort_unstable_by_key(|(order, _, _)| *order);
     view! {
         <div class="flex flex-col text-xl">
             {categories
@@ -185,7 +185,7 @@ fn job_category_lookup(class_job_category: &ClassJobCategory, job_acronym: &str)
 fn JobsList() -> impl IntoView {
     let jobs = &xiv_gen_db::data().class_jobs;
     let mut jobs: Vec<_> = jobs.iter().collect();
-    jobs.sort_by_key(|(_, job)| job.ui_priority);
+    jobs.sort_unstable_by_key(|(_, job)| job.ui_priority);
     view! {
         <div class="flex flex-col text-xl">
             {jobs

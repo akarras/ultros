@@ -397,9 +397,13 @@ fn AnalyzerTable(
             .collect::<Vec<_>>();
 
         match sort_mode().unwrap_or(SortMode::Roi) {
-            SortMode::Roi => sorted_data.sort_by_key(|data| Reverse(data.return_on_investment)),
-            SortMode::Profit => sorted_data.sort_by_key(|data| Reverse(data.profit)),
-            SortMode::ProfitPerDay => sorted_data.sort_by_key(|data| Reverse(data.profit_per_day)),
+            SortMode::Roi => {
+                sorted_data.sort_unstable_by_key(|data| Reverse(data.return_on_investment))
+            }
+            SortMode::Profit => sorted_data.sort_unstable_by_key(|data| Reverse(data.profit)),
+            SortMode::ProfitPerDay => {
+                sorted_data.sort_unstable_by_key(|data| Reverse(data.profit_per_day))
+            }
         }
         sorted_data
             .into_iter()
@@ -497,7 +501,7 @@ fn AnalyzerTable(
                                     .filter(|(_, cat)| !cat.name.is_empty())
                                     .map(|(id, cat)| (id.0, cat.name.clone()))
                                     .collect::<Vec<_>>();
-                                categories.sort_by(|a, b| a.1.cmp(&b.1));
+                                categories.sort_unstable_by(|a, b| a.1.cmp(&b.1));
                                 categories.into_iter().map(|(id, name)| {
                                     view! { <option value=id.to_string() selected=move || category_filter() == Some(id)>{name}</option> }
                                 }).collect_view()

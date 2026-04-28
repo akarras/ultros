@@ -24,7 +24,7 @@ fn get_cheapest_listing(
     quantity: i32,
     hq: Option<bool>,
 ) -> Vec<ActiveListing> {
-    listings.sort_by_key(|listing| listing.price_per_unit);
+    listings.sort_unstable_by_key(|listing| listing.price_per_unit);
     let quantity_needed = quantity;
     let mut current_quantity = 0;
     listings
@@ -174,13 +174,13 @@ pub fn ListSummary(items: Vec<(ListItem, Vec<ActiveListing>)>) -> impl IntoView 
 
     // Sort datacenters by total item count (descending)
     let mut sorted_datacenters: Vec<_> = datacenter_totals.into_iter().collect();
-    sorted_datacenters.sort_by(|(_, (_, _, a_item_count)), (_, (_, _, b_item_count))| {
+    sorted_datacenters.sort_unstable_by(|(_, (_, _, a_item_count)), (_, (_, _, b_item_count))| {
         b_item_count.cmp(a_item_count)
     });
 
     // Sort worlds within each datacenter: by item count (descending), then alphabetically
     for worlds in datacenter_groups.values_mut() {
-        worlds.sort_by(|a, b| match b.item_count.cmp(&a.item_count) {
+        worlds.sort_unstable_by(|a, b| match b.item_count.cmp(&a.item_count) {
             std::cmp::Ordering::Equal => a.world_name.cmp(&b.world_name),
             other => other,
         });

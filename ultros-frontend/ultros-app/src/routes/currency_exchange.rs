@@ -602,7 +602,7 @@ pub fn ExchangeItem() -> impl IntoView {
                                 let q = currency_quantity.get();
                                 compute_prices(s, l, q).map(|p: Vec<CurrencyTrade>| {
                                     let mut rows = p.clone();
-                                    rows.sort_by(|a, b| b.total_profit.cmp(&a.total_profit));
+                                    rows.sort_unstable_by(|a, b| b.total_profit.cmp(&a.total_profit));
                                     let top = rows.into_iter().take(5).collect::<Vec<_>>();
                                     view! {
                                         <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-5 gap-3 mb-4 items-stretch">
@@ -687,10 +687,10 @@ pub fn ExchangeItem() -> impl IntoView {
                                                 // surface best option at top by default (total_profit desc)
                                                 match sort_label.as_deref() {
                                                     None => {
-                                                        p.sort_by(|a, b| b.total_profit.cmp(&a.total_profit));
+                                                        p.sort_unstable_by(|a, b| b.total_profit.cmp(&a.total_profit));
                                                     }
                                                     Some("total_profit") => {
-                                                        p.sort_by(|a, b| b.total_profit.cmp(&a.total_profit));
+                                                        p.sort_unstable_by(|a, b| b.total_profit.cmp(&a.total_profit));
                                                     }
                                                     Some(label) => {
                                                         CurrencyTrade::sort_vec_by_label(&mut p, label, None);

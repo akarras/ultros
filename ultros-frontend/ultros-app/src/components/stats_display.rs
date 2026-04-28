@@ -76,7 +76,7 @@ fn get_param_data_for_item(item: ItemId) -> Option<Vec<ParamData>> {
         .into_values()
         .collect::<Vec<_>>();
 
-    params.sort_by_key(|param| param.base_param.order_priority);
+    params.sort_unstable_by_key(|param| param.base_param.order_priority);
     Some(params)
 }
 

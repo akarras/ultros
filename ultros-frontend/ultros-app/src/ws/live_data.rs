@@ -53,7 +53,7 @@ pub(crate) async fn live_sales(
                                                     hq: sale.hq,
                                                 });
                                             }
-                                            sales.make_contiguous().sort_by_key(|sale| {
+                                            sales.make_contiguous().sort_unstable_by_key(|sale| {
                                                 std::cmp::Reverse(sale.sold_date)
                                             });
                                             *sales = sales

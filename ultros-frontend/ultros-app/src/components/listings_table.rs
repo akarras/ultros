@@ -18,7 +18,7 @@ pub fn ListingsTable(
     // Note: We use Arc<Retainer> to make cloning cheap (pointer copy vs string copy).
     let sorted_listings = Memo::new(move |_| {
         let mut listings = listings();
-        listings.sort_by_key(|(listing, _)| listing.price_per_unit);
+        listings.sort_unstable_by_key(|(listing, _)| listing.price_per_unit);
         listings
     });
     // This memo handles the cheap slicing/view logic.
