@@ -735,7 +735,7 @@ pub fn ExchangeItem() -> impl IntoView {
                                                                 .filter(|(i, _)| *i <= 6)
                                                                 .map(|(i, l)| {
                                                                     view! {
-                                                                        <th class="px-6 py-3">
+                                                                        <th scope="col" class="px-6 py-3">
                                                                             <div class="flex flex-row items-center gap-2">
                                                                                 <QueryButton
                                                                                     key="sorted-by"
