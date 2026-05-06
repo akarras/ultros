@@ -170,12 +170,13 @@ impl SalesWindow {
             })
             .ok()?;
 
-        unit_prices.sort_unstable();
-        let median_unit_price = unit_prices[count / 2];
+        let min_unit_price = *unit_prices.iter().min()?;
+        let max_unit_price = *unit_prices.iter().max()?;
+
+        let (_, &mut median_unit_price, _) = unit_prices.select_nth_unstable(count / 2);
         let avg_sale_price = total_sale_price as f64 / count as f64;
 
-        stack_sizes.sort_unstable();
-        let median_stack_size = stack_sizes[count / 2];
+        let (_, &mut median_stack_size, _) = stack_sizes.select_nth_unstable(count / 2);
 
         let duration = *date_range.start() - *date_range.end();
         let avg_duration = duration / count as i32;
@@ -197,8 +198,8 @@ impl SalesWindow {
         Some(Self {
             total_gil,
             average_unit_price: avg_sale_price,
-            max_unit_price: *unit_prices.last()?,
-            min_unit_price: *unit_prices.first()?,
+            max_unit_price,
+            min_unit_price,
             median_stack_size,
             hq_percent: ((hq_count as f64 / count as f64) * 100.0).round() as i32,
             guessed_next_sale_price: next,
@@ -270,55 +271,44 @@ impl SalesSummaryData {
 
 #[component]
 fn WindowStats(#[prop(into)] sales: Signal<SalesWindow>) -> impl IntoView {
-    let total_gil = Memo::new(move |_| sales.with(|s| s.total_gil));
-    let average_unit_price =
-        Memo::new(move |_| sales.with(|s| s.average_unit_price.round() as i32));
-    let max_unit_price = Memo::new(move |_| sales.with(|s| s.max_unit_price));
-    let median_unit_price = Memo::new(move |_| sales.with(|s| s.median_unit_price));
-    let min_unit_price = Memo::new(move |_| sales.with(|s| s.min_unit_price));
-    let median_stack_size = Memo::new(move |_| sales.with(|s| s.median_stack_size));
-    let guessed_next_sale_price =
-        Memo::new(move |_| sales.with(|s| s.guessed_next_sale_price.round() as i32));
-    let time_between_sales = Memo::new(move |_| sales.with(|s| s.time_between_sales));
-    let hq_percent = Memo::new(move |_| sales.with(|s| s.hq_percent));
     view! {
         <div class="flex flex-wrap gap-2">
             <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
                 <span class="text-[color:var(--color-text-muted)] mr-1">"Gil sold"</span>
-                <GenericGil<u64> amount=total_gil />
+                <GenericGil<u64> amount=Signal::derive(move || sales.with(|s| s.total_gil)) />
             </div>
             <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
                 <span class="text-[color:var(--color-text-muted)] mr-1">"Avg price"</span>
-                <Gil amount=average_unit_price />
+                <Gil amount=Signal::derive(move || sales.with(|s| s.average_unit_price.round() as i32)) />
             </div>
             <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
                 <span class="text-[color:var(--color-text-muted)] mr-1">"Median price"</span>
-                <Gil amount=median_unit_price />
+                <Gil amount=Signal::derive(move || sales.with(|s| s.median_unit_price)) />
             </div>
             <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
                 <span class="text-[color:var(--color-text-muted)] mr-1">"Min"</span>
-                <Gil amount=min_unit_price />
+                <Gil amount=Signal::derive(move || sales.with(|s| s.min_unit_price)) />
             </div>
             <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
                 <span class="text-[color:var(--color-text-muted)] mr-1">"Max"</span>
-                <Gil amount=max_unit_price />
+                <Gil amount=Signal::derive(move || sales.with(|s| s.max_unit_price)) />
             </div>
             <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
                 <span class="text-[color:var(--color-text-muted)] mr-1">"Typical stack"</span>
-                {median_stack_size}
+                {move || sales.with(|s| s.median_stack_size)}
             </div>
             <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
                 <span class="text-[color:var(--color-text-muted)] mr-1">"HQ %"</span>
-                {move || format!("{}%", hq_percent())}
+                {move || format!("{}%", sales.with(|s| s.hq_percent))}
             </div>
             <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
                 <span class="text-[color:var(--color-text-muted)] mr-1">"Next sale (est.)"</span>
-                <Gil amount=guessed_next_sale_price />
+                <Gil amount=Signal::derive(move || sales.with(|s| s.guessed_next_sale_price.round() as i32)) />
             </div>
             <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
                 <span class="text-[color:var(--color-text-muted)] mr-1">"Time between sales"</span>
                 {move || {
-                    time_between_sales()
+                    sales.with(|s| s.time_between_sales)
                         .abs()
                         .to_std()
                         .map(|d| {
