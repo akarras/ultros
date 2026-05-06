@@ -1,3 +1,3 @@
-## 2026-01-15 - Table Accessibility Pattern
-**Learning:** Multiple data tables (`ListingsTable`, `SaleHistoryTable`) were missing semantic `<thead>` wrappers and `scope` attributes, relying on browser auto-correction which is insufficient for accessibility.
-**Action:** Enforce `<thead>` and `scope="col"`/`scope="row"` in all table components during creation or refactor.
+## 2025-02-12 - Add ARIA label to AddRecipeToCurrentListModal Close Button
+**Learning:** Icon-only close buttons in modals are common missing accessibility targets. In `AddRecipeToCurrentListModal` (`add_recipe_to_current_list.rs`), the close button (`btn-ghost`) had an icon but no textual label.
+**Action:** Always verify icon-only action buttons (like modal closes or form clears) have an appropriate `aria-label` attribute (e.g., `aria-label="Close"`) to support screen readers, aligning with the `btn-ghost` styling pattern.
