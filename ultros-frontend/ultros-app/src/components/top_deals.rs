@@ -106,7 +106,11 @@ pub fn TopDeals() -> impl IntoView {
                             view! {
                                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     <For
-                                        each=move || data.clone().into_iter().take(6)
+                                        each=move || {
+                                            // ⚡ Bolt: Iterate first, then clone only what's needed to avoid cloning the entire array
+                                            // We collect to a Vec to avoid lifetime issues with the iter
+                                            data.iter().take(6).cloned().collect::<Vec<_>>()
+                                        }
                                         key=|deal| deal.item_id
                                         children=move |deal| {
                                             view! { <DealItem deal=deal home_world_name=world_name.clone() /> }
