@@ -19,6 +19,7 @@ pub fn ThemePicker() -> impl IntoView {
         let is_active = Signal::derive(move || mode.get() == val);
         view! {
             <button
+                role="radio"
                 class=move || {
                     if is_active() {
                         "btn-primary"
@@ -26,7 +27,7 @@ pub fn ThemePicker() -> impl IntoView {
                         "btn-secondary"
                     }
                 }
-                aria-pressed=move || is_active().to_string()
+                aria-checked=move || is_active().to_string()
                 on:click=move |_| set_mode(val)
             >
                 {label}
@@ -38,6 +39,7 @@ pub fn ThemePicker() -> impl IntoView {
         let is_active = Signal::derive(move || palette.get() == val);
         view! {
             <button
+                role="radio"
                 class=move || {
                     if is_active() {
                         "btn-primary"
@@ -45,7 +47,7 @@ pub fn ThemePicker() -> impl IntoView {
                         "btn-secondary"
                     }
                 }
-                aria-pressed=move || is_active().to_string()
+                aria-checked=move || is_active().to_string()
                 on:click=move |_| set_palette(val)
             >
                 {label}
@@ -63,7 +65,7 @@ pub fn ThemePicker() -> impl IntoView {
             <div class="space-y-4">
                 <div class="space-y-2">
                     <div class="text-[color:var(--brand-fg)] font-semibold" id="theme-mode-label">"Mode"</div>
-                    <div class="flex flex-wrap gap-2" role="group" aria-labelledby="theme-mode-label">
+                    <div class="flex flex-wrap gap-2" role="radiogroup" aria-labelledby="theme-mode-label">
                         {mode_button("Dark", ThemeMode::Dark)}
                         {mode_button("Light", ThemeMode::Light)}
                         {mode_button("System", ThemeMode::System)}
@@ -72,7 +74,7 @@ pub fn ThemePicker() -> impl IntoView {
 
                 <div class="space-y-2">
                     <div class="text-[color:var(--brand-fg)] font-semibold" id="theme-palette-label">"Palette"</div>
-                    <div class="flex flex-wrap gap-2" role="group" aria-labelledby="theme-palette-label">
+                    <div class="flex flex-wrap gap-2" role="radiogroup" aria-labelledby="theme-palette-label">
                         {palette_button("Ultros", ThemePalette::Ultros)}
                         {palette_button("Maelstrom", ThemePalette::Maelstrom)}
                         {palette_button("Twin Adder", ThemePalette::TwinAdder)}
