@@ -484,6 +484,14 @@ pub fn SearchBox() -> impl IntoView {
                         scroll_to_index=Signal::derive(move || focused_index.get())
 
                     />
+                    <Show when=move || {
+                        let s = search.get();
+                        !s.is_empty() && !loading.get() && search_results.with(|r| r.is_empty())
+                    }>
+                        <div class="p-4 text-center text-sm text-[color:var(--color-text-muted)]">
+                            "No results found for \"" {search} "\""
+                        </div>
+                    </Show>
                 </div>
             </div>
         </div>
