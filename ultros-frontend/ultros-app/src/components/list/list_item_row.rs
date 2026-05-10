@@ -130,14 +130,16 @@ pub fn ListItemRow(
                                 <div class="flex gap-1">
                                     <button
                                         class="btn"
+                                        aria-label="Delete item"
                                         on:click=move |_| {
                                             let _ = delete_item.dispatch(item.with(|i| i.id));
                                         }
                                     >
-                                        <Icon icon=i::BiTrashSolid />
+                                        <Icon icon=i::BiTrashSolid aria_hidden=true />
                                     </button>
                                     <button
                                         class="btn"
+                                        aria-label=move || if edit() { "Save item" } else { "Edit item" }
                                         on:click=move |_| {
                                             if temp_item() != item() {
                                                 let _ = edit_item.dispatch(temp_item());
@@ -145,13 +147,14 @@ pub fn ListItemRow(
                                             set_edit(!edit())
                                         }
                                     >
-                                        <Icon icon=Signal::derive(move || {
+                                        <Icon aria_hidden=true icon=Signal::derive(move || {
                                             if edit() { i::BsCheck } else { i::BsPencilFill }
                                         }) />
                                     </button>
                                     <Tooltip tooltip_text="Mark as acquired">
                                         <button
                                             class="btn"
+                                            aria-label="Mark as acquired"
                                             on:click=move |_| {
                                                 item.update(|i| {
                                                     i.acquired = i.quantity;
@@ -159,7 +162,7 @@ pub fn ListItemRow(
                                                 let _ = edit_item.dispatch(item());
                                             }
                                         >
-                                            <Icon icon=i::BiCheckRegular />
+                                            <Icon icon=i::BiCheckRegular aria_hidden=true />
                                         </button>
                                     </Tooltip>
                                 </div>
@@ -256,14 +259,16 @@ pub fn ListItemRow(
                             <td>
                                 <button
                                     class="btn"
+                                    aria-label="Delete item"
                                     on:click=move |_| {
                                         let _ = delete_item.dispatch(item.id);
                                     }
                                 >
-                                    <Icon icon=i::BiTrashSolid />
+                                    <Icon icon=i::BiTrashSolid aria_hidden=true />
                                 </button>
                                 <button
                                     class="btn"
+                                    aria-label=move || if edit() { "Save item" } else { "Edit item" }
                                     on:click=move |_| {
                                         if temp_item() != item {
                                             let _ = edit_item.dispatch(temp_item());
@@ -271,7 +276,7 @@ pub fn ListItemRow(
                                         set_edit(!edit())
                                     }
                                 >
-                                    <Icon icon=Signal::derive(move || {
+                                    <Icon aria_hidden=true icon=Signal::derive(move || {
                                         if edit() { i::BsCheck } else { i::BsPencilFill }
                                     }) />
                                 </button>
