@@ -340,14 +340,13 @@ impl UltrosDb {
                 Result::<usize>::Ok(res.rows_affected as usize)
             })
             .await;
+        let retainers_by_id: HashMap<i32, &retainer::Model> =
+            retainers.values().map(|r| (r.id, r)).collect();
         let added: Vec<_> = added
             .into_iter()
             .flat_map(|l| {
                 l.ok().map(|l| {
-                    let retainer = retainers
-                        .values()
-                        .find(|r| r.id == l.retainer_id)
-                        .unwrap()
+                    let retainer = (*retainers_by_id.get(&l.retainer_id).unwrap())
                         .clone()
                         .into();
                     (l.into(), retainer)
