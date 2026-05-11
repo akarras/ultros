@@ -170,11 +170,10 @@ fn VentureAnalyzerTable(
                 continue;
             }
 
-            #[allow(clippy::collapsible_if)]
-            if let Some(ids) = &selected_ids {
-                if !ids.contains(&task.class_job_category) {
-                    continue;
-                }
+            if let Some(ids) = &selected_ids
+                && !ids.contains(&task.class_job_category)
+            {
+                continue;
             }
 
             // Check if `task.task` (RowId) corresponds to a RetainerTaskNormal

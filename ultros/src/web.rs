@@ -631,18 +631,15 @@ pub(crate) async fn edit_list(
 ) -> Result<Json<()>, ApiError> {
     let list = db
         .update_list(list.id, user.id as i64, |ulist| {
-            ulist.datacenter_id = ActiveValue::Set(match list.wdr_filter {
-                ultros_api_types::world_helper::AnySelector::Datacenter(dc) => Some(dc),
-                _ => None,
-            });
-            ulist.region_id = ActiveValue::Set(match list.wdr_filter {
-                ultros_api_types::world_helper::AnySelector::Region(region) => Some(region),
-                _ => None,
-            });
-            ulist.world_id = ActiveValue::Set(match list.wdr_filter {
-                ultros_api_types::world_helper::AnySelector::World(world) => Some(world),
-                _ => None,
-            });
+            use ultros_api_types::world_helper::AnySelector;
+            let (datacenter_id, region_id, world_id) = match list.wdr_filter {
+                AnySelector::Datacenter(dc) => (Some(dc), None, None),
+                AnySelector::Region(region) => (None, Some(region), None),
+                AnySelector::World(world) => (None, None, Some(world)),
+            };
+            ulist.datacenter_id = ActiveValue::Set(datacenter_id);
+            ulist.region_id = ActiveValue::Set(region_id);
+            ulist.world_id = ActiveValue::Set(world_id);
             ulist.name = ActiveValue::Set(list.name);
         })
         .await?;
