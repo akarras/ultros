@@ -1,7 +1,6 @@
 use crate::api::{
     UndercutData, get_retainer_listings, get_retainer_undercuts, get_user_retainer_listings,
 };
-use crate::global_state::xiv_data::tracked_data;
 use crate::components::ad::Ad;
 use crate::components::clipboard::Clipboard;
 use crate::components::gil::*;
@@ -9,6 +8,7 @@ use crate::components::icon::Icon;
 use crate::components::skeleton::BoxSkeleton;
 use crate::components::{item_icon::*, loading::*, meta::*, world_name::*};
 use crate::global_state::LocalWorldData;
+use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use components::{A, Outlet};
 use hooks::use_params_map;

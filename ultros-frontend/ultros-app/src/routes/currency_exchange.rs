@@ -4,7 +4,6 @@ use std::hash::Hash;
 use std::hash::Hasher;
 
 use crate::Ad;
-use crate::global_state::xiv_data::tracked_data;
 use crate::Tooltip;
 use crate::api::get_cheapest_listings;
 use crate::api::get_recent_sales_for_world;
@@ -21,6 +20,7 @@ use crate::components::number_input::ParseableInputBox;
 use crate::components::query_button::QueryButton;
 use crate::error::AppError;
 use crate::global_state::home_world::use_home_world;
+use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use chrono::TimeDelta;
 use chrono::Utc;

@@ -1,8 +1,8 @@
 use crate::components::item_icon::ItemIcon;
-use crate::global_state::xiv_data::tracked_data;
 use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::components::recently_viewed::RecentItems;
 use crate::components::skeleton::BoxSkeleton;
+use crate::global_state::xiv_data::tracked_data;
 use leptos::either::Either;
 use leptos::prelude::*;
 use leptos_router::components::A;

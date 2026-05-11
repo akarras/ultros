@@ -1,5 +1,4 @@
 use crate::api::get_listings;
-use crate::global_state::xiv_data::tracked_data;
 use crate::components::gil::Gil;
 use crate::components::icon::Icon;
 use crate::components::price_history_chart::PriceHistoryChart;
@@ -13,6 +12,7 @@ use crate::error::AppError;
 use crate::global_state::LocalWorldData;
 use crate::global_state::cheapest_prices::CheapestPrices;
 use crate::global_state::home_world::{get_price_zone, use_home_world};
+use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::{t, t_string};
 use chrono::{TimeDelta, Utc};
 use leptos::prelude::*;

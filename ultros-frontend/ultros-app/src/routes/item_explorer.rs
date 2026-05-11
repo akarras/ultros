@@ -4,7 +4,6 @@ use std::{collections::HashSet, str::FromStr};
 
 use crate::CheapestPrices;
 use crate::components::clipboard::Clipboard;
-use crate::global_state::xiv_data::tracked_data;
 use crate::components::gil::Gil;
 use crate::components::icon::Icon;
 use crate::components::loading::Loading;
@@ -12,6 +11,7 @@ use crate::components::query_button::QueryButton;
 use crate::components::toggle::Toggle;
 use crate::components::{add_to_list::*, cheapest_price::*, fonts::*, item_icon::*, meta::*};
 use crate::global_state::home_world::get_price_zone;
+use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use icondata as i;
 use itertools::Itertools;

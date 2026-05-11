@@ -42,10 +42,7 @@ impl Iterator for ParamIterator {
                 return None;
             };
             self.index += 1;
-            if let Some(base_param) = tracked_data()
-                .base_params
-                .get(&BaseParamId(param as i32))
-            {
+            if let Some(base_param) = tracked_data().base_params.get(&BaseParamId(param as i32)) {
                 return Some((base_param, self.index > 6, value));
             }
         }

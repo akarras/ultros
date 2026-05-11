@@ -18,7 +18,9 @@ use crate::{
         add_recipe_to_list::AddRecipeToList, icon::Icon, item_icon::ItemIcon,
         skeleton::SingleLineSkeleton,
     },
-    global_state::{cheapest_prices::CheapestPrices, home_world::get_price_zone, xiv_data::tracked_data},
+    global_state::{
+        cheapest_prices::CheapestPrices, home_world::get_price_zone, xiv_data::tracked_data,
+    },
 };
 
 use super::{cheapest_price::*, gil::*, small_item_display::*};

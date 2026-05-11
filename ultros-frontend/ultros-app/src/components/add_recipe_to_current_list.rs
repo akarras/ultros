@@ -1,9 +1,9 @@
 use crate::api::bulk_add_item_to_list;
-use crate::global_state::xiv_data::tracked_data;
 use crate::components::icon::Icon;
 use crate::components::item_icon::{IconSize, ItemIcon};
 use crate::components::modal::Modal;
 use crate::components::related_items::IngredientsIter;
+use crate::global_state::xiv_data::tracked_data;
 use icondata as i;
 use leptos::prelude::*;
 use leptos::reactive::wrappers::write::SignalSetter;
