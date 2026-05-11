@@ -35,11 +35,64 @@ pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl 
     let helper = local_world_data.0.unwrap();
     let theme = use_theme_settings();
     let (filter_outliers, set_filter_outliers) = signal(true);
+    // Optimization: separate color extraction from resize logic to avoid `get_computed_style` on every resize
+    let chart_colors = Memo::new(move |_| {
+        let _ = theme.mode.get();
+        let _ = theme.palette.get();
+
+        #[cfg(feature = "hydrate")]
+        fn __parse_css_rgb(value: &str) -> Option<(u8, u8, u8)> {
+            let v = value.trim();
+            if let Some(hex) = v.strip_prefix('#')
+                && hex.len() == 6
+            {
+                let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+                let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+                let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+                return Some((r, g, b));
+            }
+            let v = v
+                .trim_start_matches("rgb(")
+                .trim_start_matches("rgba(")
+                .trim_end_matches(')');
+            let parts: Vec<_> = v.split(',').map(|s| s.trim()).collect();
+            if parts.len() >= 3 {
+                let r = parts[0].parse::<u8>().ok()?;
+                let g = parts[1].parse::<u8>().ok()?;
+                let b = parts[2].parse::<u8>().ok()?;
+                return Some((r, g, b));
+            }
+            None
+        }
+
+        #[cfg(feature = "hydrate")]
+        {
+            let mut text_rgb = None;
+            let mut grid_rgb = None;
+            if let Some(window) = web_sys::window()
+                && let Some(document) = window.document()
+                && let Some(root) = document.document_element()
+                && let Ok(Some(style)) = window.get_computed_style(&root)
+            {
+                if let Ok(val) = style.get_property_value("--color-text") {
+                    text_rgb = __parse_css_rgb(&val);
+                }
+                if let Ok(val) = style.get_property_value("--color-outline") {
+                    grid_rgb = __parse_css_rgb(&val);
+                }
+            }
+            (text_rgb, grid_rgb)
+        }
+
+        #[cfg(not(feature = "hydrate"))]
+        (None, None)
+    });
+
     let hidden = Memo::new(move |_| {
         width.track();
         height.track();
-        let _ = theme.mode.get();
-        let _ = theme.palette.get();
+        let (text_rgb, grid_rgb) = chart_colors.get();
+
         if let Some(canvas) = canvas.get() {
             #[cfg(feature = "hydrate")]
             {
@@ -53,54 +106,6 @@ pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl 
             }
             let backend = CanvasBackend::with_canvas_object(canvas.clone()).unwrap();
             // if there's an error drawing, we should hide the canvas
-
-            #[cfg(feature = "hydrate")]
-            fn __parse_css_rgb(value: &str) -> Option<(u8, u8, u8)> {
-                let v = value.trim();
-                if let Some(hex) = v.strip_prefix('#')
-                    && hex.len() == 6
-                {
-                    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-                    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-                    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-                    return Some((r, g, b));
-                }
-                let v = v
-                    .trim_start_matches("rgb(")
-                    .trim_start_matches("rgba(")
-                    .trim_end_matches(')');
-                let parts: Vec<_> = v.split(',').map(|s| s.trim()).collect();
-                if parts.len() >= 3 {
-                    let r = parts[0].parse::<u8>().ok()?;
-                    let g = parts[1].parse::<u8>().ok()?;
-                    let b = parts[2].parse::<u8>().ok()?;
-                    return Some((r, g, b));
-                }
-                None
-            }
-
-            #[cfg(feature = "hydrate")]
-            let (text_rgb, grid_rgb) = {
-                let mut text_rgb = None;
-                let mut grid_rgb = None;
-                if let Some(window) = web_sys::window()
-                    && let Some(document) = window.document()
-                    && let Some(root) = document.document_element()
-                    && let Ok(Some(style)) = window.get_computed_style(&root)
-                {
-                    if let Ok(val) = style.get_property_value("--color-text") {
-                        text_rgb = __parse_css_rgb(&val);
-                    }
-                    if let Ok(val) = style.get_property_value("--color-outline") {
-                        grid_rgb = __parse_css_rgb(&val);
-                    }
-                }
-
-                (text_rgb, grid_rgb)
-            };
-
-            #[cfg(not(feature = "hydrate"))]
-            let (text_rgb, grid_rgb) = (None, None);
 
             sales.with(|sales| {
                 draw_sale_history_scatter_plot(

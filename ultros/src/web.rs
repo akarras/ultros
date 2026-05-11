@@ -19,8 +19,6 @@ use axum_extra::extract::CookieJar;
 use axum_extra::extract::cookie::{Cookie, Key};
 use axum_extra::headers::{CacheControl, ContentType, HeaderMapExt};
 use futures::future::{try_join, try_join_all};
-use futures::stream::TryStreamExt;
-use futures::{StreamExt, stream};
 use hyper::header;
 use itertools::Itertools;
 use leptos::config::LeptosOptions;
@@ -549,26 +547,25 @@ pub(crate) async fn get_list_with_listings(
     let world_ids = world_cache
         .get_all_worlds_in(&world)
         .ok_or(anyhow::anyhow!("Bad world id"))?;
-    // borrow these for use inside the closure
-    let world_ids = &world_ids;
-    let db = &db;
-    let list_items = stream::iter(list_items.into_iter().map(|list| async move {
-        // get alll the listings that match our item list
-        let listings = db
-            .get_all_listings_in_worlds(world_ids, ItemId(list.item_id))
-            .await;
-        listings.map(|listings| {
-            // return this as a tuple and bring the list that we moved vec
-            (
-                ListItem::from(list),
-                // convert our new active listing to the API types
-                listings.into_iter().map(ActiveListing::from).collect(),
-            )
+    let item_ids: Vec<_> = list_items.iter().map(|i| i.item_id).collect();
+    let listings = db
+        .get_listings_for_items_in_worlds(&world_ids, &item_ids)
+        .await?;
+    let mut listings_map: HashMap<i32, Vec<ActiveListing>> = HashMap::new();
+    for listing in listings {
+        listings_map
+            .entry(listing.item_id)
+            .or_default()
+            .push(listing.into());
+    }
+
+    let list_items = list_items
+        .into_iter()
+        .map(|list| {
+            let listings = listings_map.get(&list.item_id).cloned().unwrap_or_default();
+            (ListItem::from(list), listings)
         })
-    }))
-    .buffered(2)
-    .try_collect()
-    .await?;
+        .collect();
 
     Ok(Json((List::try_from(list)?, list_items)))
 }
@@ -741,21 +738,17 @@ pub(crate) async fn bulk_item_listings(
     let worlds = &world_cache
         .get_all_worlds_in(&world_lookup)
         .ok_or(anyhow::anyhow!("Invalid world"))?;
-    let db = &db;
     // get item ids
     let item_ids: HashSet<i32> = item_ids.split(',').map(|id| id.parse()).try_collect()?;
+    let item_vec: Vec<i32> = item_ids.iter().cloned().collect();
     // now perform lookups for all the listings for each world/item pair
-    let listings = try_join_all(item_ids.into_iter().map(|item| async move {
-        db.get_all_listings_in_worlds_with_retainers(worlds, ItemId(item))
-            .await
-            // map the result to have the item id at the front.
-            .map(|res| (item, res))
-    }))
-    .await?;
+    let mut listings_map = db.get_listings_for_items(worlds, &item_vec).await?;
+
     // now convert the database models to API types.
-    let listings = listings
+    let listings = item_ids
         .into_iter()
-        .map(|(id, l)| {
+        .map(|id| {
+            let l = listings_map.remove(&id).unwrap_or_default();
             (
                 id,
                 l.into_iter()

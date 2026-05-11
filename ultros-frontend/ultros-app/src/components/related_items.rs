@@ -644,7 +644,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     let db = xiv_gen_db::data();
     let item = Memo::new(move |_| db.items.get(&ItemId(item_id())));
     let (price_zone, _) = get_price_zone();
-    let item_set = move || {
+    let related_items_data = Memo::new(move |_| {
         item()
             .map(|item| {
                 item_set_iter(item)
@@ -654,109 +654,91 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                     .unique_by(|i| i.key_id)
                     .filter(|i| i.item_search_category > 0)
                     .filter(|i| i.key_id.0 != item.key_id.0)
-                    .map(|item| {
-                        view! {
-                            <A
-                                attr:class="group flex flex-col gap-2 rounded-lg card p-3 transition-all hover:scale-[1.02] hover:shadow-lg hover:bg-brand-800/50 border border-brand-700/30"
-                                exact=true
-                                href=move || {
-                                    format!(
-                                        "/item/{}/{}",
-                                        price_zone()
-                                            .as_ref()
-                                            .map(|z| z.get_name())
-                                            .unwrap_or("North-America"),
-                                        item.key_id.0,
-                                    )
-                                }
-                            >
-
-                                <div class="flex items-center gap-2 text-sm">
-                                    <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
-                                    <span class="flex-1 truncate font-medium text-brand-100">{item.name.as_str()}</span>
-                                    <span class="text-xs text-[color:var(--color-text-muted)] bg-brand-900/50 px-1.5 py-0.5 rounded border border-brand-700/50">"iLvl " {item.level_item}</span>
-                                </div>
-                                <div class="text-sm font-bold text-[color:var(--brand-fg)] mt-1 ml-1">
-                                    <CheapestPrice item_id=item.key_id />
-                                </div>
-                            </A>
-                        }
-                    })
-                    .take(12)
-                    .collect_view()
+                    .collect::<Vec<_>>()
             })
             .unwrap_or_default()
+    });
+
+    let item_set = move || {
+        related_items_data.with(|items| {
+            items.iter().take(12).map(|&item| {
+                view! {
+                    <A
+                        attr:class="group flex flex-col gap-2 rounded-lg card p-3 transition-all hover:scale-[1.02] hover:shadow-lg hover:bg-brand-800/50 border border-brand-700/30"
+                        exact=true
+                        href=move || {
+                            format!(
+                                "/item/{}/{}",
+                                price_zone()
+                                    .as_ref()
+                                    .map(|z| z.get_name())
+                                    .unwrap_or("North-America"),
+                                item.key_id.0,
+                            )
+                        }
+                    >
+
+                        <div class="flex items-center gap-2 text-sm">
+                            <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
+                            <span class="flex-1 truncate font-medium text-brand-100">{item.name.as_str()}</span>
+                            <span class="text-xs text-[color:var(--color-text-muted)] bg-brand-900/50 px-1.5 py-0.5 rounded border border-brand-700/50">"iLvl " {item.level_item}</span>
+                        </div>
+                        <div class="text-sm font-bold text-[color:var(--brand-fg)] mt-1 ml-1">
+                            <CheapestPrice item_id=item.key_id />
+                        </div>
+                    </A>
+                }
+            }).collect_view()
+        })
     };
-    let recipes = Signal::derive(move || {
+
+    let recipes = Memo::new(move |_| {
         recipe_tree_iter(ItemId(item_id.get()))
             .take(30)
             .collect::<Vec<_>>()
     });
+
     let (show_more, set_show_more) = signal(false);
-    let has_more = move || {
-        item()
-            .map(|item| {
-                item_set_iter(item)
-                    .chain(prefix_item_iterator(item))
-                    .chain(suffix_item_iterator(item))
-                    .unique_by(|i| i.key_id)
-                    .filter(|i| i.item_search_category > 0)
-                    .filter(|i| i.key_id.0 != item.key_id.0)
-                    .count()
-                    > 12
-            })
-            .unwrap_or(false)
-    };
+    let has_more = move || related_items_data.with(|items| items.len() > 12);
 
     view! {
         <div class="flex flex-col gap-6">
-            <div class="panel p-4 sm:p-6" class:hidden=move || item_set().is_empty()>
+            <div class="panel p-4 sm:p-6" class:hidden=move || related_items_data.with(|i| i.is_empty())>
                 <h2 class="text-xl font-bold text-brand-200 mb-4 px-1">"Related Items"</h2>
                 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
                     {item_set}
                     {move || {
                         show_more().then(|| {
-                            item()
-                                .map(|item| {
-                                    item_set_iter(item)
-                                        .chain(prefix_item_iterator(item))
-                                        .chain(suffix_item_iterator(item))
-                                        .sorted_by_key(|i| i.key_id.0)
-                                        .unique_by(|i| i.key_id)
-                                        .filter(|i| i.item_search_category > 0)
-                                        .filter(|i| i.key_id.0 != item.key_id.0)
-                                        .skip(12)
-                                        .map(|item| {
-                                            view! {
-                                                <A
-                                                    attr:class="group flex flex-col gap-2 rounded-lg card p-3 transition-all hover:scale-[1.02] hover:shadow-lg hover:bg-brand-800/50 border border-brand-700/30"
-                                                    exact=true
-                                                    href=move || {
-                                                        format!(
-                                                            "/item/{}/{}",
-                                                            price_zone()
-                                                                .as_ref()
-                                                                .map(|z| z.get_name())
-                                                                .unwrap_or("North-America"),
-                                                            item.key_id.0,
-                                                        )
-                                                    }
-                                                >
-
-                                                    <div class="flex items-center gap-2 text-sm">
-                                                        <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
-                                                        <span class="flex-1 truncate font-medium text-brand-100">{item.name.as_str()}</span>
-                                                        <span class="text-xs text-[color:var(--color-text-muted)] bg-brand-900/50 px-1.5 py-0.5 rounded border border-brand-700/50">"iLvl " {item.level_item}</span>
-                                                    </div>
-                                                    <div class="text-sm font-bold text-[color:var(--brand-fg)] mt-1 ml-1">
-                                                        <CheapestPrice item_id=item.key_id />
-                                                    </div>
-                                                </A>
+                            related_items_data.with(|items| {
+                                items.iter().skip(12).map(|&item| {
+                                    view! {
+                                        <A
+                                            attr:class="group flex flex-col gap-2 rounded-lg card p-3 transition-all hover:scale-[1.02] hover:shadow-lg hover:bg-brand-800/50 border border-brand-700/30"
+                                            exact=true
+                                            href=move || {
+                                                format!(
+                                                    "/item/{}/{}",
+                                                    price_zone()
+                                                        .as_ref()
+                                                        .map(|z| z.get_name())
+                                                        .unwrap_or("North-America"),
+                                                    item.key_id.0,
+                                                )
                                             }
-                                        })
-                                        .collect_view()
-                                })
-                                .unwrap_or_default()
+                                        >
+
+                                            <div class="flex items-center gap-2 text-sm">
+                                                <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
+                                                <span class="flex-1 truncate font-medium text-brand-100">{item.name.as_str()}</span>
+                                                <span class="text-xs text-[color:var(--color-text-muted)] bg-brand-900/50 px-1.5 py-0.5 rounded border border-brand-700/50">"iLvl " {item.level_item}</span>
+                                            </div>
+                                            <div class="text-sm font-bold text-[color:var(--brand-fg)] mt-1 ml-1">
+                                                <CheapestPrice item_id=item.key_id />
+                                            </div>
+                                        </A>
+                                    }
+                                }).collect_view()
+                            })
                         })
                     }}
                 </div>

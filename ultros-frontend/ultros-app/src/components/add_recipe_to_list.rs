@@ -131,8 +131,9 @@ fn AddRecipeToListModal(
                 </div>
 
                 <div class="flex flex-wrap items-center gap-3">
-                    <label class="text-sm text-[color:var(--color-text-muted)]">"Number of crafts"</label>
+                    <label class="text-sm text-[color:var(--color-text-muted)]" for=move || format!("craft-qty-{}", recipe.key_id.0)>"Number of crafts"</label>
                     <input
+                        id=move || format!("craft-qty-{}", recipe.key_id.0)
                         type="number"
                         min="1"
                         class="input w-24"
@@ -164,8 +165,11 @@ fn AddRecipeToListModal(
                         children=move |ingredient| {
                             view! {
                                 <div class="flex items-center gap-2">
-                                    <SmallItemDisplay item=ingredient.item />
+                                    <label for=move || format!("ingredient-qty-{}", ingredient.item_id.0) class="flex-1">
+                                        <SmallItemDisplay item=ingredient.item />
+                                    </label>
                                     <input
+                                        id=move || format!("ingredient-qty-{}", ingredient.item_id.0)
                                         type="number"
                                         min="0"
                                         class="input w-24 ml-auto"
