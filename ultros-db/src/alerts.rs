@@ -3,6 +3,7 @@ use crate::entity::*;
 use anyhow::Result;
 use futures::future::try_join_all;
 use sea_orm::*;
+use sea_orm::sea_query::Expr;
 
 impl UltrosDb {
     pub async fn get_alert(&self, alert_id: i32) -> Result<Option<alert::Model>> {
@@ -124,7 +125,6 @@ impl UltrosDb {
         notification_name: &str,
     ) -> Result<alert::Model> {
         use sea_orm::TransactionTrait;
-        use sea_orm::sea_query::Expr;
         let txn = self.db.begin().await?;
         let alert = alert::Entity::insert(alert::ActiveModel {
             id: ActiveValue::default(),
@@ -152,7 +152,7 @@ impl UltrosDb {
             .filter(notification_endpoint::Column::UserId.eq(owner_discord_user_id))
             .filter(notification_endpoint::Column::Method.eq(notification_method))
             .filter(Expr::cust_with_values(
-                "config = $1::jsonb",
+                "config = ?::jsonb",
                 vec![notification_config.clone()],
             ))
             .one(&txn)
@@ -292,14 +292,14 @@ impl UltrosDb {
     }
 
     pub async fn update_alert_last_fired(&self, alert_id: i32) -> Result<()> {
-        let alert = alert::Entity::find_by_id(alert_id)
-            .one(&self.db)
-            .await?
-            .ok_or_else(|| anyhow::Error::msg("alert not found"))?;
-        let mut a: alert::ActiveModel = alert.into();
-        // last_fired_at is Option<DateTimeWithTimeZone>
-        a.last_fired_at = Set(Some(chrono::Utc::now().into()));
-        a.update(&self.db).await?;
+        alert::Entity::update_many()
+            .col_expr(
+                alert::Column::LastFiredAt,
+                Expr::value(chrono::Utc::now().fixed_offset()),
+            )
+            .filter(alert::Column::Id.eq(alert_id))
+            .exec(&self.db)
+            .await?;
         Ok(())
     }
 
