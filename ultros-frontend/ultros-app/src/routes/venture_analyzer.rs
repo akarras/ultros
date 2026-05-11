@@ -8,7 +8,9 @@ use crate::{
         gil::*, icon::Icon, item_icon::*, query_button::QueryButton, skeleton::BoxSkeleton,
         virtual_scroller::*, world_picker::WorldOnlyPicker,
     },
-    global_state::{LocalWorldData, home_world::use_home_world},
+    global_state::{
+        LocalWorldData, home_world::use_home_world, region_for_world::use_region_for_world,
+    },
 };
 use icondata as i;
 use itertools::Itertools;
@@ -25,7 +27,6 @@ use std::{
 use ultros_api_types::{
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     recent_sales::{RecentSales, SaleData},
-    world_helper::AnyResult,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -431,25 +432,7 @@ pub fn VentureAnalyzer() -> impl IntoView {
     let (home_world, _) = use_home_world();
     let nav = use_navigate();
 
-    let region = Memo::new(move |_| {
-        let worlds = use_context::<LocalWorldData>()
-            .expect("Worlds should always be populated here")
-            .0
-            .unwrap();
-        // Default to home world region or North-America
-        let world_name = query
-            .with(|p| p.get("world").clone())
-            .or_else(|| home_world.get().map(|w| w.name))
-            .unwrap_or_else(|| "North-America".to_string());
-
-        worlds
-            .lookup_world_by_name(&world_name)
-            .map(|world| {
-                let region = worlds.get_region(world);
-                AnyResult::Region(region).get_name().to_string()
-            })
-            .unwrap_or_else(|| "North-America".to_string())
-    });
+    let region = use_region_for_world(move || query.with(|p| p.get("world").clone()));
 
     let global_cheapest_listings = ArcResource::new(region, move |region: String| async move {
         get_cheapest_listings(&region).await

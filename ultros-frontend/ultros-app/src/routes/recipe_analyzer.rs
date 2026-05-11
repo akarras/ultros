@@ -10,7 +10,8 @@ use crate::{
         virtual_scroller::*, world_picker::WorldOnlyPicker,
     },
     global_state::{
-        LocalWorldData, cookies::Cookies, crafter_levels::CrafterLevels, home_world::use_home_world,
+        cookies::Cookies, crafter_levels::CrafterLevels, home_world::use_home_world,
+        region_for_world::use_region_for_world,
     },
 };
 use icondata as i;
@@ -20,7 +21,6 @@ use std::{cmp::Reverse, collections::HashMap, fmt::Display, str::FromStr, sync::
 use ultros_api_types::{
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     recent_sales::{RecentSales, SaleData},
-    world_helper::AnyResult,
 };
 use xiv_gen::{ItemId, Recipe, RecipeLevelTableId};
 
@@ -736,25 +736,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     let params = use_params_map();
     let (home_world, _) = use_home_world();
 
-    let region = Memo::new(move |_| {
-        let worlds = use_context::<LocalWorldData>()
-            .expect("Worlds should always be populated here")
-            .0
-            .unwrap();
-        // Default to home world region or North-America
-        let world_name = params
-            .with(|p| p.get("world").clone())
-            .or_else(|| home_world.get().map(|w| w.name))
-            .unwrap_or_else(|| "North-America".to_string());
-
-        worlds
-            .lookup_world_by_name(&world_name)
-            .map(|world| {
-                let region = worlds.get_region(world);
-                AnyResult::Region(region).get_name().to_string()
-            })
-            .unwrap_or_else(|| "North-America".to_string())
-    });
+    let region = use_region_for_world(move || params.with(|p| p.get("world").clone()));
 
     let global_cheapest_listings = ArcResource::new(region, move |region: String| async move {
         get_cheapest_listings(&region).await
