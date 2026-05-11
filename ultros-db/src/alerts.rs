@@ -152,7 +152,7 @@ impl UltrosDb {
             .filter(notification_endpoint::Column::UserId.eq(owner_discord_user_id))
             .filter(notification_endpoint::Column::Method.eq(notification_method))
             .filter(Expr::cust_with_values(
-                "config = ?::jsonb",
+                "config::jsonb = ?::jsonb",
                 vec![notification_config.clone()],
             ))
             .one(&txn)
