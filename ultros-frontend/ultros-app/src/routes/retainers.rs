@@ -1,7 +1,6 @@
 use crate::api::{
     UndercutData, get_retainer_listings, get_retainer_undercuts, get_user_retainer_listings,
 };
-use crate::components::ad::Ad;
 use crate::components::clipboard::Clipboard;
 use crate::components::gil::*;
 use crate::components::icon::Icon;
@@ -453,16 +452,8 @@ pub fn Retainers() -> impl IntoView {
             </A>
         </div>
         <div class="main-content">
-            <div class="container mx-auto flex flex-col xl:flex-row items-start">
-                <div class="flex flex-col grow">
-                    <div class="grow w-full">
-                        <Ad class="h-[90px] w-full xl:w-[728px]" />
-                    </div>
-                    <Outlet />
-                </div>
-                <div>
-                    <Ad class="h-96 w-96 xl:h-[750px] xl:w-40" />
-                </div>
+            <div class="container mx-auto">
+                <Outlet />
             </div>
         </div>
     }

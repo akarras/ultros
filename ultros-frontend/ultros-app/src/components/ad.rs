@@ -44,7 +44,7 @@ pub fn Ad(#[prop(optional)] class: Option<&'static str>) -> impl IntoView {
             <div class:hidden=unfilled class="ad">
                 <div class="flex flex-col h-full">
                     <span class="text-sm px-2 py-0.5 rounded-md border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)] text-[color:var(--color-text-muted)] shrink max-w-fit">
-                        "Ad"
+                        "Advertisements"
                     </span>
                     <script
                         async
@@ -63,11 +63,28 @@ pub fn Ad(#[prop(optional)] class: Option<&'static str>) -> impl IntoView {
                     ></ins>
                     <script>(adsbygoogle = window.adsbygoogle || []).push({});</script>
                     <span class="text-neutral-500 italic text-sm">
-                        "ads support the site. you may disable or enable them under "
+                        "ads are optional. you may disable or enable them under "
                         <A href="/settings">"Settings"</A>
                     </span>
                 </div>
             </div>
         </Show>
     }.into_any()
+}
+
+#[component]
+pub fn DesktopAdRail() -> impl IntoView {
+    let cookies = use_context::<Cookies>().unwrap();
+    let (hide_ads, _) = cookies.use_cookie_typed::<_, bool>("HIDE_ADS");
+    let ads_visible = Signal::derive(move || !hide_ads.get().unwrap_or_default());
+
+    view! {
+        <Show when=ads_visible>
+            <aside class="app-ad-rail" aria-label="Advertisements">
+                <div class="ad-rail-slot sticky top-24">
+                    <Ad class="h-[600px] w-full" />
+                </div>
+            </aside>
+        </Show>
+    }
 }
