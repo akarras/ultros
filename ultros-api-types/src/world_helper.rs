@@ -276,3 +276,299 @@ impl<'a> WorldHelper {
         self.world_data.clone()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::world::{Datacenter, Region, World, WorldData};
+
+    fn sample_world_data() -> WorldData {
+        // Region 1 "North-America" → DC 10 "Aether" → Worlds 100 "Adamantoise", 101 "Cactuar"
+        // Region 1 "North-America" → DC 11 "Primal" → World 110 "Behemoth"
+        // Region 2 "Japan" → DC 20 "Elemental" → World 200 "Aegis"
+        WorldData {
+            regions: vec![
+                Region {
+                    id: 1,
+                    name: "North-America".into(),
+                    datacenters: vec![
+                        Datacenter {
+                            id: 10,
+                            name: "Aether".into(),
+                            region_id: 1,
+                            worlds: vec![
+                                World {
+                                    id: 100,
+                                    name: "Adamantoise".into(),
+                                    datacenter_id: 10,
+                                },
+                                World {
+                                    id: 101,
+                                    name: "Cactuar".into(),
+                                    datacenter_id: 10,
+                                },
+                            ],
+                        },
+                        Datacenter {
+                            id: 11,
+                            name: "Primal".into(),
+                            region_id: 1,
+                            worlds: vec![World {
+                                id: 110,
+                                name: "Behemoth".into(),
+                                datacenter_id: 11,
+                            }],
+                        },
+                    ],
+                },
+                Region {
+                    id: 2,
+                    name: "Japan".into(),
+                    datacenters: vec![Datacenter {
+                        id: 20,
+                        name: "Elemental".into(),
+                        region_id: 2,
+                        worlds: vec![World {
+                            id: 200,
+                            name: "Aegis".into(),
+                            datacenter_id: 20,
+                        }],
+                    }],
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn any_selector_as_world_id_only_for_world_variant() {
+        assert_eq!(AnySelector::World(7).as_world_id(), Some(7));
+        assert_eq!(AnySelector::Datacenter(7).as_world_id(), None);
+        assert_eq!(AnySelector::Region(7).as_world_id(), None);
+    }
+
+    #[test]
+    fn any_selector_serde_roundtrip() {
+        for s in [
+            AnySelector::Region(1),
+            AnySelector::Datacenter(10),
+            AnySelector::World(100),
+        ] {
+            let j = serde_json::to_string(&s).unwrap();
+            let back: AnySelector = serde_json::from_str(&j).unwrap();
+            assert_eq!(s, back);
+        }
+    }
+
+    #[test]
+    fn lookup_selector_finds_each_kind() {
+        let helper: WorldHelper = sample_world_data().into();
+        assert!(matches!(
+            helper.lookup_selector(AnySelector::Region(1)),
+            Some(AnyResult::Region(r)) if r.id == 1
+        ));
+        assert!(matches!(
+            helper.lookup_selector(AnySelector::Datacenter(10)),
+            Some(AnyResult::Datacenter(d)) if d.id == 10
+        ));
+        assert!(matches!(
+            helper.lookup_selector(AnySelector::World(100)),
+            Some(AnyResult::World(w)) if w.id == 100
+        ));
+    }
+
+    #[test]
+    fn lookup_selector_returns_none_for_unknown_id() {
+        let helper: WorldHelper = sample_world_data().into();
+        assert!(helper.lookup_selector(AnySelector::World(99999)).is_none());
+        assert!(
+            helper
+                .lookup_selector(AnySelector::Datacenter(99999))
+                .is_none()
+        );
+        assert!(helper.lookup_selector(AnySelector::Region(99999)).is_none());
+    }
+
+    #[test]
+    fn lookup_world_by_name_is_case_insensitive() {
+        let helper: WorldHelper = sample_world_data().into();
+        let r = helper.lookup_world_by_name("adamantoise").unwrap();
+        assert_eq!(r.get_name(), "Adamantoise");
+        let r = helper.lookup_world_by_name("AETHER").unwrap();
+        assert_eq!(r.get_name(), "Aether");
+    }
+
+    #[test]
+    fn lookup_world_by_name_finds_region_dc_or_world() {
+        let helper: WorldHelper = sample_world_data().into();
+        assert!(matches!(
+            helper.lookup_world_by_name("North-America"),
+            Some(AnyResult::Region(_))
+        ));
+        assert!(matches!(
+            helper.lookup_world_by_name("Primal"),
+            Some(AnyResult::Datacenter(_))
+        ));
+        assert!(matches!(
+            helper.lookup_world_by_name("Behemoth"),
+            Some(AnyResult::World(_))
+        ));
+    }
+
+    #[test]
+    fn lookup_world_by_name_missing_returns_none() {
+        let helper: WorldHelper = sample_world_data().into();
+        assert!(helper.lookup_world_by_name("Nowhere").is_none());
+    }
+
+    #[test]
+    fn any_result_is_in_self_is_true() {
+        let helper: WorldHelper = sample_world_data().into();
+        let world = helper.lookup_selector(AnySelector::World(100)).unwrap();
+        assert!(world.is_in(&world));
+    }
+
+    #[test]
+    fn any_result_world_is_in_its_datacenter_and_region() {
+        let helper: WorldHelper = sample_world_data().into();
+        let world = helper.lookup_selector(AnySelector::World(100)).unwrap();
+        let dc = helper.lookup_selector(AnySelector::Datacenter(10)).unwrap();
+        let region = helper.lookup_selector(AnySelector::Region(1)).unwrap();
+        assert!(world.is_in(&dc));
+        assert!(world.is_in(&region));
+    }
+
+    #[test]
+    fn any_result_world_not_in_foreign_dc_or_region() {
+        let helper: WorldHelper = sample_world_data().into();
+        let na_world = helper.lookup_selector(AnySelector::World(100)).unwrap();
+        let jp_dc = helper.lookup_selector(AnySelector::Datacenter(20)).unwrap();
+        let jp_region = helper.lookup_selector(AnySelector::Region(2)).unwrap();
+        assert!(!na_world.is_in(&jp_dc));
+        assert!(!na_world.is_in(&jp_region));
+    }
+
+    #[test]
+    fn any_result_datacenter_in_region_match() {
+        let helper: WorldHelper = sample_world_data().into();
+        let dc = helper.lookup_selector(AnySelector::Datacenter(10)).unwrap();
+        let region = helper.lookup_selector(AnySelector::Region(1)).unwrap();
+        assert!(dc.is_in(&region));
+        let other_region = helper.lookup_selector(AnySelector::Region(2)).unwrap();
+        assert!(!dc.is_in(&other_region));
+    }
+
+    #[test]
+    fn any_result_dc_never_contains_region_or_world_when_swapped() {
+        // The `is_in` impl has explicit asymmetric cases; the unhandled directions return false.
+        let helper: WorldHelper = sample_world_data().into();
+        let region = helper.lookup_selector(AnySelector::Region(1)).unwrap();
+        let dc = helper.lookup_selector(AnySelector::Datacenter(10)).unwrap();
+        let world = helper.lookup_selector(AnySelector::World(100)).unwrap();
+        // Region is_in DC / Region is_in World — explicitly false branch
+        assert!(!region.is_in(&dc));
+        assert!(!region.is_in(&world));
+        assert!(!dc.is_in(&world));
+    }
+
+    #[test]
+    fn all_worlds_for_region_yields_every_world_in_every_dc() {
+        let helper: WorldHelper = sample_world_data().into();
+        let region = helper.lookup_selector(AnySelector::Region(1)).unwrap();
+        let ids: Vec<_> = region.all_worlds().map(|w| w.id).collect();
+        assert_eq!(ids, vec![100, 101, 110]);
+    }
+
+    #[test]
+    fn all_worlds_for_datacenter_yields_only_its_worlds() {
+        let helper: WorldHelper = sample_world_data().into();
+        let dc = helper.lookup_selector(AnySelector::Datacenter(10)).unwrap();
+        let ids: Vec<_> = dc.all_worlds().map(|w| w.id).collect();
+        assert_eq!(ids, vec![100, 101]);
+    }
+
+    #[test]
+    fn all_worlds_for_world_yields_only_itself() {
+        let helper: WorldHelper = sample_world_data().into();
+        let w = helper.lookup_selector(AnySelector::World(100)).unwrap();
+        let ids: Vec<_> = w.all_worlds().map(|w| w.id).collect();
+        assert_eq!(ids, vec![100]);
+    }
+
+    #[test]
+    fn get_datacenters_for_region_returns_all_datacenters() {
+        let helper: WorldHelper = sample_world_data().into();
+        let region = helper.lookup_selector(AnySelector::Region(1)).unwrap();
+        let ids: Vec<_> = helper
+            .get_datacenters(&region)
+            .iter()
+            .map(|d| d.id)
+            .collect();
+        assert_eq!(ids, vec![10, 11]);
+    }
+
+    #[test]
+    fn get_datacenters_for_world_returns_owning_dc() {
+        let helper: WorldHelper = sample_world_data().into();
+        let world = helper.lookup_selector(AnySelector::World(110)).unwrap();
+        let dcs = helper.get_datacenters(&world);
+        assert_eq!(dcs.len(), 1);
+        assert_eq!(dcs[0].id, 11);
+    }
+
+    #[test]
+    fn get_region_for_world_returns_owning_region() {
+        let helper: WorldHelper = sample_world_data().into();
+        let world = helper.lookup_selector(AnySelector::World(200)).unwrap();
+        let region = helper.get_region(world);
+        assert_eq!(region.id, 2);
+    }
+
+    #[test]
+    fn get_region_for_datacenter_returns_owning_region() {
+        let helper: WorldHelper = sample_world_data().into();
+        let dc = helper.lookup_selector(AnySelector::Datacenter(11)).unwrap();
+        let region = helper.get_region(dc);
+        assert_eq!(region.id, 1);
+    }
+
+    #[test]
+    fn iter_yields_regions_datacenters_and_worlds_each() {
+        let helper: WorldHelper = sample_world_data().into();
+        let mut regions = 0;
+        let mut datacenters = 0;
+        let mut worlds = 0;
+        for any in helper.iter() {
+            match any {
+                AnyResult::Region(_) => regions += 1,
+                AnyResult::Datacenter(_) => datacenters += 1,
+                AnyResult::World(_) => worlds += 1,
+            }
+        }
+        assert_eq!(regions, 2);
+        assert_eq!(datacenters, 3);
+        assert_eq!(worlds, 4);
+    }
+
+    #[test]
+    fn any_result_selector_conversion_matches_id() {
+        let helper: WorldHelper = sample_world_data().into();
+        let world = helper.lookup_selector(AnySelector::World(101)).unwrap();
+        assert_eq!(AnySelector::from(&world), AnySelector::World(101));
+        let dc = helper.lookup_selector(AnySelector::Datacenter(11)).unwrap();
+        assert_eq!(AnySelector::from(&dc), AnySelector::Datacenter(11));
+        let region = helper.lookup_selector(AnySelector::Region(2)).unwrap();
+        assert_eq!(AnySelector::from(&region), AnySelector::Region(2));
+    }
+
+    #[test]
+    fn owned_result_get_name_matches_inner() {
+        let helper: WorldHelper = sample_world_data().into();
+        let world = helper.lookup_selector(AnySelector::World(100)).unwrap();
+        let owned: OwnedResult = world.into();
+        assert_eq!(owned.get_name(), "Adamantoise");
+        // round-trip ref
+        assert_eq!(owned.as_ref().get_name(), "Adamantoise");
+        // into selector
+        assert_eq!(AnySelector::from(owned), AnySelector::World(100));
+    }
+}

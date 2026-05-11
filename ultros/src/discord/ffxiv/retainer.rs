@@ -1,4 +1,5 @@
 use crate::EventType;
+use crate::discord::ffxiv::helpers::name_matches_lowered_ascii;
 use itertools::Itertools;
 use poise::serenity_prelude::Color;
 use std::fmt::Write;
@@ -286,7 +287,7 @@ async fn owned_retainer_auto_complete(
     ctx: Context<'_>,
     partial: &str,
 ) -> impl Iterator<Item = poise::serenity_prelude::AutocompleteChoice> {
-    let partial = partial.to_string();
+    let partial = partial.to_ascii_lowercase();
     ctx.data()
         .db
         .get_owned_retainers(ctx.author().id.get(), ctx.author().name.clone())
@@ -294,14 +295,8 @@ async fn owned_retainer_auto_complete(
         .unwrap_or_default()
         .into_iter()
         .filter(move |(_o, r)| {
-            if let Some(retainer) = r {
-                retainer
-                    .name
-                    .to_ascii_lowercase()
-                    .contains(&partial.to_ascii_lowercase())
-            } else {
-                false
-            }
+            r.as_ref()
+                .is_some_and(|retainer| name_matches_lowered_ascii(&retainer.name, &partial))
         })
         .flat_map(|(owned, retainer)| {
             let retainer = retainer?;

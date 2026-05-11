@@ -58,3 +58,57 @@ pub struct ListInvite {
     pub max_uses: Option<i32>,
     pub uses: i32,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn list_permission_from_i16_known_values() {
+        assert_eq!(ListPermission::from(0_i16), ListPermission::None);
+        assert_eq!(ListPermission::from(1_i16), ListPermission::Read);
+        assert_eq!(ListPermission::from(2_i16), ListPermission::Write);
+        assert_eq!(ListPermission::from(3_i16), ListPermission::Owner);
+    }
+
+    #[test]
+    fn list_permission_from_unknown_falls_back_to_none() {
+        assert_eq!(ListPermission::from(-1_i16), ListPermission::None);
+        assert_eq!(ListPermission::from(4_i16), ListPermission::None);
+        assert_eq!(ListPermission::from(i16::MAX), ListPermission::None);
+        assert_eq!(ListPermission::from(i16::MIN), ListPermission::None);
+    }
+
+    #[test]
+    fn list_permission_ord_increases_with_capability() {
+        assert!(ListPermission::None < ListPermission::Read);
+        assert!(ListPermission::Read < ListPermission::Write);
+        assert!(ListPermission::Write < ListPermission::Owner);
+    }
+
+    #[test]
+    fn list_item_default_is_all_zero_and_none() {
+        let item = ListItem::default();
+        assert_eq!(item.id, 0);
+        assert_eq!(item.item_id, 0);
+        assert_eq!(item.list_id, 0);
+        assert!(item.hq.is_none());
+        assert!(item.quantity.is_none());
+        assert!(item.acquired.is_none());
+    }
+
+    #[test]
+    fn list_item_serde_roundtrip() {
+        let item = ListItem {
+            id: 1,
+            item_id: 2,
+            list_id: 3,
+            hq: Some(true),
+            quantity: Some(99),
+            acquired: Some(50),
+        };
+        let s = serde_json::to_string(&item).unwrap();
+        let back: ListItem = serde_json::from_str(&s).unwrap();
+        assert_eq!(item, back);
+    }
+}

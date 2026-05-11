@@ -8821,6 +8821,7 @@ dependencies = [
  "chrono",
  "rkyv",
  "serde",
+ "serde_json",
  "thiserror 2.0.18",
 ]
 
@@ -8940,6 +8941,7 @@ dependencies = [
  "sea-orm",
  "sea-query",
  "serde",
+ "serde_json",
  "thiserror 2.0.18",
  "tracing",
  "ultros-api-types",

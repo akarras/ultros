@@ -164,4 +164,77 @@ mod test {
             ]
         );
     }
+
+    #[test]
+    fn empty_inputs_yield_nothing() {
+        let a_set: [TestA; 0] = [];
+        let b_set: [TestB; 0] = [];
+        let iter = PartialDiffIterator::from((a_set.iter(), b_set.iter()));
+        assert_eq!(iter.count(), 0);
+    }
+
+    #[test]
+    fn left_only_emits_all_as_left() {
+        let a_set = [TestA { name: "a", id: 1 }, TestA { name: "b", id: 2 }];
+        let b_set: [TestB; 0] = [];
+        let iter = PartialDiffIterator::from((a_set.iter(), b_set.iter()));
+        let results: Vec<_> = iter.collect();
+        assert_eq!(
+            results,
+            vec![DiffItem::Left(&a_set[0]), DiffItem::Left(&a_set[1])]
+        );
+    }
+
+    #[test]
+    fn right_only_emits_all_as_right() {
+        let a_set: [TestA; 0] = [];
+        let b_set = [TestB { name: "a" }, TestB { name: "b" }];
+        let iter = PartialDiffIterator::from((a_set.iter(), b_set.iter()));
+        let results: Vec<_> = iter.collect();
+        assert_eq!(
+            results,
+            vec![DiffItem::Right(&b_set[0]), DiffItem::Right(&b_set[1])]
+        );
+    }
+
+    #[test]
+    fn identical_sets_collapse_to_all_same() {
+        let a_set = [TestA { name: "x", id: 1 }, TestA { name: "y", id: 2 }];
+        let b_set = [TestB { name: "x" }, TestB { name: "y" }];
+        let iter = PartialDiffIterator::from((a_set.iter(), b_set.iter()));
+        let results: Vec<_> = iter.collect();
+        assert_eq!(
+            results,
+            vec![
+                DiffItem::Same(&a_set[0], &b_set[0]),
+                DiffItem::Same(&a_set[1], &b_set[1]),
+            ]
+        );
+    }
+
+    #[test]
+    fn diff_item_accessors_pick_the_matching_variant() {
+        let a = TestA { name: "x", id: 1 };
+        let b = TestB { name: "x" };
+
+        // Same: only `.same()` returns Some
+        let same: DiffItem<&TestA, &TestB> = DiffItem::Same(&a, &b);
+        assert!(same.left().is_none());
+        let same: DiffItem<&TestA, &TestB> = DiffItem::Same(&a, &b);
+        assert!(same.right().is_none());
+        let same: DiffItem<&TestA, &TestB> = DiffItem::Same(&a, &b);
+        assert_eq!(same.same(), Some((&a, &b)));
+
+        // Left: only `.left()` returns Some
+        let left: DiffItem<&TestA, &TestB> = DiffItem::Left(&a);
+        assert_eq!(left.left(), Some(&a));
+        let left: DiffItem<&TestA, &TestB> = DiffItem::Left(&a);
+        assert!(left.right().is_none());
+
+        // Right: only `.right()` returns Some
+        let right: DiffItem<&TestA, &TestB> = DiffItem::Right(&b);
+        assert_eq!(right.right(), Some(&b));
+        let right: DiffItem<&TestA, &TestB> = DiffItem::Right(&b);
+        assert!(right.left().is_none());
+    }
 }

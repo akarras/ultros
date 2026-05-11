@@ -1217,7 +1217,9 @@ mod test {
     use chrono::{Duration, Utc};
     use ultros_db::sales::AbbreviatedSaleData;
 
-    use crate::analyzer_service::ItemKey;
+    use crate::analyzer_service::{
+        CheapestListingValue, CheapestListings, ItemKey, SALE_HISTORY_SIZE,
+    };
 
     use super::{SaleHistory, SaleSummary, SoldAmount, SoldWithin, calculate_valuation};
 
@@ -1414,6 +1416,268 @@ mod test {
             SoldWithin::Today(SoldAmount(1)),
             "Should only count sales within the 'Today' window"
         );
+    }
+
+    #[test]
+    fn sold_amount_display_caps_at_history_size() {
+        // SALE_HISTORY_SIZE is 6 and anything ≥ that should render as "6+".
+        assert_eq!(SoldAmount(0).to_string(), "0");
+        assert_eq!(SoldAmount(5).to_string(), "5");
+        assert_eq!(
+            SoldAmount(SALE_HISTORY_SIZE as u8).to_string(),
+            format!("{}+", SALE_HISTORY_SIZE)
+        );
+        assert_eq!(
+            SoldAmount(SALE_HISTORY_SIZE as u8 + 3).to_string(),
+            format!("{}+", SALE_HISTORY_SIZE)
+        );
+    }
+
+    #[test]
+    fn sold_within_display_describes_bucket() {
+        assert_eq!(SoldWithin::NoSales.to_string(), "No sales");
+        assert_eq!(SoldWithin::Today(SoldAmount(2)).to_string(), "2 sold today");
+        assert_eq!(
+            SoldWithin::Week(SoldAmount(1)).to_string(),
+            "1 sold this week"
+        );
+        assert_eq!(
+            SoldWithin::Month(SoldAmount(3)).to_string(),
+            "3 sold this month"
+        );
+        assert_eq!(
+            SoldWithin::Year(SoldAmount(4)).to_string(),
+            "4 sold this year"
+        );
+        assert_eq!(
+            SoldWithin::YearsAgo(2, SoldAmount(5)).to_string(),
+            "5 sold 2 years ago"
+        );
+    }
+
+    #[test]
+    fn sold_within_duration_conversion_matches_bucket_size() {
+        assert_eq!(Duration::from(&SoldWithin::NoSales), Duration::days(0));
+        assert_eq!(
+            Duration::from(&SoldWithin::Today(SoldAmount(0))),
+            Duration::days(1)
+        );
+        assert_eq!(
+            Duration::from(&SoldWithin::Week(SoldAmount(0))),
+            Duration::weeks(1)
+        );
+        assert_eq!(
+            Duration::from(&SoldWithin::Month(SoldAmount(0))),
+            Duration::weeks(4)
+        );
+        assert_eq!(
+            Duration::from(&SoldWithin::Year(SoldAmount(0))),
+            Duration::weeks(52)
+        );
+        assert_eq!(
+            Duration::from(&SoldWithin::YearsAgo(3, SoldAmount(0))),
+            Duration::weeks(3 * 52)
+        );
+    }
+
+    #[test]
+    fn sold_within_partial_ord_orders_smaller_window_as_less() {
+        // Smaller (more recent) window is "less than" a larger window.
+        let today = SoldWithin::Today(SoldAmount(1));
+        let week = SoldWithin::Week(SoldAmount(1));
+        let month = SoldWithin::Month(SoldAmount(1));
+        let year = SoldWithin::Year(SoldAmount(1));
+        let years = SoldWithin::YearsAgo(2, SoldAmount(1));
+
+        assert!(today < week);
+        assert!(week < month);
+        assert!(month < year);
+        assert!(year < years);
+    }
+
+    #[test]
+    fn sold_within_no_sales_compared_to_other_buckets_is_unordered() {
+        let no_sales = SoldWithin::NoSales;
+        let today = SoldWithin::Today(SoldAmount(0));
+        assert_eq!(no_sales.partial_cmp(&today), None);
+        assert_eq!(today.partial_cmp(&no_sales), None);
+        // NoSales == NoSales
+        assert_eq!(
+            no_sales.partial_cmp(&SoldWithin::NoSales),
+            Some(std::cmp::Ordering::Equal)
+        );
+    }
+
+    #[test]
+    fn sold_within_within_same_bucket_orders_by_count_desc() {
+        // Per the PartialOrd impl, comparing two Same-bucket variants flips the order
+        // (b.cmp(a)) so a *larger* count is "less" — meaning a fresher market.
+        let a = SoldWithin::Today(SoldAmount(5));
+        let b = SoldWithin::Today(SoldAmount(2));
+        assert!(a < b);
+    }
+
+    #[test]
+    fn cheapest_listing_value_compares_only_by_price() {
+        let a = CheapestListingValue {
+            price: 100,
+            world_id: 1,
+        };
+        let b = CheapestListingValue {
+            price: 100,
+            world_id: 999,
+        };
+        let c = CheapestListingValue {
+            price: 200,
+            world_id: 1,
+        };
+        // Different world_id but same price ⇒ equal under PartialEq + total ordering by price
+        assert_eq!(a, b);
+        assert!(a < c);
+        assert!(c > b);
+    }
+
+    #[test]
+    fn cheapest_listings_add_listing_keeps_cheapest_for_item() {
+        let mut cheapest = CheapestListings::default();
+        let make = |item_id, world_id, price| ultros_db::listings::ListingSummary {
+            item_id,
+            world_id,
+            price_per_unit: price,
+            hq: false,
+        };
+
+        // Insert three listings for the same item, cheapest second.
+        cheapest.add_listing(&make(7, 1, 500));
+        cheapest.add_listing(&make(7, 2, 100));
+        cheapest.add_listing(&make(7, 3, 250));
+
+        let key = ItemKey {
+            item_id: 7,
+            hq: false,
+        };
+        let stored = cheapest.item_map.get(&key).unwrap();
+        assert_eq!(stored.price, 100);
+        assert_eq!(stored.world_id, 2);
+    }
+
+    #[test]
+    fn cheapest_listings_keeps_separate_entries_per_quality() {
+        let mut cheapest = CheapestListings::default();
+        let make = |hq, price| ultros_db::listings::ListingSummary {
+            item_id: 9,
+            world_id: 1,
+            price_per_unit: price,
+            hq,
+        };
+        cheapest.add_listing(&make(false, 50));
+        cheapest.add_listing(&make(true, 75));
+        assert_eq!(cheapest.item_map.len(), 2);
+        assert_eq!(
+            cheapest
+                .item_map
+                .get(&ItemKey {
+                    item_id: 9,
+                    hq: false
+                })
+                .unwrap()
+                .price,
+            50
+        );
+        assert_eq!(
+            cheapest
+                .item_map
+                .get(&ItemKey {
+                    item_id: 9,
+                    hq: true
+                })
+                .unwrap()
+                .price,
+            75
+        );
+    }
+
+    #[test]
+    fn sale_history_replaces_oldest_when_full_and_new_sale_is_newer() {
+        let mut sale_history = SaleHistory::default();
+        let now = Utc::now().naive_utc();
+        // Fill to capacity (SALE_HISTORY_SIZE = 6) with progressively newer sales.
+        for i in 0..SALE_HISTORY_SIZE {
+            sale_history.add_sale(&AbbreviatedSaleData {
+                sold_item_id: 1,
+                hq: false,
+                price_per_item: i as i32,
+                sold_date: now - Duration::hours((SALE_HISTORY_SIZE - i) as i64),
+                world_id: 0,
+            });
+        }
+        let key = ItemKey {
+            item_id: 1,
+            hq: false,
+        };
+        assert_eq!(
+            sale_history.item_map.get(&key).unwrap().len(),
+            SALE_HISTORY_SIZE
+        );
+
+        // Add a sale newer than the newest. Oldest should be dropped.
+        sale_history.add_sale(&AbbreviatedSaleData {
+            sold_item_id: 1,
+            hq: false,
+            price_per_item: 999,
+            sold_date: now + Duration::hours(1),
+            world_id: 0,
+        });
+        let entries = sale_history.item_map.get(&key).unwrap();
+        assert_eq!(entries.len(), SALE_HISTORY_SIZE);
+        // Newest sale should now be at the front.
+        assert_eq!(entries[0].price_per_item, 999);
+        // The slot at the previous tail position should now be the second-newest.
+    }
+
+    #[test]
+    fn sale_history_ignores_older_sale_when_full() {
+        let mut sale_history = SaleHistory::default();
+        let now = Utc::now().naive_utc();
+        for i in 0..SALE_HISTORY_SIZE {
+            // Newer sales (smaller `i` → bigger offset back, so use reversed).
+            sale_history.add_sale(&AbbreviatedSaleData {
+                sold_item_id: 2,
+                hq: true,
+                price_per_item: 10 + i as i32,
+                sold_date: now - Duration::minutes(i as i64),
+                world_id: 0,
+            });
+        }
+        let key = ItemKey {
+            item_id: 2,
+            hq: true,
+        };
+        let snapshot_prices: Vec<i32> = sale_history
+            .item_map
+            .get(&key)
+            .unwrap()
+            .iter()
+            .map(|s| s.price_per_item)
+            .collect();
+
+        // Try to insert a sale older than every existing one — should be ignored.
+        sale_history.add_sale(&AbbreviatedSaleData {
+            sold_item_id: 2,
+            hq: true,
+            price_per_item: 9999,
+            sold_date: now - Duration::days(100),
+            world_id: 0,
+        });
+        let after_prices: Vec<i32> = sale_history
+            .item_map
+            .get(&key)
+            .unwrap()
+            .iter()
+            .map(|s| s.price_per_item)
+            .collect();
+        assert_eq!(snapshot_prices, after_prices);
+        assert!(!after_prices.contains(&9999));
     }
 }
 

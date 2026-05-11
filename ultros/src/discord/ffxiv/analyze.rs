@@ -2,7 +2,8 @@ use poise::serenity_prelude::Color;
 use std::fmt::Write;
 use xiv_gen::ItemId;
 
-use crate::analyzer_service::{ResaleOptions, SoldAmount, SoldWithin};
+use crate::analyzer_service::ResaleOptions;
+use crate::discord::ffxiv::helpers::{clamp_sold_amount, threshold_days_to_sold_within};
 
 use super::{Context, Error};
 
@@ -32,18 +33,8 @@ pub(crate) async fn profit(
         .ok_or(anyhow::anyhow!("World not in a region?"))?
         .id;
 
-    let amount = SoldAmount(number_recently_sold.clamp(0, 255) as u8);
-    let filter_sale = if threshold_days <= 1 {
-        SoldWithin::Today(amount)
-    } else if threshold_days <= 7 {
-        SoldWithin::Week(amount)
-    } else if threshold_days <= 30 {
-        SoldWithin::Month(amount)
-    } else if threshold_days <= 365 {
-        SoldWithin::Year(amount)
-    } else {
-        SoldWithin::YearsAgo(((threshold_days / 365).clamp(1, 255)) as u8, amount)
-    };
+    let amount = clamp_sold_amount(number_recently_sold);
+    let filter_sale = threshold_days_to_sold_within(threshold_days, amount);
 
     let xiv_data = xiv_gen_db::data();
     let items = &xiv_data.items;
