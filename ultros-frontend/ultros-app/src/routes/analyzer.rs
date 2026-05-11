@@ -141,7 +141,7 @@ fn compute_summary(sale: SaleData, filter_outliers: bool) -> SaleSummary {
     // 2. Build the clamped vector. If the clamp would remove everything, keep the raw set.
     let mut clamped: Vec<i32> = raw.iter().copied().filter(|p| *p >= floor).collect();
     if clamped.is_empty() {
-        clamped = raw.clone();
+        clamped = raw;
     }
     let median_price = median_i32(&clamped);
     let min_price = *clamped.first().unwrap_or(&0);
@@ -1507,7 +1507,7 @@ mod tests {
     }
 
     #[test]
-    fn troll_world_floor_does_not_inflate_estimate() {
+    fn troll_region_floor_drops_row_entirely() {
         use ultros_api_types::cheapest_listings::{CheapestListingItem, CheapestListings};
         use ultros_api_types::recent_sales::RecentSales;
 
@@ -1548,6 +1548,59 @@ mod tests {
         // The troll 999M region listing should cause the row to be dropped entirely
         // (the displayed "deal" would be fictional). table.0 should be empty.
         assert_eq!(table.0.len(), 0);
+    }
+
+    #[test]
+    fn troll_world_floor_falls_through_to_median() {
+        use ultros_api_types::cheapest_listings::{CheapestListingItem, CheapestListings};
+        use ultros_api_types::recent_sales::RecentSales;
+
+        // Sales settle at a stable median of 1000.
+        let sales = RecentSales {
+            sales: vec![sales_row(
+                300,
+                false,
+                &[
+                    (1000, 0),
+                    (1000, 1),
+                    (1000, 2),
+                    (1000, 3),
+                    (1000, 4),
+                    (1000, 5),
+                ],
+            )],
+        };
+        // Region floor is sane (500 — below median, a real deal).
+        let region = CheapestListings {
+            cheapest_listings: vec![CheapestListingItem {
+                item_id: 300,
+                hq: false,
+                cheapest_price: 500,
+                world_id: 42,
+            }],
+        };
+        // Local world floor is a troll listing.
+        let world = CheapestListings {
+            cheapest_listings: vec![CheapestListingItem {
+                item_id: 300,
+                hq: false,
+                cheapest_price: 999_999_999,
+                world_id: 1,
+            }],
+        };
+
+        let table = ProfitTable::new(sales, region, world, vec![], false);
+        // Row is kept (region floor is sane), but the troll world floor is ignored —
+        // estimated_sale_price falls through to median, not the troll value.
+        assert_eq!(table.0.len(), 1);
+        assert_eq!(table.0[0].estimated_sale_price, 1000);
+    }
+
+    #[test]
+    fn median_i32_odd_length() {
+        // Direct unit test on the helper — exercises the n % 2 == 1 branch.
+        assert_eq!(median_i32(&[100, 200, 300, 400, 500]), 300);
+        assert_eq!(median_i32(&[100, 110, 120, 130, 140]), 120);
     }
 
     #[test]
