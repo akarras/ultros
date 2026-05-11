@@ -1,0 +1,252 @@
+# Shared Lists Integration & Onboarding — Design
+
+**Date:** 2026-05-11
+**Status:** Awaiting user review
+**Scope:** Make the already-built Shared Lists backend usable. Three tiers: (1) surface ownership and permissions in existing UI, (2) ship the missing sharing/invite/group UI, (3) thread discovery into onboarding and analyzer flows. Includes targeted backend refactors (`web.rs` split, permission extractor, scoped WebSocket broadcasts).
+
+---
+
+## Why
+
+Shared Lists has an almost complete backend and almost no frontend.
+
+Concrete findings from walking the code:
+
+- **All sharing endpoints exist and are reachable.** `share_list_with_user`, `share_list_with_group`, `unshare_list_from_*`, `create_invite`, `use_invite`, `delete_invite`, full group CRUD, and group-member management are all wired in [ultros/src/web.rs:1195-1232](ultros/src/web.rs:1195). Permission enforcement is in place via `ListPermission` ([ultros-api-types/src/list.rs:5-23](ultros-api-types/src/list.rs:5)).
+- **The frontend shows shared lists silently.** [`get_lists`](ultros-frontend/ultros-app/src/api.rs:225) returns owned and shared lists merged, and [`EditLists`](ultros-frontend/ultros-app/src/routes/lists.rs:124) renders them in one undifferentiated grid. There is no badge for permission, no owner attribution, no separation between "Mine" and "Shared with me". The delete button is shown on every card even when the user has only `Read` — the backend will reject it, but the affordance is misleading.
+- **There is no UI to *share* a list.** No share modal, no user picker, no permission selector, no invite-link generator, no copy-link affordance. The "edit list" panel ([lists.rs:40-91](ultros-frontend/ultros-app/src/routes/lists.rs:40)) jumps straight from name/world to a Danger Zone.
+- **There is no UI for groups.** `user_group` exists in the DB, all CRUD endpoints exist, but no Leptos component creates, names, or manages a group's members. Group-based sharing is unreachable from the UI.
+- **There is no UI for invites.** `create_invite`/`use_invite` exist; users have no way to generate or redeem a link. This is the cleanest fit for "share with a friend who hasn't logged in yet."
+- **`/welcome` doesn't mention lists.** [routes/welcome.rs:1-163](ultros-frontend/ultros-app/src/routes/welcome.rs) is a home-world / price-zone / language picker. Lists are arguably the most engaging logged-in feature and don't appear in the discovery surface at all.
+- **`add_to_list` doesn't communicate permission.** [components/add_to_list.rs](ultros-frontend/ultros-app/src/components/add_to_list.rs) presents every list the user can see in one dropdown. A user with `Read`-only on a shared list will see it offered, click it, and get a server error.
+- **WebSocket broadcasts are unscoped.** [list_view.rs:88](ultros-frontend/ultros-app/src/routes/list_view.rs:88) subscribes to all `ListUpdate` events; the server fans every list change out to every connected client. Works at current scale, doesn't at 10×.
+- **`web.rs` is 1322 lines and growing.** It's the only file in `ultros/src/` that contains list, group, invite, retainer, alert, and auth handlers. Each `share_*` handler re-implements ownership check, error mapping, and broadcast plumbing. Adding the missing endpoints (none — already done) would have pushed it further.
+- **Stale comment in DB layer.** [ultros-db/src/lists.rs:173](ultros-db/src/lists.rs:173) reads "This should probably also include lists shared with the user" — but `get_lists_for_user` *does* now merge owned + shared + group-shared. The comment is misleading.
+
+Net: the product can ship Shared Lists end-to-end in roughly a week of frontend work plus a focused backend cleanup. The biggest risk is *not* doing the cleanup — adding a share modal, an invite UI, and a group page on top of the current `web.rs` and the current permission check sprawl makes the file untenable.
+
+## Non-goals
+
+- **No new backend features.** Permissions stay at None/Read/Write/Owner; no fine-grained per-item permissions, no "expiring share", no transfer-ownership UI. Those are interesting and out of scope.
+- **No notifications system.** Sharing a list with a user does not send them a Discord DM, an in-app notification, or an email. The recipient discovers the list when they next open `/list`. A real notification layer is a separate spec.
+- **No tutorial / interactive walkthrough.** Onboarding is contextual nudges, not a guided tour. If we want a Shepherd.js-style overlay later, that's a different spec.
+- **No public lists.** A list is private, shared with named users, shared with groups the owner controls, or invite-link gated. There is no "discoverable" or "public to everyone" mode. (Possible Tier 4; explicitly deferred.)
+- **No mobile-specific layout work beyond responsive defaults.** The share modal and groups page must work on mobile, but a dedicated mobile UX pass is out of scope.
+- **No rename of `Lists` → `Collections` or similar.** Keep the existing terminology.
+
+## Tiers
+
+The work is structured so each tier is independently shippable.
+
+- **Tier 1 — Make ownership visible.** Permission badges, owner attribution, sectioning. No new endpoints.
+- **Tier 2 — Sharing UI.** Share modal, invite link UI, groups page. Uses existing endpoints.
+- **Tier 3 — Discovery & onboarding.** `/welcome` step, post-creation nudge, analyzer integration.
+- **Backend cleanup (parallel).** `web.rs` split, `RequireListPermission` extractor, scoped WebSocket broadcasts. Lands alongside Tier 2.
+
+---
+
+## Tier 1 — Make ownership visible
+
+Goal: a user who already has shared lists today can immediately tell which is which, without us building any new endpoint.
+
+### 1.1 Permission badge on list cards
+
+`List` ([ultros-api-types/src/list.rs](ultros-api-types/src/list.rs)) does not currently carry the viewer's permission — the frontend only knows that a list came back from `get_lists_for_user`, not *why* it came back. Add a `viewer_permission: ListPermission` field to the response DTO. Server-side, `get_lists_for_user` already computes this implicitly via the join path; we surface it.
+
+Render as a small pill on each `ListCard` ([routes/lists.rs:33](ultros-frontend/ultros-app/src/routes/lists.rs:33)):
+
+- `Owner` → no badge (default state).
+- `Write` → blue "Shared · Editor" pill.
+- `Read` → grey "Shared · Viewer" pill.
+
+### 1.2 Owner attribution on shared cards
+
+For cards where `viewer_permission != Owner`, show the owner's Discord username under the world line. Requires `owner: Option<UserDisplay>` on the list DTO (already-public Discord avatar + username — same shape used in retainer ownership display).
+
+### 1.3 Hide destructive actions on shared lists
+
+In edit mode for a non-Owner card:
+
+- Hide the **Delete** button (Read or Write — only the owner can delete).
+- Hide the **Edit name / world** controls if `Read`.
+- Show "Leave list" instead of "Delete" — a new client-side affordance that calls `DELETE /api/v1/list/{id}/share/user/{me}`. This already works on the backend (a user can unshare themselves); we just expose it.
+
+### 1.4 Section the grid
+
+In [`EditLists`](ultros-frontend/ultros-app/src/routes/lists.rs:124), partition `lists` into two groups by `viewer_permission == Owner`. Render under two headings: **My Lists** and **Shared With Me**. Keep the search filter applying to both sections. Empty-state copy ("no_lists_found") becomes specific to "My Lists" — having only shared lists is fine.
+
+### 1.5 `add_to_list` shows permission and disables read-only
+
+In [`components/add_to_list.rs`](ultros-frontend/ultros-app/src/components/add_to_list.rs), use the new `viewer_permission` to:
+
+- Show the pill next to each list name in the dropdown.
+- Disable selection (greyed out, tooltip "You have read-only access") for `Read` lists.
+
+### 1.6 Drop the stale comment
+
+Remove the line at [ultros-db/src/lists.rs:173](ultros-db/src/lists.rs:173). The function does include shared lists; the comment now misleads.
+
+**Out:** No new pages, no new endpoints, no behaviour change to backend logic.
+
+---
+
+## Tier 2 — Sharing UI
+
+Goal: every existing backend sharing endpoint becomes reachable from the UI.
+
+### 2.1 Share modal (`<ShareListModal />`)
+
+Triggered from a new "Share" button on the owner's list-edit panel ([lists.rs:57](ultros-frontend/ultros-app/src/routes/lists.rs:57)) and on the list-view page header. Three tabs:
+
+1. **People** — search/select existing Ultros users (Discord display) → choose Read/Write → submit. Backed by `POST /api/v1/list/{id}/share/user`. Below the picker, a list of current shares with revoke buttons (`DELETE /api/v1/list/{id}/share/user/{user_id}`).
+2. **Groups** — same shape, scoped to groups the current user owns. Backed by `*/share/group`. If the user has no groups, show a "Create a group" CTA that opens the groups page.
+3. **Invite link** — list active invites with their remaining uses; "Create new link" with a permission selector and optional max-uses. Backed by `POST /api/v1/list/{id}/invite/create`. Each row has copy-to-clipboard for `https://ultros.app/list/invite/{invite_id}` and a revoke button.
+
+User search is the riskiest sub-piece. The current backend has no user-search endpoint. Two options:
+
+- **(A)** Add `GET /api/v1/user/search?q=...`. Discord display name prefix match, capped at ~20 results, requires auth.
+- **(B)** Defer the People tab; ship Tier 2 with only Groups and Invite link. Users who want to share with a specific friend create a one-use invite link and DM it.
+
+**Recommendation: B.** Invite links are *better* product than a name-search — they don't require the recipient to have logged into Ultros yet, and they sidestep username-collision UX. People-tab can come later if there's demand. Skipping it cuts the Tier 2 surface significantly.
+
+### 2.2 Invite redemption flow
+
+New route `/list/invite/{invite_id}` → server-rendered Leptos page that:
+
+- If the viewer is not logged in: show "Sign in with Discord to accept this invite", store the invite id in a cookie, redirect to OAuth, redirect back, redeem.
+- If logged in: call `POST /api/v1/invite/{id}/use`, then redirect to `/list/{list_id}`.
+- If the invite is exhausted or revoked: show "This invite is no longer valid" with a button back to the list owner's profile if available, else home.
+
+### 2.3 Groups page (`/groups`)
+
+A new route. List the groups the user owns. Each group:
+
+- Name (editable inline).
+- Member list (Discord avatar + name) with a "Remove" button per row.
+- "Add member" search → `POST /api/v1/group/{id}/member/{user_id}`. Same dependency on user-search as 2.1 People tab; same recommendation — **defer the search and add members via "Invite to group" link**, which becomes a new lightweight endpoint mirroring list invites. Or simpler: members are added implicitly when someone redeems a list invite that targets a group. (See open question below.)
+- "Delete group" with a confirmation.
+- "Create new group" button at the top.
+
+Nav: add `/groups` to the side nav alongside `/list`.
+
+### 2.4 Sharing status surface on `/list/{id}`
+
+The list-view page ([routes/list_view.rs](ultros-frontend/ultros-app/src/routes/list_view.rs)) gains a small "Shared with N people" indicator next to the title, clickable to open `<ShareListModal />`. For non-owners, it reads "Shared by {owner}" and is non-interactive.
+
+**Open question deferred to implementation:** how do users get added to a group without a user-search? Options: invite-to-group links analogous to invite-to-list, or "members are auto-added when they redeem an invite to a list shared with this group." Pick during plan-writing; both are small.
+
+---
+
+## Tier 3 — Discovery & onboarding
+
+Goal: a new user learns Shared Lists exists without us building a tutorial.
+
+### 3.1 `/welcome` gets a fourth step (logged-in only)
+
+After Language, add **Step 4: Make a list** ([routes/welcome.rs:122-134](ultros-frontend/ultros-app/src/routes/welcome.rs:122)). Render only when the user is authenticated (the current `/welcome` is reached pre-login too via "set my preferences"). The step explains in one sentence what a list is, links to `/list`, and is skippable. No form on the welcome page itself — just a nudge with an icon.
+
+For unauthenticated visitors, replace Step 4 with a "Sign in to save lists, share with friends, and get price alerts" prompt. Same icon, same slot — the welcome page picks the variant based on auth state.
+
+### 3.2 First-list-created nudge
+
+After `create_list` succeeds in [`EditLists`](ultros-frontend/ultros-app/src/routes/lists.rs:209) for the first time (detect: this user's `lists` length transitions 0 → 1), show a one-time toast: *"List created. You can share it with friends or a group — click the share icon any time."* Use `localStorage` to fire it at most once per user. No backend changes.
+
+### 3.3 Share affordance on cards with items
+
+A `ListCard` whose item count is > 0 and `viewer_permission == Owner` shows a small "Share" icon in its header. Clicking opens `<ShareListModal />` for that list. (Cards without items skip the affordance — there's nothing useful to share.)
+
+### 3.4 Analyzer → list integration awareness
+
+Today, the Recipe and Crafting analyzers can bulk-add ingredients to a list ([bulk_add_item_to_list](ultros-frontend/ultros-app/src/api.rs:250)) but the call sites are sparse. Audit each analyzer route ([analyzer.rs](ultros-frontend/ultros-app/src/routes/analyzer.rs), recipe analyzer, FC crafting analyzer, leve analyzer, venture analyzer) for an "Add results to a list" affordance. Where missing, add one. The dropdown filters to lists where `viewer_permission >= Write` and matches the analyzer's world/DC filter. This is mechanical and low-risk; it makes shared lists genuinely useful to a guild ("our weekly crafting run targets list").
+
+### 3.5 Empty-state copy on `/list`
+
+When `My Lists` is empty but `Shared With Me` has items, the empty-state copy changes from "create your first list" to "You don't own any lists yet — but {N} have been shared with you." This is a 2-line copy change in [lists.rs:248-254](ultros-frontend/ultros-app/src/routes/lists.rs:248).
+
+---
+
+## Backend cleanup (alongside Tier 2)
+
+These are not optional. Tier 2 doubles the number of list-handler call sites; without these, `web.rs` becomes unreadable.
+
+### B.1 Split `web.rs` into `web/handlers/{lists,groups,invites,...}.rs`
+
+[ultros/src/web.rs](ultros/src/web.rs) is 1322 lines and contains handlers for at least six bounded contexts. Move handlers into submodules; keep route registration in `web.rs` so the URL map stays in one place. This is a no-behavior-change refactor — should ship as its own commit before Tier 2 handlers grow.
+
+### B.2 `RequireListPermission` Axum extractor
+
+Every list-write handler currently calls `get_permission()` ([ultros-db/src/lists.rs:209, 225, 246, …](ultros-db/src/lists.rs:209)) and maps the result manually. Replace with an extractor:
+
+```rust
+struct RequireListPermission<const MIN: u8>(pub ListAccess);
+// implements FromRequestParts; rejects with 403 if user.perm < MIN
+```
+
+Handlers become `async fn share_list_with_user(perm: RequireListPermission<{Owner as u8}>, ...)`. Removes ~10 duplicated check sites, makes the auth contract visible at the function signature.
+
+### B.3 Scope WebSocket broadcasts by list id
+
+[ultros-api-types/src/websocket.rs:134](ultros-api-types/src/websocket.rs:134) defines `ListUpdate` with no addressing — every client gets every update. Add a per-connection subscription set on the server (the client already calls `subscribe_to_list` at [list_view.rs:88](ultros-frontend/ultros-app/src/routes/list_view.rs:88)); only forward `ListUpdate` events whose `list_id` is in the connection's subscribed set. Existing client API doesn't change; server filtering is added. Fixes the unbounded fan-out and prevents leaking other users' list change notifications (currently *every* list change is broadcast to *every* connected client — minor info leak today, real one once groups exist).
+
+### B.4 Drop `let _ = …` on broadcast sends
+
+[ultros/src/web.rs:602-606](ultros/src/web.rs:602) ignores broadcast send errors with `let _ =`. After B.3 the broadcaster has bounded fan-out and the only legitimate failure is "channel closed" (server shutting down). Log the failure at `warn!` rather than discarding — silent failures here mean a client missed a delete and shows stale UI until refresh.
+
+---
+
+## Architecture & data flow
+
+```
+Owner clicks "Share"
+   └─→ <ShareListModal /> opens (Tier 2.1)
+        ├─→ People tab        (deferred — uses invite link instead)
+        ├─→ Groups tab        POST /list/{id}/share/group
+        └─→ Invite link tab   POST /list/{id}/invite/create
+                              ─ user copies https://ultros.app/list/invite/{id}
+                              ─ shares via Discord/etc.
+
+Recipient opens invite URL
+   └─→ /list/invite/{id}      (Tier 2.2)
+        ├─ not logged in → cookie + OAuth → return
+        └─ logged in → POST /invite/{id}/use
+                       → 200 OK → redirect /list/{list_id}
+                       → server emits ListUpdate (Tier B.3: scoped to subscribers of list_id)
+                       → owner's open tab refreshes share count
+```
+
+State on the recipient side:
+
+- Their `get_lists()` now returns the new list (via `list_shared_user` join, already wired).
+- It appears under "Shared With Me" with a badge and the owner's name.
+- `add_to_list` dropdowns pick it up automatically.
+
+## Error handling
+
+- **Modal submission fails** → toast with server error message; modal stays open. Same pattern as the existing `edit_list` flow.
+- **Invite expired or revoked** → recipient lands on a dedicated "This invite is no longer valid" page (Tier 2.2). Owner sees zero remaining uses in the invite list and a "Revoked" tag.
+- **Permission mismatch on `add_to_list`** → after Tier 1.5, read-only lists are non-selectable so the server-side 403 should not fire; if it does (race with a revoke), show the error toast and refresh the list cache.
+- **Group deletion with active shares** → backend already cascades; UI confirmation explicitly says "This group is shared on N lists; those shares will be removed."
+
+## Testing
+
+- **Unit**: `RequireListPermission` extractor (B.2) — happy path per permission level + 403 for insufficient.
+- **Unit**: scoped broadcast filter (B.3) — subscribed clients receive, non-subscribed do not.
+- **Integration / e2e**: the existing Puppeteer harness in [integration/](integration/) gains one test: log in as user A, create list, generate invite, redeem as user B (via test-auth login flow added in commit 1cbf5b4c), assert list appears in B's `/list` page with "Shared · Editor" pill.
+- **Visual**: take screenshots of `/list` with owned-only, shared-only, and mixed states for the snapshot harness.
+
+## Roadmap / explicitly deferred
+
+Sketched for context; not in scope:
+
+- **User search** for a People tab in `<ShareListModal />`. Needs a `/api/v1/user/search` endpoint and rate limiting. Re-evaluate after Tier 2 ships if invite-link sharing turns out to be friction.
+- **Notifications.** "X shared a list with you" in a bell-icon dropdown. Wants a notification table, read/unread state, optionally Discord DM delivery. Whole separate spec.
+- **Public lists / discoverable lists.** "Top crafting lists this week." Different content model, different moderation problem.
+- **Per-item permission** (e.g., one user can mark items bought, another can only view). Likely YAGNI for the FFXIV use case.
+- **Transfer ownership.** Rare; can be done with a backend script for now.
+- **Mobile UX pass** on the share modal and groups page.
+
+## Open questions for plan-writing
+
+- How do non-owner members get added to a group? Invite-link analog vs. auto-add on list-invite-redemption-targeting-group. Pick one during planning; both are small.
+- Does `viewer_permission` go on the `List` DTO or a sibling `ListWithViewerContext` DTO? Adding to `List` is simpler but mixes concerns; sibling is cleaner but touches every call site. Lean simpler — put it on `List` as `Option<ListPermission>`, populated only by `get_lists_for_user`.
+- Should "Leave list" require a confirm modal? Probably yes; cheap to add.
