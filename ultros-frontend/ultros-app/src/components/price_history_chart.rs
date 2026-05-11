@@ -143,6 +143,55 @@ fn short_number(value: i32) -> String {
     }
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum TimeRange {
+    Last24h,
+    Last7d,
+    Last30d,
+    All,
+}
+
+impl TimeRange {
+    #[allow(dead_code)]
+    fn label(self) -> &'static str {
+        match self {
+            TimeRange::Last24h => "24h",
+            TimeRange::Last7d => "7d",
+            TimeRange::Last30d => "30d",
+            TimeRange::All => "All",
+        }
+    }
+
+    fn cutoff(self, now: chrono::NaiveDateTime) -> Option<chrono::NaiveDateTime> {
+        let delta = match self {
+            TimeRange::Last24h => chrono::Duration::hours(24),
+            TimeRange::Last7d => chrono::Duration::days(7),
+            TimeRange::Last30d => chrono::Duration::days(30),
+            TimeRange::All => return None,
+        };
+        Some(now - delta)
+    }
+}
+
+/// Filter sales whose `sold_date` is on-or-after the range cutoff.
+/// `now` is parameterized for tests.
+#[allow(dead_code)]
+fn filter_by_range(
+    sales: &[SaleHistory],
+    range: TimeRange,
+    now: chrono::NaiveDateTime,
+) -> Vec<SaleHistory> {
+    match range.cutoff(now) {
+        Some(cutoff) => sales
+            .iter()
+            .filter(|s| s.sold_date >= cutoff)
+            .cloned()
+            .collect(),
+        None => sales.to_vec(),
+    }
+}
+
 #[component]
 pub fn PriceHistoryChart(
     #[prop(into)] sales: Signal<Vec<SaleHistory>>,
@@ -498,5 +547,40 @@ mod tests {
     fn iqr_band_widens_with_25x_multiplier() {
         let prices: Vec<i32> = (0..20).collect();
         assert_eq!(iqr_band(&prices), Some((-20, 40)));
+    }
+
+    #[test]
+    fn time_range_all_keeps_everything() {
+        let now = chrono::Utc::now().naive_utc();
+        let sales = vec![
+            sale(100, 1000, 1, now.and_utc().timestamp() - 60 * 60 * 24 * 60),
+            sale(100, 2000, 1, now.and_utc().timestamp()),
+        ];
+        let filtered = filter_by_range(&sales, TimeRange::All, now);
+        assert_eq!(filtered.len(), 2);
+    }
+
+    #[test]
+    fn time_range_24h_filters_older_sales() {
+        let now = chrono::Utc::now().naive_utc();
+        let sales = vec![
+            sale(100, 1000, 1, now.and_utc().timestamp() - 60 * 60 * 25),
+            sale(100, 2000, 1, now.and_utc().timestamp() - 60 * 60),
+        ];
+        let filtered = filter_by_range(&sales, TimeRange::Last24h, now);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].price_per_item, 2000);
+    }
+
+    #[test]
+    fn time_range_7d_filters_older_sales() {
+        let now = chrono::Utc::now().naive_utc();
+        let sales = vec![
+            sale(100, 1000, 1, now.and_utc().timestamp() - 60 * 60 * 24 * 8),
+            sale(100, 2000, 1, now.and_utc().timestamp() - 60 * 60 * 24 * 3),
+        ];
+        let filtered = filter_by_range(&sales, TimeRange::Last7d, now);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].price_per_item, 2000);
     }
 }
