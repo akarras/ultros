@@ -197,6 +197,14 @@ struct SaleRow {
     /// Price per item (f64 for chartistry). One column per series; NAN if
     /// this row does not belong to that series.
     prices: Vec<f64>,
+    /// Volume-weighted average price overlay (constant across all rows, or NAN).
+    vwap_y: f64,
+    /// Least-squares trendline value at this row's timestamp (or NAN).
+    trend_y: f64,
+    /// IQR-band upper bound (constant across all rows, or NAN).
+    iqr_hi: f64,
+    /// IQR-band lower bound (constant across all rows, or NAN).
+    iqr_lo: f64,
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
@@ -355,6 +363,11 @@ pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl 
     let helper_clone = helper.clone();
     let chart_data = Memo::new(move |_| {
         let data = filtered.get();
+        // IQR band uses the time-range-only data (before outlier filter) so the
+        // band reflects the full distribution and is stable when the outlier
+        // toggle changes.
+        let range_only = range_filtered.get();
+
         let groups = group_sales_by_locale(&helper_clone, &data);
         // Build flat rows: one row per sale, prices indexed by series slot.
         // series_names drives the number of price columns.
@@ -365,25 +378,74 @@ pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl 
         // series_names: stable order (already sorted by group_sales_by_locale)
         let series_names: Vec<String> = groups.iter().map(|(n, _)| n.clone()).collect();
 
-        // Flatten all points into (ts, series_idx, price)
-        let mut flat: Vec<(chrono::DateTime<chrono::Utc>, usize, f64)> = groups
+        // Flatten all points into (ts, series_idx, price, qty)
+        let mut flat: Vec<(chrono::DateTime<chrono::Utc>, usize, f64, i32)> = groups
             .iter()
             .enumerate()
             .flat_map(|(idx, (_, points))| {
-                points.iter().map(move |(dt, price, _qty)| {
+                points.iter().map(move |(dt, price, qty)| {
                     let utc = dt.with_timezone(&chrono::Utc);
-                    (utc, idx, *price as f64)
+                    (utc, idx, *price as f64, *qty)
                 })
             })
             .collect();
         // Sort by timestamp so chartistry's line renderer doesn't cross itself
         flat.sort_by(|a, b| a.0.cmp(&b.0));
 
+        // ── Overlay computations ──────────────────────────────────────────
+
+        // VWAP (from filtered, same as stats strip)
+        let pq_filtered: Vec<(i32, i32)> = data
+            .iter()
+            .map(|s| (s.price_per_item, s.quantity))
+            .collect();
+        let vwap_val = vwap(&pq_filtered).map(|v| v as f64).unwrap_or(f64::NAN);
+
+        // IQR band (from range-only, before outlier filter)
+        let range_prices: Vec<i32> = range_only.iter().map(|s| s.price_per_item).collect();
+        let (iqr_lo_val, iqr_hi_val) = match iqr_band(&range_prices) {
+            Some((lo, hi)) => (lo as f64, hi as f64),
+            None => (f64::NAN, f64::NAN),
+        };
+
+        // Trendline via least-squares on (ts_secs, price) from filtered set
+        // y = b + m*x  where x = timestamp in seconds
+        let trend_points: Vec<(f64, f64)> = flat
+            .iter()
+            .map(|(ts, _, price, _)| (ts.timestamp() as f64, *price))
+            .collect();
+        let n = trend_points.len() as f64;
+        let (sum_x, sum_y, sum_xx, sum_xy) = trend_points.iter().fold(
+            (0.0f64, 0.0f64, 0.0f64, 0.0f64),
+            |(sx, sy, sxx, sxy), (x, y)| (sx + x, sy + y, sxx + x * x, sxy + x * y),
+        );
+        let denom = n * sum_xx - sum_x * sum_x;
+        let (trend_m, trend_b) = if denom.abs() > f64::EPSILON {
+            let m = (n * sum_xy - sum_x * sum_y) / denom;
+            let b = (sum_y - m * sum_x) / n;
+            (m, b)
+        } else {
+            (f64::NAN, f64::NAN)
+        };
+
+        // ── Build rows ────────────────────────────────────────────────────
         let mut rows: Vec<SaleRow> = Vec::with_capacity(flat.len());
-        for (ts, series_idx, price) in flat {
+        for (ts, series_idx, price, _qty) in flat {
             let mut prices = vec![f64::NAN; n_series];
             prices[series_idx] = price;
-            rows.push(SaleRow { ts, prices });
+            let trend_y = if trend_m.is_nan() || trend_b.is_nan() {
+                f64::NAN
+            } else {
+                trend_b + trend_m * ts.timestamp() as f64
+            };
+            rows.push(SaleRow {
+                ts,
+                prices,
+                vwap_y: vwap_val,
+                trend_y,
+                iqr_hi: iqr_hi_val,
+                iqr_lo: iqr_lo_val,
+            });
         }
         (series_names, rows)
     });
@@ -486,6 +548,52 @@ pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl 
                             );
                             reactive_series = reactive_series.line(line);
                         }
+
+                        // ── Overlay lines ─────────────────────────────────────────────
+                        // VWAP: solid yellow-400 horizontal line
+                        reactive_series = reactive_series.line(
+                            Line::new(|r: &SaleRow| r.vwap_y)
+                                .with_name("VWAP")
+                                .with_width(2.0)
+                                .with_colour(
+                                    "#facc15"
+                                        .parse()
+                                        .unwrap_or(Colour::from_rgb(250, 204, 21)),
+                                ),
+                        );
+                        // Trendline: slate-400, slightly thinner
+                        reactive_series = reactive_series.line(
+                            Line::new(|r: &SaleRow| r.trend_y)
+                                .with_name("Trend")
+                                .with_width(1.5)
+                                .with_colour(
+                                    "#94a3b8"
+                                        .parse()
+                                        .unwrap_or(Colour::from_rgb(148, 163, 184)),
+                                ),
+                        );
+                        // IQR high: slate-500, thin
+                        reactive_series = reactive_series.line(
+                            Line::new(|r: &SaleRow| r.iqr_hi)
+                                .with_name("IQR high")
+                                .with_width(1.0)
+                                .with_colour(
+                                    "#64748b"
+                                        .parse()
+                                        .unwrap_or(Colour::from_rgb(100, 116, 139)),
+                                ),
+                        );
+                        // IQR low: slate-500, thin
+                        reactive_series = reactive_series.line(
+                            Line::new(|r: &SaleRow| r.iqr_lo)
+                                .with_name("IQR low")
+                                .with_width(1.0)
+                                .with_colour(
+                                    "#64748b"
+                                        .parse()
+                                        .unwrap_or(Colour::from_rgb(100, 116, 139)),
+                                ),
+                        );
 
                         let aspect_ratio = AspectRatio::from_inner_ratio(800.0, 450.0);
                         let tooltip = Tooltip::left_cursor().skip_missing(true);
