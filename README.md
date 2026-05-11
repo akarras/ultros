@@ -16,6 +16,14 @@ A comprehensive user guide is available [here](https://book.ultros.app).
 
 The site currently runs ads to help cover hosting expenses without relying on donations. These ads are completely optional and can be disabled via the settings page. Ad blockers will also continue to work without issue.
 
+## Price Alerts
+
+Logged-in users can create per-item price-threshold alerts via the API. When a listing matches, a Discord DM fires (subject to a per-rule cooldown).
+
+API surface: `GET/POST /api/v1/alerts`, `PATCH/DELETE /api/v1/alerts/{id}`, `GET /api/v1/alerts/events`. See `docs/superpowers/plans/2026-05-10-price-alerts-phase-1.md` for the implementation plan.
+
+(Phases 2-4 — webhook delivery, frontend UI, AI suggestions — are tracked separately.)
+
 ## Development
 
 ### Prerequisites
