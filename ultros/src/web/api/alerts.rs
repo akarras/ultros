@@ -11,12 +11,38 @@ use ultros_db::UltrosDb;
 use crate::web::error::ApiError;
 use crate::web::oauth::AuthDiscordUser;
 
+/// Default cooldown when the user doesn't supply one (1 hour).
+pub(crate) const DEFAULT_COOLDOWN_SECONDS: i32 = 3600;
+/// Minimum cooldown a user can request (1 minute) — prevents spam.
+pub(crate) const MIN_COOLDOWN_SECONDS: i32 = 60;
+/// Maximum cooldown a user can request (1 day).
+pub(crate) const MAX_COOLDOWN_SECONDS: i32 = 86400;
+
+/// Resolve a user-supplied cooldown into the actual cooldown stored in the DB.
+/// Missing → default (1h). Out-of-range → clamped to [60s, 86400s].
+pub(crate) fn resolve_cooldown_seconds(requested: Option<i32>) -> i32 {
+    requested
+        .unwrap_or(DEFAULT_COOLDOWN_SECONDS)
+        .clamp(MIN_COOLDOWN_SECONDS, MAX_COOLDOWN_SECONDS)
+}
+
+/// Validate a price threshold from a user request. Returns `Err` when zero or negative.
+pub(crate) fn validate_price_threshold(price_threshold: i32) -> Result<(), ApiError> {
+    if price_threshold <= 0 {
+        Err(ApiError::from(anyhow::anyhow!(
+            "price_threshold must be positive"
+        )))
+    } else {
+        Ok(())
+    }
+}
+
 pub(crate) async fn create_alert(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
     Json(req): Json<CreateAlertRequest>,
 ) -> Result<Json<Alert>, ApiError> {
-    let cooldown = req.cooldown_seconds.unwrap_or(3600).clamp(60, 86400);
+    let cooldown = resolve_cooldown_seconds(req.cooldown_seconds);
     let owner = user.id as i64;
 
     let AlertTrigger::BelowThreshold {
@@ -26,11 +52,7 @@ pub(crate) async fn create_alert(
         hq_only,
     } = req.trigger;
 
-    if price_threshold <= 0 {
-        return Err(ApiError::from(anyhow::anyhow!(
-            "price_threshold must be positive"
-        )));
-    }
+    validate_price_threshold(price_threshold)?;
 
     let (notification_method, notification_config, notification_name): (&str, _, String) =
         match &req.delivery {
@@ -141,11 +163,7 @@ pub(crate) async fn update_alert(
             .map_err(ApiError::from)?;
     }
     if let Some(price) = req.price_threshold {
-        if price <= 0 {
-            return Err(ApiError::from(anyhow::anyhow!(
-                "price_threshold must be positive"
-            )));
-        }
+        validate_price_threshold(price)?;
         db.update_threshold_alert_price(owner, alert_id, price)
             .await
             .map_err(ApiError::from)?;
@@ -215,4 +233,120 @@ fn validate_discord_webhook_url(url: &str) -> Result<(), ApiError> {
         )));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ---------- resolve_cooldown_seconds ----------
+
+    #[test]
+    fn cooldown_default_when_unset() {
+        assert_eq!(
+            resolve_cooldown_seconds(None),
+            DEFAULT_COOLDOWN_SECONDS
+        );
+    }
+
+    #[test]
+    fn cooldown_passes_in_range_values_through() {
+        assert_eq!(resolve_cooldown_seconds(Some(60)), 60);
+        assert_eq!(resolve_cooldown_seconds(Some(3600)), 3600);
+        assert_eq!(resolve_cooldown_seconds(Some(86400)), 86400);
+        assert_eq!(resolve_cooldown_seconds(Some(7200)), 7200);
+    }
+
+    #[test]
+    fn cooldown_clamps_to_min_when_below_60() {
+        assert_eq!(resolve_cooldown_seconds(Some(0)), 60);
+        assert_eq!(resolve_cooldown_seconds(Some(59)), 60);
+        assert_eq!(resolve_cooldown_seconds(Some(-1)), 60);
+        assert_eq!(resolve_cooldown_seconds(Some(i32::MIN)), 60);
+    }
+
+    #[test]
+    fn cooldown_clamps_to_max_when_above_86400() {
+        assert_eq!(resolve_cooldown_seconds(Some(86401)), 86400);
+        assert_eq!(resolve_cooldown_seconds(Some(1_000_000)), 86400);
+        assert_eq!(resolve_cooldown_seconds(Some(i32::MAX)), 86400);
+    }
+
+    // ---------- validate_price_threshold ----------
+
+    #[test]
+    fn price_threshold_accepts_positive() {
+        assert!(validate_price_threshold(1).is_ok());
+        assert!(validate_price_threshold(100).is_ok());
+        assert!(validate_price_threshold(i32::MAX).is_ok());
+    }
+
+    #[test]
+    fn price_threshold_rejects_zero_and_negative() {
+        assert!(validate_price_threshold(0).is_err());
+        assert!(validate_price_threshold(-1).is_err());
+        assert!(validate_price_threshold(i32::MIN).is_err());
+    }
+
+    // ---------- validate_discord_webhook_url ----------
+
+    #[test]
+    fn webhook_url_accepts_canonical_discord_host() {
+        assert!(
+            validate_discord_webhook_url("https://discord.com/api/webhooks/1/abc").is_ok()
+        );
+    }
+
+    #[test]
+    fn webhook_url_accepts_all_documented_discord_hosts() {
+        for host in [
+            "discord.com",
+            "discordapp.com",
+            "ptb.discord.com",
+            "canary.discord.com",
+        ] {
+            let url = format!("https://{host}/api/webhooks/1/abc");
+            assert!(
+                validate_discord_webhook_url(&url).is_ok(),
+                "expected ok for {url}"
+            );
+        }
+    }
+
+    #[test]
+    fn webhook_url_rejects_non_https_scheme() {
+        assert!(
+            validate_discord_webhook_url("http://discord.com/api/webhooks/1/abc").is_err()
+        );
+        assert!(
+            validate_discord_webhook_url("ftp://discord.com/api/webhooks/1/abc").is_err()
+        );
+    }
+
+    #[test]
+    fn webhook_url_rejects_non_discord_host() {
+        assert!(
+            validate_discord_webhook_url("https://evil.com/api/webhooks/1/abc").is_err()
+        );
+        assert!(
+            validate_discord_webhook_url("https://discord.com.evil.com/api/webhooks/1/abc")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn webhook_url_rejects_wrong_path_prefix() {
+        assert!(validate_discord_webhook_url("https://discord.com/").is_err());
+        assert!(validate_discord_webhook_url("https://discord.com/api/").is_err());
+        assert!(
+            validate_discord_webhook_url("https://discord.com/login?next=/api/webhooks/")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn webhook_url_rejects_garbage_string() {
+        assert!(validate_discord_webhook_url("not a url").is_err());
+        assert!(validate_discord_webhook_url("").is_err());
+    }
 }

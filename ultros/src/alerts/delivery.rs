@@ -6,7 +6,7 @@ use serde::Deserialize;
 use tracing::error;
 use ultros_db::UltrosDb;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(tag = "method")]
 pub(crate) enum EndpointConfig {
     #[serde(rename = "DiscordChannel")]
@@ -15,6 +15,26 @@ pub(crate) enum EndpointConfig {
     DiscordDm { user_id: i64 },
     #[serde(rename = "Webhook")]
     Webhook { url: String },
+}
+
+/// Parse a notification endpoint row's `(method, config)` pair into a typed [`EndpointConfig`].
+///
+/// The DB stores `method` as a separate column and `config` as a JSON object missing the
+/// discriminator — this helper splices the discriminator in so `serde(tag = "method")` can
+/// deserialize the result.
+pub(crate) fn parse_endpoint_config(
+    method: &str,
+    config: &serde_json::Value,
+) -> Result<EndpointConfig> {
+    let mut config_obj =
+        serde_json::from_value::<serde_json::Map<String, serde_json::Value>>(config.clone())
+            .unwrap_or_default();
+    config_obj.insert(
+        "method".to_string(),
+        serde_json::Value::String(method.to_string()),
+    );
+    serde_json::from_value(serde_json::Value::Object(config_obj))
+        .map_err(|e| anyhow!("bad endpoint config: {e}"))
 }
 
 /// Look up all notification endpoints for an alert and dispatch the message via each.
@@ -36,23 +56,13 @@ pub(crate) async fn dispatch_alert(
     let mut any_ok = false;
 
     for endpoint in endpoints {
-        // Re-construct the tagged enum from the method string + config JSON object.
-        let mut config_obj = serde_json::from_value::<serde_json::Map<String, serde_json::Value>>(
-            endpoint.config.clone(),
-        )
-        .unwrap_or_default();
-        config_obj.insert(
-            "method".to_string(),
-            serde_json::Value::String(endpoint.method.clone()),
-        );
-        let parsed: EndpointConfig =
-            match serde_json::from_value(serde_json::Value::Object(config_obj)) {
-                Ok(p) => p,
-                Err(e) => {
-                    last_err = Some(anyhow!("bad endpoint config for {}: {e}", endpoint.id));
-                    continue;
-                }
-            };
+        let parsed = match parse_endpoint_config(&endpoint.method, &endpoint.config) {
+            Ok(p) => p,
+            Err(e) => {
+                last_err = Some(anyhow!("bad endpoint config for {}: {e}", endpoint.id));
+                continue;
+            }
+        };
 
         let result = match parsed {
             EndpointConfig::DiscordChannel { channel_id } => {
@@ -144,4 +154,77 @@ async fn send_webhook(url: &str, title: &str, body: &str) -> Result<()> {
         return Err(anyhow!("webhook returned {status}: {body}"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parses_discord_dm_from_method_plus_config() {
+        let cfg = json!({ "user_id": 1234 });
+        let parsed = parse_endpoint_config("DiscordDm", &cfg).unwrap();
+        assert_eq!(parsed, EndpointConfig::DiscordDm { user_id: 1234 });
+    }
+
+    #[test]
+    fn parses_discord_channel_from_method_plus_config() {
+        let cfg = json!({ "channel_id": 99 });
+        let parsed = parse_endpoint_config("DiscordChannel", &cfg).unwrap();
+        assert_eq!(parsed, EndpointConfig::DiscordChannel { channel_id: 99 });
+    }
+
+    #[test]
+    fn parses_webhook_from_method_plus_config() {
+        let cfg = json!({ "url": "https://discord.com/api/webhooks/1/abc" });
+        let parsed = parse_endpoint_config("Webhook", &cfg).unwrap();
+        assert_eq!(
+            parsed,
+            EndpointConfig::Webhook {
+                url: "https://discord.com/api/webhooks/1/abc".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn parse_endpoint_ignores_method_field_already_present_in_config() {
+        // The splicing overwrites any existing "method" key in the config object —
+        // protects against double-tagged rows in the DB.
+        let cfg = json!({ "method": "WrongMethod", "user_id": 7 });
+        let parsed = parse_endpoint_config("DiscordDm", &cfg).unwrap();
+        assert_eq!(parsed, EndpointConfig::DiscordDm { user_id: 7 });
+    }
+
+    #[test]
+    fn parse_endpoint_rejects_unknown_method() {
+        let cfg = json!({ "user_id": 1 });
+        assert!(parse_endpoint_config("Pigeon", &cfg).is_err());
+    }
+
+    #[test]
+    fn parse_endpoint_rejects_missing_required_fields() {
+        // DiscordDm requires user_id; missing it is a parse error.
+        let cfg = json!({});
+        assert!(parse_endpoint_config("DiscordDm", &cfg).is_err());
+        // Webhook requires url; missing it is also a parse error.
+        assert!(parse_endpoint_config("Webhook", &cfg).is_err());
+    }
+
+    #[test]
+    fn parse_endpoint_rejects_wrong_type_for_id() {
+        let cfg = json!({ "user_id": "not-a-number" });
+        assert!(parse_endpoint_config("DiscordDm", &cfg).is_err());
+    }
+
+    #[test]
+    fn parse_endpoint_treats_non_object_config_as_empty() {
+        // If the DB stores null/array/string as config, the splicer turns it into an
+        // object with just the method tag, which then fails for missing fields. We
+        // only assert that we don't panic and return an error rather than success.
+        for bad in [json!(null), json!([]), json!("string"), json!(42)] {
+            let r = parse_endpoint_config("DiscordDm", &bad);
+            assert!(r.is_err(), "expected err for config: {bad}");
+        }
+    }
 }
