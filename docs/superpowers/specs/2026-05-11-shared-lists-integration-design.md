@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-11
 **Status:** Awaiting user review
-**Scope:** Make the already-built Shared Lists backend usable. Three tiers: (1) surface ownership and permissions in existing UI, (2) ship the missing sharing/invite/group UI, (3) thread discovery into onboarding and analyzer flows. Includes targeted backend refactors (`web.rs` split, permission extractor, scoped WebSocket broadcasts).
+**Scope:** Make the already-built Shared Lists backend usable, and extend it with Discord guild integration. Four tiers: (1) surface ownership and permissions in existing UI, (2) ship the missing sharing/invite/group UI, (2b) bind lists/groups to Discord guilds with role-based access and channel notifications, (3) thread discovery into onboarding and analyzer flows. Includes targeted backend refactors (`web.rs` split, permission extractor, scoped WebSocket broadcasts).
 
 ---
 
@@ -27,12 +27,13 @@ Net: the product can ship Shared Lists end-to-end in roughly a week of frontend 
 
 ## Non-goals
 
-- **No new backend features.** Permissions stay at None/Read/Write/Owner; no fine-grained per-item permissions, no "expiring share", no transfer-ownership UI. Those are interesting and out of scope.
-- **No notifications system.** Sharing a list with a user does not send them a Discord DM, an in-app notification, or an email. The recipient discovers the list when they next open `/list`. A real notification layer is a separate spec.
-- **No tutorial / interactive walkthrough.** Onboarding is contextual nudges, not a guided tour. If we want a Shepherd.js-style overlay later, that's a different spec.
-- **No public lists.** A list is private, shared with named users, shared with groups the owner controls, or invite-link gated. There is no "discoverable" or "public to everyone" mode. (Possible Tier 4; explicitly deferred.)
-- **No mobile-specific layout work beyond responsive defaults.** The share modal and groups page must work on mobile, but a dedicated mobile UX pass is out of scope.
-- **No rename of `Lists` → `Collections` or similar.** Keep the existing terminology.
+- **No new permission levels.** Stays at None/Read/Write/Owner; no fine-grained per-item permissions, no "expiring share", no transfer-ownership UI.
+- **No general in-app notifications system.** "X shared a list with you" via a bell icon is a separate spec. Discord *channel* notifications for list events are in scope (Tier 2b) because they reuse the existing alert-delivery pipeline. In-app and Discord-DM notifications are not.
+- **No `GUILD_MEMBERS` privileged intent.** That intent requires Discord verification past 100 guilds and a privacy review. We resolve guild role membership lazily via per-user REST calls at OAuth callback time — see Tier 2b.4. If the bot ever needs to react to live role changes (someone gets promoted mid-session), that's a future expansion, not this spec.
+- **No tutorial / interactive walkthrough.** Onboarding is contextual nudges, not a guided tour.
+- **No public lists.** A list is private, shared with named users, shared with groups the owner controls, invite-link gated, or guild-bound (Tier 2b). No "discoverable to all" mode.
+- **No mobile-specific layout work beyond responsive defaults.**
+- **No rename of `Lists` → `Collections` or similar.**
 
 ## Tiers
 
@@ -40,6 +41,7 @@ The work is structured so each tier is independently shippable.
 
 - **Tier 1 — Make ownership visible.** Permission badges, owner attribution, sectioning. No new endpoints.
 - **Tier 2 — Sharing UI.** Share modal, invite link UI, groups page. Uses existing endpoints.
+- **Tier 2b — Discord guild integration.** Bind a list or group to a guild role for auto-membership; bind a list to a guild channel for event notifications. Adds OAuth scope, bot guild-join handler, new DB tables, reuses existing alert delivery pipeline.
 - **Tier 3 — Discovery & onboarding.** `/welcome` step, post-creation nudge, analyzer integration.
 - **Backend cleanup (parallel).** `web.rs` split, `RequireListPermission` extractor, scoped WebSocket broadcasts. Lands alongside Tier 2.
 
@@ -133,7 +135,89 @@ Nav: add `/groups` to the side nav alongside `/list`.
 
 The list-view page ([routes/list_view.rs](ultros-frontend/ultros-app/src/routes/list_view.rs)) gains a small "Shared with N people" indicator next to the title, clickable to open `<ShareListModal />`. For non-owners, it reads "Shared by {owner}" and is non-interactive.
 
-**Open question deferred to implementation:** how do users get added to a group without a user-search? Options: invite-to-group links analogous to invite-to-list, or "members are auto-added when they redeem an invite to a list shared with this group." Pick during plan-writing; both are small.
+**Open question deferred to implementation:** how do users get added to a group without a user-search? Options: invite-to-group links analogous to invite-to-list, or "members are auto-added when they redeem an invite to a list shared with this group." Pick during plan-writing; both are small. Tier 2b makes a third option viable — *guild-backed groups* (group membership is whoever has the bound Discord role).
+
+---
+
+## Tier 2b — Discord guild integration
+
+Goal: a Discord guild owner / officer can bind one of their guild's roles to an Ultros group (or directly to a list), and bind a guild channel to receive list-change notifications. Members of the role automatically gain the corresponding list permission the next time they log into Ultros. The bot must be in the guild.
+
+This tier is the most net-new — new tables, new OAuth scope, new bot handlers — but the architecture is straightforward because we deliberately avoid the privileged `GUILD_MEMBERS` intent.
+
+### 2b.1 Bot guild lifecycle
+
+When the Ultros bot joins or leaves a guild, sync minimal metadata:
+
+- New table `discord_guild(id, name, icon_url, joined_at, left_at)`. `left_at IS NOT NULL` is the soft-deleted state — keep the row so historical bindings can be re-activated if the bot is re-added.
+- New table `discord_guild_role(guild_id, role_id, name, color, position, is_managed)`. Composite primary key. Synced from the bot.
+
+Wire two handlers in [ultros/src/discord/mod.rs](ultros/src/discord/mod.rs):
+
+- `EventHandler::guild_create` — bot joined, or a guild came back online. Upsert `discord_guild`, fetch role list via REST, upsert `discord_guild_role` rows, mark missing roles as deleted.
+- `EventHandler::guild_role_create / update / delete` — keep `discord_guild_role` in sync without a full re-fetch.
+
+These events are part of the **non-privileged** GUILD intent set; no Discord verification needed.
+
+### 2b.2 OAuth scope upgrade: add `guilds`
+
+Currently [`ultros/src/main.rs` requests only `Identify`](ultros/src/main.rs). Add `guilds`. On the next login each existing user will be re-prompted by Discord to grant the additional scope; this is normal Discord UX and we don't try to hide it. The scope yields a list of guilds the user belongs to plus per-guild `permissions` (a bitfield — we read `MANAGE_GUILD` to identify "officer-level" users for the bind UI).
+
+We do **not** request `guilds.members.read`. We don't need the full member list; we resolve a single user's roles in a single guild on demand (see 2b.4).
+
+### 2b.3 Binding schema
+
+New tables:
+
+- `discord_guild_list_binding(id, guild_id, list_id, role_id, permission, created_at, created_by_user_id)` — binds a guild role to a list permission. `role_id` is nullable; `NULL` means `@everyone` (every member of the guild). `permission` is `ListPermission` (Read or Write — not Owner; owner-grant via role would be wild).
+- `discord_guild_group_binding(id, guild_id, group_id, role_id, created_at, created_by_user_id)` — binds a guild role to a group. Same nullability semantics. Permission is whatever the group is shared with on each list (separate concern).
+- `discord_guild_notification(id, guild_id, channel_id, list_id, events, created_at, created_by_user_id)` — binds a guild channel to a list. `events` is a bitfield of `ListChanged | ItemAddedRemoved | InviteUsed`.
+
+All three FK to `discord_guild(id)` with `ON DELETE CASCADE` so removing the bot tears down bindings cleanly. The `list_id` / `group_id` FKs also cascade.
+
+Authorization invariant: to create any binding, the calling user must have `MANAGE_GUILD` on the guild (read from the OAuth `guilds` payload, cached in their session). This is checked in the Axum handler — the bot never trusts client-supplied guild ids.
+
+### 2b.4 Lazy membership resolution
+
+We don't subscribe to live member events. Instead, role membership is re-evaluated at well-defined moments:
+
+- **At OAuth login.** After the existing `Identify` callback, for each guild in `discord_guild_list_binding ∪ discord_guild_group_binding` that the user belongs to (intersection of bot-known guilds and the user's guild list from OAuth), call `GET /guilds/{guild_id}/members/{user_id}` via the bot token. The response includes the member's role list. Upsert/delete the corresponding `list_shared_user` and `user_group_member` rows so the user's access matches their current roles.
+- **On binding create / edit.** When an officer creates or modifies a binding, enqueue a one-shot resolution for every Ultros user currently linked to that guild (find them via the OAuth `guilds` cache from their last login). This is bounded by users-who-have-logged-in, not the full guild member count.
+- **Hourly drift sweep.** A background tokio task re-resolves users who logged in more than 24 hours ago, capped at N per minute. Nice to have, not required for shipping.
+
+Lazy resolution intentionally accepts a "user gets promoted on Discord, doesn't see Editor permission on Ultros until they refresh / re-login" lag. The product reads as "permissions sync on login" — that's an acceptable mental model and saves us the privileged intent.
+
+### 2b.5 Notification dispatch
+
+New events emitted by the list backend:
+
+- `ListChanged` — list metadata (name/world/filters) edited.
+- `ItemAddedRemoved` — item added to or removed from the list.
+- `InviteUsed` — someone redeemed an invite link.
+
+The existing alert delivery pipeline ([ultros/src/alerts/delivery.rs:11-18](ultros/src/alerts/delivery.rs:11), [ultros/src/alerts/delivery.rs:40-88](ultros/src/alerts/delivery.rs:40)) already handles `DiscordChannel { channel_id }` dispatch with embed rendering. We add a thin `list_event_dispatcher` that, on each event, looks up `discord_guild_notification` rows matching `list_id` and `events`, builds an embed, and hands off to the existing delivery function. No new transport.
+
+Rate-limit and de-dup: an item bulk-add of 50 items should produce one batched embed, not 50. The dispatcher coalesces events for the same `(list_id, event_type)` over a 30-second window.
+
+### 2b.6 UI: guild tab in `<ShareListModal />`
+
+A fourth tab in the share modal (alongside Groups, Invite link, and the deferred People tab): **Discord guild**.
+
+Visible only to the list owner. Content:
+
+- If the user has not granted the `guilds` scope yet → "Connect your Discord guilds to bind roles" with a re-auth button.
+- Else, a dropdown of guilds where the user has `MANAGE_GUILD` *and* the Ultros bot is present. For guilds where bot is missing, show an "Invite Ultros to this guild" link with the bot install URL and the minimum required permissions (`Send Messages`, `Embed Links`, `Read Roles` — guild-only, no member-list, no message-content).
+- After picking a guild:
+  - **Roles**: list current `discord_guild_list_binding` rows for this guild+list. Each row: role-name pill (with guild's color), permission selector (Read/Write), revoke. "Add binding" → role dropdown + permission selector. `@everyone` is one of the role choices, prefixed with an icon to differentiate.
+  - **Notifications**: list current `discord_guild_notification` rows. Each row: channel name, event-type checkboxes, revoke. "Add notification" → channel dropdown (filtered to text channels the bot can post to) + event checkboxes.
+
+### 2b.7 Groups page integration
+
+The `/groups` page (Tier 2.3) gains the same guild-binding UI per group, scoped to `discord_guild_group_binding`. A group with a guild binding shows a Discord icon and the guild name below the group name.
+
+### 2b.8 Bot slash command (optional, post-Tier-2b)
+
+A `/ffxiv list` already exists ([ultros/src/discord/ffxiv/mod.rs:20-28](ultros/src/discord/ffxiv/mod.rs:20)). Extend with `/ffxiv list link` — an officer-only slash command that links the calling guild to an Ultros list by id (the user must own the list on Ultros). Convenience over the web UI; nice to have, not required for the tier.
 
 ---
 
@@ -212,6 +296,27 @@ Recipient opens invite URL
                        → 200 OK → redirect /list/{list_id}
                        → server emits ListUpdate (Tier B.3: scoped to subscribers of list_id)
                        → owner's open tab refreshes share count
+
+Officer binds a guild role             (Tier 2b)
+   └─→ <ShareListModal /> "Discord" tab
+        ├─ pick guild (must have MANAGE_GUILD + bot present)
+        ├─ pick role + permission → POST /api/v1/list/{id}/guild-binding
+        │     └─ enqueue lazy resolve for each linked Ultros user in that guild
+        └─ pick channel + events → POST /api/v1/list/{id}/guild-notification
+
+User logs in
+   └─→ /oauth callback
+        ├─ existing flow: upsert discord_user, set session cookie
+        └─ new (Tier 2b.4): for each guild they're in that has a binding,
+                            GET /guilds/{g}/members/{u} via bot token,
+                            reconcile list_shared_user + user_group_member
+                            rows against current roles
+
+List event fires (item added, edited, invite used)
+   └─→ list_event_dispatcher (Tier 2b.5)
+        ├─ look up discord_guild_notification rows
+        ├─ coalesce within 30s window
+        └─ delivery.rs → DiscordChannel { channel_id } → embed
 ```
 
 State on the recipient side:
@@ -231,8 +336,12 @@ State on the recipient side:
 
 - **Unit**: `RequireListPermission` extractor (B.2) — happy path per permission level + 403 for insufficient.
 - **Unit**: scoped broadcast filter (B.3) — subscribed clients receive, non-subscribed do not.
-- **Integration / e2e**: the existing Puppeteer harness in [integration/](integration/) gains one test: log in as user A, create list, generate invite, redeem as user B (via test-auth login flow added in commit 1cbf5b4c), assert list appears in B's `/list` page with "Shared · Editor" pill.
-- **Visual**: take screenshots of `/list` with owned-only, shared-only, and mixed states for the snapshot harness.
+- **Unit**: lazy role resolver (2b.4) — given a mocked `GET /guilds/{g}/members/{u}` response, produces the expected `list_shared_user` upsert/delete set.
+- **Unit**: event coalescer (2b.5) — N rapid `ItemAddedRemoved` events for the same list collapse to one embed.
+- **Integration / e2e**: the existing Puppeteer harness in [integration/](integration/) gains:
+  - **Invite redemption**: log in as user A, create list, generate invite, redeem as user B (via test-auth login flow added in commit 1cbf5b4c), assert list appears in B's `/list` with "Shared · Editor" pill.
+  - **Guild bind dry-run**: stub the Discord bot API behind a feature flag (test-mode delivery sink instead of real channel send), assert binding creation triggers a fake-resolve and that notifications hit the sink. The bot itself does not run in CI; mock its REST surface.
+- **Visual**: screenshots of `/list` with owned-only, shared-only, and mixed states; `<ShareListModal />` Groups/Invite/Discord tabs; `/groups` page.
 
 ## Roadmap / explicitly deferred
 
@@ -247,6 +356,10 @@ Sketched for context; not in scope:
 
 ## Open questions for plan-writing
 
-- How do non-owner members get added to a group? Invite-link analog vs. auto-add on list-invite-redemption-targeting-group. Pick one during planning; both are small.
-- Does `viewer_permission` go on the `List` DTO or a sibling `ListWithViewerContext` DTO? Adding to `List` is simpler but mixes concerns; sibling is cleaner but touches every call site. Lean simpler — put it on `List` as `Option<ListPermission>`, populated only by `get_lists_for_user`.
+- How do non-owner members get added to a group? Invite-link analog vs. auto-add on list-invite-redemption-targeting-group vs. guild-backed (Tier 2b). All three can coexist; planning picks the minimum for Tier 2 ship.
+- Does `viewer_permission` go on the `List` DTO or a sibling `ListWithViewerContext` DTO? *Decided: on `List` as `Option<ListPermission>`, populated by `get_lists_for_user`.*
 - Should "Leave list" require a confirm modal? Probably yes; cheap to add.
+- **Tier 2b**: does the bot need any additional Discord OAuth permissions at install time beyond `Send Messages + Embed Links`? `View Channels` is implicit; `Read Message History` is not needed. Pin during planning.
+- **Tier 2b**: bot install URL — generate per-deploy or hard-code the application id? Hard-code is fine; the bot's application id is public.
+- **Tier 2b**: how do we handle a guild where the bot was removed but bindings still exist? Lazy resolution stops syncing (the REST call fails); UI shows a "bot removed from this guild" warning on the binding row with a re-invite link. Don't auto-delete bindings — the officer may re-add the bot.
+- **Tier 2b**: the `guilds` OAuth scope re-prompt on first login after deploy will surprise existing users. Communicate via a small in-app banner ("We added Discord guild integration — log out and back in to enable") rather than forcing a hard re-auth.
