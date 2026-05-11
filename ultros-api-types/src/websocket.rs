@@ -325,7 +325,9 @@ mod tests {
             .and(FilterPredicate::Retainer("Bob".into()));
         assert!(both.filter(&h, &data));
         // and: one false ⇒ false
-        let one = item_miss.clone().and(FilterPredicate::Retainer("Bob".into()));
+        let one = item_miss
+            .clone()
+            .and(FilterPredicate::Retainer("Bob".into()));
         assert!(!one.filter(&h, &data));
         // or: one true ⇒ true
         let or_one = item_miss.clone().or(item_match.clone());
@@ -361,7 +363,7 @@ mod tests {
 
     #[test]
     fn undercut_retainer_orders_by_struct_field_order() {
-        let mut v = vec![
+        let mut v = [
             UndercutRetainer {
                 id: 2,
                 name: "B".into(),

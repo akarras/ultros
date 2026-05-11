@@ -1436,10 +1436,7 @@ mod test {
     #[test]
     fn sold_within_display_describes_bucket() {
         assert_eq!(SoldWithin::NoSales.to_string(), "No sales");
-        assert_eq!(
-            SoldWithin::Today(SoldAmount(2)).to_string(),
-            "2 sold today"
-        );
+        assert_eq!(SoldWithin::Today(SoldAmount(2)).to_string(), "2 sold today");
         assert_eq!(
             SoldWithin::Week(SoldAmount(1)).to_string(),
             "1 sold this week"
@@ -1460,10 +1457,7 @@ mod test {
 
     #[test]
     fn sold_within_duration_conversion_matches_bucket_size() {
-        assert_eq!(
-            Duration::from(&SoldWithin::NoSales),
-            Duration::days(0)
-        );
+        assert_eq!(Duration::from(&SoldWithin::NoSales), Duration::days(0));
         assert_eq!(
             Duration::from(&SoldWithin::Today(SoldAmount(0))),
             Duration::days(1)
@@ -1508,7 +1502,10 @@ mod test {
         assert_eq!(no_sales.partial_cmp(&today), None);
         assert_eq!(today.partial_cmp(&no_sales), None);
         // NoSales == NoSales
-        assert_eq!(no_sales.partial_cmp(&SoldWithin::NoSales), Some(std::cmp::Ordering::Equal));
+        assert_eq!(
+            no_sales.partial_cmp(&SoldWithin::NoSales),
+            Some(std::cmp::Ordering::Equal)
+        );
     }
 
     #[test]
@@ -1618,7 +1615,10 @@ mod test {
             item_id: 1,
             hq: false,
         };
-        assert_eq!(sale_history.item_map.get(&key).unwrap().len(), SALE_HISTORY_SIZE);
+        assert_eq!(
+            sale_history.item_map.get(&key).unwrap().len(),
+            SALE_HISTORY_SIZE
+        );
 
         // Add a sale newer than the newest. Oldest should be dropped.
         sale_history.add_sale(&AbbreviatedSaleData {

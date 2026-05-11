@@ -489,7 +489,7 @@ mod tests {
     #[test]
     fn undercut_retainer_orders_by_struct_field_declaration_order() {
         // id < name < undercut_amount via derive(Ord) on tuple of fields.
-        let mut v = vec![
+        let mut v = [
             UndercutRetainer {
                 id: 2,
                 name: "A".into(),

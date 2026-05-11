@@ -31,27 +31,16 @@ pub(crate) fn clamp_sold_amount(number_recently_sold: i32) -> SoldAmount {
     SoldAmount(number_recently_sold.clamp(0, 255) as u8)
 }
 
-/// Case-insensitive substring match used by Discord autocomplete handlers.
-///
-/// `partial` is lowered on every call; for tight autocomplete loops over thousands of
-/// items, lower the needle once and call [`name_matches_lowered`] instead.
-/// An empty `partial` matches any haystack. The match is Unicode-aware via `to_lowercase`.
-pub(crate) fn name_matches_partial(haystack: &str, partial: &str) -> bool {
-    name_matches_lowered(haystack, &partial.to_lowercase())
-}
-
-/// Hot-loop variant of [`name_matches_partial`]: caller pre-lowers the needle once.
+/// Case-insensitive substring match used by Discord autocomplete handlers. The caller
+/// is expected to lower `partial_lower` once before iterating so the hot loop doesn't
+/// re-allocate a `String` per item. An empty needle matches any haystack. Unicode-aware
+/// via `to_lowercase`.
 pub(crate) fn name_matches_lowered(haystack: &str, partial_lower: &str) -> bool {
     haystack.to_lowercase().contains(partial_lower)
 }
 
-/// ASCII-only variant of [`name_matches_partial`]. Cheaper for plain-text fields like
-/// retainer names that are guaranteed to be ASCII in practice.
-pub(crate) fn name_matches_partial_ascii(haystack: &str, partial: &str) -> bool {
-    name_matches_lowered_ascii(haystack, &partial.to_ascii_lowercase())
-}
-
-/// Hot-loop variant of [`name_matches_partial_ascii`]: caller pre-lowers the needle.
+/// ASCII-only variant of [`name_matches_lowered`]. Cheaper for plain-text fields like
+/// retainer names that are guaranteed to be ASCII in practice. Caller pre-lowers needle.
 pub(crate) fn name_matches_lowered_ascii(haystack: &str, partial_lower: &str) -> bool {
     haystack.to_ascii_lowercase().contains(partial_lower)
 }
@@ -226,41 +215,6 @@ mod tests {
         assert_eq!(clamp_sold_amount(i32::MAX), SoldAmount(255));
     }
 
-    // ---------- name_matches_partial ----------
-
-    #[test]
-    fn name_matches_partial_empty_partial_matches_anything() {
-        assert!(name_matches_partial("Adamantoise", ""));
-        assert!(name_matches_partial("", ""));
-    }
-
-    #[test]
-    fn name_matches_partial_is_case_insensitive() {
-        assert!(name_matches_partial("Adamantoise", "ada"));
-        assert!(name_matches_partial("Adamantoise", "ADA"));
-        assert!(name_matches_partial("ADAMANTOISE", "ada"));
-    }
-
-    #[test]
-    fn name_matches_partial_substring_anywhere() {
-        assert!(name_matches_partial("Behemoth", "hemo"));
-        assert!(name_matches_partial("Behemoth", "moth"));
-    }
-
-    #[test]
-    fn name_matches_partial_no_match_returns_false() {
-        assert!(!name_matches_partial("Adamantoise", "xyz"));
-        assert!(!name_matches_partial("", "anything"));
-    }
-
-    #[test]
-    fn name_matches_partial_handles_unicode() {
-        // Turkish dotless I lowercases differently than ASCII.
-        assert!(name_matches_partial("İstanbul", "i\u{0307}stan"));
-        // CJK names in the game data should match by exact lowercase identity.
-        assert!(name_matches_partial("中国", "中国"));
-    }
-
     // ---------- name_matches_lowered ----------
 
     #[test]
@@ -283,31 +237,23 @@ mod tests {
     }
 
     #[test]
-    fn name_matches_lowered_agrees_with_partial_when_needle_is_prelowered() {
-        let cases = [("Adamantoise", "ada"), ("Behemoth", "moth"), ("中国", "中国")];
-        for (h, n) in cases {
-            let lower = n.to_lowercase();
-            assert_eq!(name_matches_partial(h, n), name_matches_lowered(h, &lower));
-        }
-    }
-
-    // ---------- name_matches_partial_ascii ----------
-
-    #[test]
-    fn name_matches_partial_ascii_empty_partial_matches_anything() {
-        assert!(name_matches_partial_ascii("Bob", ""));
+    fn name_matches_lowered_substring_anywhere() {
+        assert!(name_matches_lowered("Behemoth", "hemo"));
+        assert!(name_matches_lowered("Behemoth", "moth"));
     }
 
     #[test]
-    fn name_matches_partial_ascii_is_case_insensitive() {
-        assert!(name_matches_partial_ascii("Bob", "BOB"));
-        assert!(name_matches_partial_ascii("BOB", "bob"));
+    fn name_matches_lowered_no_match_returns_false() {
+        assert!(!name_matches_lowered("Adamantoise", "xyz"));
+        assert!(!name_matches_lowered("", "anything"));
     }
 
     #[test]
-    fn name_matches_partial_ascii_does_not_lowercase_non_ascii() {
-        // Uppercase 'İ' is NOT lowercased by to_ascii_lowercase, so it won't match 'i'.
-        assert!(!name_matches_partial_ascii("İstanbul", "i"));
+    fn name_matches_lowered_handles_unicode() {
+        // Turkish dotless I lowercases differently than ASCII.
+        assert!(name_matches_lowered("İstanbul", "i\u{0307}stan"));
+        // CJK names in the game data should match by exact lowercase identity.
+        assert!(name_matches_lowered("中国", "中国"));
     }
 
     // ---------- name_matches_lowered_ascii ----------
@@ -324,14 +270,16 @@ mod tests {
     }
 
     #[test]
-    fn name_matches_lowered_ascii_agrees_with_partial_when_prelowered() {
-        let cases = [("Bob", "bo"), ("Retainer42", "AINER"), ("Cap", "P")];
-        for (h, n) in cases {
-            let lower = n.to_ascii_lowercase();
-            assert_eq!(
-                name_matches_partial_ascii(h, n),
-                name_matches_lowered_ascii(h, &lower)
-            );
+    fn name_matches_lowered_ascii_does_not_lowercase_non_ascii() {
+        // Uppercase 'İ' is NOT lowercased by to_ascii_lowercase, so a lowered-needle
+        // of "i" won't find it in the haystack.
+        assert!(!name_matches_lowered_ascii("İstanbul", "i"));
+    }
+
+    #[test]
+    fn name_matches_lowered_ascii_finds_substring_with_prelowered_needle() {
+        for (h, lower) in [("Bob", "bo"), ("Retainer42", "ainer"), ("Cap", "p")] {
+            assert!(name_matches_lowered_ascii(h, lower));
         }
     }
 

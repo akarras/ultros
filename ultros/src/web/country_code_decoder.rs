@@ -196,9 +196,6 @@ mod tests {
 
     #[test]
     fn as_ref_matches_as_str() {
-        assert_eq!(
-            AsRef::<str>::as_ref(&Region::NorthAmerica),
-            "North-America"
-        );
+        assert_eq!(AsRef::<str>::as_ref(&Region::NorthAmerica), "North-America");
     }
 }

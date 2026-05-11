@@ -27,6 +27,7 @@ pub(crate) fn resolve_cooldown_seconds(requested: Option<i32>) -> i32 {
 }
 
 /// Validate a price threshold from a user request. Returns `Err` when zero or negative.
+#[allow(clippy::result_large_err)]
 pub(crate) fn validate_price_threshold(price_threshold: i32) -> Result<(), ApiError> {
     if price_threshold <= 0 {
         Err(ApiError::from(anyhow::anyhow!(
@@ -243,10 +244,7 @@ mod tests {
 
     #[test]
     fn cooldown_default_when_unset() {
-        assert_eq!(
-            resolve_cooldown_seconds(None),
-            DEFAULT_COOLDOWN_SECONDS
-        );
+        assert_eq!(resolve_cooldown_seconds(None), DEFAULT_COOLDOWN_SECONDS);
     }
 
     #[test]
@@ -292,9 +290,7 @@ mod tests {
 
     #[test]
     fn webhook_url_accepts_canonical_discord_host() {
-        assert!(
-            validate_discord_webhook_url("https://discord.com/api/webhooks/1/abc").is_ok()
-        );
+        assert!(validate_discord_webhook_url("https://discord.com/api/webhooks/1/abc").is_ok());
     }
 
     #[test]
@@ -315,19 +311,13 @@ mod tests {
 
     #[test]
     fn webhook_url_rejects_non_https_scheme() {
-        assert!(
-            validate_discord_webhook_url("http://discord.com/api/webhooks/1/abc").is_err()
-        );
-        assert!(
-            validate_discord_webhook_url("ftp://discord.com/api/webhooks/1/abc").is_err()
-        );
+        assert!(validate_discord_webhook_url("http://discord.com/api/webhooks/1/abc").is_err());
+        assert!(validate_discord_webhook_url("ftp://discord.com/api/webhooks/1/abc").is_err());
     }
 
     #[test]
     fn webhook_url_rejects_non_discord_host() {
-        assert!(
-            validate_discord_webhook_url("https://evil.com/api/webhooks/1/abc").is_err()
-        );
+        assert!(validate_discord_webhook_url("https://evil.com/api/webhooks/1/abc").is_err());
         assert!(
             validate_discord_webhook_url("https://discord.com.evil.com/api/webhooks/1/abc")
                 .is_err()
@@ -339,8 +329,7 @@ mod tests {
         assert!(validate_discord_webhook_url("https://discord.com/").is_err());
         assert!(validate_discord_webhook_url("https://discord.com/api/").is_err());
         assert!(
-            validate_discord_webhook_url("https://discord.com/login?next=/api/webhooks/")
-                .is_err()
+            validate_discord_webhook_url("https://discord.com/login?next=/api/webhooks/").is_err()
         );
     }
 

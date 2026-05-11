@@ -498,7 +498,11 @@ mod tests {
     fn get_datacenters_for_region_returns_all_datacenters() {
         let helper: WorldHelper = sample_world_data().into();
         let region = helper.lookup_selector(AnySelector::Region(1)).unwrap();
-        let ids: Vec<_> = helper.get_datacenters(&region).iter().map(|d| d.id).collect();
+        let ids: Vec<_> = helper
+            .get_datacenters(&region)
+            .iter()
+            .map(|d| d.id)
+            .collect();
         assert_eq!(ids, vec![10, 11]);
     }
 

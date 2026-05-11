@@ -43,10 +43,7 @@ mod tests {
 
     #[test]
     fn api_error_serde_roundtrip() {
-        for e in [
-            ApiError::Message("oops".into()),
-            ApiError::NotAuthenticated,
-        ] {
+        for e in [ApiError::Message("oops".into()), ApiError::NotAuthenticated] {
             let s = serde_json::to_string(&e).unwrap();
             let back: ApiError = serde_json::from_str(&s).unwrap();
             assert_eq!(e, back);
