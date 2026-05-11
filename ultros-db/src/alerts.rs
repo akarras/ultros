@@ -53,6 +53,9 @@ impl UltrosDb {
         let alert = alert::Entity::insert(alert::ActiveModel {
             id: ActiveValue::default(),
             owner: Set(discord_user),
+            enabled: ActiveValue::default(),
+            last_fired_at: ActiveValue::default(),
+            cooldown_seconds: ActiveValue::default(),
         })
         .exec_with_returning(&self.db)
         .await?;
