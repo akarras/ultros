@@ -1,4 +1,4 @@
-use crate::analysis::roi_badge_class;
+use crate::analysis::{SalesStats, analyze_sales, roi_badge_class};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use crate::{
@@ -9,7 +9,6 @@ use crate::{
     },
     global_state::{LocalWorldData, home_world::use_home_world},
 };
-use chrono::Utc;
 use leptos::{either::Either, prelude::*};
 use leptos_meta::{Meta, Title};
 use leptos_router::hooks::{query_signal, use_params_map};
@@ -146,50 +145,6 @@ fn calculate_fc_project_cost(
     (clamped_cost, material_infos)
 }
 
-#[derive(Clone, Copy, Debug)]
-struct SalesStats {
-    daily_sales: f32,
-    avg_price: i32,
-    total_sales: usize,
-}
-
-fn analyze_sales(sales_data: &[&SaleData]) -> SalesStats {
-    let now = Utc::now().naive_utc();
-    let mut total_sales = 0;
-    let mut total_price: i64 = 0;
-    let mut oldest_date = now;
-
-    for data in sales_data {
-        for sale in &data.sales {
-            total_sales += 1;
-            total_price += sale.price_per_unit as i64;
-            if sale.sale_date < oldest_date {
-                oldest_date = sale.sale_date;
-            }
-        }
-    }
-
-    if total_sales == 0 {
-        return SalesStats {
-            daily_sales: 0.0,
-            avg_price: 0,
-            total_sales: 0,
-        };
-    }
-
-    let avg_price = (total_price / total_sales as i64) as i32;
-    let duration_millis = (now - oldest_date).num_milliseconds().abs();
-    let duration_hours = (duration_millis as f64 / 1000.0 / 3600.0).max(1.0);
-    let days_in_sample = duration_hours / 24.0;
-    let daily_sales = total_sales as f32 / days_in_sample as f32;
-
-    SalesStats {
-        daily_sales,
-        avg_price,
-        total_sales,
-    }
-}
-
 #[component]
 fn FCCraftingAnalyzerTable(
     global_cheapest_listings: CheapestListings,
@@ -233,7 +188,7 @@ fn FCCraftingAnalyzerTable(
             // The generated code uses keys, let's assume valid keys if present.
 
             let sales_stats = if let Some(item_sales) = sales_map.get(&{ sequence.result_item }) {
-                analyze_sales(item_sales)
+                analyze_sales(item_sales, false)
             } else {
                 SalesStats {
                     daily_sales: 0.0,

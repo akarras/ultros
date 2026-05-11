@@ -771,15 +771,8 @@ pub fn RecipeAnalyzer() -> impl IntoView {
 
     let recent_sales = ArcResource::new(selected_world, move |world| async move {
         if let Some(world) = world {
-            leptos::logging::log!("Fetching sales for world: {}", &world.name);
-            let res = get_recent_sales_for_world(&world.name).await;
-            match &res {
-                Ok(sales) => leptos::logging::log!("Sales result: {} items", sales.sales.len()),
-                Err(e) => leptos::logging::log!("Sales error: {}", e),
-            }
-            res
+            get_recent_sales_for_world(&world.name).await
         } else {
-            leptos::logging::log!("No world selected for sales");
             Ok(RecentSales { sales: vec![] })
         }
     });

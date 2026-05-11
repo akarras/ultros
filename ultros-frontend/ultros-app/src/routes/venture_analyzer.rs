@@ -213,10 +213,10 @@ fn VentureAnalyzerTable(
                     }
                 };
 
-                let venture_cost_gil = 0; // Placeholder
-
+                // Ventures cost venture coins (not gil), so "profit" here is gross revenue.
+                // If we ever convert ventures to a gil-equivalent cost, subtract it here.
                 let revenue = market_price * quantity;
-                let profit = revenue - venture_cost_gil;
+                let profit = revenue;
 
                 if let Some(min) = minimum_profit()
                     && profit < min
