@@ -11,14 +11,8 @@ use xiv_gen::ItemId;
 #[component]
 pub fn Alerts() -> impl IntoView {
     let action_version = RwSignal::new(0u64);
-    let alerts = Resource::new(
-        move || action_version.get(),
-        move |_| get_alerts(),
-    );
-    let events = Resource::new(
-        move || action_version.get(),
-        move |_| get_alert_events(),
-    );
+    let alerts = Resource::new(move || action_version.get(), move |_| get_alerts());
+    let events = Resource::new(move || action_version.get(), move |_| get_alert_events());
     let toasts = use_toast();
 
     let toggle = move |alert: Alert| {

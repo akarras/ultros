@@ -193,7 +193,9 @@ fn validate_discord_webhook_url(url: &str) -> Result<(), ApiError> {
     let parsed = url::Url::parse(url)
         .map_err(|e| ApiError::from(anyhow::anyhow!("invalid webhook URL: {e}")))?;
     if parsed.scheme() != "https" {
-        return Err(ApiError::from(anyhow::anyhow!("webhook URL must use https")));
+        return Err(ApiError::from(anyhow::anyhow!(
+            "webhook URL must use https"
+        )));
     }
     let host = parsed.host_str().unwrap_or("");
     let allowed = [
