@@ -32,13 +32,19 @@ pub(crate) async fn create_alert(
         )));
     }
 
-    let (notification_method, notification_config, notification_name) = match req.delivery {
-        AlertDelivery::DiscordDm => (
-            "DiscordDm",
-            serde_json::json!({ "user_id": owner }),
-            format!("DM to {}", user.name),
-        ),
-    };
+    let (notification_method, notification_config, notification_name): (&str, _, String) =
+        match &req.delivery {
+            AlertDelivery::DiscordDm => (
+                "DiscordDm",
+                serde_json::json!({ "user_id": owner }),
+                format!("DM to {}", user.name),
+            ),
+            AlertDelivery::Webhook { url } => (
+                "Webhook",
+                serde_json::json!({ "url": url }),
+                format!("Webhook to {url}"),
+            ),
+        };
 
     // AnySelector is Copy — passed by value here, also Copied into the response below.
     let world_selector_json = serde_json::to_value(world_selector)
@@ -67,7 +73,7 @@ pub(crate) async fn create_alert(
             price_threshold,
             hq_only,
         },
-        delivery: AlertDelivery::DiscordDm,
+        delivery: req.delivery,
         enabled: alert.enabled,
         cooldown_seconds: alert.cooldown_seconds,
         last_fired_at: alert.last_fired_at.map(|t| t.with_timezone(&chrono::Utc)),

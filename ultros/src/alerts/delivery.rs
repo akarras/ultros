@@ -13,6 +13,8 @@ pub(crate) enum EndpointConfig {
     DiscordChannel { channel_id: i64 },
     #[serde(rename = "DiscordDm")]
     DiscordDm { user_id: i64 },
+    #[serde(rename = "Webhook")]
+    Webhook { url: String },
 }
 
 /// Look up all notification endpoints for an alert and dispatch the message via each.
@@ -57,6 +59,7 @@ pub(crate) async fn dispatch_alert(
                 send_to_channel(channel_id, title, body, ctx).await
             }
             EndpointConfig::DiscordDm { user_id } => send_dm(user_id, title, body, ctx).await,
+            EndpointConfig::Webhook { url } => send_webhook(&url, title, body).await,
         };
         match result {
             Ok(()) => any_ok = true,
@@ -117,5 +120,28 @@ async fn send_dm(
             .allowed_mentions(CreateAllowedMentions::new()),
     )
     .await?;
+    Ok(())
+}
+
+async fn send_webhook(url: &str, title: &str, body: &str) -> Result<()> {
+    // Discord webhook expects JSON with `embeds`. allowed_mentions parse=[] suppresses pings.
+    let payload = serde_json::json!({
+        "embeds": [{
+            "title": title,
+            "description": body,
+            "color": 0x00c850,
+        }],
+        "allowed_mentions": { "parse": [] },
+    });
+    let resp = reqwest::Client::new()
+        .post(url)
+        .json(&payload)
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(anyhow!("webhook returned {status}: {body}"));
+    }
     Ok(())
 }
