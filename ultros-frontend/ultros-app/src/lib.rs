@@ -286,6 +286,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
     provide_theme_settings();
     provide_toast_context();
     provide_xiv_data_revision();
+    ws::realtime::provide_realtime_context();
     // AnimationContext::provide();
     let root_node_ref = NodeRef::<Div>::new();
     #[cfg(feature = "hydrate")]
