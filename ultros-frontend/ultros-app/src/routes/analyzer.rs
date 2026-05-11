@@ -359,6 +359,15 @@ fn AnalyzerTable(
             .unwrap_or("---".to_string())
     });
 
+    let (last_sold_within, set_last_sold_within) = query_signal::<String>("last-sold");
+    let last_sold_duration =
+        Memo::new(move |_| last_sold_within().and_then(|d| parse_duration(d.as_str()).ok()));
+    let last_sold_string = Memo::new(move |_| {
+        last_sold_duration()
+            .map(|d| format_duration(d).to_string())
+            .unwrap_or("---".to_string())
+    });
+
     let sorted_data = Memo::new(move |_| {
         let include_tax = tax_enabled().unwrap_or(true);
         let mut sorted_data = profits
@@ -439,6 +448,18 @@ fn AnalyzerTable(
                             .sale_summary
                             .avg_sale_duration
                             .map(|dur| dur.to_std().ok().map(|dur| dur < time).unwrap_or(false))
+                            .unwrap_or(false)
+                    })
+                    .unwrap_or(true)
+            })
+            .filter(move |data| {
+                last_sold_duration()
+                    .map(|max_age| {
+                        data.inner
+                            .sale_summary
+                            .days_since_last_sale
+                            .and_then(|d| d.to_std().ok())
+                            .map(|d| d <= max_age)
                             .unwrap_or(false)
                     })
                     .unwrap_or(true)
@@ -712,6 +733,25 @@ fn AnalyzerTable(
                 </FilterCard>
 
                 <FilterCard
+                    title=t_string!(i18n, analyzer_last_sold_within).to_string()
+                    description=t_string!(i18n, analyzer_last_sold_within_desc).to_string()
+                >
+                    <div class="flex flex-col gap-2">
+                        <div class="text-brand-300">{last_sold_string}</div>
+                        <input
+                            class="input"
+                            placeholder="e.g. 7d"
+                            title="Accepts formats like 1h 30m, 7d, 1M (month), etc."
+                            prop:value=move || last_sold_within().unwrap_or_default()
+                            on:input=move |input| {
+                                let value = event_target_value(&input);
+                                set_last_sold_within(Some(value))
+                            }
+                        />
+                    </div>
+                </FilterCard>
+
+                <FilterCard
                     title=t_string!(i18n, analyzer_tax_calculation).to_string()
                     description=t_string!(i18n, analyzer_tax_calculation_desc).to_string()
                 >
@@ -819,6 +859,16 @@ fn AnalyzerTable(
                                 </span>
                             }.into_any());
                         }
+                        if last_sold_within().is_some() {
+                            chips.push(view! {
+                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
+                                    {t!(i18n, analyzer_last_sold_lte)} {last_sold_string()}
+                                    <button aria-label="Remove filter" class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_last_sold_within(None)>
+                                        <Icon icon=icondata::MdiClose />
+                                    </button>
+                                </span>
+                            }.into_any());
+                        }
                         if let Some(w) = world_filter() {
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
@@ -857,6 +907,7 @@ fn AnalyzerTable(
                     set_category_filter(None);
                     set_max_purchase_price(None);
                     set_min_buy_price(None);
+                    set_last_sold_within(None);
                 }>
                     {t!(i18n, analyzer_clear_all)}
                 </button>
