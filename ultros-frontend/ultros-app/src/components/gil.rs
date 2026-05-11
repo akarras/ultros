@@ -83,6 +83,7 @@ fn GilIcon() -> impl IntoView {
             aria-label="Spawn gil party"
             on:click=move |ev| {
                 #[cfg(feature = "hydrate")]
+                #[allow(clippy::unnecessary_cast)] // client_x() is i32 in WASM, f64 in SSR
                 spawn_gil_party(ev.client_x() as f64, ev.client_y() as f64);
                 #[cfg(not(feature = "hydrate"))]
                 {
