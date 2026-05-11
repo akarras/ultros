@@ -6,6 +6,7 @@ use tracing::error;
 use tracing::instrument;
 use ultros_api_types::{
     ActiveListing, CurrentlyShownItem, FfxivCharacter, FfxivCharacterVerification,
+    alert::{Alert, AlertEvent, CreateAlertRequest, UpdateAlertRequest},
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     list::{CreateList, List, ListItem},
     recent_sales::RecentSales,
@@ -273,6 +274,26 @@ pub(crate) async fn update_retainer_order(retainers: Vec<OwnedRetainer>) -> AppR
     post_api("/api/v1/retainer/reorder", retainers).await
 }
 
+pub(crate) async fn get_alerts() -> AppResult<Vec<Alert>> {
+    fetch_api("/api/v1/alerts").await
+}
+
+pub(crate) async fn create_alert(req: CreateAlertRequest) -> AppResult<Alert> {
+    post_api("/api/v1/alerts", req).await
+}
+
+pub(crate) async fn patch_alert(id: i32, req: UpdateAlertRequest) -> AppResult<()> {
+    patch_api(&format!("/api/v1/alerts/{id}"), req).await
+}
+
+pub(crate) async fn delete_alert(id: i32) -> AppResult<()> {
+    delete_api(&format!("/api/v1/alerts/{id}")).await
+}
+
+pub(crate) async fn get_alert_events() -> AppResult<Vec<AlertEvent>> {
+    fetch_api("/api/v1/alerts/events").await
+}
+
 /// Return the T, or try and return an AppError
 #[instrument]
 fn deserialize<T>(json: &str) -> AppResult<T>
@@ -515,4 +536,55 @@ where
 {
     // This really only will be called by clients- I think.
     unreachable!("post_api should only be called on clients? I think...")
+}
+
+#[cfg(not(feature = "ssr"))]
+#[instrument(skip(json))]
+pub(crate) async fn patch_api<Y, T>(path: &str, json: Y) -> AppResult<T>
+where
+    Y: serde::Serialize + 'static,
+    T: serde::de::DeserializeOwned,
+{
+    use leptos::task::spawn_local;
+
+    let path = path.to_string();
+    let (tx, rx) = flume::unbounded::<AppResult<String>>();
+    spawn_local(async move {
+        let inner_impl = async move || -> AppResult<String> {
+            let body = serde_json::to_string(&json)
+                .map_err(|e| anyhow::anyhow!("failed to serialize json body: {:?}", e))?;
+            let json: String = gloo_net::http::Request::patch(&path)
+                .header("Content-Type", "application/json")
+                .credentials(web_sys::RequestCredentials::Include)
+                .body(body)
+                .map_err(|e| anyhow::anyhow!("failed to set json body: {:?}", e))?
+                .send()
+                .await
+                .inspect_err(|e| {
+                    log::error!("{e}");
+                })?
+                .text()
+                .await
+                .inspect_err(|e| log::error!("{e}"))?;
+            Ok(json)
+        };
+        let result = inner_impl().await;
+        tx.send(result).unwrap();
+    });
+    let json = rx
+        .into_recv_async()
+        .await
+        .expect("The channel to just work")?;
+    deserialize(&json)
+}
+
+#[cfg(feature = "ssr")]
+#[instrument(skip(_json))]
+pub(crate) async fn patch_api<Y, T>(_path: &str, _json: Y) -> AppResult<T>
+where
+    Y: Serialize,
+    T: Serialize,
+{
+    // This really only will be called by clients- I think.
+    unreachable!("patch_api should only be called on clients? I think...")
 }
