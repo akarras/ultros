@@ -35,7 +35,6 @@ pub struct CreateAlertRequest {
 pub struct UpdateAlertRequest {
     pub enabled: Option<bool>,
     pub price_threshold: Option<i32>,
-    pub cooldown_seconds: Option<i32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
