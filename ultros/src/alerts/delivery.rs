@@ -84,12 +84,14 @@ async fn send_to_channel(
     channel_id
         .send_message(
             ctx,
-            CreateMessage::new().embed(
-                CreateEmbed::new()
-                    .color(Color::from_rgb(0, 200, 80))
-                    .title(title)
-                    .description(body),
-            ),
+            CreateMessage::new()
+                .embed(
+                    CreateEmbed::new()
+                        .color(Color::from_rgb(0, 200, 80))
+                        .title(title)
+                        .description(body),
+                )
+                .allowed_mentions(CreateAllowedMentions::new()),
         )
         .await?;
     Ok(())
