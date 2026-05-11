@@ -41,8 +41,13 @@ struct SaleSummary {
     num_sold: usize,
     /// Represents the average time between sales within the `num_sold`
     avg_sale_duration: Option<Duration>,
+    /// Time since the most-recent sale. `None` if no sales.
+    days_since_last_sale: Option<Duration>,
     max_price: i32,
     avg_price: i32,
+    /// Robust mid-point of the clamped sales — used as the realistic seller estimate.
+    median_price: i32,
+    /// Floor of the clamped sales — worst-case undercut.
     min_price: i32,
 }
 
@@ -94,29 +99,57 @@ fn listings_to_map(listings: CheapestListings) -> HashMap<ProfitKey, (i32, i32)>
         .collect()
 }
 
-fn compute_summary(
-    sale: SaleData,
-    hq_data: Option<&SaleData>,
-    filter_outliers: bool,
-) -> SaleSummary {
+/// Sniper-clamp threshold: drop any sale priced below this fraction of the raw median.
+const SNIPER_FRACTION: f64 = 0.1;
+
+fn median_i32(sorted: &[i32]) -> i32 {
+    if sorted.is_empty() {
+        return 0;
+    }
+    let n = sorted.len();
+    if n % 2 == 1 {
+        sorted[n / 2]
+    } else {
+        ((sorted[n / 2 - 1] as i64 + sorted[n / 2] as i64) / 2) as i32
+    }
+}
+
+fn compute_summary(sale: SaleData, filter_outliers: bool) -> SaleSummary {
     let now = Utc::now().naive_utc();
     let SaleData { item_id, hq, sales } = sale;
-    let min_price = hq_data
-        .map(|sales| sales.sales.iter())
-        .into_iter()
-        .flatten()
-        .chain(sales.iter())
-        .map(|price| price.price_per_unit)
-        .min()
-        .unwrap_or_default();
-    let max_price = sales
-        .iter()
-        .map(|price| price.price_per_unit)
-        .max()
-        .unwrap_or_default();
 
+    if sales.is_empty() {
+        return SaleSummary {
+            item_id,
+            hq,
+            num_sold: 0,
+            avg_sale_duration: None,
+            days_since_last_sale: None,
+            max_price: 0,
+            avg_price: 0,
+            median_price: 0,
+            min_price: 0,
+        };
+    }
+
+    // 1. Raw-median pass for the sniper threshold.
+    let mut raw: Vec<i32> = sales.iter().map(|s| s.price_per_unit).collect();
+    raw.sort_unstable();
+    let raw_median = median_i32(&raw);
+    let floor = (raw_median as f64 * SNIPER_FRACTION) as i32;
+
+    // 2. Build the clamped vector. If the clamp would remove everything, keep the raw set.
+    let mut clamped: Vec<i32> = raw.iter().copied().filter(|p| *p >= floor).collect();
+    if clamped.is_empty() {
+        clamped = raw.clone();
+    }
+    let median_price = median_i32(&clamped);
+    let min_price = *clamped.first().unwrap_or(&0);
+    let max_price = *clamped.last().unwrap_or(&0);
+
+    // 3. Average price respects the existing IQR filter-outliers toggle.
     let avg_price = if filter_outliers {
-        let mut prices: Vec<i32> = sales.iter().map(|s| s.price_per_unit).collect();
+        let mut prices = clamped.clone();
         let filtered = filter_outliers_iqr_in_place(&mut prices);
         if filtered.is_empty() {
             0
@@ -124,24 +157,28 @@ fn compute_summary(
             (filtered.iter().map(|&p| p as i64).sum::<i64>() / filtered.len() as i64) as i32
         }
     } else {
-        (sales
-            .iter()
-            .map(|price| price.price_per_unit as i64)
-            .sum::<i64>()
-            / sales.len() as i64) as i32
+        (clamped.iter().map(|&p| p as i64).sum::<i64>() / clamped.len() as i64) as i32
     };
 
-    let t = sales
-        .last()
-        .map(|last| (last.sale_date - now).num_milliseconds().abs() / sales.len() as i64);
-    let avg_sale_duration = t.map(Duration::milliseconds);
+    // 4. Velocity. Newest first in the API's response.
+    let newest = sales.first().map(|s| s.sale_date);
+    let oldest = sales.last().map(|s| s.sale_date);
+    let avg_sale_duration = oldest.map(|last| {
+        let ms = (last - now).num_milliseconds().abs() / sales.len() as i64;
+        Duration::milliseconds(ms)
+    });
+    let days_since_last_sale =
+        newest.map(|n| Duration::milliseconds((now - n).num_milliseconds().max(0)));
+
     SaleSummary {
         item_id,
         hq,
         num_sold: sales.len(),
         avg_sale_duration,
+        days_since_last_sale,
         max_price,
         avg_price,
+        median_price,
         min_price,
     }
 }
@@ -171,6 +208,14 @@ impl std::fmt::Display for SortMode {
     }
 }
 
+/// Listings whose price is at least this multiple of the row's median sale are treated as troll
+/// listings and ignored when picking the world floor.
+const TROLL_MULTIPLE: i64 = 50;
+
+fn is_troll_listing(price: i32, median: i32) -> bool {
+    median > 0 && (price as i64) > (median as i64).saturating_mul(TROLL_MULTIPLE)
+}
+
 impl ProfitTable {
     fn new(
         sales: RecentSales,
@@ -181,11 +226,9 @@ impl ProfitTable {
     ) -> Self {
         let mut region_cheapest = listings_to_map(global_cheapest_listings);
         let world_cheapest = listings_to_map(world_cheapest_listings);
-        let cross_region = cross_region.into_iter().map(listings_to_map);
 
-        // merge cross regions into region cheapest
-        for cross_region in cross_region {
-            for (key, (new_price, world_id)) in cross_region {
+        for cross in cross_region.into_iter().map(listings_to_map) {
+            for (key, (new_price, world_id)) in cross {
                 match region_cheapest.entry(key) {
                     Entry::Occupied(mut entry) => {
                         let (current_price, _) = entry.get();
@@ -200,13 +243,6 @@ impl ProfitTable {
             }
         }
 
-        let hq_sales: HashMap<i32, SaleData> = sales
-            .sales
-            .iter()
-            .filter(|sales| sales.hq)
-            .map(|sale| (sale.item_id, sale.clone()))
-            .collect();
-
         let table = sales
             .sales
             .into_iter()
@@ -214,26 +250,35 @@ impl ProfitTable {
                 let item_id = sale.item_id;
                 let hq = sale.hq;
                 let key = ProfitKey { item_id, hq };
-                let (cheapest_price, cheapest_world_id) = *region_cheapest.get(&key)?;
-                let summary = compute_summary(
-                    sale,
-                    (!hq).then(|| hq_sales.get(&item_id)).flatten(),
-                    filter_outliers,
-                );
+                let (raw_region_price, region_world_id) = *region_cheapest.get(&key)?;
+                let summary = compute_summary(sale, filter_outliers);
 
-                // Use the world's price as estimated sale price
-                let estimated_sale_price =
-                    if let Some((world_cheapest, _)) = world_cheapest.get(&key) {
-                        summary.min_price.min(*world_cheapest)
+                // Troll-listing guard: if the region floor is implausibly high vs the median,
+                // drop the row entirely — the displayed "deal" would be fictional.
+                if is_troll_listing(raw_region_price, summary.median_price) {
+                    return None;
+                }
+
+                // Same guard on the local world floor — if it's a troll, ignore it and fall
+                // through to the median as the estimate.
+                let world_floor = world_cheapest.get(&key).and_then(|(price, _)| {
+                    if is_troll_listing(*price, summary.median_price) {
+                        None
                     } else {
-                        summary.min_price
-                    };
+                        Some(*price)
+                    }
+                });
+
+                let estimated_sale_price = match world_floor {
+                    Some(floor) => summary.median_price.min(floor),
+                    None => summary.median_price,
+                };
 
                 Some(ProfitData {
                     estimated_sale_price,
                     sale_summary: summary,
-                    cheapest_world_id,
-                    cheapest_price,
+                    cheapest_world_id: region_world_id,
+                    cheapest_price: raw_region_price,
                 })
             })
             .map(Arc::new)
@@ -1393,5 +1438,161 @@ pub fn Analyzer() -> impl IntoView {
                 </div>
             </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ultros_api_types::recent_sales::{SaleData, Sales};
+
+    fn sale(price: i32, days_ago: i64) -> Sales {
+        let date = Utc::now()
+            .naive_utc()
+            .checked_sub_signed(Duration::days(days_ago))
+            .unwrap();
+        Sales {
+            price_per_unit: price,
+            sale_date: date,
+        }
+    }
+
+    fn sales_row(item_id: i32, hq: bool, prices_and_days: &[(i32, i64)]) -> SaleData {
+        SaleData {
+            item_id,
+            hq,
+            sales: prices_and_days.iter().map(|(p, d)| sale(*p, *d)).collect(),
+        }
+    }
+
+    #[test]
+    fn median_price_is_middle_of_clamped_sales() {
+        let row = sales_row(
+            1,
+            false,
+            &[(100, 0), (110, 1), (120, 2), (130, 3), (140, 4), (150, 5)],
+        );
+        let summary = compute_summary(row, false);
+        // Six even-length sample: median = (third + fourth) / 2 = (120 + 130) / 2 = 125
+        assert_eq!(summary.median_price, 125);
+    }
+
+    #[test]
+    fn sniper_sale_below_10pct_of_median_is_dropped() {
+        // Raw median of [1, 100, 110, 120, 130, 140] sorted = (110+120)/2 = 115.
+        // The "1" is well below 10% of 115 (=11), so it's dropped.
+        let row = sales_row(
+            2,
+            false,
+            &[(1, 0), (100, 1), (110, 2), (120, 3), (130, 4), (140, 5)],
+        );
+        let summary = compute_summary(row, false);
+        // Median of remaining [100, 110, 120, 130, 140] = 120.
+        assert_eq!(summary.median_price, 120);
+        // min_price should also reflect the clamp, not the sniper.
+        assert_eq!(summary.min_price, 100);
+    }
+
+    #[test]
+    fn hq_prices_do_not_contaminate_nq_summary() {
+        // An NQ row with normal prices. compute_summary no longer takes HQ context.
+        let row = sales_row(
+            3,
+            false,
+            &[(500, 0), (510, 1), (520, 2), (530, 3), (540, 4), (550, 5)],
+        );
+        let summary = compute_summary(row, false);
+        assert_eq!(summary.min_price, 500);
+        assert_eq!(summary.median_price, 525);
+    }
+
+    #[test]
+    fn troll_world_floor_does_not_inflate_estimate() {
+        use ultros_api_types::cheapest_listings::{CheapestListingItem, CheapestListings};
+        use ultros_api_types::recent_sales::RecentSales;
+
+        let sales = RecentSales {
+            sales: vec![sales_row(
+                100,
+                false,
+                &[
+                    (1000, 0),
+                    (1000, 1),
+                    (1100, 2),
+                    (1000, 3),
+                    (1050, 4),
+                    (1000, 5),
+                ],
+            )],
+        };
+        // Region cheapest = a troll 999,999,999 listing on a foreign world.
+        let region = CheapestListings {
+            cheapest_listings: vec![CheapestListingItem {
+                item_id: 100,
+                hq: false,
+                cheapest_price: 999_999_999,
+                world_id: 42,
+            }],
+        };
+        // Our own world has a sane cheapest at 1100.
+        let world = CheapestListings {
+            cheapest_listings: vec![CheapestListingItem {
+                item_id: 100,
+                hq: false,
+                cheapest_price: 1100,
+                world_id: 1,
+            }],
+        };
+
+        let table = ProfitTable::new(sales, region, world, vec![], false);
+        // The troll 999M region listing should cause the row to be dropped entirely
+        // (the displayed "deal" would be fictional). table.0 should be empty.
+        assert_eq!(table.0.len(), 0);
+    }
+
+    #[test]
+    fn estimated_sale_price_uses_median_not_min() {
+        use ultros_api_types::cheapest_listings::{CheapestListingItem, CheapestListings};
+        use ultros_api_types::recent_sales::RecentSales;
+
+        let sales = RecentSales {
+            sales: vec![sales_row(
+                200,
+                false,
+                &[
+                    (800, 0),
+                    (1000, 1),
+                    (1000, 2),
+                    (1000, 3),
+                    (1000, 4),
+                    (1200, 5),
+                ],
+            )],
+        };
+        // Region floor is below median (a sane off-world deal).
+        let region = CheapestListings {
+            cheapest_listings: vec![CheapestListingItem {
+                item_id: 200,
+                hq: false,
+                cheapest_price: 700,
+                world_id: 42,
+            }],
+        };
+        // Local world floor is well above the median — the estimate should pin to median (=1000),
+        // not min (=800) and not the world floor (=5000).
+        let world = CheapestListings {
+            cheapest_listings: vec![CheapestListingItem {
+                item_id: 200,
+                hq: false,
+                cheapest_price: 5000,
+                world_id: 1,
+            }],
+        };
+
+        let table = ProfitTable::new(sales, region, world, vec![], false);
+        assert_eq!(table.0.len(), 1);
+        let row = &table.0[0];
+        assert_eq!(row.sale_summary.median_price, 1000);
+        assert_eq!(row.estimated_sale_price, 1000);
     }
 }
