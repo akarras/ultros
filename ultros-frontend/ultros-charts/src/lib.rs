@@ -9,6 +9,7 @@ use std::rc::Rc;
 use anyhow::anyhow;
 use chrono::DateTime;
 use chrono::Local;
+use chrono::TimeDelta;
 use itertools::Itertools;
 use plotters::{prelude::*, style::full_palette::PURPLE_A400};
 #[cfg(feature = "image")]
@@ -75,7 +76,6 @@ fn filter_outliers<'a>(sales: &'a [SaleHistory]) -> Cow<'a, [SaleHistory]> {
     }
 }
 
-#[derive(Default)]
 pub struct ChartOptions {
     pub remove_outliers: bool,
     pub icon_item_id: i32,
@@ -100,6 +100,50 @@ pub struct ChartOptions {
     pub caption: Option<String>,
     /// Optional custom palette (r,g,b) per series; falls back to dynamic HSL
     pub palette_rgb: Option<Vec<(u8, u8, u8)>>,
+    /// Whether to draw the chart caption/title.
+    pub show_caption: bool,
+    /// Whether to draw the world/datacenter legend.
+    pub show_legend: bool,
+    /// Optional mesh label font size.
+    pub label_font_size: Option<f64>,
+    /// Optional caption font size.
+    pub caption_font_size: Option<f64>,
+    /// Optional number of x-axis labels.
+    pub x_labels: Option<usize>,
+    /// Optional x-axis label area size in pixels.
+    pub x_label_area_size: Option<u32>,
+    /// Optional y-axis label area size in pixels.
+    pub y_label_area_size: Option<u32>,
+    /// Optional chart margin in pixels.
+    pub margin: Option<u32>,
+}
+
+impl Default for ChartOptions {
+    fn default() -> Self {
+        Self {
+            remove_outliers: false,
+            icon_item_id: 0,
+            draw_icon: false,
+            text_rgb: None,
+            grid_rgb: None,
+            background_rgb: None,
+            top_pad_ratio: 0.0,
+            show_iqr_band: false,
+            show_trendline: false,
+            x_label: None,
+            y_label: None,
+            caption: None,
+            palette_rgb: None,
+            show_caption: true,
+            show_legend: true,
+            label_font_size: None,
+            caption_font_size: None,
+            x_labels: None,
+            x_label_area_size: None,
+            y_label_area_size: None,
+            margin: None,
+        }
+    }
 }
 
 // #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -166,6 +210,14 @@ fn draw_impl<'a, T>(
         y_label,
         caption,
         palette_rgb,
+        show_caption,
+        show_legend,
+        label_font_size,
+        caption_font_size,
+        x_labels,
+        x_label_area_size,
+        y_label_area_size,
+        margin,
     }: ChartOptions,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'a>>
 where
@@ -221,10 +273,13 @@ where
         .minmax()
         .into_option()
         .ok_or(anyhow!("bad dates"))?;
+    let mut first_sale = *first_sale;
+    let mut last_sale = *last_sale;
     if first_sale == last_sale {
-        Err(anyhow!("only one sale"))?;
+        first_sale -= TimeDelta::minutes(30);
+        last_sale += TimeDelta::minutes(30);
     }
-    let time_range = last_sale.signed_duration_since(*first_sale);
+    let time_range = last_sale.signed_duration_since(first_sale);
     let label = if time_range.num_days() > 2 {
         DayLabelMode::Day
     } else if time_range.num_hours() > 5 {
@@ -232,23 +287,31 @@ where
     } else {
         DayLabelMode::Minute
     };
-    let title_size = if draw_icon { 40.0 } else { 25.0 };
+    let title_size = if !show_caption {
+        0.0
+    } else {
+        caption_font_size.unwrap_or(if draw_icon { 40.0 } else { 25.0 })
+    };
     let pad_top = ((max_sale as f32) * (1.0 + top_pad_ratio.max(0.0))).ceil() as i32;
     // Labels and caption (overrides if provided)
-    let caption_text = caption.unwrap_or_else(|| format!("{} - Sale History", item_name));
+    let caption_text = if show_caption {
+        caption.unwrap_or_else(|| format!("{} - Sale History", item_name))
+    } else {
+        String::new()
+    };
     let x_label_text = x_label.unwrap_or_else(|| "Time".to_string());
     let y_label_text = y_label.unwrap_or_else(|| "Price per unit".to_string());
     let mut chart = ChartBuilder::on(&root)
-        .x_label_area_size(60)
-        .y_label_area_size(100)
-        .margin(10)
+        .x_label_area_size(x_label_area_size.unwrap_or(60))
+        .y_label_area_size(y_label_area_size.unwrap_or(100))
+        .margin(margin.unwrap_or(10))
         .caption(
             caption_text,
             ("Jaldi, sans-serif", title_size)
                 .into_font()
                 .color(&label_color),
         )
-        .build_cartesian_2d(*first_sale..*last_sale, 0..pad_top)?;
+        .build_cartesian_2d(first_sale..last_sale, 0..pad_top)?;
 
     chart
         .configure_mesh()
@@ -262,8 +325,12 @@ where
             DayLabelMode::Minute => format!("{}", x.format("%Y-%m-%d %H:%M")),
         })
         .y_label_formatter(&|y| short_number(*y))
-        .x_labels(5)
-        .label_style(("Jaldi, sans-serif", 20.0).into_font().color(&label_color))
+        .x_labels(x_labels.unwrap_or(5))
+        .label_style(
+            ("Jaldi, sans-serif", label_font_size.unwrap_or(20.0))
+                .into_font()
+                .color(&label_color),
+        )
         .draw()?;
 
     // Build a dynamic palette matching the number of series
@@ -293,7 +360,7 @@ where
         let band_color = grid_base.mix(0.12);
         // draw translucent band between iqr_min..iqr_max across the full time range
         let _ = chart.draw_series(AreaSeries::new(
-            vec![(*first_sale, iqr_max), (*last_sale, iqr_max)],
+            vec![(first_sale, iqr_max), (last_sale, iqr_max)],
             iqr_min,
             band_color,
         ));
@@ -328,7 +395,7 @@ where
                 let y1 = (b + m * x1).round() as i32;
                 let y2 = (b + m * x2).round() as i32;
                 let _ = chart.draw_series(LineSeries::new(
-                    vec![(*first_sale, y1), (*last_sale, y2)],
+                    vec![(first_sale, y1), (last_sale, y2)],
                     &grid_base.mix(0.40),
                 ));
             }
@@ -349,12 +416,14 @@ where
             .legend(move |l| Circle::new(l, 5.0, color));
     }
 
-    chart
-        .configure_series_labels()
-        .border_style(PURPLE_A400)
-        .position(SeriesLabelPosition::UpperRight)
-        .label_font(("Jaldi, sans-serif", 18.0).into_font().color(&label_color))
-        .draw()?;
+    if show_legend {
+        chart
+            .configure_series_labels()
+            .border_style(PURPLE_A400)
+            .position(SeriesLabelPosition::UpperRight)
+            .label_font(("Jaldi, sans-serif", 18.0).into_font().color(&label_color))
+            .draw()?;
+    }
 
     #[cfg(feature = "image")]
     if draw_icon && let Some(image) = get_item_image(icon_item_id, IconSize::Medium) {

@@ -13,12 +13,15 @@ use ultros_charts::ChartOptions;
 use ultros_charts::draw_sale_history_scatter_plot;
 
 use crate::components::skeleton::BoxSkeleton;
+use crate::global_state::LocalWorldData;
 use crate::global_state::theme::use_theme_settings;
 use crate::global_state::xiv_data::tracked_data;
-use crate::{components::toggle::Toggle, global_state::LocalWorldData};
 
 #[component]
-pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
+pub fn PriceHistoryChart(
+    #[prop(into)] sales: Signal<Vec<SaleHistory>>,
+    #[prop(into)] filter_outliers: Signal<bool>,
+) -> impl IntoView {
     let canvas = NodeRef::<Canvas>::new();
     let local_world_data = use_context::<LocalWorldData>().unwrap();
     cfg_if! {
@@ -35,7 +38,6 @@ pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl 
     }
     let helper = local_world_data.0.unwrap();
     let theme = use_theme_settings();
-    let (filter_outliers, set_filter_outliers) = signal(true);
     // Optimization: separate color extraction from resize logic to avoid `get_computed_style` on every resize
     let chart_colors = Memo::new(move |_| {
         let _ = theme.mode.get();
@@ -89,14 +91,44 @@ pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl 
         (None, None)
     });
 
-    let hidden = Memo::new(move |_| {
-        width.track();
-        height.track();
+    let (show_skeleton, set_show_skeleton) = signal(true);
+    Effect::new(move |_| {
+        let measured_width = width.get();
+        let measured_height = height.get();
         // Subscribe to xiv-gen-db swaps so chart title re-renders on locale change.
         let _ = tracked_data();
+        #[cfg_attr(not(feature = "hydrate"), allow(unused_mut))]
+        let mut chart_width = if measured_width > 0.0 {
+            measured_width
+        } else {
+            800.0
+        };
+        #[cfg_attr(not(feature = "hydrate"), allow(unused_mut))]
+        let mut chart_height = if measured_height > 0.0 {
+            measured_height.min(390.0)
+        } else {
+            390.0
+        };
         let (text_rgb, grid_rgb) = chart_colors.get();
+        let remove_outliers = filter_outliers.get();
+        #[cfg(not(feature = "hydrate"))]
+        let _ = (chart_width, chart_height);
 
         if let Some(canvas) = canvas.get() {
+            #[cfg(feature = "hydrate")]
+            {
+                let client_width = canvas.client_width();
+                let client_height = canvas.client_height();
+                if client_width > 0 {
+                    chart_width = client_width as f64;
+                    canvas.set_width(client_width as u32);
+                }
+                if client_height > 0 {
+                    chart_height = client_height as f64;
+                    canvas.set_height(client_height as u32);
+                }
+            }
+
             #[cfg(feature = "hydrate")]
             {
                 use wasm_bindgen::JsCast;
@@ -104,54 +136,83 @@ pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl 
                     .get_context("2d")
                     .map(|c| c.and_then(|c| c.dyn_into::<web_sys::CanvasRenderingContext2d>().ok()))
                 {
-                    ctx.clear_rect(0.0, 0.0, width.get_untracked(), height.get_untracked());
+                    ctx.clear_rect(0.0, 0.0, chart_width, chart_height);
                 }
             }
-            let backend = CanvasBackend::with_canvas_object(canvas.clone()).unwrap();
-            // if there's an error drawing, we should hide the canvas
+            let compact_options = |remove_outliers| ChartOptions {
+                remove_outliers,
+                text_rgb,
+                grid_rgb,
+                top_pad_ratio: 0.08,
+                show_iqr_band: true,
+                show_trendline: true,
+                show_caption: false,
+                show_legend: false,
+                x_label: Some(String::new()),
+                y_label: Some(String::new()),
+                label_font_size: Some(if chart_width < 500.0 { 12.0 } else { 14.0 }),
+                x_labels: Some(if chart_width < 500.0 { 2 } else { 4 }),
+                x_label_area_size: Some(if chart_width < 500.0 { 30 } else { 36 }),
+                y_label_area_size: Some(if chart_width < 500.0 { 36 } else { 50 }),
+                margin: Some(4),
+                ..Default::default()
+            };
 
-            sales.with(|sales| {
+            let is_hidden = sales.with(|sales| {
+                let Some(backend) = CanvasBackend::with_canvas_object(canvas.clone()) else {
+                    return true;
+                };
+                let result = draw_sale_history_scatter_plot(
+                    Rc::new(RefCell::new(backend)),
+                    helper.clone().as_ref(),
+                    sales,
+                    compact_options(remove_outliers),
+                );
+
+                if result.is_ok() || !remove_outliers {
+                    return result.is_err();
+                }
+
+                #[cfg(feature = "hydrate")]
+                {
+                    use wasm_bindgen::JsCast;
+                    if let Ok(Some(ctx)) = canvas.get_context("2d").map(|c| {
+                        c.and_then(|c| c.dyn_into::<web_sys::CanvasRenderingContext2d>().ok())
+                    }) {
+                        ctx.clear_rect(0.0, 0.0, chart_width, chart_height);
+                    }
+                }
+
+                let Some(backend) = CanvasBackend::with_canvas_object(canvas.clone()) else {
+                    return true;
+                };
                 draw_sale_history_scatter_plot(
                     Rc::new(RefCell::new(backend)),
                     helper.clone().as_ref(),
                     sales,
-                    ChartOptions {
-                        remove_outliers: filter_outliers(),
-                        text_rgb,
-                        grid_rgb,
-                        top_pad_ratio: 0.15,
-                        show_iqr_band: true,
-                        show_trendline: true,
-                        ..Default::default()
-                    },
+                    compact_options(false),
                 )
                 .is_err()
-            })
+            });
+            set_show_skeleton.set(is_hidden);
         } else {
-            true
+            set_show_skeleton.set(true);
         }
     });
     view! {
-        <div class="mx-auto min-h-[440px]" class:hidden=move || !hidden()>
-            <BoxSkeleton />
-        </div>
-        <div node_ref=div class="flex flex-col min-h-[480px] mx-auto" class:hidden=hidden>
+        <div node_ref=div class="relative flex flex-col h-[320px] sm:h-[360px] xl:h-[390px] w-full min-w-0">
+            <div class="absolute inset-0" class:hidden=move || !show_skeleton()>
+                <BoxSkeleton />
+            </div>
             <canvas
-                width=width
-                height=move || height.get().min(480.0)
-                style=move || {
-                    format!("width: {}px; height: {}px", width.get(), height.get().min(480.0))
-                }
+                class=move || if show_skeleton() { "opacity-0" } else { "opacity-100" }
+                width=move || width.get().max(800.0).round() as u32
+                height=390
+                style="width: 100%; height: 100%;"
                 node_ref=canvas
                 role="img"
                 aria-label="Scatter plot showing price history over time"
             ></canvas>
-            <Toggle
-                checked=filter_outliers
-                set_checked=set_filter_outliers
-                checked_label="Filtering outliers"
-                unchecked_label="No filter"
-            />
         </div>
     }
     .into_any()
