@@ -222,12 +222,13 @@ pub fn NavRow() -> impl IntoView {
                                     <div class="w-full">
                                         <SearchBox />
                                     </div>
-                                    <div class="mt-2 flex items-center justify-between w-full">
+                                    <div class="mt-2 flex items-center justify-between w-full gap-2">
                                         <A href="/" exact=true attr:class="nav-link">
                                             <Icon icon=i::AiHomeFilled />
                                             <span class="hidden sm:inline">{t!(i18n, home)}</span>
                                         </A>
                                         <AppsMenu />
+                                        <LanguageNavMenu />
                                         <UserMenu />
                                     </div>
                                 </div>
@@ -236,7 +237,7 @@ pub fn NavRow() -> impl IntoView {
                                 <div class="hidden lg:flex items-center gap-3">
                     <div class="hidden lg:block">
                         <div class="flex items-center gap-2">
-                            <LanguagePicker />
+                            <LanguageNavMenu />
                             <QuickThemeToggle />
                         </div>
                     </div>
