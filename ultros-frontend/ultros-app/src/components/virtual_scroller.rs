@@ -187,7 +187,7 @@ where
                             // easeOutCubic
                             let ease = 1.0 - (1.0 - t) * (1.0 - t) * (1.0 - t);
                             let val = from + (to - from) * ease;
-                            div_clone.set_scroll_top(val.round() as i32);
+                            div_clone.set_scroll_top(val.round());
                             if t < 1.0 {
                                 if let Some(w) = window() {
                                     let _ = w.request_animation_frame(
@@ -210,7 +210,7 @@ where
                         );
                     } else {
                         // fallback without rAF
-                        div.set_scroll_top(desired.round() as i32);
+                        div.set_scroll_top(desired.round());
                     }
                 }
             }
@@ -237,7 +237,7 @@ where
         <div
             on:scroll=move |scroll| {
                 let div = event_target::<HtmlDivElement>(&scroll);
-                last_scroll.set(div.scroll_top());
+                last_scroll.set(div.scroll_top() as i32);
                 if !raf_pending.get_untracked() {
                     raf_pending.set(true);
                     let last_scroll = last_scroll;
