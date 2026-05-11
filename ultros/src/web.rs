@@ -36,8 +36,12 @@ use tower_http::compression::{CompressionLayer, Predicate};
 use tower_http::trace::TraceLayer;
 use tracing::{debug, warn};
 use ultros_api_types::icon_size::IconSize;
-use ultros_api_types::list::{CreateList, List, ListItem, ListPermission};
+use ultros_api_types::list::{
+    CreateInvite, CreateList, List, ListInvite, ListItem, ListSharedGroup, ListSharedUser,
+    ShareListGroup, ShareListUser,
+};
 use ultros_api_types::retainer::RetainerListings;
+use ultros_api_types::user::group::{CreateGroup, UserGroup, UserGroupMember};
 use ultros_api_types::user::{OwnedRetainer, UserData, UserRetainerListings, UserRetainers};
 use ultros_api_types::websocket::{ListEventData, ListingEventData};
 use ultros_api_types::world::WorldData;
@@ -890,57 +894,26 @@ async fn unclaim_character(
     Ok(Json(()))
 }
 
-#[derive(Deserialize)]
-struct CreateInvite {
-    permission: ListPermission,
-    max_uses: Option<i32>,
-}
+// --- Group management ---
 
-async fn create_invite(
+pub(crate) async fn get_groups(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
-    Path(id): Path<i32>,
-    Json(data): Json<CreateInvite>,
-) -> Result<Json<String>, ApiError> {
-    let invite = db
-        .create_invite(id, user.id as i64, data.permission, data.max_uses)
-        .await?;
-    Ok(Json(invite.id))
+) -> Result<Json<Vec<UserGroup>>, ApiError> {
+    let groups = db.get_groups_for_user(user.id as i64).await?;
+    Ok(Json(groups.into_iter().map(UserGroup::from).collect()))
 }
 
-async fn use_invite(
+pub(crate) async fn create_group(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
-    Path(id): Path<String>,
-) -> Result<Json<i32>, ApiError> {
-    let shared = db.use_invite(id, user.id as i64).await?;
-    Ok(Json(shared.list_id))
+    Json(group): Json<CreateGroup>,
+) -> Result<Json<UserGroup>, ApiError> {
+    let group = db.create_group(group.name, user.id as i64).await?;
+    Ok(Json(UserGroup::from(group)))
 }
 
-async fn delete_invite(
-    State(db): State<UltrosDb>,
-    user: AuthDiscordUser,
-    Path(id): Path<String>,
-) -> Result<Json<()>, ApiError> {
-    db.delete_invite(id, user.id as i64).await?;
-    Ok(Json(()))
-}
-
-#[derive(Deserialize)]
-struct CreateGroup {
-    name: String,
-}
-
-async fn create_group(
-    State(db): State<UltrosDb>,
-    user: AuthDiscordUser,
-    Json(data): Json<CreateGroup>,
-) -> Result<Json<i32>, ApiError> {
-    let group = db.create_group(data.name, user.id as i64).await?;
-    Ok(Json(group.id))
-}
-
-async fn delete_group(
+pub(crate) async fn delete_group(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
     Path(id): Path<i32>,
@@ -949,82 +922,166 @@ async fn delete_group(
     Ok(Json(()))
 }
 
-#[derive(Deserialize)]
-struct AddMember {
-    user_id: i64,
-}
-
-async fn add_group_member(
+pub(crate) async fn get_group_members(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
     Path(id): Path<i32>,
-    Json(data): Json<AddMember>,
+) -> Result<Json<Vec<UserGroupMember>>, ApiError> {
+    let members = db.get_group_members(id, user.id as i64).await?;
+    Ok(Json(
+        members.into_iter().map(UserGroupMember::from).collect(),
+    ))
+}
+
+pub(crate) async fn add_group_member(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path((group_id, member_id)): Path<(i32, i64)>,
 ) -> Result<Json<()>, ApiError> {
-    db.add_group_member(id, user.id as i64, data.user_id)
+    db.add_group_member(group_id, user.id as i64, member_id)
         .await?;
     Ok(Json(()))
 }
 
-async fn remove_group_member(
+pub(crate) async fn remove_group_member(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
-    Path((id, user_id)): Path<(i32, i64)>,
+    Path((group_id, member_id)): Path<(i32, i64)>,
 ) -> Result<Json<()>, ApiError> {
-    db.remove_group_member(id, user.id as i64, user_id).await?;
-    Ok(Json(()))
-}
-
-#[derive(Deserialize)]
-struct ShareUser {
-    user_id: i64,
-    permission: ListPermission,
-}
-
-#[derive(Deserialize)]
-struct ShareGroup {
-    group_id: i32,
-    permission: ListPermission,
-}
-
-async fn share_list_with_user(
-    State(db): State<UltrosDb>,
-    user: AuthDiscordUser,
-    Path(id): Path<i32>,
-    Json(data): Json<ShareUser>,
-) -> Result<Json<()>, ApiError> {
-    db.share_list_with_user(id, user.id as i64, data.user_id, data.permission)
+    db.remove_group_member(group_id, user.id as i64, member_id)
         .await?;
     Ok(Json(()))
 }
 
-async fn share_list_with_group(
+// --- List sharing ---
+
+pub(crate) async fn get_list_shares(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
     Path(id): Path<i32>,
-    Json(data): Json<ShareGroup>,
+) -> Result<Json<(Vec<ListSharedUser>, Vec<ListSharedGroup>)>, ApiError> {
+    let (users, groups) = futures::future::try_join(
+        db.get_list_shared_users(id, user.id as i64),
+        db.get_list_shared_groups(id, user.id as i64),
+    )
+    .await?;
+    Ok(Json((
+        users.into_iter().map(ListSharedUser::from).collect(),
+        groups.into_iter().map(ListSharedGroup::from).collect(),
+    )))
+}
+
+// Sharing changes who can see the list — broadcast a list-update event so
+// affected clients (the recipient and the owner) refetch their list set.
+async fn broadcast_list_update(
+    db: &UltrosDb,
+    senders: &EventSenders,
+    list_id: i32,
+    user: i64,
+) -> Result<(), ApiError> {
+    let list = db.get_list(list_id, user).await?;
+    let _ = senders
+        .lists
+        .send(EventType::updated(ListEventData::List(List::try_from(
+            list,
+        )?)));
+    Ok(())
+}
+
+pub(crate) async fn share_list_with_user(
+    State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+    Json(share): Json<ShareListUser>,
 ) -> Result<Json<()>, ApiError> {
-    db.share_list_with_group(id, user.id as i64, data.group_id, data.permission)
+    db.share_list_with_user(id, user.id as i64, share.user_id, share.permission)
         .await?;
+    broadcast_list_update(&db, &senders, id, user.id as i64).await?;
     Ok(Json(()))
 }
 
-async fn unshare_list_from_user(
+pub(crate) async fn share_list_with_group(
     State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+    Json(share): Json<ShareListGroup>,
+) -> Result<Json<()>, ApiError> {
+    db.share_list_with_group(id, user.id as i64, share.group_id, share.permission)
+        .await?;
+    broadcast_list_update(&db, &senders, id, user.id as i64).await?;
+    Ok(Json(()))
+}
+
+pub(crate) async fn unshare_list_from_user(
+    State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
     user: AuthDiscordUser,
     Path((id, user_id)): Path<(i32, i64)>,
 ) -> Result<Json<()>, ApiError> {
     db.unshare_list_from_user(id, user.id as i64, user_id)
         .await?;
+    // Best-effort: only broadcast if the caller still has read permission
+    // (e.g. the owner unsharing someone else). If a member removed themselves
+    // they can no longer fetch the list, so skip the broadcast in that case.
+    let _ = broadcast_list_update(&db, &senders, id, user.id as i64).await;
     Ok(Json(()))
 }
 
-async fn unshare_list_from_group(
+pub(crate) async fn unshare_list_from_group(
     State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
     user: AuthDiscordUser,
     Path((id, group_id)): Path<(i32, i32)>,
 ) -> Result<Json<()>, ApiError> {
     db.unshare_list_from_group(id, user.id as i64, group_id)
         .await?;
+    broadcast_list_update(&db, &senders, id, user.id as i64).await?;
+    Ok(Json(()))
+}
+
+// --- Invites ---
+
+pub(crate) async fn get_list_invites(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+) -> Result<Json<Vec<ListInvite>>, ApiError> {
+    let invites = db.get_list_invites(id, user.id as i64).await?;
+    Ok(Json(invites.into_iter().map(ListInvite::from).collect()))
+}
+
+pub(crate) async fn create_invite(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+    Json(invite): Json<CreateInvite>,
+) -> Result<Json<ListInvite>, ApiError> {
+    let invite = db
+        .create_invite(id, user.id as i64, invite.permission, invite.max_uses)
+        .await?;
+    Ok(Json(ListInvite::from(invite)))
+}
+
+pub(crate) async fn use_invite(
+    State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
+    user: AuthDiscordUser,
+    Path(id): Path<String>,
+) -> Result<Json<i32>, ApiError> {
+    let shared = db.use_invite(id, user.id as i64).await?;
+    // The user just gained access — surface the list to their UI.
+    broadcast_list_update(&db, &senders, shared.list_id, user.id as i64).await?;
+    Ok(Json(shared.list_id))
+}
+
+pub(crate) async fn delete_invite(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<String>,
+) -> Result<Json<()>, ApiError> {
+    db.delete_invite(id, user.id as i64).await?;
     Ok(Json(()))
 }
 
@@ -1146,13 +1203,19 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/list/{id}/delete", delete(delete_list))
         .route("/api/v1/list/item/{id}/delete", delete(delete_list_item))
         .route("/api/v1/list/item/delete", post(delete_multiple_list_items))
+        .route("/api/v1/group", get(get_groups))
         .route("/api/v1/group/create", post(create_group))
         .route("/api/v1/group/{id}", delete(delete_group))
-        .route("/api/v1/group/{id}/member/add", post(add_group_member))
+        .route("/api/v1/group/{id}/members", get(get_group_members))
         .route(
-            "/api/v1/group/{id}/member/{user_id}",
+            "/api/v1/group/{group_id}/member/add/{member_id}",
+            post(add_group_member),
+        )
+        .route(
+            "/api/v1/group/{group_id}/member/remove/{member_id}",
             delete(remove_group_member),
         )
+        .route("/api/v1/list/{id}/shares", get(get_list_shares))
         .route("/api/v1/list/{id}/share/user", post(share_list_with_user))
         .route("/api/v1/list/{id}/share/group", post(share_list_with_group))
         .route(
@@ -1163,6 +1226,7 @@ pub(crate) async fn start_web(state: WebState) {
             "/api/v1/list/{id}/share/group/{group_id}",
             delete(unshare_list_from_group),
         )
+        .route("/api/v1/list/{id}/invites", get(get_list_invites))
         .route("/api/v1/list/{id}/invite/create", post(create_invite))
         .route("/api/v1/invite/{id}/use", post(use_invite))
         .route("/api/v1/invite/{id}", delete(delete_invite))
