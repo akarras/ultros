@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use icondata as i;
 use leptos::{prelude::*, reactive::wrappers::write::SignalSetter, task::spawn_local};
 use ultros_api_types::{
