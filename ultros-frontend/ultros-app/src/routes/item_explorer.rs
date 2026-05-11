@@ -843,7 +843,7 @@ pub fn ItemExplorer() -> impl IntoView {
 mod tests {
     #[test]
     fn test_job_filtering() {
-        let data = tracked_data();
+        let data = xiv_gen_db::data();
         let jobs = &data.class_jobs;
         let visible_jobs: Vec<_> = jobs
             .iter()
