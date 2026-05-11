@@ -415,6 +415,11 @@ pub mod test_auth {
         cookie.set_path("/");
         cookie.make_permanent();
 
-        Ok((cookies.add(cookie), Redirect::to(&params.redirect)))
+        let redirect = if params.redirect.starts_with('/') {
+            params.redirect.as_str()
+        } else {
+            "/"
+        };
+        Ok((cookies.add(cookie), Redirect::to(redirect)))
     }
 }
