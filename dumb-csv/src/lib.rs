@@ -90,4 +90,69 @@ mod tests {
             }
         );
     }
+
+    #[test]
+    fn bool_from_str_recognized_truthy_strings() {
+        assert_eq!(bool_from_str("TRUE"), Some(true));
+        assert_eq!(bool_from_str("True"), Some(true));
+        assert_eq!(bool_from_str("1"), Some(true));
+    }
+
+    #[test]
+    fn bool_from_str_recognized_falsy_strings() {
+        assert_eq!(bool_from_str("FALSE"), Some(false));
+        assert_eq!(bool_from_str("False"), Some(false));
+        assert_eq!(bool_from_str("0"), Some(false));
+    }
+
+    #[test]
+    fn bool_from_str_returns_none_for_unknown_values() {
+        assert_eq!(bool_from_str(""), None);
+        assert_eq!(bool_from_str("true"), None); // lowercase not handled
+        assert_eq!(bool_from_str("false"), None);
+        assert_eq!(bool_from_str("yes"), None);
+        assert_eq!(bool_from_str("2"), None);
+        assert_eq!(bool_from_str(" TRUE "), None); // no trimming
+    }
+
+    #[test]
+    fn parse_bool_trait_defaults_to_false_for_unknown() {
+        assert!("TRUE".parse_bool());
+        assert!(!"FALSE".parse_bool());
+        // unknown input becomes default (false)
+        assert!(!"banana".parse_bool());
+        assert!(!"".parse_bool());
+    }
+
+    #[test]
+    fn deserialize_reads_records_via_dumb_csv_deserialize() {
+        let input = "1,2,3,4,5\n6,7,8,9,10\n";
+        let rdr = csv::ReaderBuilder::new()
+            .has_headers(false)
+            .from_reader(input.as_bytes());
+        let rows: Vec<SomeType> = deserialize(rdr).unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                SomeType {
+                    a: 1,
+                    b: vec![2, 3],
+                    c: vec![4, 5]
+                },
+                SomeType {
+                    a: 6,
+                    b: vec![7, 8],
+                    c: vec![9, 10]
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_or_default_uses_default_for_invalid_input() {
+        let v: i32 = <&str as ParseOrDefault>::parse_or_default("abc");
+        assert_eq!(v, 0);
+        let v: i32 = <&str as ParseOrDefault>::parse_or_default("42");
+        assert_eq!(v, 42);
+    }
 }

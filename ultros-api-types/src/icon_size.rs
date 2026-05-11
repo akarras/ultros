@@ -44,3 +44,51 @@ impl Display for IconSize {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn class_strings_match_size() {
+        assert_eq!(IconSize::Small.get_class(), "icon-small");
+        assert_eq!(IconSize::Medium.get_class(), "icon-medium");
+        assert_eq!(IconSize::Large.get_class(), "icon-large");
+    }
+
+    #[test]
+    fn px_sizes_are_ordered_ascending() {
+        assert!(IconSize::Small.get_px_size() < IconSize::Medium.get_px_size());
+        assert!(IconSize::Medium.get_px_size() < IconSize::Large.get_px_size());
+    }
+
+    #[test]
+    fn size_px_string_matches_get_px_size() {
+        for size in [IconSize::Small, IconSize::Medium, IconSize::Large] {
+            let expected = format!("{}px", size.get_px_size());
+            assert_eq!(size.get_size_px(), expected);
+        }
+    }
+
+    #[test]
+    fn display_renders_variant_name() {
+        assert_eq!(IconSize::Small.to_string(), "Small");
+        assert_eq!(IconSize::Medium.to_string(), "Medium");
+        assert_eq!(IconSize::Large.to_string(), "Large");
+    }
+
+    #[test]
+    fn serde_roundtrip_preserves_value() {
+        for size in [IconSize::Small, IconSize::Medium, IconSize::Large] {
+            let s = serde_json::to_string(&size).unwrap();
+            let back: IconSize = serde_json::from_str(&s).unwrap();
+            assert_eq!(size, back);
+        }
+    }
+
+    #[test]
+    fn ordering_is_small_lt_medium_lt_large() {
+        assert!(IconSize::Small < IconSize::Medium);
+        assert!(IconSize::Medium < IconSize::Large);
+    }
+}

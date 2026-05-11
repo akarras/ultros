@@ -117,3 +117,88 @@ impl From<CountryCode> for Region {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_region(country: CountryCode, expected: &str) {
+        let r: Region = country.into();
+        assert_eq!(r.as_str(), expected, "country {country:?}");
+    }
+
+    #[test]
+    fn north_america_countries_map_to_north_america() {
+        for c in [CountryCode::USA, CountryCode::CAN, CountryCode::MEX] {
+            assert_region(c, "North-America");
+        }
+    }
+
+    #[test]
+    fn japan_maps_to_japan() {
+        assert_region(CountryCode::JPN, "Japan");
+    }
+
+    #[test]
+    fn korea_maps_to_korea() {
+        let r: Region = CountryCode::KOR.into();
+        assert!(matches!(r, Region::Korea));
+    }
+
+    #[test]
+    fn china_maps_to_china() {
+        let r: Region = CountryCode::CHN.into();
+        assert!(matches!(r, Region::China));
+    }
+
+    #[test]
+    fn oceania_countries_map_to_oceania() {
+        for c in [
+            CountryCode::AUS,
+            CountryCode::NZL,
+            CountryCode::FJI,
+            CountryCode::GUM,
+            CountryCode::WSM,
+            CountryCode::PNG,
+            CountryCode::TON,
+            CountryCode::PLW,
+            CountryCode::NCL,
+            CountryCode::TUV,
+        ] {
+            assert_region(c, "Oceania");
+        }
+    }
+
+    #[test]
+    fn unknown_country_defaults_to_europe() {
+        // Pick a random European country and a few not handled above.
+        for c in [
+            CountryCode::DEU,
+            CountryCode::FRA,
+            CountryCode::GBR,
+            CountryCode::IND, // India — not in any explicit branch
+            CountryCode::BRA, // Brazil — falls into Europe via the catch-all (documented quirk)
+        ] {
+            assert_region(c, "Europe");
+        }
+    }
+
+    #[test]
+    fn display_renders_region_name() {
+        assert_eq!(Region::Japan.to_string(), "Japan");
+        assert_eq!(Region::NorthAmerica.to_string(), "North-America");
+        assert_eq!(Region::Europe.to_string(), "Europe");
+        assert_eq!(Region::Oceania.to_string(), "Oceania");
+        // The Chinese and Korean display strings are localized.
+        assert_eq!(Region::China.to_string(), "中国");
+        assert_eq!(Region::Korea.to_string(), "한국");
+    }
+
+    #[test]
+    fn as_ref_matches_as_str() {
+        assert_eq!(
+            AsRef::<str>::as_ref(&Region::NorthAmerica),
+            "North-America"
+        );
+    }
+}

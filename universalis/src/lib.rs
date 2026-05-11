@@ -497,3 +497,212 @@ mod test {
         assert_eq!(entries.items.len(), 200);
     }
 }
+
+#[cfg(test)]
+mod pure_tests {
+    //! Network-independent unit tests.
+
+    use super::*;
+
+    fn empty_listing() -> ListingView {
+        ListingView {
+            last_review_time: DateTime::<Local>::from(
+                DateTime::parse_from_rfc3339("2024-01-01T00:00:00+00:00").unwrap(),
+            ),
+            price_per_unit: Some(100),
+            quantity: Some(1),
+            stain_id: None,
+            world_name: None,
+            world_id: None,
+            creator_name: None,
+            creator_id: None,
+            hq: false,
+            is_crafted: false,
+            listing_id: None,
+            materia: vec![],
+            on_mannequin: false,
+            retainer_city: 1,
+            retainer_id: None,
+            retainer_name: "Bob".into(),
+            seller_id: None,
+            total: 100,
+            tax: 0,
+        }
+    }
+
+    #[test]
+    fn ids_to_string_joins_with_commas() {
+        assert_eq!(UniversalisClient::ids_to_string(&[1, 2, 3]), "1,2,3");
+        assert_eq!(UniversalisClient::ids_to_string(&[42]), "42");
+        assert_eq!(UniversalisClient::ids_to_string(&[]), "");
+    }
+
+    #[test]
+    fn single_view_returns_listings_for_matching_id() {
+        let view = MarketView::SingleView(CurrentlyShownSingleView {
+            item_id: 7,
+            listings: vec![empty_listing()],
+            recent_history: vec![],
+        });
+        let listings = view.get_listings_for_item_id(7).unwrap();
+        assert_eq!(listings.len(), 1);
+    }
+
+    #[test]
+    fn single_view_returns_bad_id_for_non_matching_id() {
+        let view = MarketView::SingleView(CurrentlyShownSingleView {
+            item_id: 7,
+            listings: vec![empty_listing()],
+            recent_history: vec![],
+        });
+        let err = view.get_listings_for_item_id(9).unwrap_err();
+        assert!(matches!(err, Error::BadId(7)));
+    }
+
+    #[test]
+    fn multi_view_returns_listings_for_present_id() {
+        let mut items = HashMap::new();
+        items.insert(
+            42,
+            ListingMultiViewData {
+                item_id: 42,
+                last_upload_time: 0,
+                listings: vec![empty_listing()],
+                recent_history: vec![],
+                current_average_price: 0.0,
+                current_average_price_nq: 0.0,
+                current_average_price_hq: 0.0,
+                regular_sale_velocity: 0.0,
+                nq_sale_velocity: 0.0,
+                hq_sale_velocity: 0.0,
+                average_price: 0.0,
+                average_price_nq: 0.0,
+                average_price_hq: 0.0,
+                min_price: 0.0,
+                min_price_nq: 0.0,
+                min_price_hq: 0.0,
+                max_price: 0.0,
+                max_price_nq: 0.0,
+                max_price_hq: 0.0,
+                stack_size_histogram: HashMap::new(),
+                stack_size_histogram_nq: HashMap::new(),
+                stack_size_histogram_hq: HashMap::new(),
+                world_upload_times: None,
+            },
+        );
+        let view = MarketView::MultiView(CurrentlyShownMultiView {
+            item_ids: vec![42],
+            items,
+            unresolved_items: vec![],
+            dc_name: None,
+        });
+        assert_eq!(view.get_listings_for_item_id(42).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn multi_view_returns_bad_id_for_missing_id() {
+        let view = MarketView::MultiView(CurrentlyShownMultiView {
+            item_ids: vec![],
+            items: HashMap::new(),
+            unresolved_items: vec![],
+            dc_name: None,
+        });
+        assert!(matches!(
+            view.get_listings_for_item_id(99).unwrap_err(),
+            Error::BadId(99)
+        ));
+    }
+
+    #[test]
+    fn single_view_items_yields_single_tuple() {
+        let view = MarketView::SingleView(CurrentlyShownSingleView {
+            item_id: 5,
+            listings: vec![empty_listing()],
+            recent_history: vec![],
+        });
+        let items: Vec<_> = view.items().collect();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].0, ItemId(5));
+        assert_eq!(items[0].1.len(), 1);
+    }
+
+    #[test]
+    fn multi_view_items_yields_one_tuple_per_item() {
+        let mut items_map = HashMap::new();
+        for id in [10_u32, 20] {
+            items_map.insert(
+                id,
+                ListingMultiViewData {
+                    item_id: id,
+                    last_upload_time: 0,
+                    listings: vec![],
+                    recent_history: vec![],
+                    current_average_price: 0.0,
+                    current_average_price_nq: 0.0,
+                    current_average_price_hq: 0.0,
+                    regular_sale_velocity: 0.0,
+                    nq_sale_velocity: 0.0,
+                    hq_sale_velocity: 0.0,
+                    average_price: 0.0,
+                    average_price_nq: 0.0,
+                    average_price_hq: 0.0,
+                    min_price: 0.0,
+                    min_price_nq: 0.0,
+                    min_price_hq: 0.0,
+                    max_price: 0.0,
+                    max_price_nq: 0.0,
+                    max_price_hq: 0.0,
+                    stack_size_histogram: HashMap::new(),
+                    stack_size_histogram_nq: HashMap::new(),
+                    stack_size_histogram_hq: HashMap::new(),
+                    world_upload_times: None,
+                },
+            );
+        }
+        let view = MarketView::MultiView(CurrentlyShownMultiView {
+            item_ids: vec![10, 20],
+            items: items_map,
+            unresolved_items: vec![],
+            dc_name: None,
+        });
+        let mut got: Vec<i32> = view.items().map(|(id, _, _)| id.0).collect();
+        got.sort();
+        assert_eq!(got, vec![10, 20]);
+    }
+
+    #[test]
+    fn no_items_error_displays_human_message() {
+        let e = Error::NoItems;
+        assert_eq!(e.to_string(), "No items were suggested");
+    }
+
+    #[test]
+    fn bad_id_error_displays_id_in_message() {
+        let e = Error::BadId(12345);
+        assert!(e.to_string().contains("12345"));
+    }
+
+    #[test]
+    fn item_id_serde_roundtrip() {
+        let id = ItemId(99);
+        let s = serde_json::to_string(&id).unwrap();
+        let back: ItemId = serde_json::from_str(&s).unwrap();
+        assert_eq!(id, back);
+    }
+
+    #[test]
+    fn world_id_ordering() {
+        assert!(WorldId(1) < WorldId(2));
+        assert_eq!(WorldId(7), WorldId(7));
+    }
+
+    #[tokio::test]
+    async fn marketboard_current_data_with_no_items_returns_no_items_error() {
+        let client = UniversalisClient::new("ultros-test");
+        let err = client
+            .marketboard_current_data("Aether", &[])
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::NoItems));
+    }
+}

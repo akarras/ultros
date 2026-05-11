@@ -27,3 +27,6 @@ rkyv = { version = "0.7.42", features = ["validation", "size_64", "hashbrown"], 
 
 [features]
 rkyv = ["dep:rkyv"]
+
+[dev-dependencies]
+serde_json = "1.0"

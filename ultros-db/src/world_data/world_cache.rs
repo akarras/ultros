@@ -416,3 +416,105 @@ impl WorldCache {
             .flat_map(|(_, d)| d.iter().flat_map(|(_, worlds)| worlds.iter()))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn world(id: i32, datacenter_id: i32, name: &str) -> world::Model {
+        world::Model {
+            id,
+            name: name.to_string(),
+            datacenter_id,
+        }
+    }
+
+    fn datacenter(id: i32, region_id: i32, name: &str) -> datacenter::Model {
+        datacenter::Model {
+            id,
+            name: name.to_string(),
+            region_id,
+        }
+    }
+
+    fn region(id: i32, name: &str) -> region::Model {
+        region::Model {
+            id,
+            name: name.to_string(),
+        }
+    }
+
+    #[test]
+    fn any_selector_serde_roundtrip() {
+        for s in [
+            AnySelector::World(1),
+            AnySelector::Datacenter(2),
+            AnySelector::Region(3),
+        ] {
+            let j = serde_json::to_string(&s).unwrap();
+            let back: AnySelector = serde_json::from_str(&j).unwrap();
+            assert_eq!(s, back);
+        }
+    }
+
+    #[test]
+    fn any_selector_ord_matches_variant_order() {
+        // Per `Ord` derive: variants are ordered by declaration: World < Datacenter < Region.
+        assert!(AnySelector::World(1) < AnySelector::Datacenter(0));
+        assert!(AnySelector::Datacenter(99) < AnySelector::Region(0));
+        // Same variant: ordered by inner id.
+        assert!(AnySelector::World(1) < AnySelector::World(2));
+    }
+
+    #[test]
+    fn any_result_get_name_returns_inner_name() {
+        let r = region(1, "NA");
+        let d = datacenter(10, 1, "Aether");
+        let w = world(100, 10, "Adamantoise");
+        assert_eq!(AnyResult::Region(&r).get_name(), "NA");
+        assert_eq!(AnyResult::Datacenter(&d).get_name(), "Aether");
+        assert_eq!(AnyResult::World(&w).get_name(), "Adamantoise");
+    }
+
+    #[test]
+    fn any_result_as_world_ok_only_for_world_variant() {
+        let r = region(1, "NA");
+        let d = datacenter(10, 1, "Aether");
+        let w = world(100, 10, "Adamantoise");
+        assert!(AnyResult::World(&w).as_world().is_ok());
+        assert!(matches!(
+            AnyResult::Datacenter(&d).as_world(),
+            Err(WorldCacheError::NotWorld)
+        ));
+        assert!(matches!(
+            AnyResult::Region(&r).as_world(),
+            Err(WorldCacheError::NotWorld)
+        ));
+    }
+
+    #[test]
+    fn any_selector_from_any_result_reads_id() {
+        let r = region(1, "NA");
+        let d = datacenter(10, 1, "Aether");
+        let w = world(100, 10, "Adamantoise");
+        let ar = AnyResult::Region(&r);
+        let ad = AnyResult::Datacenter(&d);
+        let aw = AnyResult::World(&w);
+        assert_eq!(AnySelector::from(&ar), AnySelector::Region(1));
+        assert_eq!(AnySelector::from(&ad), AnySelector::Datacenter(10));
+        assert_eq!(AnySelector::from(&aw), AnySelector::World(100));
+    }
+
+    #[test]
+    fn world_cache_error_messages_include_ids() {
+        assert!(WorldCacheError::World(42).to_string().contains("42"));
+        assert!(WorldCacheError::Datacenter(7).to_string().contains("7"));
+        assert!(WorldCacheError::Region(9).to_string().contains("9"));
+        assert_eq!(WorldCacheError::NotWorld.to_string(), "Not a world");
+        assert!(
+            WorldCacheError::NameLookupError("foo".into())
+                .to_string()
+                .contains("foo")
+        );
+    }
+}

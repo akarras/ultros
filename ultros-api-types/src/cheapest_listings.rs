@@ -153,3 +153,202 @@ impl From<CheapestListings> for CheapestListingsMap {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn data(price: i32, world_id: i32) -> CheapestListingData {
+        CheapestListingData { price, world_id }
+    }
+
+    #[test]
+    fn map_key_serializes_to_id_hq_string() {
+        let key = CheapestListingMapKey {
+            item_id: 42,
+            hq: true,
+        };
+        let s = serde_json::to_string(&key).unwrap();
+        assert_eq!(s, "\"42_true\"");
+    }
+
+    #[test]
+    fn map_key_deserializes_from_id_hq_string() {
+        let key: CheapestListingMapKey = serde_json::from_str("\"123_false\"").unwrap();
+        assert_eq!(
+            key,
+            CheapestListingMapKey {
+                item_id: 123,
+                hq: false
+            }
+        );
+    }
+
+    #[test]
+    fn map_key_roundtrip_through_json() {
+        for (item_id, hq) in [(1, true), (-7, false), (i32::MAX, true), (0, false)] {
+            let key = CheapestListingMapKey { item_id, hq };
+            let s = serde_json::to_string(&key).unwrap();
+            let back: CheapestListingMapKey = serde_json::from_str(&s).unwrap();
+            assert_eq!(key, back);
+        }
+    }
+
+    #[test]
+    fn map_key_rejects_missing_separator() {
+        let r: Result<CheapestListingMapKey, _> = serde_json::from_str("\"123true\"");
+        assert!(r.is_err(), "should reject when separator absent");
+    }
+
+    #[test]
+    fn map_key_rejects_invalid_item_id() {
+        let r: Result<CheapestListingMapKey, _> = serde_json::from_str("\"abc_true\"");
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn map_key_rejects_invalid_hq() {
+        let r: Result<CheapestListingMapKey, _> = serde_json::from_str("\"123_maybe\"");
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn price_summary_lowest_gil_none_when_both_missing() {
+        let summary = PriceSummary { lq: None, hq: None };
+        assert_eq!(summary.lowest_gil(), None);
+    }
+
+    #[test]
+    fn price_summary_lowest_gil_picks_minimum_when_both_present() {
+        let summary = PriceSummary {
+            lq: Some(data(100, 1)),
+            hq: Some(data(80, 1)),
+        };
+        assert_eq!(summary.lowest_gil(), Some(80));
+
+        let summary = PriceSummary {
+            lq: Some(data(100, 1)),
+            hq: Some(data(120, 1)),
+        };
+        assert_eq!(summary.lowest_gil(), Some(100));
+    }
+
+    #[test]
+    fn price_summary_lowest_gil_uses_only_present_side() {
+        let summary = PriceSummary {
+            lq: Some(data(50, 1)),
+            hq: None,
+        };
+        assert_eq!(summary.lowest_gil(), Some(50));
+
+        let summary = PriceSummary {
+            lq: None,
+            hq: Some(data(75, 1)),
+        };
+        assert_eq!(summary.lowest_gil(), Some(75));
+    }
+
+    #[test]
+    fn price_summary_preferring_hq_prefers_hq_even_when_more_expensive() {
+        let summary = PriceSummary {
+            lq: Some(data(50, 1)),
+            hq: Some(data(200, 1)),
+        };
+        assert_eq!(summary.price_preferring_hq(), Some(200));
+    }
+
+    #[test]
+    fn price_summary_preferring_hq_falls_back_to_lq_when_no_hq() {
+        let summary = PriceSummary {
+            lq: Some(data(50, 1)),
+            hq: None,
+        };
+        assert_eq!(summary.price_preferring_hq(), Some(50));
+    }
+
+    #[test]
+    fn price_summary_preferring_hq_none_when_both_missing() {
+        let summary = PriceSummary { lq: None, hq: None };
+        assert_eq!(summary.price_preferring_hq(), None);
+    }
+
+    #[test]
+    fn from_cheapest_listings_builds_map_indexed_by_item_id_and_hq() {
+        let listings = CheapestListings {
+            cheapest_listings: vec![
+                CheapestListingItem {
+                    item_id: 1,
+                    hq: false,
+                    cheapest_price: 100,
+                    world_id: 7,
+                },
+                CheapestListingItem {
+                    item_id: 1,
+                    hq: true,
+                    cheapest_price: 250,
+                    world_id: 9,
+                },
+                CheapestListingItem {
+                    item_id: 2,
+                    hq: false,
+                    cheapest_price: 1,
+                    world_id: 3,
+                },
+            ],
+        };
+        let map: CheapestListingsMap = listings.into();
+        assert_eq!(map.map.len(), 3);
+        let lq = map
+            .map
+            .get(&CheapestListingMapKey {
+                item_id: 1,
+                hq: false,
+            })
+            .unwrap();
+        assert_eq!(lq.price, 100);
+        assert_eq!(lq.world_id, 7);
+        let hq = map
+            .map
+            .get(&CheapestListingMapKey {
+                item_id: 1,
+                hq: true,
+            })
+            .unwrap();
+        assert_eq!(hq.price, 250);
+        assert_eq!(hq.world_id, 9);
+    }
+
+    #[test]
+    fn find_matching_listings_returns_lq_and_hq() {
+        let listings = CheapestListings {
+            cheapest_listings: vec![
+                CheapestListingItem {
+                    item_id: 5,
+                    hq: false,
+                    cheapest_price: 1000,
+                    world_id: 1,
+                },
+                CheapestListingItem {
+                    item_id: 5,
+                    hq: true,
+                    cheapest_price: 2000,
+                    world_id: 1,
+                },
+            ],
+        };
+        let map: CheapestListingsMap = listings.into();
+        let summary = map.find_matching_listings(5);
+        assert_eq!(summary.lq.map(|d| d.price), Some(1000));
+        assert_eq!(summary.hq.map(|d| d.price), Some(2000));
+    }
+
+    #[test]
+    fn find_matching_listings_returns_none_when_item_missing() {
+        let map: CheapestListingsMap = CheapestListings {
+            cheapest_listings: vec![],
+        }
+        .into();
+        let summary = map.find_matching_listings(999);
+        assert!(summary.lq.is_none() && summary.hq.is_none());
+    }
+}
