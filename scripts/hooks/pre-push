@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Full pre-push: matches CI (fmt + clippy). Slower; runs only on `git push`.
+set -e
+
+if ! command -v cargo >/dev/null 2>&1; then
+    echo "pre-push: cargo not on PATH; skipping check_ci.sh" >&2
+    exit 0
+fi
+
+./check_ci.sh

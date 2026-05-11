@@ -19,6 +19,7 @@ pub mod settings;
 pub mod trends;
 pub mod vendor_resale;
 pub mod venture_analyzer;
+pub mod welcome;
 
 pub mod legal {
     pub mod cookie_policy;

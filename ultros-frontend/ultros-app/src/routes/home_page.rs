@@ -1,4 +1,5 @@
 use crate::components::icon::Icon;
+use crate::global_state::home_world::use_home_world;
 use crate::i18n::{t, t_string};
 use icondata as i;
 use leptos::prelude::*;
@@ -40,6 +41,8 @@ fn FeatureCard(
 #[component]
 pub fn HomePage() -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
+    let (homeworld, _) = use_home_world();
+    let needs_onboarding = Memo::new(move |_| homeworld.with(|w| w.is_none()));
     view! {
         <MetaTitle title=move || t_string!(i18n, meta_title).to_string() />
         <MetaDescription text=move || t_string!(i18n, meta_description).to_string() />
@@ -54,6 +57,31 @@ pub fn HomePage() -> impl IntoView {
 
                 // Main content
                 <div class="flex flex-col grow gap-8">
+                    {move || needs_onboarding.get().then(|| view! {
+                        <A
+                            href="/welcome"
+                            attr:class="group focus:outline-none rounded-2xl"
+                            attr:aria-label=move || t_string!(i18n, home_onboarding_banner_cta).to_string()
+                        >
+                            <div class="panel p-5 sm:p-6 rounded-2xl border-l-4 border-brand-300/70 flex flex-wrap items-center gap-4 hover:border-brand-300 transition-colors">
+                                <div class="p-3 rounded-xl bg-[color:var(--brand-bg)] text-[color:var(--brand-fg)] shrink-0">
+                                    <Icon icon=i::FaMapLocationDotSolid width="1.75em" height="1.75em" />
+                                </div>
+                                <div class="flex-1 min-w-[16rem]">
+                                    <h2 class="text-xl font-bold text-[color:var(--brand-fg)]">
+                                        {t!(i18n, home_onboarding_banner_title)}
+                                    </h2>
+                                    <p class="text-sm text-[color:var(--color-text-muted)]">
+                                        {t!(i18n, home_onboarding_banner_body)}
+                                    </p>
+                                </div>
+                                <span class="btn-primary py-2 px-4 group-hover:translate-x-0.5 transition-transform">
+                                    <span>{t!(i18n, home_onboarding_banner_cta)}</span>
+                                    <Icon icon=i::FaArrowRightSolid width="0.9em" height="0.9em" />
+                                </span>
+                            </div>
+                        </A>
+                    })}
                     <div class="panel p-4 sm:p-8 overflow-hidden relative">
                         <div class="flex flex-col md:flex-row items-center gap-6 md:gap-10">
                             <div class="flex-1 space-y-4 z-10">

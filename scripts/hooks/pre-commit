@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Fast precommit: rustfmt check only. Clippy is left to pre-push and CI.
+# To bypass for an emergency commit: `git commit --no-verify` (please don't).
+set -e
+
+if ! command -v cargo >/dev/null 2>&1; then
+    echo "pre-commit: cargo not on PATH; skipping fmt check" >&2
+    exit 0
+fi
+
+cargo fmt --all -- --check

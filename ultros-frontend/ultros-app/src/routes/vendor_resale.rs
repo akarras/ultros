@@ -743,7 +743,7 @@ pub fn VendorWorldView() -> impl IntoView {
                         </h1>
                         <div class="flex flex-col gap-4">
                             <MetaDescription text=move || {
-                                t_string!(i18n, vendor_resale_meta_desc).to_string().replace("{{world}}", &world())
+                                t_string!(i18n, vendor_resale_meta_desc).to_string().replace("%world%", &world())
                             } />
 
                             // World Navigator

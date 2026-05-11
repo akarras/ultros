@@ -85,4 +85,7 @@ tempfile = "3.6.0"
 [features]
 profiling = ["dep:tikv-jemallocator", "dep:jemalloc_pprof"]
 jemalloc = ["dep:tikv-jemallocator"]
+# Exposes /test/login for E2E tests. Compile-time gated so prod binaries
+# physically cannot contain this route. Build with: --features test-auth
+test-auth = []
 default = []
