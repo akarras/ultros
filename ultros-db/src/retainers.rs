@@ -141,13 +141,15 @@ impl UltrosDb {
             futures::future::join_all(items_by_world.into_iter().flat_map(|(world, item_ids)| {
                 item_ids.into_iter().map(move |i| async move {
                     (
-                        world,
-                        i,
+                        (world, i),
                         self.get_listings_for_world(WorldId(world), ItemId(i)).await,
                     )
                 })
             }))
-            .await;
+            .await
+            .into_iter()
+            // Bolt optimization: collect results into a HashMap for O(1) lookup
+            .collect::<std::collections::HashMap<_, _>>();
         // now filter the retainer queries down to just listings that beat our retainer's listings
         Ok(retainers
             .into_iter()
@@ -161,32 +163,30 @@ impl UltrosDb {
                             let l = &listing;
                             // find the item in the main listings set that matches this item
                             let number_of_listings_undercutting =
-                                results.iter().find_map(|(world_id, item_id, listings)| {
+                                results.get(&(l.world_id, l.item_id)).and_then(|listings| {
                                     if let Ok(listings) = listings {
                                         if listings.is_empty() {
                                             return None;
                                         }
-                                        if l.world_id == *world_id && l.item_id == *item_id {
-                                            // now check if the given listing is UNDERCUTTING than our given listing
-                                            let listings_in_range: Vec<_> = listings
+                                        // now check if the given listing is UNDERCUTTING than our given listing
+                                        let listings_in_range: Vec<_> = listings
+                                            .iter()
+                                            .filter(|all_l| {
+                                                all_l.price_per_unit < l.price_per_unit
+                                                    && (!l.hq || l.hq == all_l.hq)
+                                                    // filter our own retainer listings
+                                                    && !retainer_ids
+                                                        .contains(&all_l.retainer_id)
+                                            })
+                                            .collect();
+                                        return Some(ListingUndercutData {
+                                            number_behind: listings_in_range.len(),
+                                            price_to_beat: listings_in_range
                                                 .iter()
-                                                .filter(|all_l| {
-                                                    all_l.price_per_unit < l.price_per_unit
-                                                        && (!l.hq || l.hq == all_l.hq)
-                                                        // filter our own retainer listings
-                                                        && !retainer_ids
-                                                            .contains(&all_l.retainer_id)
-                                                })
-                                                .collect();
-                                            return Some(ListingUndercutData {
-                                                number_behind: listings_in_range.len(),
-                                                price_to_beat: listings_in_range
-                                                    .iter()
-                                                    .map(|x| x.price_per_unit)
-                                                    .min()
-                                                    .unwrap_or_default(),
-                                            });
-                                        }
+                                                .map(|x| x.price_per_unit)
+                                                .min()
+                                                .unwrap_or_default(),
+                                        });
                                     }
                                     None
                                 });
