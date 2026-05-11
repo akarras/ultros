@@ -123,7 +123,7 @@ Two Claude-backed endpoints. Both optional; both cached aggressively.
 - item_id, suggested trigger type, suggested threshold, one-line rationale
 - e.g., *"Eden Mode — viewed 7x in past 14 days; median 180k, suggesting `below_threshold @ 150k`"*
 
-**Cache:** Per-user, 24-hour TTL. Burst limit: 3 calls/day/user.
+**Cache:** Per-user, 24-hour TTL. The frontend has a "refresh suggestions" button to bust the cache, capped at 3 refreshes/day/user to prevent abuse.
 
 ### `POST /api/alerts/suggest-threshold/{item_id}`
 **Input:** item_id, optional world_selector.
