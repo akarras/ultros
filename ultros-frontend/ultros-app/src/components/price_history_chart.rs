@@ -499,7 +499,18 @@ pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl 
             <StatsStrip stats=stats.into() />
 
             // Chart body
-            <div class="w-full aspect-[16/9] max-h-[520px] overflow-hidden">
+            <div
+                class="w-full aspect-[16/9] max-h-[520px] overflow-hidden"
+                role="img"
+                aria-label=move || {
+                    let n = stats.get().map(|s| s.n).unwrap_or(0);
+                    t_string!(i18n, chart_aria_label)
+                        .to_string()
+                        .replace("{n}", &n.to_string())
+                        .replace("{from}", "")
+                        .replace("{to}", "")
+                }
+            >
                 {move || {
                     let (series_names, rows) = chart_data.get();
                     if rows.is_empty() {
