@@ -31,11 +31,19 @@ impl RecentItems {
     }
 
     pub fn add_item(&self, item_id: i32) {
-        use itertools::Itertools;
-
         self.write_signal.update(|items| {
+            // ⚡ Bolt Optimization:
+            // Previously used `items.iter().copied().unique().collect()` which allocated a
+            // new collection and performed expensive hashing for up to 1000 items on every view.
+            // Now we do a fast O(N) linear scan and in-place shift, which is nearly instant
+            // and avoids allocations. We also fast-path the common case of refreshing the same item.
+            if let Some(pos) = items.iter().position(|&id| id == item_id) {
+                if pos == 0 {
+                    return; // Fast path: already at the front
+                }
+                items.remove(pos);
+            }
             items.push_front(item_id);
-            *items = items.iter().copied().unique().collect();
             if items.len() > 1000 {
                 items.pop_back();
             }

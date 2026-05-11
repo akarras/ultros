@@ -254,7 +254,13 @@ pub fn SearchBox() -> impl IntoView {
             }
         } else if key == "Enter" {
             if let Some(url) = focused_url.get_untracked() {
-                navigate_keydown(&url, NavigateOptions::default());
+                navigate_keydown(
+                    &url,
+                    NavigateOptions {
+                        scroll: false,
+                        ..Default::default()
+                    },
+                );
                 set_search("".to_string());
                 set_active(false);
                 if let Some(input) = text_input.get() {
@@ -263,7 +269,13 @@ pub fn SearchBox() -> impl IntoView {
             } else {
                 let first_url = search_results.with_untracked(|r| r.first().map(|f| f.url.clone()));
                 if let Some(url) = first_url {
-                    navigate_keydown(&url, NavigateOptions::default());
+                    navigate_keydown(
+                        &url,
+                        NavigateOptions {
+                            scroll: false,
+                            ..Default::default()
+                        },
+                    );
                     set_search("".to_string());
                     set_active(false);
                     if let Some(input) = text_input.get() {
@@ -330,11 +342,27 @@ pub fn SearchBox() -> impl IntoView {
             // Search Results
             <div
                 id="search-results"
-                role="listbox"
+                role=move || {
+                    if !loading.get() && search_results.with(|v| v.is_empty()) && !search.get().is_empty() {
+                        "status"
+                    } else {
+                        "listbox"
+                    }
+                }
                 class="absolute w-full mt-2 z-50 content-visible contain-content forced-layer"
                 class:hidden=move || !active() || search().is_empty()
             >
-                <div class="scroll-panel content-auto contain-layout contain-paint will-change-scroll forced-layer cis-42">
+                <Show when=move || !loading.get() && search_results.with(|v| v.is_empty()) && !search.get().is_empty()>
+                    <div class="p-8 text-center text-[color:var(--color-text-muted)] flex flex-col items-center gap-2 bg-[color:var(--color-background-elevated)] border border-[color:var(--color-outline)] rounded-md shadow-lg">
+                        <Icon icon=i::AiSearchOutlined attr:class="w-8 h-8 opacity-50" />
+                        <span>"No results found"</span>
+                    </div>
+                </Show>
+
+                <div
+                    class="scroll-panel content-auto contain-layout contain-paint will-change-scroll forced-layer cis-42"
+                    class:hidden=move || search_results.with(|v| v.is_empty())
+                >
                     <VirtualScroller
                         each=search_results.into()
                         key={move |result: &Arc<SearchResult>| result.url.clone()}
@@ -366,7 +394,13 @@ pub fn SearchBox() -> impl IntoView {
                                         format!("p-2 hover:bg-[color:var(--color-background-elevated)] cursor-pointer flex items-center gap-2{}", hl)
                                     }
                                     on:click=move |_| {
-                                        navigate(&url_for_click, NavigateOptions::default());
+                                        navigate(
+                                            &url_for_click,
+                                            NavigateOptions {
+                                                scroll: false,
+                                                ..Default::default()
+                                            },
+                                        );
                                         set_search("".to_string());
                                         set_active(false);
                                         if let Some(input) = text_input.get() {
@@ -450,6 +484,14 @@ pub fn SearchBox() -> impl IntoView {
                         scroll_to_index=Signal::derive(move || focused_index.get())
 
                     />
+                    <Show when=move || {
+                        let s = search.get();
+                        !s.is_empty() && !loading.get() && search_results.with(|r| r.is_empty())
+                    }>
+                        <div class="p-4 text-center text-sm text-[color:var(--color-text-muted)]">
+                            "No results found for \"" {search} "\""
+                        </div>
+                    </Show>
                 </div>
             </div>
         </div>

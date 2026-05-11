@@ -82,7 +82,7 @@ where
     let raf_pending = RwSignal::new(false);
     // hybrid variable-height state: per-index delta from estimated row_height and prefix sums
     let children_len = Memo::new(move |_| each.with(|children| children.len()));
-    let (height_deltas, set_height_deltas) = signal(Vec::<f64>::new());
+    let height_deltas = StoredValue::new(Vec::<f64>::new());
     let initial_len = each.with_untracked(|children| children.len());
     let fenwick = RwSignal::new(Fenwick::new(initial_len));
 
@@ -91,7 +91,7 @@ where
         let len = children_len();
         // reset measurements on length change
         let v = vec![0.0; len];
-        set_height_deltas.set(v);
+        height_deltas.set_value(v);
         fenwick.update(|f| {
             f.reset(len);
         });
@@ -258,12 +258,12 @@ where
                 }
             }
             node_ref=scroller
-            class="overflow-y-auto overflow-x-visible w-full will-change-scroll contain-paint forced-layer"
+            class="overflow-y-auto overflow-x-auto w-full will-change-scroll contain-paint forced-layer"
             style=format!("height: {}px;", viewport_height.ceil() as u32)
         >
-            {header_opt.map(|h| view! { <div class="sticky top-0 z-10 content-visible contain-content">{h}</div> })}
+            {header_opt.map(|h| view! { <div class="sticky top-0 z-10">{h}</div> })}
             <div
-                class="overflow-y-hidden overflow-x-visible will-change-[transform] relative w-full contain-layout contain-paint content-visible forced-layer"
+                class="overflow-y-hidden overflow-x-visible will-change-[transform] relative w-full contain-layout forced-layer"
                 style=move || {
                     format!(
                         r#"height: {}px;"#,
@@ -294,7 +294,6 @@ where
                         key=move |(_, t): &(usize, T)| key(t)
                         children=move |(idx, child)| {
                             let row = NodeRef::<leptos::html::Div>::new();
-                            let set_height_deltas = set_height_deltas;
                             let height_deltas = height_deltas;
                             let fenwick = fenwick;
                             if variable_height {
@@ -302,16 +301,16 @@ where
                                     if let Some(el) = row.get() {
                                         let measured = el.offset_height() as f64;
                                         let delta = measured - row_height;
-                                        let mut v = height_deltas.get_untracked();
-                                        if idx < v.len() {
-                                            let old = v[idx];
-                                            if (old - delta).abs() > 0.5 {
-                                                v[idx] = delta;
-                                                set_height_deltas.set(v.clone());
-                                                // O(log n) update instead of rebuilding prefix sums
-                                                fenwick.update(|f| f.add(idx, delta - old));
+                                        height_deltas.update_value(|v| {
+                                            if idx < v.len() {
+                                                let old = v[idx];
+                                                if (old - delta).abs() > 0.5 {
+                                                    v[idx] = delta;
+                                                    // O(log n) update instead of rebuilding prefix sums
+                                                    fenwick.update(|f| f.add(idx, delta - old));
+                                                }
                                             }
-                                        }
+                                        });
                                     }
                                 });
                             }
@@ -320,9 +319,9 @@ where
                                     node_ref=row
                                     class=move || {
                                         if variable_height {
-                                            "content-auto contain-layout contain-paint will-change-transform".to_string()
+                                            "content-auto contain-layout will-change-transform".to_string()
                                         } else {
-                                            "content-visible contain-layout contain-paint will-change-transform overflow-hidden".to_string()
+                                            "content-visible contain-layout will-change-transform overflow-hidden".to_string()
                                         }
                                     }
                                     style=move || {

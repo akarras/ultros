@@ -109,12 +109,12 @@ fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> imp
             <table class="w-full">
                 <thead>
                     <tr>
-                        <th>"HQ"</th>
-                        <th>"Item"</th>
-                        <th>"Price Per Unit"</th>
-                        <th>"Quantity"</th>
-                        <th>"Total"</th>
-                        <th>"Undercut by one"</th>
+                        <th scope="col">"HQ"</th>
+                        <th scope="col">"Item"</th>
+                        <th scope="col">"Price Per Unit"</th>
+                        <th scope="col">"Quantity"</th>
+                        <th scope="col">"Total"</th>
+                        <th scope="col">"Undercut by one"</th>
                     </tr>
                 </thead>
                 <tbody>{listings}</tbody>
@@ -184,11 +184,11 @@ fn RetainerTable(retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoV
             <table>
                 <thead>
                     <tr>
-                        <th>"HQ"</th>
-                        <th>"Item"</th>
-                        <th>"Price Per Unit"</th>
-                        <th>"Quantity"</th>
-                        <th>"Total"</th>
+                        <th scope="col">"HQ"</th>
+                        <th scope="col">"Item"</th>
+                        <th scope="col">"Price Per Unit"</th>
+                        <th scope="col">"Quantity"</th>
+                        <th scope="col">"Total"</th>
                     </tr>
                 </thead>
                 <tbody>{listings}</tbody>
