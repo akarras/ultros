@@ -2,6 +2,7 @@ pub mod ad;
 pub mod add_recipe_to_current_list;
 pub mod add_recipe_to_list;
 pub mod add_to_list;
+pub mod alert_config_drawer;
 pub mod apps_menu;
 pub mod cheapest_price;
 pub mod clipboard;
