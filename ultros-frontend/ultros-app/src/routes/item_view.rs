@@ -14,6 +14,7 @@ use crate::global_state::cheapest_prices::CheapestPrices;
 use crate::global_state::home_world::{get_price_zone, use_home_world};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::{t, t_string};
+use crate::ws::realtime::{RealtimeSubscription, use_realtime};
 use chrono::{TimeDelta, Utc};
 use leptos::prelude::*;
 use leptos_meta::{Link, Meta};
@@ -21,9 +22,12 @@ use leptos_router::components::A;
 use leptos_router::hooks::use_params_map;
 use leptos_router::location::Url;
 use std::sync::Arc;
-use ultros_api_types::CurrentlyShownItem;
+use ultros_api_types::websocket::{
+    EventType, FilterPredicate, ListingEventData, SaleEventData, ServerClient, SocketMessageType,
+};
 use ultros_api_types::world_helper::AnySelector;
 use ultros_api_types::world_helper::{AnyResult, OwnedResult};
+use ultros_api_types::{ActiveListing, CurrentlyShownItem, Retainer, SaleHistory};
 use xiv_gen::{ItemId, ItemSearchCategoryId, ItemUiCategoryId};
 
 #[component]
@@ -854,6 +858,77 @@ fn SalesDetails(
     .into_any()
 }
 
+fn update_current_item(
+    listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
+    update: impl FnOnce(&mut CurrentlyShownItem),
+) {
+    listing_resource.update(|current| {
+        if let Some(Ok(current)) = current {
+            let mut updated = current.as_ref().clone();
+            update(&mut updated);
+            *current = Arc::new(updated);
+        }
+    });
+}
+
+fn apply_listing_event(data: &mut CurrentlyShownItem, event: EventType<ListingEventData>) {
+    match event {
+        EventType::Added(event) | EventType::Updated(event) => {
+            upsert_listings(data, event.listings);
+        }
+        EventType::Removed(event) => {
+            remove_listings(data, event.listings);
+        }
+    }
+    data.listings
+        .sort_by_key(|(listing, _)| (listing.hq, listing.price_per_unit));
+}
+
+fn upsert_listings(data: &mut CurrentlyShownItem, listings: Vec<(ActiveListing, Retainer)>) {
+    for incoming in listings {
+        data.listings
+            .retain(|(listing, _)| listing.id != incoming.0.id);
+        data.listings.push(incoming);
+    }
+}
+
+fn remove_listings(data: &mut CurrentlyShownItem, listings: Vec<(ActiveListing, Retainer)>) {
+    for (removed, _) in listings {
+        data.listings
+            .retain(|(listing, _)| listing.id != removed.id);
+    }
+}
+
+fn apply_sales_event(data: &mut CurrentlyShownItem, event: EventType<SaleEventData>) {
+    match event {
+        EventType::Added(event) | EventType::Updated(event) => {
+            upsert_sales(
+                data,
+                event
+                    .sales
+                    .into_iter()
+                    .map(|(sale, _)| sale)
+                    .collect::<Vec<_>>(),
+            );
+        }
+        EventType::Removed(event) => {
+            for (removed, _) in event.sales {
+                data.sales.retain(|sale| sale.id != removed.id);
+            }
+        }
+    }
+    data.sales
+        .sort_by_key(|sale| std::cmp::Reverse(sale.sold_date));
+    data.sales.truncate(200);
+}
+
+fn upsert_sales(data: &mut CurrentlyShownItem, sales: Vec<SaleHistory>) {
+    for incoming in sales {
+        data.sales.retain(|sale| sale.id != incoming.id);
+        data.sales.push(incoming);
+    }
+}
+
 #[component]
 fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
     let listing_resource = Resource::new(
@@ -868,6 +943,58 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
     Effect::new(move |_| {
         let val = listing_resource.get();
         tracing::info!(?val, "Listings updated");
+    });
+    let realtime = use_realtime();
+    let world_data = use_context::<LocalWorldData>().unwrap().0.unwrap();
+    let market_subscriptions = StoredValue::new(Vec::<RealtimeSubscription>::new());
+    Effect::new(move |_| {
+        market_subscriptions.update_value(|subscriptions| subscriptions.clear());
+        let item_id = item_id();
+        let world = Url::unescape(&world());
+        let Some(realtime) = realtime.clone() else {
+            return;
+        };
+        let Some(selector) = world_data
+            .lookup_world_by_name(&world)
+            .map(|world| AnySelector::from(&world))
+        else {
+            return;
+        };
+        if item_id == 0 {
+            return;
+        }
+
+        let filter = FilterPredicate::World(selector).and(FilterPredicate::Item(item_id));
+        let listings_subscription = realtime.subscribe_market(
+            filter.clone(),
+            SocketMessageType::Listings,
+            move |message| match message {
+                ServerClient::Listings(event) => {
+                    update_current_item(listing_resource, |data| {
+                        apply_listing_event(data, event);
+                    });
+                }
+                ServerClient::Stale { .. } => listing_resource.refetch(),
+                _ => {}
+            },
+        );
+        let sales_subscription = realtime.subscribe_market(
+            filter,
+            SocketMessageType::Sales,
+            move |message| match message {
+                ServerClient::Sales(event) => {
+                    update_current_item(listing_resource, |data| {
+                        apply_sales_event(data, event);
+                    });
+                }
+                ServerClient::Stale { .. } => listing_resource.refetch(),
+                _ => {}
+            },
+        );
+        market_subscriptions.set_value(vec![listings_subscription, sales_subscription]);
+    });
+    on_cleanup(move || {
+        market_subscriptions.update_value(|subscriptions| subscriptions.clear());
     });
     view! {
         <div class="w-full py-4 sm:py-6 text-[color:var(--color-text)]">
