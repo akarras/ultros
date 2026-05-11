@@ -15,9 +15,16 @@ pub fn LanguagePicker() -> impl IntoView {
             Locale::de => Locale::ja,
             Locale::ja => Locale::cn,
             Locale::cn => Locale::ko,
-            Locale::ko => Locale::en,
+            Locale::ko => Locale::tc,
+            Locale::tc => Locale::en,
         };
         i18n.set_locale(new_locale);
+        #[cfg(target_arch = "wasm32")]
+        {
+            if let Some(window) = web_sys::window() {
+                let _ = window.location().reload();
+            }
+        }
     };
 
     view! {

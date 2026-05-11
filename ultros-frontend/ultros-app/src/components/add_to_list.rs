@@ -17,25 +17,27 @@ use crate::components::toggle::Toggle;
 use crate::components::tooltip::Tooltip;
 use crate::components::{item_icon::ItemIcon, loading::Loading, modal::Modal};
 use crate::global_state::toasts::use_toast;
+use crate::i18n::*;
 
 #[component]
 pub fn AddToList(
     #[prop(into)] item_id: Signal<i32>,
     #[prop(optional, into)] class: Option<String>,
 ) -> impl IntoView {
+    let i18n = use_i18n();
     let (modal_visible, set_modal_visible) = signal(false);
     let class = class.unwrap_or("btn-primary".to_string());
     view! {
-        <Tooltip tooltip_text="Add to list">
+        <Tooltip tooltip_text=t_string!(i18n, add_to_list_tooltip).to_string()>
             <button
                 class=class.clone()
-                attr:aria-label="Add this item to one of your lists"
+                attr:aria-label=t_string!(i18n, add_to_list_aria_label).to_string()
                 on:click=move |_| {
                     set_modal_visible(!modal_visible());
                 }
             >
                 <Icon icon=RiPlayListAddMediaLine />
-                <div class="sr-only">"Add To List"</div>
+                <div class="sr-only">{t!(i18n, add_to_list_sr_only)}</div>
                 <Show when=modal_visible>
                     <AddToListModal item_id set_visible=set_modal_visible />
                 </Show>
@@ -49,6 +51,7 @@ fn AddToListModal(
     item_id: Signal<i32>,
     #[prop(into)] set_visible: SignalSetter<bool>,
 ) -> impl IntoView {
+    let i18n = use_i18n();
     let items = &xiv_gen_db::data().items;
     let item = move || items.get(&ItemId(item_id()));
     let lists = Resource::new(move || {}, move |_| get_lists());
@@ -64,12 +67,12 @@ fn AddToListModal(
                         <ItemIcon item_id icon_size=IconSize::Medium />
                     </div>
                     <div class="min-w-0 flex-1">
-                        <div class="text-xl font-extrabold text-[color:var(--brand-fg)]">"add to list"</div>
+                        <div class="text-xl font-extrabold text-[color:var(--brand-fg)]">{t!(i18n, add_to_list_title)}</div>
                         <div class="text-[color:var(--color-text-muted)] truncate">
-                            {move || item().map(|i| i.name.as_str()).unwrap_or("unknown item")}
+                            {move || item().map(|i| i.name.to_string()).unwrap_or_else(|| t_string!(i18n, add_to_list_unknown_item).to_string())}
                         </div>
                     </div>
-                    <button class="btn-secondary" on:click=move |_| set_visible(false)>"close"</button>
+                    <button class="btn-secondary" on:click=move |_| set_visible(false)>{t!(i18n, add_to_list_close)}</button>
                 </div>
 
                 <div class="flex flex-wrap items-center gap-3">
@@ -77,7 +80,7 @@ fn AddToListModal(
                         class="text-sm text-[color:var(--color-text-muted)]"
                         for=quantity_id
                     >
-                        "quantity"
+                        {t!(i18n, add_to_list_quantity)}
                     </label>
                     <input
                         id=quantity_id
@@ -94,8 +97,8 @@ fn AddToListModal(
                     <Toggle
                         checked=hq
                         set_checked=set_hq
-                        checked_label="HQ"
-                        unchecked_label="Normal quality"
+                        checked_label=t_string!(i18n, add_to_list_hq).to_string()
+                        unchecked_label=t_string!(i18n, add_to_list_normal_quality).to_string()
                     />
                 </div>
 
@@ -104,7 +107,7 @@ fn AddToListModal(
                         {move || {
                             let Ok(lists) = lists.get()? else {
                                 return Some(Either::Right(view! {
-                                    <div class="text-red-400 text-sm">"unable to load your lists — are you logged in?"</div>
+                                    <div class="text-red-400 text-sm">{t!(i18n, add_to_list_unable_to_load)}</div>
                                 }));
                             };
 
@@ -124,7 +127,7 @@ fn AddToListModal(
                                                     <div class="font-semibold truncate">{list.name}</div>
                                                     <button
                                                         class="btn-primary"
-                                                        aria-label=move || format!("Add to list {}", list_name)
+                                                        aria-label=move || format!("{} {}", t_string!(i18n, add_to_list_aria_label_list), list_name)
                                                         disabled=running
                                                         on:click=move |_| {
                                                             set_error(None);
@@ -149,13 +152,13 @@ fn AddToListModal(
                                                                     Ok(()) => {
                                                                         set_saved(true);
                                                                         if let Some(toasts) = toasts {
-                                                                            toasts.success("Added to list!");
+                                                                            toasts.success(t_string!(i18n, add_to_list_success_toast));
                                                                         }
                                                                     }
                                                                     Err(e) => {
                                                                         set_error(Some(format!("{e}")));
                                                                         if let Some(toasts) = toasts {
-                                                                            toasts.error(format!("Failed to add to list: {e}"));
+                                                                            toasts.error(format!("{} {e}", t_string!(i18n, add_to_list_error_toast)));
                                                                         }
                                                                     }
                                                                 }
@@ -165,9 +168,9 @@ fn AddToListModal(
                                                     >
                                                         {move || {
                                                             if saved() {
-                                                                EitherOf3::A(view! { <span>"added ✔"</span> })
+                                                                EitherOf3::A(view! { <span>{t!(i18n, add_to_list_added_success)}</span> })
                                                             } else if running() {
-                                                                EitherOf3::B(view! { <span>"adding…"</span> })
+                                                                EitherOf3::B(view! { <span>{t!(i18n, add_to_list_adding)}</span> })
                                                             } else {
                                                                 EitherOf3::C(view! {
                                                                     <div class="flex items-center gap-1">
@@ -177,7 +180,7 @@ fn AddToListModal(
                                                                             width="1.1em"
                                                                             height="1.1em"
                                                                         />
-                                                                        <span>"add"</span>
+                                                                        <span>{t!(i18n, add_to_list_add)}</span>
                                                                     </div>
                                                                 })
                                                             }

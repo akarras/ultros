@@ -4,11 +4,17 @@ use crate::*;
 use std::collections::HashMap;
 
 pub fn read_data(lang: Language) -> Data {
-    let base_path = format!(
-        "{}/ffxiv-datamining/csv/{}/",
-        env!("CARGO_MANIFEST_DIR"),
-        lang.to_path_part()
-    );
+    let base_path = match lang {
+        Language::Ko => format!(
+            "{}/ffxiv-datamining/csv/ko/csv/",
+            env!("CARGO_MANIFEST_DIR")
+        ),
+        _ => format!(
+            "{}/ffxiv-datamining/csv/{}/",
+            env!("CARGO_MANIFEST_DIR"),
+            lang.to_path_part()
+        ),
+    };
     Data {
         items: read_csv_to_map(&format!("{}Item.csv", base_path)),
         recipes: read_csv_to_map(&format!("{}Recipe.csv", base_path)),
@@ -74,13 +80,35 @@ fn read_csv_vec<T: FromCsv>(path: &str) -> Vec<T> {
         .from_path(path)
         .unwrap_or_else(|_| panic!("Failed to open csv at {}", path));
     let mut records = reader.records();
-    let header: Vec<String> = records
-        .next()
-        .expect("Missing header")
-        .unwrap()
+
+    let first_row = records.next().expect("Missing header").unwrap();
+    let mut header_row = first_row.clone();
+
+    if first_row.get(0) == Some("key") {
+        // SaintCoinach format (CN/KO/TC)
+        header_row = records.next().expect("Missing second header row").unwrap();
+        // Skip the type row
+        let _ = records.next();
+    }
+
+    let header: Vec<String> = header_row
         .iter()
-        .map(|s| s.to_string())
+        .map(|s| {
+            let mut s = s
+                .replace("{", "")
+                .replace("}", "")
+                .replace("<%>", "Percent")
+                .replace("ItemIngredient", "Ingredient");
+
+            // Map SaintCoinach's Item{Receive}[x][0] to English's Item[x].Item[0]
+            if s.starts_with("ItemReceive[") && s.ends_with("][0]") {
+                let num = &s[12..s.len() - 4];
+                s = format!("Item[{}].Item[0]", num);
+            }
+            s
+        })
         .collect();
+
     records
         .map(|r| T::from_csv_row(&header, &r.unwrap()))
         .collect()

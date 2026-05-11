@@ -12,8 +12,9 @@ pub fn bincode(lang: Language) -> &'static [u8] {
         Language::Ja => include_bytes!(concat!(env!("OUT_DIR"), "/database_ja.bincode")),
         Language::De => include_bytes!(concat!(env!("OUT_DIR"), "/database_de.bincode")),
         Language::Fr => include_bytes!(concat!(env!("OUT_DIR"), "/database_fr.bincode")),
-        Language::Cn => &[], // Not yet supported
-        Language::Ko => &[], // Not yet supported
+        Language::Cn => include_bytes!(concat!(env!("OUT_DIR"), "/database_cn.bincode")),
+        Language::Ko => include_bytes!(concat!(env!("OUT_DIR"), "/database_ko.bincode")),
+        Language::Tc => include_bytes!(concat!(env!("OUT_DIR"), "/database_tc.bincode")),
     }
 }
 
