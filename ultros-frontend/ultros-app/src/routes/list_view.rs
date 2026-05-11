@@ -396,16 +396,18 @@ pub fn ListView() -> impl IntoView {
                                                     <thead>
                                                         <tr>
                                                             <th
+                                                                scope="col"
                                                                 class="text-left p-2"
                                                                 class:hidden=move || !edit_list_mode()
                                                             >
                                                                 "✅"
                                                             </th>
-                                                            <th class="text-left p-2">"HQ"</th>
-                                                            <th class="text-left p-2">"Item"</th>
-                                                            <th class="text-left p-2">"Quantity"</th>
-                                                            <th class="text-left p-2">"Price"</th>
+                                                            <th scope="col" class="text-left p-2">"HQ"</th>
+                                                            <th scope="col" class="text-left p-2">"Item"</th>
+                                                            <th scope="col" class="text-left p-2">"Quantity"</th>
+                                                            <th scope="col" class="text-left p-2">"Price"</th>
                                                             <th
+                                                                scope="col"
                                                                 class="text-left p-2"
                                                                 class:hidden=edit_list_mode
                                                             >

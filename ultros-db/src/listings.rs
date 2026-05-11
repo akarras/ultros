@@ -34,6 +34,8 @@ pub type ListingUpdate = (
     Vec<(ActiveListing, Retainer)>,
 );
 
+pub type ListingsWithRetainers = Vec<(active_listing::Model, Option<retainer::Model>)>;
+
 struct ListingData(active_listing::Model, retainer::Model);
 
 impl PartialOrd<ListingView> for ListingData {
@@ -143,6 +145,43 @@ impl UltrosDb {
     }
 
     #[instrument(skip(self))]
+    pub async fn get_listings_for_items(
+        &self,
+        worlds: &[i32],
+        items: &[i32],
+    ) -> Result<HashMap<i32, ListingsWithRetainers>> {
+        let instant = Instant::now();
+        // OPTIMIZATION: Fetch all listings in one query
+        let listings = active_listing::Entity::find()
+            .filter(active_listing::Column::ItemId.is_in(items.to_vec()))
+            .filter(active_listing::Column::WorldId.is_in(worlds.to_vec()))
+            .all(&self.db)
+            .await?;
+
+        let retainers = retainer::Entity::find()
+            .filter(retainer::Column::Id.is_in(listings.iter().map(|l| l.retainer_id).unique()))
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .map(|r| (r.id, r))
+            .collect::<HashMap<_, _>>();
+
+        let mut result: HashMap<i32, ListingsWithRetainers> = HashMap::new();
+
+        for listing in listings {
+            let retainer = retainers.get(&listing.retainer_id).cloned();
+            result
+                .entry(listing.item_id)
+                .or_default()
+                .push((listing, retainer));
+        }
+
+        histogram!("ultros_db_query_multiple_listings_all_world_with_retainers_duration_seconds")
+            .record(instant.elapsed());
+        Ok(result)
+    }
+
+    #[instrument(skip(self))]
     pub async fn get_all_listings_in_worlds(
         &self,
         worlds: &Vec<i32>,
@@ -152,6 +191,21 @@ impl UltrosDb {
         let listings = active_listing::Entity::find()
             .filter(active_listing::Column::ItemId.eq(item.0))
             .filter(active_listing::Column::WorldId.is_in(worlds.clone()))
+            .all(&self.db)
+            .await?;
+        Ok(listings)
+    }
+
+    #[instrument(skip(self))]
+    pub async fn get_listings_for_items_in_worlds(
+        &self,
+        worlds: &[i32],
+        items: &[i32],
+    ) -> Result<Vec<active_listing::Model>> {
+        // OPTIMIZATION: Fetch all listings for all items in one query
+        let listings = active_listing::Entity::find()
+            .filter(active_listing::Column::ItemId.is_in(items.to_vec()))
+            .filter(active_listing::Column::WorldId.is_in(worlds.to_vec()))
             .all(&self.db)
             .await?;
         Ok(listings)
@@ -340,14 +394,13 @@ impl UltrosDb {
                 Result::<usize>::Ok(res.rows_affected as usize)
             })
             .await;
+        let retainers_by_id: HashMap<i32, &retainer::Model> =
+            retainers.values().map(|r| (r.id, r)).collect();
         let added: Vec<_> = added
             .into_iter()
             .flat_map(|l| {
                 l.ok().map(|l| {
-                    let retainer = retainers
-                        .values()
-                        .find(|r| r.id == l.retainer_id)
-                        .unwrap()
+                    let retainer = (*retainers_by_id.get(&l.retainer_id).unwrap())
                         .clone()
                         .into();
                     (l.into(), retainer)

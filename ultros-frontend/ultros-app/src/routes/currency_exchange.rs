@@ -170,6 +170,8 @@ fn FilterModal(filter_name: &'static str) -> impl IntoView {
                                         <ParseableInputBox
                                             input=Signal::derive(max)
                                             set_value=SignalSetter::map(set_max)
+                                            aria_label=format!("Max {}", filter_name.replace("_", " "))
+                                            placeholder="Max"
                                         />
                                     </div>
                                     <div class="flex items-center justify-between">
@@ -177,6 +179,8 @@ fn FilterModal(filter_name: &'static str) -> impl IntoView {
                                         <ParseableInputBox
                                             input=Signal::derive(min)
                                             set_value=SignalSetter::map(set_min)
+                                            aria_label=format!("Min {}", filter_name.replace("_", " "))
+                                            placeholder="Min"
                                         />
                                     </div>
                                 </div>
@@ -403,6 +407,8 @@ pub fn ExchangeItem() -> impl IntoView {
                                         <ParseableInputBox
                                             input=Signal::derive(min)
                                             set_value=SignalSetter::map(set_min)
+                                            aria_label="Min Price Per Item"
+                                            placeholder="Min"
                                         />
                                     </div>
                                     <div class="flex items-center justify-between">
@@ -410,6 +416,8 @@ pub fn ExchangeItem() -> impl IntoView {
                                         <ParseableInputBox
                                             input=Signal::derive(max)
                                             set_value=SignalSetter::map(set_max)
+                                            aria_label="Max Price Per Item"
+                                            placeholder="Max"
                                         />
                                     </div>
                                 </div>
@@ -431,6 +439,8 @@ pub fn ExchangeItem() -> impl IntoView {
                                         <ParseableInputBox
                                             input=Signal::derive(min)
                                             set_value=SignalSetter::map(set_min)
+                                            aria_label="Min Quantity Received"
+                                            placeholder="Min"
                                         />
                                     </div>
                                     <div class="flex items-center justify-between">
@@ -438,6 +448,8 @@ pub fn ExchangeItem() -> impl IntoView {
                                         <ParseableInputBox
                                             input=Signal::derive(max)
                                             set_value=SignalSetter::map(set_max)
+                                            aria_label="Max Quantity Received"
+                                            placeholder="Max"
                                         />
                                     </div>
                                 </div>
@@ -459,6 +471,8 @@ pub fn ExchangeItem() -> impl IntoView {
                                         <ParseableInputBox
                                             input=Signal::derive(min)
                                             set_value=SignalSetter::map(set_min)
+                                            aria_label="Min Profit"
+                                            placeholder="Min"
                                         />
                                     </div>
                                     <div class="flex items-center justify-between">
@@ -466,6 +480,8 @@ pub fn ExchangeItem() -> impl IntoView {
                                         <ParseableInputBox
                                             input=Signal::derive(max)
                                             set_value=SignalSetter::map(set_max)
+                                            aria_label="Max Profit"
+                                            placeholder="Max"
                                         />
                                     </div>
                                 </div>
@@ -487,6 +503,8 @@ pub fn ExchangeItem() -> impl IntoView {
                                         <ParseableInputBox
                                             input=Signal::derive(min)
                                             set_value=SignalSetter::map(set_min)
+                                            aria_label="Min Hours Between Sales"
+                                            placeholder="Min"
                                         />
                                     </div>
                                     <div class="flex items-center justify-between">
@@ -494,6 +512,8 @@ pub fn ExchangeItem() -> impl IntoView {
                                         <ParseableInputBox
                                             input=Signal::derive(max)
                                             set_value=SignalSetter::map(set_max)
+                                            aria_label="Max Hours Between Sales"
+                                            placeholder="Max"
                                         />
                                     </div>
                                 </div>
@@ -600,10 +620,10 @@ pub fn ExchangeItem() -> impl IntoView {
                                 let s = s_res.as_ref().and_then(|r| r.as_ref().ok());
                                 let l = l_res.as_ref().and_then(|r| r.as_ref().ok());
                                 let q = currency_quantity.get();
-                                compute_prices(s, l, q).map(|p: Vec<CurrencyTrade>| {
-                                    let mut rows = p.clone();
+                                compute_prices(s, l, q).map(|mut rows: Vec<CurrencyTrade>| {
                                     rows.sort_by(|a, b| b.total_profit.cmp(&a.total_profit));
-                                    let top = rows.into_iter().take(5).collect::<Vec<_>>();
+                                    rows.truncate(5);
+                                    let top = rows;
                                     view! {
                                         <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-5 gap-3 mb-4 items-stretch">
                                             {top.into_iter().map(|t| view! {
@@ -735,7 +755,7 @@ pub fn ExchangeItem() -> impl IntoView {
                                                                 .filter(|(i, _)| *i <= 6)
                                                                 .map(|(i, l)| {
                                                                     view! {
-                                                                        <th class="px-6 py-3">
+                                                                        <th scope="col" class="px-6 py-3">
                                                                             <div class="flex flex-row items-center gap-2">
                                                                                 <QueryButton
                                                                                     key="sorted-by"
