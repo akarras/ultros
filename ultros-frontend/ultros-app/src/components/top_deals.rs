@@ -17,7 +17,7 @@ fn DealItem(deal: ResaleStatsDto, home_world_name: String) -> impl IntoView {
     view! {
         <a
             href=format!("/item/{}/{}", home_world_name, deal.item_id)
-            class="group block p-4 rounded-xl bg-[color:var(--surface-color)] hover:bg-[color:var(--surface-color-hover)] transition-all duration-200 border border-[color:var(--separator-color)] hover:border-[color:var(--brand-ring)] hover:shadow-lg relative overflow-hidden"
+            class="card group block relative overflow-hidden"
         >
             <div class="absolute top-0 right-0 p-2 opacity-10 group-hover:opacity-20 transition-opacity pointer-events-none">
                  <Icon icon=i::FaMoneyBillTrendUpSolid width="3em" height="3em" />
@@ -58,8 +58,13 @@ pub fn TopDeals() -> impl IntoView {
         },
     );
 
+    let view_all_href = move || match home_world.get() {
+        Some(w) => format!("/flip-finder/{}", w.name),
+        None => "/flip-finder".to_string(),
+    };
+
     view! {
-        <div class="panel p-6 rounded-2xl bg-gradient-to-br from-[color:var(--surface-color)] to-[color:var(--surface-color-hover)] relative overflow-hidden">
+        <div class="panel p-6 relative overflow-hidden">
             <div class="flex items-center justify-between mb-6 relative z-10">
                 <div class="flex items-center gap-3">
                     <div class="p-2 rounded-lg bg-[color:var(--brand-bg)] text-[color:var(--brand-fg)]">
@@ -75,7 +80,7 @@ pub fn TopDeals() -> impl IntoView {
                     </div>
                 </div>
                 <a
-                    href="/flip-finder"
+                    href=view_all_href
                     class="text-sm font-medium text-[color:var(--brand-fg)] hover:text-[color:var(--brand-fg-hover)] hover:underline flex items-center gap-1 transition-colors"
                 >
                     "View All" <span class="text-xs flex items-center"><Icon icon=i::FaArrowRightSolid /></span>
