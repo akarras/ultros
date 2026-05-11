@@ -8,7 +8,7 @@ license = "MIT"
 
 [dependencies]
 ultros-api-types = {path = "../../ultros-api-types"}
-tar = "0.4.38"
+tar = "0.4.45"
 flate2 = "1.0.25"
 once_cell = "1.17"
 
@@ -19,5 +19,5 @@ tokio = {version = "^1", features = ["rt-multi-thread", "macros", "fs"]}
 indicatif = {version = "*"}
 futures = "0.3.26"
 tempfile = "3"
-tar = "0.4.38"
+tar = "0.4.45"
 flate2 = "1.0.25"
