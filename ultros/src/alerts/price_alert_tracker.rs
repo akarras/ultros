@@ -80,9 +80,16 @@ impl PriceAlertListener {
                 tokio::select! {
                     _ = stop_rx.recv() => break,
                     msg = listings.recv() => {
-                        let Ok(event) = msg else { continue };
-                        if let EventType::Add(added) = event {
-                            handle_added(&added, &state_for_loop, &db_for_loop, &ctx).await;
+                        match msg {
+                            Ok(event) => {
+                                if let EventType::Add(added) = event {
+                                    handle_added(&added, &state_for_loop, &db_for_loop, &ctx).await;
+                                }
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                                error!("price-alert tracker lagged, dropped {n} listing events");
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                         }
                     }
                 }
