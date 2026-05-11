@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use cfg_if::cfg_if;
@@ -8,6 +9,7 @@ use leptos::{html::Canvas, prelude::*};
 use leptos_use::use_element_size;
 use plotters_canvas::CanvasBackend;
 use ultros_api_types::SaleHistory;
+use ultros_api_types::world_helper::AnySelector;
 
 use ultros_charts::ChartOptions;
 use ultros_charts::draw_sale_history_scatter_plot;
@@ -16,6 +18,72 @@ use crate::components::skeleton::BoxSkeleton;
 use crate::global_state::LocalWorldData;
 use crate::global_state::theme::use_theme_settings;
 use crate::global_state::xiv_data::tracked_data;
+
+type SeriesPoints = Vec<(chrono::DateTime<chrono::Local>, i32, i32)>;
+
+/// Roll sales up to world / DC / region depending on how many distinct regions
+/// and DCs are represented. Mirrors the rule in `ultros-charts::map_sale_history_to_line`.
+fn group_sales_by_locale(
+    helper: &ultros_api_types::world_helper::WorldHelper,
+    sales: &[SaleHistory],
+) -> Vec<(String, SeriesPoints)> {
+    use itertools::Itertools;
+
+    let world_ids: HashSet<AnySelector> = sales
+        .iter()
+        .map(|s| AnySelector::World(s.world_id))
+        .collect();
+    let datacenters: HashSet<AnySelector> = world_ids
+        .iter()
+        .flat_map(|w| {
+            helper
+                .lookup_selector(*w)
+                .and_then(|r| r.as_world())
+                .map(|w| AnySelector::Datacenter(w.datacenter_id))
+        })
+        .collect();
+    let regions: HashSet<AnySelector> = datacenters
+        .iter()
+        .flat_map(|dc| {
+            helper
+                .lookup_selector(*dc)
+                .and_then(|r| r.as_datacenter())
+                .map(|dc| AnySelector::Region(dc.region_id))
+        })
+        .collect();
+    let selectors = if datacenters.len() == 1 {
+        world_ids
+    } else if regions.len() == 1 {
+        datacenters
+    } else {
+        regions
+    };
+    selectors
+        .into_iter()
+        .filter_map(|sel| {
+            let result = helper.lookup_selector(sel)?;
+            let name = result.get_name().to_string();
+            let points: SeriesPoints = sales
+                .iter()
+                .filter(|s| {
+                    helper
+                        .lookup_selector(AnySelector::World(s.world_id))
+                        .map(|w| w.is_in(&result))
+                        .unwrap_or_default()
+                })
+                .filter_map(|s| {
+                    Some((
+                        s.sold_date.and_local_timezone(chrono::Local).single()?,
+                        s.price_per_item,
+                        s.quantity,
+                    ))
+                })
+                .collect();
+            Some((name, points))
+        })
+        .sorted_by_cached_key(|(name, _)| name.clone())
+        .collect()
+}
 
 #[component]
 pub fn PriceHistoryChart(
@@ -216,4 +284,115 @@ pub fn PriceHistoryChart(
         </div>
     }
     .into_any()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+    use ultros_api_types::world::{Datacenter, Region, World, WorldData};
+    use ultros_api_types::world_helper::WorldHelper;
+
+    fn test_world_helper() -> WorldHelper {
+        // Two regions; region 1 has two DCs; DC 10 has two worlds, DC 11 has one, DC 20 (region 2) has one.
+        let world_data = WorldData {
+            regions: vec![
+                Region {
+                    id: 1,
+                    name: "North-America".into(),
+                    datacenters: vec![
+                        Datacenter {
+                            id: 10,
+                            name: "Aether".into(),
+                            region_id: 1,
+                            worlds: vec![
+                                World {
+                                    id: 100,
+                                    name: "Gilgamesh".into(),
+                                    datacenter_id: 10,
+                                },
+                                World {
+                                    id: 101,
+                                    name: "Adamantoise".into(),
+                                    datacenter_id: 10,
+                                },
+                            ],
+                        },
+                        Datacenter {
+                            id: 11,
+                            name: "Crystal".into(),
+                            region_id: 1,
+                            worlds: vec![World {
+                                id: 102,
+                                name: "Balmung".into(),
+                                datacenter_id: 11,
+                            }],
+                        },
+                    ],
+                },
+                Region {
+                    id: 2,
+                    name: "Europe".into(),
+                    datacenters: vec![Datacenter {
+                        id: 20,
+                        name: "Light".into(),
+                        region_id: 2,
+                        worlds: vec![World {
+                            id: 200,
+                            name: "Phoenix".into(),
+                            datacenter_id: 20,
+                        }],
+                    }],
+                },
+            ],
+        };
+        WorldHelper::from(world_data)
+    }
+
+    fn sale(world_id: i32, price: i32, qty: i32, ts: i64) -> SaleHistory {
+        SaleHistory {
+            id: 0,
+            quantity: qty,
+            price_per_item: price,
+            buying_character_id: 0,
+            hq: false,
+            sold_item_id: 1,
+            sold_date: chrono::Utc.timestamp_opt(ts, 0).unwrap().naive_utc(),
+            world_id,
+            buyer_name: None,
+        }
+    }
+
+    #[test]
+    fn grouping_collapses_to_world_when_one_dc() {
+        let helper = test_world_helper();
+        // Both sales are on worlds inside Aether (DC 10) → one DC → group by world.
+        let sales = vec![sale(100, 1000, 1, 0), sale(101, 1100, 1, 1)];
+        let series = group_sales_by_locale(&helper, &sales);
+        let names: Vec<_> = series.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(names.contains(&"Gilgamesh"));
+        assert!(names.contains(&"Adamantoise"));
+    }
+
+    #[test]
+    fn grouping_collapses_to_dc_when_one_region() {
+        let helper = test_world_helper();
+        // Two DCs (Aether, Crystal) both in NA → one region → group by DC.
+        let sales = vec![sale(100, 1000, 1, 0), sale(102, 1100, 1, 1)];
+        let series = group_sales_by_locale(&helper, &sales);
+        let names: Vec<_> = series.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(names.contains(&"Aether"));
+        assert!(names.contains(&"Crystal"));
+    }
+
+    #[test]
+    fn grouping_collapses_to_region_when_multiple_regions() {
+        let helper = test_world_helper();
+        // Worlds from two regions → group by region.
+        let sales = vec![sale(100, 1000, 1, 0), sale(200, 1100, 1, 1)];
+        let series = group_sales_by_locale(&helper, &sales);
+        let names: Vec<_> = series.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(names.contains(&"North-America"));
+        assert!(names.contains(&"Europe"));
+    }
 }
