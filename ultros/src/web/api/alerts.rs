@@ -40,9 +40,8 @@ pub(crate) async fn create_alert(
         ),
     };
 
-    let world_selector_json = serde_json::to_value(&world_selector).map_err(|e| {
-        ApiError::from(anyhow::anyhow!("invalid world_selector: {}", e))
-    })?;
+    let world_selector_json = serde_json::to_value(&world_selector)
+        .map_err(|e| ApiError::from(anyhow::anyhow!("invalid world_selector: {}", e)))?;
 
     let alert = db
         .create_threshold_alert(
@@ -84,9 +83,8 @@ pub(crate) async fn list_alerts(
         .map_err(ApiError::from)?;
     let mut out = Vec::with_capacity(rows.len());
     for (a, t) in rows {
-        let world_selector = serde_json::from_value(t.world_selector.clone()).map_err(|e| {
-            ApiError::from(anyhow::anyhow!("bad world_selector in db: {}", e))
-        })?;
+        let world_selector = serde_json::from_value(t.world_selector.clone())
+            .map_err(|e| ApiError::from(anyhow::anyhow!("bad world_selector in db: {}", e)))?;
         out.push(Alert {
             id: a.id,
             trigger: AlertTrigger::BelowThreshold {

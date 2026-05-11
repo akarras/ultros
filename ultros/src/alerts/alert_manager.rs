@@ -62,7 +62,14 @@ impl AlertManager {
             }
             Err(e) => error!("Error creating all alerts {e:?}"),
         }
-        match PriceAlertListener::start(ultros_db.clone(), listings.resubscribe(), ctx.clone(), world_cache).await {
+        match PriceAlertListener::start(
+            ultros_db.clone(),
+            listings.resubscribe(),
+            ctx.clone(),
+            world_cache,
+        )
+        .await
+        {
             Ok(listener) => manager.price_alerts = Some(listener),
             Err(e) => error!("failed to start price alert listener: {e}"),
         }

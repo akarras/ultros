@@ -2,8 +2,8 @@ use crate::UltrosDb;
 use crate::entity::*;
 use anyhow::Result;
 use futures::future::try_join_all;
-use sea_orm::*;
 use sea_orm::sea_query::Expr;
+use sea_orm::*;
 
 impl UltrosDb {
     pub async fn get_alert(&self, alert_id: i32) -> Result<Option<alert::Model>> {
@@ -216,12 +216,7 @@ impl UltrosDb {
             .collect())
     }
 
-    pub async fn set_alert_enabled(
-        &self,
-        owner: i64,
-        alert_id: i32,
-        enabled: bool,
-    ) -> Result<()> {
+    pub async fn set_alert_enabled(&self, owner: i64, alert_id: i32, enabled: bool) -> Result<()> {
         let alert = alert::Entity::find_by_id(alert_id)
             .filter(alert::Column::Owner.eq(owner))
             .one(&self.db)

@@ -63,7 +63,12 @@ impl MigrationTrait for Migration {
                             .integer()
                             .not_null(),
                     )
-                    .col(ColumnDef::new(AlertItemThreshold::HqOnly).boolean().not_null().default(false))
+                    .col(
+                        ColumnDef::new(AlertItemThreshold::HqOnly)
+                            .boolean()
+                            .not_null()
+                            .default(false),
+                    )
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_alert_item_threshold_alert_id")

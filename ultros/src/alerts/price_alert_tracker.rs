@@ -15,8 +15,8 @@ use ultros_db::{
     world_data::world_cache::WorldCache,
 };
 
-use crate::event::{EventBus, EventType};
 use crate::alerts::delivery::dispatch_alert;
+use crate::event::{EventBus, EventType};
 
 pub(crate) fn is_off_cooldown(last_fired_at: Option<DateTime<Utc>>, cooldown_seconds: i32) -> bool {
     match last_fired_at {
@@ -54,32 +54,34 @@ impl TrackerState {
                 continue;
             }
             // Deserialize and resolve the world_selector to a flat set of world IDs.
-            let world_id_set: HashSet<i32> = match serde_json::from_value::<ApiAnySelector>(t.world_selector.clone()) {
-                Ok(api_selector) => {
-                    let selector: ultros_db::world_data::world_cache::AnySelector = api_selector.into();
-                    match world_cache.lookup_selector(&selector) {
-                        Ok(result) => world_cache
-                            .get_all_worlds_in(&result)
-                            .unwrap_or_default()
-                            .into_iter()
-                            .collect(),
-                        Err(e) => {
-                            warn!(
-                                alert_id = a.id,
-                                "could not resolve world_selector for alert: {e}"
-                            );
-                            HashSet::new()
+            let world_id_set: HashSet<i32> =
+                match serde_json::from_value::<ApiAnySelector>(t.world_selector.clone()) {
+                    Ok(api_selector) => {
+                        let selector: ultros_db::world_data::world_cache::AnySelector =
+                            api_selector.into();
+                        match world_cache.lookup_selector(&selector) {
+                            Ok(result) => world_cache
+                                .get_all_worlds_in(&result)
+                                .unwrap_or_default()
+                                .into_iter()
+                                .collect(),
+                            Err(e) => {
+                                warn!(
+                                    alert_id = a.id,
+                                    "could not resolve world_selector for alert: {e}"
+                                );
+                                HashSet::new()
+                            }
                         }
                     }
-                }
-                Err(e) => {
-                    warn!(
-                        alert_id = a.id,
-                        "could not deserialize world_selector for alert: {e}"
-                    );
-                    HashSet::new()
-                }
-            };
+                    Err(e) => {
+                        warn!(
+                            alert_id = a.id,
+                            "could not deserialize world_selector for alert: {e}"
+                        );
+                        HashSet::new()
+                    }
+                };
             self.by_item.entry(t.item_id).or_default().push(ActiveRule {
                 alert_id: a.id,
                 item_id: t.item_id,
@@ -94,7 +96,12 @@ impl TrackerState {
 }
 
 pub(crate) struct PriceAlertListener {
-    pub(crate) stop_tx: tokio::sync::mpsc::Sender<()>,
+    /// Held to keep the channel sender alive — when `PriceAlertListener` is
+    /// dropped, the corresponding `stop_rx.recv()` in the spawned task returns
+    /// `None`, ending the loop. Also reserved for future explicit shutdown
+    /// (e.g., on `AlertManager`'s cancellation token).
+    #[allow(dead_code)]
+    stop_tx: tokio::sync::mpsc::Sender<()>,
 }
 
 impl PriceAlertListener {
@@ -150,7 +157,9 @@ async fn handle_added(
     {
         let mut guard = state.lock().await;
         for (listing, _retainer) in &added.listings {
-            let Some(rules) = guard.by_item.get_mut(&listing.item_id) else { continue };
+            let Some(rules) = guard.by_item.get_mut(&listing.item_id) else {
+                continue;
+            };
             for rule in rules.iter_mut() {
                 if !rule.world_id_set.contains(&listing.world_id) {
                     continue;
@@ -197,12 +206,16 @@ async fn handle_added(
             )
             .await
         {
-            error!("failed to record alert_event for alert {}: {e}", rule.alert_id);
+            error!(
+                "failed to record alert_event for alert {}: {e}",
+                rule.alert_id
+            );
         }
-        if delivered
-            && let Err(e) = db.update_alert_last_fired(rule.alert_id).await
-        {
-            error!("failed to update last_fired_at for alert {}: {e}", rule.alert_id);
+        if delivered && let Err(e) = db.update_alert_last_fired(rule.alert_id).await {
+            error!(
+                "failed to update last_fired_at for alert {}: {e}",
+                rule.alert_id
+            );
         }
     }
 }
