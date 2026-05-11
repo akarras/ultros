@@ -291,6 +291,27 @@ impl UltrosDb {
         Ok(())
     }
 
+    /// Return all notification endpoints linked to an alert via alert_notification_rule.
+    pub async fn get_notification_endpoints_for_alert(
+        &self,
+        alert_id: i32,
+    ) -> Result<Vec<notification_endpoint::Model>> {
+        let rules = alert_notification_rule::Entity::find()
+            .filter(alert_notification_rule::Column::AlertId.eq(alert_id))
+            .all(&self.db)
+            .await?;
+
+        let endpoint_ids: Vec<i32> = rules.into_iter().map(|r| r.endpoint_id).collect();
+        if endpoint_ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        Ok(notification_endpoint::Entity::find()
+            .filter(notification_endpoint::Column::Id.is_in(endpoint_ids))
+            .all(&self.db)
+            .await?)
+    }
+
     pub async fn update_alert_last_fired(&self, alert_id: i32) -> Result<()> {
         alert::Entity::update_many()
             .col_expr(
