@@ -8809,6 +8809,7 @@ dependencies = [
  "ultros-db",
  "ultros-xiv-icons",
  "universalis",
+ "url",
  "xiv-gen",
  "xiv-gen-db",
 ]

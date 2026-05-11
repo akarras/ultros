@@ -308,6 +308,23 @@ impl UltrosDb {
             .await?)
     }
 
+    pub async fn get_first_endpoint_for_alert(
+        &self,
+        alert_id: i32,
+    ) -> Result<Option<notification_endpoint::Model>> {
+        let rules = alert_notification_rule::Entity::find()
+            .filter(alert_notification_rule::Column::AlertId.eq(alert_id))
+            .all(&self.db)
+            .await?;
+        if let Some(rule) = rules.first() {
+            Ok(notification_endpoint::Entity::find_by_id(rule.endpoint_id)
+                .one(&self.db)
+                .await?)
+        } else {
+            Ok(None)
+        }
+    }
+
     pub async fn update_alert_last_fired(&self, alert_id: i32) -> Result<()> {
         alert::Entity::update_many()
             .col_expr(
