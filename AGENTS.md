@@ -63,10 +63,10 @@ LEPTOS_FEATURES=test-auth ./scripts/run_e2e.sh
 
 ### Caveats
 
-- Requires a populated `.env` (DATABASE_URL, DISCORD_*, KEY).
+- Requires a populated `.env` (DATABASE_URL, DISCORD_*, KEY) — or those vars exported directly.
 - Windows: process-group cleanup is best-effort; if `cargo leptos serve` lingers, kill it manually.
 
-In CI the `e2e` job in `.github/workflows/rust.yml` runs the same flow against a postgres service container with a dummy `DISCORD_TOKEN` (the bot panic is non-fatal — see the gotchas section below) and `LEPTOS_FEATURES=test-auth`. Screenshots and the server log are uploaded as artifacts.
+E2E is currently run locally only — not wired into GitHub Actions. Run `./scripts/run_e2e.sh` before merging anything that touches routing, hydration, or the analyzer service.
 
 ## Cursor Cloud specific instructions
 
