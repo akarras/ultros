@@ -1,3 +1,4 @@
+pub mod alert;
 pub mod cheapest_listings;
 mod ffxiv_character;
 pub mod icon_size;

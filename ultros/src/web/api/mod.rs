@@ -1,3 +1,4 @@
+pub(crate) mod alerts;
 mod best_deals;
 mod cheapest_per_world;
 pub(crate) mod real_time_data;

@@ -5,6 +5,8 @@ pub mod prelude;
 pub mod active_listing;
 pub mod alert;
 pub mod alert_discord_destination;
+pub mod alert_event;
+pub mod alert_item_threshold;
 pub mod alert_notification_rule;
 pub mod alert_price;
 pub mod alert_retainer_undercut;

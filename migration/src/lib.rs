@@ -23,6 +23,7 @@ mod m20230918_033709_remove_junk_pk_from_listing;
 mod m20240203_230653_add_list_item_owned_quantity;
 mod m20240424_000001_create_notification_endpoints;
 mod m20240520_000001_shared_lists;
+mod m20260510_000001_price_alert_phase1;
 
 pub struct Migrator;
 
@@ -55,6 +56,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20240203_230653_add_list_item_owned_quantity::Migration),
             Box::new(m20240424_000001_create_notification_endpoints::Migration),
             Box::new(m20240520_000001_shared_lists::Migration),
+            Box::new(m20260510_000001_price_alert_phase1::Migration),
         ]
     }
 }
