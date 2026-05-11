@@ -3,10 +3,10 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::hash::Hasher;
 
-use crate::Ad;
 use crate::Tooltip;
 use crate::api::get_cheapest_listings;
 use crate::api::get_recent_sales_for_world;
+use crate::components::ad::Ad;
 use crate::components::add_to_list::AddToList;
 use crate::components::clipboard::Clipboard;
 use crate::components::filter_card::FilterCard;
@@ -1013,7 +1013,9 @@ pub fn CurrencySelection() -> impl IntoView {
 pub fn CurrencyExchange() -> impl IntoView {
     let i18n = use_i18n();
     view! {
-        <Ad class="w-full h-[100px]" />
+        <div class="app-inline-ad">
+            <Ad class="w-full h-[100px]" />
+        </div>
         <div class="main-content">
             <A href="/currency-exchange">
                 <h3 class="text-2xl font-bold text-[color:var(--brand-fg)] hover:opacity-90 transition-all ease-in-out duration-500">

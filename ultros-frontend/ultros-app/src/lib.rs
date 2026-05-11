@@ -23,8 +23,8 @@ use crate::global_state::{
 };
 use crate::{
     components::{
-        ad::Ad, apps_menu::*, language_picker::*, patreon::*, search_box::*, theme_picker::*,
-        toast::*, tooltip::*,
+        ad::DesktopAdRail, apps_menu::*, language_picker::*, patreon::*, search_box::*,
+        theme_picker::*, toast::*, tooltip::*,
     },
     routes::{
         about::*,
@@ -305,69 +305,72 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                 // <AnimatedRoutes outro="route-out" intro="route-in" outro_back="route-out-back" intro_back="route-in-back">
                 // https://github.com/leptos-rs/leptos/issues/1754
                 <main class="flex-1">
-                    <div class="mx-auto max-w-7xl px-0 sm:px-4 lg:px-6 py-4 sm:py-6">
-                        <Routes fallback=NotFound>
-                            <Route path=path!("") view=HomePage />
-                            <ParentRoute path=path!("retainers") view=Retainers>
-                                <Route path=path!("edit") view=EditRetainers />
-                                <Route path=path!("undercuts") view=RetainerUndercuts />
-                                <Route path=path!("listings") view=RetainerListings />
-                                <Route path=path!("listings/:id") view=SingleRetainerListings />
-                                <Route path=path!("") view=RetainersBasePath />
-                            </ParentRoute>
-                            <Route path=path!("alerts") view=Alerts />
-                            <ParentRoute path=path!("list") view=Lists>
-                                <Route path=path!(":id") view=ListView />
-                                <Route path=path!("") view=EditLists />
-                            </ParentRoute>
-                            <ParentRoute path=path!("items") view=ItemExplorer>
-                                <Route path=path!("jobset/:jobset") view=JobItems />
-                                <Route path=path!("category/:category") view=CategoryItems />
-                                <Route
-                                    path=path!("")
-                                    view=move || view! { "Choose a category to search!" }
-                                />
-                            </ParentRoute>
-                            <Route path=path!("item/:world/:id") view=ItemView />
-                            <Route path=path!("item/:id") view=ItemView />
-                            <Route path=path!("flip-finder") view=Analyzer />
-                            <Route path=path!("analyzer") view=move || {
-                                let nav = leptos_router::hooks::use_navigate();
-                                Effect::new(move |_| { nav("/flip-finder", Default::default()); });
-                                view! { <div /> }
-                            } />
-                            <Route path=path!("flip-finder/:world") view=AnalyzerWorldView />
-                            <Route path=path!("vendor-resale") view=VendorResale />
-                            <Route path=path!("vendor-resale/:world") view=VendorWorldView />
-                            <Route path=path!("recipe-analyzer") view=RecipeAnalyzer />
-                            <Route path=path!("fc-crafting-analyzer") view=FCCraftingAnalyzer />
-                            <Route path=path!("fc-crafting-analyzer/:world") view=FCCraftingAnalyzer />
-                            <Route path=path!("leve-analyzer") view=LeveAnalyzer />
-                            <Route path=path!("scrip-sources") view=ScripSources />
-                            <Route path=path!("venture-analyzer") view=VentureAnalyzer />
-                            <Route path=path!("analyzer/:world") view=move || {
-                                let nav = leptos_router::hooks::use_navigate();
-                                let params = leptos_router::hooks::use_params_map();
-                                Effect::new(move |_| {
-                                    let w = params.with_untracked(|p| p.get("world").clone().unwrap_or_default());
-                                    let to = format!("/flip-finder/{}", w);
-                                    nav(&to, Default::default());
-                                });
-                                view! { <div /> }
-                            } />
-                            <Route path=path!("trends/:world") view=Trends />
-                            <Route path=path!("trends") view=Trends />
-                            <Route path=path!("settings") view=Settings />
-                            <Route path=path!("profile") view=Profile />
-                            <Route path=path!("privacy") view=PrivacyPolicy />
-                            <Route path=path!("cookie-policy") view=CookiePolicy />
-                            <Route path=path!("about") view=About />
-                            <Route path=path!("history") view=History />
-                            <ParentRoute path=path!("currency-exchange") view=CurrencyExchange>
-                                <Route path=path!(":id") view=ExchangeItem />
-                                <Route path=path!("") view=CurrencySelection />
-                            </ParentRoute>
-                        </Routes>
+                    <div class="app-route-shell">
+                        <div class="app-route-content">
+                            <Routes fallback=NotFound>
+                                <Route path=path!("") view=HomePage />
+                                <ParentRoute path=path!("retainers") view=Retainers>
+                                    <Route path=path!("edit") view=EditRetainers />
+                                    <Route path=path!("undercuts") view=RetainerUndercuts />
+                                    <Route path=path!("listings") view=RetainerListings />
+                                    <Route path=path!("listings/:id") view=SingleRetainerListings />
+                                    <Route path=path!("") view=RetainersBasePath />
+                                </ParentRoute>
+                                <Route path=path!("alerts") view=Alerts />
+                                <ParentRoute path=path!("list") view=Lists>
+                                    <Route path=path!(":id") view=ListView />
+                                    <Route path=path!("") view=EditLists />
+                                </ParentRoute>
+                                <ParentRoute path=path!("items") view=ItemExplorer>
+                                    <Route path=path!("jobset/:jobset") view=JobItems />
+                                    <Route path=path!("category/:category") view=CategoryItems />
+                                    <Route
+                                        path=path!("")
+                                        view=move || view! { "Choose a category to search!" }
+                                    />
+                                </ParentRoute>
+                                <Route path=path!("item/:world/:id") view=ItemView />
+                                <Route path=path!("item/:id") view=ItemView />
+                                <Route path=path!("flip-finder") view=Analyzer />
+                                <Route path=path!("analyzer") view=move || {
+                                    let nav = leptos_router::hooks::use_navigate();
+                                    Effect::new(move |_| { nav("/flip-finder", Default::default()); });
+                                    view! { <div /> }
+                                } />
+                                <Route path=path!("flip-finder/:world") view=AnalyzerWorldView />
+                                <Route path=path!("vendor-resale") view=VendorResale />
+                                <Route path=path!("vendor-resale/:world") view=VendorWorldView />
+                                <Route path=path!("recipe-analyzer") view=RecipeAnalyzer />
+                                <Route path=path!("fc-crafting-analyzer") view=FCCraftingAnalyzer />
+                                <Route path=path!("fc-crafting-analyzer/:world") view=FCCraftingAnalyzer />
+                                <Route path=path!("leve-analyzer") view=LeveAnalyzer />
+                                <Route path=path!("scrip-sources") view=ScripSources />
+                                <Route path=path!("venture-analyzer") view=VentureAnalyzer />
+                                <Route path=path!("analyzer/:world") view=move || {
+                                    let nav = leptos_router::hooks::use_navigate();
+                                    let params = leptos_router::hooks::use_params_map();
+                                    Effect::new(move |_| {
+                                        let w = params.with_untracked(|p| p.get("world").clone().unwrap_or_default());
+                                        let to = format!("/flip-finder/{}", w);
+                                        nav(&to, Default::default());
+                                    });
+                                    view! { <div /> }
+                                } />
+                                <Route path=path!("trends/:world") view=Trends />
+                                <Route path=path!("trends") view=Trends />
+                                <Route path=path!("settings") view=Settings />
+                                <Route path=path!("profile") view=Profile />
+                                <Route path=path!("privacy") view=PrivacyPolicy />
+                                <Route path=path!("cookie-policy") view=CookiePolicy />
+                                <Route path=path!("about") view=About />
+                                <Route path=path!("history") view=History />
+                                <ParentRoute path=path!("currency-exchange") view=CurrencyExchange>
+                                    <Route path=path!(":id") view=ExchangeItem />
+                                    <Route path=path!("") view=CurrencySelection />
+                                </ParentRoute>
+                            </Routes>
+                        </div>
+                        <DesktopAdRail />
                     </div>
                 </main>
             </Router>

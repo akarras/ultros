@@ -1415,3 +1415,73 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 @utility animate-float {
     animation: float 6s ease-in-out infinite;
 }
+
+.app-route-shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    width: 100%;
+    max-width: 80rem;
+    margin-inline: auto;
+    padding: 1rem 0;
+    gap: 2rem;
+    align-items: start;
+}
+
+.app-route-content {
+    min-width: 0;
+}
+
+.app-ad-rail {
+    display: none;
+}
+
+.app-inline-ad {
+    display: block;
+}
+
+.ad-rail-slot {
+    width: 10rem;
+}
+
+@media (min-width: 640px) {
+    .app-route-shell {
+        padding: 1.5rem 1rem;
+    }
+}
+
+@media (min-width: 1024px) {
+    .app-route-shell {
+        padding-inline: 1.5rem;
+    }
+}
+
+@media (min-width: 1536px) {
+    .app-route-shell {
+        max-width: calc(80rem + 10rem + 2rem + 3rem);
+        grid-template-columns: minmax(0, 80rem) 10rem;
+    }
+
+    .app-ad-rail {
+        display: block;
+        min-width: 0;
+    }
+
+    .app-ad-rail:has(.ad.hidden) {
+        display: none;
+    }
+
+    .app-inline-ad {
+        display: none;
+    }
+}
+
+@media (min-width: 1660px) {
+    .app-route-shell {
+        max-width: calc(80rem + 18.75rem + 2rem + 3rem);
+        grid-template-columns: minmax(0, 80rem) 18.75rem;
+    }
+
+    .ad-rail-slot {
+        width: 18.75rem;
+    }
+}
