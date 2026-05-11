@@ -36,11 +36,12 @@ DEVICE="${DEVICE:-both}"
 
 log() { printf '[e2e] %s\n' "$*" >&2; }
 
-if [ ! -f .env ]; then
+if [ ! -f .env ] && [ -z "${DATABASE_URL:-}" ]; then
     cat >&2 <<'EOF'
-[e2e] .env not found. Copy one from a sibling worktree, e.g.:
-    cp ../../.env .
-or populate from .env.example. The app needs DISCORD_*, DATABASE_URL, KEY.
+[e2e] Neither .env nor DATABASE_URL is set. Either:
+    - copy an .env from a sibling worktree (`cp ../../.env .`), or
+    - export the required vars directly (DATABASE_URL, DISCORD_*, KEY,
+      HOSTNAME, PORT) — CI does this via the workflow `env:` block.
 EOF
     exit 1
 fi
