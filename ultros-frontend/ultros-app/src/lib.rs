@@ -49,6 +49,7 @@ use crate::{
         trends::*,
         vendor_resale::*,
         venture_analyzer::*,
+        welcome::*,
     },
 };
 use git_const::git_short_hash;
@@ -359,6 +360,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                                 <Route path=path!("trends/:world") view=Trends />
                                 <Route path=path!("trends") view=Trends />
                                 <Route path=path!("settings") view=Settings />
+                                <Route path=path!("welcome") view=Welcome />
                                 <Route path=path!("profile") view=Profile />
                                 <Route path=path!("privacy") view=PrivacyPolicy />
                                 <Route path=path!("cookie-policy") view=CookiePolicy />
