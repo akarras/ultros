@@ -537,15 +537,15 @@ fn RecipeAnalyzerTable(
                                 }
                             }
                         >
-                            <option value="">"All Jobs"</option>
-                            <option value="CRP" selected=move || job_filter() == Some("CRP".to_string())>"Carpenter"</option>
-                            <option value="BSM" selected=move || job_filter() == Some("BSM".to_string())>"Blacksmith"</option>
-                            <option value="ARM" selected=move || job_filter() == Some("ARM".to_string())>"Armorer"</option>
-                            <option value="GSM" selected=move || job_filter() == Some("GSM".to_string())>"Goldsmith"</option>
-                            <option value="LTW" selected=move || job_filter() == Some("LTW".to_string())>"Leatherworker"</option>
-                            <option value="WVR" selected=move || job_filter() == Some("WVR".to_string())>"Weaver"</option>
-                            <option value="ALC" selected=move || job_filter() == Some("ALC".to_string())>"Alchemist"</option>
-                            <option value="CUL" selected=move || job_filter() == Some("CUL".to_string())>"Culinarian"</option>
+                            <option value="">{t!(i18n, all_jobs)}</option>
+                            <option value="CRP" selected=move || job_filter() == Some("CRP".to_string())>{t!(i18n, carpenter)}</option>
+                            <option value="BSM" selected=move || job_filter() == Some("BSM".to_string())>{t!(i18n, blacksmith)}</option>
+                            <option value="ARM" selected=move || job_filter() == Some("ARM".to_string())>{t!(i18n, armorer)}</option>
+                            <option value="GSM" selected=move || job_filter() == Some("GSM".to_string())>{t!(i18n, goldsmith)}</option>
+                            <option value="LTW" selected=move || job_filter() == Some("LTW".to_string())>{t!(i18n, leatherworker)}</option>
+                            <option value="WVR" selected=move || job_filter() == Some("WVR".to_string())>{t!(i18n, weaver)}</option>
+                            <option value="ALC" selected=move || job_filter() == Some("ALC".to_string())>{t!(i18n, alchemist)}</option>
+                            <option value="CUL" selected=move || job_filter() == Some("CUL".to_string())>{t!(i18n, culinarian)}</option>
                         </select>
                      </div>
                 </FilterCard>
