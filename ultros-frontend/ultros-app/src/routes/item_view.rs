@@ -46,13 +46,13 @@ fn WorldButton(
     let (bg_color, other_styles) = match world {
         OwnedResult::Region(_) => (
             "bg-brand-500/10",
-            "text-lg font-bold text-brand-200 px-4 py-2",
+            "text-sm font-bold text-brand-200 px-3 py-1.5",
         ),
         OwnedResult::Datacenter(_) => (
             "bg-brand-500/15",
-            "text-base font-semibold text-brand-300 px-3 py-1.5",
+            "text-sm font-semibold text-brand-300 px-2.5 py-1",
         ),
-        OwnedResult::World(_) => ("bg-transparent", "text-sm px-2 py-1"),
+        OwnedResult::World(_) => ("bg-transparent", "text-xs px-2 py-1"),
     };
     let is_selected = move || current_world.with(|w| w == world_3.as_str());
     let home_world_emphasis = move || {
@@ -68,10 +68,10 @@ fn WorldButton(
         <A
             attr:class=move || {
                 [
-                    "rounded-md text-[color:var(--color-text)] flex items-center gap-2 transition-all duration-200",
+                    "rounded-md text-[color:var(--color-text)] flex items-center gap-1.5 transition-all duration-200 whitespace-nowrap",
                     bg_color,
                     other_styles,
-                    "hover:scale-105 hover:shadow-lg shadow-brand-900/20",
+                    "hover:bg-brand-500/15 hover:shadow-lg shadow-brand-900/20",
                     if is_selected() { "bg-brand-500/25 font-bold" } else { "" },
                     home_world_emphasis(),
                 ]
@@ -116,8 +116,8 @@ fn WorldGrouping(
     let datacenters = world_data.get_datacenters(&region.as_ref());
     let i18n = crate::i18n::use_i18n();
     view! {
-        <div class="flex flex-col gap-2 rounded-lg bg-brand-900/20 p-2">
-            <h2 class="text-lg font-bold text-brand-200 px-2 py-1">
+        <div class="flex flex-col gap-2 rounded-lg bg-brand-900/15 p-2">
+            <h2 class="text-xs font-bold text-brand-200 px-1 uppercase tracking-wide">
                 {t!(i18n, datacenter)}
             </h2>
             <div class="flex flex-wrap gap-1">
@@ -137,7 +137,7 @@ fn WorldGrouping(
             {active_datacenter
                 .map(|dc| {
                     view! {
-                        <h2 class="text-lg font-bold text-brand-200 px-2 py-1">
+                        <h2 class="text-xs font-bold text-brand-200 px-1 uppercase tracking-wide">
                             {t!(i18n, worlds)}
                         </h2>
                         <div class="flex flex-wrap gap-1">
@@ -171,7 +171,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
         <div class="sticky top-0 z-10">
             <div class="container mx-auto px-4">
                 <div class="panel">
-                    <div class="flex flex-col gap-2 py-3">
+                    <div class="flex flex-col gap-2 p-2">
                         {move || {
                             let world = world_name();
                             let world_name = Url::unescape(&world);
@@ -221,14 +221,14 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                                 });
 
                             view! {
-                                <div class="flex flex-wrap items-center gap-1">
+                                <div class="flex items-center gap-1 overflow-x-auto pb-1">
                                     {all_regions.collect_view()}
                                     {(!home_world_in_region)
                                         .then(|| {
                                             view! { <HomeWorldButton current_world item_id /> }
                                         })}
                                 </div>
-                                <div class="w-full h-px bg-brand-700/50 my-1"></div>
+                                <div class="w-full h-px bg-brand-700/40"></div>
                                 <WorldGrouping
                                     region=OwnedResult::Region(region.clone())
                                     active_datacenter
@@ -246,336 +246,312 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
 }
 
 #[component]
-fn SummaryCards(
+fn MarketStatsPanel(
     listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
-    item_id: i32,
+    item_id: Memo<i32>,
 ) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
+    let cheapest_prices = use_context::<CheapestPrices>();
+
     view! {
         <Transition fallback=move || view! { <BoxSkeleton /> }>
             {move || {
-                listing_resource.with(|data_ref| {
-                if let Some(Ok(data)) = data_ref.as_ref() {
-                    let data = data.clone();
-                    let cheapest_nq = data.listings
-                        .iter()
-                        .filter(|(l, _)| !l.hq)
-                        .min_by_key(|(l, _)| l.price_per_unit)
-                        .cloned();
+                listing_resource
+                    .with(|data_ref| {
+                        if let Some(Ok(data)) = data_ref.as_ref() {
+                            let data = data.clone();
+                            let cheapest_nq = data
+                                .listings
+                                .iter()
+                                .filter(|(listing, _)| !listing.hq)
+                                .min_by_key(|(listing, _)| listing.price_per_unit)
+                                .cloned();
+                            let cheapest_hq = data
+                                .listings
+                                .iter()
+                                .filter(|(listing, _)| listing.hq)
+                                .min_by_key(|(listing, _)| listing.price_per_unit)
+                                .cloned();
+                            let listings_count = data.listings.len();
+                            let recent_sales = data.sales.clone();
+                            let avg_price = if recent_sales.is_empty() {
+                                None
+                            } else {
+                                Some(
+                                    recent_sales
+                                        .iter()
+                                        .map(|sale| sale.price_per_item as i64)
+                                        .sum::<i64>() as i32
+                                        / recent_sales.len() as i32,
+                                )
+                            };
+                            let median_price = if recent_sales.is_empty() {
+                                None
+                            } else {
+                                let mut prices = recent_sales
+                                    .iter()
+                                    .map(|sale| sale.price_per_item)
+                                    .collect::<Vec<_>>();
+                                prices.sort_unstable();
+                                Some(prices[prices.len() / 2])
+                            };
+                            let sales_cadence = if recent_sales.len() > 1 {
+                                let newest = recent_sales.first().unwrap().sold_date;
+                                let oldest = recent_sales.last().unwrap().sold_date;
+                                let seconds = (newest - oldest).num_seconds().abs();
+                                let count = recent_sales.len() - 1;
 
-                    let cheapest_hq = data.listings
-                        .iter()
-                        .filter(|(l, _)| l.hq)
-                        .min_by_key(|(l, _)| l.price_per_unit)
-                        .cloned();
+                                if seconds > 0 {
+                                    let seconds_per_sale = seconds as f64 / count as f64;
+                                    if seconds_per_sale < 60.0 {
+                                        t!(i18n, sells_per_minute, count = format!("{:.1}", 60.0 / seconds_per_sale)).into_any()
+                                    } else if seconds_per_sale < 3600.0 {
+                                        t!(i18n, sells_per_hour, count = format!("{:.1}", 3600.0 / seconds_per_sale)).into_any()
+                                    } else if seconds_per_sale < 86400.0 {
+                                        t!(i18n, sells_per_day, count = format!("{:.1}", 86400.0 / seconds_per_sale)).into_any()
+                                    } else {
+                                        t!(i18n, sells_every_days, count = format!("{:.1}", seconds_per_sale / 86400.0)).into_any()
+                                    }
+                                } else {
+                                    t!(i18n, very_high_frequency).into_any()
+                                }
+                            } else {
+                                t!(i18n, not_enough_data).into_any()
+                            };
 
-                    let recent_sales = data.sales.clone();
-                    let avg_price = if !recent_sales.is_empty() {
-                        recent_sales.iter().map(|s| s.price_per_item as i64).sum::<i64>() / recent_sales.len() as i64
-                    } else {
-                        0
-                    };
-                    let listings_count = data.listings.len();
-                    let has_nq = cheapest_nq.is_some();
+                            let source_callout = {
+                                let game_data = tracked_data();
+                                let cheapest_prices = cheapest_prices.clone();
+                                let item_id = item_id();
+                                let vendor_exists = is_vendor_item(item_id);
+                                let exchange_exists = game_data
+                                    .special_shops
+                                    .values()
+                                    .any(|shop| special_shop_has_item(shop, item_id));
+                                let leve_exists = game_data.leves.values().any(|leve| {
+                                    leve_rewards_item(
+                                        leve,
+                                        item_id,
+                                        &game_data.leve_reward_items,
+                                        &game_data.leve_reward_item_groups,
+                                    )
+                                });
+                                let recipe_exists =
+                                    recipe_tree_iter(ItemId(item_id)).next().is_some();
 
-                    // Re-evaluate logic inside the closure to avoid cloning AnyView
-                    let non_market_card = {
-                         let data = tracked_data();
-                         let cheapest_prices = use_context::<CheapestPrices>();
+                                if vendor_exists || exchange_exists || recipe_exists || leve_exists {
+                                    let (title, summary, icon, href, accent_class): (
+                                        String,
+                                        AnyView,
+                                        icondata::Icon,
+                                        &str,
+                                        &str,
+                                    ) = if vendor_exists {
+                                        let price = game_data
+                                            .items
+                                            .get(&ItemId(item_id))
+                                            .map(|item| {
+                                                if item.price_mid > 0 {
+                                                    item.price_mid
+                                                } else {
+                                                    item.price_low
+                                                }
+                                            })
+                                            .unwrap_or(0);
+                                        (
+                                            t_string!(i18n, vendor_available).to_string(),
+                                            view! { <span>{t!(i18n, sells_for)} <Gil amount=price as i32 /></span> }.into_any(),
+                                            icondata::FaShopSolid,
+                                            "#vendor-sources",
+                                            "text-amber-300 border-amber-400/40 bg-amber-500/10",
+                                        )
+                                    } else if exchange_exists {
+                                        (
+                                            t_string!(i18n, exchange_available).to_string(),
+                                            view! { <span>{t!(i18n, exchange_available)}</span> }.into_any(),
+                                            icondata::BsArrowLeftRight,
+                                            "#exchange-sources",
+                                            "text-purple-300 border-purple-400/40 bg-purple-500/10",
+                                        )
+                                    } else if recipe_exists {
+                                        let summary_view = view! {
+                                            <Suspense fallback=move || "Craftable">
+                                                {move || {
+                                                    if let Some(recipe) = recipe_tree_iter(ItemId(item_id)).next() {
+                                                        if let Some(prices) = cheapest_prices.as_ref() {
+                                                            prices.read_listings.with(|prices| {
+                                                                let prices = prices.as_ref().and_then(|prices| prices.as_ref().ok());
+                                                                if let Some(prices) = prices {
+                                                                    let prices = prices.clone();
+                                                                    let (hq, lq) = calculate_crafting_cost(recipe, &prices);
+                                                                    let min_cost = if lq > 0 { lq } else { hq };
+                                                                    if min_cost > 0 && recipe.item_result == item_id {
+                                                                        view! { <span>{t!(i18n, craft_for)} " ~" <Gil amount=min_cost /></span> }.into_any()
+                                                                    } else if recipe.item_result == item_id {
+                                                                        t!(i18n, craftable).into_any()
+                                                                    } else {
+                                                                        t!(i18n, used_in_crafting).into_any()
+                                                                    }
+                                                                } else if recipe.item_result == item_id {
+                                                                    t!(i18n, craftable).into_any()
+                                                                } else {
+                                                                    t!(i18n, used_in_crafting).into_any()
+                                                                }
+                                                            })
+                                                        } else if recipe.item_result == item_id {
+                                                            t!(i18n, craftable).into_any()
+                                                        } else {
+                                                            t!(i18n, used_in_crafting).into_any()
+                                                        }
+                                                    } else {
+                                                        t!(i18n, craftable).into_any()
+                                                    }
+                                                }}
+                                            </Suspense>
+                                        }
+                                        .into_any();
+                                        (
+                                            t_string!(i18n, crafting_recipe).to_string(),
+                                            summary_view,
+                                            icondata::FaHammerSolid,
+                                            "#crafting-recipes",
+                                            "text-orange-300 border-orange-400/40 bg-orange-500/10",
+                                        )
+                                    } else {
+                                        (
+                                            t_string!(i18n, levequest_reward).to_string(),
+                                            view! { t!(i18n, obtainable_via_levequest) }.into_any(),
+                                            icondata::FaScrollSolid,
+                                            "#leve-sources",
+                                            "text-pink-300 border-pink-400/40 bg-pink-500/10",
+                                        )
+                                    };
 
-                         let vendor_exists = is_vendor_item(item_id);
-                         let exchange_exists = data
-                             .special_shops
-                             .values()
-                             .any(|s| special_shop_has_item(s, item_id));
-                         let leve_exists = data.leves.values().any(|l| {
-                             leve_rewards_item(
-                                 l,
-                                 item_id,
-                                 &data.leve_reward_items,
-                                 &data.leve_reward_item_groups,
-                             )
-                         });
-                         let recipe_exists = recipe_tree_iter(ItemId(item_id)).next().is_some();
+                                    Some(
+                                        view! {
+                                            <a
+                                                href=href
+                                                class=format!(
+                                                    "flex items-center gap-3 rounded-lg border px-3 py-2 text-sm transition-colors hover:border-[color:var(--brand-ring)] {}",
+                                                    accent_class,
+                                                )
+                                            >
+                                                <Icon icon=icon attr:class="text-lg shrink-0" />
+                                                <span class="min-w-0">
+                                                    <span class="block font-semibold leading-tight">{title}</span>
+                                                    <span class="block text-[color:var(--color-text)] leading-tight">{summary}</span>
+                                                </span>
+                                            </a>
+                                        }
+                                        .into_any(),
+                                    )
+                                } else {
+                                    None
+                                }
+                            };
 
-                         if vendor_exists || exchange_exists || leve_exists || recipe_exists {
-                             let (title, summary, icon, href, color_class, border_color): (String, AnyView, icondata::Icon, &str, &str, &str) = if vendor_exists {
-                                 let price = data
-                                     .items
-                                     .get(&ItemId(item_id))
-                                         .map(|i| if i.price_mid > 0 { i.price_mid } else { i.price_low })
-                                     .unwrap_or(0);
-                                 (
-                                     t_string!(i18n, vendor_available).to_string(),
-                                     view! { <span>{t!(i18n, sells_for)} <Gil amount=price as i32 /></span> }.into_any(),
-                                     icondata::FaShopSolid,
-                                     "#vendor-sources",
-                                     "from-amber-900/20",
-                                     "border-l-amber-500",
-                                 )
-                             } else if exchange_exists {
-                                 (
-                                     t_string!(i18n, exchange_available).to_string(),
-                                     view! { <span>{t!(i18n, exchange_available)}</span> }.into_any(),
-                                     icondata::BsArrowLeftRight,
-                                     "#exchange-sources",
-                                     "from-purple-900/20",
-                                     "border-l-purple-500",
-                                 )
-                             } else if recipe_exists {
-                                 let summary_view = view! {
-                                     <Suspense fallback=move || "Craftable">
-                                         {move || {
-                                             if let Some(recipe) = recipe_tree_iter(ItemId(item_id)).next() {
-                                                 if let Some(prices) = cheapest_prices.as_ref() {
-                                                     prices.read_listings.with(|prices| {
-                                                         let prices = prices.as_ref().and_then(|p| p.as_ref().ok());
-                                                         if let Some(prices) = prices {
-                                            let prices = prices.clone();
-                                                             let (hq, lq) = calculate_crafting_cost(recipe, &prices);
-                                                             let min_cost = if lq > 0 { lq } else { hq };
-                                                             if min_cost > 0 {
-                                                 // Determine phrasing based on if this item is a recipe result
-                                                 // or just an ingredient.
-                                                 // Actually, recipe_tree_iter returns recipes *related* to the item.
-                                                 // It could be the item ITSELF (craftable), or it could be an ingredient.
-                                                 // We only want to show "Craft for ~" if the item itself is the result.
-                                                 if recipe.item_result == item_id {
-                                                     view! { <span>{t!(i18n, craft_for)} " ~" <Gil amount=min_cost /></span> }
-                                                         .into_any()
-                                                 } else {
-                                                     t!(i18n, used_in_crafting).into_any()
-                                                 }
-                                             } else if recipe.item_result == item_id {
-                                                                 t!(i18n, craftable).into_any()
-                                             } else {
-                                                 t!(i18n, used_in_crafting).into_any()
-                                                             }
-                                         } else if recipe.item_result == item_id {
-                                                             t!(i18n, craftable).into_any()
-                                         } else {
-                                             t!(i18n, used_in_crafting).into_any()
-                                                         }
-                                                     })
-                                                 } else {
-                                                     t!(i18n, craftable).into_any()
-                                                 }
-                                             } else {
-                                                 t!(i18n, craftable).into_any()
-                                             }
-                                         }}
-                                     </Suspense>
-                                 }
-                                 .into_any();
+                            view! {
+                                <div class="panel p-3 sm:p-5 h-full">
+                                    <div class="flex items-center justify-between gap-3 mb-3 sm:mb-4">
+                                        <div>
+                                            <h2 class="text-lg sm:text-xl font-bold text-[color:var(--color-text)] leading-tight">
+                                                {t!(i18n, cheapest_found)}
+                                            </h2>
+                                            <p class="text-sm text-[color:var(--color-text-muted)]">
+                                                {move || t!(i18n, based_on_sales, count = recent_sales.len())}
+                                            </p>
+                                        </div>
+                                        <Icon icon=icondata::FaCoinsSolid attr:class="text-xl sm:text-2xl text-brand-300/70" />
+                                    </div>
 
-                                 (
-                                     t_string!(i18n, crafting_recipe).to_string(),
-                                     summary_view,
-                                     icondata::FaHammerSolid,
-                                     "#crafting-recipes",
-                                     "from-orange-900/20",
-                                     "border-l-orange-500",
-                                 )
-                             } else {
-                                 (
-                                     t_string!(i18n, levequest_reward).to_string(),
-                                     view! { t!(i18n, obtainable_via_levequest) }.into_any(),
-                                     icondata::FaScrollSolid,
-                                     "#leve-sources",
-                                     "from-pink-900/20",
-                                     "border-l-pink-500",
-                                 )
-                             };
-
-                             Some(
-                                 view! {
-                                     <a
-                                         href=href
-                                         class=format!(
-                                             "panel p-4 border-l-4 hover:scale-[1.02] transition-all cursor-pointer group bg-gradient-to-br to-transparent {} {}",
-                                             border_color,
-                                             color_class,
-                                         )
-                                     >
-                                         <div class="flex justify-between items-start">
-                                             <div>
-                                                 <div class=format!(
-                                                     "text-xs font-bold uppercase tracking-wider mb-2 {}",
-                                                     border_color.replace("border-l-", "text-"),
-                                                 )>
-                                                     {title}
-                                                 </div>
-                                                 <div class="text-xl font-bold text-[color:var(--color-text)]">
-                                                     {summary}
-                                                 </div>
-                                                 <div class="text-xs opacity-80 mt-1 text-[color:var(--color-text-muted)]">
-                                                     {t!(i18n, click_to_view_details)}
-                                                 </div>
-                                             </div>
-                                             <Icon
-                                                 icon=icon
-                                                 attr:class=format!(
-                                                     "text-3xl opacity-20 group-hover:opacity-40 transition-opacity {}",
-                                                     border_color.replace("border-l-", "text-"),
-                                                 )
-                                             />
-                                         </div>
-                                     </a>
-                                 }
-                                 .into_any(),
-                             )
-                         } else {
-                             None
-                         }
-                    };
-
-                    let grid_class = if non_market_card.is_some() {
-                        "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6"
-                    } else {
-                        "grid grid-cols-1 md:grid-cols-3 gap-4 mb-6"
-                    };
-
-                    view! {
-                         <div class=grid_class>
-                            // Card 1: Cheapest Found
-                             <a href="#listings" class="panel p-4 border-l-4 border-l-brand-500 hover:scale-[1.02] transition-all cursor-pointer group bg-gradient-to-br from-brand-900/50 to-transparent">
-                                 <div class="flex justify-between items-start">
-                                     <div>
-                                         <div class="text-xs font-bold text-brand-300 uppercase tracking-wider mb-2">{t!(i18n, cheapest_found)}</div>
-                                         <div class="flex flex-col gap-3">
-                                             // NQ Display
-                                             {if let Some((listing, _retainer)) = cheapest_nq {
-                                                     view! {
-                                                         <div>
-                                                             <div class="flex items-center gap-2">
-                                                                 <span class="text-xs font-bold text-brand-400 bg-brand-900/50 px-1.5 py-0.5 rounded border border-brand-700/50">"NQ"</span>
-                                        <div class="text-xl font-bold text-[color:var(--color-text)]">
-                                                                     <Gil amount=listing.price_per_unit />
-                                                                 </div>
-                                                             </div>
-                                                         <div class="text-xs text-brand-200 mt-0.5 flex items-center gap-1 opacity-80">
-                                                             <Icon icon=icondata::FaGlobeSolid attr:class="text-[10px]" />
-                                                             <WorldName id=AnySelector::World(listing.world_id) />
-                                                         </div>
-                                                     </div>
-                                                 }.into_any()
-                                             } else {
-                                                 // Don't show "No NQ" if HQ exists to avoid clutter, or maybe small text?
-                                                 // If ONLY HQ exists, it will pop.
-                                                 match cheapest_hq {
-                                                    None => view! { <div class="text-lg text-gray-400 italic">{t!(i18n, no_listings)}</div> }.into_any(),
-                                                    _ => ().into_any()
-                                                 }
-                                             }}
-
-                                             // HQ Display
-                                             {if let Some((listing, _retainer)) = cheapest_hq {
-                                                 view! {
-                                                     <div class="relative">
-                                                         // Add a separator if NQ also exists
-                                                         <Show when=move || has_nq>
-                                                             <div class="absolute -top-1.5 left-0 w-8 border-t border-brand-700/30"></div>
-                                                         </Show>
-                                                         <div class="flex items-center gap-2">
-                                                             <span class="text-xs font-bold text-[#95c521] bg-[#95c521]/10 px-1.5 py-0.5 rounded border border-[#95c521]/20 flex items-center gap-1">
-                                                                 <Icon icon=icondata::FaStarSolid attr:class="text-[9px]" />
-                                                                 "HQ"
-                                                             </span>
-                                        <div class="text-xl font-bold text-[color:var(--color-text)]">
-                                                                 <Gil amount=listing.price_per_unit />
-                                                             </div>
-                                                         </div>
-                                                         <div class="text-xs text-brand-200 mt-0.5 flex items-center gap-1 opacity-80">
-                                                             <Icon icon=icondata::FaGlobeSolid attr:class="text-[10px]" />
-                                                             <WorldName id=AnySelector::World(listing.world_id) />
-                                                         </div>
-                                                     </div>
-                                                 }.into_any()
-                                             } else {
-                                                 ().into_any()
-                                             }}
-                                         </div>
-                                     </div>
-                                     <Icon icon=icondata::FaCoinsSolid attr:class="text-3xl text-brand-500/20 group-hover:text-brand-500/40 transition-colors" />
-                                 </div>
-                             </a>
-
-                            // Card 2: Recent History
-                            <a href="#history" class="panel p-4 border-l-4 border-l-blue-500 hover:scale-[1.02] transition-all cursor-pointer group bg-gradient-to-br from-blue-900/20 to-transparent">
-                                 <div class="flex justify-between items-start">
-                                     <div>
-                                    <div class="text-xs font-bold text-blue-700 dark:text-blue-300 uppercase tracking-wider mb-1">{t!(i18n, recent_average)}</div>
-                                    <div class="text-2xl font-bold text-[color:var(--color-text)]">
-                                            {if avg_price > 0 {
-                                                view! { <Gil amount=avg_price as i32 /> }.into_any()
+                                    <div class="grid grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2 gap-2 sm:gap-3">
+                                        <a href="#listings" class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)] p-2 sm:p-3 min-h-24">
+                                            <div class="text-xs font-bold uppercase text-brand-300 mb-1">"NQ"</div>
+                                            {if let Some((listing, _)) = cheapest_nq.clone() {
+                                                view! {
+                                                    <div>
+                                                        <div class="text-xl sm:text-2xl font-bold leading-none"><Gil amount=listing.price_per_unit /></div>
+                                                        <div class="text-xs text-[color:var(--color-text-muted)] mt-2 flex items-center gap-1">
+                                                            <Icon icon=icondata::FaGlobeSolid attr:class="text-[10px]" />
+                                                            <WorldName id=AnySelector::World(listing.world_id) />
+                                                        </div>
+                                                    </div>
+                                                }
+                                                .into_any()
                                             } else {
-                                                view! { <span class="text-gray-400">{t!(i18n, no_data)}</span> }.into_any()
+                                                view! { <div class="text-base sm:text-lg text-[color:var(--color-text-muted)]">{t!(i18n, no_data)}</div> }.into_any()
                                             }}
-                                         </div>
-                                         <div class="text-sm text-blue-700 dark:text-blue-200 mt-1">
-                                             {
-                                                 let recent_sales = recent_sales.clone();
-                                                 move || t!(i18n, based_on_sales, count = recent_sales.len())
-                                             }
-                                         </div>
-                                         <div class="text-sm text-blue-700 dark:text-blue-200 mt-1">
-                                             {
-                                                 let recent_sales = recent_sales.clone();
-                                                 if recent_sales.len() > 1 {
-                                                     let newest = recent_sales.first().unwrap().sold_date;
-                                                     let oldest = recent_sales.last().unwrap().sold_date;
-                                                     let seconds = (newest - oldest).num_seconds().abs();
-                                                     let count = recent_sales.len() - 1;
+                                        </a>
 
-                                                     if seconds > 0 {
-                                                         let seconds_per_sale = seconds as f64 / count as f64;
-                                                         if seconds_per_sale < 60.0 {
-                                                             t!(i18n, sells_per_minute, count = format!("{:.1}", 60.0 / seconds_per_sale)).into_any()
-                                                         } else if seconds_per_sale < 3600.0 {
-                                                             t!(i18n, sells_per_hour, count = format!("{:.1}", 3600.0 / seconds_per_sale)).into_any()
-                                                         } else if seconds_per_sale < 86400.0 {
-                                                             t!(i18n, sells_per_day, count = format!("{:.1}", 86400.0 / seconds_per_sale)).into_any()
-                                                         } else {
-                                                             t!(i18n, sells_every_days, count = format!("{:.1}", seconds_per_sale / 86400.0)).into_any()
-                                                         }
-                                                     } else {
-                                                         t!(i18n, very_high_frequency).into_any()
-                                                     }
-                                                 } else {
-                                                     t!(i18n, not_enough_data).into_any()
-                                                 }
-                                             }
-                                         </div>
-                                     </div>
-                                     <Icon icon=icondata::FaChartLineSolid attr:class="text-3xl text-blue-500/20 group-hover:text-blue-500/40 transition-colors" />
-                                 </div>
-                            </a>
+                                        <a href="#listings" class="rounded-lg border border-[color:var(--color-outline)] bg-[#95c521]/10 p-2 sm:p-3 min-h-24">
+                                            <div class="text-xs font-bold uppercase text-[#95c521] mb-1 flex items-center gap-1">
+                                                <Icon icon=icondata::FaStarSolid attr:class="text-[10px]" />
+                                                "HQ"
+                                            </div>
+                                            {if let Some((listing, _)) = cheapest_hq.clone() {
+                                                view! {
+                                                    <div>
+                                                        <div class="text-xl sm:text-2xl font-bold leading-none"><Gil amount=listing.price_per_unit /></div>
+                                                        <div class="text-xs text-[color:var(--color-text-muted)] mt-2 flex items-center gap-1">
+                                                            <Icon icon=icondata::FaGlobeSolid attr:class="text-[10px]" />
+                                                            <WorldName id=AnySelector::World(listing.world_id) />
+                                                        </div>
+                                                    </div>
+                                                }
+                                                .into_any()
+                                            } else {
+                                                view! { <div class="text-base sm:text-lg text-[color:var(--color-text-muted)]">{t!(i18n, no_data)}</div> }.into_any()
+                                            }}
+                                        </a>
 
-                            // Card 3: Active Listings
-                            <a href="#listings" class="panel p-4 border-l-4 border-l-emerald-500 hover:scale-[1.02] transition-all cursor-pointer group bg-gradient-to-br from-emerald-900/20 to-transparent">
-                                 <div class="flex justify-between items-start">
-                                     <div>
-                                    <div class="text-xs font-bold text-emerald-700 dark:text-emerald-300 uppercase tracking-wider mb-1">{t!(i18n, active_listings)}</div>
-                                    <div class="text-2xl font-bold text-[color:var(--color-text)]">
-                                             {listings_count}
-                                         </div>
-                                    <div class="text-sm text-emerald-700 dark:text-emerald-200 mt-1">
-                                             {t!(i18n, available_now)}
-                                         </div>
-                                     </div>
-                                     <Icon icon=icondata::FaListSolid attr:class="text-3xl text-emerald-500/20 group-hover:text-emerald-500/40 transition-colors" />
-                                 </div>
-                            </a>
-                            {non_market_card}
-                         </div>
-                    }.into_any()
-                } else {
-                    ().into_any()
-                }
-                })
+                                        <a href="#history" class="rounded-lg border border-[color:var(--color-outline)] p-2 sm:p-3 min-h-24">
+                                            <div class="text-xs font-bold uppercase text-blue-300 mb-1">{t!(i18n, recent_average)}</div>
+                                            <div class="text-xl sm:text-2xl font-bold leading-none">
+                                                {avg_price
+                                                    .map(|price| view! { <Gil amount=price /> }.into_any())
+                                                    .unwrap_or_else(|| view! { <span class="text-[color:var(--color-text-muted)]">{t!(i18n, no_data)}</span> }.into_any())}
+                                            </div>
+                                            <div class="text-xs text-[color:var(--color-text-muted)] mt-2">
+                                                "Median "
+                                                {median_price
+                                                    .map(|price| view! { <Gil amount=price /> }.into_any())
+                                                    .unwrap_or_else(|| view! { <span>{t!(i18n, no_data)}</span> }.into_any())}
+                                            </div>
+                                        </a>
+
+                                        <a href="#listings" class="rounded-lg border border-[color:var(--color-outline)] p-2 sm:p-3 min-h-24">
+                                            <div class="text-xs font-bold uppercase text-emerald-300 mb-1">{t!(i18n, active_listings)}</div>
+                                            <div class="text-xl sm:text-2xl font-bold leading-none">{listings_count}</div>
+                                            <div class="text-xs text-[color:var(--color-text-muted)] mt-2">
+                                                {sales_cadence}
+                                            </div>
+                                        </a>
+                                    </div>
+
+                                    <div class="mt-3 sm:mt-4 space-y-2">
+                                        {source_callout}
+                                        {if listings_count == 0 {
+                                            view! {
+                                                <div role="status" class="rounded-lg border border-amber-700/40 bg-amber-900/30 px-3 py-2 text-sm text-amber-200">
+                                                    {move || t_string!(i18n, no_active_listings_found).to_string()}
+                                                </div>
+                                            }
+                                            .into_any()
+                                        } else {
+                                            ().into_any()
+                                        }}
+                                    </div>
+                                </div>
+                            }
+                            .into_any()
+                        } else {
+                            ().into_any()
+                        }
+                    })
             }}
         </Transition>
-    }.into_any()
+    }
+    .into_any()
 }
 
 #[component]
@@ -586,6 +562,7 @@ pub fn ChartWrapper(
 ) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
     let (hq_only, set_hq_only) = signal(false);
+    let (filter_outliers, set_filter_outliers) = signal(true);
     let (days_range, set_days_range) = signal(30i32); // 0 = All
 
     /* moved into Transition branch to avoid reading resource outside Suspense/Transition */
@@ -593,7 +570,7 @@ pub fn ChartWrapper(
     view! {
         <Transition fallback=move || {
             view! {
-                <div class="animate-pulse panel h-[35em] text-[color:var(--color-text)]">
+                <div class="animate-pulse panel h-[26rem] text-[color:var(--color-text)]">
                     <div class="h-full w-full flex items-center justify-center">
                         <div class="w-16 h-16 border-4 border-brand-400/40 border-t-transparent rounded-full animate-spin" />
                     </div>
@@ -635,10 +612,16 @@ pub fn ChartWrapper(
                     });
 
                     view! {
-                        <div class="space-y-4">
-                            <div class="panel p-4 text-[color:var(--color-text)]">
-                                <div class="flex flex-wrap items-center justify-between gap-3">
-                                    <div class="flex flex-wrap items-center gap-2">
+                        <div class="panel p-4 text-[color:var(--color-text)] h-full">
+                            <div class="flex flex-col gap-3">
+                                <div class="flex flex-wrap items-start justify-between gap-3">
+                                    <div>
+                                        <h2 class="text-xl font-bold leading-tight">{move || t_string!(i18n, sale_history).to_string()}</h2>
+                                        <p class="text-sm text-[color:var(--color-text-muted)]">
+                                            {move || t!(i18n, based_on_sales, count = base_sales.with(|sales| sales.len()))}
+                                        </p>
+                                    </div>
+                                    <div class="flex flex-wrap items-center justify-end gap-2">
                                         <div class="inline-flex rounded-md overflow-hidden border border-[color:var(--color-outline)]">
                                             <button
                                                 class=move || [
@@ -677,51 +660,57 @@ pub fn ChartWrapper(
                                                 "All"
                                             </button>
                                         </div>
-                                        <div class="ml-2">
-                                            <Toggle
-                                                checked=hq_only
-                                                set_checked=set_hq_only
-                                                checked_label=t_string!(i18n, hq_only).to_string()
-                                                unchecked_label=t_string!(i18n, all_qualities).to_string()
-                                            />
-                                        </div>
+                                        <Toggle
+                                            checked=hq_only
+                                            set_checked=set_hq_only
+                                            checked_label=t_string!(i18n, hq_only).to_string()
+                                            unchecked_label=t_string!(i18n, all_qualities).to_string()
+                                        />
+                                        <Toggle
+                                            checked=filter_outliers
+                                            set_checked=set_filter_outliers
+                                            checked_label="Filtering outliers"
+                                            unchecked_label="No filter"
+                                        />
+                                        <a
+                                            class="btn-primary text-sm"
+                                            target="_blank"
+                                            href=move || format!("/itemcard/{}/{}", world(), item_id())
+                                        >
+                                            {move || t_string!(i18n, download_png).to_string()}
+                                        </a>
                                     </div>
-                                    <a
-                                        class="btn-primary"
-                                        target="_blank"
-                                        href=move || format!("/itemcard/{}/{}", world(), item_id())
-                                    >
-                                        {move || t_string!(i18n, download_png).to_string()}
-                                    </a>
                                 </div>
+
+                                {move || {
+                                    if filtered_sales.with(|sales| sales.is_empty()) {
+                                        view! {
+                                            <div role="status" class="bg-amber-900/30 text-amber-200 border border-amber-700/40 rounded-xl p-4">
+                                                {move || t_string!(i18n, no_sales_found).to_string()}
+                                            </div>
+                                        }.into_any()
+                                    } else {
+                                        view! {
+                                            <PriceHistoryChart sales=filtered_sales filter_outliers />
+                                        }.into_any()
+                                    }
+                                }}
+
+                                {move || {
+                                    let no_listings = listing_resource.with(|listing| {
+                                        listing
+                                            .as_ref()
+                                            .and_then(|result| result.as_ref().ok())
+                                            .map(|listing| listing.listings.is_empty())
+                                            .unwrap_or(false)
+                                    });
+                                    no_listings.then(|| view! {
+                                        <div role="status" class="bg-amber-900/30 text-amber-200 border border-amber-700/40 rounded-xl px-3 py-2 text-sm">
+                                            {move || t_string!(i18n, no_active_listings_found).to_string()}
+                                        </div>
+                                    })
+                                }}
                             </div>
-
-                            {move || {
-                                if filtered_sales.with(|s| s.is_empty()) {
-                                    view! {
-                                        <div role="status" class="bg-amber-900/30 text-amber-200 border border-amber-700/40 rounded-xl p-4">
-                                            {move || t_string!(i18n, no_sales_found).to_string()}
-                                        </div>
-                                    }.into_any()
-                                } else {
-                                    view! {
-                                        <div class="panel p-6 text-[color:var(--color-text)]">
-                                            <PriceHistoryChart sales=filtered_sales />
-                                        </div>
-                                    }.into_any()
-                                }
-                            }}
-
-                            {move || {
-                                let no_listings = listing_resource.with(|l| {
-                                    l.as_ref().and_then(|r| r.as_ref().ok()).map(|l| l.listings.is_empty()).unwrap_or(false)
-                                });
-                                no_listings.then(|| view! {
-                                    <div role="status" class="bg-amber-900/30 text-amber-200 border border-amber-700/40 rounded-xl p-4">
-                                        {move || t_string!(i18n, no_active_listings_found).to_string()}
-                                    </div>
-                                })
-                            }}
                         </div>
                     }.into_any()
                 }
@@ -872,7 +861,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
         |(item_id, world)| async move {
             get_listings(item_id, world.as_str())
                 .await
-                .map(Arc::new) // Optimization: Wrap in Arc to avoid deep cloning large datasets in SummaryCards
+                .map(Arc::new) // Keep large listing payloads cheap to share across page sections.
                 .inspect_err(|e| tracing::error!(error = ?e, "Error getting value"))
         },
     );
@@ -881,17 +870,19 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
         tracing::info!(?val, "Listings updated");
     });
     view! {
-        <div class="w-full py-8 text-[color:var(--color-text)]">
-            <SummaryCards listing_resource item_id=item_id() />
+        <div class="w-full py-4 sm:py-6 text-[color:var(--color-text)]">
+            <div id="history" class="grid grid-cols-1 xl:grid-cols-[minmax(320px,0.85fr)_minmax(0,1.45fr)] gap-4 sm:gap-6">
+                <MarketStatsPanel listing_resource item_id />
+                <ChartWrapper listing_resource item_id world />
+            </div>
 
-            <div id="listings" class="grid grid-cols-1 gap-6">
+            <div id="listings" class="grid grid-cols-1 gap-6 mt-6">
                 <HighQualityTable listing_resource />
                 <LowQualityTable listing_resource />
             </div>
 
-            <div id="history" class="grid grid-cols-1 gap-6 mt-8">
-                 <ChartWrapper listing_resource item_id world />
-                 <SalesDetails listing_resource />
+            <div class="grid grid-cols-1 gap-6 mt-8">
+                <SalesDetails listing_resource />
             </div>
 
             <div class="mt-6 mx-auto">
@@ -983,13 +974,13 @@ pub fn ItemView() -> impl IntoView {
         />
         <Link rel="canonical" prop:href=move || format!("https://ultros.app/item/{}", item_id()) />
         <div class="min-h-screen">
-            <div class="w-full px-0 sm:px-4 py-4 sm:py-6">
-                <div class="flex flex-col gap-6 p-4 sm:p-6 panel">
+            <div class="w-full px-0 sm:px-4 pt-4 sm:pt-5 pb-3">
+                <div class="flex flex-col gap-4 p-4 sm:p-5 panel">
                     <div class="flex flex-col md:flex-row items-start gap-4">
                         <div class="flex items-center gap-4 flex-1">
                             <ItemIcon item_id icon_size=IconSize::Large />
-                            <div class="flex flex-col">
-                                <h1 class="text-3xl font-bold text-[color:var(--color-text)] flex items-center gap-2">
+                            <div class="flex flex-col min-w-0">
+                                <h1 class="text-2xl sm:text-3xl font-bold text-[color:var(--color-text)] flex items-center gap-2 leading-tight">
                                     {item_name}
                                     <Clipboard clipboard_text=Signal::derive(move || {
                                         item_name().to_string()
@@ -1038,18 +1029,16 @@ pub fn ItemView() -> impl IntoView {
                         </div>
                     </div>
 
-                    // Moved Description and Item Level here
-                    <div class="space-y-3 pt-4 border-t border-[color:var(--color-outline)] text-[color:var(--color-text)]/90">
-                        <div class="flex items-center gap-2">
-                            <span class="text-brand-300 font-medium tracking-wide text-sm uppercase">{move || t_string!(i18n, item_level).to_string()}</span>
+                    <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,0.8fr)_minmax(320px,1.2fr)] gap-3 pt-3 border-t border-[color:var(--color-outline)] text-[color:var(--color-text)]/90">
+                        <div class="flex flex-wrap items-center gap-2">
+                            <span class="text-brand-300 font-medium tracking-wide text-xs uppercase">{move || t_string!(i18n, item_level).to_string()}</span>
                             <span class="bg-brand-900/40 text-brand-100 px-2 py-0.5 rounded text-sm font-bold border border-brand-700/50">
                                 {move || item().map(|item| item.level_item).unwrap_or_default()}
                             </span>
-                            <div class="flex-grow"></div>
-                             <div>{move || view! { <ItemStats item_id=ItemId(item_id()) /> }}</div>
                         </div>
+                        <div>{move || view! { <ItemStats item_id=ItemId(item_id()) /> }}</div>
                         <div
-                            class=""
+                            class="lg:col-span-2 text-sm sm:text-base text-[color:var(--color-text-muted)] line-clamp-3"
                             class:hidden=move || { item_description().is_empty() }
                         >
                             {move || view! { <UIText text=item_description().to_string() /> }}
