@@ -1,0 +1,23 @@
+# Claude Code instructions for Ultros
+
+## Before committing — always
+
+Run `./check_ci.sh` from the repo root. It runs `cargo fmt --all -- --check` and `cargo clippy --all-targets -- -D warnings`. CI will fail on either, so fix anything it reports before committing.
+
+- Formatting failures: `cargo fmt --all` to autofix.
+- Clippy failures: read the warning, fix the code. Do not `#[allow]` to silence unless it's a genuine false-positive worth a comment.
+
+## When the submodule isn't initialized
+
+`./check_ci.sh` runs clippy which compiles the whole workspace, and the `xiv-gen-db` build script reads from `xiv-gen/ffxiv-datamining/` — a git submodule. If it isn't initialized, clippy errors out before running.
+
+Two paths:
+
+1. Initialize it: `git submodule update --init --recursive`. May require user permission depending on the sandbox.
+2. If submodule init is blocked, **at least run `cargo fmt --all -- --check`** — it doesn't need the submodule and catches most CI failures from this repo's history. Note this in the PR so a reviewer knows clippy was not run.
+
+Either way, *do not commit and push without running fmt-check* — every formatting mistake will fail CI and waste a round trip.
+
+## Repo conventions
+
+See `AGENTS.md` for the canonical agent instructions (services overview, env var gotchas, etc.). This file repeats the CI bit because it's the single most common failure mode for AI agents on this repo.
