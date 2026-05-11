@@ -100,38 +100,35 @@ pub fn AutoMarkPurchases(list_view: Resource<ListViewResult>) -> impl IntoView {
     });
 
     view! {
-        <div class="flex-row">
-            <details class="content-well group w-full mb-4">
-                <summary class="flex items-center justify-between p-4 cursor-pointer list-none">
-                    <div class="flex items-center gap-2">
-                         <Icon icon=i::BiPurchaseTagSolid />
-                         <span class="font-bold">"Auto-mark Purchases"</span>
-                         <span class="text-xs text-[color:var(--color-text-muted)] ml-2">"Experimental"</span>
-                    </div>
-                    <Icon icon=i::BiChevronDownRegular attr:class="transition-transform group-open:rotate-180" />
-                </summary>
-                <div class="p-4 pt-0 border-t border-white/5 mt-2 pt-4 flex flex-col gap-3">
-                    <p class="text-sm text-[color:var(--color-text-muted)]">
-                        "Enter your character name below. When you purchase an item on the market board, it will automatically be marked as acquired in this list."
-                    </p>
-                    <div class="join w-full max-w-md">
-                        <input
-                            class="input input-bordered join-item flex-1"
-                            placeholder="Character Name"
-                            prop:value=watch_character_name
-                            on:input=move |e| set_watch_character_name(event_target_value(&e))
-                            disabled=move || is_watching.get()
-                        />
-                        <button
-                            class="btn join-item"
-                            class:btn-success=move || is_watching.get()
-                            on:click=move |_| set_is_watching.update(|w| *w = !*w)
-                        >
-                            {move || if is_watching.get() { "Watching..." } else { "Start Watching" }}
-                        </button>
-                    </div>
+        <details class="panel group rounded-lg">
+            <summary class="flex cursor-pointer list-none items-center justify-between gap-3 p-3">
+                <div class="flex min-w-0 items-center gap-2">
+                    <Icon icon=i::BiPurchaseTagSolid />
+                    <span class="font-bold">"Auto-mark Purchases"</span>
+                    <span class="rounded-md border border-[color:var(--color-outline)] px-2 py-0.5 text-xs text-[color:var(--color-text-muted)]">
+                        "Experimental"
+                    </span>
                 </div>
-            </details>
-        </div>
+                <Icon icon=i::BiChevronDownRegular attr:class="shrink-0 transition-transform group-open:rotate-180" />
+            </summary>
+            <div class="border-t border-[color:var(--color-outline)] p-3">
+                <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <input
+                        class="input flex-1"
+                        placeholder="Character Name"
+                        prop:value=watch_character_name
+                        on:input=move |e| set_watch_character_name(event_target_value(&e))
+                        disabled=move || is_watching.get()
+                    />
+                    <button
+                        class="btn-secondary sm:w-40"
+                        class:bg-brand-900=move || is_watching.get()
+                        on:click=move |_| set_is_watching.update(|w| *w = !*w)
+                    >
+                        {move || if is_watching.get() { "Watching" } else { "Start" }}
+                    </button>
+                </div>
+            </div>
+        </details>
     }
 }
