@@ -372,9 +372,9 @@ pub fn ExchangeItem() -> impl IntoView {
 
     view! {
         <div class="container mx-auto p-4">
-            <MetaTitle title=move || t_string!(i18n, currency_exchange_meta_title).replace("%item%", &item_name()) />
+            <MetaTitle title=move || t_string!(i18n, currency_exchange_meta_title).replace("%item%", item_name()) />
             <MetaDescription text=move || {
-                t_string!(i18n, currency_exchange_meta_desc).replace("%item%", &item_name())
+                t_string!(i18n, currency_exchange_meta_desc).replace("%item%", item_name())
             } />
             <div class="panel p-6 rounded-xl mb-6">
                 <h2 class="text-2xl font-bold mb-4 text-[color:var(--brand-fg)]">
@@ -552,14 +552,14 @@ pub fn ExchangeItem() -> impl IntoView {
                             }
                         };
 
-                        push_chip(&t_string!(i18n, currency_exchange_chip_price_min), "price_per_item_min", get_i("price_per_item_min"));
-                        push_chip(&t_string!(i18n, currency_exchange_chip_price_max), "price_per_item_max", get_i("price_per_item_max"));
-                        push_chip(&t_string!(i18n, currency_exchange_chip_qty_min), "number_received_min", get_i("number_received_min"));
-                        push_chip(&t_string!(i18n, currency_exchange_chip_qty_max), "number_received_max", get_i("number_received_max"));
-                        push_chip(&t_string!(i18n, currency_exchange_chip_profit_min), "total_profit_min", get_i("total_profit_min"));
-                        push_chip(&t_string!(i18n, currency_exchange_chip_profit_max), "total_profit_max", get_i("total_profit_max"));
-                        push_chip(&t_string!(i18n, currency_exchange_chip_hours_min), "hours_between_sales_min", get_i("hours_between_sales_min"));
-                        push_chip(&t_string!(i18n, currency_exchange_chip_hours_max), "hours_between_sales_max", get_i("hours_between_sales_max"));
+                        push_chip(t_string!(i18n, currency_exchange_chip_price_min), "price_per_item_min", get_i("price_per_item_min"));
+                        push_chip(t_string!(i18n, currency_exchange_chip_price_max), "price_per_item_max", get_i("price_per_item_max"));
+                        push_chip(t_string!(i18n, currency_exchange_chip_qty_min), "number_received_min", get_i("number_received_min"));
+                        push_chip(t_string!(i18n, currency_exchange_chip_qty_max), "number_received_max", get_i("number_received_max"));
+                        push_chip(t_string!(i18n, currency_exchange_chip_profit_min), "total_profit_min", get_i("total_profit_min"));
+                        push_chip(t_string!(i18n, currency_exchange_chip_profit_max), "total_profit_max", get_i("total_profit_max"));
+                        push_chip(t_string!(i18n, currency_exchange_chip_hours_min), "hours_between_sales_min", get_i("hours_between_sales_min"));
+                        push_chip(t_string!(i18n, currency_exchange_chip_hours_max), "hours_between_sales_max", get_i("hours_between_sales_max"));
 
                         if !chips.is_empty() {
                             chips.push(view! {

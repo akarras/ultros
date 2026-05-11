@@ -733,7 +733,7 @@ pub fn VendorWorldView() -> impl IntoView {
 
     view! {
         <div class="main-content p-2 sm:p-6">
-            <MetaTitle title=move || format!("{} - {}", t_string!(i18n, vendor_resale_title).to_string(), world()) />
+            <MetaTitle title=move || format!("{} - {}", t_string!(i18n, vendor_resale_title), world()) />
             <div class="container mx-auto max-w-7xl">
                 <div class="flex flex-col gap-8">
                     // Header Section

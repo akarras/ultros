@@ -63,7 +63,7 @@ fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> imp
             let new_best_price = undercut_data.cheapest - 1;
             view! {
                 <tr>
-                    <td>{listing.hq.then(|| t!(i18n, retainers_hq))}</td>
+                    <td>{listing.hq.then_some(t!(i18n, retainers_hq))}</td>
                     <td class="flex flex-row">
                         {if let Some(item) = item {
                             Either::Left(
@@ -145,7 +145,7 @@ fn RetainerTable(retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoV
             let total = listing.quantity * listing.price_per_unit;
             view! {
                 <tr>
-                    <td>{listing.hq.then(|| t!(i18n, retainers_hq))}</td>
+                    <td>{listing.hq.then_some(t!(i18n, retainers_hq))}</td>
                     <td class="flex flex-row">
                         {if let Some(item) = item {
                             Either::Left(
