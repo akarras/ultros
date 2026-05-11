@@ -977,7 +977,7 @@ fn AnalyzerTable(
                                     </div>
                                     <div role="cell" class="px-4 py-2 w-30 hidden lg:block flex items-center">
                                         <Tooltip tooltip_text=Signal::derive(move || {
-                                            t_string!(i18n, analyzer_only_show_world).to_string().replace("{{world}}", &world())
+                                            t_string!(i18n, analyzer_only_show_world).to_string().replace("%world%", &world())
                                         })>
                                             <QueryButton
                                                 key="world"
@@ -992,7 +992,7 @@ fn AnalyzerTable(
                                     </div>
                                     <div role="cell" class="px-4 py-2 w-30 hidden xl:block flex items-center">
                                         <Tooltip tooltip_text=Signal::derive(move || {
-                                            t_string!(i18n, analyzer_only_show_world).to_string().replace("{{world}}", &datacenter())
+                                            t_string!(i18n, analyzer_only_show_world).to_string().replace("%world%", &datacenter())
                                         })>
                                             <QueryButton
                                                 key="datacenter"
@@ -1113,7 +1113,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
 
     view! {
         <div class="main-content p-2 sm:p-6">
-            <MetaTitle title=move || t_string!(i18n, analyzer_meta_title).to_string().replace("{{world}}", &world()) />
+            <MetaTitle title=move || t_string!(i18n, analyzer_meta_title).to_string().replace("%world%", &world()) />
             <div class="container mx-auto max-w-7xl">
                 <div class="flex flex-col gap-8">
                     // Header Section
@@ -1123,7 +1123,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                         </h1>
                         <div class="flex flex-col gap-4">
                             <MetaDescription text=move || {
-                                t_string!(i18n, analyzer_meta_desc).to_string().replace("{{world}}", &world())
+                                t_string!(i18n, analyzer_meta_desc).to_string().replace("%world%", &world())
                             } />
 
                             // World Navigator
@@ -1173,8 +1173,8 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                                                     set_checked=SignalSetter::map(move |checked: bool| {
                                                                         set_enabled(Some(checked));
                                                                     })
-                                                                    checked_label=t_string!(i18n, analyzer_region_enabled).to_string().replace("{{region}}", region)
-                                                                    unchecked_label=t_string!(i18n, analyzer_region_disabled).to_string().replace("{{region}}", region)
+                                                                    checked_label=t_string!(i18n, analyzer_region_enabled).to_string().replace("%region%", region)
+                                                                    unchecked_label=t_string!(i18n, analyzer_region_disabled).to_string().replace("%region%", region)
                                                                 />
                                                             }
                                                         })

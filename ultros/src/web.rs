@@ -357,15 +357,29 @@ async fn fallback_item_icon() -> impl IntoResponse {
 async fn get_item_icon(
     Path(item_id): Path<u32>,
     Query(query): Query<IconQuery>,
-) -> Result<impl IntoResponse, WebError> {
-    let bytes =
-        get_item_image(item_id as i32, query.size).ok_or(anyhow::anyhow!("Failed to get icon"))?;
-    let mime_type = mime_guess::from_path("icon.webp").first_or_text_plain();
-    let age_header = HeaderValue::from_static("max-age=86400");
-    Ok(Response::builder()
-        .header(header::CACHE_CONTROL, age_header)
-        .header(header::CONTENT_TYPE, mime_type.as_ref())
-        .body(body::Body::new(http_body_util::Full::from(bytes)))?)
+) -> Result<Response<body::Body>, WebError> {
+    // When an item has no icon (or the requested size variant is missing),
+    // serve the static fallback PNG with 200 instead of throwing a 500.
+    // Browsers render the placeholder cleanly and no console errors fire.
+    if let Some(bytes) = get_item_image(item_id as i32, query.size) {
+        let mime_type = mime_guess::from_path("icon.webp").first_or_text_plain();
+        Ok(Response::builder()
+            .header(
+                header::CACHE_CONTROL,
+                HeaderValue::from_static("max-age=86400"),
+            )
+            .header(header::CONTENT_TYPE, mime_type.as_ref())
+            .body(body::Body::new(http_body_util::Full::from(bytes)))?)
+    } else {
+        let fallback: &'static [u8] = include_bytes!("../static/fallback-image.png");
+        Ok(Response::builder()
+            .header(
+                header::CACHE_CONTROL,
+                HeaderValue::from_static("max-age=3600"),
+            )
+            .header(header::CONTENT_TYPE, "image/png")
+            .body(body::Body::new(http_body_util::Full::from(fallback)))?)
+    }
 }
 
 pub(crate) async fn invite() -> Redirect {
@@ -1083,6 +1097,18 @@ async fn listings_redirect(Path((world, id)): Path<(String, i32)>) -> Redirect {
     Redirect::permanent(&format!("/item/{world}/{id}"))
 }
 
+/// Returns the test-only auth routes when the `test-auth` feature is enabled;
+/// an empty router otherwise. Compile-time gated so prod binaries are clean.
+#[cfg(feature = "test-auth")]
+fn test_auth_routes() -> Router<WebState> {
+    Router::new().route("/test/login", get(self::oauth::test_auth::test_login))
+}
+
+#[cfg(not(feature = "test-auth"))]
+fn test_auth_routes() -> Router<WebState> {
+    Router::new()
+}
+
 pub(crate) async fn start_web(state: WebState) {
     // build our application with a route
     let worlds = state.world_helper.clone();
@@ -1185,6 +1211,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/sitemap.xml", get(sitemap_index))
         .route("/sitemap/pages.xml", get(generic_pages_sitemap))
         .route("/listings/{world}/{item}", get(listings_redirect))
+        .merge(test_auth_routes())
         .merge(create_leptos_app(state.world_helper.clone()).await.unwrap())
         .fallback(leptos_axum::file_and_error_handler_with_context::<
             WebState,
