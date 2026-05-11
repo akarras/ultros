@@ -240,8 +240,8 @@ pub fn CategoryItems() -> impl IntoView {
             .to_string()
     });
     view! {
-        <MetaTitle title=move || crate::i18n::t_string!(i18n, item_explorer_title).to_string().replace("{{name}}", &category_view_name()) />
-        <MetaDescription text=move || crate::i18n::t_string!(i18n, category_list_desc).to_string().replace("{{category}}", &category_view_name()) />
+        <MetaTitle title=move || crate::i18n::t_string!(i18n, item_explorer_title).to_string().replace("%name%", &category_view_name()) />
+        <MetaDescription text=move || crate::i18n::t_string!(i18n, category_list_desc).to_string().replace("%category%", &category_view_name()) />
         <h3 class="text-xl">{category_view_name}</h3>
         <ItemList items />
     }
@@ -312,8 +312,8 @@ pub fn JobItems() -> impl IntoView {
             .unwrap_or("Job Set".to_string())
     });
     view! {
-        <MetaTitle title=move || crate::i18n::t_string!(i18n, item_explorer_title).to_string().replace("{{name}}", &job_set()) />
-        <MetaDescription text=move || crate::i18n::t_string!(i18n, job_set_list_desc).to_string().replace("{{job}}", &job_set()) />
+        <MetaTitle title=move || crate::i18n::t_string!(i18n, item_explorer_title).to_string().replace("%name%", &job_set()) />
+        <MetaDescription text=move || crate::i18n::t_string!(i18n, job_set_list_desc).to_string().replace("%job%", &job_set()) />
         <h3 class="text-xl">{job_set}</h3>
         <div class="flex flex-row items-center gap-2">
             <Toggle

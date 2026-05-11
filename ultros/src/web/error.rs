@@ -197,6 +197,17 @@ impl WebError {
     fn as_status_code(&self) -> StatusCode {
         match self {
             WebError::NotAuthenticated => StatusCode::UNAUTHORIZED,
+            WebError::NotFound => StatusCode::NOT_FOUND,
+            WebError::BadRequest => StatusCode::BAD_REQUEST,
+            WebError::InvalidItemId(_) | WebError::WorldNotFound(_) => StatusCode::BAD_REQUEST,
+            // Analyzer warm-up isn't a server bug — it's a transient state at
+            // startup. 503 lets clients retry instead of treating it as fatal.
+            WebError::AnalyzerError(AnalyzerError::Uninitialized) => {
+                StatusCode::SERVICE_UNAVAILABLE
+            }
+            WebError::AnalyzerError(AnalyzerError::NotFound) | WebError::WorldSelectError(_) => {
+                StatusCode::NOT_FOUND
+            }
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -204,8 +215,12 @@ impl WebError {
 
 impl IntoResponse for WebError {
     fn into_response(self) -> Response {
-        tracing::error!(error = %self, "Returning web error");
-
-        (self.as_status_code(), format!("{self}")).into_response()
+        let status = self.as_status_code();
+        if status.is_server_error() {
+            tracing::error!(error = %self, %status, "Returning web error");
+        } else {
+            tracing::debug!(error = %self, %status, "Returning web error");
+        }
+        (status, format!("{self}")).into_response()
     }
 }

@@ -12,6 +12,62 @@ This repository enforces strict CI checks. Before committing any code, you **mus
 
 Failure to follow these steps will result in CI failures.
 
+## Git hooks (optional but recommended)
+
+Tracked hooks live under `scripts/hooks/`. One-time install:
+
+```bash
+./scripts/install-hooks.sh
+```
+
+This sets `core.hooksPath=scripts/hooks` (per-repo, not global) and gives you:
+
+- **pre-commit** → `cargo fmt --all -- --check` (fast; catches the #1 CI failure)
+- **pre-push** → `./check_ci.sh` (fmt + clippy)
+
+Bypass once with `--no-verify`. Uninstall via `git config --unset core.hooksPath`.
+
+## E2E (Puppeteer)
+
+`integration/` contains a Puppeteer harness. The runner ([integration/runner.cjs](integration/runner.cjs)) visits a curated route list at desktop and mobile breakpoints, screenshots them, asserts on title tags and body content, and fails if any page logs `console.error` or a `pageerror`. A separate [integration/login.cjs](integration/login.cjs) exercises the test-auth login flow end-to-end.
+
+### Driver
+
+```bash
+./scripts/run_e2e.sh
+```
+
+Default behavior: pick a free port, `cargo leptos build`, spawn `cargo leptos serve` on that port (`PORT`, `LEPTOS_SITE_ADDR`, and `HOSTNAME` all set accordingly), poll `/` for readiness, run the Puppeteer suite against the spawned server, then tear it down. Screenshots in `integration/artifacts/`; server log at `/tmp/ultros-e2e-server.log`.
+
+Knobs:
+
+| Env | Effect |
+|---|---|
+| `REUSE_SERVER=1` | Don't spawn — reuse a server already on `$BASE_URL` (default `http://127.0.0.1:8080`). Faster, but tests whatever build is up. **Do not use in multi-worktree setups** unless you're sure of which branch the existing server is from. |
+| `E2E_PORT=N` | Pin to a specific port instead of a random one. |
+| `LEPTOS_FEATURES="test-auth"` | Build with the `test-auth` cargo feature; enables `/test/login` and triggers the login-flow test. |
+| `SKIP_BUILD=1` | Skip `cargo leptos build` (assumes a previous build is fresh). |
+| `STRICT_CONSOLE=0` | Suppress the console.error / pageerror failure mode. |
+| `SKIP_ASSERTS=1` | Skip per-route content assertions (screenshot smoke only). |
+| `CONSOLE_ALLOW="foo,bar"` | Extra substrings to allow-list in console errors. |
+
+### test-auth feature
+
+Compile-time gated route `GET /test/login?user_id=...&username=...` that mints a session cookie + cache entry + DB row without any Discord round-trip. Defined in [ultros/src/web/oauth.rs](ultros/src/web/oauth.rs) under `#[cfg(feature = "test-auth")]` and registered in [ultros/src/web.rs](ultros/src/web.rs) via the `test_auth_routes()` helper. Prod Docker builds don't pass `--features test-auth`, so the route literally isn't in the binary.
+
+To exercise login flow locally:
+
+```bash
+LEPTOS_FEATURES=test-auth ./scripts/run_e2e.sh
+```
+
+### Caveats
+
+- Requires a populated `.env` (DATABASE_URL, DISCORD_*, KEY).
+- Windows: process-group cleanup is best-effort; if `cargo leptos serve` lingers, kill it manually.
+
+In CI the `e2e` job in `.github/workflows/rust.yml` runs the same flow against a postgres service container with a dummy `DISCORD_TOKEN` (the bot panic is non-fatal — see the gotchas section below) and `LEPTOS_FEATURES=test-auth`. Screenshots and the server log are uploaded as artifacts.
+
 ## Cursor Cloud specific instructions
 
 ### Services overview
