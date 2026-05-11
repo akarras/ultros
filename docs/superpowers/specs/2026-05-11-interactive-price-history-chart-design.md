@@ -59,11 +59,11 @@ Chips that would produce zero points are still clickable — the empty state ("N
 Computed from the *filtered* sale list (after both the time-range chip and the outlier toggle):
 
 - **n**: count
+- **VWAP**: `Σ(price × qty) / Σ(qty)`, rounded integer — same value the line draws
 - **median**: middle of sorted prices
-- **mean**: rounded integer
 - **min / max**: bookends
 
-Rendered as `n sales · median 1.2K · mean 1.3K · min 800 · max 2.4K`, using the existing `short_number` helper logic (lift it from [ultros-charts/src/lib.rs:24](../../ultros-frontend/ultros-charts/src/lib.rs:24) into the component or a small util module).
+Rendered as `n sales · VWAP 1.2K · median 1.1K · min 800 · max 2.4K`, using the existing `short_number` helper logic (lift it from [ultros-charts/src/lib.rs:24](../../ultros-frontend/ultros-charts/src/lib.rs:24) into the component or a small util module). The arithmetic mean is dropped — VWAP is the better central-tendency number for trade data and showing both invites confusion.
 
 Hidden when `n == 0`; replaced by a one-line "No sales in this window" muted notice.
 
@@ -79,11 +79,16 @@ Extract this into a small pure function inside the component module (call it `gr
 
 ## Visual elements
 
-- **Series**: scatter only (no connecting lines — multi-world overlap would be visual noise; trendline carries the trend signal).
-- **Point size**: proportional to `quantity`, clamped (chartistry supports point-size from data; if not, use 3 fixed sizes by quantity bucket: 1, 2–10, 11+).
-- **IQR band**: translucent horizontal band, computed from filtered data. Drawn as a chartistry "ref line" pair or a thin filled rect underlay. **Toggled by the outlier filter** — when outliers are filtered, band is implicit, so hide it then; show it when outliers are visible. (Cleaner than today, which always shows it.)
-- **Trendline**: least-squares fit, single line across all series, drawn faint. Same math as today.
-- **Colors**: read `--color-text`, `--color-outline`, `--color-brand-*` from the document element on mount and on theme-change. Series palette: cycle through brand + accent CSS vars (look up what's defined in [style/tailwind.css](../../style/tailwind.css) — the current chart only reads two vars; we'll need ~6 palette slots).
+The overlay set is chosen to match conventions from financial trade-tape visualizations, adapted for FFXIV's heavy-tailed price distribution.
+
+- **Series**: scatter only (no connecting lines — multi-world overlap would be visual noise; the trend overlays carry that signal).
+- **Point size**: proportional to `quantity`, clamped (chartistry supports point-size from data; if not, use 3 fixed sizes by quantity bucket: 1, 2–10, 11+). This is the standard trade-tape convention — volume-scaled markers.
+- **VWAP line** (new, always on): volume-weighted average price line drawn across the current time window. Computed as `Σ(price × qty) / Σ(qty)`. Drawn as a single solid line in a distinct accent color (brand-300 or similar) at moderate opacity. VWAP is the financial-standard central-tendency line for trade history because it answers "what did people actually pay on average," weighted by transaction size. Strictly preferable to median or arithmetic mean for this dataset.
+- **IQR band** (always on, dimmed when outlier filter is active): translucent horizontal band between Q1 − 2.5·IQR and Q3 + 2.5·IQR (same formula as today's `get_iqr_filter`). Drawn as a chartistry ref-line pair or a thin filled rect underlay. Chosen over Bollinger bands (mean ± 2σ) because FFXIV market data is heavy-tailed (vendor floors, RMT outliers, whale buys) and stdev bands misbehave on non-normal distributions. When the outlier filter is on, opacity drops further so the band reads as a quiet "this is the typical zone" hint rather than a competing element.
+- **Trendline** (always on): least-squares fit, single line across all series, drawn faint. Same math as today. Provides directional signal across the window.
+- **Colors**: read `--color-text`, `--color-outline`, `--color-brand-*` from the document element on mount and on theme-change. Series palette: cycle through brand + accent CSS vars (look up what's defined in [style/tailwind.css](../../style/tailwind.css) — the current chart only reads two vars; we'll need ~6 palette slots plus distinct colors for the VWAP line and trendline).
+
+**Why no toggles for VWAP / IQR / trendline?** The time-range chips and outlier filter already give plenty of control surface. Financial trading UIs default to showing standard overlays and tuck visibility controls behind a kebab menu — adding three separate toggles for v1 is clutter. If users ask, a single "Overlays" disclosure can be added later.
 
 ## Hover behavior
 
@@ -158,4 +163,5 @@ If `leptos-chartistry` turns out to be incompatible with Leptos 0.8.14 (the late
 - Brush-zoom for arbitrary time windows.
 - Linking the chart to the sale history table (click point → scroll to row).
 - Per-series legend toggle persistence (remember last-deselected series across navigations).
-- Median/mean lines overlaid on the chart itself.
+- A dedicated "Overlays" menu (kebab) to toggle VWAP / IQR / trendline visibility — only add if users ask.
+- Time-bucketed VWAP (e.g. one VWAP point per hour) instead of a single window-wide VWAP line.
