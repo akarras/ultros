@@ -70,7 +70,7 @@ fn AddToListModal(
                     <div class="min-w-0 flex-1">
                         <div class="text-xl font-extrabold text-[color:var(--brand-fg)]">{t!(i18n, add_to_list_title)}</div>
                         <div class="text-[color:var(--color-text-muted)] truncate">
-                            {move || item().map(|i| i.name.to_string()).unwrap_or_else(|| t_string!(i18n, add_to_list_unknown_item).to_string())}
+                            {move || item().map(|i| i.name.to_string()).unwrap_or_else(|| t_string!(i18n, unknown).to_string())}
                         </div>
                     </div>
                     <button class="btn-secondary" on:click=move |_| set_visible(false)>{t!(i18n, add_to_list_close)}</button>

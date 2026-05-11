@@ -460,7 +460,7 @@ fn FCCraftingAnalyzerTable(
                     view=move |(index, data): (usize, Arc<FCCraftProfitData>)| {
                         let data_clone = data.clone();
                         let item_id = ItemId(data.sequence.result_item);
-                        let item = items.get(&item_id).map(|i| i.name.as_str().to_string()).unwrap_or_else(|| t_string!(i18n, fc_crafting_analyzer_unknown_item).to_string());
+                        let item = items.get(&item_id).map(|i| i.name.as_str().to_string()).unwrap_or_else(|| t_string!(i18n, unknown).to_string());
                          let classes = if (index % 2) == 0 {
                             "flex flex-row items-center flex-nowrap h-15 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_6%,transparent)] transition-colors"
                         } else {
