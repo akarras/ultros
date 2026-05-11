@@ -1,6 +1,7 @@
 use crate::api::{
     UndercutData, get_retainer_listings, get_retainer_undercuts, get_user_retainer_listings,
 };
+use crate::global_state::xiv_data::tracked_data;
 use crate::components::ad::Ad;
 use crate::components::clipboard::Clipboard;
 use crate::components::gil::*;
@@ -24,7 +25,7 @@ struct ItemSortKey(u8, i32, bool);
 impl From<(ItemId, bool)> for ItemSortKey {
     fn from((item_id, hq): (ItemId, bool)) -> Self {
         let inner = move || {
-            let data = xiv_gen_db::data();
+            let data = tracked_data();
             let items = &data.items;
             let sort_category = &data.item_sort_categorys;
             let item = items.get(&item_id)?;
@@ -47,7 +48,7 @@ impl From<&ActiveListing> for ItemSortKey {
 fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> impl IntoView {
     let i18n = use_i18n();
     let mut listings = listings;
-    let data = xiv_gen_db::data();
+    let data = tracked_data();
     let items = &data.items;
     listings.sort_by_key(|u| ItemSortKey::from(&u.current));
     let worlds = use_context::<LocalWorldData>().unwrap().0.unwrap();
@@ -129,7 +130,7 @@ fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> imp
 #[component]
 fn RetainerTable(retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoView {
     let i18n = use_i18n();
-    let data = xiv_gen_db::data();
+    let data = tracked_data();
     let items = &data.items;
     let mut listings = listings;
     listings.sort_by_key(|u| ItemSortKey::from(u));

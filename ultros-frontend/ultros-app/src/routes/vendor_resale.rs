@@ -1,3 +1,4 @@
+use crate::global_state::xiv_data::tracked_data;
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
@@ -127,7 +128,7 @@ impl std::fmt::Display for SortMode {
 
 impl VendorProfitTable {
     fn new(sales: RecentSales, world_cheapest_listings: CheapestListings) -> Self {
-        let data = xiv_gen_db::data();
+        let data = tracked_data();
 
         // Build map of vendor items: ItemId -> VendorPrice
         // We only care about base items, HQ doesn't exist for vendors usually (or is same price)
@@ -201,7 +202,7 @@ fn VendorResaleTable(
     let i18n = use_i18n();
     let profits = VendorProfitTable::new(sales, world_cheapest_listings);
 
-    let items = &xiv_gen_db::data().items;
+    let items = &tracked_data().items;
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
     let (minimum_profit, set_minimum_profit) = query_signal::<i32>("profit");
     let (minimum_roi, set_minimum_roi) = query_signal::<i32>("roi");
@@ -350,7 +351,7 @@ fn VendorResaleTable(
                         >
                             <option value="">{t!(i18n, vendor_resale_all_categories)}</option>
                             {
-                                let mut categories = xiv_gen_db::data().item_search_categorys
+                                let mut categories = tracked_data().item_search_categorys
                                     .iter()
                                     .filter(|(_, cat)| !cat.name.is_empty())
                                     .map(|(id, cat)| (id.0, cat.name.clone()))
@@ -481,7 +482,7 @@ fn VendorResaleTable(
                             }.into_any());
                         }
                         if let Some(cat_id) = category_filter() {
-                             let cat_name = xiv_gen_db::data()
+                             let cat_name = tracked_data()
                                 .item_search_categorys
                                 .get(&xiv_gen::ItemSearchCategoryId(cat_id))
                                 .map(|c| c.name.clone())

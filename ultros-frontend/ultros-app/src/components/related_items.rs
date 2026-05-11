@@ -18,7 +18,7 @@ use crate::{
         add_recipe_to_list::AddRecipeToList, icon::Icon, item_icon::ItemIcon,
         skeleton::SingleLineSkeleton,
     },
-    global_state::{cheapest_prices::CheapestPrices, home_world::get_price_zone},
+    global_state::{cheapest_prices::CheapestPrices, home_world::get_price_zone, xiv_data::tracked_data},
 };
 
 use super::{cheapest_price::*, gil::*, small_item_display::*};
@@ -26,7 +26,7 @@ use super::{cheapest_price::*, gil::*, small_item_display::*};
 /// Matches against items that start with the same prefix
 /// "Diadochos" -> "Diadochos Helmet" etc
 fn prefix_item_iterator(item: &'static Item) -> impl Iterator<Item = &'static Item> {
-    let items = &xiv_gen_db::data().items;
+    let items = &tracked_data().items;
     let prefix = item.name.split_once(' ').map(|(prefix, _)| prefix);
     items.values().filter(move |f| {
         if let Some(prefix) = prefix {
@@ -40,7 +40,7 @@ fn prefix_item_iterator(item: &'static Item) -> impl Iterator<Item = &'static It
 }
 
 fn suffix_item_iterator(item: &'static Item) -> impl Iterator<Item = &'static Item> {
-    let items = &xiv_gen_db::data().items;
+    let items = &tracked_data().items;
     let suffix = item.name.rsplit_once(' ').map(|(_, suffix)| suffix);
     items.values().filter(move |f| {
         if let Some(suffix) = suffix {
@@ -55,7 +55,7 @@ fn suffix_item_iterator(item: &'static Item) -> impl Iterator<Item = &'static It
 
 /// This iterator will attempt to find related items using the classjobcategory && ilvl
 fn item_set_iter(item: &'static Item) -> impl Iterator<Item = &'static Item> {
-    let items = &xiv_gen_db::data().items;
+    let items = &tracked_data().items;
     items.values().filter(|i| {
         item.class_job_category != 0
             && item.class_job_category == i.class_job_category
@@ -92,7 +92,7 @@ impl<'a> Iterator for IngredientsIter<'a> {
 
 /// This iterator will traverse the recipe tree for items that are related to using this item for crafting
 pub(crate) fn recipe_tree_iter(item_id: ItemId) -> impl Iterator<Item = &'static Recipe> {
-    let recipes = &xiv_gen_db::data().recipes;
+    let recipes = &tracked_data().recipes;
     // our item id could be in item_result, or item_ingredient
     recipes
         .values()
@@ -104,7 +104,7 @@ pub(crate) fn recipe_tree_iter(item_id: ItemId) -> impl Iterator<Item = &'static
 }
 
 pub(crate) fn calculate_crafting_cost(recipe: &Recipe, prices: &CheapestListingsMap) -> (i32, i32) {
-    let items = &xiv_gen_db::data().items;
+    let items = &tracked_data().items;
     let sum_for = |prefer_hq: bool| -> i32 {
         IngredientsIter::new(recipe)
             .flat_map(|(ingredient, amount)| items.get(&ingredient).map(|item| (item, amount)))
@@ -160,7 +160,7 @@ fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
 
 #[component]
 fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
-    let items = &xiv_gen_db::data().items;
+    let items = &tracked_data().items;
     let ingredients = IngredientsIter::new(recipe)
         .flat_map(|(ingredient, amount)| items.get(&ingredient).map(|item| (item, amount)))
         .map(|(ingredient, amount)| {
@@ -305,7 +305,7 @@ fn npc_rows(npc: &ENpcBase) -> impl Iterator<Item = u32> + '_ {
 }
 
 fn gil_shop_to_npc(gil_shops: &[GilShopId]) -> Vec<(GilShopId, &'static ENpcBase)> {
-    let data = xiv_gen_db::data();
+    let data = tracked_data();
 
     data.e_npc_bases
         .values()
@@ -346,7 +346,7 @@ fn gil_shop_to_npc(gil_shops: &[GilShopId]) -> Vec<(GilShopId, &'static ENpcBase
 
 #[component]
 fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
-    let data = xiv_gen_db::data();
+    let data = tracked_data();
     // lookup items
     let npcs = Memo::new(move |_| {
         let item_id = item_id();
@@ -402,7 +402,7 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
 }
 
 static VENDOR_ITEM_IDS: LazyLock<HashSet<i32>> = LazyLock::new(|| {
-    let data = xiv_gen_db::data();
+    let data = tracked_data();
     let mut set = HashSet::new();
     for items in data.gil_shop_items.values() {
         for shop_item in items {
@@ -418,7 +418,7 @@ pub(crate) fn is_vendor_item(item_id: i32) -> bool {
 
 pub(crate) fn get_vendor_price(item_id: i32) -> Option<u32> {
     if is_vendor_item(item_id) {
-        let data = xiv_gen_db::data();
+        let data = tracked_data();
         if let Some(item) = data.items.get(&ItemId(item_id)) {
             let price = if item.price_mid > 0 {
                 item.price_mid
@@ -457,7 +457,7 @@ fn get_trade_costs(shop: &SpecialShop, item_id: i32) -> Vec<TradeCosts> {
 
 #[component]
 fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
-    let data = xiv_gen_db::data();
+    let data = tracked_data();
     let exchanges = Memo::new(move |_| {
         let item_id = item_id();
         data.special_shops
@@ -584,7 +584,7 @@ pub fn leve_rewards_item(
 
 #[component]
 fn LeveSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
-    let data = xiv_gen_db::data();
+    let data = tracked_data();
     let leves = Memo::new(move |_| {
         let item_id = item_id();
         data.leves
@@ -641,7 +641,7 @@ fn LeveSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
 
 #[component]
 pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
-    let db = xiv_gen_db::data();
+    let db = tracked_data();
     let item = Memo::new(move |_| db.items.get(&ItemId(item_id())));
     let (price_zone, _) = get_price_zone();
     let related_items_data = Memo::new(move |_| {

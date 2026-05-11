@@ -1,4 +1,5 @@
 use crate::api::{bulk_add_item_to_list, get_lists};
+use crate::global_state::xiv_data::tracked_data;
 use crate::components::icon::Icon;
 use crate::components::related_items::IngredientsIter;
 use crate::components::{
@@ -25,7 +26,7 @@ struct IngredientState {
 #[component]
 pub fn AddRecipeToList(recipe: &'static Recipe) -> impl IntoView {
     let (modal_visible, set_modal_visible) = signal(false);
-    let items = &xiv_gen_db::data().items;
+    let items = &tracked_data().items;
     let result_item = items.get(&ItemId(recipe.item_result));
     view! {
         <Tooltip tooltip_text="Add recipe ingredients to a list">
@@ -55,7 +56,7 @@ fn AddRecipeToListModal(
     recipe: &'static Recipe,
     #[prop(into)] set_visible: SignalSetter<bool>,
 ) -> impl IntoView {
-    let data = xiv_gen_db::data();
+    let data = tracked_data();
     let items = &data.items;
     let result_item = move || items.get(&ItemId(recipe.item_result));
     let lists = Resource::new(move || {}, move |_| get_lists());

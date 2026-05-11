@@ -1,3 +1,4 @@
+use crate::global_state::xiv_data::tracked_data;
 use leptos::prelude::*;
 use leptos_router::{
     NavigateOptions,
@@ -62,7 +63,7 @@ fn TrendsTable(items: Vec<TrendItem>, world: String) -> impl IntoView {
                 view=move |(index, item): (usize, TrendItem)| {
                     let world = world.clone();
                     let item_id = item.item_id;
-                    let item_data = xiv_gen_db::data().items.get(&xiv_gen::ItemId(item_id));
+                    let item_data = tracked_data().items.get(&xiv_gen::ItemId(item_id));
                     let item_name = item_data.map(|i| i.name.as_str()).unwrap_or("Unknown Item").to_string();
                     let icon_loading = if index < 20 { "eager" } else { "" };
 

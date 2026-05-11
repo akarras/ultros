@@ -4,6 +4,7 @@ use std::{collections::HashSet, str::FromStr};
 
 use crate::CheapestPrices;
 use crate::components::clipboard::Clipboard;
+use crate::global_state::xiv_data::tracked_data;
 use crate::components::gil::Gil;
 use crate::components::icon::Icon;
 use crate::components::loading::Loading;
@@ -49,7 +50,7 @@ where
 /// Displays buttons of categories
 #[component]
 fn CategoryView(category: u8) -> impl IntoView {
-    let data = xiv_gen_db::data();
+    let data = tracked_data();
     let search_categories = &data.item_search_categorys;
     // let item_ui_category = &data.item_ui_categorys;
     let mut categories = search_categories
@@ -184,7 +185,7 @@ fn job_category_lookup(class_job_category: &ClassJobCategory, job_acronym: &str)
 
 #[component]
 fn JobsList() -> impl IntoView {
-    let jobs = &xiv_gen_db::data().class_jobs;
+    let jobs = &tracked_data().class_jobs;
     let mut jobs: Vec<_> = jobs.iter().collect();
     jobs.sort_by_key(|(_, job)| job.ui_priority);
     view! {
@@ -212,7 +213,7 @@ fn JobsList() -> impl IntoView {
 pub fn CategoryItems() -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
     let params = use_params_map();
-    let data = xiv_gen_db::data();
+    let data = tracked_data();
     let items = Memo::new(move |_| {
         let cat = params()
             .get_str("category")
@@ -251,7 +252,7 @@ pub fn CategoryItems() -> impl IntoView {
 pub fn JobItems() -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
     let params = use_params_map();
-    let data = xiv_gen_db::data();
+    let data = tracked_data();
     let (non_market, set_non_market) = query_signal::<bool>("show-non-market");
     let market_only = Memo::new(move |_| !non_market().unwrap_or_default());
     let set_market_only =
@@ -743,7 +744,7 @@ fn CategorySection(
 pub fn ItemExplorer() -> impl IntoView {
     let i18n = use_i18n();
     let params = use_params_map();
-    let data = xiv_gen_db::data();
+    let data = tracked_data();
     let (menu_open, set_open) = query_signal("menu-open");
     let menu_open = Memo::new(move |_| menu_open().unwrap_or(false));
     let active_category_group = Memo::new(move |_| {
@@ -842,7 +843,7 @@ pub fn ItemExplorer() -> impl IntoView {
 mod tests {
     #[test]
     fn test_job_filtering() {
-        let data = xiv_gen_db::data();
+        let data = tracked_data();
         let jobs = &data.class_jobs;
         let visible_jobs: Vec<_> = jobs
             .iter()

@@ -1,4 +1,5 @@
 use crate::components::meta::{MetaDescription, MetaTitle};
+use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use crate::{
     analysis::{SalesStats, analyze_sales},
@@ -74,7 +75,7 @@ fn VentureAnalyzerTable(
 ) -> impl IntoView {
     let i18n = use_i18n();
     let prices = CheapestListingsMap::from(global_cheapest_listings);
-    let data = xiv_gen_db::data();
+    let data = tracked_data();
     let items = &data.items;
     let retainer_tasks = &data.retainer_tasks;
     let retainer_task_normals = &data.retainer_task_normals;

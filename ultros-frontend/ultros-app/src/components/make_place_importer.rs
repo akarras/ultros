@@ -1,5 +1,6 @@
 use std::num::ParseIntError;
 
+use crate::global_state::xiv_data::tracked_data;
 use leptos::{either::Either, prelude::*};
 use thiserror::Error;
 use ultros_api_types::list::ListItem;
@@ -16,7 +17,7 @@ pub enum ParseListError {
 }
 
 fn lookup_item_by_name(name: &str) -> Result<ItemId, ParseListError> {
-    let items = &xiv_gen_db::data().items;
+    let items = &tracked_data().items;
     items
         .iter()
         .find(|(_, item)| item.name == name.trim())

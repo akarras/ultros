@@ -2,6 +2,7 @@ use super::gil::*;
 use super::item_icon::*;
 use super::relative_time::RelativeToNow;
 use crate::components::icon::Icon;
+use crate::global_state::xiv_data::tracked_data;
 use chrono::NaiveDateTime;
 use icondata as i;
 use leptos::prelude::*;
@@ -25,7 +26,7 @@ pub(crate) struct SaleView {
 
 #[component]
 fn Item(item_id: i32) -> impl IntoView {
-    let item = xiv_gen_db::data().items.get(&ItemId(item_id))?;
+    let item = tracked_data().items.get(&ItemId(item_id))?;
     Some(view! {
         <div class="flex items-center">
             <span class="text-[color:var(--color-text)]">{item.name.as_str()}</span>

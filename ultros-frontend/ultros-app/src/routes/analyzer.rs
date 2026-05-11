@@ -1,3 +1,4 @@
+use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
@@ -273,7 +274,7 @@ fn AnalyzerTable(
         filter_outliers,
     );
 
-    let items = &xiv_gen_db::data().items;
+    let items = &tracked_data().items;
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
     let (minimum_profit, set_minimum_profit) = query_signal::<i32>("profit");
     let (minimum_profit_per_day, set_minimum_profit_per_day) = query_signal::<i32>("ppd");
@@ -500,7 +501,7 @@ fn AnalyzerTable(
                         >
                             <option value="">{t!(i18n, analyzer_all_categories)}</option>
                             {
-                                let mut categories = xiv_gen_db::data().item_search_categorys
+                                let mut categories = tracked_data().item_search_categorys
                                     .iter()
                                     .filter(|(_, cat)| !cat.name.is_empty())
                                     .map(|(id, cat)| (id.0, cat.name.clone()))
@@ -672,7 +673,7 @@ fn AnalyzerTable(
                             }.into_any());
                         }
                         if let Some(cat_id) = category_filter() {
-                            let cat_name = xiv_gen_db::data()
+                            let cat_name = tracked_data()
                                 .item_search_categorys
                                 .get(&xiv_gen::ItemSearchCategoryId(cat_id))
                                 .map(|c| c.name.clone())

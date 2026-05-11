@@ -1,6 +1,8 @@
 use std::cmp::Reverse;
 use std::collections::HashSet;
 
+use crate::global_state::xiv_data::tracked_data;
+
 use crate::components::icon::Icon;
 use icondata as i;
 use leptos::either::Either;
@@ -178,7 +180,7 @@ pub fn ListView() -> impl IntoView {
                 Some(
                     Either::Left({
                         let (search, set_search) = signal("".to_string());
-                        let items = &xiv_gen_db::data().items;
+                        let items = &tracked_data().items;
                         let item_search = move || {
                             search
                                 .with(|s| {

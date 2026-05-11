@@ -4,6 +4,7 @@ use std::hash::Hash;
 use std::hash::Hasher;
 
 use crate::Ad;
+use crate::global_state::xiv_data::tracked_data;
 use crate::Tooltip;
 use crate::api::get_cheapest_listings;
 use crate::api::get_recent_sales_for_world;
@@ -107,7 +108,7 @@ fn from_lists(
     item: impl Iterator<Item = ItemId>,
     amount: impl Iterator<Item = u32>,
 ) -> impl Iterator<Item = Option<ItemAmount>> {
-    let items = &xiv_gen_db::data().items;
+    let items = &tracked_data().items;
     item.zip(amount).map(|(item_id, amount)| {
         let item = items.get(&item_id)?;
         Some(ItemAmount { item, amount })
@@ -228,7 +229,7 @@ pub fn ExchangeItem() -> impl IntoView {
         let world = world.ok_or(AppError::NoHomeWorld)?;
         get_cheapest_listings(&world.name).await
     });
-    let data = xiv_gen_db::data();
+    let data = tracked_data();
     let item_id = move || {
         ItemId(
             params
@@ -874,7 +875,7 @@ fn ShopNames(#[prop(into)] shop_names: ShopNames) -> impl IntoView {
 #[component]
 pub fn CurrencySelection() -> impl IntoView {
     let i18n = use_i18n();
-    let data = xiv_gen_db::data();
+    let data = tracked_data();
     let ui_categories = &data.item_ui_categorys;
     let disallowed_items = &["Gil", "MGP"];
     let allowed_item_ui_categories = ["Currency", "Miscellany", "Other"]

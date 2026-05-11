@@ -1,4 +1,5 @@
 use crate::api::bulk_add_item_to_list;
+use crate::global_state::xiv_data::tracked_data;
 use crate::components::icon::Icon;
 use crate::components::item_icon::{IconSize, ItemIcon};
 use crate::components::modal::Modal;
@@ -17,7 +18,7 @@ pub fn AddRecipeToCurrentListModal(
     #[prop(into, optional)] on_success: Option<Callback<()>>,
 ) -> impl IntoView {
     let (search, set_search) = signal(String::new());
-    let data = xiv_gen_db::data();
+    let data = tracked_data();
     let recipes = &data.recipes;
     let items = &data.items;
 

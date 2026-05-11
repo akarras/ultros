@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::global_state::xiv_data::tracked_data;
 use leptos::prelude::*;
 use ultros_api_types::{ActiveListing, list::ListItem};
 use xiv_gen::ItemId;
@@ -105,7 +106,7 @@ fn calculate_list_totals(
 
 #[component]
 pub fn ListSummary(items: Vec<(ListItem, Vec<ActiveListing>)>) -> impl IntoView {
-    let data = xiv_gen_db::data();
+    let data = tracked_data();
     let game_items = &data.items;
 
     // Get world data from context

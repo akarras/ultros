@@ -1,4 +1,5 @@
 use crate::components::icon::Icon;
+use crate::global_state::xiv_data::tracked_data;
 use icondata as i;
 use icondata::RiPlayListAddMediaLine;
 use leptos::component;
@@ -52,7 +53,7 @@ fn AddToListModal(
     #[prop(into)] set_visible: SignalSetter<bool>,
 ) -> impl IntoView {
     let i18n = use_i18n();
-    let items = &xiv_gen_db::data().items;
+    let items = &tracked_data().items;
     let item = move || items.get(&ItemId(item_id()));
     let lists = Resource::new(move || {}, move |_| get_lists());
     let (hq, set_hq) = signal(false);
