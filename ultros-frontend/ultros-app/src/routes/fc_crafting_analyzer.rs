@@ -1,3 +1,4 @@
+use crate::analysis::roi_badge_class;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use crate::{
@@ -491,11 +492,7 @@ fn FCCraftingAnalyzerTable(
                                 <div role="cell" class="px-4 py-2 w-30 shrink-0 text-right">
                                     <span class={
                                         let data = data_clone.clone();
-                                        move || {
-                                            let roi = data.return_on_investment;
-                                            let tint = if roi >= 500 { "24%" } else if roi >= 200 { "20%" } else if roi >= 100 { "16%" } else if roi >= 50 { "12%" } else { "10%" };
-                                            format!("inline-flex items-center justify-end px-2 py-1 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_{tint},transparent)]")
-                                        }
+                                        move || roi_badge_class(data.return_on_investment)
                                     }>
                                         {format!("{}%", data.return_on_investment)}
                                     </span>
