@@ -5,6 +5,7 @@ use ultros_db::world_data::world_cache::AnySelector;
 use xiv_gen::ItemId;
 
 use crate::discord::ffxiv::ULTROS_COLOR;
+use crate::discord::ffxiv::helpers::{name_matches_lowered, top_n_cheapest_listings};
 use crate::web::item_card::generate_image;
 
 use super::{Context, Error};
@@ -19,10 +20,11 @@ async fn autocomplete_item<'a>(
     _ctx: Context<'_>,
     partial: &'a str,
 ) -> impl Iterator<Item = poise::serenity_prelude::AutocompleteChoice> + 'a {
-    let items = xiv_gen_db::data().items.values();
     let partial = partial.to_lowercase();
-    items
-        .filter(move |item| item.name.to_lowercase().contains(&partial))
+    xiv_gen_db::data()
+        .items
+        .values()
+        .filter(move |item| name_matches_lowered(&item.name, &partial))
         .map(|item| {
             poise::serenity_prelude::AutocompleteChoice::new(item.name.to_string(), item.key_id.0)
         })
@@ -37,7 +39,7 @@ async fn autocomplete_world<'a>(
     ctx.data()
         .world_cache
         .get_all_results()
-        .filter(move |w| w.get_name().to_lowercase().contains(&partial))
+        .filter(move |w| name_matches_lowered(w.get_name(), &partial))
         .map(|w| w.get_name().to_string())
         .take(99)
 }
@@ -60,16 +62,13 @@ async fn current(
         .items
         .get(&ItemId(item))
         .ok_or(anyhow!("bad item id"))?;
-    let mut listings = ctx
+    let listings = ctx
         .data()
         .db
         .get_all_listings_in_worlds(&world_ids, universalis::ItemId(item))
         .await?;
-    listings.sort_by_key(|l| l.price_per_unit);
-    let listings = listings
+    let listings = top_n_cheapest_listings(listings, hq_only, 10)
         .into_iter()
-        .filter(|w| hq_only.map(|hq| w.hq == hq).unwrap_or(true))
-        .take(10)
         .format_with("\n", |l, f| {
             f(&format_args!(
                 "{:<10} {:3} {:<7} {}",

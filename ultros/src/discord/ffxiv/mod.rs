@@ -2,6 +2,7 @@ use super::{Context, Error};
 pub mod admin;
 mod analyze;
 mod character;
+mod helpers;
 mod item_prices;
 mod lists;
 mod retainer;
