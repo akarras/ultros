@@ -1,3 +1,4 @@
+use crate::components::alert_config_drawer::AlertConfigDrawer;
 use crate::components::icon::Icon;
 use crate::components::{clipboard::*, item_icon::*, price_viewer::*, tooltip::*};
 use crate::global_state::xiv_data::tracked_data;
@@ -35,6 +36,7 @@ pub fn ListItemRow(
     let game_items = &data.items;
 
     let (edit, set_edit) = signal(false);
+    let (alert_drawer_open, set_alert_drawer_open) = signal(false);
     let item = RwSignal::new(item);
     let temp_item = RwSignal::new(item());
     let listings = RwSignal::new(listings);
@@ -129,6 +131,15 @@ pub fn ListItemRow(
                             </td>
                             <td class:hidden=edit_list_mode>
                                 <div class="flex gap-1">
+                                    <Tooltip tooltip_text="Create price alert">
+                                        <button
+                                            class="btn"
+                                            aria-label="Create price alert"
+                                            on:click=move |_| set_alert_drawer_open.set(true)
+                                        >
+                                            <Icon icon=i::BsBell />
+                                        </button>
+                                    </Tooltip>
                                     <button
                                         class="btn"
                                         on:click=move |_| {
@@ -255,6 +266,15 @@ pub fn ListItemRow(
 
                             </td>
                             <td>
+                                <Tooltip tooltip_text="Create price alert">
+                                    <button
+                                        class="btn"
+                                        aria-label="Create price alert"
+                                        on:click=move |_| set_alert_drawer_open.set(true)
+                                    >
+                                        <Icon icon=i::BsBell />
+                                    </button>
+                                </Tooltip>
                                 <button
                                     class="btn"
                                     on:click=move |_| {
@@ -282,5 +302,19 @@ pub fn ListItemRow(
                 }
             }}
         </tr>
+        <Show when=alert_drawer_open>
+            <AlertConfigDrawer
+                item_id=item.with(|i| i.item_id)
+                item_name={
+                    let id = item.with(|i| i.item_id);
+                    game_items
+                        .get(&ItemId(id))
+                        .map(|i| i.name.as_str().to_string())
+                        .unwrap_or_default()
+                }
+                default_world=Signal::derive(|| None)
+                set_visible=set_alert_drawer_open.into()
+            />
+        </Show>
     }
 }

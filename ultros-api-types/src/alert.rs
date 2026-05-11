@@ -21,6 +21,8 @@ pub enum AlertTrigger {
 pub enum AlertDelivery {
     /// Send a Discord DM to the user. The user_id is derived from the auth session, not the request body.
     DiscordDm,
+    /// POST a Discord-shaped embed to a user-provided webhook URL (typically a Discord channel webhook).
+    Webhook { url: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -32,13 +32,22 @@ pub(crate) async fn create_alert(
         )));
     }
 
-    let (notification_method, notification_config, notification_name) = match req.delivery {
-        AlertDelivery::DiscordDm => (
-            "DiscordDm",
-            serde_json::json!({ "user_id": owner }),
-            format!("DM to {}", user.name),
-        ),
-    };
+    let (notification_method, notification_config, notification_name): (&str, _, String) =
+        match &req.delivery {
+            AlertDelivery::DiscordDm => (
+                "DiscordDm",
+                serde_json::json!({ "user_id": owner }),
+                format!("DM to {}", user.name),
+            ),
+            AlertDelivery::Webhook { url } => {
+                validate_discord_webhook_url(url)?;
+                (
+                    "Webhook",
+                    serde_json::json!({ "url": url }),
+                    format!("Webhook to {url}"),
+                )
+            }
+        };
 
     // AnySelector is Copy — passed by value here, also Copied into the response below.
     let world_selector_json = serde_json::to_value(world_selector)
@@ -67,7 +76,7 @@ pub(crate) async fn create_alert(
             price_threshold,
             hq_only,
         },
-        delivery: AlertDelivery::DiscordDm,
+        delivery: req.delivery,
         enabled: alert.enabled,
         cooldown_seconds: alert.cooldown_seconds,
         last_fired_at: alert.last_fired_at.map(|t| t.with_timezone(&chrono::Utc)),
@@ -86,6 +95,22 @@ pub(crate) async fn list_alerts(
     for (a, t) in rows {
         let world_selector = serde_json::from_value(t.world_selector.clone())
             .map_err(|e| ApiError::from(anyhow::anyhow!("bad world_selector in db: {}", e)))?;
+        let delivery = match db
+            .get_first_endpoint_for_alert(a.id)
+            .await
+            .map_err(ApiError::from)?
+        {
+            Some(e) if e.method == "Webhook" => {
+                let url = e
+                    .config
+                    .get("url")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                AlertDelivery::Webhook { url }
+            }
+            _ => AlertDelivery::DiscordDm,
+        };
         out.push(Alert {
             id: a.id,
             trigger: AlertTrigger::BelowThreshold {
@@ -94,7 +119,7 @@ pub(crate) async fn list_alerts(
                 price_threshold: t.price_threshold,
                 hq_only: t.hq_only,
             },
-            delivery: AlertDelivery::DiscordDm,
+            delivery,
             enabled: a.enabled,
             cooldown_seconds: a.cooldown_seconds,
             last_fired_at: a.last_fired_at.map(|t| t.with_timezone(&chrono::Utc)),
@@ -161,4 +186,33 @@ pub(crate) async fn list_alert_events(
             })
             .collect(),
     ))
+}
+
+#[allow(clippy::result_large_err)]
+fn validate_discord_webhook_url(url: &str) -> Result<(), ApiError> {
+    let parsed = url::Url::parse(url)
+        .map_err(|e| ApiError::from(anyhow::anyhow!("invalid webhook URL: {e}")))?;
+    if parsed.scheme() != "https" {
+        return Err(ApiError::from(anyhow::anyhow!(
+            "webhook URL must use https"
+        )));
+    }
+    let host = parsed.host_str().unwrap_or("");
+    let allowed = [
+        "discord.com",
+        "discordapp.com",
+        "ptb.discord.com",
+        "canary.discord.com",
+    ];
+    if !allowed.contains(&host) {
+        return Err(ApiError::from(anyhow::anyhow!(
+            "webhook URL host must be a Discord webhook host"
+        )));
+    }
+    if !parsed.path().starts_with("/api/webhooks/") {
+        return Err(ApiError::from(anyhow::anyhow!(
+            "webhook URL path must start with /api/webhooks/"
+        )));
+    }
+    Ok(())
 }

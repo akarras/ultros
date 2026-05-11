@@ -28,6 +28,7 @@ use crate::{
     },
     routes::{
         about::*,
+        alerts::Alerts,
         analyzer::*,
         currency_exchange::{CurrencyExchange, CurrencySelection, ExchangeItem},
         edit_retainers::*,
@@ -314,6 +315,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                                 <Route path=path!("listings/:id") view=SingleRetainerListings />
                                 <Route path=path!("") view=RetainersBasePath />
                             </ParentRoute>
+                            <Route path=path!("alerts") view=Alerts />
                             <ParentRoute path=path!("list") view=Lists>
                                 <Route path=path!(":id") view=ListView />
                                 <Route path=path!("") view=EditLists />
