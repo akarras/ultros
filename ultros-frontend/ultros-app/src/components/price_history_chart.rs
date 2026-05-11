@@ -5,7 +5,6 @@ use leptos_chartistry::*;
 use ultros_api_types::SaleHistory;
 use ultros_api_types::world_helper::AnySelector;
 
-use crate::components::toggle::Toggle;
 use crate::global_state::LocalWorldData;
 use crate::i18n::{t_string, use_i18n};
 
@@ -129,52 +128,6 @@ fn short_number(value: i32) -> String {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum TimeRange {
-    Last24h,
-    Last7d,
-    Last30d,
-    All,
-}
-
-impl TimeRange {
-    fn label(self) -> &'static str {
-        match self {
-            TimeRange::Last24h => "24h",
-            TimeRange::Last7d => "7d",
-            TimeRange::Last30d => "30d",
-            TimeRange::All => "All",
-        }
-    }
-
-    fn cutoff(self, now: chrono::NaiveDateTime) -> Option<chrono::NaiveDateTime> {
-        let delta = match self {
-            TimeRange::Last24h => chrono::Duration::hours(24),
-            TimeRange::Last7d => chrono::Duration::days(7),
-            TimeRange::Last30d => chrono::Duration::days(30),
-            TimeRange::All => return None,
-        };
-        Some(now - delta)
-    }
-}
-
-/// Filter sales whose `sold_date` is on-or-after the range cutoff.
-/// `now` is parameterized for tests.
-fn filter_by_range(
-    sales: &[SaleHistory],
-    range: TimeRange,
-    now: chrono::NaiveDateTime,
-) -> Vec<SaleHistory> {
-    match range.cutoff(now) {
-        Some(cutoff) => sales
-            .iter()
-            .filter(|s| s.sold_date >= cutoff)
-            .cloned()
-            .collect(),
-        None => sales.to_vec(),
-    }
-}
-
 /// Computed statistics for the stats strip.
 #[derive(Clone, Debug, PartialEq)]
 struct ChartStats {
@@ -208,48 +161,6 @@ struct SaleRow {
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
-
-#[component]
-fn RangeChips(current: Signal<TimeRange>, set_current: SignalSetter<TimeRange>) -> impl IntoView {
-    let ranges = [
-        TimeRange::Last24h,
-        TimeRange::Last7d,
-        TimeRange::Last30d,
-        TimeRange::All,
-    ];
-    view! {
-        <div class="flex items-center gap-1" role="group" aria-label="Time range">
-            {ranges
-                .into_iter()
-                .map(|r| {
-                    view! {
-                        <button
-                            type="button"
-                            aria-pressed=move || (current.get() == r).to_string()
-                            class=move || {
-                                let base = "px-3 py-1 rounded-full text-sm transition-colors duration-150 ";
-                                if current.get() == r {
-                                    format!(
-                                        "{}bg-brand-500/25 font-medium text-[color:var(--color-text)]",
-                                        base,
-                                    )
-                                } else {
-                                    format!(
-                                        "{}hover:bg-brand-500/10 text-[color:var(--color-text)]/70",
-                                        base,
-                                    )
-                                }
-                            }
-                            on:click=move |_| set_current.set(r)
-                        >
-                            {r.label()}
-                        </button>
-                    }
-                })
-                .collect_view()}
-        </div>
-    }
-}
 
 #[component]
 fn StatsStrip(stats: Signal<Option<ChartStats>>) -> impl IntoView {
@@ -300,7 +211,10 @@ fn StatsStrip(stats: Signal<Option<ChartStats>>) -> impl IntoView {
 // ── Main component ────────────────────────────────────────────────────────────
 
 #[component]
-pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
+pub fn PriceHistoryChart(
+    #[prop(into)] sales: Signal<Vec<SaleHistory>>,
+    #[prop(into)] filter_outliers: Signal<bool>,
+) -> impl IntoView {
     // Implementation uses leptos-chartistry 0.2 for a multi-series scatter chart.
     // Scatter is achieved by setting line width to 0.0 and adding Circle markers.
     // Each series is a column of f64 prices in a flat Vec<SaleRow>, with NAN for
@@ -310,18 +224,9 @@ pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl 
     let helper = local_world_data.0.unwrap();
     let i18n = use_i18n();
 
-    let (range, set_range) = signal(TimeRange::All);
-    let (filter_outliers, set_filter_outliers) = signal(true);
-
-    // Step 1: time-range filter
-    let range_filtered = Memo::new(move |_| {
-        let now = chrono::Utc::now().naive_utc();
-        filter_by_range(&sales.get(), range.get(), now)
-    });
-
-    // Step 2: optional IQR outlier filter on top of the time-range filter
+    // Optional IQR outlier filter applied to the incoming (pre-filtered) sales.
     let filtered = Memo::new(move |_| {
-        let base = range_filtered.get();
+        let base = sales.get();
         if !filter_outliers.get() {
             return base;
         }
@@ -335,7 +240,7 @@ pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl 
         }
     });
 
-    // Step 3: stats
+    // Stats computed from the outlier-filtered sales.
     let stats = Memo::new(move |_| {
         let data = filtered.get();
         if data.is_empty() {
@@ -357,16 +262,16 @@ pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl 
         })
     });
 
-    // Step 4: group by locale and build flat row vec for chartistry
+    // Group by locale and build flat row vec for chartistry.
     // We produce a derived signal so chartistry's `data` prop stays reactive.
     // Series names come from group_sales_by_locale; order is stable (sorted).
     let helper_clone = helper.clone();
     let chart_data = Memo::new(move |_| {
         let data = filtered.get();
-        // IQR band uses the time-range-only data (before outlier filter) so the
-        // band reflects the full distribution and is stable when the outlier
-        // toggle changes.
-        let range_only = range_filtered.get();
+        // IQR band uses the incoming sales (before outlier filter) so the band
+        // reflects the broader pre-outlier distribution and is stable when the
+        // outlier toggle changes.
+        let all_sales = sales.get();
 
         let groups = group_sales_by_locale(&helper_clone, &data);
         // Build flat rows: one row per sale, prices indexed by series slot.
@@ -401,9 +306,10 @@ pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl 
             .collect();
         let vwap_val = vwap(&pq_filtered).map(|v| v as f64).unwrap_or(f64::NAN);
 
-        // IQR band (from range-only, before outlier filter)
-        let range_prices: Vec<i32> = range_only.iter().map(|s| s.price_per_item).collect();
-        let (iqr_lo_val, iqr_hi_val) = match iqr_band(&range_prices) {
+        // IQR band from the incoming sales (before outlier filter) so the band
+        // reflects the full distribution.
+        let all_prices: Vec<i32> = all_sales.iter().map(|s| s.price_per_item).collect();
+        let (iqr_lo_val, iqr_hi_val) = match iqr_band(&all_prices) {
             Some((lo, hi)) => (lo as f64, hi as f64),
             None => (f64::NAN, f64::NAN),
         };
@@ -478,29 +384,9 @@ pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl 
     // (array of &'static str) and is captured by value.
 
     view! {
-        <div class="panel p-4 md:p-6 text-[color:var(--color-text)]">
-            // Header row: title on left, controls on right
-            <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
-                <h3 class="text-lg font-semibold m-0">
-                    {move || t_string!(i18n, sale_history).to_string()}
-                </h3>
-                <div class="flex flex-wrap items-center gap-3">
-                    <RangeChips current=range.into() set_current=set_range.into() />
-                    <Toggle
-                        checked=Signal::from(filter_outliers)
-                        set_checked=SignalSetter::map(move |v| set_filter_outliers.set(v))
-                        checked_label=t_string!(i18n, filter_outliers_enabled)
-                        unchecked_label=t_string!(i18n, filter_outliers_disabled)
-                    />
-                </div>
-            </div>
-
-            // Stats strip
+        <div class="flex flex-col gap-3">
             <StatsStrip stats=stats.into() />
-
-            // Chart body
             <div
-                class="w-full aspect-[16/9] max-h-[520px] overflow-hidden"
                 role="img"
                 aria-label=move || {
                     let n = stats.get().map(|s| s.n).unwrap_or(0);
@@ -510,6 +396,7 @@ pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl 
                         .replace("{from}", "")
                         .replace("{to}", "")
                 }
+                class="w-full aspect-[16/9] max-h-[520px] overflow-hidden"
             >
                 {move || {
                     let (series_names, rows) = chart_data.get();
@@ -789,40 +676,5 @@ mod tests {
     fn iqr_band_widens_with_25x_multiplier() {
         let prices: Vec<i32> = (0..20).collect();
         assert_eq!(iqr_band(&prices), Some((-20, 40)));
-    }
-
-    #[test]
-    fn time_range_all_keeps_everything() {
-        let now = chrono::Utc::now().naive_utc();
-        let sales = vec![
-            sale(100, 1000, 1, now.and_utc().timestamp() - 60 * 60 * 24 * 60),
-            sale(100, 2000, 1, now.and_utc().timestamp()),
-        ];
-        let filtered = filter_by_range(&sales, TimeRange::All, now);
-        assert_eq!(filtered.len(), 2);
-    }
-
-    #[test]
-    fn time_range_24h_filters_older_sales() {
-        let now = chrono::Utc::now().naive_utc();
-        let sales = vec![
-            sale(100, 1000, 1, now.and_utc().timestamp() - 60 * 60 * 25),
-            sale(100, 2000, 1, now.and_utc().timestamp() - 60 * 60),
-        ];
-        let filtered = filter_by_range(&sales, TimeRange::Last24h, now);
-        assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].price_per_item, 2000);
-    }
-
-    #[test]
-    fn time_range_7d_filters_older_sales() {
-        let now = chrono::Utc::now().naive_utc();
-        let sales = vec![
-            sale(100, 1000, 1, now.and_utc().timestamp() - 60 * 60 * 24 * 8),
-            sale(100, 2000, 1, now.and_utc().timestamp() - 60 * 60 * 24 * 3),
-        ];
-        let filtered = filter_by_range(&sales, TimeRange::Last7d, now);
-        assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].price_per_item, 2000);
     }
 }
