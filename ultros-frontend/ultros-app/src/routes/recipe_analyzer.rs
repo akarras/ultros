@@ -2,7 +2,7 @@ use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use crate::{
-    analysis::{SalesStats, analyze_sales},
+    analysis::{SalesStats, analyze_sales, roi_badge_class},
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
         add_recipe_to_list::AddRecipeToList, crafter_settings::CrafterSettings, gil::*, icon::Icon,
@@ -535,15 +535,15 @@ fn RecipeAnalyzerTable(
                                 }
                             }
                         >
-                            <option value="">"All Jobs"</option>
-                            <option value="CRP" selected=move || job_filter() == Some("CRP".to_string())>"Carpenter"</option>
-                            <option value="BSM" selected=move || job_filter() == Some("BSM".to_string())>"Blacksmith"</option>
-                            <option value="ARM" selected=move || job_filter() == Some("ARM".to_string())>"Armorer"</option>
-                            <option value="GSM" selected=move || job_filter() == Some("GSM".to_string())>"Goldsmith"</option>
-                            <option value="LTW" selected=move || job_filter() == Some("LTW".to_string())>"Leatherworker"</option>
-                            <option value="WVR" selected=move || job_filter() == Some("WVR".to_string())>"Weaver"</option>
-                            <option value="ALC" selected=move || job_filter() == Some("ALC".to_string())>"Alchemist"</option>
-                            <option value="CUL" selected=move || job_filter() == Some("CUL".to_string())>"Culinarian"</option>
+                            <option value="">{t!(i18n, all_jobs)}</option>
+                            <option value="CRP" selected=move || job_filter() == Some("CRP".to_string())>{t!(i18n, carpenter)}</option>
+                            <option value="BSM" selected=move || job_filter() == Some("BSM".to_string())>{t!(i18n, blacksmith)}</option>
+                            <option value="ARM" selected=move || job_filter() == Some("ARM".to_string())>{t!(i18n, armorer)}</option>
+                            <option value="GSM" selected=move || job_filter() == Some("GSM".to_string())>{t!(i18n, goldsmith)}</option>
+                            <option value="LTW" selected=move || job_filter() == Some("LTW".to_string())>{t!(i18n, leatherworker)}</option>
+                            <option value="WVR" selected=move || job_filter() == Some("WVR".to_string())>{t!(i18n, weaver)}</option>
+                            <option value="ALC" selected=move || job_filter() == Some("ALC".to_string())>{t!(i18n, alchemist)}</option>
+                            <option value="CUL" selected=move || job_filter() == Some("CUL".to_string())>{t!(i18n, culinarian)}</option>
                         </select>
                      </div>
                 </FilterCard>
@@ -652,11 +652,7 @@ fn RecipeAnalyzerTable(
                                 <div role="cell" class="px-4 py-2 w-32 shrink-0 text-right">
                                      <span class={
                                         let data = data_clone.clone();
-                                        move || {
-                                            let roi = data.return_on_investment;
-                                            let tint = if roi >= 500 { "24%" } else if roi >= 200 { "20%" } else if roi >= 100 { "16%" } else if roi >= 50 { "12%" } else { "10%" };
-                                            format!("inline-flex items-center justify-end px-2 py-1 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_{tint},transparent)]")
-                                        }
+                                        move || roi_badge_class(data.return_on_investment)
                                     }>
                                         {format!("{}%", data.return_on_investment)}
                                     </span>
@@ -773,15 +769,8 @@ pub fn RecipeAnalyzer() -> impl IntoView {
 
     let recent_sales = ArcResource::new(selected_world, move |world| async move {
         if let Some(world) = world {
-            leptos::logging::log!("Fetching sales for world: {}", &world.name);
-            let res = get_recent_sales_for_world(&world.name).await;
-            match &res {
-                Ok(sales) => leptos::logging::log!("Sales result: {} items", sales.sales.len()),
-                Err(e) => leptos::logging::log!("Sales error: {}", e),
-            }
-            res
+            get_recent_sales_for_world(&world.name).await
         } else {
-            leptos::logging::log!("No world selected for sales");
             Ok(RecentSales { sales: vec![] })
         }
     });
