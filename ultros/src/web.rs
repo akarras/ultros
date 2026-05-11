@@ -840,14 +840,8 @@ async fn character_search(
         .flat_map(|r| {
             // world comes back as World [Datacenter], so strip the datacenter and parse the world
             let (world, _) = r.world.split_once(' ')?;
-            let world = cache
-                .lookup_value_by_name(world)
-                .ok()
-                .unwrap_or_else(|| panic!("World {} not found", world));
-            let (first_name, last_name) = r
-                .name
-                .split_once(' ')
-                .expect("Should always have first last name");
+            let world = cache.lookup_value_by_name(world).ok()?;
+            let (first_name, last_name) = r.name.split_once(' ')?;
             Some(FfxivCharacter {
                 id: r.user_id as i32,
                 first_name: first_name.to_string(),
