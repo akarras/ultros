@@ -112,6 +112,7 @@ impl UltrosDb {
 
     /// Create an alert + alert_item_threshold + alert_notification_rule + (if needed) notification_endpoint
     /// in a single transaction.
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_threshold_alert(
         &self,
         owner_discord_user_id: i64,

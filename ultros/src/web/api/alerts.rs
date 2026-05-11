@@ -16,7 +16,7 @@ pub(crate) async fn create_alert(
     user: AuthDiscordUser,
     Json(req): Json<CreateAlertRequest>,
 ) -> Result<Json<Alert>, ApiError> {
-    let cooldown = req.cooldown_seconds.unwrap_or(3600).max(60).min(86400);
+    let cooldown = req.cooldown_seconds.unwrap_or(3600).clamp(60, 86400);
     let owner = user.id as i64;
 
     let AlertTrigger::BelowThreshold {
@@ -40,7 +40,8 @@ pub(crate) async fn create_alert(
         ),
     };
 
-    let world_selector_json = serde_json::to_value(&world_selector)
+    // AnySelector is Copy — passed by value here, also Copied into the response below.
+    let world_selector_json = serde_json::to_value(world_selector)
         .map_err(|e| ApiError::from(anyhow::anyhow!("invalid world_selector: {}", e)))?;
 
     let alert = db
