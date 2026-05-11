@@ -6,22 +6,19 @@ pub(crate) mod error;
 pub(crate) mod item_card;
 pub(crate) mod oauth;
 pub(crate) mod sitemap;
+pub(crate) mod state;
+pub(crate) mod static_files;
 
 use anyhow::Error;
-use axum::body::Body;
-use axum::extract::{FromRef, Path, Query, State};
-use axum::http::{HeaderValue, Response, StatusCode};
+use axum::extract::{Path, Query, State};
 use axum::response::{IntoResponse, Redirect};
 use axum::routing::{delete, get, post};
-use axum::{Json, Router, body, middleware};
-use axum_extra::TypedHeader;
+use axum::{Json, Router, middleware};
 use axum_extra::extract::CookieJar;
-use axum_extra::extract::cookie::{Cookie, Key};
-use axum_extra::headers::{CacheControl, ContentType, HeaderMapExt};
+use axum_extra::extract::cookie::Cookie;
+use axum_extra::headers::{CacheControl, HeaderMapExt};
 use futures::future::{try_join, try_join_all};
-use hyper::header;
 use itertools::Itertools;
-use leptos::config::LeptosOptions;
 use leptos::prelude::provide_context;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
@@ -30,12 +27,10 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::time::timeout;
-use tokio_util::sync::CancellationToken;
 use tower_http::compression::predicate::{NotForContentType, SizeAbove};
 use tower_http::compression::{CompressionLayer, Predicate};
 use tower_http::trace::TraceLayer;
 use tracing::{debug, warn};
-use ultros_api_types::icon_size::IconSize;
 use ultros_api_types::list::{
     CreateInvite, CreateList, List, ListInvite, ListItem, ListSharedGroup, ListSharedUser,
     ShareListGroup, ShareListUser,
@@ -45,7 +40,6 @@ use ultros_api_types::user::group::{CreateGroup, UserGroup, UserGroupMember};
 use ultros_api_types::user::{OwnedRetainer, UserData, UserRetainerListings, UserRetainers};
 use ultros_api_types::websocket::{ListEventData, ListingEventData};
 use ultros_api_types::world::WorldData;
-use ultros_api_types::world_helper::WorldHelper;
 use ultros_api_types::{
     ActiveListing, CurrentlyShownItem, FfxivCharacter, FfxivCharacterVerification, Retainer,
 };
@@ -54,15 +48,13 @@ use ultros_db::ActiveValue;
 use ultros_db::common_type_conversions::ApiConversionError;
 use ultros_db::world_data::world_cache::AnySelector;
 use ultros_db::{UltrosDb, world_data::world_cache::WorldCache};
-use ultros_xiv_icons::get_item_image;
 use universalis::{ItemId, ListingView, UniversalisClient, WorldId};
 
 use self::character_verifier_service::CharacterVerifierService;
 use self::country_code_decoder::Region;
 use self::error::{ApiError, WebError};
-use self::oauth::{AuthDiscordUser, AuthUserCache, DiscordAuthConfig};
-use crate::analyzer_service::AnalyzerService;
-use crate::event::{EventReceivers, EventSenders, EventType};
+use self::oauth::{AuthDiscordUser, AuthUserCache};
+use crate::event::{EventSenders, EventType};
 use crate::leptos::create_leptos_app;
 use crate::search_service::SearchService;
 use crate::web::api::alerts::{
@@ -200,191 +192,8 @@ async fn refresh_world_item_listings(
     Ok(Redirect::to(&format!("/item/{world}/{item_id}")))
 }
 
-#[derive(Clone)]
-pub(crate) struct WebState {
-    pub(crate) db: UltrosDb,
-    pub(crate) key: Key,
-    pub(crate) oauth_config: DiscordAuthConfig,
-    pub(crate) user_cache: AuthUserCache,
-    pub(crate) event_receivers: EventReceivers,
-    pub(crate) event_senders: EventSenders,
-    pub(crate) world_cache: Arc<WorldCache>,
-    /// Common variant of world_cache. Maybe get rid of world_cache?
-    pub(crate) world_helper: Arc<WorldHelper>,
-    pub(crate) analyzer_service: AnalyzerService,
-    pub(crate) character_verification: CharacterVerifierService,
-    pub(crate) leptos_options: LeptosOptions,
-    pub(crate) search_service: SearchService,
-    pub(crate) token: CancellationToken,
-}
-
-impl FromRef<WebState> for UltrosDb {
-    fn from_ref(input: &WebState) -> Self {
-        input.db.clone()
-    }
-}
-
-impl FromRef<WebState> for Key {
-    fn from_ref(input: &WebState) -> Self {
-        input.key.clone()
-    }
-}
-
-impl FromRef<WebState> for DiscordAuthConfig {
-    fn from_ref(input: &WebState) -> Self {
-        input.oauth_config.clone()
-    }
-}
-
-impl FromRef<WebState> for AuthUserCache {
-    fn from_ref(input: &WebState) -> Self {
-        input.user_cache.clone()
-    }
-}
-
-impl FromRef<WebState> for EventReceivers {
-    fn from_ref(input: &WebState) -> Self {
-        input.event_receivers.clone()
-    }
-}
-
-impl FromRef<WebState> for Arc<WorldCache> {
-    fn from_ref(input: &WebState) -> Self {
-        input.world_cache.clone()
-    }
-}
-
-impl FromRef<WebState> for Arc<WorldHelper> {
-    fn from_ref(input: &WebState) -> Self {
-        input.world_helper.clone()
-    }
-}
-
-impl FromRef<WebState> for AnalyzerService {
-    fn from_ref(input: &WebState) -> Self {
-        input.analyzer_service.clone()
-    }
-}
-
-impl FromRef<WebState> for EventSenders {
-    fn from_ref(input: &WebState) -> Self {
-        input.event_senders.clone()
-    }
-}
-
-impl FromRef<WebState> for CharacterVerifierService {
-    fn from_ref(input: &WebState) -> Self {
-        input.character_verification.clone()
-    }
-}
-
-impl FromRef<WebState> for LeptosOptions {
-    fn from_ref(input: &WebState) -> Self {
-        input.leptos_options.clone()
-    }
-}
-
-impl FromRef<WebState> for SearchService {
-    fn from_ref(input: &WebState) -> Self {
-        input.search_service.clone()
-    }
-}
-
-/// In release mode, return the files from a statically included dir
-#[cfg(not(debug_assertions))]
-fn get_static_file(path: &str) -> Option<&'static [u8]> {
-    use include_dir::include_dir;
-    static STATIC_DIR: include_dir::Dir = include_dir!("$CARGO_MANIFEST_DIR/static");
-    let dir = &STATIC_DIR;
-    let file = dir.get_file(path)?;
-    Some(file.contents())
-}
-
-/// In debug mode, just load the files from disk
-#[cfg(debug_assertions)]
-fn get_static_file(path: &str) -> Option<Vec<u8>> {
-    use std::{io::Read, path::PathBuf};
-
-    let file = PathBuf::from("./ultros/static").join(path);
-    let mut file = std::fs::File::open(file).ok()?;
-    let mut vec = Vec::new();
-    file.read_to_end(&mut vec).ok()?;
-    Some(vec)
-}
-
-async fn get_file(path: &str) -> Result<impl IntoResponse + use<>, WebError> {
-    let mime_type = mime_guess::from_path(path).first_or_text_plain();
-    match get_static_file(path) {
-        None => Ok(Response::builder()
-            .status(StatusCode::NOT_FOUND)
-            .body(Body::new(http_body_util::Empty::new()))?),
-        Some(file) => Ok(Response::builder()
-            .status(StatusCode::OK)
-            .header(
-                header::CONTENT_TYPE,
-                HeaderValue::from_str(mime_type.as_ref()).unwrap(),
-            )
-            .header(
-                header::CACHE_CONTROL,
-                #[cfg(not(debug_assertions))]
-                HeaderValue::from_str("public, max-age=86400").unwrap(),
-                #[cfg(debug_assertions)]
-                HeaderValue::from_str("none").unwrap(),
-            )
-            .body(Body::new(http_body_util::Full::from(file)))?),
-    }
-}
-
-async fn favicon() -> impl IntoResponse {
-    get_file("favicon.ico").await
-}
-
-async fn robots() -> impl IntoResponse {
-    get_file("robots.txt").await
-}
-
-async fn static_path(Path(path): Path<String>) -> impl IntoResponse {
-    let path = path.trim_start_matches('/');
-    get_file(path).await
-}
-
-#[derive(Deserialize)]
-struct IconQuery {
-    size: IconSize,
-}
-
-async fn fallback_item_icon() -> impl IntoResponse {
-    let fallback_image = include_bytes!("../static/fallback-image.png");
-    (TypedHeader(ContentType::png()), fallback_image)
-}
-
-async fn get_item_icon(
-    Path(item_id): Path<u32>,
-    Query(query): Query<IconQuery>,
-) -> Result<Response<body::Body>, WebError> {
-    // When an item has no icon (or the requested size variant is missing),
-    // serve the static fallback PNG with 200 instead of throwing a 500.
-    // Browsers render the placeholder cleanly and no console errors fire.
-    if let Some(bytes) = get_item_image(item_id as i32, query.size) {
-        let mime_type = mime_guess::from_path("icon.webp").first_or_text_plain();
-        Ok(Response::builder()
-            .header(
-                header::CACHE_CONTROL,
-                HeaderValue::from_static("max-age=86400"),
-            )
-            .header(header::CONTENT_TYPE, mime_type.as_ref())
-            .body(body::Body::new(http_body_util::Full::from(bytes)))?)
-    } else {
-        let fallback: &'static [u8] = include_bytes!("../static/fallback-image.png");
-        Ok(Response::builder()
-            .header(
-                header::CACHE_CONTROL,
-                HeaderValue::from_static("max-age=3600"),
-            )
-            .header(header::CONTENT_TYPE, "image/png")
-            .body(body::Body::new(http_body_util::Full::from(fallback)))?)
-    }
-}
+pub(crate) use self::state::WebState;
+use self::static_files::{fallback_item_icon, favicon, get_item_icon, robots, static_path};
 
 pub(crate) async fn invite() -> Redirect {
     let client_id = std::env::var("DISCORD_CLIENT_ID").expect("Unable to get DISCORD_CLIENT_ID");
