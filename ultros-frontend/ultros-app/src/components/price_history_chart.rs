@@ -191,8 +191,9 @@ struct ChartStats {
 /// is set on the tooltip.
 #[derive(Clone, Debug, PartialEq)]
 struct SaleRow {
-    /// Unix timestamp in seconds, used as the X axis.
-    ts: f64,
+    /// Sale timestamp, used as the X axis. chartistry's built-in `DateTime<Utc>`
+    /// `Tick` impl automatically formats labels as dates.
+    ts: chrono::DateTime<chrono::Utc>,
     /// Price per item (f64 for chartistry). One column per series; NAN if
     /// this row does not belong to that series.
     prices: Vec<f64>,
@@ -365,17 +366,18 @@ pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl 
         let series_names: Vec<String> = groups.iter().map(|(n, _)| n.clone()).collect();
 
         // Flatten all points into (ts, series_idx, price)
-        let mut flat: Vec<(f64, usize, f64)> = groups
+        let mut flat: Vec<(chrono::DateTime<chrono::Utc>, usize, f64)> = groups
             .iter()
             .enumerate()
             .flat_map(|(idx, (_, points))| {
-                points
-                    .iter()
-                    .map(move |(dt, price, _qty)| (dt.timestamp() as f64, idx, *price as f64))
+                points.iter().map(move |(dt, price, _qty)| {
+                    let utc = dt.with_timezone(&chrono::Utc);
+                    (utc, idx, *price as f64)
+                })
             })
             .collect();
         // Sort by timestamp so chartistry's line renderer doesn't cross itself
-        flat.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        flat.sort_by(|a, b| a.0.cmp(&b.0));
 
         let mut rows: Vec<SaleRow> = Vec::with_capacity(flat.len());
         for (ts, series_idx, price) in flat {
@@ -487,13 +489,16 @@ pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl 
 
                         let aspect_ratio = AspectRatio::from_inner_ratio(800.0, 450.0);
                         let tooltip = Tooltip::left_cursor().skip_missing(true);
+                        // Y-axis formatter: reuse short_number style for f64 prices.
+                        let y_labels = TickLabels::aligned_floats()
+                            .with_format(|v: &f64, _state| short_number(*v as i32));
                         view! {
                             <Chart
                                 aspect_ratio=aspect_ratio
                                 series=reactive_series
                                 data=rows
-                                bottom=vec![TickLabels::aligned_floats().into_edge()]
-                                left=vec![TickLabels::aligned_floats().into_edge()]
+                                bottom=vec![TickLabels::timestamps().into_edge()]
+                                left=vec![y_labels.into_edge()]
                                 inner=vec![
                                     XGridLine::default().into_inner(),
                                     YGridLine::default().into_inner(),
