@@ -247,3 +247,19 @@ Beyond Price Alerts itself, the roadmap should cover:
 - Prompt structure for `suggest-items` — needs A/B exploration
 - UI copy for "your alert fired" — should match Ultros's existing tone
 - Whether to seed new accounts with a "try alerts" tutorial flow (probably yes, defer to UX iteration)
+
+---
+
+## Implementation status (2026-05-11)
+
+- **Phase 1** (backend foundation) — shipped via PR #586
+- **Phase 2** (webhook delivery) — combined into Phase 3 PR
+- **Phase 3** (frontend UI: bell icon + drawer + /alerts page) — this PR
+
+**Still deferred:**
+- **Phase 4**: AI-suggested watchlist items + threshold recommendations
+- **% drop from median** trigger (requires a median tracker reading from sale_history)
+- **Live state refresh** in `PriceAlertTracker` (alerts created via API don't fire until app restart)
+- **Per-list "alert defaults"** UI sugar
+- **Top-bar badge** for unread fires
+- **Email delivery**, **web push (PWA)** — out of original scope
