@@ -85,6 +85,64 @@ fn group_sales_by_locale(
         .collect()
 }
 
+/// Volume-weighted average price. Returns None if the input is empty or total qty is 0.
+#[allow(dead_code)]
+fn vwap(prices_and_qty: &[(i32, i32)]) -> Option<i32> {
+    let (num, den) = prices_and_qty
+        .iter()
+        .fold((0i64, 0i64), |(n, d), (price, qty)| {
+            (n + (*price as i64) * (*qty as i64), d + (*qty as i64))
+        });
+    if den == 0 {
+        return None;
+    }
+    Some((num / den) as i32)
+}
+
+/// Median price. For even counts, returns the integer mean of the two middle values.
+#[allow(dead_code)]
+fn median(prices: &[i32]) -> Option<i32> {
+    if prices.is_empty() {
+        return None;
+    }
+    let mut sorted: Vec<i32> = prices.to_vec();
+    sorted.sort_unstable();
+    let n = sorted.len();
+    if n % 2 == 1 {
+        Some(sorted[n / 2])
+    } else {
+        Some((sorted[n / 2 - 1] + sorted[n / 2]) / 2)
+    }
+}
+
+/// IQR-based outlier band, matching the existing logic in `ultros-charts`.
+/// Returns (min, max) where min = Q1 - 2.5*IQR, max = Q3 + 2.5*IQR.
+/// Returns None for samples smaller than 10.
+#[allow(dead_code)]
+fn iqr_band(prices: &[i32]) -> Option<(i32, i32)> {
+    if prices.len() < 10 {
+        return None;
+    }
+    let mut sorted: Vec<i32> = prices.to_vec();
+    sorted.sort_unstable();
+    let q1_idx = sorted.len() / 4;
+    let q3_idx = sorted.len() - q1_idx;
+    let q1 = *sorted.get(q1_idx)?;
+    let q3 = *sorted.get(q3_idx)?;
+    let widened = ((q3 - q1) as f32 * 2.5) as i32;
+    Some((q1 - widened, q3 + widened))
+}
+
+/// Format an integer price using K/mil shortening, same rules as the plotters chart.
+#[allow(dead_code)]
+fn short_number(value: i32) -> String {
+    match value {
+        1_000_000.. => format!("{:.2}mil", value as f32 / 1_000_000.0),
+        1_000..=999_999 => format!("{:.2}K", value as f32 / 1_000.0),
+        _ => value.to_string(),
+    }
+}
+
 #[component]
 pub fn PriceHistoryChart(
     #[prop(into)] sales: Signal<Vec<SaleHistory>>,
@@ -394,5 +452,51 @@ mod tests {
         let names: Vec<_> = series.iter().map(|(n, _)| n.as_str()).collect();
         assert!(names.contains(&"North-America"));
         assert!(names.contains(&"Europe"));
+    }
+
+    #[test]
+    fn vwap_weights_by_quantity() {
+        let prices = vec![(100, 1), (200, 9)];
+        assert_eq!(vwap(&prices), Some(190));
+    }
+
+    #[test]
+    fn vwap_returns_none_for_empty() {
+        assert_eq!(vwap(&[]), None);
+    }
+
+    #[test]
+    fn vwap_returns_none_when_total_qty_zero() {
+        let prices = vec![(100, 0), (200, 0)];
+        assert_eq!(vwap(&prices), None);
+    }
+
+    #[test]
+    fn median_of_odd_count() {
+        let prices = vec![300, 100, 200];
+        assert_eq!(median(&prices), Some(200));
+    }
+
+    #[test]
+    fn median_of_even_count_averages_middle_two() {
+        let prices = vec![400, 100, 300, 200];
+        assert_eq!(median(&prices), Some(250));
+    }
+
+    #[test]
+    fn median_returns_none_for_empty() {
+        assert_eq!(median(&[]), None);
+    }
+
+    #[test]
+    fn iqr_band_returns_none_for_small_samples() {
+        let prices: Vec<i32> = (0..9).collect();
+        assert_eq!(iqr_band(&prices), None);
+    }
+
+    #[test]
+    fn iqr_band_widens_with_25x_multiplier() {
+        let prices: Vec<i32> = (0..20).collect();
+        assert_eq!(iqr_band(&prices), Some((-20, 40)));
     }
 }
