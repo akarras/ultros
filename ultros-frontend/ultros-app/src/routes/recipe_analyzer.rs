@@ -1,4 +1,6 @@
 use crate::components::meta::{MetaDescription, MetaTitle};
+use crate::global_state::xiv_data::tracked_data;
+use crate::i18n::*;
 use crate::{
     analysis::{SalesStats, analyze_sales},
     api::{get_cheapest_listings, get_recent_sales_for_world},
@@ -183,10 +185,11 @@ fn RecipeAnalyzerTable(
     world: Signal<String>,
 ) -> impl IntoView {
     let prices = CheapestListingsMap::from(global_cheapest_listings);
-    let data = xiv_gen_db::data();
+    let data = tracked_data();
     let items = &data.items;
     let recipes = &data.recipes;
     let recipe_level_tables = &data.recipe_level_tables;
+    let i18n = use_i18n();
 
     // Index recipes by output item for subcraft lookup
     let recipes_by_output = Memo::new(move |_| {
@@ -382,8 +385,8 @@ fn RecipeAnalyzerTable(
         <div class="flex flex-col gap-6">
             <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                  <FilterCard
-                    title="Minimum Profit"
-                    description="Set the minimum profit margin"
+                    title=t_string!(i18n, minimum_profit).to_string()
+                    description=t_string!(i18n, set_minimum_profit_margin).to_string()
                 >
                     <div class="flex flex-col gap-2">
                         <div class="text-brand-300">

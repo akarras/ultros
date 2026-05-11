@@ -2,6 +2,7 @@ use crate::components::gil::*;
 use crate::components::icon::Icon;
 use crate::components::item_icon::*;
 use crate::global_state::LocalWorldData;
+use crate::global_state::xiv_data::tracked_data;
 use icondata as i;
 use leptos::either::Either;
 use leptos::prelude::*;
@@ -33,7 +34,7 @@ pub fn BuyingView(
         .expect("LocalWorldData should be available")
         .0
         .expect("LocalWorldData should be loaded");
-    let data = xiv_gen_db::data();
+    let data = tracked_data();
     let game_items = &data.items;
 
     let mut selected_listings: Vec<(i32, GroupedListing)> = Vec::new();

@@ -1,21 +1,22 @@
 use crate::components::icon::Icon;
 use crate::components::meta::{MetaDescription, MetaTitle};
+use crate::i18n::*;
 use icondata as i;
 use leptos::prelude::*;
 
 #[component]
 pub fn About() -> impl IntoView {
+    let i18n = use_i18n();
     view! {
         <div class="container mx-auto space-y-6">
-            <MetaTitle title="About - Ultros" />
-            <MetaDescription text="About Ultros - FFXIV Market Board Analysis Tool" />
+            <MetaTitle title=move || t_string!(i18n, about_ultros_title).to_string() />
+            <MetaDescription text=move || t_string!(i18n, about_ultros_desc).to_string() />
 
             // Hero / Intro
             <div class="panel p-8 rounded-xl flex flex-col items-center text-center space-y-4">
-                <h1 class="text-4xl font-bold text-[color:var(--brand-fg)]">"About Ultros"</h1>
+                <h1 class="text-4xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, about_ultros)}</h1>
                 <p class="text-lg text-[color:var(--color-text)] max-w-3xl leading-relaxed">
-                    "Ultros is a Final Fantasy XIV market board analysis tool that utilizes data sourced from Universalis.
-                    Our goal is to help you make better decisions on the market board, whether you are a crafter, gatherer, or flipper."
+                    {t!(i18n, about_ultros_text)}
                 </p>
                 <div class="flex flex-wrap justify-center gap-4 mt-4">
                     <a
@@ -25,7 +26,7 @@ pub fn About() -> impl IntoView {
                         rel="noopener noreferrer"
                     >
                         <Icon icon=i::BsDiscord width="1.2em" height="1.2em" />
-                        "Join Discord"
+                        {t!(i18n, join_discord)}
                     </a>
                     <a
                         href="https://github.com/akarras/ultros"
@@ -34,16 +35,16 @@ pub fn About() -> impl IntoView {
                         rel="noopener noreferrer"
                     >
                         <Icon icon=i::IoLogoGithub width="1.2em" height="1.2em" />
-                        "View on GitHub"
+                        {t!(i18n, view_on_github)}
                     </a>
                 </div>
             </div>
 
             // Tech Stack
             <div class="panel p-6 rounded-xl">
-                <h2 class="text-2xl font-bold mb-4 text-[color:var(--brand-fg)]">"Technology"</h2>
+                <h2 class="text-2xl font-bold mb-4 text-[color:var(--brand-fg)]">{t!(i18n, technology)}</h2>
                 <p class="text-[color:var(--color-text)] mb-4">
-                    "Ultros is built with Rust for high performance and reliability. The project is open source and we welcome contributions."
+                    {t!(i18n, technology_text)}
                 </p>
                 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                     <TechCard
@@ -71,34 +72,34 @@ pub fn About() -> impl IntoView {
 
             // Credits
             <div class="panel p-6 rounded-xl">
-                <h2 class="text-2xl font-bold mb-4 text-[color:var(--brand-fg)]">"Credits & Acknowledgements"</h2>
+                <h2 class="text-2xl font-bold mb-4 text-[color:var(--brand-fg)]">{t!(i18n, credits_acknowledgements)}</h2>
                 <div class="space-y-4 text-[color:var(--color-text)]">
                     <p>
-                        "This project would not be possible without "
+                        {t!(i18n, credits_universalis_1)}
                         <a
                             href="https://universalis.app/"
                             class="text-[color:var(--brand-fg)] hover:underline"
                             target="_blank"
                             rel="noopener noreferrer"
                         >
-                            "Universalis"
+                            {t!(i18n, universalis)}
                         </a>
-                        ", which provides the market board data. Please consider contributing to Universalis to help this site stay up to date."
+                        {t!(i18n, credits_universalis_2)}
                     </p>
                     <p>
-                        "Game data is sourced from "
+                        {t!(i18n, credits_ffxiv_datamining_1)}
                         <a
                             href="https://github.com/xivapi/ffxiv-datamining"
                             class="text-[color:var(--brand-fg)] hover:underline"
                             target="_blank"
                             rel="noopener noreferrer"
                         >
-                            "ffxiv-datamining"
+                            {t!(i18n, ffxiv_datamining)}
                         </a>
                         "."
                     </p>
                     <p class="text-sm text-[color:var(--color-text-muted)] mt-8">
-                        "FINAL FANTASY XIV © 2010 - 2024 SQUARE ENIX CO., LTD. All Rights Reserved."
+                        {t!(i18n, final_fantasy_copyright)}
                     </p>
                 </div>
             </div>

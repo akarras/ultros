@@ -19,6 +19,7 @@ use crate::global_state::{
     cookies::Cookies,
     theme::{ThemeMode, provide_theme_settings, use_theme_settings},
     toasts::provide_toast_context,
+    xiv_data::provide_xiv_data_revision,
 };
 use crate::{
     components::{
@@ -282,6 +283,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
     provide_context(RecentItems::new());
     provide_theme_settings();
     provide_toast_context();
+    provide_xiv_data_revision();
     // AnimationContext::provide();
     let root_node_ref = NodeRef::<Div>::new();
     #[cfg(feature = "hydrate")]

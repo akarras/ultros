@@ -8,6 +8,8 @@ use crate::components::icon::Icon;
 use crate::components::skeleton::BoxSkeleton;
 use crate::components::{item_icon::*, loading::*, meta::*, world_name::*};
 use crate::global_state::LocalWorldData;
+use crate::global_state::xiv_data::tracked_data;
+use crate::i18n::*;
 use components::{A, Outlet};
 use hooks::use_params_map;
 use icondata as i;
@@ -23,7 +25,7 @@ struct ItemSortKey(u8, i32, bool);
 impl From<(ItemId, bool)> for ItemSortKey {
     fn from((item_id, hq): (ItemId, bool)) -> Self {
         let inner = move || {
-            let data = xiv_gen_db::data();
+            let data = tracked_data();
             let items = &data.items;
             let sort_category = &data.item_sort_categorys;
             let item = items.get(&item_id)?;
@@ -44,8 +46,9 @@ impl From<&ActiveListing> for ItemSortKey {
 
 #[component]
 fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> impl IntoView {
+    let i18n = use_i18n();
     let mut listings = listings;
-    let data = xiv_gen_db::data();
+    let data = tracked_data();
     let items = &data.items;
     listings.sort_by_key(|u| ItemSortKey::from(&u.current));
     let worlds = use_context::<LocalWorldData>().unwrap().0.unwrap();
@@ -60,7 +63,7 @@ fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> imp
             let new_best_price = undercut_data.cheapest - 1;
             view! {
                 <tr>
-                    <td>{listing.hq.then_some("HQ")}</td>
+                    <td>{listing.hq.then_some(t!(i18n, retainers_hq))}</td>
                     <td class="flex flex-row">
                         {if let Some(item) = item {
                             Either::Left(
@@ -79,7 +82,7 @@ fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> imp
                                 },
                             )
                         } else {
-                            Either::Right(view! { "Item not found" })
+                            Either::Right(view! { {t!(i18n, retainers_item_not_found)} })
                         }}
 
                     </td>
@@ -109,12 +112,12 @@ fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> imp
             <table class="w-full">
                 <thead>
                     <tr>
-                        <th scope="col">"HQ"</th>
-                        <th scope="col">"Item"</th>
-                        <th scope="col">"Price Per Unit"</th>
-                        <th scope="col">"Quantity"</th>
-                        <th scope="col">"Total"</th>
-                        <th scope="col">"Undercut by one"</th>
+                        <th scope="col">{t!(i18n, retainers_hq)}</th>
+                        <th scope="col">{t!(i18n, retainers_item)}</th>
+                        <th scope="col">{t!(i18n, retainers_price_per_unit)}</th>
+                        <th scope="col">{t!(i18n, retainers_quantity)}</th>
+                        <th scope="col">{t!(i18n, retainers_total)}</th>
+                        <th scope="col">{t!(i18n, retainers_undercut_by_one)}</th>
                     </tr>
                 </thead>
                 <tbody>{listings}</tbody>
@@ -126,7 +129,8 @@ fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> imp
 
 #[component]
 fn RetainerTable(retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoView {
-    let data = xiv_gen_db::data();
+    let i18n = use_i18n();
+    let data = tracked_data();
     let items = &data.items;
     let mut listings = listings;
     listings.sort_by_key(|u| ItemSortKey::from(u));
@@ -141,7 +145,7 @@ fn RetainerTable(retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoV
             let total = listing.quantity * listing.price_per_unit;
             view! {
                 <tr>
-                    <td>{listing.hq.then_some("HQ")}</td>
+                    <td>{listing.hq.then_some(t!(i18n, retainers_hq))}</td>
                     <td class="flex flex-row">
                         {if let Some(item) = item {
                             Either::Left(
@@ -160,7 +164,7 @@ fn RetainerTable(retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoV
                                 },
                             )
                         } else {
-                            Either::Right(view! { "Item not found" })
+                            Either::Right(view! { {t!(i18n, retainers_item_not_found)} })
                         }}
 
                     </td>
@@ -184,11 +188,11 @@ fn RetainerTable(retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoV
             <table>
                 <thead>
                     <tr>
-                        <th scope="col">"HQ"</th>
-                        <th scope="col">"Item"</th>
-                        <th scope="col">"Price Per Unit"</th>
-                        <th scope="col">"Quantity"</th>
-                        <th scope="col">"Total"</th>
+                        <th scope="col">{t!(i18n, retainers_hq)}</th>
+                        <th scope="col">{t!(i18n, retainers_item)}</th>
+                        <th scope="col">{t!(i18n, retainers_price_per_unit)}</th>
+                        <th scope="col">{t!(i18n, retainers_quantity)}</th>
+                        <th scope="col">{t!(i18n, retainers_total)}</th>
                     </tr>
                 </thead>
                 <tbody>{listings}</tbody>
@@ -246,17 +250,18 @@ pub(crate) fn CharacterRetainerUndercutList(
 
 #[component]
 pub fn RetainerUndercuts() -> impl IntoView {
+    let i18n = use_i18n();
     let retainers = Resource::new(|| "undercuts", move |_| get_retainer_undercuts());
     view! {
-        <MetaTitle title="Retainer Undercuts" />
-        <span class="content-title">"Retainer Undercuts"</span>
+        <MetaTitle title=t_string!(i18n, retainers_undercuts_title).to_string() />
+        <span class="content-title">{t!(i18n, retainers_undercuts_title)}</span>
         <br />
         <span>
-            "Please keep in mind that data may not always be up to date. To update data, please contribute to universalis and then refresh this page."
+            {t!(i18n, retainers_data_notice)}
         </span>
         <br />
         <span>
-            "This page will only show listings that have been undercut, enabling you to quickly view which items need to be refreshed"
+            {t!(i18n, retainers_undercuts_description)}
         </span>
         <Suspense fallback=move || {
             view! { <Loading /> }
@@ -277,15 +282,15 @@ pub fn RetainerUndercuts() -> impl IntoView {
                                     .collect();
                                 Either::Left(view! { <div>{retainers}</div> })
                             }
-                            Err(e) => {
-                                Either::Right(
-                                    view! {
-                                        <div>
-                                            {"Unable to get retainers"} <br /> {e.to_string()}
-                                        </div>
-                                    },
-                                )
-                            }
+                                    Err(e) => {
+                                        Either::Right(
+                                            view! {
+                                                <div>
+                                                    {t!(i18n, retainers_unable_to_get)} <br /> {e.to_string()}
+                                                </div>
+                                            },
+                                        )
+                                    }
                         }
                     })
             }}
@@ -296,16 +301,18 @@ pub fn RetainerUndercuts() -> impl IntoView {
 
 #[component]
 pub fn RetainersBasePath() -> impl IntoView {
+    let i18n = use_i18n();
     view! {
         <div>
-            <h3>"Retainers"</h3>
-            "Retainers can be added added to your account while logged in and tracked. To get started get logged in and click the tabs above."
+            <h3>{t!(i18n, retainers_title)}</h3>
+            {t!(i18n, retainers_base_path_description)}
         </div>
     }
 }
 
 #[component]
 pub fn SingleRetainerListings() -> impl IntoView {
+    let i18n = use_i18n();
     let params = use_params_map();
     let retainer_listings = Resource::new(
         move || params().get("id").and_then(|id| id.parse::<i32>().ok()),
@@ -320,8 +327,8 @@ pub fn SingleRetainerListings() -> impl IntoView {
 
     view! {
         <span>
-            "To claim this retainer, please login and visit "
-            <A href="/retainers/edit">"the edit tab"</A>
+            {t!(i18n, retainers_claim_prompt_start)}
+            <A href="/retainers/edit">{t!(i18n, retainers_claim_prompt_link)}</A>
         </span>
         <Suspense fallback=move || {
             view! {
@@ -371,14 +378,15 @@ pub fn SingleRetainerListings() -> impl IntoView {
 
 #[component]
 pub fn RetainerListings() -> impl IntoView {
+    let i18n = use_i18n();
     let retainers = Resource::new(|| "undercuts", move |_| get_user_retainer_listings());
     view! {
-        <span class="content-title">"All Listings"</span>
-        <MetaTitle title="All Listings" />
-        <MetaDescription text="View your retainer's listings without making it a second job!" />
+        <span class="content-title">{t!(i18n, retainers_all_listings_title)}</span>
+        <MetaTitle title=t_string!(i18n, retainers_all_listings_title).to_string() />
+        <MetaDescription text=t_string!(i18n, retainers_all_listings_desc).to_string() />
         <br />
         <span>
-            "Please keep in mind that data may not always be up to date. To update data, please contribute to universalis and then refresh this page."
+            {t!(i18n, retainers_data_notice)}
         </span>
         <Suspense fallback=move || {
             view! { <Loading /> }
@@ -401,22 +409,22 @@ pub fn RetainerListings() -> impl IntoView {
                                         {retainers
                                             .is_empty()
                                             .then(|| {
-                                                view! { <span>"Add a retainer to get started!"</span> }
+                                                view! { <span>{t!(i18n, retainers_add_to_start)}</span> }
                                             })}
 
                                         <div>{retainers}</div>
                                     },
                                 )
                             }
-                            Err(e) => {
-                                Either::Right(
-                                    view! {
-                                        <div>
-                                            {"Unable to get retainers"} <br /> {e.to_string()}
-                                        </div>
-                                    },
-                                )
-                            }
+                                    Err(e) => {
+                                        Either::Right(
+                                            view! {
+                                                <div>
+                                                    {t!(i18n, retainers_unable_to_get)} <br /> {e.to_string()}
+                                                </div>
+                                            },
+                                        )
+                                    }
                         }
                     })
             }}
@@ -427,20 +435,21 @@ pub fn RetainerListings() -> impl IntoView {
 
 #[component]
 pub fn Retainers() -> impl IntoView {
+    let i18n = use_i18n();
     // let retainers = create_resource(|| "retainers", move |_| get_retainer_listings(cx));
     view! {
         <div class="flex items-center gap-2 md:gap-3 mb-3">
             <A exact=true attr:class="nav-link" href="/retainers/edit">
                 <Icon height="1.25em" width="1.25em" icon=i::BsPencilFill />
-                <span>"Edit"</span>
+                <span>{t!(i18n, retainers_edit_tab)}</span>
             </A>
             <A exact=true attr:class="nav-link" href="/retainers/listings">
                 <Icon height="1.25em" width="1.25em" icon=i::AiOrderedListOutlined />
-                <span>"All Listings"</span>
+                <span>{t!(i18n, retainers_all_listings_tab)}</span>
             </A>
             <A exact=true attr:class="nav-link" href="/retainers/undercuts">
                 <Icon height="1.25em" width="1.25em" icon=i::AiExclamationOutlined />
-                <span>"Undercuts"</span>
+                <span>{t!(i18n, retainers_undercuts_tab)}</span>
             </A>
         </div>
         <div class="main-content">

@@ -15,9 +15,20 @@ pub fn LanguagePicker() -> impl IntoView {
             Locale::de => Locale::ja,
             Locale::ja => Locale::cn,
             Locale::cn => Locale::ko,
-            Locale::ko => Locale::en,
+            Locale::ko => Locale::tc,
+            Locale::tc => Locale::en,
         };
         i18n.set_locale(new_locale);
+        #[cfg(not(feature = "ssr"))]
+        if let Some(rev) = use_context::<crate::global_state::xiv_data::DataRevision>() {
+            let locale_str = new_locale.as_str().to_string();
+            leptos::task::spawn_local(async move {
+                match crate::global_state::xiv_data::reload_xiv_data(&locale_str).await {
+                    Ok(()) => rev.0.update(|v| *v = v.wrapping_add(1)),
+                    Err(e) => log::error!("failed to reload xiv data for {locale_str}: {e}"),
+                }
+            });
+        }
     };
 
     view! {

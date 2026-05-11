@@ -21,6 +21,7 @@ pub enum Language {
     Fr,
     Cn,
     Ko,
+    Tc,
 }
 
 impl Language {
@@ -32,6 +33,7 @@ impl Language {
             Language::Fr => "fr",
             Language::Cn => "cn",
             Language::Ko => "ko",
+            Language::Tc => "tc",
         }
     }
 }
@@ -181,7 +183,7 @@ pub struct ClassJob {
     #[xiv_gen(column = "DohDolJobIndex")]
     pub doh_dol_job_index: i8,
     #[xiv_gen(column = "UIPriority")]
-    pub ui_priority: u8,
+    pub ui_priority: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Encode, Decode, FromCsv)]

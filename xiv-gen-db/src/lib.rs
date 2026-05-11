@@ -1,9 +1,12 @@
 use flate2::FlushDecompress;
-use once_cell::sync::OnceCell;
+use std::sync::RwLock;
 #[cfg(feature = "embed")]
 use xiv_gen::Language;
 
-pub static XIV_DATA: OnceCell<xiv_gen::Data> = OnceCell::new();
+// Stored as a leaked `&'static` reference so callers of `data()` can keep using
+// the result without holding a lock guard. Swapping the locale leaks the old
+// box; bounded by the number of locale switches in a session.
+static XIV_DATA: RwLock<Option<&'static xiv_gen::Data>> = RwLock::new(None);
 
 #[cfg(feature = "embed")]
 pub fn bincode(lang: Language) -> &'static [u8] {
@@ -12,31 +15,30 @@ pub fn bincode(lang: Language) -> &'static [u8] {
         Language::Ja => include_bytes!(concat!(env!("OUT_DIR"), "/database_ja.bincode")),
         Language::De => include_bytes!(concat!(env!("OUT_DIR"), "/database_de.bincode")),
         Language::Fr => include_bytes!(concat!(env!("OUT_DIR"), "/database_fr.bincode")),
-        Language::Cn => &[], // Not yet supported
-        Language::Ko => &[], // Not yet supported
+        Language::Cn => include_bytes!(concat!(env!("OUT_DIR"), "/database_cn.bincode")),
+        Language::Ko => include_bytes!(concat!(env!("OUT_DIR"), "/database_ko.bincode")),
+        Language::Tc => include_bytes!(concat!(env!("OUT_DIR"), "/database_tc.bincode")),
     }
 }
 
 #[cfg(feature = "embed")]
 pub fn data() -> &'static xiv_gen::Data {
-    match XIV_DATA.get() {
-        Some(d) => d,
-        None => {
-            XIV_DATA
-                .set(decompress_data(bincode(Language::En)).unwrap())
-                .unwrap();
-            XIV_DATA.get().unwrap()
-        }
+    if let Some(d) = *XIV_DATA.read().unwrap() {
+        return d;
     }
+    let _ = try_init(bincode(Language::En));
+    XIV_DATA.read().unwrap().expect("just initialized")
 }
 
 #[cfg(not(feature = "embed"))]
 pub fn data() -> &'static xiv_gen::Data {
-    XIV_DATA.get().expect("XIV data not initialized")
+    XIV_DATA.read().unwrap().expect("XIV data not initialized")
 }
 
 pub fn try_init(bytes: &[u8]) -> anyhow::Result<()> {
-    let _ = XIV_DATA.set(decompress_data(bytes)?);
+    let data = decompress_data(bytes)?;
+    let leaked: &'static xiv_gen::Data = Box::leak(Box::new(data));
+    *XIV_DATA.write().unwrap() = Some(leaked);
     Ok(())
 }
 

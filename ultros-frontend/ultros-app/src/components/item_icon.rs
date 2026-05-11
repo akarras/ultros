@@ -1,3 +1,4 @@
+use crate::global_state::xiv_data::tracked_data;
 use leptos::prelude::*;
 pub use ultros_api_types::icon_size::IconSize;
 use xiv_gen::ItemId;
@@ -13,7 +14,7 @@ pub fn ItemIcon(
     // inside the `view!`. By using `Memo::new`, we only perform the `HashMap` lookup
     // when `item_id` changes, rather than on every reactive update (like when `failed_item` triggers).
     let valid_search_category = Memo::new(move |_| {
-        xiv_gen_db::data()
+        tracked_data()
             .items
             .get(&ItemId(item_id()))
             .map(|item| item.item_search_category > 0)
@@ -21,7 +22,7 @@ pub fn ItemIcon(
     });
 
     let item_name = Memo::new(move |_| {
-        xiv_gen_db::data()
+        tracked_data()
             .items
             .get(&ItemId(item_id()))
             .map(|i| i.name.as_str().to_string())

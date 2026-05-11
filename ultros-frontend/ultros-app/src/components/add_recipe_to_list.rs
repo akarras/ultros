@@ -5,6 +5,7 @@ use crate::components::{
     item_icon::*, loading::Loading, modal::Modal, small_item_display::SmallItemDisplay,
     toggle::Toggle, tooltip::Tooltip,
 };
+use crate::global_state::xiv_data::tracked_data;
 use icondata::RiPlayListAddMediaLine;
 use leptos::either::Either;
 use leptos::prelude::*;
@@ -25,7 +26,7 @@ struct IngredientState {
 #[component]
 pub fn AddRecipeToList(recipe: &'static Recipe) -> impl IntoView {
     let (modal_visible, set_modal_visible) = signal(false);
-    let items = &xiv_gen_db::data().items;
+    let items = &tracked_data().items;
     let result_item = items.get(&ItemId(recipe.item_result));
     view! {
         <Tooltip tooltip_text="Add recipe ingredients to a list">
@@ -55,7 +56,7 @@ fn AddRecipeToListModal(
     recipe: &'static Recipe,
     #[prop(into)] set_visible: SignalSetter<bool>,
 ) -> impl IntoView {
-    let data = xiv_gen_db::data();
+    let data = tracked_data();
     let items = &data.items;
     let result_item = move || items.get(&ItemId(recipe.item_result));
     let lists = Resource::new(move || {}, move |_| get_lists());

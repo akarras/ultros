@@ -12,8 +12,9 @@ fn main() {
         Language::Ja,
         Language::De,
         Language::Fr,
-        // Language::Cn, // CN and KO have different headers/structure, skipping for now
-        // Language::Ko,
+        Language::Cn,
+        Language::Ko,
+        Language::Tc,
     ];
 
     for lang in languages {

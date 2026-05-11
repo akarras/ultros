@@ -12,6 +12,7 @@ use crate::error::AppError;
 use crate::global_state::LocalWorldData;
 use crate::global_state::cheapest_prices::CheapestPrices;
 use crate::global_state::home_world::{get_price_zone, use_home_world};
+use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::{t, t_string};
 use chrono::{TimeDelta, Utc};
 use leptos::prelude::*;
@@ -279,7 +280,7 @@ fn SummaryCards(
 
                     // Re-evaluate logic inside the closure to avoid cloning AnyView
                     let non_market_card = {
-                         let data = xiv_gen_db::data();
+                         let data = tracked_data();
                          let cheapest_prices = use_context::<CheapestPrices>();
 
                          let vendor_exists = is_vendor_item(item_id);
@@ -917,7 +918,7 @@ pub fn ItemView() -> impl IntoView {
         recently_viewed.add_item(item_id());
     });
 
-    let data = &xiv_gen_db::data();
+    let data = &tracked_data();
     let items = &data.items;
     let categories = &data.item_ui_categorys;
     let search_categories = &data.item_search_categorys;

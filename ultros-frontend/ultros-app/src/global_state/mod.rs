@@ -8,3 +8,4 @@ pub mod user;
 pub use local_world_data::LocalWorldData;
 pub mod crafter_levels;
 pub mod toasts;
+pub mod xiv_data;

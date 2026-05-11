@@ -3,6 +3,7 @@ use crate::components::icon::Icon;
 use crate::components::item_icon::{IconSize, ItemIcon};
 use crate::components::modal::Modal;
 use crate::components::related_items::IngredientsIter;
+use crate::global_state::xiv_data::tracked_data;
 use icondata as i;
 use leptos::prelude::*;
 use leptos::reactive::wrappers::write::SignalSetter;
@@ -17,7 +18,7 @@ pub fn AddRecipeToCurrentListModal(
     #[prop(into, optional)] on_success: Option<Callback<()>>,
 ) -> impl IntoView {
     let (search, set_search) = signal(String::new());
-    let data = xiv_gen_db::data();
+    let data = tracked_data();
     let recipes = &data.recipes;
     let items = &data.items;
 

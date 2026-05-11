@@ -1,4 +1,5 @@
 use crate::components::meta::{MetaDescription, MetaTitle};
+use crate::global_state::xiv_data::tracked_data;
 use crate::{
     api::get_cheapest_listings,
     components::{
@@ -18,6 +19,8 @@ use ultros_api_types::{
     world_helper::AnyResult,
 };
 use xiv_gen::{CollectablesShopRewardScripId, ItemId, Recipe};
+
+use crate::i18n::*;
 
 #[derive(Clone, Debug, PartialEq)]
 struct ScripSourceData {
@@ -115,8 +118,9 @@ fn ScripSourceTable(
     global_cheapest_listings: CheapestListings,
     world: Signal<String>,
 ) -> impl IntoView {
+    let i18n = use_i18n();
     let prices = CheapestListingsMap::from(global_cheapest_listings);
-    let data = xiv_gen_db::data();
+    let data = tracked_data();
     let items = &data.items;
     let recipes = &data.recipes;
 
@@ -304,7 +308,7 @@ fn ScripSourceTable(
         <div class="flex flex-col gap-6">
              <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                  <div class="panel p-6 flex flex-col w-full bg-[color:var(--color-background-elevated)] bg-opacity-100 z-20">
-                    <h3 class="font-bold text-xl mb-2 text-[color:var(--brand-fg)]">"Scrip Type"</h3>
+                    <h3 class="font-bold text-xl mb-2 text-[color:var(--brand-fg)]">{t!(i18n, scrip_sources_scrip_type)}</h3>
                     <select
                         class="input"
                         on:change=move |ev| {
@@ -316,18 +320,18 @@ fn ScripSourceTable(
                             }
                         }
                     >
-                        <option value="">"All Scrips"</option>
-                        <option value="OrangeCrafters" selected=move || scrip_filter() == Some("OrangeCrafters".to_string())>"Orange Crafters' Scrip"</option>
-                        <option value="OrangeGatherers" selected=move || scrip_filter() == Some("OrangeGatherers".to_string())>"Orange Gatherers' Scrip"</option>
-                        <option value="PurpleCrafters" selected=move || scrip_filter() == Some("PurpleCrafters".to_string())>"Purple Crafters' Scrip"</option>
-                        <option value="WhiteCrafters" selected=move || scrip_filter() == Some("WhiteCrafters".to_string())>"White Crafters' Scrip"</option>
-                        <option value="PurpleGatherers" selected=move || scrip_filter() == Some("PurpleGatherers".to_string())>"Purple Gatherers' Scrip"</option>
-                        <option value="WhiteGatherers" selected=move || scrip_filter() == Some("WhiteGatherers".to_string())>"White Gatherers' Scrip"</option>
+                        <option value="">{t!(i18n, scrip_sources_all_scrips)}</option>
+                        <option value="OrangeCrafters" selected=move || scrip_filter() == Some("OrangeCrafters".to_string())>{t!(i18n, scrip_sources_orange_crafters)}</option>
+                        <option value="OrangeGatherers" selected=move || scrip_filter() == Some("OrangeGatherers".to_string())>{t!(i18n, scrip_sources_orange_gatherers)}</option>
+                        <option value="PurpleCrafters" selected=move || scrip_filter() == Some("PurpleCrafters".to_string())>{t!(i18n, scrip_sources_purple_crafters)}</option>
+                        <option value="WhiteCrafters" selected=move || scrip_filter() == Some("WhiteCrafters".to_string())>{t!(i18n, scrip_sources_white_crafters)}</option>
+                        <option value="PurpleGatherers" selected=move || scrip_filter() == Some("PurpleGatherers".to_string())>{t!(i18n, scrip_sources_purple_gatherers)}</option>
+                        <option value="WhiteGatherers" selected=move || scrip_filter() == Some("WhiteGatherers".to_string())>{t!(i18n, scrip_sources_white_gatherers)}</option>
                     </select>
                 </div>
 
                 <div class="panel p-6 flex flex-col w-full bg-[color:var(--color-background-elevated)] bg-opacity-100 z-20">
-                    <h3 class="font-bold text-xl mb-2 text-[color:var(--brand-fg)]">"Job Filter"</h3>
+                    <h3 class="font-bold text-xl mb-2 text-[color:var(--brand-fg)]">{t!(i18n, scrip_sources_job_filter)}</h3>
                      <select
                         class="input"
                         on:change=move |ev| {
@@ -339,15 +343,15 @@ fn ScripSourceTable(
                             }
                         }
                     >
-                        <option value="">"All Jobs"</option>
-                        <option value="Carpenter" selected=move || job_filter() == Some("Carpenter".to_string())>"Carpenter"</option>
-                        <option value="Blacksmith" selected=move || job_filter() == Some("Blacksmith".to_string())>"Blacksmith"</option>
-                        <option value="Armorer" selected=move || job_filter() == Some("Armorer".to_string())>"Armorer"</option>
-                        <option value="Goldsmith" selected=move || job_filter() == Some("Goldsmith".to_string())>"Goldsmith"</option>
-                        <option value="Leatherworker" selected=move || job_filter() == Some("Leatherworker".to_string())>"Leatherworker"</option>
-                        <option value="Weaver" selected=move || job_filter() == Some("Weaver".to_string())>"Weaver"</option>
-                        <option value="Alchemist" selected=move || job_filter() == Some("Alchemist".to_string())>"Alchemist"</option>
-                        <option value="Culinarian" selected=move || job_filter() == Some("Culinarian".to_string())>"Culinarian"</option>
+                        <option value="">{t!(i18n, scrip_sources_all_jobs)}</option>
+                        <option value="Carpenter" selected=move || job_filter() == Some("Carpenter".to_string())>{t!(i18n, scrip_sources_carpenter)}</option>
+                        <option value="Blacksmith" selected=move || job_filter() == Some("Blacksmith".to_string())>{t!(i18n, scrip_sources_blacksmith)}</option>
+                        <option value="Armorer" selected=move || job_filter() == Some("Armorer".to_string())>{t!(i18n, scrip_sources_armorer)}</option>
+                        <option value="Goldsmith" selected=move || job_filter() == Some("Goldsmith".to_string())>{t!(i18n, scrip_sources_goldsmith)}</option>
+                        <option value="Leatherworker" selected=move || job_filter() == Some("Leatherworker".to_string())>{t!(i18n, scrip_sources_leatherworker)}</option>
+                        <option value="Weaver" selected=move || job_filter() == Some("Weaver".to_string())>{t!(i18n, scrip_sources_weaver)}</option>
+                        <option value="Alchemist" selected=move || job_filter() == Some("Alchemist".to_string())>{t!(i18n, scrip_sources_alchemist)}</option>
+                        <option value="Culinarian" selected=move || job_filter() == Some("Culinarian".to_string())>{t!(i18n, scrip_sources_culinarian)}</option>
                     </select>
                 </div>
             </div>
@@ -361,7 +365,7 @@ fn ScripSourceTable(
                     variable_height=false
                     header=view! {
                         <div class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]" role="rowgroup">
-                             <div role="columnheader" class="w-84 p-4">"Item"</div>
+                             <div role="columnheader" class="w-84 p-4">{t!(i18n, scrip_sources_item)}</div>
                              <div role="columnheader" class="w-40 p-4">
                                 <QueryButton
                                     class="!text-brand-300 hover:text-brand-200"
@@ -369,7 +373,7 @@ fn ScripSourceTable(
                                     key="sort"
                                     value="efficiency"
                                 >
-                                    "Cost / Scrip"
+                                    {t!(i18n, scrip_sources_cost_per_scrip)}
                                 </QueryButton>
                              </div>
                              <div role="columnheader" class="w-30 p-4">
@@ -379,7 +383,7 @@ fn ScripSourceTable(
                                     key="sort"
                                     value="amount"
                                 >
-                                    "Scrips"
+                                    {t!(i18n, scrip_sources_scrips)}
                                 </QueryButton>
                              </div>
                              <div role="columnheader" class="w-30 p-4">
@@ -389,10 +393,10 @@ fn ScripSourceTable(
                                     key="sort"
                                     value="cost"
                                 >
-                                    "Cost"
+                                    {t!(i18n, scrip_sources_cost)}
                                 </QueryButton>
                              </div>
-                             <div role="columnheader" class="w-40 p-4 hidden md:block">"Scrip Type"</div>
+                             <div role="columnheader" class="w-40 p-4 hidden md:block">{t!(i18n, scrip_sources_scrip_type_header)}</div>
                         </div>
                     }.into_any()
                     each=computed_data.into()
@@ -418,7 +422,7 @@ fn ScripSourceTable(
                                         <div class="flex flex-col truncate">
                                             <span class="font-semibold">{data.item_name.clone()}</span>
                                             <span class="text-xs text-[color:var(--color-text-muted)] truncate">
-                                                "Lv " {data.level} " " {data.job_category_name.clone()}
+                                                {t!(i18n, scrip_sources_lv_prefix)} " " {data.level} " " {data.job_category_name.clone()}
                                             </span>
                                         </div>
                                     </a>
@@ -448,6 +452,7 @@ fn ScripSourceTable(
 
 #[component]
 pub fn ScripSources() -> impl IntoView {
+    let i18n = use_i18n();
     let query = use_query_map();
     let (home_world, _) = use_home_world();
     let nav = use_navigate();
@@ -528,16 +533,16 @@ pub fn ScripSources() -> impl IntoView {
 
     view! {
         <div class="flex flex-col gap-4 h-full">
-            <MetaTitle title="Scrip Source Analyzer - Ultros" />
-            <MetaDescription text="Analyze Collectable Scrip Sources for efficiency" />
+            <MetaTitle title=t_string!(i18n, scrip_sources_meta_title).to_string() />
+            <MetaDescription text=t_string!(i18n, scrip_sources_meta_desc).to_string() />
 
             <div class="flex flex-col gap-4 p-4 bg-brand-900/50 rounded-lg border border-brand-800">
                 <div class="flex flex-row justify-between items-center">
-                    <h1 class="text-2xl font-bold text-brand-100">"Scrip Sources"</h1>
+                    <h1 class="text-2xl font-bold text-brand-100">{t!(i18n, scrip_sources_title)}</h1>
                 </div>
 
                 <div class="flex flex-col md:flex-row items-center gap-2">
-                    <label class="text-[color:var(--brand-fg)] font-semibold">"Select World for Prices:"</label>
+                    <label class="text-[color:var(--brand-fg)] font-semibold">{t!(i18n, scrip_sources_select_world)}</label>
                     <div class="w-full md:w-auto">
                         <WorldOnlyPicker
                             current_world=selected_world.into()
@@ -547,7 +552,7 @@ pub fn ScripSources() -> impl IntoView {
                 </div>
 
                 <div class="text-sm text-[color:var(--color-text-muted)]">
-                    "This tool finds the most efficient Collectables to craft for White/Purple Scrips based on current market board prices for materials."
+                    {t!(i18n, scrip_sources_description)}
                 </div>
 
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>
@@ -565,7 +570,7 @@ pub fn ScripSources() -> impl IntoView {
                             Some(Err(e)) => {
                                 view! {
                                     <div class="text-red-400">
-                                        "Error loading listings: " {e.to_string()}
+                                        {t!(i18n, scrip_sources_error_loading)} {e.to_string()}
                                     </div>
                                 }.into_any()
                             }

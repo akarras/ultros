@@ -1,5 +1,6 @@
 use crate::components::icon::Icon;
 use crate::components::{clipboard::*, item_icon::*, price_viewer::*, tooltip::*};
+use crate::global_state::xiv_data::tracked_data;
 use icondata as i;
 use leptos::either::Either;
 use leptos::prelude::*;
@@ -30,7 +31,7 @@ pub fn ListItemRow(
     delete_item: Action<i32, Result<(), crate::error::AppError>>,
     edit_item: Action<ListItem, Result<(), crate::error::AppError>>,
 ) -> impl IntoView {
-    let data = xiv_gen_db::data();
+    let data = tracked_data();
     let game_items = &data.items;
 
     let (edit, set_edit) = signal(false);

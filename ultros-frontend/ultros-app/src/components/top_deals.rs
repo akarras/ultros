@@ -4,13 +4,14 @@ use crate::components::icon::Icon;
 use crate::components::item_icon::{IconSize, ItemIcon};
 use crate::components::skeleton::BoxSkeleton;
 use crate::global_state::home_world::use_home_world;
+use crate::global_state::xiv_data::tracked_data;
 use icondata as i;
 use leptos::prelude::*;
 use xiv_gen::ItemId;
 
 #[component]
 fn DealItem(deal: ResaleStatsDto, home_world_name: String) -> impl IntoView {
-    let item = xiv_gen_db::data().items.get(&ItemId(deal.item_id));
+    let item = tracked_data().items.get(&ItemId(deal.item_id));
     let name = item.map(|i| i.name.as_str()).unwrap_or("Unknown Item");
 
     view! {

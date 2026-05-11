@@ -14,6 +14,7 @@ use ultros_charts::draw_sale_history_scatter_plot;
 
 use crate::components::skeleton::BoxSkeleton;
 use crate::global_state::theme::use_theme_settings;
+use crate::global_state::xiv_data::tracked_data;
 use crate::{components::toggle::Toggle, global_state::LocalWorldData};
 
 #[component]
@@ -91,6 +92,8 @@ pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl 
     let hidden = Memo::new(move |_| {
         width.track();
         height.track();
+        // Subscribe to xiv-gen-db swaps so chart title re-renders on locale change.
+        let _ = tracked_data();
         let (text_rgb, grid_rgb) = chart_colors.get();
 
         if let Some(canvas) = canvas.get() {

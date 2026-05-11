@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use super::tooltip::*;
+use crate::global_state::xiv_data::tracked_data;
 use leptos::prelude::*;
 use xiv_gen::{BaseParam, BaseParamId, Item, ItemId};
 
@@ -41,10 +42,7 @@ impl Iterator for ParamIterator {
                 return None;
             };
             self.index += 1;
-            if let Some(base_param) = xiv_gen_db::data()
-                .base_params
-                .get(&BaseParamId(param as i32))
-            {
+            if let Some(base_param) = tracked_data().base_params.get(&BaseParamId(param as i32)) {
                 return Some((base_param, self.index > 6, value));
             }
         }
@@ -56,7 +54,7 @@ impl Iterator for ParamIterator {
 }
 
 fn get_param_data_for_item(item: ItemId) -> Option<Vec<ParamData>> {
-    let item = xiv_gen_db::data().items.get(&item)?;
+    let item = tracked_data().items.get(&item)?;
     let mut params = ParamIterator::new(item)
         .map(|(param, hq, value)| ((param.key_id, hq), (param, value)))
         // .filter(|((_, _), (_, v))| *v > 0)

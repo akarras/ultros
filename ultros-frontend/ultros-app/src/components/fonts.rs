@@ -1,3 +1,4 @@
+use crate::global_state::xiv_data::tracked_data;
 use leptos::{either::Either, prelude::*};
 use xiv_gen::{ClassJobId, ItemSearchCategoryId};
 
@@ -5,7 +6,7 @@ use xiv_gen::{ClassJobId, ItemSearchCategoryId};
 pub fn ItemSearchCategoryIcon(id: ItemSearchCategoryId) -> impl IntoView {
     // the css names match with the english name of the category
     // if there's a class job, use the abbreviation instead
-    let data = &xiv_gen_db::data();
+    let data = &tracked_data();
     let categories = &data.item_search_categorys;
     let class_jobs = &data.class_jobs;
     categories.get(&id).map(|category| {

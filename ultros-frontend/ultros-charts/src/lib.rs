@@ -199,13 +199,14 @@ where
         root.fill(&TRANSPARENT)?;
     }
     let line = map_sale_history_to_line(world_helper, &sales);
-    let item_name = &xiv_gen_db::data()
+    let item_name = xiv_gen_db::data()
         .items
         .get(&ItemId(
             sales.first().ok_or(anyhow!("no sales"))?.sold_item_id,
         ))
         .ok_or(anyhow!("no item data"))?
-        .name;
+        .name
+        .clone();
     let max_sale = line
         .iter()
         .flat_map(|(_, sales)| sales)

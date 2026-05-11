@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 
+use crate::global_state::xiv_data::tracked_data;
 use codee::string::JsonSerdeCodec;
 use leptos::leptos_dom::helpers::set_timeout;
 use leptos::prelude::*;
@@ -106,7 +107,7 @@ pub fn RecentlyViewed() -> impl IntoView {
                                     .iter()
                                     .map(|item| {
                                         let item_id = *item;
-                                        let item_data = xiv_gen_db::data()
+                                        let item_data = tracked_data()
                                             .items
                                             .get(&ItemId(item_id));
 
