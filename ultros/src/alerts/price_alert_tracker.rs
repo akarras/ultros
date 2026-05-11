@@ -1,14 +1,18 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use poise::serenity_prelude;
 use tokio::sync::Mutex;
-use tracing::{error, info, instrument};
-use ultros_api_types::websocket::ListingEventData;
+use tracing::{error, info, instrument, warn};
+use ultros_api_types::{websocket::ListingEventData, world_helper::AnySelector as ApiAnySelector};
 use ultros_db::{
     UltrosDb,
     entity::{alert, alert_item_threshold},
+    world_data::world_cache::WorldCache,
 };
 
 use crate::event::{EventBus, EventType};
@@ -29,6 +33,8 @@ struct ActiveRule {
     hq_only: bool,
     cooldown_seconds: i32,
     last_fired_at: Option<DateTime<Utc>>,
+    /// Pre-resolved set of world IDs this rule applies to.
+    world_id_set: HashSet<i32>,
 }
 
 #[derive(Debug, Default)]
@@ -37,12 +43,43 @@ struct TrackerState {
 }
 
 impl TrackerState {
-    fn refresh_from(&mut self, alerts: &[(alert::Model, alert_item_threshold::Model)]) {
+    fn refresh_from(
+        &mut self,
+        alerts: &[(alert::Model, alert_item_threshold::Model)],
+        world_cache: &WorldCache,
+    ) {
         self.by_item.clear();
         for (a, t) in alerts {
             if !a.enabled {
                 continue;
             }
+            // Deserialize and resolve the world_selector to a flat set of world IDs.
+            let world_id_set: HashSet<i32> = match serde_json::from_value::<ApiAnySelector>(t.world_selector.clone()) {
+                Ok(api_selector) => {
+                    let selector: ultros_db::world_data::world_cache::AnySelector = api_selector.into();
+                    match world_cache.lookup_selector(&selector) {
+                        Ok(result) => world_cache
+                            .get_all_worlds_in(&result)
+                            .unwrap_or_default()
+                            .into_iter()
+                            .collect(),
+                        Err(e) => {
+                            warn!(
+                                alert_id = a.id,
+                                "could not resolve world_selector for alert: {e}"
+                            );
+                            HashSet::new()
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        alert_id = a.id,
+                        "could not deserialize world_selector for alert: {e}"
+                    );
+                    HashSet::new()
+                }
+            };
             self.by_item.entry(t.item_id).or_default().push(ActiveRule {
                 alert_id: a.id,
                 item_id: t.item_id,
@@ -50,6 +87,7 @@ impl TrackerState {
                 hq_only: t.hq_only,
                 cooldown_seconds: a.cooldown_seconds,
                 last_fired_at: a.last_fired_at.map(|dt| dt.with_timezone(&Utc)),
+                world_id_set,
             });
         }
     }
@@ -60,15 +98,16 @@ pub(crate) struct PriceAlertListener {
 }
 
 impl PriceAlertListener {
-    #[instrument(skip(ultros_db, listings, ctx))]
+    #[instrument(skip(ultros_db, listings, ctx, world_cache))]
     pub(crate) async fn start(
         ultros_db: UltrosDb,
         mut listings: EventBus<ListingEventData>,
         ctx: serenity_prelude::Context,
+        world_cache: Arc<WorldCache>,
     ) -> Result<Self> {
         let initial = ultros_db.get_all_active_threshold_alerts().await?;
         let state = Arc::new(Mutex::new(TrackerState::default()));
-        state.lock().await.refresh_from(&initial);
+        state.lock().await.refresh_from(&initial, &world_cache);
         info!("price-alert tracker started with {} rules", initial.len());
 
         let (stop_tx, mut stop_rx) = tokio::sync::mpsc::channel::<()>(1);
@@ -113,6 +152,9 @@ async fn handle_added(
         for (listing, _retainer) in &added.listings {
             let Some(rules) = guard.by_item.get_mut(&listing.item_id) else { continue };
             for rule in rules.iter_mut() {
+                if !rule.world_id_set.contains(&listing.world_id) {
+                    continue;
+                }
                 if rule.hq_only && !listing.hq {
                     continue;
                 }

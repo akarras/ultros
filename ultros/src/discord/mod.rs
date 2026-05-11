@@ -108,6 +108,7 @@ pub(crate) async fn start_discord(
                     alert_events,
                     ctx.clone(),
                     setup_token,
+                    world_cache.clone(),
                 ));
                 Ok(Data {
                     db,

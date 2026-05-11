@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use futures::future::{self, Either};
 use poise::serenity_prelude;
@@ -8,6 +8,7 @@ use ultros_api_types::{user::OwnedRetainer, websocket::ListingEventData};
 use ultros_db::{
     UltrosDb,
     entity::{alert, alert_retainer_undercut},
+    world_data::world_cache::WorldCache,
 };
 
 use crate::event::{EventBus, EventType};
@@ -31,6 +32,7 @@ impl AlertManager {
         ),
         ctx: serenity_prelude::Context,
         token: CancellationToken,
+        world_cache: Arc<WorldCache>,
     ) {
         // start all alerts we know about from the db, then use the alert busses to monitor for new alerts being spawned
         let mut manager = AlertManager {
@@ -60,7 +62,7 @@ impl AlertManager {
             }
             Err(e) => error!("Error creating all alerts {e:?}"),
         }
-        match PriceAlertListener::start(ultros_db.clone(), listings.resubscribe(), ctx.clone()).await {
+        match PriceAlertListener::start(ultros_db.clone(), listings.resubscribe(), ctx.clone(), world_cache).await {
             Ok(listener) => manager.price_alerts = Some(listener),
             Err(e) => error!("failed to start price alert listener: {e}"),
         }
