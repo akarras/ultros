@@ -15,6 +15,7 @@ pub fn ListItemRow(
     item: ListItem,
     listings: Vec<ActiveListing>,
     edit_list_mode: Signal<bool>,
+    can_write: bool,
     #[prop(into)] selected_items: RwSignal<HashSet<i32>>,
     // The return type of delete_list_item is impl Future<Output = Result<(), AppError>> so in Action it becomes () for the output if we don't care about the result, but wait. Action<I, O>. The original code used Action::new. Let's check original.
     // original: let delete_item = Action::new(move |list_item: &i32| delete_list_item(*list_item));
@@ -140,49 +141,53 @@ pub fn ListItemRow(
                                             <Icon icon=i::BsBell />
                                         </button>
                                     </Tooltip>
-                                    <button
-                                        class="btn"
-                                        aria-label="Delete item"
-                                        on:click=move |_| {
-                                            let _ = delete_item.dispatch(item.with(|i| i.id));
-                                        }
-                                    >
-                                        <Icon icon=i::BiTrashSolid />
-                                    </button>
-                                    <button
-                                        class="btn"
-                                        aria-label=move || if edit() { "Save edit" } else { "Edit item" }
-                                        on:click=move |_| {
-                                            if temp_item() != item() {
-                                                let _ = edit_item.dispatch(temp_item());
-                                            }
-                                            set_edit(!edit())
-                                        }
-                                    >
-                                        <Icon icon=Signal::derive(move || {
-                                            if edit() { i::BsCheck } else { i::BsPencilFill }
-                                        }) />
-                                    </button>
-                                    <Tooltip tooltip_text="Mark as acquired">
+                                    <Show when=move || can_write>
                                         <button
                                             class="btn"
-                                            aria-label="Mark as acquired"
+                                            aria-label="Delete item"
                                             on:click=move |_| {
-                                                item.update(|i| {
-                                                    i.acquired = i.quantity;
-                                                });
-                                                let _ = edit_item.dispatch(item());
+                                                let _ = delete_item.dispatch(item.with(|i| i.id));
                                             }
                                         >
-                                            <Icon icon=i::BiCheckRegular />
+                                            <Icon icon=i::BiTrashSolid />
                                         </button>
-                                    </Tooltip>
+                                        <button
+                                            class="btn"
+                                            aria-label=move || if edit() { "Save edit" } else { "Edit item" }
+                                            on:click=move |_| {
+                                                if temp_item() != item() {
+                                                    let _ = edit_item.dispatch(temp_item());
+                                                }
+                                                set_edit(!edit())
+                                            }
+                                        >
+                                            <Icon icon=Signal::derive(move || {
+                                                if edit() { i::BsCheck } else { i::BsPencilFill }
+                                            }) />
+                                        </button>
+                                        <Tooltip tooltip_text="Mark as acquired">
+                                            <button
+                                                class="btn"
+                                                aria-label="Mark as acquired"
+                                                on:click=move |_| {
+                                                    item.update(|i| {
+                                                        i.acquired = i.quantity;
+                                                    });
+                                                    let _ = edit_item.dispatch(item());
+                                                }
+                                            >
+                                                <Icon icon=i::BiCheckRegular />
+                                            </button>
+                                        </Tooltip>
+                                    </Show>
                                 </div>
                             </td>
                         },
                     )
                 } else {
-                    let item = item();
+                    let item_signal = item;
+                    let snapshot = item.get();
+                    let item_id = snapshot.id;
                     Either::Right(
                         view! {
                             <td>
@@ -197,16 +202,16 @@ pub fn ListItemRow(
                             </td>
                             <td>
                                 <div class="flex-row">
-                                    <ItemIcon item_id=item.item_id icon_size=IconSize::Small />
+                                    <ItemIcon item_id=snapshot.item_id icon_size=IconSize::Small />
                                     {game_items
-                                        .get(&ItemId(item.item_id))
+                                        .get(&ItemId(snapshot.item_id))
                                         .map(|item| item.name.as_str())}
                                     <Clipboard clipboard_text=game_items
-                                        .get(&ItemId(item.item_id))
+                                        .get(&ItemId(snapshot.item_id))
                                         .map(|item| item.name.to_string())
                                         .unwrap_or_default() />
                                     {game_items
-                                        .get(&ItemId(item.item_id))
+                                        .get(&ItemId(snapshot.item_id))
                                         .map(|item| item.item_search_category <= 1)
                                         .unwrap_or_default()
                                         .then(move || {
@@ -255,13 +260,13 @@ pub fn ListItemRow(
                             </td>
                             <td>
                                 {move || {
-                                    let q = item.quantity.unwrap_or(1);
-                                    let a = item.acquired.unwrap_or(0);
+                                    let q = snapshot.quantity.unwrap_or(1);
+                                    let a = snapshot.acquired.unwrap_or(0);
                                     let remaining = q.saturating_sub(a);
                                     view! {
                                         <PriceViewer
                                             quantity=remaining
-                                            hq=item.hq
+                                            hq=snapshot.hq
                                             listings=listings()
                                         />
                                     }
@@ -278,29 +283,31 @@ pub fn ListItemRow(
                                         <Icon icon=i::BsBell />
                                     </button>
                                 </Tooltip>
-                                <button
-                                    class="btn"
-                                    aria-label="Delete item"
-                                    on:click=move |_| {
-                                        let _ = delete_item.dispatch(item.id);
-                                    }
-                                >
-                                    <Icon icon=i::BiTrashSolid />
-                                </button>
-                                <button
-                                    class="btn"
-                                    aria-label=move || if edit() { "Save edit" } else { "Edit item" }
-                                    on:click=move |_| {
-                                        if temp_item() != item {
-                                            let _ = edit_item.dispatch(temp_item());
+                                <Show when=move || can_write>
+                                    <button
+                                        class="btn"
+                                        aria-label="Delete item"
+                                        on:click=move |_| {
+                                            let _ = delete_item.dispatch(item_id);
                                         }
-                                        set_edit(!edit())
-                                    }
-                                >
-                                    <Icon icon=Signal::derive(move || {
-                                        if edit() { i::BsCheck } else { i::BsPencilFill }
-                                    }) />
-                                </button>
+                                    >
+                                        <Icon icon=i::BiTrashSolid />
+                                    </button>
+                                    <button
+                                        class="btn"
+                                        aria-label=move || if edit() { "Save edit" } else { "Edit item" }
+                                        on:click=move |_| {
+                                            if temp_item() != item_signal.get_untracked() {
+                                                let _ = edit_item.dispatch(temp_item());
+                                            }
+                                            set_edit(!edit())
+                                        }
+                                    >
+                                        <Icon icon=Signal::derive(move || {
+                                            if edit() { i::BsCheck } else { i::BsPencilFill }
+                                        }) />
+                                    </button>
+                                </Show>
                             </td>
                         },
                     )

@@ -8958,6 +8958,7 @@ dependencies = [
  "dotenvy",
  "fastrand",
  "futures",
+ "getrandom 0.3.4",
  "itertools",
  "metrics",
  "migration",

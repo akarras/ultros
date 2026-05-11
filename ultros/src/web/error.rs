@@ -19,7 +19,8 @@ use tokio::{sync::broadcast::error::SendError, time::error::Elapsed};
 use tracing::{error, info};
 use ultros_api_types::result::JsonErrorWrapper;
 use ultros_db::{
-    SeaDbErr, common_type_conversions::ApiConversionError, world_data::world_cache::WorldCacheError,
+    SeaDbErr, common_type_conversions::ApiConversionError, lists::ListError,
+    world_data::world_cache::WorldCacheError,
 };
 
 use crate::{analyzer_service::AnalyzerError, event};
@@ -93,7 +94,35 @@ impl ApiError {
     fn as_status_code(&self) -> StatusCode {
         match self {
             ApiError::NoAuthCookie => StatusCode::OK, // In this case I don't want a real error.
+            ApiError::AnyhowError(e) => match e.downcast_ref::<ListError>() {
+                Some(ListError::Forbidden(_)) => StatusCode::FORBIDDEN,
+                Some(ListError::NotFound | ListError::InviteNotFound) => StatusCode::NOT_FOUND,
+                Some(ListError::BadRequest(_) | ListError::InviteExhausted) => {
+                    StatusCode::BAD_REQUEST
+                }
+                None => StatusCode::INTERNAL_SERVER_ERROR,
+            },
             _ => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
+
+    fn as_api_error(&self) -> ultros_api_types::result::ApiError {
+        match self {
+            ApiError::NoAuthCookie => ultros_api_types::result::ApiError::NotAuthenticated,
+            ApiError::AnyhowError(e) => match e.downcast_ref::<ListError>() {
+                Some(ListError::Forbidden(_)) => ultros_api_types::result::ApiError::Forbidden,
+                Some(ListError::NotFound | ListError::InviteNotFound) => {
+                    ultros_api_types::result::ApiError::NotFound
+                }
+                Some(ListError::BadRequest(msg)) => {
+                    ultros_api_types::result::ApiError::BadRequest((*msg).into())
+                }
+                Some(ListError::InviteExhausted) => ultros_api_types::result::ApiError::BadRequest(
+                    "Invite has reached max uses".into(),
+                ),
+                None => ultros_api_types::result::ApiError::Message(self.to_string()),
+            },
+            _ => ultros_api_types::result::ApiError::Message(self.to_string()),
         }
     }
 }
@@ -112,17 +141,15 @@ impl IntoResponse for ApiError {
             )
                 .into_response();
         }
-        if let ApiError::NoAuthCookie = self {
-            return (
-                self.as_status_code(),
-                Json(JsonErrorWrapper::ApiError(
-                    ultros_api_types::result::ApiError::NotAuthenticated,
-                )),
-            )
-                .into_response();
+        let status = self.as_status_code();
+        if status.is_server_error() {
+            error!(error = ?self, "Generic API error");
         }
-        error!(error = ?self, "Generic API error");
-        (self.as_status_code(), Json(JsonErrorWrapper::from(self))).into_response()
+        (
+            status,
+            Json(JsonErrorWrapper::ApiError(self.as_api_error())),
+        )
+            .into_response()
     }
 }
 

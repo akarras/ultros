@@ -8,7 +8,7 @@ use icondata as i;
 use leptos::either::Either;
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
-use ultros_api_types::list::ListItem;
+use ultros_api_types::list::{ListItem, ListPermission};
 
 use crate::api::{
     add_item_to_list, delete_list_item, delete_list_items, edit_list_item,
@@ -77,6 +77,13 @@ pub fn ListView() -> impl IntoView {
         },
         move |(id, _)| get_list_items_with_listings(id),
     );
+    let can_write_list = Signal::derive(move || {
+        list_view
+            .get()
+            .and_then(Result::ok)
+            .map(|(list, _)| list.permission >= ListPermission::Write)
+            .unwrap_or(false)
+    });
 
     #[cfg(not(feature = "ssr"))]
     {
@@ -110,6 +117,7 @@ pub fn ListView() -> impl IntoView {
                 <button
                     class="btn-primary"
                     class:active=move || menu() == MenuState::Item
+                    prop:disabled=move || !can_write_list.get()
                     on:click=move |_| set_menu(
                         match menu() {
                             MenuState::Item => MenuState::None,
@@ -128,6 +136,7 @@ pub fn ListView() -> impl IntoView {
                 <button
                     class="btn-secondary"
                     class:active=move || recipe_modal_open()
+                    prop:disabled=move || !can_write_list.get()
                     on:click=move |_| set_recipe_modal_open(true)
                 >
 
@@ -138,6 +147,7 @@ pub fn ListView() -> impl IntoView {
                 <button
                     class="btn-secondary"
                     class:active=move || menu() == MenuState::MakePlace
+                    prop:disabled=move || !can_write_list.get()
                     on:click=move |_| set_menu(
                         match menu() {
                             MenuState::MakePlace => MenuState::None,
@@ -322,6 +332,7 @@ pub fn ListView() -> impl IntoView {
                     .get()
                     .map(move |list| match list {
                         Ok((list, items)) => {
+                            let can_write = list.permission >= ListPermission::Write;
                             let items = StoredValue::new(items);
                             Either::Left(move || {
                                 if buying_view() {
@@ -329,7 +340,7 @@ pub fn ListView() -> impl IntoView {
                                         view! {
                                             <div class="content-well">
                                                 <div class="sticky top-0 flex-row justify-between">
-                                                    <span class="content-title">{list.name.clone()}</span>
+                                                    <span class="content-title">{list.list.name.clone()}</span>
                                                 </div>
                                                 <BuyingView items=items.get_value() edit_item=edit_item />
                                             </div>
@@ -340,37 +351,44 @@ pub fn ListView() -> impl IntoView {
                                         view! {
                                             <div class="content-well">
                                                 <div class="sticky top-0 flex-row justify-between">
-                                                    <span class="content-title">{list.name.clone()}</span>
+                                                    <div class="flex flex-col">
+                                                        <span class="content-title">{list.list.name.clone()}</span>
+                                                        <Show when=move || !can_write>
+                                                            <span class="text-sm text-[color:var(--color-text-muted)]">"Read-only shared list"</span>
+                                                        </Show>
+                                                    </div>
                                                     <div class="flex flex-row">
-                                                        <button
-                                                            class="btn"
-                                                            class:bg-brand-950=edit_list_mode
-                                                            on:click=move |_| {
-                                                                edit_list_mode
-                                                                    .update(|u| {
-                                                                        *u = !*u;
-                                                                    })
-                                                            }
-                                                        >
-
-                                                            {t!(i18n, list_view_bulk_edit)}
-                                                        </button>
-                                                        <div class:hidden=move || !edit_list_mode()>
+                                                        <Show when=move || can_write>
                                                             <button
                                                                 class="btn"
+                                                                class:bg-brand-950=edit_list_mode
                                                                 on:click=move |_| {
-                                                                    let items = selected_items
-                                                                        .with_untracked(|s| {
-                                                                            s.iter().copied().collect::<Vec<_>>()
-                                                                        });
-                                                                    selected_items.update(|i| i.clear());
-                                                                    delete_items.dispatch(items);
+                                                                    edit_list_mode
+                                                                        .update(|u| {
+                                                                            *u = !*u;
+                                                                        })
                                                                 }
                                                             >
 
-                                                                {t!(i18n, list_view_delete)}
+                                                                {t!(i18n, list_view_bulk_edit)}
                                                             </button>
-                                                        </div>
+                                                            <div class:hidden=move || !edit_list_mode()>
+                                                                <button
+                                                                    class="btn"
+                                                                    on:click=move |_| {
+                                                                        let items = selected_items
+                                                                            .with_untracked(|s| {
+                                                                                s.iter().copied().collect::<Vec<_>>()
+                                                                            });
+                                                                        selected_items.update(|i| i.clear());
+                                                                        delete_items.dispatch(items);
+                                                                    }
+                                                                >
+
+                                                                    {t!(i18n, list_view_delete)}
+                                                                </button>
+                                                            </div>
+                                                        </Show>
                                                         <button
                                                             class="btn"
                                                             on:click=move |_| {
@@ -429,6 +447,7 @@ pub fn ListView() -> impl IntoView {
                                                                         item=item
                                                                         listings=listings
                                                                         edit_list_mode=edit_list_mode.into()
+                                                                        can_write=can_write
                                                                         selected_items=selected_items
                                                                         delete_item=delete_item
                                                                         edit_item=edit_item
