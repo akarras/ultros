@@ -384,6 +384,8 @@
     "analyzer_col_world": "World",
     "analyzer_col_datacenter": "Datacenter",
     "analyzer_col_avg_sale_time": "Avg Sale Time",
+    "analyzer_col_last_sold": "Last Sold",
+    "analyzer_last_sold_never": "—",
     "analyzer_only_show_world": "Only show %world%",
     "analyzer_meta_title": "Flip Finder - %world%",
     "analyzer_title_for": "Flip Finder for ",

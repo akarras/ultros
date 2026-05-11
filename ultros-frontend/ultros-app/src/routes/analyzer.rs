@@ -925,6 +925,9 @@ fn AnalyzerTable(
                                 <div role="columnheader" class="w-30 p-4 hidden md:block">
                                     {t!(i18n, analyzer_col_avg_sale_time)}
                                 </div>
+                                <div role="columnheader" class="w-30 p-4 hidden md:block">
+                                    {t!(i18n, analyzer_col_last_sold)}
+                                </div>
                             </div>
                         }.into_any()
                         each=sorted_data.into()
@@ -1069,6 +1072,21 @@ fn AnalyzerTable(
                                                 if parts.is_empty() { "0s".to_string() } else { parts[..parts.len().min(2)].join(" ") }
                                             })
                                             .unwrap_or_else(|| "---".to_string())}
+                                    </div>
+                                    <div role="cell" class="px-4 py-2 w-30 truncate hidden md:block flex items-center">
+                                        {data.inner
+                                            .sale_summary
+                                            .days_since_last_sale
+                                            .and_then(|d| d.to_std().ok())
+                                            .map(|d| {
+                                                let secs = d.as_secs();
+                                                let days = secs / 86_400;
+                                                let hours = (secs % 86_400) / 3_600;
+                                                if days > 0 { format!("{}d ago", days) }
+                                                else if hours > 0 { format!("{}h ago", hours) }
+                                                else { "just now".to_string() }
+                                            })
+                                            .unwrap_or_else(|| t_string!(i18n, analyzer_last_sold_never).to_string())}
                                     </div>
                                 </div>
                             }
