@@ -155,7 +155,7 @@ where
             {
                 // approximate top of target row using measured prefix sums
                 let row_top = target as f64 * row_height + fenwick.with(|f| f.sum(target));
-                let current = div.scroll_top() as f64;
+                let current = div.scroll_top();
                 let visible_top = current + header_h;
                 let visible_bottom = current + header_h + effective_viewport;
                 let row_bottom = row_top + avg_row_height();

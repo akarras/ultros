@@ -1,23 +1,13 @@
-use std::cell::RefCell;
 use std::collections::HashSet;
-use std::rc::Rc;
 
-use cfg_if::cfg_if;
-use leptos::html::Div;
-use leptos::{html::Canvas, prelude::*};
-#[cfg(feature = "hydrate")]
-use leptos_use::use_element_size;
-use plotters_canvas::CanvasBackend;
+use leptos::prelude::*;
+use leptos_chartistry::*;
 use ultros_api_types::SaleHistory;
 use ultros_api_types::world_helper::AnySelector;
 
-use ultros_charts::ChartOptions;
-use ultros_charts::draw_sale_history_scatter_plot;
-
-use crate::components::skeleton::BoxSkeleton;
+use crate::components::toggle::Toggle;
 use crate::global_state::LocalWorldData;
-use crate::global_state::theme::use_theme_settings;
-use crate::global_state::xiv_data::tracked_data;
+use crate::i18n::{t_string, use_i18n};
 
 type SeriesPoints = Vec<(chrono::DateTime<chrono::Local>, i32, i32)>;
 
@@ -86,7 +76,6 @@ fn group_sales_by_locale(
 }
 
 /// Volume-weighted average price. Returns None if the input is empty or total qty is 0.
-#[allow(dead_code)]
 fn vwap(prices_and_qty: &[(i32, i32)]) -> Option<i32> {
     let (num, den) = prices_and_qty
         .iter()
@@ -100,7 +89,6 @@ fn vwap(prices_and_qty: &[(i32, i32)]) -> Option<i32> {
 }
 
 /// Median price. For even counts, returns the integer mean of the two middle values.
-#[allow(dead_code)]
 fn median(prices: &[i32]) -> Option<i32> {
     if prices.is_empty() {
         return None;
@@ -118,7 +106,6 @@ fn median(prices: &[i32]) -> Option<i32> {
 /// IQR-based outlier band, matching the existing logic in `ultros-charts`.
 /// Returns (min, max) where min = Q1 - 2.5*IQR, max = Q3 + 2.5*IQR.
 /// Returns None for samples smaller than 10.
-#[allow(dead_code)]
 fn iqr_band(prices: &[i32]) -> Option<(i32, i32)> {
     if prices.len() < 10 {
         return None;
@@ -134,7 +121,6 @@ fn iqr_band(prices: &[i32]) -> Option<(i32, i32)> {
 }
 
 /// Format an integer price using K/mil shortening, same rules as the plotters chart.
-#[allow(dead_code)]
 fn short_number(value: i32) -> String {
     match value {
         1_000_000.. => format!("{:.2}mil", value as f32 / 1_000_000.0),
@@ -144,7 +130,6 @@ fn short_number(value: i32) -> String {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum TimeRange {
     Last24h,
     Last7d,
@@ -153,7 +138,6 @@ pub enum TimeRange {
 }
 
 impl TimeRange {
-    #[allow(dead_code)]
     fn label(self) -> &'static str {
         match self {
             TimeRange::Last24h => "24h",
@@ -176,7 +160,6 @@ impl TimeRange {
 
 /// Filter sales whose `sold_date` is on-or-after the range cutoff.
 /// `now` is parameterized for tests.
-#[allow(dead_code)]
 fn filter_by_range(
     sales: &[SaleHistory],
     range: TimeRange,
@@ -192,202 +175,337 @@ fn filter_by_range(
     }
 }
 
+/// Computed statistics for the stats strip.
+#[derive(Clone, Debug, PartialEq)]
+struct ChartStats {
+    n: usize,
+    vwap_val: Option<i32>,
+    median_val: Option<i32>,
+    min_val: i32,
+    max_val: i32,
+}
+
+/// One row in the flat chartistry data Vec.
+/// Each row represents a single sale event. Series that don't have a point
+/// for this row carry f64::NAN, which chartistry skips when `skip_missing()`
+/// is set on the tooltip.
+#[derive(Clone, Debug, PartialEq)]
+struct SaleRow {
+    /// Unix timestamp in seconds, used as the X axis.
+    ts: f64,
+    /// Price per item (f64 for chartistry). One column per series; NAN if
+    /// this row does not belong to that series.
+    prices: Vec<f64>,
+}
+
+// ── Sub-components ────────────────────────────────────────────────────────────
+
 #[component]
-pub fn PriceHistoryChart(
-    #[prop(into)] sales: Signal<Vec<SaleHistory>>,
-    #[prop(into)] filter_outliers: Signal<bool>,
-) -> impl IntoView {
-    let canvas = NodeRef::<Canvas>::new();
-    let local_world_data = use_context::<LocalWorldData>().unwrap();
-    cfg_if! {
-        if #[cfg(feature = "hydrate")] {
-            let div = NodeRef::<Div>::new();
-            let parent_div_size = use_element_size(div);
-            let width = parent_div_size.width;
-            let height = parent_div_size.height;
-        } else {
-            let div = NodeRef::<Div>::new();
-            let (width, _set_width) = signal(800.0f64);
-            let (height, _set_height) = signal(480.0f64);
-        }
-    }
-    let helper = local_world_data.0.unwrap();
-    let theme = use_theme_settings();
-    // Optimization: separate color extraction from resize logic to avoid `get_computed_style` on every resize
-    let chart_colors = Memo::new(move |_| {
-        let _ = theme.mode.get();
-        let _ = theme.palette.get();
-
-        #[cfg(feature = "hydrate")]
-        fn __parse_css_rgb(value: &str) -> Option<(u8, u8, u8)> {
-            let v = value.trim();
-            if let Some(hex) = v.strip_prefix('#')
-                && hex.len() == 6
-            {
-                let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-                let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-                let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-                return Some((r, g, b));
-            }
-            let v = v
-                .trim_start_matches("rgb(")
-                .trim_start_matches("rgba(")
-                .trim_end_matches(')');
-            let parts: Vec<_> = v.split(',').map(|s| s.trim()).collect();
-            if parts.len() >= 3 {
-                let r = parts[0].parse::<u8>().ok()?;
-                let g = parts[1].parse::<u8>().ok()?;
-                let b = parts[2].parse::<u8>().ok()?;
-                return Some((r, g, b));
-            }
-            None
-        }
-
-        #[cfg(feature = "hydrate")]
-        {
-            let mut text_rgb = None;
-            let mut grid_rgb = None;
-            if let Some(window) = web_sys::window()
-                && let Some(document) = window.document()
-                && let Some(root) = document.document_element()
-                && let Ok(Some(style)) = window.get_computed_style(&root)
-            {
-                if let Ok(val) = style.get_property_value("--color-text") {
-                    text_rgb = __parse_css_rgb(&val);
-                }
-                if let Ok(val) = style.get_property_value("--color-outline") {
-                    grid_rgb = __parse_css_rgb(&val);
-                }
-            }
-            (text_rgb, grid_rgb)
-        }
-
-        #[cfg(not(feature = "hydrate"))]
-        (None, None)
-    });
-
-    let (show_skeleton, set_show_skeleton) = signal(true);
-    Effect::new(move |_| {
-        let measured_width = width.get();
-        let measured_height = height.get();
-        // Subscribe to xiv-gen-db swaps so chart title re-renders on locale change.
-        let _ = tracked_data();
-        #[cfg_attr(not(feature = "hydrate"), allow(unused_mut))]
-        let mut chart_width = if measured_width > 0.0 {
-            measured_width
-        } else {
-            800.0
-        };
-        #[cfg_attr(not(feature = "hydrate"), allow(unused_mut))]
-        let mut chart_height = if measured_height > 0.0 {
-            measured_height.min(390.0)
-        } else {
-            390.0
-        };
-        let (text_rgb, grid_rgb) = chart_colors.get();
-        let remove_outliers = filter_outliers.get();
-        #[cfg(not(feature = "hydrate"))]
-        let _ = (chart_width, chart_height);
-
-        if let Some(canvas) = canvas.get() {
-            #[cfg(feature = "hydrate")]
-            {
-                let client_width = canvas.client_width();
-                let client_height = canvas.client_height();
-                if client_width > 0 {
-                    chart_width = client_width as f64;
-                    canvas.set_width(client_width as u32);
-                }
-                if client_height > 0 {
-                    chart_height = client_height as f64;
-                    canvas.set_height(client_height as u32);
-                }
-            }
-
-            #[cfg(feature = "hydrate")]
-            {
-                use wasm_bindgen::JsCast;
-                if let Ok(Some(ctx)) = canvas
-                    .get_context("2d")
-                    .map(|c| c.and_then(|c| c.dyn_into::<web_sys::CanvasRenderingContext2d>().ok()))
-                {
-                    ctx.clear_rect(0.0, 0.0, chart_width, chart_height);
-                }
-            }
-            let compact_options = |remove_outliers| ChartOptions {
-                remove_outliers,
-                text_rgb,
-                grid_rgb,
-                top_pad_ratio: 0.08,
-                show_iqr_band: true,
-                show_trendline: true,
-                show_caption: false,
-                show_legend: false,
-                x_label: Some(String::new()),
-                y_label: Some(String::new()),
-                label_font_size: Some(if chart_width < 500.0 { 12.0 } else { 14.0 }),
-                x_labels: Some(if chart_width < 500.0 { 2 } else { 4 }),
-                x_label_area_size: Some(if chart_width < 500.0 { 30 } else { 36 }),
-                y_label_area_size: Some(if chart_width < 500.0 { 36 } else { 50 }),
-                margin: Some(4),
-                ..Default::default()
-            };
-
-            let is_hidden = sales.with(|sales| {
-                let Some(backend) = CanvasBackend::with_canvas_object(canvas.clone()) else {
-                    return true;
-                };
-                let result = draw_sale_history_scatter_plot(
-                    Rc::new(RefCell::new(backend)),
-                    helper.clone().as_ref(),
-                    sales,
-                    compact_options(remove_outliers),
-                );
-
-                if result.is_ok() || !remove_outliers {
-                    return result.is_err();
-                }
-
-                #[cfg(feature = "hydrate")]
-                {
-                    use wasm_bindgen::JsCast;
-                    if let Ok(Some(ctx)) = canvas.get_context("2d").map(|c| {
-                        c.and_then(|c| c.dyn_into::<web_sys::CanvasRenderingContext2d>().ok())
-                    }) {
-                        ctx.clear_rect(0.0, 0.0, chart_width, chart_height);
-                    }
-                }
-
-                let Some(backend) = CanvasBackend::with_canvas_object(canvas.clone()) else {
-                    return true;
-                };
-                draw_sale_history_scatter_plot(
-                    Rc::new(RefCell::new(backend)),
-                    helper.clone().as_ref(),
-                    sales,
-                    compact_options(false),
-                )
-                .is_err()
-            });
-            set_show_skeleton.set(is_hidden);
-        } else {
-            set_show_skeleton.set(true);
-        }
-    });
+fn RangeChips(current: Signal<TimeRange>, set_current: SignalSetter<TimeRange>) -> impl IntoView {
+    let ranges = [
+        TimeRange::Last24h,
+        TimeRange::Last7d,
+        TimeRange::Last30d,
+        TimeRange::All,
+    ];
     view! {
-        <div node_ref=div class="relative flex flex-col h-[320px] sm:h-[360px] xl:h-[390px] w-full min-w-0">
-            <div class="absolute inset-0" class:hidden=move || !show_skeleton()>
-                <BoxSkeleton />
+        <div class="flex items-center gap-1" role="group" aria-label="Time range">
+            {ranges
+                .into_iter()
+                .map(|r| {
+                    view! {
+                        <button
+                            type="button"
+                            aria-pressed=move || (current.get() == r).to_string()
+                            class=move || {
+                                let base = "px-3 py-1 rounded-full text-sm transition-colors duration-150 ";
+                                if current.get() == r {
+                                    format!(
+                                        "{}bg-brand-500/25 font-medium text-[color:var(--color-text)]",
+                                        base,
+                                    )
+                                } else {
+                                    format!(
+                                        "{}hover:bg-brand-500/10 text-[color:var(--color-text)]/70",
+                                        base,
+                                    )
+                                }
+                            }
+                            on:click=move |_| set_current.set(r)
+                        >
+                            {r.label()}
+                        </button>
+                    }
+                })
+                .collect_view()}
+        </div>
+    }
+}
+
+#[component]
+fn StatsStrip(stats: Signal<Option<ChartStats>>) -> impl IntoView {
+    let i18n = use_i18n();
+    view! {
+        {move || {
+            stats
+                .get()
+                .map(|s| {
+                    let n_label = t_string!(i18n, chart_stat_n_sales)
+                        .to_string()
+                        .replace("{n}", &s.n.to_string());
+                    let vwap_label = t_string!(i18n, chart_stat_vwap).to_string();
+                    let median_label = t_string!(i18n, chart_stat_median).to_string();
+                    let min_label = t_string!(i18n, chart_stat_min).to_string();
+                    let max_label = t_string!(i18n, chart_stat_max).to_string();
+                    view! {
+                        <div class="flex flex-wrap gap-x-4 gap-y-1 text-sm tabular-nums text-[color:var(--color-text)]/70 mb-3">
+                            <span>{n_label}</span>
+                            {s
+                                .vwap_val
+                                .map(|v| {
+                                    view! {
+                                        <span>
+                                            {vwap_label} " " {short_number(v)}
+                                        </span>
+                                    }
+                                })}
+                            {s
+                                .median_val
+                                .map(|v| {
+                                    view! {
+                                        <span>
+                                            {median_label} " " {short_number(v)}
+                                        </span>
+                                    }
+                                })}
+                            <span>{min_label} " " {short_number(s.min_val)}</span>
+                            <span>{max_label} " " {short_number(s.max_val)}</span>
+                        </div>
+                    }
+                        .into_any()
+                })
+        }}
+    }
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
+
+#[component]
+pub fn PriceHistoryChart(#[prop(into)] sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
+    // Implementation uses leptos-chartistry 0.2 for a multi-series scatter chart.
+    // Scatter is achieved by setting line width to 0.0 and adding Circle markers.
+    // Each series is a column of f64 prices in a flat Vec<SaleRow>, with NAN for
+    // rows that don't belong to that series.
+
+    let local_world_data = use_context::<LocalWorldData>().unwrap();
+    let helper = local_world_data.0.unwrap();
+    let i18n = use_i18n();
+
+    let (range, set_range) = signal(TimeRange::All);
+    let (filter_outliers, set_filter_outliers) = signal(true);
+
+    // Step 1: time-range filter
+    let range_filtered = Memo::new(move |_| {
+        let now = chrono::Utc::now().naive_utc();
+        filter_by_range(&sales.get(), range.get(), now)
+    });
+
+    // Step 2: optional IQR outlier filter on top of the time-range filter
+    let filtered = Memo::new(move |_| {
+        let base = range_filtered.get();
+        if !filter_outliers.get() {
+            return base;
+        }
+        let prices: Vec<i32> = base.iter().map(|s| s.price_per_item).collect();
+        match iqr_band(&prices) {
+            Some((lo, hi)) => base
+                .into_iter()
+                .filter(|s| s.price_per_item >= lo && s.price_per_item <= hi)
+                .collect(),
+            None => base,
+        }
+    });
+
+    // Step 3: stats
+    let stats = Memo::new(move |_| {
+        let data = filtered.get();
+        if data.is_empty() {
+            return None;
+        }
+        let prices: Vec<i32> = data.iter().map(|s| s.price_per_item).collect();
+        let pq: Vec<(i32, i32)> = data
+            .iter()
+            .map(|s| (s.price_per_item, s.quantity))
+            .collect();
+        let min_val = *prices.iter().min().unwrap();
+        let max_val = *prices.iter().max().unwrap();
+        Some(ChartStats {
+            n: data.len(),
+            vwap_val: vwap(&pq),
+            median_val: median(&prices),
+            min_val,
+            max_val,
+        })
+    });
+
+    // Step 4: group by locale and build flat row vec for chartistry
+    // We produce a derived signal so chartistry's `data` prop stays reactive.
+    // Series names come from group_sales_by_locale; order is stable (sorted).
+    let helper_clone = helper.clone();
+    let chart_data = Memo::new(move |_| {
+        let data = filtered.get();
+        let groups = group_sales_by_locale(&helper_clone, &data);
+        // Build flat rows: one row per sale, prices indexed by series slot.
+        // series_names drives the number of price columns.
+        let n_series = groups.len();
+        if n_series == 0 || data.is_empty() {
+            return (vec![], vec![]);
+        }
+        // series_names: stable order (already sorted by group_sales_by_locale)
+        let series_names: Vec<String> = groups.iter().map(|(n, _)| n.clone()).collect();
+
+        // Flatten all points into (ts, series_idx, price)
+        let mut flat: Vec<(f64, usize, f64)> = groups
+            .iter()
+            .enumerate()
+            .flat_map(|(idx, (_, points))| {
+                points
+                    .iter()
+                    .map(move |(dt, price, _qty)| (dt.timestamp() as f64, idx, *price as f64))
+            })
+            .collect();
+        // Sort by timestamp so chartistry's line renderer doesn't cross itself
+        flat.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+        let mut rows: Vec<SaleRow> = Vec::with_capacity(flat.len());
+        for (ts, series_idx, price) in flat {
+            let mut prices = vec![f64::NAN; n_series];
+            prices[series_idx] = price;
+            rows.push(SaleRow { ts, prices });
+        }
+        (series_names, rows)
+    });
+
+    // Stable series objects: we build them once but read series_names reactively
+    // via the chart_data signal. Chartistry requires fixed series count at
+    // component build time, so we cap at a reasonable max and let extras be NAN.
+    // In practice FFXIV has at most ~8 worlds per DC, so 12 is safe.
+    const MAX_SERIES: usize = 12;
+
+    // Build the PALETTE of colors for up to MAX_SERIES series.
+    // These are Tailwind brand/chart-friendly hex colors.
+    let palette = [
+        "#60a5fa", // blue-400
+        "#f97316", // orange-500
+        "#34d399", // emerald-400
+        "#a78bfa", // violet-400
+        "#fb7185", // rose-400
+        "#facc15", // yellow-400
+        "#22d3ee", // cyan-400
+        "#c084fc", // purple-400
+        "#4ade80", // green-400
+        "#f472b6", // pink-400
+        "#94a3b8", // slate-400
+        "#fdba74", // orange-300
+    ];
+
+    // The Series and AspectRatio are created fresh inside the reactive `move ||`
+    // closure below so they don't need to be `Copy`. The palette array is `Copy`
+    // (array of &'static str) and is captured by value.
+
+    view! {
+        <div class="panel p-4 md:p-6 text-[color:var(--color-text)]">
+            // Header row: title on left, controls on right
+            <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+                <h3 class="text-lg font-semibold m-0">
+                    {move || t_string!(i18n, sale_history).to_string()}
+                </h3>
+                <div class="flex flex-wrap items-center gap-3">
+                    <RangeChips current=range.into() set_current=set_range.into() />
+                    <Toggle
+                        checked=Signal::from(filter_outliers)
+                        set_checked=SignalSetter::map(move |v| set_filter_outliers.set(v))
+                        checked_label=t_string!(i18n, filter_outliers_enabled)
+                        unchecked_label=t_string!(i18n, filter_outliers_disabled)
+                    />
+                </div>
             </div>
-            <canvas
-                class=move || if show_skeleton() { "opacity-0" } else { "opacity-100" }
-                width=move || width.get().max(800.0).round() as u32
-                height=390
-                style="width: 100%; height: 100%;"
-                node_ref=canvas
-                role="img"
-                aria-label="Scatter plot showing price history over time"
-            ></canvas>
+
+            // Stats strip
+            <StatsStrip stats=stats.into() />
+
+            // Chart body
+            <div class="w-full aspect-[16/9] max-h-[520px] overflow-hidden">
+                {move || {
+                    let (series_names, rows) = chart_data.get();
+                    if rows.is_empty() {
+                        let msg = t_string!(i18n, chart_no_sales_in_window).to_string();
+                        view! {
+                            <div class="flex items-center justify-center w-full h-full text-[color:var(--color-text)]/60 text-sm">
+                                {msg}
+                            </div>
+                        }
+                            .into_any()
+                    } else {
+                        // Build reactive legend labels from series_names
+                        // We only show series that have at least one real data point.
+                        // Because Line entries are pre-built with fixed indices,
+                        // the legend names are set on the Line; we override name
+                        // reactively via a wrapper series below.
+                        //
+                        // Since chartistry's Series is not reactive post-construction,
+                        // we build a new Series each render — this is acceptable
+                        // because the chart re-mounts when rows changes.
+                        let n_active = series_names.len().min(MAX_SERIES);
+                        let mut reactive_series =
+                            Series::new(|row: &SaleRow| row.ts);
+                        for i in 0..n_active {
+                            let colour_hex = palette[i % palette.len()];
+                            let colour: Colour = colour_hex
+                                .parse()
+                                .unwrap_or(Colour::from_rgb(96, 165, 250));
+                            let name = series_names
+                                .get(i)
+                                .cloned()
+                                .unwrap_or_default();
+                            let line = Line::new(move |row: &SaleRow| {
+                                if i < row.prices.len() {
+                                    row.prices[i]
+                                } else {
+                                    f64::NAN
+                                }
+                            })
+                            .with_name(name)
+                            .with_width(0.0)
+                            .with_marker(
+                                Marker::from_shape(MarkerShape::Circle)
+                                    .with_colour(colour)
+                                    .with_scale(4.0),
+                            );
+                            reactive_series = reactive_series.line(line);
+                        }
+
+                        let aspect_ratio = AspectRatio::from_inner_ratio(800.0, 450.0);
+                        let tooltip = Tooltip::left_cursor().skip_missing(true);
+                        view! {
+                            <Chart
+                                aspect_ratio=aspect_ratio
+                                series=reactive_series
+                                data=rows
+                                bottom=vec![TickLabels::aligned_floats().into_edge()]
+                                left=vec![TickLabels::aligned_floats().into_edge()]
+                                inner=vec![
+                                    XGridLine::default().into_inner(),
+                                    YGridLine::default().into_inner(),
+                                ]
+                                tooltip=tooltip
+                                right=vec![Legend::end().into_edge()]
+                            />
+                        }
+                            .into_any()
+                    }
+                }}
+            </div>
         </div>
     }
     .into_any()
