@@ -8,13 +8,19 @@ use ultros_api_types::{
     ActiveListing, CurrentlyShownItem, FfxivCharacter, FfxivCharacterVerification,
     alert::{Alert, AlertEvent, CreateAlertRequest, UpdateAlertRequest},
     cheapest_listings::{CheapestListings, CheapestListingsMap},
-    list::{CreateList, List, ListItem},
+    list::{
+        CreateInvite, CreateList, List, ListInvite, ListItem, ListPermission, ListSharedGroup,
+        ListSharedUser, ShareListGroup, ShareListUser,
+    },
     recent_sales::RecentSales,
     result::JsonErrorWrapper,
     retainer::{Retainer, RetainerListings},
     search::SearchResult,
     trends::TrendsData,
-    user::{OwnedRetainer, UserData, UserRetainerListings, UserRetainers},
+    user::{
+        OwnedRetainer, UserData, UserRetainerListings, UserRetainers,
+        group::{CreateGroup, UserGroup, UserGroupMember},
+    },
 };
 
 use crate::error::{AppError, AppResult};
@@ -235,6 +241,10 @@ pub(crate) async fn get_list_items_with_listings(
     fetch_api(&format!("/api/v1/list/{list_id}/listings")).await
 }
 
+pub(crate) async fn get_list_permission(list_id: i32) -> AppResult<ListPermission> {
+    fetch_api(&format!("/api/v1/list/{list_id}/permission")).await
+}
+
 pub(crate) async fn delete_list(list_id: i32) -> AppResult<()> {
     delete_api(&format!("/api/v1/list/{list_id}/delete")).await
 }
@@ -268,6 +278,85 @@ pub(crate) async fn delete_list_item(list_id: i32) -> AppResult<()> {
 
 pub(crate) async fn delete_list_items(list_items: Vec<i32>) -> AppResult<()> {
     post_api("/api/v1/list/item/delete", list_items).await
+}
+
+pub(crate) async fn get_list_shares(
+    list_id: i32,
+) -> AppResult<(Vec<ListSharedUser>, Vec<ListSharedGroup>)> {
+    fetch_api(&format!("/api/v1/list/{list_id}/shares")).await
+}
+
+pub(crate) async fn share_list_with_user(list_id: i32, share: ShareListUser) -> AppResult<()> {
+    post_api(&format!("/api/v1/list/{list_id}/share/user"), share).await
+}
+
+pub(crate) async fn share_list_with_group(list_id: i32, share: ShareListGroup) -> AppResult<()> {
+    post_api(&format!("/api/v1/list/{list_id}/share/group"), share).await
+}
+
+pub(crate) async fn unshare_list_from_user(list_id: i32, user_id: i64) -> AppResult<()> {
+    delete_api(&format!("/api/v1/list/{list_id}/share/user/{user_id}")).await
+}
+
+pub(crate) async fn unshare_list_from_group(list_id: i32, group_id: i32) -> AppResult<()> {
+    delete_api(&format!("/api/v1/list/{list_id}/share/group/{group_id}")).await
+}
+
+pub(crate) async fn get_list_invites(list_id: i32) -> AppResult<Vec<ListInvite>> {
+    fetch_api(&format!("/api/v1/list/{list_id}/invites")).await
+}
+
+pub(crate) async fn create_list_invite(
+    list_id: i32,
+    invite: CreateInvite,
+) -> AppResult<ListInvite> {
+    post_api(&format!("/api/v1/list/{list_id}/invite/create"), invite).await
+}
+
+pub(crate) async fn delete_list_invite(invite_id: String) -> AppResult<()> {
+    delete_api(&format!("/api/v1/invite/{invite_id}")).await
+}
+
+#[allow(dead_code)]
+pub(crate) async fn use_list_invite(invite_id: String) -> AppResult<i32> {
+    post_api(&format!("/api/v1/invite/{invite_id}/use"), ()).await
+}
+
+#[allow(dead_code)]
+pub(crate) async fn get_groups() -> AppResult<Vec<UserGroup>> {
+    fetch_api("/api/v1/group").await
+}
+
+#[allow(dead_code)]
+pub(crate) async fn create_group(group: CreateGroup) -> AppResult<UserGroup> {
+    post_api("/api/v1/group/create", group).await
+}
+
+#[allow(dead_code)]
+pub(crate) async fn delete_group(group_id: i32) -> AppResult<()> {
+    delete_api(&format!("/api/v1/group/{group_id}")).await
+}
+
+#[allow(dead_code)]
+pub(crate) async fn get_group_members(group_id: i32) -> AppResult<Vec<UserGroupMember>> {
+    fetch_api(&format!("/api/v1/group/{group_id}/members")).await
+}
+
+#[allow(dead_code)]
+pub(crate) async fn add_group_member(group_id: i32, member_id: i64) -> AppResult<()> {
+    post_api(
+        &format!("/api/v1/group/{group_id}/member/add/{member_id}"),
+        (),
+    )
+    .await
+}
+
+#[allow(dead_code)]
+pub(crate) async fn remove_group_member(group_id: i32, member_id: i64) -> AppResult<()> {
+    delete_api(&format!(
+        "/api/v1/group/{group_id}/member/remove/{member_id}"
+    ))
+    .await
 }
 
 pub(crate) async fn update_retainer_order(retainers: Vec<OwnedRetainer>) -> AppResult<()> {

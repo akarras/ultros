@@ -5,11 +5,11 @@ use leptos::either::Either;
 use leptos::prelude::*;
 use leptos_router::components::{A, Outlet};
 
-use crate::api::{create_list, delete_list, edit_list, get_lists};
+use crate::api::{create_list, delete_list, edit_list, get_list_permission, get_lists};
 use crate::components::ad::Ad;
 use crate::components::{loading::*, tooltip::*, world_name::*, world_picker::*};
 use crate::global_state::home_world::get_price_zone;
-use ultros_api_types::list::{CreateList, List};
+use ultros_api_types::list::{CreateList, List, ListPermission};
 
 #[component]
 fn ListCard(
@@ -22,6 +22,22 @@ fn ListCard(
     let (name, set_name) = signal(list.name.clone());
     let (current_world, set_current_world) = signal(Some(list.wdr_filter));
     let i18n = crate::i18n::use_i18n();
+    let list_id = list.id;
+    let permission = Resource::new(move || list_id, get_list_permission);
+    let can_write = Signal::derive(move || {
+        permission
+            .get()
+            .and_then(Result::ok)
+            .map(ListPermission::can_write)
+            .unwrap_or(false)
+    });
+    let is_owner = Signal::derive(move || {
+        permission
+            .get()
+            .and_then(Result::ok)
+            .map(ListPermission::is_owner)
+            .unwrap_or(false)
+    });
 
     let list_clone_cancel = list.clone();
     let cancel_edit = move |_| {
@@ -73,20 +89,22 @@ fn ListCard(
                                     <Icon icon=i::BiSaveSolid /> {t!(i18n, save)}
                                 </button>
                             </div>
-                            <div class="border-t border-gray-600/50 my-2"></div>
-                            <div class="flex justify-between items-center">
-                                <span class="text-red-400 text-sm font-semibold">{t!(i18n, danger_zone)}</span>
-                                <Tooltip tooltip_text=Signal::derive(move || t_string!(i18n, delete).to_string())>
-                                    <button
-                                        class="btn-danger btn-sm"
-                                        on:click=move |_| {
-                                            let _ = delete_list.dispatch(list_for_delete.id);
-                                        }
-                                    >
-                                        <Icon icon=i::BiTrashSolid /> {t!(i18n, delete)}
-                                    </button>
-                                </Tooltip>
-                            </div>
+                            <Show when=is_owner>
+                                <div class="border-t border-gray-600/50 my-2"></div>
+                                <div class="flex justify-between items-center">
+                                    <span class="text-red-400 text-sm font-semibold">{t!(i18n, danger_zone)}</span>
+                                    <Tooltip tooltip_text=Signal::derive(move || t_string!(i18n, delete).to_string())>
+                                        <button
+                                            class="btn-danger btn-sm"
+                                            on:click=move |_| {
+                                                let _ = delete_list.dispatch(list_for_delete.id);
+                                            }
+                                        >
+                                            <Icon icon=i::BiTrashSolid /> {t!(i18n, delete)}
+                                        </button>
+                                    </Tooltip>
+                                </div>
+                            </Show>
                         </div>
                     })
                 } else {
@@ -102,11 +120,13 @@ fn ListCard(
                                          <WorldName id=list.wdr_filter />
                                     </div>
                                 </div>
-                                <Tooltip tooltip_text=Signal::derive(move || t_string!(i18n, edit_list).to_string())>
-                                    <button class="btn-ghost btn-sm text-gray-400 hover:text-white" on:click=move |_| set_is_edit(true) aria_label=move || t_string!(i18n, edit_list).to_string()>
-                                        <Icon icon=i::BsPencilFill />
-                                    </button>
-                                </Tooltip>
+                                <Show when=can_write>
+                                    <Tooltip tooltip_text=Signal::derive(move || t_string!(i18n, edit_list).to_string())>
+                                        <button class="btn-ghost btn-sm text-gray-400 hover:text-white" on:click=move |_| set_is_edit(true) aria_label=move || t_string!(i18n, edit_list).to_string()>
+                                            <Icon icon=i::BsPencilFill />
+                                        </button>
+                                    </Tooltip>
+                                </Show>
                             </div>
                             <div class="mt-4 flex justify-end">
                                 <a href=format!("/list/{}", list.id) class="btn-secondary btn-sm">

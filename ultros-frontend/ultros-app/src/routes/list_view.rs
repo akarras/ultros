@@ -7,15 +7,22 @@ use crate::components::icon::Icon;
 use icondata as i;
 use leptos::either::Either;
 use leptos::prelude::*;
+use leptos::reactive::wrappers::write::SignalSetter;
 use leptos_router::hooks::use_params_map;
-use ultros_api_types::list::ListItem;
+use ultros_api_types::list::{
+    CreateInvite, ListInvite, ListItem, ListPermission, ListSharedGroup, ListSharedUser,
+    ShareListGroup, ShareListUser,
+};
 
 use crate::api::{
-    add_item_to_list, delete_list_item, delete_list_items, edit_list_item,
-    get_list_items_with_listings,
+    add_item_to_list, create_list_invite, delete_list_invite, delete_list_item, delete_list_items,
+    edit_list_item, get_list_invites, get_list_items_with_listings, get_list_permission,
+    get_list_shares, share_list_with_group, share_list_with_user, unshare_list_from_group,
+    unshare_list_from_user,
 };
 use crate::components::{
     add_recipe_to_current_list::AddRecipeToCurrentListModal,
+    clipboard::Clipboard,
     item_icon::*,
     list::{
         auto_mark_purchases::AutoMarkPurchases, buying_view::BuyingView,
@@ -23,8 +30,10 @@ use crate::components::{
     },
     loading::*,
     make_place_importer::*,
+    modal::Modal,
     tooltip::*,
 };
+use crate::global_state::toasts::use_toast;
 use crate::i18n::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -33,6 +42,357 @@ enum MenuState {
     Item,
     // Recipe is now handled by a modal
     MakePlace,
+}
+
+fn permission_from_input(value: &str) -> ListPermission {
+    match value {
+        "Write" => ListPermission::Write,
+        _ => ListPermission::Read,
+    }
+}
+
+fn permission_name(permission: ListPermission) -> &'static str {
+    match permission {
+        ListPermission::Owner => "Owner",
+        ListPermission::Write => "Write",
+        ListPermission::Read => "Read",
+        ListPermission::None => "None",
+    }
+}
+
+fn invite_url(invite: &ListInvite) -> String {
+    #[cfg(feature = "hydrate")]
+    {
+        if let Some(window) = web_sys::window()
+            && let Ok(origin) = window.location().origin()
+        {
+            return format!("{origin}/invite/{}", invite.id);
+        }
+    }
+    format!("/invite/{}", invite.id)
+}
+
+#[component]
+fn SharedUsers(
+    users: Vec<ListSharedUser>,
+    unshare_user: Action<i64, Result<(), crate::error::AppError>>,
+) -> impl IntoView {
+    view! {
+        <div class="flex flex-col gap-2">
+            <h3 class="font-semibold text-[color:var(--brand-fg)]">"Shared Users"</h3>
+            {if users.is_empty() {
+                view! { <div class="text-sm text-[color:var(--color-text-muted)]">"No direct user shares yet."</div> }.into_any()
+            } else {
+                users
+                    .into_iter()
+                    .map(|user| {
+                        let user_id = user.user_id;
+                        view! {
+                            <div class="flex items-center justify-between gap-3 rounded border border-[color:var(--brand-border)] p-2">
+                                <div class="min-w-0">
+                                    <div class="font-semibold truncate">{user.username}</div>
+                                    <div class="text-xs text-[color:var(--color-text-muted)]">{format!("{} - {}", user.user_id, permission_name(user.permission))}</div>
+                                </div>
+                                <button class="btn-danger btn-sm" on:click=move |_| { unshare_user.dispatch(user_id); }>
+                                    "Remove"
+                                </button>
+                            </div>
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .into_any()
+            }}
+        </div>
+    }
+}
+
+#[component]
+fn SharedGroups(
+    groups: Vec<ListSharedGroup>,
+    unshare_group: Action<i32, Result<(), crate::error::AppError>>,
+) -> impl IntoView {
+    view! {
+        <div class="flex flex-col gap-2">
+            <h3 class="font-semibold text-[color:var(--brand-fg)]">"Shared Groups"</h3>
+            {if groups.is_empty() {
+                view! { <div class="text-sm text-[color:var(--color-text-muted)]">"No group shares yet."</div> }.into_any()
+            } else {
+                groups
+                    .into_iter()
+                    .map(|group| {
+                        let group_id = group.group_id;
+                        view! {
+                            <div class="flex items-center justify-between gap-3 rounded border border-[color:var(--brand-border)] p-2">
+                                <div class="min-w-0">
+                                    <div class="font-semibold truncate">{group.group_name}</div>
+                                    <div class="text-xs text-[color:var(--color-text-muted)]">{format!("{} - {}", group.group_id, permission_name(group.permission))}</div>
+                                </div>
+                                <button class="btn-danger btn-sm" on:click=move |_| { unshare_group.dispatch(group_id); }>
+                                    "Remove"
+                                </button>
+                            </div>
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .into_any()
+            }}
+        </div>
+    }
+}
+
+#[component]
+fn ListShareModal(list_id: i32, #[prop(into)] set_visible: SignalSetter<bool>) -> impl IntoView {
+    let toasts = use_toast();
+    let (user_id, set_user_id) = signal(String::new());
+    let (group_id, set_group_id) = signal(String::new());
+    let (user_permission, set_user_permission) = signal(ListPermission::Read);
+    let (group_permission, set_group_permission) = signal(ListPermission::Read);
+    let (invite_permission, set_invite_permission) = signal(ListPermission::Read);
+    let (max_uses, set_max_uses) = signal(String::new());
+
+    let share_user =
+        Action::new(move |share: &ShareListUser| share_list_with_user(list_id, share.clone()));
+    let share_group =
+        Action::new(move |share: &ShareListGroup| share_list_with_group(list_id, share.clone()));
+    let unshare_user = Action::new(move |user_id: &i64| unshare_list_from_user(list_id, *user_id));
+    let unshare_group =
+        Action::new(move |group_id: &i32| unshare_list_from_group(list_id, *group_id));
+    let create_invite =
+        Action::new(move |invite: &CreateInvite| create_list_invite(list_id, invite.clone()));
+    let delete_invite =
+        Action::new(move |invite_id: &String| delete_list_invite(invite_id.clone()));
+
+    let shares = Resource::new(
+        move || {
+            (
+                list_id,
+                share_user.version().get(),
+                share_group.version().get(),
+                unshare_user.version().get(),
+                unshare_group.version().get(),
+            )
+        },
+        move |(list_id, ..)| get_list_shares(list_id),
+    );
+
+    let invites = Resource::new(
+        move || {
+            (
+                list_id,
+                create_invite.version().get(),
+                delete_invite.version().get(),
+            )
+        },
+        move |(list_id, ..)| get_list_invites(list_id),
+    );
+
+    Effect::new(move |_| {
+        if let Some(result) = share_user.value().get() {
+            match result {
+                Ok(()) => {
+                    set_user_id(String::new());
+                    if let Some(toasts) = toasts {
+                        toasts.success("User share saved.");
+                    }
+                }
+                Err(error) => {
+                    if let Some(toasts) = toasts {
+                        toasts.error(format!("Unable to share with user: {error}"));
+                    }
+                }
+            }
+        }
+    });
+
+    Effect::new(move |_| {
+        if let Some(result) = share_group.value().get() {
+            match result {
+                Ok(()) => {
+                    set_group_id(String::new());
+                    if let Some(toasts) = toasts {
+                        toasts.success("Group share saved.");
+                    }
+                }
+                Err(error) => {
+                    if let Some(toasts) = toasts {
+                        toasts.error(format!("Unable to share with group: {error}"));
+                    }
+                }
+            }
+        }
+    });
+
+    Effect::new(move |_| {
+        if let Some(result) = create_invite.value().get() {
+            match result {
+                Ok(_) => {
+                    set_max_uses(String::new());
+                    if let Some(toasts) = toasts {
+                        toasts.success("Invite link created.");
+                    }
+                }
+                Err(error) => {
+                    if let Some(toasts) = toasts {
+                        toasts.error(format!("Unable to create invite: {error}"));
+                    }
+                }
+            }
+        }
+    });
+
+    view! {
+        <Modal set_visible max_width="max-w-3xl w-[95vw]">
+            <div class="flex flex-col gap-6">
+                <div>
+                    <h2 class="text-2xl font-bold text-[color:var(--brand-fg)]">"Share List"</h2>
+                    <p class="text-sm text-[color:var(--color-text-muted)]">"Create invite links or grant access to known user and group IDs."</p>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="panel p-4 rounded-xl flex flex-col gap-3">
+                        <h3 class="font-semibold text-[color:var(--brand-fg)]">"Invite Links"</h3>
+                        <div class="grid grid-cols-1 sm:grid-cols-[1fr_auto_auto] gap-2 items-end">
+                            <label class="flex flex-col gap-1 text-sm">
+                                <span class="label">"Max uses"</span>
+                                <input
+                                    class="input"
+                                    type="number"
+                                    min="1"
+                                    placeholder="Unlimited"
+                                    prop:value=max_uses
+                                    on:input=move |ev| set_max_uses(event_target_value(&ev))
+                                />
+                            </label>
+                            <label class="flex flex-col gap-1 text-sm">
+                                <span class="label">"Access"</span>
+                                <select
+                                    class="input"
+                                    on:change=move |ev| set_invite_permission(permission_from_input(&event_target_value(&ev)))
+                                >
+                                    <option value="Read" selected=move || invite_permission() == ListPermission::Read>"Read"</option>
+                                    <option value="Write" selected=move || invite_permission() == ListPermission::Write>"Write"</option>
+                                </select>
+                            </label>
+                            <button
+                                class="btn-primary"
+                                prop:disabled=create_invite.pending()
+                                on:click=move |_| {
+                                    let max_uses = max_uses().trim().parse::<i32>().ok();
+                                    create_invite.dispatch(CreateInvite {
+                                        permission: invite_permission(),
+                                        max_uses,
+                                    });
+                                }
+                            >
+                                "Create"
+                            </button>
+                        </div>
+                        {move || match invites.get() {
+                            Some(Ok(invites)) => {
+                                if invites.is_empty() {
+                                    view! { <div class="text-sm text-[color:var(--color-text-muted)]">"No invite links yet."</div> }.into_any()
+                                } else {
+                                    invites
+                                        .into_iter()
+                                        .map(|invite| {
+                                            let invite_id = invite.id.clone();
+                                            let link = invite_url(&invite);
+                                            view! {
+                                                <div class="rounded border border-[color:var(--brand-border)] p-2 flex flex-col gap-2">
+                                                    <div class="flex items-center justify-between gap-2">
+                                                        <div class="text-sm min-w-0 truncate">{link.clone()}</div>
+                                                        <Clipboard clipboard_text=link />
+                                                    </div>
+                                                    <div class="flex items-center justify-between gap-2 text-xs text-[color:var(--color-text-muted)]">
+                                                        <span>{format!("{} - uses {}{}", permission_name(invite.permission), invite.uses, invite.max_uses.map(|m| format!("/{m}")).unwrap_or_default())}</span>
+                                                        <button class="btn-danger btn-sm" on:click=move |_| { delete_invite.dispatch(invite_id.clone()); }>
+                                                            "Delete"
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            }
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .into_any()
+                                }
+                            }
+                            Some(Err(error)) => view! { <div class="alert alert-error">{format!("Unable to load invites: {error}")}</div> }.into_any(),
+                            None => view! { <Loading /> }.into_any(),
+                        }}
+                    </div>
+
+                    <div class="panel p-4 rounded-xl flex flex-col gap-3">
+                        <h3 class="font-semibold text-[color:var(--brand-fg)]">"Direct Shares"</h3>
+                        <div class="grid grid-cols-1 sm:grid-cols-[1fr_auto_auto] gap-2 items-end">
+                            <label class="flex flex-col gap-1 text-sm">
+                                <span class="label">"User ID"</span>
+                                <input class="input" prop:value=user_id on:input=move |ev| set_user_id(event_target_value(&ev)) />
+                            </label>
+                            <label class="flex flex-col gap-1 text-sm">
+                                <span class="label">"Access"</span>
+                                <select class="input" on:change=move |ev| set_user_permission(permission_from_input(&event_target_value(&ev)))>
+                                    <option value="Read" selected=move || user_permission() == ListPermission::Read>"Read"</option>
+                                    <option value="Write" selected=move || user_permission() == ListPermission::Write>"Write"</option>
+                                </select>
+                            </label>
+                            <button
+                                class="btn-primary"
+                                prop:disabled=share_user.pending()
+                                on:click=move |_| {
+                                    if let Ok(user_id) = user_id().trim().parse::<i64>() {
+                                        share_user.dispatch(ShareListUser {
+                                            user_id,
+                                            permission: user_permission(),
+                                        });
+                                    }
+                                }
+                            >
+                                "Share"
+                            </button>
+                        </div>
+                        <div class="grid grid-cols-1 sm:grid-cols-[1fr_auto_auto] gap-2 items-end">
+                            <label class="flex flex-col gap-1 text-sm">
+                                <span class="label">"Group ID"</span>
+                                <input class="input" prop:value=group_id on:input=move |ev| set_group_id(event_target_value(&ev)) />
+                            </label>
+                            <label class="flex flex-col gap-1 text-sm">
+                                <span class="label">"Access"</span>
+                                <select class="input" on:change=move |ev| set_group_permission(permission_from_input(&event_target_value(&ev)))>
+                                    <option value="Read" selected=move || group_permission() == ListPermission::Read>"Read"</option>
+                                    <option value="Write" selected=move || group_permission() == ListPermission::Write>"Write"</option>
+                                </select>
+                            </label>
+                            <button
+                                class="btn-primary"
+                                prop:disabled=share_group.pending()
+                                on:click=move |_| {
+                                    if let Ok(group_id) = group_id().trim().parse::<i32>() {
+                                        share_group.dispatch(ShareListGroup {
+                                            group_id,
+                                            permission: group_permission(),
+                                        });
+                                    }
+                                }
+                            >
+                                "Share"
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                {move || match shares.get() {
+                    Some(Ok((users, groups))) => view! {
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <SharedUsers users unshare_user />
+                            <SharedGroups groups unshare_group />
+                        </div>
+                    }.into_any(),
+                    Some(Err(error)) => view! { <div class="alert alert-error">{format!("Unable to load shares: {error}")}</div> }.into_any(),
+                    None => view! { <Loading /> }.into_any(),
+                }}
+            </div>
+        </Modal>
+    }
 }
 
 #[component]
@@ -77,6 +437,21 @@ pub fn ListView() -> impl IntoView {
         },
         move |(id, _)| get_list_items_with_listings(id),
     );
+    let permission = Resource::new(list_id, get_list_permission);
+    let can_write = Signal::derive(move || {
+        permission
+            .get()
+            .and_then(Result::ok)
+            .map(ListPermission::can_write)
+            .unwrap_or(false)
+    });
+    let is_owner = Signal::derive(move || {
+        permission
+            .get()
+            .and_then(Result::ok)
+            .map(ListPermission::is_owner)
+            .unwrap_or(false)
+    });
 
     #[cfg(not(feature = "ssr"))]
     {
@@ -96,6 +471,7 @@ pub fn ListView() -> impl IntoView {
 
     let (menu, set_menu) = signal(MenuState::None);
     let (recipe_modal_open, set_recipe_modal_open) = signal(false);
+    let (share_modal_open, set_share_modal_open) = signal(false);
     let (buying_view, set_buying_view) = signal(false);
 
     let edit_list_mode = RwSignal::new(false);
@@ -106,49 +482,51 @@ pub fn ListView() -> impl IntoView {
     view! {
         <AutoMarkPurchases list_view=list_view />
         <div class="flex-row gap-2">
-            <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_add_item).to_string()>
-                <button
-                    class="btn-primary"
-                    class:active=move || menu() == MenuState::Item
-                    on:click=move |_| set_menu(
-                        match menu() {
-                            MenuState::Item => MenuState::None,
-                            _ => MenuState::Item,
-                        },
-                    )
-                >
+            <Show when=can_write>
+                <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_add_item).to_string()>
+                    <button
+                        class="btn-primary"
+                        class:active=move || menu() == MenuState::Item
+                        on:click=move |_| set_menu(
+                            match menu() {
+                                MenuState::Item => MenuState::None,
+                                _ => MenuState::Item,
+                            },
+                        )
+                    >
 
-                    <i class="pr-1.5">
-                        <Icon icon=i::BiPlusRegular />
-                    </i>
-                    <span>{t!(i18n, list_view_add_item)}</span>
-                </button>
-            </Tooltip>
-            <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_add_recipe).to_string()>
-                <button
-                    class="btn-secondary"
-                    class:active=move || recipe_modal_open()
-                    on:click=move |_| set_recipe_modal_open(true)
-                >
+                        <i class="pr-1.5">
+                            <Icon icon=i::BiPlusRegular />
+                        </i>
+                        <span>{t!(i18n, list_view_add_item)}</span>
+                    </button>
+                </Tooltip>
+                <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_add_recipe).to_string()>
+                    <button
+                        class="btn-secondary"
+                        class:active=move || recipe_modal_open()
+                        on:click=move |_| set_recipe_modal_open(true)
+                    >
 
-                    {t!(i18n, list_view_add_recipe)}
-                </button>
-            </Tooltip>
-            <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_import_item).to_string()>
-                <button
-                    class="btn-secondary"
-                    class:active=move || menu() == MenuState::MakePlace
-                    on:click=move |_| set_menu(
-                        match menu() {
-                            MenuState::MakePlace => MenuState::None,
-                            _ => MenuState::MakePlace,
-                        },
-                    )
-                >
+                        {t!(i18n, list_view_add_recipe)}
+                    </button>
+                </Tooltip>
+                <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_import_item).to_string()>
+                    <button
+                        class="btn-secondary"
+                        class:active=move || menu() == MenuState::MakePlace
+                        on:click=move |_| set_menu(
+                            match menu() {
+                                MenuState::MakePlace => MenuState::None,
+                                _ => MenuState::MakePlace,
+                            },
+                        )
+                    >
 
-                    {t!(i18n, list_view_make_place)}
-                </button>
-            </Tooltip>
+                        {t!(i18n, list_view_make_place)}
+                    </button>
+                </Tooltip>
+            </Show>
             <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_purchasing_view).to_string()>
                 <button
                     class="btn-secondary"
@@ -161,6 +539,12 @@ pub fn ListView() -> impl IntoView {
                     <span>{t!(i18n, list_view_purchasing_view)}</span>
                 </button>
             </Tooltip>
+            <Show when=is_owner>
+                <button class="btn-secondary" on:click=move |_| set_share_modal_open(true)>
+                    <Icon icon=i::BsShareFill />
+                    <span>"Share"</span>
+                </button>
+            </Show>
 
         </div>
 
@@ -173,6 +557,10 @@ pub fn ListView() -> impl IntoView {
                     set_recipe_modal_open(false);
                 }
             />
+        </Show>
+
+        <Show when=share_modal_open>
+            <ListShareModal list_id=list_id() set_visible=set_share_modal_open />
         </Show>
 
         {move || match menu() {
@@ -341,7 +729,7 @@ pub fn ListView() -> impl IntoView {
                                             <div class="content-well">
                                                 <div class="sticky top-0 flex-row justify-between">
                                                     <span class="content-title">{list.name.clone()}</span>
-                                                    <div class="flex flex-row">
+                                                    <div class="flex flex-row" class:hidden=move || !can_write()>
                                                         <button
                                                             class="btn"
                                                             class:bg-brand-950=edit_list_mode
@@ -402,7 +790,7 @@ pub fn ListView() -> impl IntoView {
                                                             <th
                                                                 scope="col"
                                                                 class="text-left p-2"
-                                                                class:hidden=move || !edit_list_mode()
+                                                                class:hidden=move || !edit_list_mode() || !can_write()
                                                             >
                                                                 "✅"
                                                             </th>
@@ -413,7 +801,7 @@ pub fn ListView() -> impl IntoView {
                                                             <th
                                                                 scope="col"
                                                                 class="text-left p-2"
-                                                                class:hidden=edit_list_mode
+                                                                class:hidden=move || edit_list_mode() || !can_write()
                                                             >
                                                                 {t!(i18n, list_view_options)}
                                                             </th>
@@ -429,6 +817,7 @@ pub fn ListView() -> impl IntoView {
                                                                         item=item
                                                                         listings=listings
                                                                         edit_list_mode=edit_list_mode.into()
+                                                                        can_write=can_write
                                                                         selected_items=selected_items
                                                                         delete_item=delete_item
                                                                         edit_item=edit_item

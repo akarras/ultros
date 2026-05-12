@@ -15,6 +15,7 @@ pub fn ListItemRow(
     item: ListItem,
     listings: Vec<ActiveListing>,
     edit_list_mode: Signal<bool>,
+    can_write: Signal<bool>,
     #[prop(into)] selected_items: RwSignal<HashSet<i32>>,
     // The return type of delete_list_item is impl Future<Output = Result<(), AppError>> so in Action it becomes () for the output if we don't care about the result, but wait. Action<I, O>. The original code used Action::new. Let's check original.
     // original: let delete_item = Action::new(move |list_item: &i32| delete_list_item(*list_item));
@@ -44,10 +45,10 @@ pub fn ListItemRow(
     view! {
         <tr>
             {move || {
-                if !edit() || edit_list_mode() {
+                if !edit() || edit_list_mode() || !can_write() {
                     Either::Left(
                         view! {
-                            <td class:hidden=move || !edit_list_mode()>
+                            <td class:hidden=move || !edit_list_mode() || !can_write()>
                                 <input
                                     type="checkbox"
                                     on:click=move |_| {
@@ -129,7 +130,7 @@ pub fn ListItemRow(
                                 }}
 
                             </td>
-                            <td class:hidden=edit_list_mode>
+                            <td class:hidden=move || edit_list_mode() || !can_write()>
                                 <div class="flex gap-1">
                                     <Tooltip tooltip_text="Create price alert">
                                         <button

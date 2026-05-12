@@ -37,8 +37,8 @@ use tower_http::trace::TraceLayer;
 use tracing::{debug, warn};
 use ultros_api_types::icon_size::IconSize;
 use ultros_api_types::list::{
-    CreateInvite, CreateList, List, ListInvite, ListItem, ListSharedGroup, ListSharedUser,
-    ShareListGroup, ShareListUser,
+    CreateInvite, CreateList, List, ListInvite, ListItem, ListPermission, ListSharedGroup,
+    ListSharedUser, ShareListGroup, ShareListUser,
 };
 use ultros_api_types::retainer::RetainerListings;
 use ultros_api_types::user::group::{CreateGroup, UserGroup, UserGroupMember};
@@ -971,6 +971,14 @@ pub(crate) async fn get_list_shares(
     )))
 }
 
+pub(crate) async fn get_list_permission(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+) -> Result<Json<ListPermission>, ApiError> {
+    Ok(Json(db.get_permission(id, user.id as i64).await?))
+}
+
 // Sharing changes who can see the list — broadcast a list-update event so
 // affected clients (the recipient and the owner) refetch their list set.
 async fn broadcast_list_update(
@@ -1218,6 +1226,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/list/{id}/shares", get(get_list_shares))
         .route("/api/v1/list/{id}/share/user", post(share_list_with_user))
         .route("/api/v1/list/{id}/share/group", post(share_list_with_group))
+        .route("/api/v1/list/{id}/permission", get(get_list_permission))
         .route(
             "/api/v1/list/{id}/share/user/{user_id}",
             delete(unshare_list_from_user),

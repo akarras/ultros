@@ -35,6 +35,7 @@ use crate::{
         fc_crafting_analyzer::*,
         history::*,
         home_page::*,
+        invite::*,
         item_explorer::*,
         item_view::*,
         legal::{cookie_policy::CookiePolicy, privacy_policy::PrivacyPolicy},
@@ -318,6 +319,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                                     <Route path=path!("") view=RetainersBasePath />
                                 </ParentRoute>
                                 <Route path=path!("alerts") view=Alerts />
+                                <Route path=path!("invite/:id") view=InviteAccept />
                                 <ParentRoute path=path!("list") view=Lists>
                                     <Route path=path!(":id") view=ListView />
                                     <Route path=path!("") view=EditLists />

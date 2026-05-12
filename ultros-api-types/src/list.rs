@@ -93,6 +93,16 @@ pub struct CreateInvite {
     pub max_uses: Option<i32>,
 }
 
+impl ListPermission {
+    pub fn can_write(self) -> bool {
+        self >= Self::Write
+    }
+
+    pub fn is_owner(self) -> bool {
+        self >= Self::Owner
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
