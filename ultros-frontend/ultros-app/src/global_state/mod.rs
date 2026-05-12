@@ -7,6 +7,7 @@ pub mod region_for_world;
 pub mod theme;
 pub mod user;
 pub use local_world_data::LocalWorldData;
+pub use user::BootstrapUser;
 pub mod crafter_levels;
 pub mod toasts;
 pub mod xiv_data;

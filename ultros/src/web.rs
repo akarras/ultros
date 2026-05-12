@@ -1187,7 +1187,9 @@ pub(crate) async fn start_web(state: WebState) {
             move || {
                 provide_context(LocalWorldData(Ok(worlds.clone())));
             },
-            shell,
+            // The file/404 fallback doesn't have per-request bootstrap data; an
+            // empty script tag is harmless and the client falls back to HTTP.
+            |options| shell(options, String::new()),
         ))
         .with_state(state)
         .route_layer(middleware::from_fn(track_metrics))

@@ -42,8 +42,22 @@ pub(crate) async fn get_listings(item_id: i32, world: &str) -> AppResult<Current
     fetch_api(&format!("/api/v1/listings/{world}/{item_id}")).await
 }
 
-/// This is okay because the client will send our login cookie
+/// This is okay because the client will send our login cookie.
+///
+/// Before falling back to the network, consult `BootstrapUser` — the SSR
+/// handler resolves the user from the auth cookie on every page render, and
+/// the client mirrors that into context on hydration from the bootstrap
+/// script. When the context is present we never have to hit
+/// `/api/v1/current_user`.
 pub(crate) async fn get_login() -> AppResult<UserData> {
+    use leptos::prelude::use_context;
+    if let Some(crate::global_state::BootstrapUser(user)) =
+        use_context::<crate::global_state::BootstrapUser>()
+    {
+        return user.ok_or(AppError::ApiError(
+            ultros_api_types::result::ApiError::NotAuthenticated,
+        ));
+    }
     fetch_api("/api/v1/current_user").await
 }
 
