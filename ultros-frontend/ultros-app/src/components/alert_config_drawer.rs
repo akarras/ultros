@@ -58,7 +58,8 @@ pub fn AlertConfigDrawer(
                 price_threshold: threshold,
                 hq_only: hq_only.get(),
             },
-            delivery,
+            delivery: Some(delivery),
+            endpoint_ids: vec![],
             cooldown_seconds: None,
         };
         spawn_local(async move {

@@ -55,8 +55,16 @@ pub(crate) async fn create_alert(
 
     validate_price_threshold(price_threshold)?;
 
+    // Legacy path: `delivery` is required while endpoints are not yet wired up through
+    // `endpoint_ids`. Task 11 of the Notification Tier 1 plan migrates this away.
+    let delivery = req.delivery.clone().ok_or_else(|| {
+        ApiError::from(anyhow::anyhow!(
+            "delivery is required (endpoint_ids not yet supported on this handler)"
+        ))
+    })?;
+
     let (notification_method, notification_config, notification_name): (&str, _, String) =
-        match &req.delivery {
+        match &delivery {
             AlertDelivery::DiscordDm => (
                 "DiscordDm",
                 serde_json::json!({ "user_id": owner }),
@@ -99,7 +107,8 @@ pub(crate) async fn create_alert(
             price_threshold,
             hq_only,
         },
-        delivery: req.delivery,
+        delivery,
+        endpoint_ids: vec![],
         enabled: alert.enabled,
         cooldown_seconds: alert.cooldown_seconds,
         last_fired_at: alert.last_fired_at.map(|t| t.with_timezone(&chrono::Utc)),
@@ -143,6 +152,7 @@ pub(crate) async fn list_alerts(
                 hq_only: t.hq_only,
             },
             delivery,
+            endpoint_ids: vec![],
             enabled: a.enabled,
             cooldown_seconds: a.cooldown_seconds,
             last_fired_at: a.last_fired_at.map(|t| t.with_timezone(&chrono::Utc)),
