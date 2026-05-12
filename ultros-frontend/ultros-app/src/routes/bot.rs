@@ -1,14 +1,11 @@
+use crate::components::meta::{MetaDescription, MetaTitle};
 use leptos::prelude::*;
-use leptos_meta::{Meta, Title};
 
 #[component]
 pub fn BotGuide() -> impl IntoView {
     view! {
-        <Title text="Ultros Discord Bot" />
-        <Meta
-            name="description"
-            content="Command reference and setup guide for the Ultros Discord bot — FFXIV market data in your server."
-        />
+        <MetaTitle title="Ultros Discord Bot" />
+        <MetaDescription text="Command reference and setup guide for the Ultros Discord bot — FFXIV market data in your server." />
         <div class="container mx-auto max-w-4xl px-4 py-8 flex flex-col gap-12">
             <header class="flex flex-col gap-3">
                 <h1 class="text-4xl font-bold text-brand-200">"Ultros Discord Bot"</h1>
@@ -45,8 +42,8 @@ pub fn BotGuide() -> impl IntoView {
                 <h2 class="text-2xl font-semibold text-brand-300">"3. Command reference"</h2>
 
                 <CommandGroup
-                    title="/ffxiv prices".to_string()
-                    description="Real-time market lookups.".to_string()
+                    title="/ffxiv prices"
+                    description="Real-time market lookups."
                     commands=vec![
                         ("/ffxiv prices current item:<name> world:<world>", "Top 10 cheapest current listings."),
                         ("/ffxiv prices history item:<name> world:<world>", "Historical price chart (PNG)."),
@@ -54,8 +51,8 @@ pub fn BotGuide() -> impl IntoView {
                 />
 
                 <CommandGroup
-                    title="/ffxiv retainer".to_string()
-                    description="Manage your retainers. Requires a verified character.".to_string()
+                    title="/ffxiv retainer"
+                    description="Manage your retainers. Requires a verified character."
                     commands=vec![
                         ("/ffxiv retainer list", "Show your retainers and their listing counts."),
                         ("/ffxiv retainer add retainer_id:<name>", "Claim a retainer (autocomplete only shows your own)."),
@@ -68,8 +65,8 @@ pub fn BotGuide() -> impl IntoView {
                 />
 
                 <CommandGroup
-                    title="/ffxiv list".to_string()
-                    description="Shopping lists scoped to a region/datacenter/world.".to_string()
+                    title="/ffxiv list"
+                    description="Shopping lists scoped to a region/datacenter/world."
                     commands=vec![
                         ("/ffxiv list show_lists", "Show your list names."),
                         ("/ffxiv list create list_name:<name> region_datacenter_or_world:<scope>", "Create a list."),
@@ -81,16 +78,16 @@ pub fn BotGuide() -> impl IntoView {
                 />
 
                 <CommandGroup
-                    title="/ffxiv analyze".to_string()
-                    description="Market analysis.".to_string()
+                    title="/ffxiv analyze"
+                    description="Market analysis."
                     commands=vec![
                         ("/ffxiv analyze profit world:<name> [minimum_profit=10000] [number_recently_sold=5] [threshold_days=7]", "Top 15 flips on a world."),
                     ]
                 />
 
                 <CommandGroup
-                    title="/ffxiv character".to_string()
-                    description="Lodestone lookup. To verify ownership, use Settings on this site.".to_string()
+                    title="/ffxiv character"
+                    description="Lodestone lookup. To verify ownership, use Settings on this site."
                     commands=vec![
                         ("/ffxiv character register name:<First Last> [home_world]", "Search Lodestone."),
                     ]
@@ -102,8 +99,8 @@ pub fn BotGuide() -> impl IntoView {
 
 #[component]
 fn CommandGroup(
-    title: String,
-    description: String,
+    title: &'static str,
+    description: &'static str,
     commands: Vec<(&'static str, &'static str)>,
 ) -> impl IntoView {
     view! {
