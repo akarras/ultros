@@ -1,8 +1,12 @@
 //! Pure helpers extracted from the Discord command handlers so they can be unit-tested
 //! without spinning up Serenity, Poise, the DB, or the world cache.
 
+use anyhow::anyhow;
+use ultros_api_types::world_helper::AnySelector;
 use ultros_db::entity::active_listing;
+use xiv_gen::ItemId;
 
+use super::{Context, Error};
 use crate::analyzer_service::{SoldAmount, SoldWithin};
 
 /// Map a user-supplied "threshold in days" into the appropriate `SoldWithin` bucket.
@@ -60,6 +64,80 @@ pub(crate) fn top_n_cheapest_listings(
         .filter(|l| hq_filter.map(|hq| l.hq == hq).unwrap_or(true))
         .take(limit)
         .collect()
+}
+
+/// Discord autocomplete handler for item-name string args. Returns up to 99 game items
+/// whose lowercased name contains the partial input. The choice value is the item name
+/// (callers should resolve it to an id via [`resolve_item_id`]).
+pub(crate) async fn autocomplete_item<'a>(
+    _ctx: Context<'_>,
+    partial: &'a str,
+) -> impl Iterator<Item = poise::serenity_prelude::AutocompleteChoice> + 'a {
+    let partial = partial.to_lowercase();
+    xiv_gen_db::data()
+        .items
+        .values()
+        .filter(move |item| name_matches_lowered(&item.name, &partial))
+        .map(|item| {
+            poise::serenity_prelude::AutocompleteChoice::new(
+                item.name.to_string(),
+                item.name.to_string(),
+            )
+        })
+        .take(99)
+}
+
+/// Resolve a user-supplied item name (case-insensitive exact match) to an FFXIV item id.
+/// Returns `None` if no item with that exact name exists.
+pub(crate) fn resolve_item_id(name: &str) -> Option<i32> {
+    let lowered = name.to_lowercase();
+    xiv_gen_db::data()
+        .items
+        .iter()
+        .find(|(_, item)| item.name.to_lowercase() == lowered)
+        .map(|(ItemId(id), _)| *id)
+}
+
+/// Parse a world/datacenter/region name from a user-supplied string via the world cache.
+/// Returns an `AnySelector` suitable for serializing into an alert's `world_selector` JSON.
+pub(crate) async fn parse_world_selector(
+    ctx: &Context<'_>,
+    name: &str,
+) -> Result<AnySelector, Error> {
+    use ultros_db::world_data::world_cache::AnySelector as DbAnySelector;
+    let result = ctx
+        .data()
+        .world_cache
+        .lookup_value_by_name(name)
+        .map_err(|e| anyhow!("unknown world/datacenter/region '{name}': {e}"))?;
+    let db_sel: DbAnySelector = (&result).into();
+    Ok(match db_sel {
+        DbAnySelector::World(id) => AnySelector::World(id),
+        DbAnySelector::Datacenter(id) => AnySelector::Datacenter(id),
+        DbAnySelector::Region(id) => AnySelector::Region(id),
+    })
+}
+
+/// Default world selector for the caller: returns `AnySelector::World(w)` where `w` is the
+/// world of one of the caller's owned characters. Errors if the user has no claimed
+/// characters, since the codebase doesn't store a per-user "home world" column.
+pub(crate) async fn user_home_world_selector(ctx: &Context<'_>) -> Result<AnySelector, Error> {
+    let owner = ctx.author().id.get() as i64;
+    let chars = ctx
+        .data()
+        .db
+        .get_all_characters_for_discord_user(owner)
+        .await?;
+    let world_id = chars
+        .into_iter()
+        .find_map(|(_, ch)| ch.map(|c| c.world_id))
+        .ok_or_else(|| {
+            anyhow!(
+                "no world specified and no claimed character on file. \
+                 Pass `world:<name>` or claim a character with `/ffxiv character`."
+            )
+        })?;
+    Ok(AnySelector::World(world_id))
 }
 
 #[cfg(test)]
