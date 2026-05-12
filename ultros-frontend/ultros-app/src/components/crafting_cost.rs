@@ -158,14 +158,72 @@ pub fn compute_ingredient_cost(
     }
 }
 
-// Placeholder — implemented in Tasks 3-4.
+#[cfg(test)]
+pub mod fixtures;
+
+/// Compute the cost of one execution of `recipe`.
+///
+/// `is_shard` returns true for ingredient item ids whose `item_search_category == 59`.
+/// In production this is `|id| tracked_data().items.get(&id).map(|i| i.item_search_category == 59).unwrap_or(false)`.
+/// In tests this is a closure over a fixture HashMap.
 pub fn compute_cost(
-    _recipe: &Recipe,
-    _prices: &CheapestListingsMap,
+    recipe: &Recipe,
+    prices: &CheapestListingsMap,
     _recipes_by_output: &HashMap<ItemId, Vec<&'static Recipe>>,
-    _opts: &CraftingCostOptions<'_>,
+    opts: &CraftingCostOptions<'_>,
+    is_shard: &dyn Fn(ItemId) -> bool,
 ) -> CostBreakdown {
-    unimplemented!("Tasks 3-4")
+    let mut hq_cost: i64 = 0;
+    let mut lq_cost: i64 = 0;
+    let mut shard_cost: i64 = 0;
+    let mut on_hand_savings: i64 = 0;
+    let mut ingredient_lines: Vec<IngredientLine> = Vec::new();
+    let sub_crafts: Vec<SubcraftInfo> = Vec::new(); // populated in Task 4
+
+    for (item_id, amount) in IngredientsIter::new(recipe) {
+        let mut line = compute_ingredient_cost(item_id, amount, prices, opts);
+        line.is_shard = is_shard(item_id);
+
+        let line_market_cost = (line.used_from_market as i64) * (line.unit_price as i64);
+        let line_on_hand_value = (line.used_from_on_hand as i64) * (line.unit_price as i64);
+
+        if line.is_shard {
+            // Shards are accumulated separately so we can show the user
+            // what they "saved" by excluding them.
+            shard_cost = shard_cost.saturating_add(line_market_cost + line_on_hand_value);
+            if matches!(opts.shards, ShardsMode::IncludeMarket) {
+                hq_cost = hq_cost.saturating_add(line_market_cost);
+                lq_cost = lq_cost.saturating_add(line_market_cost);
+                on_hand_savings = on_hand_savings.saturating_add(line_on_hand_value);
+            }
+            // ExcludeShards: don't add to hq/lq_cost; still record the line for UI.
+        } else {
+            hq_cost = hq_cost.saturating_add(line_market_cost);
+            lq_cost = lq_cost.saturating_add(line_market_cost);
+            on_hand_savings = on_hand_savings.saturating_add(line_on_hand_value);
+        }
+
+        ingredient_lines.push(line);
+    }
+
+    let clamp = |v: i64| -> i32 {
+        if v < 0 {
+            0
+        } else if v > i32::MAX as i64 {
+            i32::MAX
+        } else {
+            v as i32
+        }
+    };
+
+    CostBreakdown {
+        hq_cost: clamp(hq_cost),
+        lq_cost: clamp(lq_cost),
+        shard_cost: clamp(shard_cost),
+        on_hand_savings: clamp(on_hand_savings),
+        ingredient_lines,
+        sub_crafts,
+    }
 }
 
 #[cfg(test)]
@@ -332,5 +390,106 @@ mod tests {
         };
         let line = compute_ingredient_cost(ItemId(100), 1, &prices, &opts);
         assert_eq!(line.unit_price, 50);
+    }
+
+    use crate::components::crafting_cost::fixtures::*;
+    use xiv_gen::Recipe;
+
+    fn make_recipe(ingredients: &[(i32, i32)]) -> Recipe {
+        // Recipe in xiv_gen has fixed-size arrays for ingredient[8] and amount_ingredient[8].
+        let mut ing = [0i32; 8];
+        let mut amt = [0i32; 8];
+        for (i, (id, q)) in ingredients.iter().enumerate() {
+            ing[i] = *id;
+            amt[i] = *q;
+        }
+        Recipe {
+            key_id: xiv_gen::RecipeId::default(),
+            item_result: 0,
+            amount_result: 0,
+            ingredient: ing,
+            amount_ingredient: amt,
+            craft_type: 0,
+            recipe_level_table: 0,
+        }
+    }
+
+    #[test]
+    fn compute_cost_simple_recipe_lq() {
+        let prices = fixture_simple_recipe_prices();
+        let cats = fixture_categories();
+        let recipe = make_recipe(&[(1000, 2)]);
+        let oh = EmptyOnHand;
+        let opts = CraftingCostOptions {
+            require_hq: false,
+            max_subcraft_depth: 0,
+            shards: ShardsMode::ExcludeShards,
+            on_hand: &oh,
+        };
+        let is_shard = |id: ItemId| cats.get(&id.0) == Some(&59);
+        let recipes_by_output: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
+        let cb = compute_cost(&recipe, &prices, &recipes_by_output, &opts, &is_shard);
+        assert_eq!(cb.lq_cost, 200);
+        assert_eq!(cb.hq_cost, 200);
+        assert_eq!(cb.shard_cost, 0);
+    }
+
+    #[test]
+    fn compute_cost_excludes_shards_by_default() {
+        let prices = fixture_shard_recipe_prices();
+        let cats = fixture_categories();
+        let recipe = make_recipe(&[(1000, 2), (1001, 5)]);
+        let oh = EmptyOnHand;
+        let opts = CraftingCostOptions {
+            require_hq: false,
+            max_subcraft_depth: 0,
+            shards: ShardsMode::ExcludeShards,
+            on_hand: &oh,
+        };
+        let is_shard = |id: ItemId| cats.get(&id.0) == Some(&59);
+        let recipes_by_output: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
+        let cb = compute_cost(&recipe, &prices, &recipes_by_output, &opts, &is_shard);
+        assert_eq!(cb.lq_cost, 200);
+        assert_eq!(cb.shard_cost, 25);
+        assert_eq!(cb.ingredient_lines.len(), 2);
+        assert!(cb.ingredient_lines.iter().any(|l| l.is_shard));
+    }
+
+    #[test]
+    fn compute_cost_includes_shards_when_requested() {
+        let prices = fixture_shard_recipe_prices();
+        let cats = fixture_categories();
+        let recipe = make_recipe(&[(1000, 2), (1001, 5)]);
+        let oh = EmptyOnHand;
+        let opts = CraftingCostOptions {
+            require_hq: false,
+            max_subcraft_depth: 0,
+            shards: ShardsMode::IncludeMarket,
+            on_hand: &oh,
+        };
+        let is_shard = |id: ItemId| cats.get(&id.0) == Some(&59);
+        let recipes_by_output: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
+        let cb = compute_cost(&recipe, &prices, &recipes_by_output, &opts, &is_shard);
+        assert_eq!(cb.lq_cost, 225); // 200 + 25
+        assert_eq!(cb.shard_cost, 25);
+    }
+
+    #[test]
+    fn compute_cost_on_hand_savings() {
+        let prices = fixture_simple_recipe_prices();
+        let cats = fixture_categories();
+        let recipe = make_recipe(&[(1000, 2)]);
+        let oh = MapOnHand::new(&[(1000, 1)]);
+        let opts = CraftingCostOptions {
+            require_hq: false,
+            max_subcraft_depth: 0,
+            shards: ShardsMode::ExcludeShards,
+            on_hand: &oh,
+        };
+        let is_shard = |id: ItemId| cats.get(&id.0) == Some(&59);
+        let recipes_by_output: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
+        let cb = compute_cost(&recipe, &prices, &recipes_by_output, &opts, &is_shard);
+        assert_eq!(cb.lq_cost, 100);
+        assert_eq!(cb.on_hand_savings, 100);
     }
 }
