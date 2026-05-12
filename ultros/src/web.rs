@@ -38,7 +38,7 @@ use tracing::{debug, warn};
 use ultros_api_types::icon_size::IconSize;
 use ultros_api_types::list::{
     CreateInvite, CreateList, List, ListInvite, ListItem, ListSharedGroup, ListSharedUser,
-    ShareListGroup, ShareListUser,
+    ListWithPermission, ShareListGroup, ShareListUser,
 };
 use ultros_api_types::retainer::RetainerListings;
 use ultros_api_types::user::group::{CreateGroup, UserGroup, UserGroupMember};
@@ -51,7 +51,6 @@ use ultros_api_types::{
 };
 use ultros_app::{LocalWorldData, shell};
 use ultros_db::ActiveValue;
-use ultros_db::common_type_conversions::ApiConversionError;
 use ultros_db::world_data::world_cache::AnySelector;
 use ultros_db::{UltrosDb, world_data::world_cache::WorldCache};
 use ultros_xiv_icons::get_item_image;
@@ -523,13 +522,24 @@ pub(crate) async fn unclaim_retainer(
 pub(crate) async fn get_lists(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
-) -> Result<Json<Vec<List>>, ApiError> {
-    let lists = db
-        .get_lists_for_user(user.id as i64)
-        .await?
-        .into_iter()
-        .map(List::try_from)
-        .collect::<Result<Vec<_>, ApiConversionError>>()?;
+) -> Result<Json<Vec<ListWithPermission>>, ApiError> {
+    let lists = try_join_all(
+        db.get_lists_for_user(user.id as i64)
+            .await?
+            .into_iter()
+            .map(|list| {
+                let db = db.clone();
+                let user_id = user.id as i64;
+                async move {
+                    let permission = db.get_permission(list.id, user_id).await?;
+                    Ok::<_, ApiError>(ListWithPermission {
+                        list: List::try_from(list)?,
+                        permission,
+                    })
+                }
+            }),
+    )
+    .await?;
     Ok(Json(lists))
 }
 
@@ -537,17 +547,21 @@ pub(crate) async fn get_list(
     State(db): State<UltrosDb>,
     Path(id): Path<i32>,
     user: AuthDiscordUser,
-) -> Result<Json<(List, Vec<ListItem>)>, ApiError> {
+) -> Result<Json<(ListWithPermission, Vec<ListItem>)>, ApiError> {
     let (list, list_items) = futures::future::try_join(
         db.get_list(id, user.id as i64),
         db.get_list_items(id, user.id as i64),
     )
     .await?;
+    let permission = db.get_permission(id, user.id as i64).await?;
     let list_items = list_items
         .into_iter()
         .map(ListItem::from)
         .collect::<Vec<_>>();
-    let list = List::try_from(list)?;
+    let list = ListWithPermission {
+        list: List::try_from(list)?,
+        permission,
+    };
     Ok(Json((list, list_items)))
 }
 
@@ -556,12 +570,13 @@ pub(crate) async fn get_list_with_listings(
     State(world_cache): State<Arc<WorldCache>>,
     Path(id): Path<i32>,
     user: AuthDiscordUser,
-) -> Result<Json<(List, Vec<(ListItem, Vec<ActiveListing>)>)>, ApiError> {
+) -> Result<Json<(ListWithPermission, Vec<(ListItem, Vec<ActiveListing>)>)>, ApiError> {
     let (list, list_items) = futures::future::try_join(
         db.get_list(id, user.id as i64),
         db.get_list_items(id, user.id as i64),
     )
     .await?;
+    let permission = db.get_permission(id, user.id as i64).await?;
     // tbd: probably don't need to send clients all listings, but for now keep it this way.
     let selector = AnySelector::try_from(&list)?;
     let world = world_cache.lookup_selector(&selector)?;
@@ -588,7 +603,13 @@ pub(crate) async fn get_list_with_listings(
         })
         .collect();
 
-    Ok(Json((List::try_from(list)?, list_items)))
+    Ok(Json((
+        ListWithPermission {
+            list: List::try_from(list)?,
+            permission,
+        },
+        list_items,
+    )))
 }
 
 pub(crate) async fn delete_list(

@@ -4,16 +4,11 @@ use crate::ws::realtime::{RealtimeSubscription, use_realtime};
 use icondata as i;
 use leptos::prelude::*;
 use ultros_api_types::ActiveListing;
-use ultros_api_types::list::ListItem;
+use ultros_api_types::list::{ListItem, ListPermission, ListWithPermission};
 use ultros_api_types::websocket::{EventType, FilterPredicate, ServerClient, SocketMessageType};
 
-type ListViewResult = Result<
-    (
-        ultros_api_types::list::List,
-        Vec<(ListItem, Vec<ActiveListing>)>,
-    ),
-    crate::error::AppError,
->;
+type ListViewResult =
+    Result<(ListWithPermission, Vec<(ListItem, Vec<ActiveListing>)>), crate::error::AppError>;
 
 #[component]
 pub fn AutoMarkPurchases(list_view: Resource<ListViewResult>) -> impl IntoView {
@@ -76,6 +71,13 @@ pub fn AutoMarkPurchases(list_view: Resource<ListViewResult>) -> impl IntoView {
                     <button
                         class="btn-secondary sm:w-40"
                         class:bg-brand-900=move || is_watching.get()
+                        disabled=move || {
+                            list_view
+                                .get()
+                                .and_then(Result::ok)
+                                .map(|(list, _)| list.permission < ListPermission::Write)
+                                .unwrap_or(true)
+                        }
                         on:click=move |_| set_is_watching.update(|w| *w = !*w)
                     >
                         {move || if is_watching.get() { "Watching" } else { "Start" }}
@@ -88,7 +90,10 @@ pub fn AutoMarkPurchases(list_view: Resource<ListViewResult>) -> impl IntoView {
 
 fn mark_item_purchased(list_view: Resource<ListViewResult>, item_id: i32) {
     list_view.update(|data: &mut Option<ListViewResult>| {
-        if let Some(Ok((_, items))) = data {
+        if let Some(Ok((list, items))) = data {
+            if list.permission < ListPermission::Write {
+                return;
+            }
             for (item, _) in items.iter_mut() {
                 if item.item_id == item_id {
                     let q = item.quantity.unwrap_or(1);

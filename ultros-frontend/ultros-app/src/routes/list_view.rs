@@ -8,7 +8,7 @@ use icondata as i;
 use leptos::either::Either;
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
-use ultros_api_types::list::ListItem;
+use ultros_api_types::list::{ListItem, ListPermission};
 
 use crate::api::{
     add_item_to_list, delete_list_item, delete_list_items, edit_list_item,
@@ -116,7 +116,8 @@ pub fn ListView() -> impl IntoView {
         let Some(realtime) = realtime_for_market.clone() else {
             return;
         };
-        let filter = FilterPredicate::World(list.wdr_filter).and(FilterPredicate::Items(item_ids));
+        let filter =
+            FilterPredicate::World(list.list.wdr_filter).and(FilterPredicate::Items(item_ids));
         let sub = realtime.subscribe_market(filter, SocketMessageType::Listings, move |message| {
             if matches!(
                 message,
@@ -381,7 +382,8 @@ pub fn ListView() -> impl IntoView {
                                         })
                                         .count();
                                     let acquired_items = total_items.saturating_sub(remaining_items);
-                                    let list_name = list.name.clone();
+                                    let can_write = list.permission >= ListPermission::Write;
+                                    let list_name = list.list.name.clone();
 
                                     if buying_view() {
                                         Either::Left(
@@ -438,6 +440,7 @@ pub fn ListView() -> impl IntoView {
                                                             <button
                                                                 class="btn-secondary"
                                                                 class:bg-brand-950=edit_list_mode
+                                                                disabled=move || !can_write
                                                                 on:click=move |_| {
                                                                     edit_list_mode
                                                                         .update(|u| {
@@ -451,6 +454,7 @@ pub fn ListView() -> impl IntoView {
                                                             <div class:hidden=move || !edit_list_mode()>
                                                                 <button
                                                                     class="btn-danger"
+                                                                    disabled=move || !can_write
                                                                     on:click=move |_| {
                                                                         let items = selected_items
                                                                             .with_untracked(|s| {

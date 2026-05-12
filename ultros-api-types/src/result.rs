@@ -9,6 +9,12 @@ pub enum ApiError {
     Message(String),
     #[error("Unauthenticated. Please login to use this feature")]
     NotAuthenticated,
+    #[error("You do not have permission to perform this action")]
+    Forbidden,
+    #[error("The requested resource was not found")]
+    NotFound,
+    #[error("Bad request: {0}")]
+    BadRequest(String),
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -43,7 +49,13 @@ mod tests {
 
     #[test]
     fn api_error_serde_roundtrip() {
-        for e in [ApiError::Message("oops".into()), ApiError::NotAuthenticated] {
+        for e in [
+            ApiError::Message("oops".into()),
+            ApiError::NotAuthenticated,
+            ApiError::Forbidden,
+            ApiError::NotFound,
+            ApiError::BadRequest("nope".into()),
+        ] {
             let s = serde_json::to_string(&e).unwrap();
             let back: ApiError = serde_json::from_str(&s).unwrap();
             assert_eq!(e, back);
