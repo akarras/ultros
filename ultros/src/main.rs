@@ -201,14 +201,21 @@ async fn main() -> Result<()> {
     // Glitchtip / Sentry error reporting. No-op when GLITCHTIP_DSN is unset, so
     // local dev runs without it. The guard must be held for the duration of
     // main() so the background transport can flush on shutdown.
+    //
+    // GLITCHTIP_TRACES_SAMPLE_RATE controls performance/transaction sampling:
+    // 0.0 disables (default — matches prior behavior), 1.0 sends every request.
+    // Glitchtip 4.x and Sentry both accept transaction envelopes.
     let _sentry_guard = std::env::var("GLITCHTIP_DSN").ok().map(|dsn| {
+        let traces_sample_rate = std::env::var("GLITCHTIP_TRACES_SAMPLE_RATE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.0);
         sentry::init((
             dsn,
             sentry::ClientOptions {
                 release: sentry::release_name!(),
-                // Glitchtip currently ignores performance traces; keep low so
-                // we don't waste bandwidth if a real Sentry endpoint is used.
-                traces_sample_rate: 0.0,
+                environment: std::env::var("GLITCHTIP_ENVIRONMENT").ok().map(Into::into),
+                traces_sample_rate,
                 attach_stacktrace: true,
                 send_default_pii: false,
                 ..Default::default()
