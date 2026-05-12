@@ -104,7 +104,7 @@ pub fn HomePage() -> impl IntoView {
                                     </a>
                                 </div>
                             </div>
-                            <div class="w-full md:w-56 lg:w-64 aspect-square flex items-center justify-center animate-float opacity-60">
+                            <div class="hidden md:flex md:w-56 lg:w-64 aspect-square items-center justify-center animate-float opacity-60">
                                 <Icon icon=i::FaMoneyBillTrendUpSolid width="4.5em" height="4.5em" attr:class="text-brand-300" />
                             </div>
                         </div>
