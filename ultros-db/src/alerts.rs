@@ -576,6 +576,30 @@ impl UltrosDb {
             .await
     }
 
+    /// Same as `get_or_create_dm_endpoint` but for a WebPush endpoint pointing
+    /// at a persisted browser subscription.
+    pub async fn get_or_create_webpush_endpoint(
+        &self,
+        owner: i64,
+        subscription_id: i32,
+        name: &str,
+    ) -> Result<i32> {
+        let cfg = serde_json::json!({ "subscription_id": subscription_id });
+        if let Some(existing) = notification_endpoint::Entity::find()
+            .filter(notification_endpoint::Column::UserId.eq(owner))
+            .filter(notification_endpoint::Column::Method.eq("WebPush"))
+            .filter(Expr::cust_with_values(
+                "config::jsonb = ?::jsonb",
+                vec![cfg.clone()],
+            ))
+            .one(&self.db)
+            .await?
+        {
+            return Ok(existing.id);
+        }
+        self.create_endpoint(owner, name, "WebPush", cfg).await
+    }
+
     /// Insert (or upsert) a per-browser Web Push subscription. The unique key is
     /// `(user_id, endpoint)` — browsers may rotate `p256dh`/`auth` on the same
     /// endpoint URL, so we update those + `last_seen_at` on conflict rather than

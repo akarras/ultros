@@ -74,9 +74,8 @@ pub(crate) async fn create_push_subscription(
         .map_err(ApiError::from)?;
 
     let name = endpoint_name_from_user_agent(req.user_agent.as_deref());
-    let cfg = serde_json::json!({ "subscription_id": subscription_id });
     let id = db
-        .create_endpoint(user.id as i64, &name, "WebPush", cfg)
+        .get_or_create_webpush_endpoint(user.id as i64, subscription_id, &name)
         .await
         .map_err(ApiError::from)?;
 
