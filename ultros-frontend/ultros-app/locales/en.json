@@ -642,5 +642,14 @@
     "scrip_sources_description": "This tool finds the most efficient Collectables to craft for White/Purple Scrips based on current market board prices for materials.",
     "scrip_sources_error_loading": "Error loading listings: ",
     "gathering": "Gathering",
-    "unknown": "Unknown"
+    "unknown": "Unknown",
+    "lists_page_title": "Lists",
+    "list_shared_editor_badge": "Shared · Editor",
+    "list_shared_viewer_badge": "Shared · Viewer",
+    "shared_with_me": "Shared With Me",
+    "no_owned_lists_but_shared": "You don't own any lists yet — but others have shared {{count}} with you.",
+    "leave_list": "Leave list",
+    "leave_list_confirm": "Stop following this shared list?",
+    "leave_list_tooltip": "Remove yourself from this shared list",
+    "add_to_list_read_only": "Read-only — can't add items"
 }

@@ -253,6 +253,10 @@ pub(crate) async fn delete_list(list_id: i32) -> AppResult<()> {
     delete_api(&format!("/api/v1/list/{list_id}/delete")).await
 }
 
+pub(crate) async fn leave_list(list_id: i32, self_user_id: u64) -> AppResult<()> {
+    delete_api(&format!("/api/v1/list/{list_id}/share/user/{self_user_id}")).await
+}
+
 pub(crate) async fn create_list(list: CreateList) -> AppResult<()> {
     post_api("/api/v1/list/create", list).await
 }

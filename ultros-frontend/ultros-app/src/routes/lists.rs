@@ -8,7 +8,7 @@ use leptos_router::components::{A, Outlet};
 use crate::api::{
     add_group_member, create_group, create_list, create_list_invite, delete_list,
     delete_list_invite, edit_list, get_groups, get_list_invites, get_list_shares,
-    get_lists_with_permissions, share_list_with_group, share_list_with_user,
+    get_lists_with_permissions, get_login, leave_list, share_list_with_group, share_list_with_user,
     unshare_list_from_group, unshare_list_from_user, use_list_invite,
 };
 use crate::components::ad::Ad;
@@ -369,10 +369,30 @@ fn ShareListModal(list: List, set_visible: WriteSignal<bool>) -> impl IntoView {
 }
 
 #[component]
+fn PermissionPill(permission: ListPermission) -> impl IntoView {
+    let i18n = crate::i18n::use_i18n();
+    match permission {
+        ListPermission::Write => Some(Either::Left(view! {
+            <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-blue-900/40 text-blue-200">
+                {t!(i18n, list_shared_editor_badge)}
+            </span>
+        })),
+        ListPermission::Read => Some(Either::Right(view! {
+            <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-gray-700/40 text-gray-300">
+                {t!(i18n, list_shared_viewer_badge)}
+            </span>
+        })),
+        _ => None,
+    }
+}
+
+#[component]
 fn ListCard(
     list: ListWithPermission,
     edit_list: Action<List, Result<(), crate::error::AppError>>,
     delete_list: Action<i32, Result<(), crate::error::AppError>>,
+    leave_list_action: Action<(i32, u64), Result<(), crate::error::AppError>>,
+    user_id: Signal<Option<u64>>,
 ) -> impl IntoView {
     let permission = list.permission;
     let list = list.list;
@@ -397,45 +417,46 @@ fn ListCard(
             {move || {
                 let list = list_for_render.clone();
                 if is_edit() {
-                    let list_for_save = list.clone();
-                    let list_for_delete = list.clone();
-                    Either::Left(view! {
-                        <div class="flex flex-col gap-3 w-full">
-                             <div>
-                                <label class="label text-sm font-semibold">{t!(i18n, list_name)}</label>
-                                <input
-                                    class="input w-full"
-                                    prop:value=name
-                                    on:input=move |input| set_name(event_target_value(&input))
-                                />
-                            </div>
-                            <div>
-                                <label class="label text-sm font-semibold">{t!(i18n, world_region)}</label>
-                                <WorldPicker
-                                    current_world=current_world.into()
-                                    set_current_world=set_current_world.into()
-                                />
-                            </div>
-                            <div class="flex gap-2 justify-end mt-2">
-                                <button class="btn-secondary btn-sm" on:click=cancel_edit.clone()>
-                                    <Icon icon=i::AiCloseOutlined /> {t!(i18n, cancel)}
-                                </button>
-                                <button
-                                    class="btn-primary btn-sm"
-                                    on:click=move |_| {
-                                        let mut new_list = list_for_save.clone();
-                                        new_list.name = name();
-                                        if let Some(world) = current_world() {
-                                            new_list.wdr_filter = world;
+                    let list_id = list.id;
+                    if permission >= ListPermission::Owner {
+                        let list_for_save = list.clone();
+                        let list_for_delete = list.clone();
+                        view! {
+                            <div class="flex flex-col gap-3 w-full">
+                                <div>
+                                    <label class="label text-sm font-semibold">{t!(i18n, list_name)}</label>
+                                    <input
+                                        class="input w-full"
+                                        prop:value=name
+                                        on:input=move |input| set_name(event_target_value(&input))
+                                    />
+                                </div>
+                                <div>
+                                    <label class="label text-sm font-semibold">{t!(i18n, world_region)}</label>
+                                    <WorldPicker
+                                        current_world=current_world.into()
+                                        set_current_world=set_current_world.into()
+                                    />
+                                </div>
+                                <div class="flex gap-2 justify-end mt-2">
+                                    <button class="btn-secondary btn-sm" on:click=cancel_edit.clone()>
+                                        <Icon icon=i::AiCloseOutlined /> {t!(i18n, cancel)}
+                                    </button>
+                                    <button
+                                        class="btn-primary btn-sm"
+                                        on:click=move |_| {
+                                            let mut new_list = list_for_save.clone();
+                                            new_list.name = name();
+                                            if let Some(world) = current_world() {
+                                                new_list.wdr_filter = world;
+                                            }
+                                            edit_list.dispatch(new_list);
+                                            set_is_edit(false);
                                         }
-                                        edit_list.dispatch(new_list);
-                                        set_is_edit(false);
-                                    }
-                                >
-                                    <Icon icon=i::BiSaveSolid /> {t!(i18n, save)}
-                                </button>
-                            </div>
-                            <Show when=move || { permission >= ListPermission::Owner }>
+                                    >
+                                        <Icon icon=i::BiSaveSolid /> {t!(i18n, save)}
+                                    </button>
+                                </div>
                                 <div class="border-t border-gray-600/50 my-2"></div>
                                 <div class="flex justify-between items-center">
                                     <span class="text-red-400 text-sm font-semibold">{t!(i18n, danger_zone)}</span>
@@ -450,22 +471,46 @@ fn ListCard(
                                         </button>
                                     </Tooltip>
                                 </div>
-                            </Show>
-                        </div>
-                    })
+                            </div>
+                        }.into_any()
+                    } else {
+                        // Non-owner: show leave-list affordance
+                        view! {
+                            <div class="flex flex-col gap-3 w-full">
+                                <p class="text-sm text-gray-300">{t!(i18n, leave_list_confirm)}</p>
+                                <div class="flex gap-2 justify-end">
+                                    <button class="btn-secondary btn-sm" on:click=cancel_edit.clone()>
+                                        <Icon icon=i::AiCloseOutlined /> {t!(i18n, cancel)}
+                                    </button>
+                                    <Tooltip tooltip_text=Signal::derive(move || t_string!(i18n, leave_list_tooltip).to_string())>
+                                        <button
+                                            class="btn-danger btn-sm"
+                                            prop:disabled=move || user_id().is_none()
+                                            on:click=move |_| {
+                                                let Some(uid) = user_id() else { return; };
+                                                leave_list_action.dispatch((list_id, uid));
+                                                set_is_edit(false);
+                                            }
+                                        >
+                                            <Icon icon=i::BiExitRegular /> {t!(i18n, leave_list)}
+                                        </button>
+                                    </Tooltip>
+                                </div>
+                            </div>
+                        }.into_any()
+                    }
                 } else {
-                    Either::Right(view! {
+                    view! {
                         <>
                             <div class="flex justify-between items-start gap-2">
                                 <div class="flex flex-col gap-1 overflow-hidden">
                                     <a href=format!("/list/{}", list.id) class="text-xl font-bold hover:underline truncate text-[color:var(--link-color)]">
                                         {move || name()}
                                     </a>
-                                    <div class="text-sm text-gray-400 flex items-center gap-1">
-                                         <Icon icon=i::BiWorldRegular />
-                                         <WorldName id=list.wdr_filter />
-                                         <span>" · "</span>
-                                         <span>{permission_label(permission)}</span>
+                                    <div class="text-sm text-gray-400 flex items-center gap-1 flex-wrap">
+                                        <Icon icon=i::BiWorldRegular />
+                                        <WorldName id=list.wdr_filter />
+                                        <PermissionPill permission />
                                     </div>
                                 </div>
                                 <div class="flex items-center gap-1">
@@ -475,12 +520,12 @@ fn ListCard(
                                                 <Icon icon=i::BiShareAltRegular />
                                             </button>
                                         </Tooltip>
-                                        <Tooltip tooltip_text=Signal::derive(move || t_string!(i18n, edit_list).to_string())>
-                                            <button class="btn-ghost btn-sm text-gray-400 hover:text-white" on:click=move |_| set_is_edit(true) aria_label=move || t_string!(i18n, edit_list).to_string()>
-                                                <Icon icon=i::BsPencilFill />
-                                            </button>
-                                        </Tooltip>
                                     </Show>
+                                    <Tooltip tooltip_text=Signal::derive(move || t_string!(i18n, edit_list).to_string())>
+                                        <button class="btn-ghost btn-sm text-gray-400 hover:text-white" on:click=move |_| set_is_edit(true) aria_label=move || t_string!(i18n, edit_list).to_string()>
+                                            <Icon icon=i::BsPencilFill />
+                                        </button>
+                                    </Tooltip>
                                 </div>
                             </div>
                             <div class="mt-4 flex justify-end">
@@ -489,7 +534,7 @@ fn ListCard(
                                 </a>
                             </div>
                         </>
-                    })
+                    }.into_any()
                 }
             }}
             <Show when=share_open>
@@ -506,6 +551,8 @@ pub fn EditLists() -> impl IntoView {
     let edit_list = Action::new(move |list: &List| edit_list(list.clone()));
     let create_list = Action::new(move |list: &CreateList| create_list(list.clone()));
     let redeem_invite = Action::new(move |invite_id: &String| use_list_invite(invite_id.clone()));
+    let leave_list_action =
+        Action::new(move |(list_id, user_id): &(i32, u64)| leave_list(*list_id, *user_id));
     let lists = Resource::new(
         move || {
             (
@@ -513,10 +560,13 @@ pub fn EditLists() -> impl IntoView {
                 edit_list.version().get(),
                 create_list.version().get(),
                 redeem_invite.version().get(),
+                leave_list_action.version().get(),
             )
         },
         move |_| get_lists_with_permissions(),
     );
+    let user_resource = Resource::new(|| {}, |_| async move { get_login().await.ok() });
+    let user_id = Signal::derive(move || user_resource.get().flatten().map(|u| u.id));
     let (creating, set_creating) = signal(false);
     let (filter, set_filter) = signal(String::new());
     let (invite_id, set_invite_id) = signal(String::new());
@@ -547,7 +597,7 @@ pub fn EditLists() -> impl IntoView {
             </div>
 
             <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, my_lists)}</h1>
+                <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, lists_page_title)}</h1>
                  <button class="btn-primary" on:click=move |_| set_creating(!creating())>
                     <Icon icon=if creating() { i::AiCloseOutlined } else { i::BiPlusRegular } />
                     {move || if creating() { Either::Left(t!(i18n, cancel_creation)) } else { Either::Right(t!(i18n, create_new_list)) }}
@@ -651,40 +701,93 @@ pub fn EditLists() -> impl IntoView {
                         .map(|lists| {
                             match lists {
                                 Ok(lists) => {
-                                    if lists.is_empty() {
-                                        Either::Left(view! {
+                                    let (owned, shared): (Vec<_>, Vec<_>) = lists
+                                        .into_iter()
+                                        .partition(|lwp| lwp.permission >= ListPermission::Owner);
+                                    let shared_count = shared.len();
+
+                                    if owned.is_empty() && shared.is_empty() {
+                                        view! {
                                             <div class="flex flex-col items-center justify-center py-12 text-gray-400">
                                                 <Icon icon=i::AiOrderedListOutlined width="4em" height="4em" attr:class="mb-4 opacity-50"/>
                                                 <h3 class="text-xl font-semibold">{t!(i18n, no_lists_found)}</h3>
                                                 <p>{t!(i18n, create_new_list_to_get_started)}</p>
                                             </div>
-                                        }.into_any())
+                                        }.into_any()
                                     } else {
-                                        Either::Right(view! {
-                                            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                                <For
-                                                    each=move || lists.clone()
-                                                    key=move |list| list.list.id
-                                                    children=move |list| {
-                                                        view! {
-                                                            <ListCard
-                                                                list=list
-                                                                edit_list=edit_list
-                                                                delete_list=delete_list
-                                                            />
-                                                        }
-                                                    }
-                                                />
+                                        view! {
+                                            <div class="flex flex-col gap-6">
+                                                {if owned.is_empty() && shared_count > 0 {
+                                                    Some(view! {
+                                                        <p class="italic text-gray-400 text-sm">
+                                                            {t!(i18n, no_owned_lists_but_shared, count = shared_count)}
+                                                        </p>
+                                                    })
+                                                } else {
+                                                    None
+                                                }}
+                                                {if !owned.is_empty() {
+                                                    Some(view! {
+                                                        <section class="flex flex-col gap-3">
+                                                            <h2 class="text-xl font-semibold text-[color:var(--brand-fg)]">{t!(i18n, my_lists)}</h2>
+                                                            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                                                <For
+                                                                    each=move || owned.clone()
+                                                                    key=move |list| list.list.id
+                                                                    children=move |list| {
+                                                                        view! {
+                                                                            <ListCard
+                                                                                list=list
+                                                                                edit_list=edit_list
+                                                                                delete_list=delete_list
+                                                                                leave_list_action=leave_list_action
+                                                                                user_id=user_id
+                                                                            />
+                                                                        }
+                                                                    }
+                                                                />
+                                                            </div>
+                                                        </section>
+                                                    })
+                                                } else {
+                                                    None
+                                                }}
+                                                {if !shared.is_empty() {
+                                                    Some(view! {
+                                                        <section class="flex flex-col gap-3">
+                                                            <h2 class="text-xl font-semibold text-[color:var(--brand-fg)]">{t!(i18n, shared_with_me)}</h2>
+                                                            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                                                <For
+                                                                    each=move || shared.clone()
+                                                                    key=move |list| list.list.id
+                                                                    children=move |list| {
+                                                                        view! {
+                                                                            <ListCard
+                                                                                list=list
+                                                                                edit_list=edit_list
+                                                                                delete_list=delete_list
+                                                                                leave_list_action=leave_list_action
+                                                                                user_id=user_id
+                                                                            />
+                                                                        }
+                                                                    }
+                                                                />
+                                                            </div>
+                                                        </section>
+                                                    })
+                                                } else {
+                                                    None
+                                                }}
                                             </div>
-                                        }.into_any())
+                                        }.into_any()
                                     }
                                 }
                                 Err(e) => {
-                                    Either::Right(view! {
+                                    view! {
                                         <div class="alert alert-error">
                                             {move || t!(i18n, error_loading_lists, error = e.to_string())}
                                         </div>
-                                    }.into_any())
+                                    }.into_any()
                                 }
                             }
                         })

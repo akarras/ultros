@@ -9,11 +9,11 @@ use leptos::prelude::*;
 use leptos::reactive::wrappers::write::SignalSetter;
 use leptos::task::spawn_local;
 use ultros_api_types::icon_size::IconSize;
-use ultros_api_types::list::ListItem;
+use ultros_api_types::list::{ListItem, ListPermission};
 use xiv_gen::ItemId;
 
 use crate::api::add_item_to_list;
-use crate::api::get_lists;
+use crate::api::get_lists_with_permissions;
 use crate::components::toggle::Toggle;
 use crate::components::tooltip::Tooltip;
 use crate::components::{item_icon::ItemIcon, loading::Loading, modal::Modal};
@@ -55,7 +55,7 @@ fn AddToListModal(
     let i18n = use_i18n();
     let items = &tracked_data().items;
     let item = move || items.get(&ItemId(item_id()));
-    let lists = Resource::new(move || {}, move |_| get_lists());
+    let lists = Resource::new(move || {}, move |_| get_lists_with_permissions());
     let (hq, set_hq) = signal(false);
     let (quantity, set_quantity) = signal(1);
     let quantity_id = move || format!("add-to-list-qty-{}", item_id());
@@ -115,7 +115,10 @@ fn AddToListModal(
                             Some(Either::Left(
                                 lists
                                     .into_iter()
-                                    .map(|list| {
+                                    .map(|lwp| {
+                                        let permission = lwp.permission;
+                                        let list = lwp.list;
+                                        let can_write = !matches!(permission, ListPermission::Read);
                                         let (saved, set_saved) = signal(false);
                                         let (running, set_running) = signal(false);
                                         let (error, set_error) = signal(Option::<String>::None);
@@ -125,12 +128,29 @@ fn AddToListModal(
                                         view! {
                                             <div class="space-y-1">
                                                 <div class="flex items-center justify-between card p-2">
-                                                    <div class="font-semibold truncate">{list.name}</div>
+                                                    <div class="flex items-center gap-2 min-w-0 flex-1 mr-2">
+                                                        <span class="font-semibold truncate">{list.name}</span>
+                                                        {match permission {
+                                                            ListPermission::Write => Some(Either::Left(view! {
+                                                                <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-blue-900/40 text-blue-200 shrink-0">
+                                                                    {t!(i18n, list_shared_editor_badge)}
+                                                                </span>
+                                                            })),
+                                                            ListPermission::Read => Some(Either::Right(view! {
+                                                                <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-gray-700/40 text-gray-300 shrink-0">
+                                                                    {t!(i18n, list_shared_viewer_badge)}
+                                                                </span>
+                                                            })),
+                                                            _ => None,
+                                                        }}
+                                                    </div>
                                                     <button
-                                                        class="btn-primary"
+                                                        class="btn-primary shrink-0"
                                                         aria-label=move || format!("{} {}", t_string!(i18n, add_to_list_aria_label_list), list_name)
-                                                        disabled=running
+                                                        prop:disabled=move || running() || !can_write
+                                                        prop:title=move || if !can_write { t_string!(i18n, add_to_list_read_only).to_string() } else { String::new() }
                                                         on:click=move |_| {
+                                                            if !can_write { return; }
                                                             set_error(None);
                                                             set_running(true);
                                                             let list_id = list.id;
