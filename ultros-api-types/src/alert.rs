@@ -97,7 +97,6 @@ pub struct CreateEndpointRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpdateEndpointRequest {
     pub name: Option<String>,
-    #[serde(flatten)]
     pub method: Option<EndpointMethod>,
 }
 
@@ -143,6 +142,41 @@ mod endpoint_tests {
         };
         let s = serde_json::to_string(&req).unwrap();
         let back: CreateEndpointRequest = serde_json::from_str(&s).unwrap();
+        assert_eq!(req, back);
+    }
+
+    #[test]
+    fn update_endpoint_request_all_none_round_trips() {
+        let req = UpdateEndpointRequest {
+            name: None,
+            method: None,
+        };
+        let s = serde_json::to_string(&req).unwrap();
+        let back: UpdateEndpointRequest = serde_json::from_str(&s).unwrap();
+        assert_eq!(req, back);
+    }
+
+    #[test]
+    fn update_endpoint_request_name_only_round_trips() {
+        let req = UpdateEndpointRequest {
+            name: Some("renamed".to_string()),
+            method: None,
+        };
+        let s = serde_json::to_string(&req).unwrap();
+        let back: UpdateEndpointRequest = serde_json::from_str(&s).unwrap();
+        assert_eq!(req, back);
+    }
+
+    #[test]
+    fn update_endpoint_request_method_change_round_trips() {
+        let req = UpdateEndpointRequest {
+            name: None,
+            method: Some(EndpointMethod::Webhook {
+                url: "https://discord.com/api/webhooks/1/abc".into(),
+            }),
+        };
+        let s = serde_json::to_string(&req).unwrap();
+        let back: UpdateEndpointRequest = serde_json::from_str(&s).unwrap();
         assert_eq!(req, back);
     }
 }
