@@ -41,6 +41,7 @@ metrics = "0.24.3"
 envy = "0.4"
 metrics-exporter-prometheus = { version = "0.18.1", default-features = false }
 serde_with = "3.0.0"
+tower = "0.5"
 tower-http = { version = "0.6.8", features = ["full"] }
 sha2 = "0.10.6"
 base64 = "0.22.1"
@@ -78,6 +79,15 @@ tantivy = "0.25.0"
 rkyv = { version = "0.7.42", features = ["validation", "arrayvec", "size_64"], default-features = false }
 flate2 = "1.1.5"
 url = "2.5"
+sentry = { version = "0.38", default-features = false, features = [
+    "backtrace",
+    "contexts",
+    "panic",
+    "reqwest",
+    "rustls",
+] }
+sentry-tracing = "0.38"
+sentry-tower = { version = "0.38", features = ["http"] }
 
 [dev-dependencies]
 tempfile = "3.6.0"
