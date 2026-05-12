@@ -1,5 +1,6 @@
 //! Crafting cost types and computation — scaffolded in Task 1, implemented in Tasks 2-4.
 //! The entire module is scaffolding; suppress dead_code until consumers exist.
+// TODO(Task 2): remove this allow once compute_ingredient_cost gains a real caller.
 #![allow(dead_code)]
 
 use std::collections::HashMap;
@@ -43,6 +44,10 @@ impl<'a> CraftingCostOptions<'a> {
 /// from being credited against two ingredient lines).
 pub trait OnHand {
     fn available(&self, item: ItemId) -> i32;
+    /// Deduct `qty` units from the on-hand pool for `item`.
+    /// Implementations that track state must use interior mutability
+    /// (e.g. `RefCell<HashMap<i32, i32>>`) because `compute_cost`
+    /// holds a shared reference to `opts.on_hand` across the ingredient walk.
     fn consume(&self, item: ItemId, qty: i32);
 }
 
@@ -113,7 +118,6 @@ impl<'a> Iterator for IngredientsIter<'a> {
 }
 
 // Placeholder — implemented in Task 2.
-#[allow(dead_code)]
 pub fn compute_ingredient_cost(
     _item_id: ItemId,
     _amount_needed: i32,
@@ -124,7 +128,6 @@ pub fn compute_ingredient_cost(
 }
 
 // Placeholder — implemented in Tasks 3-4.
-#[allow(dead_code)]
 pub fn compute_cost(
     _recipe: &Recipe,
     _prices: &CheapestListingsMap,
