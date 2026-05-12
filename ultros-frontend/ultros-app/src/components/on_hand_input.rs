@@ -89,8 +89,12 @@ fn write_storage(map: &HashMap<i32, i32>) {
 pub struct OnHandMap(pub RwSignal<HashMap<i32, i32>>);
 
 /// Call once at app startup (in AppInner) to provide the OnHandMap context
-/// and wire up localStorage persistence.
+/// and wire up localStorage persistence. Idempotent — calling more than once
+/// (e.g. via a nested `OnHandProvider`) is a no-op.
 pub fn provide_on_hand_context() {
+    if use_context::<OnHandMap>().is_some() {
+        return;
+    }
     let initial = read_storage().unwrap_or_default();
     let sig = RwSignal::new(initial);
     Effect::new(move |_| {
@@ -108,10 +112,20 @@ pub fn OnHandProvider(children: Children) -> impl IntoView {
 }
 
 /// Inline per-ingredient quantity input.
+///
+/// Pass `item_name` so the screen-reader label disambiguates between
+/// multiple inputs in the same recipe panel.
 #[component]
-pub fn OnHandQuantity(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
+pub fn OnHandQuantity(
+    #[prop(into)] item_id: Signal<i32>,
+    #[prop(into, optional)] item_name: Option<Signal<String>>,
+) -> impl IntoView {
     let on_hand = use_context::<OnHandMap>().expect("OnHandMap not provided");
     let value = Memo::new(move |_| on_hand.0.with(|m| m.get(&item_id()).copied().unwrap_or(0)));
+    let aria = move || match &item_name {
+        Some(name) => format!("On-hand quantity for {}", name.get()),
+        None => "On-hand quantity".to_string(),
+    };
 
     view! {
         <input
@@ -119,7 +133,7 @@ pub fn OnHandQuantity(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
             min="0"
             class="input input-xs w-20 text-right"
             placeholder="0"
-            aria-label="On-hand quantity"
+            aria-label=aria
             prop:value=move || value().to_string()
             on:input=move |ev| {
                 let raw = event_target_value(&ev);
