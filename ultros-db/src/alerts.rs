@@ -575,6 +575,85 @@ impl UltrosDb {
         self.create_endpoint(owner, name, "DiscordChannel", cfg)
             .await
     }
+
+    /// Insert (or upsert) a per-browser Web Push subscription. The unique key is
+    /// `(user_id, endpoint)` — browsers may rotate `p256dh`/`auth` on the same
+    /// endpoint URL, so we update those + `last_seen_at` on conflict rather than
+    /// erroring. Returns the row id (new or existing).
+    pub async fn create_push_subscription(
+        &self,
+        owner: i64,
+        endpoint: &str,
+        p256dh: &str,
+        auth: &str,
+        user_agent: Option<&str>,
+    ) -> Result<i32> {
+        use migration::OnConflict;
+        let now = chrono::Utc::now();
+        let model = push_subscription::Entity::insert(push_subscription::ActiveModel {
+            id: ActiveValue::default(),
+            user_id: Set(owner),
+            endpoint: Set(endpoint.to_string()),
+            p256dh: Set(p256dh.to_string()),
+            auth: Set(auth.to_string()),
+            user_agent: Set(user_agent.map(|s| s.to_string())),
+            created_at: Set(now),
+            last_seen_at: Set(now),
+        })
+        .on_conflict(
+            OnConflict::columns([
+                push_subscription::Column::UserId,
+                push_subscription::Column::Endpoint,
+            ])
+            .update_columns([
+                push_subscription::Column::P256dh,
+                push_subscription::Column::Auth,
+                push_subscription::Column::UserAgent,
+                push_subscription::Column::LastSeenAt,
+            ])
+            .to_owned(),
+        )
+        .exec_with_returning(&self.db)
+        .await?;
+        Ok(model.id)
+    }
+
+    /// Look up a single push subscription by id (no ownership check — callers
+    /// that need one should filter by `user_id` themselves, or use this from
+    /// internal delivery code that has already authorized the operation).
+    pub async fn get_push_subscription_by_id(&self, id: i32) -> Result<push_subscription::Model> {
+        push_subscription::Entity::find_by_id(id)
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| anyhow::Error::msg("push subscription not found"))
+    }
+
+    /// Delete a push subscription owned by `owner`. Used both when a user
+    /// explicitly removes their browser endpoint and when delivery discovers
+    /// the subscription has been revoked by the push service.
+    pub async fn delete_push_subscription_by_id(&self, owner: i64, id: i32) -> Result<()> {
+        let existing = push_subscription::Entity::find_by_id(id)
+            .filter(push_subscription::Column::UserId.eq(owner))
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| anyhow::Error::msg("push subscription not found"))?;
+        existing.delete(&self.db).await?;
+        Ok(())
+    }
+
+    /// Bump `last_seen_at` after a successful push delivery. Best-effort —
+    /// callers ignore the result.
+    pub async fn touch_push_subscription_last_seen(&self, id: i32) -> Result<()> {
+        push_subscription::Entity::update_many()
+            .filter(push_subscription::Column::Id.eq(id))
+            .col_expr(
+                push_subscription::Column::LastSeenAt,
+                Expr::value(chrono::Utc::now()),
+            )
+            .exec(&self.db)
+            .await?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
