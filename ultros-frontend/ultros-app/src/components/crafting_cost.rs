@@ -117,14 +117,45 @@ impl<'a> Iterator for IngredientsIter<'a> {
     }
 }
 
-// Placeholder — implemented in Task 2.
 pub fn compute_ingredient_cost(
-    _item_id: ItemId,
-    _amount_needed: i32,
-    _prices: &CheapestListingsMap,
-    _opts: &CraftingCostOptions<'_>,
+    item_id: ItemId,
+    amount_needed: i32,
+    prices: &CheapestListingsMap,
+    opts: &CraftingCostOptions<'_>,
 ) -> IngredientLine {
-    unimplemented!("Task 2")
+    // Look up price. HQ-preferred when require_hq, with LQ fallback.
+    let summary = prices.find_matching_listings(item_id.0);
+    let unit_price = if opts.require_hq {
+        summary
+            .price_preferring_hq()
+            .or_else(|| summary.lowest_gil())
+            .unwrap_or(0)
+    } else {
+        summary.lowest_gil().unwrap_or(0)
+    };
+
+    // is_shard is set by the recipe-walking caller in Task 3 (which has
+    // access to tracked_data().items). The primitive stays pure of
+    // game-data lookups so it's trivially testable.
+    let is_shard = false;
+
+    // Apply on-hand. The trait may mutate (LocalOnHand uses interior
+    // mutability) so we consume eagerly.
+    let on_hand_available = opts.on_hand.available(item_id);
+    let used_from_on_hand = on_hand_available.min(amount_needed).max(0);
+    if used_from_on_hand > 0 {
+        opts.on_hand.consume(item_id, used_from_on_hand);
+    }
+    let used_from_market = (amount_needed - used_from_on_hand).max(0);
+
+    IngredientLine {
+        item_id,
+        needed_total: amount_needed,
+        used_from_on_hand,
+        used_from_market,
+        unit_price,
+        is_shard,
+    }
 }
 
 // Placeholder — implemented in Tasks 3-4.
@@ -159,5 +190,147 @@ mod tests {
         assert!(!opts.require_hq);
         assert_eq!(opts.max_subcraft_depth, 0);
         assert_eq!(opts.shards, ShardsMode::ExcludeShards);
+    }
+
+    use std::cell::Cell;
+    use ultros_api_types::cheapest_listings::{
+        CheapestListingItem, CheapestListings, CheapestListingsMap,
+    };
+
+    /// Build a CheapestListingsMap with one (item_id, hq) -> price entry.
+    fn one_listing(item_id: i32, hq: bool, price: i32, world_id: i32) -> CheapestListingsMap {
+        let listings = CheapestListings {
+            cheapest_listings: vec![CheapestListingItem {
+                item_id,
+                hq,
+                world_id,
+                cheapest_price: price,
+            }],
+        };
+        CheapestListingsMap::from(listings)
+    }
+
+    fn two_listings(
+        a: (i32, bool, i32),
+        b: (i32, bool, i32),
+        world_id: i32,
+    ) -> CheapestListingsMap {
+        let listings = CheapestListings {
+            cheapest_listings: vec![
+                CheapestListingItem {
+                    item_id: a.0,
+                    hq: a.1,
+                    world_id,
+                    cheapest_price: a.2,
+                },
+                CheapestListingItem {
+                    item_id: b.0,
+                    hq: b.1,
+                    world_id,
+                    cheapest_price: b.2,
+                },
+            ],
+        };
+        CheapestListingsMap::from(listings)
+    }
+
+    /// Mutable on-hand wrapper for tests.
+    struct MapOnHand {
+        inner: std::collections::HashMap<i32, Cell<i32>>,
+    }
+    impl MapOnHand {
+        fn from(pairs: &[(i32, i32)]) -> Self {
+            Self {
+                inner: pairs.iter().map(|(id, q)| (*id, Cell::new(*q))).collect(),
+            }
+        }
+    }
+    impl OnHand for MapOnHand {
+        fn available(&self, item: ItemId) -> i32 {
+            self.inner.get(&item.0).map(|c| c.get()).unwrap_or(0)
+        }
+        fn consume(&self, item: ItemId, qty: i32) {
+            if let Some(c) = self.inner.get(&item.0) {
+                c.set((c.get() - qty).max(0));
+            }
+        }
+    }
+
+    #[test]
+    fn ingredient_cost_basic_lq() {
+        let prices = one_listing(100, false, 50, 1);
+        let oh = EmptyOnHand;
+        let opts = CraftingCostOptions {
+            require_hq: false,
+            max_subcraft_depth: 0,
+            shards: ShardsMode::IncludeMarket,
+            on_hand: &oh,
+        };
+        let line = compute_ingredient_cost(ItemId(100), 10, &prices, &opts);
+        assert_eq!(line.needed_total, 10);
+        assert_eq!(line.used_from_on_hand, 0);
+        assert_eq!(line.used_from_market, 10);
+        assert_eq!(line.unit_price, 50);
+        assert!(!line.is_shard);
+    }
+
+    #[test]
+    fn ingredient_cost_on_hand_clamps_to_need() {
+        let prices = one_listing(100, false, 50, 1);
+        let oh = MapOnHand::from(&[(100, 999)]);
+        let opts = CraftingCostOptions {
+            require_hq: false,
+            max_subcraft_depth: 0,
+            shards: ShardsMode::IncludeMarket,
+            on_hand: &oh,
+        };
+        let line = compute_ingredient_cost(ItemId(100), 10, &prices, &opts);
+        assert_eq!(line.used_from_on_hand, 10);
+        assert_eq!(line.used_from_market, 0);
+        assert_eq!(oh.available(ItemId(100)), 989);
+    }
+
+    #[test]
+    fn ingredient_cost_on_hand_partial() {
+        let prices = one_listing(100, false, 50, 1);
+        let oh = MapOnHand::from(&[(100, 3)]);
+        let opts = CraftingCostOptions {
+            require_hq: false,
+            max_subcraft_depth: 0,
+            shards: ShardsMode::IncludeMarket,
+            on_hand: &oh,
+        };
+        let line = compute_ingredient_cost(ItemId(100), 10, &prices, &opts);
+        assert_eq!(line.used_from_on_hand, 3);
+        assert_eq!(line.used_from_market, 7);
+        assert_eq!(oh.available(ItemId(100)), 0);
+    }
+
+    #[test]
+    fn ingredient_cost_hq_preferred_with_fallback() {
+        let prices = two_listings((100, true, 100), (100, false, 50), 1);
+        let oh = EmptyOnHand;
+        let opts = CraftingCostOptions {
+            require_hq: true,
+            max_subcraft_depth: 0,
+            shards: ShardsMode::IncludeMarket,
+            on_hand: &oh,
+        };
+        let line = compute_ingredient_cost(ItemId(100), 1, &prices, &opts);
+        assert_eq!(line.unit_price, 100);
+    }
+
+    #[test]
+    fn ingredient_cost_hq_falls_back_to_lq_when_no_hq_listing() {
+        let prices = one_listing(100, false, 50, 1);
+        let oh = EmptyOnHand;
+        let opts = CraftingCostOptions {
+            require_hq: true,
+            max_subcraft_depth: 0,
+            shards: ShardsMode::IncludeMarket,
+            on_hand: &oh,
+        };
+        let line = compute_ingredient_cost(ItemId(100), 1, &prices, &opts);
+        assert_eq!(line.unit_price, 50);
     }
 }
