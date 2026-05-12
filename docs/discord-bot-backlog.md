@@ -119,7 +119,7 @@ The bot has zero end-user documentation today. Build it once, keep it auto-gener
 
 Currently the web app and the bot are siloed. The user can hit the same intent on both surfaces but neither tells them about the other.
 
-### B-4.1 · Alerts-page Discord banner · P1 · S
+### [shipped 2026-05-12] B-4.1 · Alerts-page Discord banner · P1 · S
 **Location.** [ultros-frontend/ultros-app/src/routes/alerts.rs](ultros-frontend/ultros-app/src/routes/alerts.rs)
 **Treatment.** Inline tip near the delivery-method selector: *"Prefer Discord-native? Run `/ffxiv retainer add_undercut_alert` in any channel where the bot is installed."* Copy-to-clipboard button on the command string.
 **Why this one first.** Highest intent overlap — users on this page are already configuring alerts.
