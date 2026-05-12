@@ -194,7 +194,7 @@ pub fn LiveSaleTicker() -> impl IntoView {
                                     sale.item_id,
                                 )
                             }>
-                                <div class="card p-3 transition-colors duration-200 group">
+                                <div class="px-2 py-2 rounded-lg hover:bg-[color:color-mix(in_srgb,var(--brand-bg)_10%,transparent)] transition-colors duration-200 group">
                                     <div class="flex items-center gap-4 w-full transform transition-transform duration-200 group-hover:translate-x-1">
                                         <ItemIcon item_id=sale.item_id icon_size=IconSize::Medium />
 
