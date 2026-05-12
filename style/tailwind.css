@@ -1441,6 +1441,33 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 
 .ad-rail-slot {
     width: 10rem;
+    flex: 0 0 auto;
+}
+
+.side-rail-bottom {
+    margin-top: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--color-outline);
+    width: 100%;
+}
+
+.side-rail-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    width: 100%;
+}
+
+.side-rail-heading {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--color-text-muted);
+    padding: 0.25rem 0.5rem 0.125rem;
 }
 
 @media (min-width: 640px) {
@@ -1462,12 +1489,15 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     }
 
     .app-ad-rail {
-        display: block;
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
         min-width: 0;
-    }
-
-    .app-ad-rail:has(.ad.hidden) {
-        display: none;
+        position: sticky;
+        top: 6rem;
+        align-self: start;
+        height: calc(100vh - 7rem);
+        overflow-y: auto;
     }
 
     .app-inline-ad {

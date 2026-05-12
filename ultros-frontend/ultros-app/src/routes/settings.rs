@@ -21,6 +21,7 @@ use leptos::reactive::wrappers::write::IntoSignalSetter;
 use leptos::task::spawn_local;
 
 use icondata as i;
+use leptos_router::components::A;
 use log::info;
 use ultros_api_types::world_helper::AnySelector;
 
@@ -377,6 +378,38 @@ pub fn Profile() -> impl IntoView {
             <div class="container mx-auto max-w-7xl space-y-6">
                 <div class="flex items-center justify-between">
                     <h1 class="text-3xl font-bold text-brand-300">{t!(i18n, profile_settings)}</h1>
+                </div>
+
+                <div class="2xl:hidden flex flex-wrap gap-2">
+                    <A
+                        href="/list"
+                        attr:class="btn-secondary"
+                    >
+                        <Icon height="1.1em" width="1.1em" icon=i::AiOrderedListOutlined />
+                        <span class="ml-2">{t!(i18n, lists)}</span>
+                    </A>
+                    <A
+                        href="/alerts"
+                        attr:class="btn-secondary"
+                    >
+                        <Icon height="1.1em" width="1.1em" icon=i::BsBell />
+                        <span class="ml-2">{t!(i18n, alerts)}</span>
+                    </A>
+                    <A
+                        href="/retainers/listings"
+                        attr:class="btn-secondary"
+                    >
+                        <Icon height="1.1em" width="1.1em" icon=i::BiGroupSolid />
+                        <span class="ml-2">{t!(i18n, retainers)}</span>
+                    </A>
+                    <a rel="external" href="/invitebot" class="btn-secondary">
+                        <Icon height="1.1em" width="1.1em" icon=i::BsDiscord />
+                        <span class="ml-2">{t!(i18n, invite_bot)}</span>
+                    </a>
+                    <a rel="external" href="/logout" class="btn-danger">
+                        <Icon height="1.1em" width="1.1em" icon=i::BiLogOutRegular />
+                        <span class="ml-2">{t!(i18n, logout)}</span>
+                    </a>
                 </div>
 
                 <HomeWorldPicker />

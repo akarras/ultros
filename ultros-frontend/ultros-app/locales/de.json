@@ -111,5 +111,7 @@
     "chart_range_7d": "7d",
     "chart_range_30d": "30d",
     "chart_range_all": "All",
-    "chart_aria_label": "Scatter plot of {n} sales between {from} and {to}"
+    "chart_aria_label": "Scatter plot of {n} sales between {from} and {to}",
+    "library": "Bibliothek",
+    "alerts": "Benachrichtigungen"
 }

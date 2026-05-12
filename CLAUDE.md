@@ -26,6 +26,18 @@ Either way, *do not commit and push without running fmt-check* — every formatt
 
 `./scripts/run_e2e.sh` brings up the app (or reuses one on `$BASE_URL`) and runs the Puppeteer screenshot harness in `integration/`. See AGENTS.md for details.
 
+## No hardcoded user-facing strings
+
+Every user-facing string in `ultros-frontend/ultros-app/` must go through `leptos-i18n`. No string literals like `"Alerts"` or `"Library"` inside `view!` — use `t!(i18n, key)` (or `t_string!(i18n, key)` for attribute values).
+
+When you introduce a new string:
+
+1. Add the key to **every** locale file in `ultros-frontend/ultros-app/locales/` (`en`, `fr`, `de`, `ja`, `cn`, `ko`, `tc`). Adding only `en.json` is not acceptable — the build warns on missing keys per locale and `leptos-i18n` won't compile without the key in every file.
+2. Provide a real translation for each locale, not an English stub. If you genuinely can't translate, copy the English value and flag it in the PR so a native speaker can fix it — but the default is to translate.
+3. Use `snake_case` keys; group related strings by feature prefix (`venture_analyzer_*`, `welcome_*`) when there are several.
+
+This applies to labels, headings, button text, aria-labels, tooltips, placeholders, toast messages — anything a user reads. Console logs, error messages bubbled to the dev console, and developer-only tooltips are fine to leave in English.
+
 ## Repo conventions
 
 See `AGENTS.md` for the canonical agent instructions (services overview, env var gotchas, etc.). This file repeats the CI bit because it's the single most common failure mode for AI agents on this repo.

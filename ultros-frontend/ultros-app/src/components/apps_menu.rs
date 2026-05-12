@@ -1,6 +1,5 @@
 use crate::api::get_login;
 use crate::components::icon::Icon;
-use crate::components::theme_picker::QuickThemeToggle;
 use crate::global_state::home_world::use_home_world;
 use crate::i18n::{t, t_string};
 use cfg_if::cfg_if;
@@ -170,6 +169,17 @@ pub fn AppsMenu() -> impl IntoView {
                             <Icon height="1.1em" width="1.1em" icon=i::BsArrowLeftRight />
                             <span class="ml-2">{t!(i18n, exchange)}</span>
                         </A>
+
+                        <div class="divider my-1 2xl:hidden"></div>
+
+                        <A
+                            href="/settings"
+                            attr:class="nav-link w-full justify-start 2xl:hidden"
+                            on:click=close_menu
+                        >
+                            <Icon height="1.1em" width="1.1em" icon=i::IoSettingsSharp />
+                            <span class="ml-2">{t!(i18n, settings)}</span>
+                        </A>
                     </div>
                 </div>
             </Show>
@@ -178,161 +188,52 @@ pub fn AppsMenu() -> impl IntoView {
     .into_any()
 }
 
-/// A user/utility menu:
-/// - When logged in: Profile, Settings, Lists, Retainers, Invite Bot, Theme (mobile), Logout
-/// - When logged out: Login (Discord), Settings
+/// A trigger that goes straight to the profile page when logged in,
+/// or to the Discord login when logged out.
 #[component]
 pub fn UserMenu() -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
-    // Focus/hover-driven open state (mirrors Select component behavior)
-    let (has_focus, set_has_focus) = signal(false);
-    let (force_close, set_force_close) = signal(false);
     let user = Resource::new(move || {}, move |_| async move { get_login().await.ok() });
-    let panel_ref = NodeRef::<html::Div>::new();
-    cfg_if! {
-        if #[cfg(feature = "hydrate")] {
-            let hovered = use_element_hover(panel_ref);
-        } else {
-            let (hovered, _set_hovered) = signal(false);
-        }
-    }
-    let is_open = Signal::derive(move || (has_focus() || hovered()) && !force_close());
 
-    let close_menu = move |_| {
-        set_has_focus(false);
-        set_force_close(true);
-    };
-
-    let on_keydown = move |ev: leptos::ev::KeyboardEvent| {
-        if ev.key() == "Escape" {
-            set_has_focus(false);
+    let fallback = move || {
+        view! {
+            <span class="nav-link opacity-70" aria-busy="true">
+                <Icon height="1.5em" width="1.5em" icon=i::BsPersonCircle />
+            </span>
         }
     };
 
     view! {
-        <div
-            class="relative"
-            on:keydown=on_keydown
-            on:focusin=move |_| {
-                set_has_focus(true);
-                set_force_close(false);
-            }
-            on:focusout=move |_| set_has_focus(false)
-            on:mouseleave=move |_| set_force_close(false)
-        >
-            <Suspense fallback=move || view! { <button class="nav-link opacity-70 cursor-wait"><Icon icon=i::BsPersonCircle /><span class="hidden lg:inline ml-2">{t!(i18n, account)}</span></button> }>
-                {move || {
-                    let u = user.get().flatten();
-                    match u {
-                        Some(auth) => {
-                            // logged in trigger: avatar circle + caret
-                            view! {
-                                <button class="nav-link flex items-center gap-2" aria-haspopup="menu" aria-expanded=move || if is_open() { "true" } else { "false" }>
-                                    <img class="avatar" src=auth.avatar alt=auth.username />
-                                    <Icon height="1em" width="1em" icon=i::BiChevronDownSolid />
-                                </button>
-                            }.into_any()
-                        }
-                        None => {
-                            // logged out trigger: user icon + caret
-                            view! {
-                                <button
-                                    class="nav-link flex items-center gap-2"
-                                    aria-haspopup="menu"
-                                    aria-expanded=move || if is_open() { "true" } else { "false" }
-                                    aria_label=move || t_string!(i18n, account)
-                                >
-                                    <Icon height="1.5em" width="1.5em" icon=i::BsPersonCircle />
-                                    <Icon height="1em" width="1em" icon=i::BiChevronDownSolid />
-                                </button>
-                            }.into_any()
-                        }
+        <Suspense fallback=fallback>
+            {move || {
+                let u = user.get().flatten();
+                match u {
+                    Some(auth) => {
+                        view! {
+                            <A
+                                href="/profile"
+                                attr:class="nav-link flex items-center"
+                                attr:aria_label=move || t_string!(i18n, profile)
+                            >
+                                <img class="avatar" src=auth.avatar alt=auth.username />
+                            </A>
+                        }.into_any()
                     }
-                }}
-            </Suspense>
-
-            <Show when=move || is_open()>
-                <div
-                    node_ref=panel_ref
-                    class="absolute right-0 mt-2 min-w-[16rem]
-                           panel rounded-xl shadow-xl border border-[color:var(--color-outline)]
-                           bg-[color:var(--color-background-elevated)]
-                           content-visible contain-content z-50"
-                    role="menu"
-                    tabindex="-1"
-                >
-                    <div class="p-2 flex flex-col gap-1">
-                        <Suspense fallback=move || view! { <div class="px-3 py-2 text-sm muted">{t!(i18n, loading)}</div> }>
-                            {move || {
-                                let u = user.get().flatten();
-                                match u {
-                                    Some(_auth) => {
-                                        view! {
-                                            <A href="/profile" attr:class="nav-link w-full justify-start" on:click=close_menu>
-                                                <Icon height="1.1em" width="1.1em" icon=i::BsPersonCircle />
-                                                <span class="ml-2">{t!(i18n, profile)}</span>
-                                            </A>
-                                            <A href="/settings" attr:class="nav-link w-full justify-start" on:click=close_menu>
-                                                <Icon height="1.1em" width="1.1em" icon=i::IoSettingsSharp />
-                                                <span class="ml-2">{t!(i18n, settings)}</span>
-                                            </A>
-
-                        <div class="divider my-1"></div>
-
-                                            <A href="/list" attr:class="nav-link w-full justify-start" on:click=close_menu>
-                                                <Icon height="1.1em" width="1.1em" icon=i::AiOrderedListOutlined />
-                                                <span class="ml-2">{t!(i18n, lists)}</span>
-                                            </A>
-                                            <A href="/alerts" attr:class="nav-link w-full justify-start" on:click=close_menu>
-                                                <Icon height="1.1em" width="1.1em" icon=i::BsBell />
-                                                <span class="ml-2">"Alerts"</span>
-                                            </A>
-                                            <A href="/retainers/listings" attr:class="nav-link w-full justify-start" on:click=close_menu>
-                                                <Icon height="1.1em" width="1.1em" icon=i::BiGroupSolid />
-                                                <span class="ml-2">{t!(i18n, retainers)}</span>
-                                            </A>
-
-                                            <div class="divider my-1"></div>
-
-                                            <a rel="external" href="/invitebot" class="nav-link w-full justify-start" on:click=close_menu>
-                                                <Icon height="1.1em" width="1.1em" icon=i::BsDiscord />
-                                                <span class="ml-2">{t!(i18n, invite_bot)}</span>
-                                            </a>
-
-                                            <div class="lg:hidden">
-                                                <QuickThemeToggle />
-                                            </div>
-
-                                            <div class="divider my-1"></div>
-
-                                            <a rel="external" href="/logout" class="nav-link w-full justify-start" on:click=close_menu>
-                                                <span class="ml-2">{t!(i18n, logout)}</span>
-                                            </a>
-                                        }.into_any()
-                                    }
-                                    None => {
-                                        view! {
-                                            <a rel="external" href="/login" class="nav-link w-full justify-start" on:click=close_menu>
-                                                <Icon height="1.1em" width="1.1em" icon=i::BsDiscord />
-                                                <span class="ml-2">{t!(i18n, login_with_discord)}</span>
-                                            </a>
-                                            <A href="/settings" attr:class="nav-link w-full justify-start" on:click=close_menu>
-                                                <Icon height="1.1em" width="1.1em" icon=i::IoSettingsSharp />
-                                                <span class="ml-2">{t!(i18n, settings)}</span>
-                                            </A>
-                                            <div class="divider my-1"></div>
-                                            <div class="lg:hidden">
-                                                <QuickThemeToggle />
-                                            </div>
-                                        }.into_any()
-                                    }
-                                }
-                            }}
-                        </Suspense>
-                    </div>
-                </div>
-            </Show>
-        </div>
+                    None => {
+                        view! {
+                            <a
+                                rel="external"
+                                href="/login"
+                                class="nav-link flex items-center"
+                                aria-label=move || t_string!(i18n, login_with_discord)
+                            >
+                                <Icon height="1.5em" width="1.5em" icon=i::BsPersonCircle />
+                            </a>
+                        }.into_any()
+                    }
+                }
+            }}
+        </Suspense>
     }
     .into_any()
 }

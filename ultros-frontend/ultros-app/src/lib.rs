@@ -234,11 +234,9 @@ pub fn NavRow() -> impl IntoView {
 
                 // Right section
                                 <div class="hidden lg:flex items-center gap-3">
-                    <div class="hidden lg:block">
-                        <div class="flex items-center gap-2">
-                            <LanguagePicker />
-                            <QuickThemeToggle />
-                        </div>
+                    <div class="hidden lg:flex 2xl:hidden items-center gap-2">
+                        <LanguagePicker />
+                        <QuickThemeToggle />
                     </div>
                     <UserMenu />
                 </div>

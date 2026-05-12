@@ -651,5 +651,7 @@
     "scrip_sources_title": "Scrip Sources",
     "scrip_sources_select_world": "Select World for Prices:",
     "scrip_sources_description": "This tool finds the most efficient Collectables to craft for White/Purple Scrips based on current market board prices for materials.",
-    "scrip_sources_error_loading": "Error loading listings: "
+    "scrip_sources_error_loading": "Error loading listings: ",
+    "library": "Library",
+    "alerts": "Alerts"
 }
