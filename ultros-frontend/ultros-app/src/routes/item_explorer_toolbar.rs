@@ -114,6 +114,8 @@ mod tests {
         assert!(!chips.is_empty(), "weapons group must have chips");
 
         // Re-fetch the source-of-truth order from xiv data to assert sort.
+        // Compare (name, id) pairs, not just names, so a tie on `order`
+        // between two categories can't silently mask an ID mismatch.
         let data = xiv_gen_db::data();
         let mut expected: Vec<_> = data
             .item_search_categorys
@@ -122,9 +124,9 @@ mod tests {
             .map(|(id, c)| (c.order, c.name.as_str(), *id))
             .collect();
         expected.sort_by_key(|(order, _, _)| *order);
-        let expected_names: Vec<&str> = expected.iter().map(|(_, name, _)| *name).collect();
-        let actual_names: Vec<&str> = chips.iter().map(|(name, _)| *name).collect();
-        assert_eq!(actual_names, expected_names);
+        let expected_pairs: Vec<(&str, ItemSearchCategoryId)> =
+            expected.iter().map(|(_, name, id)| (*name, *id)).collect();
+        assert_eq!(chips, expected_pairs);
     }
 
     #[test]
@@ -145,6 +147,18 @@ mod tests {
         assert!(
             !names.contains(&"marauder"),
             "marauder must not be in job chips"
+        );
+    }
+
+    #[test]
+    fn job_chips_are_sorted_by_ui_priority_ascending() {
+        let chips = job_chips_sorted();
+        let priorities: Vec<u32> = chips.iter().map(|j| j.ui_priority).collect();
+        let mut sorted = priorities.clone();
+        sorted.sort();
+        assert_eq!(
+            priorities, sorted,
+            "job chips must be sorted by ui_priority ascending"
         );
     }
 
