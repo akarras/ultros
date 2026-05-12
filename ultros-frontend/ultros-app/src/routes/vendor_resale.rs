@@ -3,9 +3,18 @@ use crate::global_state::xiv_data::tracked_data;
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
-        add_to_list::AddToList, clipboard::*, filter_card::*, gil::*, icon::Icon, item_icon::*,
-        meta::*, query_button::QueryButton, skeleton::BoxSkeleton, toggle::Toggle, tool_help::*,
-        virtual_scroller::*, world_picker::*,
+        add_to_list::AddToList,
+        clipboard::*,
+        gil::*,
+        icon::Icon,
+        item_icon::*,
+        meta::*,
+        query_button::QueryButton,
+        skeleton::BoxSkeleton,
+        tool_help::*,
+        toolbar::{Toolbar, ToolbarField, ToolbarPills, ToolbarSpacer},
+        virtual_scroller::*,
+        world_picker::*,
     },
     error::AppError,
     global_state::LocalWorldData,
@@ -14,7 +23,7 @@ use crate::{
 use chrono::{Duration, Utc};
 use humantime::{format_duration, parse_duration};
 use icondata as i;
-use leptos::{either::Either, prelude::*, reactive::wrappers::write::SignalSetter};
+use leptos::{either::Either, prelude::*};
 use leptos_router::{
     NavigateOptions,
     hooks::{query_signal, use_navigate, use_params_map, use_query_map},
@@ -213,6 +222,7 @@ fn VendorResaleTable(
     let (tax_enabled, set_tax_enabled) = query_signal::<bool>("tax");
     let (minimum_sales, set_minimum_sales) = query_signal::<usize>("sales");
     let (category_filter, set_category_filter) = query_signal::<i32>("category");
+    let show_more = RwSignal::new(false);
 
     let predicted_time =
         Memo::new(move |_| max_predicted_time().and_then(|d| parse_duration(d.as_str()).ok()));
@@ -302,169 +312,135 @@ fn VendorResaleTable(
 
     view! {
         <div class="flex flex-col gap-6">
-            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                <FilterCard
-                    title=t_string!(i18n, vendor_resale_minimum_profit_title)
-                    description=t_string!(i18n, vendor_resale_minimum_profit_desc)
-                >
-                    <div class="flex flex-col gap-2">
-                        <div class="text-brand-300">
-                            {move || {
-                                minimum_profit()
-                                    .map(|profit| Either::Left(view! { <Gil amount=profit /> }))
-                                    .unwrap_or(Either::Right("---"))
-                            }}
-                        </div>
-                        <input
-                            class="input"
-                            min=0
-                            max=100000
-                            step=1000
-                            placeholder=t_string!(i18n, vendor_resale_placeholder_10000)
-                            type="number"
-                            prop:value=minimum_profit
-                            on:input=move |input| {
-                                let value = event_target_value(&input);
-                                if let Ok(profit) = value.parse::<i32>() {
-                                    set_minimum_profit(Some(profit))
-                                } else if value.is_empty() {
-                                    set_minimum_profit(None);
-                                }
+            // Primary filter toolbar
+            <Toolbar>
+                <ToolbarField label="Profit (Min)">
+                    <input
+                        class="input input-sm w-32"
+                        min=0
+                        max=100000
+                        step=1000
+                        placeholder="e.g. 10000"
+                        type="number"
+                        prop:value=minimum_profit
+                        on:input=move |input| {
+                            let value = event_target_value(&input);
+                            if let Ok(profit) = value.parse::<i32>() {
+                                set_minimum_profit(Some(profit))
+                            } else if value.is_empty() {
+                                set_minimum_profit(None);
                             }
-                        />
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title=t_string!(i18n, vendor_resale_item_category_title)
-                    description=t_string!(i18n, vendor_resale_item_category_desc)
-                >
-                    <div class="flex flex-col gap-2">
-                         <select
-                            class="input"
-                            on:change=move |ev| {
-                                let val = event_target_value(&ev);
-                                if let Ok(id) = val.parse::<i32>() {
-                                    set_category_filter(Some(id));
-                                } else {
-                                    set_category_filter(None);
-                                }
+                        }
+                    />
+                </ToolbarField>
+                <ToolbarField label="ROI (Min)">
+                    <input
+                        class="input input-sm w-28"
+                        min=0
+                        max=100000
+                        step=10
+                        placeholder="e.g. 50"
+                        type="number"
+                        prop:value=minimum_roi
+                        on:input=move |input| {
+                            let value = event_target_value(&input);
+                            if let Ok(roi) = value.parse::<i32>() {
+                                set_minimum_roi(Some(roi));
+                            } else if value.is_empty() {
+                                set_minimum_roi(None);
                             }
-                            prop:value=move || category_filter().map(|c| c.to_string()).unwrap_or_default()
+                        }
+                    />
+                </ToolbarField>
+                <ToolbarField label="Sales (Min)">
+                    <input
+                        class="input input-sm w-24"
+                        min=0
+                        max=1000
+                        step=1
+                        placeholder="e.g. 5"
+                        type="number"
+                        prop:value=minimum_sales
+                        on:input=move |input| {
+                            let value = event_target_value(&input);
+                            if let Ok(sales) = value.parse::<usize>() {
+                                set_minimum_sales(Some(sales));
+                            } else if value.is_empty() {
+                                set_minimum_sales(None);
+                            }
+                        }
+                    />
+                </ToolbarField>
+                <ToolbarField label="Category">
+                    <select
+                        class="input input-sm w-48"
+                        on:change=move |ev| {
+                            let val = event_target_value(&ev);
+                            if let Ok(id) = val.parse::<i32>() {
+                                set_category_filter(Some(id));
+                            } else {
+                                set_category_filter(None);
+                            }
+                        }
+                        prop:value=move || category_filter().map(|c| c.to_string()).unwrap_or_default()
+                    >
+                        <option value="">{t!(i18n, vendor_resale_all_categories)}</option>
+                        {
+                            let mut categories = tracked_data().item_search_categorys
+                                .iter()
+                                .filter(|(_, cat)| !cat.name.is_empty())
+                                .map(|(id, cat)| (id.0, cat.name.clone()))
+                                .collect::<Vec<_>>();
+                            categories.sort_by(|a, b| a.1.cmp(&b.1));
+                            categories.into_iter().map(|(id, name)| {
+                                view! { <option value=id.to_string() selected=move || category_filter() == Some(id)>{name}</option> }
+                            }).collect_view()
+                        }
+                    </select>
+                </ToolbarField>
+                <ToolbarField label="Prices">
+                    <ToolbarPills>
+                        <button
+                            aria-pressed={if tax_enabled().unwrap_or(true) { "false" } else { "true" }}
+                            on:click=move |_| set_tax_enabled(Some(false))
                         >
-                            <option value="">{t!(i18n, vendor_resale_all_categories)}</option>
-                            {
-                                let mut categories = tracked_data().item_search_categorys
-                                    .iter()
-                                    .filter(|(_, cat)| !cat.name.is_empty())
-                                    .map(|(id, cat)| (id.0, cat.name.clone()))
-                                    .collect::<Vec<_>>();
-                                categories.sort_by(|a, b| a.1.cmp(&b.1));
-                                categories.into_iter().map(|(id, name)| {
-                                    view! { <option value=id.to_string() selected=move || category_filter() == Some(id)>{name}</option> }
-                                }).collect_view()
-                            }
-                        </select>
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title=t_string!(i18n, vendor_resale_minimum_sales_title)
-                    description=t_string!(i18n, vendor_resale_minimum_sales_desc)
+                            "Pre-tax"
+                        </button>
+                        <button
+                            aria-pressed={if tax_enabled().unwrap_or(true) { "true" } else { "false" }}
+                            on:click=move |_| set_tax_enabled(Some(true))
+                        >
+                            "Post-tax"
+                        </button>
+                    </ToolbarPills>
+                </ToolbarField>
+                <ToolbarSpacer />
+                <button
+                    class="btn-secondary flex items-center gap-2"
+                    on:click=move |_| show_more.update(|v| *v = !*v)
                 >
-                    <div class="flex flex-col gap-2">
-                        <div class="text-brand-300">
-                            {move || {
-                                minimum_sales()
-                                    .map(|sales| format!("{} sales", sales))
-                                    .unwrap_or("---".to_string())
-                            }}
-                        </div>
-                        <input
-                            class="input"
-                            min=0
-                            max=1000
-                            step=1
-                            placeholder=t_string!(i18n, vendor_resale_placeholder_5)
-                            type="number"
-                            prop:value=minimum_sales
-                            on:input=move |input| {
-                                let value = event_target_value(&input);
-                                if let Ok(sales) = value.parse::<usize>() {
-                                    set_minimum_sales(Some(sales));
-                                } else if value.is_empty() {
-                                    set_minimum_sales(None);
-                                }
-                            }
-                        />
-                    </div>
-                </FilterCard>
+                    <Icon icon=i::FaFilterSolid />
+                    {move || if show_more.get() { "Fewer Filters" } else { "More Filters" }}
+                </button>
+            </Toolbar>
 
-                <FilterCard
-                    title=t_string!(i18n, vendor_resale_minimum_roi_title)
-                    description=t_string!(i18n, vendor_resale_minimum_roi_desc)
-                >
-                    <div class="flex flex-col gap-2">
-                        <div class="text-brand-300">
-                            {move || {
-                                minimum_roi()
-                                    .map(|roi| format!("{roi}%"))
-                                    .unwrap_or("---".to_string())
-                            }}
-                        </div>
+            // Secondary filter toolbar (expanded)
+            {move || show_more.get().then(|| view! {
+                <Toolbar>
+                    <ToolbarField label="Max Sale Time">
                         <input
-                            class="input"
-                            min=0
-                            max=100000
-                            step=10
-                            placeholder=t_string!(i18n, vendor_resale_placeholder_50)
-                            type="number"
-                            prop:value=minimum_roi
-                            on:input=move |input| {
-                                let value = event_target_value(&input);
-                                if let Ok(roi) = value.parse::<i32>() {
-                                    set_minimum_roi(Some(roi));
-                                } else if value.is_empty() {
-                                    set_minimum_roi(None);
-                                }
-                            }
-                        />
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title=t_string!(i18n, vendor_resale_sale_time_prediction_title)
-                    description=t_string!(i18n, vendor_resale_sale_time_prediction_desc)
-                >
-                    <div class="flex flex-col gap-2">
-                        <div class="text-brand-300">{predicted_time_string}</div>
-                        <input
-                            class="input"
-                            placeholder=t_string!(i18n, vendor_resale_placeholder_7d_12h)
-                            title=t_string!(i18n, vendor_resale_duration_format_title)
+                            class="input input-sm w-32"
+                            placeholder="e.g. 7d 12h"
+                            title="Accepts formats like 1h 30m, 7d, 1M (month), etc."
                             prop:value=move || max_predicted_time().unwrap_or_default()
                             on:input=move |input| {
                                 let value = event_target_value(&input);
                                 set_max_predicted_time(Some(value))
                             }
                         />
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title=t_string!(i18n, vendor_resale_tax_calculation_title)
-                    description=t_string!(i18n, vendor_resale_tax_calculation_desc)
-                >
-                    <div class="flex items-center">
-                        <Toggle
-                            checked=Signal::derive(move || tax_enabled().unwrap_or(true))
-                            set_checked=SignalSetter::map(move |val: bool| set_tax_enabled(Some(val)))
-                            checked_label=t_string!(i18n, vendor_resale_tax_enabled).to_string()
-                            unchecked_label=t_string!(i18n, vendor_resale_tax_disabled).to_string()
-                        />
-                    </div>
-                </FilterCard>
-            </div>
+                    </ToolbarField>
+                </Toolbar>
+            })}
 
             // Results summary
             <div class="panel px-4 py-3 flex flex-col md:flex-row md:items-center gap-3 md:gap-0 md:justify-between">
@@ -705,85 +681,83 @@ pub fn VendorWorldView() -> impl IntoView {
     view! {
         <div class="main-content p-2 sm:p-6">
             <MetaTitle title=move || format!("{} - {}", t_string!(i18n, vendor_resale_title), world()) />
-            <div class="container mx-auto max-w-7xl">
-                <div class="flex flex-col gap-8">
-                    <ToolHeader
-                        title="Vendor Resale"
-                        summary="Find NPC vendor items that may be worth buying as NQ items and reselling on the selected world."
-                        context="HQ market listings are excluded because vendor purchases are normal quality. Specific NPC source names are not available yet."
-                        help_href="/help/vendor-resale"
-                        help_body="Vendor Resale is useful for low-risk market checks where the buy price is fixed. Favor results with recent sales; high ROI on an item that rarely sells is still slow gil."
-                    />
+            <div class="flex flex-col gap-8">
+                <ToolHeader
+                    title="Vendor Resale"
+                    summary="Find NPC vendor items that may be worth buying as NQ items and reselling on the selected world."
+                    context="HQ market listings are excluded because vendor purchases are normal quality. Specific NPC source names are not available yet."
+                    help_href="/help/vendor-resale"
+                    help_body="Vendor Resale is useful for low-risk market checks where the buy price is fixed. Favor results with recent sales; high ROI on an item that rarely sells is still slow gil."
+                />
 
-                    // Controls Section
-                    <div class="panel p-4 sm:p-6 rounded-2xl">
-                        <div class="flex flex-col gap-4">
-                            <MetaDescription text=move || {
-                                t_string!(i18n, vendor_resale_meta_desc).to_string().replace("%world%", &world())
-                            } />
+                // Controls Section
+                <div class="panel p-4 sm:p-6 rounded-2xl">
+                    <div class="flex flex-col gap-4">
+                        <MetaDescription text=move || {
+                            t_string!(i18n, vendor_resale_meta_desc).to_string().replace("%world%", &world())
+                        } />
 
-                            // World Navigator
-                            <div class="flex flex-col md:flex-row gap-4 items-center">
-                                <VendorWorldNavigator />
-                            </div>
+                        // World Navigator
+                        <div class="flex flex-col md:flex-row gap-4 items-center">
+                            <VendorWorldNavigator />
+                        </div>
 
-                            // Preset Filters
-                            <div class="flex flex-wrap gap-4">
-                                <PresetFilterButton
-                                    href="?next-sale=7d&roi=100&profit=1000&sort=profit&"
-                                    label=t_string!(i18n, vendor_resale_preset_100_roi).to_string()
-                                />
-                                <PresetFilterButton
-                                    href="?next-sale=1M&roi=500&profit=5000&"
-                                    label=t_string!(i18n, vendor_resale_preset_500_roi).to_string()
-                                />
-                                <PresetFilterButton href="?profit=50000" label=t_string!(i18n, vendor_resale_preset_50k_profit).to_string() />
-                            </div>
-                            <CalculationSummary
-                                title="How profit is estimated"
-                                formula="profit = market price - vendor price - market tax"
-                                details="Vendor items are treated as NQ. The table compares fixed NPC cost against current market-board listings and recent sale speed."
+                        // Preset Filters
+                        <div class="flex flex-wrap gap-4">
+                            <PresetFilterButton
+                                href="?next-sale=7d&roi=100&profit=1000&sort=profit&"
+                                label=t_string!(i18n, vendor_resale_preset_100_roi).to_string()
                             />
-                            <div class="flex flex-wrap gap-2">
-                                <AssumptionBadge text="NQ vendor purchase" />
-                                <AssumptionBadge text="HQ listings excluded" />
-                                <AssumptionBadge text="Vendor source names not shown yet" />
-                            </div>
+                            <PresetFilterButton
+                                href="?next-sale=1M&roi=500&profit=5000&"
+                                label=t_string!(i18n, vendor_resale_preset_500_roi).to_string()
+                            />
+                            <PresetFilterButton href="?profit=50000" label=t_string!(i18n, vendor_resale_preset_50k_profit).to_string() />
+                        </div>
+                        <CalculationSummary
+                            title="How profit is estimated"
+                            formula="profit = market price - vendor price - market tax"
+                            details="Vendor items are treated as NQ. The table compares fixed NPC cost against current market-board listings and recent sale speed."
+                        />
+                        <div class="flex flex-wrap gap-2">
+                            <AssumptionBadge text="NQ vendor purchase" />
+                            <AssumptionBadge text="HQ listings excluded" />
+                            <AssumptionBadge text="Vendor source names not shown yet" />
                         </div>
                     </div>
+                </div>
 
-                    // Main Content
-                    <div class="min-h-screen">
-                        <Suspense fallback=BoxSkeleton>
-                            {move || {
-                                let world_cheapest = world_cheapest_listings.get();
-                                let sales = sales.get();
-                                match (world_cheapest, sales) {
-                                    (Some(Ok(w)), Some(Ok(s))) => {
-                                        Either::Left(
-                                            view! {
-                                                <VendorResaleTable
-                                                    sales=s
-                                                    world_cheapest_listings=w
-                                                    world=world.into()
-                                                />
-                                            },
-                                        )
-                                    }
-                                    _ => {
-                                        Either::Right(
-                                            view! {
-                                                <div class="text-xl text-[color:var(--color-text)] text-center p-8
-                                                bg-brand-900/20 rounded-2xl border border-white/10">
-                                                    {t!(i18n, vendor_resale_loading_data)}
-                                                </div>
-                                            },
-                                        )
-                                    }
+                // Main Content
+                <div class="min-h-screen">
+                    <Suspense fallback=BoxSkeleton>
+                        {move || {
+                            let world_cheapest = world_cheapest_listings.get();
+                            let sales = sales.get();
+                            match (world_cheapest, sales) {
+                                (Some(Ok(w)), Some(Ok(s))) => {
+                                    Either::Left(
+                                        view! {
+                                            <VendorResaleTable
+                                                sales=s
+                                                world_cheapest_listings=w
+                                                world=world.into()
+                                            />
+                                        },
+                                    )
                                 }
-                            }}
-                        </Suspense>
-                    </div>
+                                _ => {
+                                    Either::Right(
+                                        view! {
+                                            <div class="text-xl text-[color:var(--color-text)] text-center p-8
+                                            bg-brand-900/20 rounded-2xl border border-white/10">
+                                                {t!(i18n, vendor_resale_loading_data)}
+                                            </div>
+                                        },
+                                    )
+                                }
+                            }
+                        }}
+                    </Suspense>
                 </div>
             </div>
         </div>
@@ -858,69 +832,67 @@ pub fn VendorResale() -> impl IntoView {
         <MetaDescription text=t_string!(i18n, vendor_resale_meta_desc_default) />
 
         <div class="main-content p-2 sm:p-6">
-            <div class="container mx-auto max-w-7xl">
-                <div class="flex flex-col gap-8">
-                    // Hero Section
-                    <div class="panel p-4 sm:p-8 rounded-2xl">
-                        <h1 class="text-3xl font-bold text-[color:var(--brand-fg)] mb-4">
-                            {t!(i18n, vendor_resale_tool_title)}
-                        </h1>
-                        <p class="text-xl text-[color:var(--color-text)] leading-relaxed mb-6">
-                            {t!(i18n, vendor_resale_tool_desc)}
-                        </p>
-                        <p class="text-lg text-[color:var(--color-text)]/90 mb-8">
-                            {t!(i18n, vendor_resale_tool_select_world)}
-                        </p>
+            <div class="flex flex-col gap-8">
+                // Hero Section
+                <div class="panel p-4 sm:p-8 rounded-2xl">
+                    <h1 class="text-3xl font-bold text-[color:var(--brand-fg)] mb-4">
+                        {t!(i18n, vendor_resale_tool_title)}
+                    </h1>
+                    <p class="text-xl text-[color:var(--color-text)] leading-relaxed mb-6">
+                        {t!(i18n, vendor_resale_tool_desc)}
+                    </p>
+                    <p class="text-lg text-[color:var(--color-text)]/90 mb-8">
+                        {t!(i18n, vendor_resale_tool_select_world)}
+                    </p>
 
-                        // World Selection
-                        <div class="panel p-6 rounded-xl">
-                            <h2 class="text-xl font-semibold text-[color:var(--brand-fg)] mb-4">
-                                {t!(i18n, vendor_resale_choose_world)}
-                            </h2>
-                            <VendorWorldNavigator />
-                        </div>
+                    // World Selection
+                    <div class="panel p-6 rounded-xl">
+                        <h2 class="text-xl font-semibold text-[color:var(--brand-fg)] mb-4">
+                            {t!(i18n, vendor_resale_choose_world)}
+                        </h2>
+                        <VendorWorldNavigator />
+                    </div>
+                </div>
+
+                // Features Grid
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    <div class="card p-6 rounded-lg transition-colors duration-200">
+                        <Icon
+                            attr:class="text-brand-300 mb-4"
+                            width="2.5em"
+                            height="2.5em"
+                            icon=i::FaMoneyBillTrendUpSolid
+                        />
+                        <h3 class="text-xl font-bold text-brand-300 mb-2">{t!(i18n, vendor_resale_arbitrage)}</h3>
+                        <p class="text-gray-300">
+                            {t!(i18n, vendor_resale_arbitrage_desc)}
+                        </p>
                     </div>
 
-                    // Features Grid
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        <div class="card p-6 rounded-lg transition-colors duration-200">
-                            <Icon
-                                attr:class="text-brand-300 mb-4"
-                                width="2.5em"
-                                height="2.5em"
-                                icon=i::FaMoneyBillTrendUpSolid
-                            />
-                            <h3 class="text-xl font-bold text-brand-300 mb-2">{t!(i18n, vendor_resale_arbitrage)}</h3>
-                            <p class="text-gray-300">
-                                {t!(i18n, vendor_resale_arbitrage_desc)}
-                            </p>
-                        </div>
+                    <div class="card p-6 rounded-lg transition-colors duration-200">
+                        <Icon
+                            attr:class="text-brand-300 mb-4"
+                            width="2.5em"
+                            height="2.5em"
+                            icon=i::FaShopSolid
+                        />
+                        <h3 class="text-xl font-bold text-brand-300 mb-2">{t!(i18n, vendor_resale_vendor_data)}</h3>
+                        <p class="text-gray-300">
+                            {t!(i18n, vendor_resale_vendor_data_desc)}
+                        </p>
+                    </div>
 
-                        <div class="card p-6 rounded-lg transition-colors duration-200">
-                            <Icon
-                                attr:class="text-brand-300 mb-4"
-                                width="2.5em"
-                                height="2.5em"
-                                icon=i::FaShopSolid
-                            />
-                            <h3 class="text-xl font-bold text-brand-300 mb-2">{t!(i18n, vendor_resale_vendor_data)}</h3>
-                            <p class="text-gray-300">
-                                {t!(i18n, vendor_resale_vendor_data_desc)}
-                            </p>
-                        </div>
-
-                        <div class="card p-6 rounded-lg transition-colors duration-200">
-                            <Icon
-                                attr:class="text-brand-300 mb-4"
-                                width="2.5em"
-                                height="2.5em"
-                                icon=i::FaFilterSolid
-                            />
-                            <h3 class="text-xl font-bold text-brand-300 mb-2">{t!(i18n, vendor_resale_filters)}</h3>
-                            <p class="text-gray-300">
-                                {t!(i18n, vendor_resale_filters_desc)}
-                            </p>
-                        </div>
+                    <div class="card p-6 rounded-lg transition-colors duration-200">
+                        <Icon
+                            attr:class="text-brand-300 mb-4"
+                            width="2.5em"
+                            height="2.5em"
+                            icon=i::FaFilterSolid
+                        />
+                        <h3 class="text-xl font-bold text-brand-300 mb-2">{t!(i18n, vendor_resale_filters)}</h3>
+                        <p class="text-gray-300">
+                            {t!(i18n, vendor_resale_filters_desc)}
+                        </p>
                     </div>
                 </div>
             </div>

@@ -288,10 +288,7 @@ fn VentureAnalyzerTable(
                             prop:checked=move || filter_outliers().unwrap_or(false)
                             on:change=move |ev| set_filter_outliers(Some(event_target_checked(&ev)))
                         />
-                        <div
-                            class="text-brand-300 cursor-help"
-                            title=move || t_string!(i18n, venture_analyzer_filter_outliers_tooltip).to_string()
-                        >
+                        <div class="text-brand-300 cursor-help" title=move || t_string!(i18n, venture_analyzer_filter_outliers_tooltip).to_string()>
                             <Icon icon=i::AiQuestionCircleOutlined />
                         </div>
                     </div>
@@ -300,9 +297,7 @@ fn VentureAnalyzerTable(
 
             // Job category multi-select: complex tag-cloud widget, kept as panel
             <div class="panel p-4 flex flex-col w-full bg-[color:var(--color-background-elevated)] bg-opacity-100 z-20">
-                <h3 class="font-bold text-base mb-2 text-[color:var(--brand-fg)]">
-                    {t!(i18n, venture_analyzer_filter_by_job)}
-                </h3>
+                <h3 class="font-bold text-base mb-2 text-[color:var(--brand-fg)]">{t!(i18n, venture_analyzer_filter_by_job)}</h3>
                 <div class="flex flex-wrap gap-2">
                     {move || {
                         let selected = selected_jobs_set.get();

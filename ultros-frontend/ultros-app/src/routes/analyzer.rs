@@ -830,22 +830,22 @@ fn AnalyzerTable(
             </div>
 
             // Results table
-            <div class="rounded-2xl overflow-x-auto panel content-visible contain-layout contain-paint will-change-scroll forced-layer">
+            <div class="rounded-lg overflow-x-auto border border-[color:var(--color-outline)] content-visible contain-layout contain-paint will-change-scroll forced-layer">
                 <VirtualScroller
                         viewport_height=720.0
                         row_height=40.0
                         overscan=8
-                        header_height=64.0
+                        header_height=56.0
                         variable_height=false
                         header=view! {
-                            <div class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]" role="rowgroup">
-                                <div role="columnheader" class="w-[40px] p-4 text-center">
+                            <div class="flex flex-row items-center h-14 text-xs font-semibold uppercase tracking-wider text-[color:var(--color-text-muted)] border-b border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]" role="rowgroup">
+                                <div role="columnheader" class="w-[44px] px-2 text-center">
                                     {t!(i18n, analyzer_col_hq)}
                                 </div>
-                                <div role="columnheader" class="w-84 p-4">
+                                <div role="columnheader" class="flex-1 min-w-[14rem] px-3">
                                     {t!(i18n, analyzer_col_item)}
                                 </div>
-                                <div role="columnheader" class="w-30 p-4">
+                                <div role="columnheader" class="w-28 px-3 text-right">
                                     <QueryButton
                                         class="!text-brand-300 hover:text-brand-200"
                                         active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
@@ -861,7 +861,7 @@ fn AnalyzerTable(
                                         </div>
                                     </QueryButton>
                                 </div>
-                                <div role="columnheader" class="w-30 p-4">
+                                <div role="columnheader" class="w-28 px-3 py-2">
                                     <QueryButton
                                         class="!text-brand-300 hover:text-brand-200"
                                         active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
@@ -877,7 +877,7 @@ fn AnalyzerTable(
                                         </div>
                                     </QueryButton>
                                 </div>
-                                <div role="columnheader" class="w-30 p-4">
+                                <div role="columnheader" class="w-28 px-3 py-2">
                                     <QueryButton
                                         class="!text-brand-300 hover:text-brand-200"
                                         active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
@@ -894,10 +894,10 @@ fn AnalyzerTable(
                                         </div>
                                     </QueryButton>
                                 </div>
-                                <div role="columnheader" class="w-30 p-4">
+                                <div role="columnheader" class="w-28 px-3 py-2">
                                     {t!(i18n, analyzer_col_buy_price)}
                                 </div>
-                                <div role="columnheader" class="w-30 p-4 flex flex-row gap-2 hidden lg:flex">
+                                <div role="columnheader" class="w-28 px-3 py-2 flex flex-row gap-2 hidden lg:flex">
                                     {t!(i18n, analyzer_col_world)}
                                     <div>
                                         {move || {
@@ -917,7 +917,7 @@ fn AnalyzerTable(
                                         }}
                                     </div>
                                 </div>
-                                <div role="columnheader" class="w-30 p-4 flex flex-row gap-2 hidden xl:flex">
+                                <div role="columnheader" class="w-28 px-3 py-2 flex flex-row gap-2 hidden xl:flex">
                                     {t!(i18n, analyzer_col_datacenter)}
                                     <div>
                                         {move || {
@@ -937,10 +937,10 @@ fn AnalyzerTable(
                                         }}
                                     </div>
                                 </div>
-                                <div role="columnheader" class="w-30 p-4 hidden md:block">
+                                <div role="columnheader" class="w-28 px-3 py-2 hidden md:block">
                                     {t!(i18n, analyzer_col_avg_sale_time)}
                                 </div>
-                                <div role="columnheader" class="w-30 p-4 hidden md:block">
+                                <div role="columnheader" class="w-28 px-3 py-2 hidden md:block">
                                     {t!(i18n, analyzer_col_last_sold)}
                                 </div>
                             </div>
@@ -992,7 +992,7 @@ fn AnalyzerTable(
                                             None
                                         }}
                                     </div>
-                                    <div role="cell" class="px-4 py-2 flex flex-row w-84 items-center gap-2">
+                                    <div role="cell" class="px-4 py-2 flex flex-row flex-1 min-w-[14rem] items-center gap-2">
                                         <a
                                             class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip w-full"
                                             href=format!("/item/{}/{item_id}", world())
@@ -1005,13 +1005,13 @@ fn AnalyzerTable(
                                         <AddToList item_id />
                                         <Clipboard clipboard_text=item.to_string() />
                                     </div>
-                                    <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
+                                    <div role="cell" class="px-3 py-2 w-28 text-right flex items-center justify-end">
                                         <Gil amount=data.profit />
                                     </div>
-                                    <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
+                                    <div role="cell" class="px-3 py-2 w-28 text-right flex items-center justify-end">
                                         <Gil amount=data.profit_per_day />
                                     </div>
-                                    <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
+                                    <div role="cell" class="px-3 py-2 w-28 text-right flex items-center justify-end">
                                         <span class={
                                             let data = data_clone.clone();
                                             move || roi_badge_class(data.return_on_investment)
@@ -1019,10 +1019,10 @@ fn AnalyzerTable(
                                             {format!("{}%", data.return_on_investment)}
                                         </span>
                                     </div>
-                                    <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
+                                    <div role="cell" class="px-3 py-2 w-28 text-right flex items-center justify-end">
                                         <Gil amount=data.inner.cheapest_price />
                                     </div>
-                                    <div role="cell" class="px-4 py-2 w-30 hidden lg:block flex items-center">
+                                    <div role="cell" class="px-3 py-2 w-28 hidden lg:block flex items-center">
                                         <Tooltip tooltip_text=Signal::derive(move || {
                                             t_string!(i18n, analyzer_only_show_world).to_string().replace("%world%", &world())
                                         })>
@@ -1037,7 +1037,7 @@ fn AnalyzerTable(
                                             </QueryButton>
                                         </Tooltip>
                                     </div>
-                                    <div role="cell" class="px-4 py-2 w-30 hidden xl:block flex items-center">
+                                    <div role="cell" class="px-3 py-2 w-28 hidden xl:block flex items-center">
                                         <Tooltip tooltip_text=Signal::derive(move || {
                                             t_string!(i18n, analyzer_only_show_world).to_string().replace("%world%", &datacenter())
                                         })>
@@ -1052,7 +1052,7 @@ fn AnalyzerTable(
                                             </QueryButton>
                                         </Tooltip>
                                     </div>
-                                    <div role="cell" class="px-4 py-2 w-30 truncate hidden md:block flex items-center">
+                                    <div role="cell" class="px-3 py-2 w-28 truncate hidden md:block flex items-center">
                                         {data.inner
                                             .sale_summary
                                             .avg_sale_duration
@@ -1060,7 +1060,7 @@ fn AnalyzerTable(
                                             .map(|duration| format_duration_short(duration.as_secs()))
                                             .unwrap_or_else(|| "---".to_string())}
                                     </div>
-                                    <div role="cell" class="px-4 py-2 w-30 truncate hidden md:block flex items-center">
+                                    <div role="cell" class="px-3 py-2 w-28 truncate hidden md:block flex items-center">
                                         {data.inner
                                             .sale_summary
                                             .days_since_last_sale
@@ -1164,8 +1164,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     view! {
         <div class="main-content p-2 sm:p-6">
             <MetaTitle title=move || t_string!(i18n, analyzer_meta_title).to_string().replace("%world%", &world()) />
-            <div class="container mx-auto max-w-7xl">
-                <div class="flex flex-col gap-8">
+            <div class="flex flex-col gap-8">
                     <ToolHeader
                         title="Flip Finder"
                         summary="Find likely buy-low/sell-high opportunities by comparing cheap listings against recent sale prices."
@@ -1327,7 +1326,6 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                         </Suspense>
                     </div>
                 </div>
-            </div>
         </div>
     }
 }
@@ -1388,8 +1386,7 @@ pub fn Analyzer() -> impl IntoView {
         <MetaDescription text=t_string!(i18n, analyzer_index_meta_desc).to_string() />
 
         <div class="main-content p-2 sm:p-6">
-            <div class="container mx-auto max-w-7xl">
-                <div class="flex flex-col gap-8">
+            <div class="flex flex-col gap-8">
                     // Hero Section
                     <div class="panel p-4 sm:p-8 rounded-2xl">
                         <h1 class="text-3xl font-bold text-[color:var(--brand-fg)] mb-4">
@@ -1470,7 +1467,6 @@ pub fn Analyzer() -> impl IntoView {
                         </ul>
                     </div>
                 </div>
-            </div>
         </div>
     }
 }

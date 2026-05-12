@@ -5,9 +5,18 @@ use crate::{
     analysis::{SalesStats, analyze_sales, roi_badge_class},
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
-        add_recipe_to_list::AddRecipeToList, crafter_settings::CrafterSettings, gil::*, icon::Icon,
-        item_icon::*, query_button::QueryButton, skeleton::BoxSkeleton, tool_help::*,
-        tooltip::Tooltip, virtual_scroller::*, world_picker::WorldOnlyPicker,
+        add_recipe_to_list::AddRecipeToList,
+        crafter_settings::CrafterSettings,
+        gil::*,
+        icon::Icon,
+        item_icon::*,
+        query_button::QueryButton,
+        skeleton::BoxSkeleton,
+        tool_help::*,
+        toolbar::{Toolbar, ToolbarField, ToolbarPills, ToolbarSpacer},
+        tooltip::Tooltip,
+        virtual_scroller::*,
+        world_picker::WorldOnlyPicker,
     },
     global_state::{
         cookies::Cookies, crafter_levels::CrafterLevels, home_world::use_home_world,
@@ -15,7 +24,7 @@ use crate::{
     },
 };
 use icondata as i;
-use leptos::{either::Either, prelude::*};
+use leptos::prelude::*;
 use leptos_router::hooks::{query_signal, use_params_map};
 use std::{cmp::Reverse, collections::HashMap, fmt::Display, str::FromStr, sync::Arc};
 use ultros_api_types::{
@@ -156,24 +165,6 @@ fn calculate_crafting_cost(
     };
 
     (clamped_cost, sub_crafts)
-}
-
-#[component]
-fn FilterCard<T>(
-    #[prop(into)] title: Oco<'static, str>,
-    #[prop(into)] description: Oco<'static, str>,
-    children: TypedChildren<T>,
-) -> impl IntoView
-where
-    T: IntoView,
-{
-    view! {
-        <div class="panel p-6 flex flex-col w-full bg-[color:var(--color-background-elevated)] bg-opacity-100 z-20" style="backdrop-filter: none; background-image: none;">
-            <h3 class="font-bold text-xl mb-2 text-[color:var(--brand-fg)]">{title}</h3>
-            <p class="mb-4 text-[color:var(--color-text-muted)]">{description}</p>
-            {children.into_inner()().into_view()}
-        </div>
-    }
 }
 
 #[component]
@@ -381,173 +372,141 @@ fn RecipeAnalyzerTable(
 
     view! {
         <div class="flex flex-col gap-6">
-            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                 <FilterCard
-                    title=t_string!(i18n, minimum_profit).to_string()
-                    description=t_string!(i18n, set_minimum_profit_margin).to_string()
-                >
-                    <div class="flex flex-col gap-2">
-                        <div class="text-brand-300">
-                            {move || {
-                                minimum_profit()
-                                    .map(|profit| Either::Left(view! { <Gil amount=profit /> }))
-                                    .unwrap_or(Either::Right("---"))
-                            }}
-                        </div>
-                        <input
-                            class="input"
-                            min=0
-                            step=1000
-                            type="number"
-                            prop:value=minimum_profit
-                            on:input=move |input| {
-                                let value = event_target_value(&input);
-                                if let Ok(profit) = value.parse::<i32>() {
-                                    set_minimum_profit(Some(profit))
-                                } else if value.is_empty() {
-                                    set_minimum_profit(None);
-                                }
-                            }
-                        />
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title="Minimum ROI"
-                    description="Set the minimum return on investment %"
-                >
-                    <div class="flex flex-col gap-2">
-                         <div class="text-brand-300">
-                            {move || {
-                                minimum_roi()
-                                    .map(|roi| format!("{roi}%"))
-                                    .unwrap_or("---".to_string())
-                            }}
-                        </div>
-                        <input
-                            class="input"
-                            min=0
-                            step=10
-                            type="number"
-                            prop:value=minimum_roi
-                            on:input=move |input| {
-                                let value = event_target_value(&input);
-                                if let Ok(roi) = value.parse::<i32>() {
-                                    set_minimum_roi(Some(roi));
-                                } else if value.is_empty() {
-                                    set_minimum_roi(None);
-                                }
-                            }
-                        />
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title="Minimum Daily Sales"
-                    description="Filter items by sales velocity (sales/day)"
-                >
-                    <div class="flex flex-col gap-2">
-                        <div class="text-brand-300">
-                             {move || {
-                                min_daily_sales()
-                                    .map(|s| format!("{:.1} / day", s))
-                                    .unwrap_or("---".to_string())
-                            }}
-                        </div>
-                        <input
-                            class="input"
-                            type="number"
-                            min="0"
-                            step="0.1"
-                            placeholder="e.g. 1.0"
-                            prop:value=min_daily_sales
-                            on:input=move |input| {
-                                let value = event_target_value(&input);
-                                if let Ok(s) = value.parse::<f32>() {
-                                    set_min_daily_sales(Some(s));
-                                } else if value.is_empty() {
-                                    set_min_daily_sales(None);
-                                }
-                            }
-                        />
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title="Options"
-                    description="Configure calculation options"
-                >
-                     <div class="flex flex-col gap-4">
-                <Show when=move || !has_levels()>
-                    <div class="text-center p-8 text-brand-300 bg-brand-900/20 rounded-lg border border-brand-800">
-                    <h3 class="text-xl font-bold mb-2">"No Crafter Levels Configured"</h3>
-                    <p>"Please configure your crafter levels above to see profitable recipes."</p>
-                </div>
-                </Show>
-
-                <div class="flex flex-row gap-4 flex-wrap">
+            // Primary filter toolbar
+            <Toolbar>
+                <ToolbarField label="Profit (Min)">
                     <input
-                        type="checkbox"
-                        id="subcrafts"
-                        class="checkbox"
-                        prop:checked=move || use_subcrafts().unwrap_or(false)
-                        on:change=move |ev| set_use_subcrafts(Some(event_target_checked(&ev)))
-                    />
-                    <label for="subcrafts">"Include Sub-crafts"</label>
-                    <div class="text-brand-300 cursor-help" title="If enabled, the analyzer will check if it's cheaper to craft intermediate ingredients rather than buying them from the market board.">
-                        <Icon icon=i::AiQuestionCircleOutlined />
-                    </div>
-                </div>
-                <div class="flex flex-row gap-4 flex-wrap">
-                    <input
-                        type="checkbox"
-                        id="require-hq"
-                        class="checkbox"
-                        prop:checked=move || require_hq().unwrap_or(false)
-                        on:change=move |ev| set_require_hq(Some(event_target_checked(&ev)))
-                    />
-                    <label for="require-hq">"Require HQ Ingredients"</label>
-                    <div class="text-brand-300 cursor-help" title="If enabled, ingredient costs will prefer HQ listings when available. Falls back to LQ if no HQ listing exists.">
-                        <Icon icon=i::AiQuestionCircleOutlined />
-                    </div>
-                </div>
-                <div class="flex flex-row gap-4 flex-wrap">
-                    <input
-                        type="checkbox"
-                        id="filter-outliers"
-                        class="checkbox"
-                        prop:checked=move || filter_outliers().unwrap_or(false)
-                        on:change=move |ev| set_filter_outliers(Some(event_target_checked(&ev)))
-                    />
-                    <label for="filter-outliers">"Filter Outliers"</label>
-                    <div class="text-brand-300 cursor-help" title="If enabled, sales outliers will be removed from the average price calculation using the Interquartile Range (IQR) method.">
-                        <Icon icon=i::AiQuestionCircleOutlined />
-                    </div>
-                </div>
-                        <select
-                            class="input"
-                            on:change=move |ev| {
-                                let val = event_target_value(&ev);
-                                if val.is_empty() {
-                                    set_job_filter(None);
-                                } else {
-                                    set_job_filter(Some(val));
-                                }
+                        class="input input-sm w-32"
+                        min=0
+                        step=1000
+                        placeholder="e.g. 10000"
+                        type="number"
+                        prop:value=minimum_profit
+                        on:input=move |input| {
+                            let value = event_target_value(&input);
+                            if let Ok(profit) = value.parse::<i32>() {
+                                set_minimum_profit(Some(profit));
+                            } else if value.is_empty() {
+                                set_minimum_profit(None);
                             }
+                        }
+                    />
+                </ToolbarField>
+                <ToolbarField label="ROI (Min)">
+                    <input
+                        class="input input-sm w-28"
+                        min=0
+                        step=10
+                        placeholder="e.g. 200"
+                        type="number"
+                        prop:value=minimum_roi
+                        on:input=move |input| {
+                            let value = event_target_value(&input);
+                            if let Ok(roi) = value.parse::<i32>() {
+                                set_minimum_roi(Some(roi));
+                            } else if value.is_empty() {
+                                set_minimum_roi(None);
+                            }
+                        }
+                    />
+                </ToolbarField>
+                <ToolbarField label="Daily Sales (Min)">
+                    <input
+                        class="input input-sm w-24"
+                        type="number"
+                        min="0"
+                        step="0.1"
+                        placeholder="e.g. 1.0"
+                        prop:value=min_daily_sales
+                        on:input=move |input| {
+                            let value = event_target_value(&input);
+                            if let Ok(s) = value.parse::<f32>() {
+                                set_min_daily_sales(Some(s));
+                            } else if value.is_empty() {
+                                set_min_daily_sales(None);
+                            }
+                        }
+                    />
+                </ToolbarField>
+                <ToolbarField label="Job">
+                    <select
+                        class="input input-sm w-40"
+                        on:change=move |ev| {
+                            let val = event_target_value(&ev);
+                            if val.is_empty() {
+                                set_job_filter(None);
+                            } else {
+                                set_job_filter(Some(val));
+                            }
+                        }
+                    >
+                        <option value="">{t!(i18n, all_jobs)}</option>
+                        <option value="CRP" selected=move || job_filter() == Some("CRP".to_string())>{t!(i18n, carpenter)}</option>
+                        <option value="BSM" selected=move || job_filter() == Some("BSM".to_string())>{t!(i18n, blacksmith)}</option>
+                        <option value="ARM" selected=move || job_filter() == Some("ARM".to_string())>{t!(i18n, armorer)}</option>
+                        <option value="GSM" selected=move || job_filter() == Some("GSM".to_string())>{t!(i18n, goldsmith)}</option>
+                        <option value="LTW" selected=move || job_filter() == Some("LTW".to_string())>{t!(i18n, leatherworker)}</option>
+                        <option value="WVR" selected=move || job_filter() == Some("WVR".to_string())>{t!(i18n, weaver)}</option>
+                        <option value="ALC" selected=move || job_filter() == Some("ALC".to_string())>{t!(i18n, alchemist)}</option>
+                        <option value="CUL" selected=move || job_filter() == Some("CUL".to_string())>{t!(i18n, culinarian)}</option>
+                    </select>
+                </ToolbarField>
+                <ToolbarField label="Sub-crafts">
+                    <ToolbarPills>
+                        <button
+                            aria-pressed=move || if use_subcrafts().unwrap_or(false) { "false" } else { "true" }
+                            title="If enabled, the analyzer will check if it's cheaper to craft intermediate ingredients rather than buying them from the market board."
+                            on:click=move |_| set_use_subcrafts(Some(!use_subcrafts().unwrap_or(false)))
                         >
-                            <option value="">{t!(i18n, all_jobs)}</option>
-                            <option value="CRP" selected=move || job_filter() == Some("CRP".to_string())>{t!(i18n, carpenter)}</option>
-                            <option value="BSM" selected=move || job_filter() == Some("BSM".to_string())>{t!(i18n, blacksmith)}</option>
-                            <option value="ARM" selected=move || job_filter() == Some("ARM".to_string())>{t!(i18n, armorer)}</option>
-                            <option value="GSM" selected=move || job_filter() == Some("GSM".to_string())>{t!(i18n, goldsmith)}</option>
-                            <option value="LTW" selected=move || job_filter() == Some("LTW".to_string())>{t!(i18n, leatherworker)}</option>
-                            <option value="WVR" selected=move || job_filter() == Some("WVR".to_string())>{t!(i18n, weaver)}</option>
-                            <option value="ALC" selected=move || job_filter() == Some("ALC".to_string())>{t!(i18n, alchemist)}</option>
-                            <option value="CUL" selected=move || job_filter() == Some("CUL".to_string())>{t!(i18n, culinarian)}</option>
-                        </select>
-                     </div>
-                </FilterCard>
-            </div>
+                            "Off"
+                        </button>
+                        <button
+                            aria-pressed=move || if use_subcrafts().unwrap_or(false) { "true" } else { "false" }
+                            title="If enabled, the analyzer will check if it's cheaper to craft intermediate ingredients rather than buying them from the market board."
+                            on:click=move |_| set_use_subcrafts(Some(!use_subcrafts().unwrap_or(false)))
+                        >
+                            "On"
+                        </button>
+                    </ToolbarPills>
+                </ToolbarField>
+                <ToolbarField label="Require HQ">
+                    <ToolbarPills>
+                        <button
+                            aria-pressed=move || if require_hq().unwrap_or(false) { "false" } else { "true" }
+                            title="If enabled, ingredient costs will prefer HQ listings when available. Falls back to LQ if no HQ listing exists."
+                            on:click=move |_| set_require_hq(Some(!require_hq().unwrap_or(false)))
+                        >
+                            "Off"
+                        </button>
+                        <button
+                            aria-pressed=move || if require_hq().unwrap_or(false) { "true" } else { "false" }
+                            title="If enabled, ingredient costs will prefer HQ listings when available. Falls back to LQ if no HQ listing exists."
+                            on:click=move |_| set_require_hq(Some(!require_hq().unwrap_or(false)))
+                        >
+                            "On"
+                        </button>
+                    </ToolbarPills>
+                </ToolbarField>
+                <ToolbarField label="Filter Outliers">
+                    <ToolbarPills>
+                        <button
+                            aria-pressed=move || if filter_outliers().unwrap_or(false) { "false" } else { "true" }
+                            title="If enabled, sales outliers will be removed from the average price calculation using the Interquartile Range (IQR) method."
+                            on:click=move |_| set_filter_outliers(Some(!filter_outliers().unwrap_or(false)))
+                        >
+                            "Off"
+                        </button>
+                        <button
+                            aria-pressed=move || if filter_outliers().unwrap_or(false) { "true" } else { "false" }
+                            title="If enabled, sales outliers will be removed from the average price calculation using the Interquartile Range (IQR) method."
+                            on:click=move |_| set_filter_outliers(Some(!filter_outliers().unwrap_or(false)))
+                        >
+                            "On"
+                        </button>
+                    </ToolbarPills>
+                </ToolbarField>
+                <ToolbarSpacer />
+            </Toolbar>
 
             <Show when=move || !has_levels()>
                 <ActionableEmptyState
