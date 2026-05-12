@@ -177,6 +177,13 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
                 <AutoReload options=options.clone() />
                 <HydrationScripts options />
                 <MetaTags />
+                <script
+                    async
+                    src="https://www.googletagmanager.com/gtag/js?id=G-WYVZLM39M3"
+                ></script>
+                <script>
+    "window.dataLayer = window.dataLayer || [];function gtag(){dataLayer.push(arguments);}gtag('js', new Date());gtag('config', 'G-WYVZLM39M3');"
+                </script>
             </head>
             <body>
                 <App />
