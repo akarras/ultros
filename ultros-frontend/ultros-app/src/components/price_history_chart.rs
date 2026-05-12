@@ -6,7 +6,7 @@ use ultros_api_types::SaleHistory;
 use ultros_api_types::world_helper::AnySelector;
 
 use crate::global_state::LocalWorldData;
-use crate::i18n::{t_string, use_i18n};
+use crate::i18n::{t, t_string, use_i18n};
 
 type SeriesPoints = Vec<(chrono::DateTime<chrono::Local>, i32, i32)>;
 
@@ -180,6 +180,8 @@ fn StatsStrip(stats: Signal<Option<ChartStats>>) -> impl IntoView {
                     let n_label = t_string!(i18n, chart_stat_n_sales)
                         .to_string()
                         .replace("{n}", &s.n.to_string());
+                    let market_average_label =
+                        t_string!(i18n, chart_stat_market_avg).to_string();
                     let median_label = t_string!(i18n, chart_stat_median).to_string();
                     let min_label = t_string!(i18n, chart_stat_min).to_string();
                     let max_label = t_string!(i18n, chart_stat_max).to_string();
@@ -191,7 +193,7 @@ fn StatsStrip(stats: Signal<Option<ChartStats>>) -> impl IntoView {
                                 .map(|v| {
                                     view! {
                                         <span>
-                                            "market avg " {short_number(v)}
+                                            {market_average_label.clone()} " " {short_number(v)}
                                         </span>
                                     }
                                 })}
@@ -381,17 +383,17 @@ pub fn PriceHistoryChart(
             <StatsStrip stats=stats.into() />
             <div class="flex flex-wrap items-center gap-2 text-xs">
                 <ChartOverlayToggle
-                    label="Market avg"
+                    label=t_string!(i18n, chart_toggle_market_avg).to_string()
                     checked=show_market_average
                     set_checked=set_show_market_average
                 />
                 <ChartOverlayToggle
-                    label="Trend"
+                    label=t_string!(i18n, chart_legend_trend).to_string()
                     checked=show_trend
                     set_checked=set_show_trend
                 />
                 <ChartOverlayToggle
-                    label="Quantity"
+                    label=t_string!(i18n, chart_legend_quantity).to_string()
                     checked=show_quantity
                     set_checked=set_show_quantity
                 />
@@ -437,7 +439,7 @@ pub fn PriceHistoryChart(
                             .unwrap_or(Colour::from_rgb(96, 165, 250));
                         let mut reactive_series = Series::new(|row: &SaleRow| row.ts).line(
                             Line::new(|row: &SaleRow| row.price)
-                                .with_name("Sales")
+                                .with_name(t_string!(i18n, chart_legend_sales).to_string())
                                 .with_width(1.0)
                                 .with_colour(sales_colour)
                                 .with_interpolation(Interpolation::Linear)
@@ -458,7 +460,7 @@ pub fn PriceHistoryChart(
                         if show_market_average.get() {
                             reactive_series = reactive_series.line(
                                 Line::new(|r: &SaleRow| r.market_average_y)
-                                    .with_name("Market avg")
+                                    .with_name(t_string!(i18n, chart_legend_market_avg).to_string())
                                     .with_width(2.0)
                                     .with_interpolation(Interpolation::Linear)
                                     .with_colour(
@@ -471,7 +473,7 @@ pub fn PriceHistoryChart(
                         if show_trend.get() {
                             reactive_series = reactive_series.line(
                                 Line::new(|r: &SaleRow| r.trend_y)
-                                    .with_name("Trend")
+                                    .with_name(t_string!(i18n, chart_legend_trend).to_string())
                                     .with_width(1.5)
                                     .with_interpolation(Interpolation::Linear)
                                     .with_colour(
@@ -523,7 +525,7 @@ pub fn PriceHistoryChart(
                                     let quantity_series = Series::new(|row: &SaleRow| row.ts)
                                         .bar(
                                             Bar::new(|row: &SaleRow| row.quantity)
-                                                .with_name("Quantity")
+                                                .with_name(t_string!(i18n, chart_legend_quantity).to_string())
                                                 .with_colour(quantity_colour)
                                                 .with_placement(BarPlacement::Edge)
                                                 .with_gap(0.35),
@@ -570,19 +572,19 @@ pub fn PriceHistoryChart(
                                     {show_market_average.get().then(|| view! {
                                         <span class="inline-flex items-center gap-1.5">
                                             <span class="h-0.5 w-5 bg-[#facc15]"></span>
-                                            "Market avg"
+                                            {t!(i18n, chart_legend_market_avg)}
                                         </span>
                                     })}
                                     {show_trend.get().then(|| view! {
                                         <span class="inline-flex items-center gap-1.5">
                                             <span class="h-0.5 w-5 bg-[#94a3b8]"></span>
-                                            "Trend"
+                                            {t!(i18n, chart_legend_trend)}
                                         </span>
                                     })}
                                     {show_quantity.get().then(|| view! {
                                         <span class="inline-flex items-center gap-1.5">
                                             <span class="h-2.5 w-3 rounded-sm bg-[#22c55e]"></span>
-                                            "Quantity"
+                                            {t!(i18n, chart_legend_quantity)}
                                         </span>
                                     })}
                                 </div>
@@ -599,7 +601,7 @@ pub fn PriceHistoryChart(
 
 #[component]
 fn ChartOverlayToggle(
-    label: &'static str,
+    label: String,
     #[prop(into)] checked: Signal<bool>,
     set_checked: WriteSignal<bool>,
 ) -> impl IntoView {
@@ -643,11 +645,12 @@ fn ColorByControl(
     #[prop(into)] selected: Signal<ColorBy>,
     set_selected: WriteSignal<ColorBy>,
 ) -> impl IntoView {
+    let i18n = use_i18n();
     view! {
         <Show when=move || options.with(|options| options.len() > 1)>
             <div class="flex flex-wrap items-center gap-2 text-xs">
                 <span class="font-semibold uppercase tracking-wide text-[color:var(--color-text-muted)]">
-                    "Color by:"
+                    {t!(i18n, chart_color_by)}
                 </span>
                 <div class="inline-flex overflow-hidden rounded-md border border-[color:var(--color-outline)]">
                 <For
@@ -671,7 +674,11 @@ fn ColorByControl(
                                 }
                                 on:click=move |_| set_selected.set(option)
                             >
-                                {option.label()}
+                                {match option {
+                                    ColorBy::Region => t_string!(i18n, chart_color_region).to_string(),
+                                    ColorBy::Datacenter => t_string!(i18n, chart_color_datacenter).to_string(),
+                                    ColorBy::World => t_string!(i18n, chart_color_world).to_string(),
+                                }}
                             </button>
                         }
                     }

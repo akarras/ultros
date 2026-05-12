@@ -21,6 +21,7 @@ use crate::{
     global_state::{
         cheapest_prices::CheapestPrices, home_world::get_price_zone, xiv_data::tracked_data,
     },
+    i18n::*,
 };
 
 use super::{cheapest_price::*, gil::*, small_item_display::*};
@@ -132,6 +133,7 @@ pub(crate) fn calculate_crafting_cost(recipe: &Recipe, prices: &CheapestListings
 
 #[component]
 fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
+    let i18n = use_i18n();
     let cheapest_prices = use_context::<CheapestPrices>().unwrap();
 
     view! {
@@ -147,9 +149,9 @@ fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
                         let (hq_amount, lq_amount) = calculate_crafting_cost(recipe, prices);
                         let result_view = view! {
                             <span class="flex flex-row gap-2 items-center">
-                                <span class="px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--brand-ring)_16%,transparent)] text-xs">"HQ:"</span>
+                                <span class="px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--brand-ring)_16%,transparent)] text-xs">{t!(i18n, related_recipe_hq_label)}</span>
                                 <Gil amount=hq_amount />
-                                <span class="px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)] text-xs">"LQ:"</span>
+                                <span class="px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)] text-xs">{t!(i18n, related_recipe_lq_label)}</span>
                                 <Gil amount=lq_amount />
                             </span>
                         };
@@ -162,6 +164,7 @@ fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
 
 #[component]
 fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
+    let i18n = use_i18n();
     let items = &tracked_data().items;
     let ingredients = IngredientsIter::new(recipe)
         .flat_map(|(ingredient, amount)| items.get(&ingredient).map(|item| (item, amount)))
@@ -194,14 +197,14 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
                         <span class="px-2 py-0.5 rounded-full text-xs font-bold
                                      bg-emerald-900/40 border border-emerald-700/40
                                      text-emerald-200">
-                            "Target"
+                            {t!(i18n, related_recipe_target_chip)}
                         </span>
                     })}
                     {is_ingredient.then(|| view! {
                         <span class="px-2 py-0.5 rounded-full text-xs font-bold
                                      bg-blue-900/40 border border-blue-700/40
                                      text-blue-200">
-                            "Ingredient"
+                            {t!(i18n, related_recipe_ingredient_chip)}
                         </span>
                     })}
                     <AddRecipeToList recipe />
@@ -209,7 +212,7 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
             </div>
 
             <div class="space-y-2">
-                <div class="text-xs font-semibold text-brand-300 uppercase tracking-wide">"Ingredients"</div>
+                <div class="text-xs font-semibold text-brand-300 uppercase tracking-wide">{t!(i18n, related_recipe_ingredients_heading)}</div>
                 <div class="rounded-md border border-brand-700/25 bg-[color:color-mix(in_srgb,_var(--color-text)_4%,_transparent)] px-3 py-2">
                     {ingredients}
                 </div>
@@ -217,7 +220,7 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
 
             <div class="grid gap-3 pt-3 border-t border-brand-700/30 sm:grid-cols-2">
                 <div class="flex flex-wrap items-center justify-between gap-2 text-sm">
-                    <span class="text-brand-300">"Est. Cost:"</span>
+                    <span class="text-brand-300">{t!(i18n, related_recipe_est_cost)}</span>
                     <RecipePriceEstimate recipe />
                 </div>
 
@@ -269,7 +272,7 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
                                     None
                                 };
 
-                                let profit_chip = |label: &str, profit_opt: Option<i32>| {
+                                let profit_chip = |label: String, profit_opt: Option<i32>| {
                                     profit_opt.map(|profit| {
                                         let cls = if profit >= 0 {
                                             "px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-900/30 text-emerald-300 border border-emerald-700/30 flex items-center gap-1"
@@ -287,10 +290,10 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
 
                                 Some(view! {
                                     <div class="flex flex-wrap items-center justify-between gap-2 text-sm">
-                                        <span class="text-brand-300">"Est. Profit:"</span>
+                                        <span class="text-brand-300">{t!(i18n, related_recipe_est_profit)}</span>
                                         <div class="flex flex-wrap justify-end gap-2">
-                                            {profit_chip("HQ", hq_sell.map(|p| p - hq_cost))}
-                                            {profit_chip("LQ", lq_sell.map(|p| p - lq_cost))}
+                                            {profit_chip(t_string!(i18n, hq).to_string(), hq_sell.map(|p| p - hq_cost))}
+                                            {profit_chip(t_string!(i18n, lq).to_string(), lq_sell.map(|p| p - lq_cost))}
                                         </div>
                                     </div>
                                 })

@@ -9,8 +9,11 @@ use linregress::{FormulaRegressionBuilder, RegressionDataBuilder};
 use log::{error, info};
 use ultros_api_types::{SaleHistory, world_helper::AnySelector};
 
+use crate::i18n::*;
+
 #[component]
 pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
+    let i18n = use_i18n();
     let (show_more, set_show_more) = signal(false);
     // Optimization: Avoid cloning the entire sales vector when we only need a slice.
     // Using `sales.with` allows us to inspect the vector without cloning it.
@@ -29,14 +32,14 @@ pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
             <table class="w-full text-sm min-w-[720px]">
             <thead class="text-xs uppercase">
                 <tr>
-                    <th scope="col">"hq"</th>
-                    <th scope="col">"price"</th>
-                    <th scope="col">"qty."</th>
-                    <th scope="col">"total"</th>
-                    <th scope="col">"purchaser"</th>
-                    <th scope="col">"world"</th>
-                    <th scope="col">"datacenter"</th>
-                    <th scope="col">"time sold"</th>
+                    <th scope="col">{t!(i18n, sale_history_col_hq)}</th>
+                    <th scope="col">{t!(i18n, sale_history_col_price)}</th>
+                    <th scope="col">{t!(i18n, sale_history_col_qty)}</th>
+                    <th scope="col">{t!(i18n, sale_history_col_total)}</th>
+                    <th scope="col">{t!(i18n, sale_history_col_purchaser)}</th>
+                    <th scope="col">{t!(i18n, sale_history_col_world)}</th>
+                    <th scope="col">{t!(i18n, sale_history_col_datacenter)}</th>
+                    <th scope="col">{t!(i18n, sale_history_col_time_sold)}</th>
                 </tr>
             </thead>
             <tbody class="divide-y divide-[color:var(--color-outline)]">
@@ -52,7 +55,7 @@ pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
                                         .hq
                                         .then(|| {
                                             view! {
-                                                <span class="sr-only">"High Quality"</span>
+                                                <span class="sr-only">{t!(i18n, sale_history_high_quality_sr)}</span>
                                                 <Icon icon=i::BsCheck aria_hidden=true />
                                             }
                                             .into_view()
@@ -90,7 +93,7 @@ pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
                                             class="btn btn-primary w-full"
                                             on:click=move |_| set_show_more(true)
                                         >
-                                            "Show more"
+                                            {t!(i18n, sale_history_show_more)}
                                         </button>
                                     </td>
                                 </tr>
@@ -270,6 +273,7 @@ impl SalesSummaryData {
 
 #[component]
 fn WindowStats(#[prop(into)] sales: Signal<SalesWindow>) -> impl IntoView {
+    let i18n = use_i18n();
     let total_gil = Memo::new(move |_| sales.with(|s| s.total_gil));
     let average_unit_price =
         Memo::new(move |_| sales.with(|s| s.average_unit_price.round() as i32));
@@ -284,41 +288,41 @@ fn WindowStats(#[prop(into)] sales: Signal<SalesWindow>) -> impl IntoView {
     view! {
         <div class="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
             <div class="col-span-2 rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_12%,_transparent)] px-3 py-2 sm:col-span-1 xl:col-span-2">
-                <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">"Gil sold"</div>
+                <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, sale_history_stat_gil_sold)}</div>
                 <div class="mt-1 text-lg font-bold tabular-nums text-[color:var(--brand-fg)]">
                     <GenericGil<u64> amount=total_gil />
                 </div>
             </div>
             <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--color-text)_5%,_transparent)] px-3 py-2">
-                <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">"Avg price"</div>
+                <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, sale_history_stat_avg_price)}</div>
                 <div class="mt-1 font-semibold tabular-nums"><Gil amount=average_unit_price /></div>
             </div>
             <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--color-text)_5%,_transparent)] px-3 py-2">
-                <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">"Median"</div>
+                <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, sale_history_stat_median_price)}</div>
                 <div class="mt-1 font-semibold tabular-nums"><Gil amount=median_unit_price /></div>
             </div>
             <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--color-text)_5%,_transparent)] px-3 py-2">
-                <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">"Min"</div>
+                <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, sale_history_stat_min)}</div>
                 <div class="mt-1 font-semibold tabular-nums"><Gil amount=min_unit_price /></div>
             </div>
             <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--color-text)_5%,_transparent)] px-3 py-2">
-                <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">"Max"</div>
+                <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, sale_history_stat_max)}</div>
                 <div class="mt-1 font-semibold tabular-nums"><Gil amount=max_unit_price /></div>
             </div>
             <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--color-text)_5%,_transparent)] px-3 py-2">
-                <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">"Stack"</div>
+                <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, sale_history_stat_typical_stack)}</div>
                 <div class="mt-1 font-semibold tabular-nums">{median_stack_size}</div>
             </div>
             <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--color-text)_5%,_transparent)] px-3 py-2">
-                <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">"HQ"</div>
+                <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, sale_history_stat_hq_percent)}</div>
                 <div class="mt-1 font-semibold tabular-nums">{move || format!("{}%", hq_percent())}</div>
             </div>
             <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_10%,_transparent)] px-3 py-2">
-                <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">"Next est."</div>
+                <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, sale_history_stat_next_sale)}</div>
                 <div class="mt-1 font-semibold tabular-nums"><Gil amount=guessed_next_sale_price /></div>
             </div>
             <div class="col-span-2 rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_10%,_transparent)] px-3 py-2 sm:col-span-1 xl:col-span-2">
-                <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">"Pace"</div>
+                <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, sale_history_stat_time_between_sales)}</div>
                 <div class="mt-1 font-semibold tabular-nums">
                     {move || {
                         time_between_sales()
@@ -349,21 +353,22 @@ fn WindowStats(#[prop(into)] sales: Signal<SalesWindow>) -> impl IntoView {
 
 #[component]
 pub fn SalesInsights(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
+    let i18n = use_i18n();
     let sales = Memo::new(move |_| sales.with(|sales| SalesSummaryData::new(sales)));
     let day_sales = Memo::new(move |_| sales.with(|s| s.past_day.clone()).unwrap_or_default());
     let month_sales = Memo::new(move |_| sales.with(|s| s.month.clone()).unwrap_or_default());
     view! {
         <div class="mb-4 flex flex-wrap items-end justify-between gap-2">
-            <h3 class="text-xl font-bold text-[color:var(--brand-fg)]">"Sales at a glance"</h3>
-            <span class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">"Recent market velocity"</span>
+            <h3 class="text-xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, sale_history_insights_title)}</h3>
+            <span class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, sale_history_insights_subtitle)}</span>
         </div>
         <div class="grid grid-cols-1 gap-4 xl:grid-cols-2">
             <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--color-text)_3%,_transparent)] p-3" class:hidden=move || sales.with(|s| s.past_day.is_none())>
-                <h4 class="mb-3 text-sm font-semibold text-[color:var(--color-text)]">"Last 24 hours"</h4>
+                <h4 class="mb-3 text-sm font-semibold text-[color:var(--color-text)]">{t!(i18n, sale_history_last_24h)}</h4>
                 <WindowStats sales=day_sales />
             </div>
             <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--color-text)_3%,_transparent)] p-3" class:hidden=move || sales.with(|s| s.month.is_none())>
-                <h4 class="mb-3 text-sm font-semibold text-[color:var(--color-text)]">"Last 30 days"</h4>
+                <h4 class="mb-3 text-sm font-semibold text-[color:var(--color-text)]">{t!(i18n, sale_history_last_30d)}</h4>
                 <WindowStats sales=month_sales />
             </div>
         </div>
