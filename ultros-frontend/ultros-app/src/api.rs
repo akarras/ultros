@@ -6,7 +6,10 @@ use tracing::error;
 use tracing::instrument;
 use ultros_api_types::{
     ActiveListing, CurrentlyShownItem, FfxivCharacter, FfxivCharacterVerification,
-    alert::{Alert, AlertEvent, CreateAlertRequest, UpdateAlertRequest},
+    alert::{
+        Alert, AlertEvent, CreateAlertRequest, CreateEndpointRequest, Endpoint, ResendResult,
+        UpdateAlertRequest, UpdateEndpointRequest,
+    },
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     list::{
         CreateInvite, CreateList, List, ListInvite, ListItem, ListSharedGroup, ListSharedUser,
@@ -367,6 +370,31 @@ pub(crate) async fn delete_alert(id: i32) -> AppResult<()> {
 
 pub(crate) async fn get_alert_events() -> AppResult<Vec<AlertEvent>> {
     fetch_api("/api/v1/alerts/events").await
+}
+
+pub(crate) async fn list_endpoints() -> AppResult<Vec<Endpoint>> {
+    fetch_api("/api/v1/endpoints").await
+}
+
+pub(crate) async fn create_endpoint(req: CreateEndpointRequest) -> AppResult<Endpoint> {
+    post_api("/api/v1/endpoints", req).await
+}
+
+#[allow(dead_code)]
+pub(crate) async fn update_endpoint(id: i32, req: UpdateEndpointRequest) -> AppResult<()> {
+    patch_api(&format!("/api/v1/endpoints/{id}"), req).await
+}
+
+pub(crate) async fn delete_endpoint(id: i32) -> AppResult<()> {
+    delete_api(&format!("/api/v1/endpoints/{id}")).await
+}
+
+pub(crate) async fn test_endpoint(id: i32) -> AppResult<ResendResult> {
+    post_api(&format!("/api/v1/endpoints/{id}/test"), ()).await
+}
+
+pub(crate) async fn resend_alert_event(event_id: i64) -> AppResult<ResendResult> {
+    post_api(&format!("/api/v1/alerts/events/{event_id}/resend"), ()).await
 }
 
 /// Return the T, or try and return an AppError

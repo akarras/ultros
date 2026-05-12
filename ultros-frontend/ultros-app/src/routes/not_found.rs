@@ -1,11 +1,13 @@
 use crate::components::meta::MetaTitle;
+use crate::i18n::*;
 use leptos::prelude::*;
 use leptos_router::components::A;
 
 #[component]
 pub fn NotFound() -> impl IntoView {
+    let i18n = use_i18n();
     view! {
-        <MetaTitle title="Page Not Found - Ultros" />
+        <MetaTitle title=move || t_string!(i18n, not_found_meta_title).to_string() />
         <div class="flex flex-col items-center justify-center min-h-[80vh] text-center space-y-12 p-4 overflow-hidden relative select-none">
 
             // Background effect
@@ -45,19 +47,19 @@ pub fn NotFound() -> impl IntoView {
             <div class="space-y-6 max-w-lg z-10 relative">
                 <h1 class="text-4xl sm:text-5xl font-extrabold tracking-tight drop-shadow-lg">
                     <span class="text-[color:var(--color-text)]">
-                        "Lost in the Void"
+                        {t!(i18n, not_found_heading)}
                     </span>
                 </h1>
                 <p class="text-lg sm:text-xl text-[color:var(--color-text)] leading-relaxed font-medium drop-shadow-md">
-                    "The page you are looking for has been cast into the void, or perhaps never existed at all."
+                    {t!(i18n, not_found_body)}
                 </p>
 
                 <div class="pt-6 flex flex-wrap justify-center gap-4">
                     <A href="/" attr:class="btn btn-primary px-8 py-3 text-lg shadow-lg shadow-brand-900/20 hover:shadow-brand-900/40 transition-all duration-300">
-                        "Return to Source"
+                        {t!(i18n, not_found_return_home)}
                     </A>
                     <a href="javascript:history.back()" class="btn btn-neutral px-8 py-3 text-lg">
-                        "Go Back"
+                        {t!(i18n, not_found_go_back)}
                     </a>
                 </div>
             </div>

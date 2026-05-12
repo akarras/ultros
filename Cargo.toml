@@ -113,6 +113,7 @@ pathfinder_simd = { git = "https://github.com/servo/pathfinder.git" } # needed o
 [profile.release]
 # lto = true
 opt-level = "z"
+strip = "debuginfo"
 # codegen-units = 1
 
 [profile.wasm-release]
@@ -137,8 +138,8 @@ opt-level = 1
 name = "ultros"
 bin-package = "ultros"
 lib-package = "ultros-client"
-output-name = "ultros"
 lib-profile-release = "wasm-release"
+output-name = "ultros"
 wasm-opt-features = [
     "-Oz",
     "-g",

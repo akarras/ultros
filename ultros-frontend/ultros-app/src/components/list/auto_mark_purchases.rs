@@ -1,5 +1,6 @@
 use crate::api::edit_list_item;
 use crate::components::icon::Icon;
+use crate::i18n::{t, t_string, use_i18n};
 use crate::ws::realtime::{RealtimeSubscription, use_realtime};
 use icondata as i;
 use leptos::prelude::*;
@@ -12,6 +13,7 @@ type ListViewResult =
 
 #[component]
 pub fn AutoMarkPurchases(list_view: Resource<ListViewResult>) -> impl IntoView {
+    let i18n = use_i18n();
     let (watch_character_name, set_watch_character_name) = signal("".to_string());
     let (is_watching, set_is_watching) = signal(false);
     let realtime = use_realtime();
@@ -52,9 +54,9 @@ pub fn AutoMarkPurchases(list_view: Resource<ListViewResult>) -> impl IntoView {
             <summary class="flex cursor-pointer list-none items-center justify-between gap-3 p-3">
                 <div class="flex min-w-0 items-center gap-2">
                     <Icon icon=i::BiPurchaseTagSolid />
-                    <span class="font-bold">"Auto-mark Purchases"</span>
+                    <span class="font-bold">{t!(i18n, list_auto_mark_title)}</span>
                     <span class="rounded-md border border-[color:var(--color-outline)] px-2 py-0.5 text-xs text-[color:var(--color-text-muted)]">
-                        "Experimental"
+                        {t!(i18n, list_auto_mark_experimental_badge)}
                     </span>
                 </div>
                 <Icon icon=i::BiChevronDownRegular attr:class="shrink-0 transition-transform group-open:rotate-180" />
@@ -63,7 +65,7 @@ pub fn AutoMarkPurchases(list_view: Resource<ListViewResult>) -> impl IntoView {
                 <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
                     <input
                         class="input flex-1"
-                        placeholder="Character Name"
+                        placeholder=t_string!(i18n, list_auto_mark_character_name_placeholder)
                         prop:value=watch_character_name
                         on:input=move |e| set_watch_character_name(event_target_value(&e))
                         disabled=move || is_watching.get()
@@ -80,7 +82,7 @@ pub fn AutoMarkPurchases(list_view: Resource<ListViewResult>) -> impl IntoView {
                         }
                         on:click=move |_| set_is_watching.update(|w| *w = !*w)
                     >
-                        {move || if is_watching.get() { "Watching" } else { "Start" }}
+                        {move || if is_watching.get() { t_string!(i18n, list_auto_mark_watching) } else { t_string!(i18n, list_auto_mark_start_watching) }}
                     </button>
                 </div>
             </div>

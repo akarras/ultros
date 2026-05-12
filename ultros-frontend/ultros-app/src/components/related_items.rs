@@ -21,6 +21,7 @@ use crate::{
     global_state::{
         cheapest_prices::CheapestPrices, home_world::get_price_zone, xiv_data::tracked_data,
     },
+    i18n::*,
 };
 
 use super::{cheapest_price::*, gil::*, small_item_display::*};
@@ -132,6 +133,7 @@ pub(crate) fn calculate_crafting_cost(recipe: &Recipe, prices: &CheapestListings
 
 #[component]
 fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
+    let i18n = use_i18n();
     let cheapest_prices = use_context::<CheapestPrices>().unwrap();
 
     view! {
@@ -147,9 +149,9 @@ fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
                         let (hq_amount, lq_amount) = calculate_crafting_cost(recipe, prices);
                         let result_view = view! {
                             <span class="flex flex-row gap-2 items-center">
-                                <span class="px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--brand-ring)_16%,transparent)] text-xs">"HQ:"</span>
+                                <span class="px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--brand-ring)_16%,transparent)] text-xs">{t!(i18n, related_recipe_hq_label)}</span>
                                 <Gil amount=hq_amount />
-                                <span class="px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)] text-xs">"LQ:"</span>
+                                <span class="px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)] text-xs">{t!(i18n, related_recipe_lq_label)}</span>
                                 <Gil amount=lq_amount />
                             </span>
                         };
@@ -162,6 +164,7 @@ fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
 
 #[component]
 fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
+    let i18n = use_i18n();
     let items = &tracked_data().items;
     let ingredients = IngredientsIter::new(recipe)
         .flat_map(|(ingredient, amount)| items.get(&ingredient).map(|item| (item, amount)))
@@ -194,14 +197,14 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
                         <span class="px-2 py-0.5 rounded-full text-xs font-bold
                                      bg-emerald-900/40 border border-emerald-700/40
                                      text-emerald-200">
-                            "Target"
+                            {t!(i18n, related_recipe_target_chip)}
                         </span>
                     })}
                     {is_ingredient.then(|| view! {
                         <span class="px-2 py-0.5 rounded-full text-xs font-bold
                                      bg-blue-900/40 border border-blue-700/40
                                      text-blue-200">
-                            "Ingredient"
+                            {t!(i18n, related_recipe_ingredient_chip)}
                         </span>
                     })}
                     <AddRecipeToList recipe />
@@ -209,7 +212,7 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
             </div>
 
             <div class="space-y-1">
-                <div class="text-xs font-semibold text-brand-300 uppercase tracking-wide">"Ingredients"</div>
+                <div class="text-xs font-semibold text-brand-300 uppercase tracking-wide">{t!(i18n, related_recipe_ingredients_heading)}</div>
                 <div class="pl-1 border-l-2 border-brand-700/30 space-y-1">
                     {ingredients}
                 </div>
@@ -217,7 +220,7 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
 
             <div class="pt-2 border-t border-brand-700/30">
                 <div class="flex items-center justify-between gap-2 text-sm">
-                    <span class="text-brand-300">"Est. Cost:"</span>
+                    <span class="text-brand-300">{t!(i18n, related_recipe_est_cost)}</span>
                     <RecipePriceEstimate recipe />
                 </div>
 
@@ -269,7 +272,7 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
                                     None
                                 };
 
-                                let profit_chip = |label: &str, profit_opt: Option<i32>| {
+                                let profit_chip = |label: String, profit_opt: Option<i32>| {
                                     profit_opt.map(|profit| {
                                         let cls = if profit >= 0 {
                                             "px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-900/30 text-emerald-300 border border-emerald-700/30 flex items-center gap-1"
@@ -287,10 +290,10 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
 
                                 Some(view! {
                                     <div class="flex flex-wrap items-center justify-between gap-2 text-sm mt-2">
-                                        <span class="text-brand-300">"Est. Profit:"</span>
+                                        <span class="text-brand-300">{t!(i18n, related_recipe_est_profit)}</span>
                                         <div class="flex gap-2">
-                                            {profit_chip("HQ", hq_sell.map(|p| p - hq_cost))}
-                                            {profit_chip("LQ", lq_sell.map(|p| p - lq_cost))}
+                                            {profit_chip(t_string!(i18n, hq).to_string(), hq_sell.map(|p| p - hq_cost))}
+                                            {profit_chip(t_string!(i18n, lq).to_string(), lq_sell.map(|p| p - lq_cost))}
                                         </div>
                                     </div>
                                 })
@@ -348,6 +351,7 @@ fn gil_shop_to_npc(gil_shops: &[GilShopId]) -> Vec<(GilShopId, &'static ENpcBase
 
 #[component]
 fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
+    let i18n = use_i18n();
     let data = tracked_data();
     // lookup items
     let npcs = Memo::new(move |_| {
@@ -395,7 +399,7 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
         <div id="vendor-sources" class:hidden=empty class="panel p-4 sm:p-6 flex flex-col gap-4 max-h-[500px] overflow-y-auto">
             <h3 class="text-lg font-bold text-brand-200 flex items-center gap-2">
                 <Icon icon=icondata::FaShopSolid attr:class="text-brand-300" />
-                "Vendor Sources"
+                {t!(i18n, related_vendor_sources_title)}
             </h3>
             <div class="grid grid-cols-1 gap-3">{data}</div>
         </div>
@@ -459,6 +463,7 @@ fn get_trade_costs(shop: &SpecialShop, item_id: i32) -> Vec<TradeCosts> {
 
 #[component]
 fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
+    let i18n = use_i18n();
     let data = tracked_data();
     let exchanges = Memo::new(move |_| {
         let item_id = item_id();
@@ -480,7 +485,7 @@ fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                                 <div class="group flex flex-col gap-2 rounded-lg card p-3 transition-all hover:shadow-md border border-brand-700/30">
                                     <span class="text-sm font-medium border-b border-[color:var(--color-outline)] pb-2 text-brand-100">{shop.name.as_str()}</span>
                                     <div class="flex items-center gap-2 flex-wrap text-xs text-[color:var(--color-text-muted)] mt-1">
-                                        <span class="font-semibold text-brand-300">"Costs:"</span>
+                                        <span class="font-semibold text-brand-300">{t!(i18n, related_exchange_costs)}</span>
                                         {
                                             costs.into_iter().map(|(item_id, count)| {
                                                 if let Some(item) = data.items.get(&item_id) {
@@ -510,7 +515,7 @@ fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
         <div id="exchange-sources" class:hidden=empty class="panel p-4 sm:p-6 flex flex-col gap-4 max-h-[500px] overflow-y-auto">
             <h3 class="text-lg font-bold text-brand-200 flex items-center gap-2">
                 <Icon icon=icondata::BsArrowLeftRight attr:class="text-brand-300" />
-                "Exchange Sources"
+                {t!(i18n, related_exchange_sources_title)}
             </h3>
             <div class="grid grid-cols-1 gap-3">
                 {view}
@@ -586,6 +591,7 @@ pub fn leve_rewards_item(
 
 #[component]
 fn LeveSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
+    let i18n = use_i18n();
     let data = tracked_data();
     let leves = Memo::new(move |_| {
         let item_id = item_id();
@@ -607,13 +613,14 @@ fn LeveSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
             leves
                 .iter()
                 .map(|leve| {
-                    let job_name = data.class_job_categorys.get(&xiv_gen::ClassJobCategoryId(leve.class_job_category)).map(|c| c.name.as_str()).unwrap_or("Unknown");
+                    let unknown_label = t_string!(i18n, unknown_item).to_string();
+                    let job_name = data.class_job_categorys.get(&xiv_gen::ClassJobCategoryId(leve.class_job_category)).map(|c| c.name.to_string()).unwrap_or(unknown_label);
                     view! {
                         <div class="group flex flex-col gap-2 rounded-lg card p-3 transition-all h-full hover:shadow-md border border-brand-700/30">
                              <div class="text-sm font-medium border-b border-[color:var(--color-outline)] pb-2 text-brand-100">{leve.name.as_str()}</div>
                              <div class="flex items-center gap-2 mt-1">
                                 <span class="px-2 py-1 rounded bg-brand-900/40 border border-brand-700/40 text-xs text-brand-200 font-bold">
-                                    "Lvl " {leve.class_job_level}
+                                    {t!(i18n, related_leve_lvl_prefix)} {leve.class_job_level}
                                 </span>
                                 <span class="text-xs text-[color:var(--color-text-muted)] truncate flex items-center gap-1">
                                     <Icon icon=icondata::FaHammerSolid attr:class="text-[10px] opacity-70" />
@@ -633,7 +640,7 @@ fn LeveSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
         <div id="leve-sources" class:hidden=empty class="panel p-4 sm:p-6 flex flex-col gap-4 max-h-[500px] overflow-y-auto">
             <h3 class="text-lg font-bold text-brand-200 flex items-center gap-2">
                 <Icon icon=icondata::FaScrollSolid attr:class="text-brand-300" />
-                "Levequest Rewards"
+                {t!(i18n, related_levequest_rewards_title)}
             </h3>
             <div class="grid grid-cols-1 gap-3">{view}</div>
         </div>
@@ -643,6 +650,7 @@ fn LeveSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
 
 #[component]
 pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
+    let i18n = use_i18n();
     let db = tracked_data();
     let item = Memo::new(move |_| db.items.get(&ItemId(item_id())));
     let (price_zone, _) = get_price_zone();
@@ -683,7 +691,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                         <div class="flex items-center gap-2 text-sm">
                             <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
                             <span class="flex-1 truncate font-medium text-brand-100">{item.name.as_str()}</span>
-                            <span class="text-xs text-[color:var(--color-text-muted)] bg-brand-900/50 px-1.5 py-0.5 rounded border border-brand-700/50">"iLvl " {item.level_item}</span>
+                            <span class="text-xs text-[color:var(--color-text-muted)] bg-brand-900/50 px-1.5 py-0.5 rounded border border-brand-700/50">{t!(i18n, related_ilvl_prefix)} {item.level_item}</span>
                         </div>
                         <div class="text-sm font-bold text-[color:var(--brand-fg)] mt-1 ml-1">
                             <CheapestPrice item_id=item.key_id />
@@ -706,7 +714,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     view! {
         <div class="flex flex-col gap-6">
             <div class="panel p-4 sm:p-6" class:hidden=move || related_items_data.with(|i| i.is_empty())>
-                <h2 class="text-xl font-bold text-brand-200 mb-4 px-1">"Related Items"</h2>
+                <h2 class="text-xl font-bold text-brand-200 mb-4 px-1">{t!(i18n, related_items_title)}</h2>
                 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
                     {item_set}
                     {move || {
@@ -732,7 +740,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                                             <div class="flex items-center gap-2 text-sm">
                                                 <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
                                                 <span class="flex-1 truncate font-medium text-brand-100">{item.name.as_str()}</span>
-                                                <span class="text-xs text-[color:var(--color-text-muted)] bg-brand-900/50 px-1.5 py-0.5 rounded border border-brand-700/50">"iLvl " {item.level_item}</span>
+                                                <span class="text-xs text-[color:var(--color-text-muted)] bg-brand-900/50 px-1.5 py-0.5 rounded border border-brand-700/50">{t!(i18n, related_ilvl_prefix)} {item.level_item}</span>
                                             </div>
                                             <div class="text-sm font-bold text-[color:var(--brand-fg)] mt-1 ml-1">
                                                 <CheapestPrice item_id=item.key_id />
@@ -746,7 +754,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                 </div>
                 <div class="mt-4 flex justify-center" class:hidden=move || !has_more()>
                     <button class="btn-secondary" on:click=move |_| set_show_more(!show_more())>
-                        {move || if show_more() { "Show less" } else { "Show more" }}
+                        {move || if show_more() { t_string!(i18n, related_show_less).to_string() } else { t_string!(i18n, related_show_more).to_string() }}
                     </button>
                 </div>
             </div>
@@ -762,7 +770,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                 class="panel p-4 sm:p-6"
                 class:hidden=move || recipes.with(|recipes| recipes.is_empty())
             >
-                <h2 class="text-xl font-bold text-brand-200 mb-4 px-1">"Crafting Recipes"</h2>
+                <h2 class="text-xl font-bold text-brand-200 mb-4 px-1">{t!(i18n, related_crafting_recipes_title)}</h2>
                 <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                     <For
                         each=Signal::derive(move || recipes().into_iter().take(5).collect::<Vec<_>>())

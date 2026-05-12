@@ -351,7 +351,7 @@ fn FCCraftingAnalyzerTable(
                             type="number"
                             min="0"
                             step="0.1"
-                            placeholder="e.g. 0.1"
+                            placeholder=t_string!(i18n, placeholder_eg_0_1)
                             prop:value=min_daily_sales
                             on:input=move |input| {
                                 let value = event_target_value(&input);
@@ -421,11 +421,12 @@ fn FCCraftingAnalyzerTable(
                         } else {
                             "flex flex-row items-center flex-nowrap h-15 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_8%,transparent)] transition-colors"
                         };
-                         let sales_tooltip = format!(
-                            "Based on {} sales over {:.1} days",
-                            data.total_sales,
-                            (data.total_sales as f32 / data.daily_sales.max(0.001))
-                        );
+                         let sales_tooltip = t_string!(
+                            i18n,
+                            fc_crafting_analyzer_sales_tooltip,
+                            count = data.total_sales,
+                            days = format!("{:.1}", data.total_sales as f32 / data.daily_sales.max(0.001))
+                        ).to_string();
                         let material_rows = data
                             .materials
                             .iter()
@@ -434,7 +435,7 @@ fn FCCraftingAnalyzerTable(
                                 let material_name = items
                                     .get(&material.item_id)
                                     .map(|item| item.name.as_str().to_string())
-                                    .unwrap_or_else(|| "Unknown material".to_string());
+                                    .unwrap_or_else(|| t_string!(i18n, fc_crafting_analyzer_unknown_material).to_string());
                                 (
                                     material_name,
                                     material.total_quantity,

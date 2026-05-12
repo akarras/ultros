@@ -49,22 +49,22 @@ pub fn About() -> impl IntoView {
                 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                     <TechCard
                         name="Axum"
-                        desc="Backend web framework"
+                        desc=t_string!(i18n, tech_axum_desc).to_string()
                         link="https://github.com/tokio-rs/axum"
                     />
                     <TechCard
                         name="Leptos"
-                        desc="Full-stack Rust web framework"
+                        desc=t_string!(i18n, tech_leptos_desc).to_string()
                         link="https://github.com/leptos-rs/leptos"
                     />
                     <TechCard
                         name="SeaORM"
-                        desc="Async ORM for the database"
+                        desc=t_string!(i18n, tech_seaorm_desc).to_string()
                         link="https://github.com/SeaQL/sea-orm"
                     />
                     <TechCard
                         name="Serenity"
-                        desc="Discord bot library"
+                        desc=t_string!(i18n, tech_serenity_desc).to_string()
                         link="https://github.com/serenity-rs/serenity"
                     />
                 </div>
@@ -108,7 +108,7 @@ pub fn About() -> impl IntoView {
 }
 
 #[component]
-fn TechCard(name: &'static str, desc: &'static str, link: &'static str) -> impl IntoView {
+fn TechCard(name: &'static str, desc: String, link: &'static str) -> impl IntoView {
     view! {
         <a
             href=link

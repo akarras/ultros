@@ -4,10 +4,11 @@ use axum::{
 };
 use ultros_api_types::alert::{
     Alert, AlertDelivery, AlertEvent as ApiAlertEvent, AlertTrigger, CreateAlertRequest,
-    UpdateAlertRequest,
+    ResendResult, UpdateAlertRequest,
 };
 use ultros_db::UltrosDb;
 
+use crate::web::api::endpoint_validation::validate_discord_webhook_url;
 use crate::web::error::ApiError;
 use crate::web::oauth::AuthDiscordUser;
 
@@ -55,8 +56,63 @@ pub(crate) async fn create_alert(
 
     validate_price_threshold(price_threshold)?;
 
+    // AnySelector is Copy — passed by value here, also Copied into the response below.
+    let world_selector_json = serde_json::to_value(world_selector)
+        .map_err(|e| ApiError::from(anyhow::anyhow!("invalid world_selector: {}", e)))?;
+
+    // Two paths:
+    //  1. endpoint_ids non-empty → create alert + bind to those endpoints (preferred)
+    //  2. endpoint_ids empty AND delivery provided → legacy path: create endpoint inline,
+    //     bind one rule
+    //  3. neither → error
+    if !req.endpoint_ids.is_empty() {
+        // Verify all endpoints belong to this user before creating the alert.
+        for &eid in &req.endpoint_ids {
+            db.get_endpoint_owned_by(owner, eid)
+                .await
+                .map_err(ApiError::from)?;
+        }
+        let alert = db
+            .create_threshold_alert_without_endpoint(
+                owner,
+                item_id,
+                world_selector_json,
+                price_threshold,
+                hq_only,
+                cooldown,
+            )
+            .await
+            .map_err(ApiError::from)?;
+        db.set_alert_rules(owner, alert.id, &req.endpoint_ids)
+            .await
+            .map_err(ApiError::from)?;
+
+        return Ok(Json(Alert {
+            id: alert.id,
+            trigger: AlertTrigger::BelowThreshold {
+                item_id,
+                world_selector,
+                price_threshold,
+                hq_only,
+            },
+            // deprecated fallback; real delivery is described by endpoint_ids
+            delivery: AlertDelivery::DiscordDm,
+            endpoint_ids: req.endpoint_ids,
+            enabled: alert.enabled,
+            cooldown_seconds: alert.cooldown_seconds,
+            last_fired_at: alert.last_fired_at.map(|t| t.with_timezone(&chrono::Utc)),
+        }));
+    }
+
+    // Legacy path: `delivery` is required when no endpoint_ids are provided.
+    let delivery = req.delivery.ok_or_else(|| {
+        ApiError::from(anyhow::anyhow!(
+            "either endpoint_ids or delivery must be supplied"
+        ))
+    })?;
+
     let (notification_method, notification_config, notification_name): (&str, _, String) =
-        match &req.delivery {
+        match &delivery {
             AlertDelivery::DiscordDm => (
                 "DiscordDm",
                 serde_json::json!({ "user_id": owner }),
@@ -71,10 +127,6 @@ pub(crate) async fn create_alert(
                 )
             }
         };
-
-    // AnySelector is Copy — passed by value here, also Copied into the response below.
-    let world_selector_json = serde_json::to_value(world_selector)
-        .map_err(|e| ApiError::from(anyhow::anyhow!("invalid world_selector: {}", e)))?;
 
     let alert = db
         .create_threshold_alert(
@@ -91,6 +143,10 @@ pub(crate) async fn create_alert(
         .await
         .map_err(ApiError::from)?;
 
+    let endpoint_ids = db
+        .list_endpoint_ids_for_alert(alert.id)
+        .await
+        .map_err(ApiError::from)?;
     Ok(Json(Alert {
         id: alert.id,
         trigger: AlertTrigger::BelowThreshold {
@@ -99,7 +155,8 @@ pub(crate) async fn create_alert(
             price_threshold,
             hq_only,
         },
-        delivery: req.delivery,
+        delivery,
+        endpoint_ids,
         enabled: alert.enabled,
         cooldown_seconds: alert.cooldown_seconds,
         last_fired_at: alert.last_fired_at.map(|t| t.with_timezone(&chrono::Utc)),
@@ -118,6 +175,10 @@ pub(crate) async fn list_alerts(
     for (a, t) in rows {
         let world_selector = serde_json::from_value(t.world_selector.clone())
             .map_err(|e| ApiError::from(anyhow::anyhow!("bad world_selector in db: {}", e)))?;
+        let endpoint_ids = db
+            .list_endpoint_ids_for_alert(a.id)
+            .await
+            .map_err(ApiError::from)?;
         let delivery = match db
             .get_first_endpoint_for_alert(a.id)
             .await
@@ -143,6 +204,7 @@ pub(crate) async fn list_alerts(
                 hq_only: t.hq_only,
             },
             delivery,
+            endpoint_ids,
             enabled: a.enabled,
             cooldown_seconds: a.cooldown_seconds,
             last_fired_at: a.last_fired_at.map(|t| t.with_timezone(&chrono::Utc)),
@@ -207,33 +269,74 @@ pub(crate) async fn list_alert_events(
     ))
 }
 
-#[allow(clippy::result_large_err)]
-fn validate_discord_webhook_url(url: &str) -> Result<(), ApiError> {
-    let parsed = url::Url::parse(url)
-        .map_err(|e| ApiError::from(anyhow::anyhow!("invalid webhook URL: {e}")))?;
-    if parsed.scheme() != "https" {
-        return Err(ApiError::from(anyhow::anyhow!(
-            "webhook URL must use https"
-        )));
+/// Resend an alert event through every endpoint linked to its alert. Returns
+/// `ResendResult { delivered, error }` rather than bailing out — the UI shows
+/// per-event status, so a soft failure (no endpoints, all endpoints errored) is
+/// reported as `delivered: false` with the last error message captured.
+///
+/// Path: `POST /api/v1/alerts/events/{id}/resend`.
+pub(crate) async fn resend_alert_event(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(event_id): Path<i64>,
+) -> Result<Json<ResendResult>, ApiError> {
+    let event = db
+        .get_alert_event_by_id_owned_by(user.id as i64, event_id)
+        .await
+        .map_err(ApiError::from)?;
+    let endpoints = db
+        .get_notification_endpoints_for_alert(event.alert_id)
+        .await
+        .map_err(ApiError::from)?;
+    if endpoints.is_empty() {
+        return Ok(Json(ResendResult {
+            delivered: false,
+            error: Some("alert has no endpoints".into()),
+        }));
     }
-    let host = parsed.host_str().unwrap_or("");
-    let allowed = [
-        "discord.com",
-        "discordapp.com",
-        "ptb.discord.com",
-        "canary.discord.com",
-    ];
-    if !allowed.contains(&host) {
-        return Err(ApiError::from(anyhow::anyhow!(
-            "webhook URL host must be a Discord webhook host"
-        )));
+    let Some(serenity_ctx) = crate::alerts::delivery::get_serenity_ctx() else {
+        return Ok(Json(ResendResult {
+            delivered: false,
+            error: Some("Discord client not ready".into()),
+        }));
+    };
+    let title = "Ultros alert (resend)";
+    let body = format!(
+        "Resending alert for item {} (matched price: {:?})",
+        event.item_id, event.matched_price
+    );
+    let mut last_err: Option<String> = None;
+    let mut any_ok = false;
+    let owner = user.id as i64;
+    for endpoint in endpoints {
+        // Defense in depth: today `set_alert_rules` is the only path that links endpoints
+        // to alerts and it verifies ownership at link time, but skipping the check here
+        // would silently deliver through a foreign endpoint if a future code path bypassed
+        // that invariant. Endpoints that don't belong to the caller are treated as missing.
+        if endpoint.user_id != owner {
+            last_err = Some(format!(
+                "endpoint {} not owned by caller; skipped",
+                endpoint.id
+            ));
+            continue;
+        }
+        match crate::alerts::delivery::deliver_to_endpoint(
+            &endpoint,
+            title,
+            &body,
+            &db,
+            &serenity_ctx,
+        )
+        .await
+        {
+            Ok(()) => any_ok = true,
+            Err(e) => last_err = Some(format!("{e}")),
+        }
     }
-    if !parsed.path().starts_with("/api/webhooks/") {
-        return Err(ApiError::from(anyhow::anyhow!(
-            "webhook URL path must start with /api/webhooks/"
-        )));
-    }
-    Ok(())
+    Ok(Json(ResendResult {
+        delivered: any_ok,
+        error: last_err,
+    }))
 }
 
 #[cfg(test)]
@@ -284,58 +387,5 @@ mod tests {
         assert!(validate_price_threshold(0).is_err());
         assert!(validate_price_threshold(-1).is_err());
         assert!(validate_price_threshold(i32::MIN).is_err());
-    }
-
-    // ---------- validate_discord_webhook_url ----------
-
-    #[test]
-    fn webhook_url_accepts_canonical_discord_host() {
-        assert!(validate_discord_webhook_url("https://discord.com/api/webhooks/1/abc").is_ok());
-    }
-
-    #[test]
-    fn webhook_url_accepts_all_documented_discord_hosts() {
-        for host in [
-            "discord.com",
-            "discordapp.com",
-            "ptb.discord.com",
-            "canary.discord.com",
-        ] {
-            let url = format!("https://{host}/api/webhooks/1/abc");
-            assert!(
-                validate_discord_webhook_url(&url).is_ok(),
-                "expected ok for {url}"
-            );
-        }
-    }
-
-    #[test]
-    fn webhook_url_rejects_non_https_scheme() {
-        assert!(validate_discord_webhook_url("http://discord.com/api/webhooks/1/abc").is_err());
-        assert!(validate_discord_webhook_url("ftp://discord.com/api/webhooks/1/abc").is_err());
-    }
-
-    #[test]
-    fn webhook_url_rejects_non_discord_host() {
-        assert!(validate_discord_webhook_url("https://evil.com/api/webhooks/1/abc").is_err());
-        assert!(
-            validate_discord_webhook_url("https://discord.com.evil.com/api/webhooks/1/abc")
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn webhook_url_rejects_wrong_path_prefix() {
-        assert!(validate_discord_webhook_url("https://discord.com/").is_err());
-        assert!(validate_discord_webhook_url("https://discord.com/api/").is_err());
-        assert!(
-            validate_discord_webhook_url("https://discord.com/login?next=/api/webhooks/").is_err()
-        );
-    }
-
-    #[test]
-    fn webhook_url_rejects_garbage_string() {
-        assert!(validate_discord_webhook_url("not a url").is_err());
-        assert!(validate_discord_webhook_url("").is_err());
     }
 }

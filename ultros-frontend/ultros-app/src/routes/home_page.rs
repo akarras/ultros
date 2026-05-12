@@ -19,7 +19,7 @@ fn FeatureCard(
     title: AnyView,
     description: AnyView,
     #[prop(optional)] external: bool,
-    #[prop(optional)] badge: Option<&'static str>,
+    #[prop(optional)] badge: Option<AnyView>,
     children: ChildrenFn,
 ) -> impl IntoView {
     let rel = if external { Some("external") } else { None };
@@ -123,7 +123,7 @@ pub fn HomePage() -> impl IntoView {
 
                     // Feature cards grid
                                         <div class="feature-grid">
-                        <FeatureCard href="/items?menu-open=true" title=t!(i18n, item_explorer).into_any() description=t!(i18n, item_explorer_desc).into_any() badge="New">
+                        <FeatureCard href="/items?menu-open=true" title=t!(i18n, item_explorer).into_any() description=t!(i18n, item_explorer_desc).into_any() badge=t!(i18n, badge_new).into_any()>
                             <Icon
                                 attr:class="feature-card-icon"
                                 width="3.5em"
@@ -147,7 +147,7 @@ pub fn HomePage() -> impl IntoView {
                                 icon=i::FaShopSolid
                             />
                         </FeatureCard>
-                        <FeatureCard href="/recipe-analyzer" title=t!(i18n, recipe_analyzer).into_any() description=t!(i18n, recipe_analyzer_desc).into_any() badge="New">
+                        <FeatureCard href="/recipe-analyzer" title=t!(i18n, recipe_analyzer).into_any() description=t!(i18n, recipe_analyzer_desc).into_any() badge=t!(i18n, badge_new).into_any()>
                             <Icon
                                 attr:class="feature-card-icon"
                                 width="3.5em"
@@ -155,7 +155,7 @@ pub fn HomePage() -> impl IntoView {
                                 icon=i::FaHammerSolid
                             />
                         </FeatureCard>
-                        <FeatureCard href="/leve-analyzer" title=t!(i18n, leve_analyzer).into_any() description=t!(i18n, leve_analyzer_desc).into_any() badge="New">
+                        <FeatureCard href="/leve-analyzer" title=t!(i18n, leve_analyzer).into_any() description=t!(i18n, leve_analyzer_desc).into_any() badge=t!(i18n, badge_new).into_any()>
                             <Icon
                                 attr:class="feature-card-icon"
                                 width="3.5em"
@@ -163,7 +163,7 @@ pub fn HomePage() -> impl IntoView {
                                 icon=i::FaScrollSolid
                             />
                         </FeatureCard>
-                        <FeatureCard href="/trends" title=t!(i18n, market_trends).into_any() description=t!(i18n, market_trends_desc).into_any() badge="New">
+                        <FeatureCard href="/trends" title=t!(i18n, market_trends).into_any() description=t!(i18n, market_trends_desc).into_any() badge=t!(i18n, badge_new).into_any()>
                             <Icon
                                 attr:class="feature-card-icon"
                                 width="3.5em"

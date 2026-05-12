@@ -1,6 +1,7 @@
 use super::gil::*;
 use super::relative_time::*;
 use crate::components::{datacenter_name::*, world_name::*};
+use crate::i18n::*;
 use leptos::prelude::*;
 use leptos_router::components::A;
 use std::sync::Arc;
@@ -10,6 +11,7 @@ use ultros_api_types::{ActiveListing, retainer::Retainer, world_helper::AnySelec
 pub fn ListingsTable(
     #[prop(into)] listings: Signal<Vec<(ActiveListing, Arc<Retainer>)>>,
 ) -> impl IntoView {
+    let i18n = use_i18n();
     let (show_more, set_show_more) = signal(false);
     let listing_count = move || listings.with(|l| l.len());
     let show_click = move |_| set_show_more(true);
@@ -37,13 +39,13 @@ pub fn ListingsTable(
             <table class="w-full min-w-[720px]">
             <thead>
                 <tr>
-                    <th scope="col">"price"</th>
-                    <th scope="col">"qty."</th>
-                    <th scope="col">"total"</th>
-                    <th scope="col">"retainer name"</th>
-                    <th scope="col">"world"</th>
-                    <th scope="col">"datacenter"</th>
-                    <th scope="col">"first seen"</th>
+                    <th scope="col">{t!(i18n, listings_col_price)}</th>
+                    <th scope="col">{t!(i18n, listings_col_qty)}</th>
+                    <th scope="col">{t!(i18n, listings_col_total)}</th>
+                    <th scope="col">{t!(i18n, listings_col_retainer)}</th>
+                    <th scope="col">{t!(i18n, listings_col_world)}</th>
+                    <th scope="col">{t!(i18n, listings_col_datacenter)}</th>
+                    <th scope="col">{t!(i18n, listings_col_first_seen)}</th>
                 </tr>
             </thead>
             <tbody>
@@ -90,7 +92,7 @@ pub fn ListingsTable(
                 >
                     <td colspan=7>
                         <button on:click=show_click class="btn w-full">
-                            "Show More"
+                            {t!(i18n, listings_show_more)}
                         </button>
                     </td>
                 </tr>

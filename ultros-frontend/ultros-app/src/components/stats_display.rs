@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use super::tooltip::*;
 use crate::global_state::xiv_data::tracked_data;
+use crate::i18n::*;
 use leptos::prelude::*;
 use xiv_gen::{BaseParam, BaseParamId, Item, ItemId};
 
@@ -80,6 +81,7 @@ fn get_param_data_for_item(item: ItemId) -> Option<Vec<ParamData>> {
 
 #[component]
 fn ParamView(data: ParamData) -> impl IntoView {
+    let i18n = use_i18n();
     view! {
         <div class="w-full">
             <Tooltip
@@ -95,7 +97,7 @@ fn ParamView(data: ParamData) -> impl IntoView {
                             .map(|special| {
                                 view! {
                                     <span class="text-brand-400 text-xs whitespace-nowrap">
-                                        "(HQ: "
+                                        {t!(i18n, stats_hq_prefix)}
                                         {data.normal_value + special}
                                         ")"
                                     </span>

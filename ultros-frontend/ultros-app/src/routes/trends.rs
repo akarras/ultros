@@ -1,4 +1,5 @@
 use crate::global_state::xiv_data::tracked_data;
+use crate::i18n::*;
 use leptos::prelude::*;
 use leptos_router::{
     NavigateOptions,
@@ -24,6 +25,7 @@ use crate::{
 
 #[component]
 fn TrendsTable(items: Vec<TrendItem>, world: String) -> impl IntoView {
+    let i18n = use_i18n();
     let items = Memo::new(move |_| {
         items
             .iter()
@@ -43,19 +45,19 @@ fn TrendsTable(items: Vec<TrendItem>, world: String) -> impl IntoView {
                 header=view! {
                     <div class="flex flex-row align-top h-12 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)] font-semibold text-[color:var(--brand-fg)]" role="rowgroup">
                         <div role="columnheader" class="w-[40px] px-2 py-3 text-center">
-                            "HQ"
+                            {t!(i18n, hq)}
                         </div>
                         <div role="columnheader" class="w-84 px-4 py-3">
-                            "Item"
+                            {t!(i18n, item)}
                         </div>
                         <div role="columnheader" class="w-32 px-4 py-3 text-right">
-                            "Price"
+                            {t!(i18n, price)}
                         </div>
                         <div role="columnheader" class="w-32 px-4 py-3 text-right">
-                            "Avg Price"
+                            {t!(i18n, avg_price)}
                         </div>
                         <div role="columnheader" class="w-32 px-4 py-3 text-right">
-                            "Sales/Week"
+                            {t!(i18n, trends_sales_per_week)}
                         </div>
                     </div>
                 }.into_any()
@@ -65,7 +67,7 @@ fn TrendsTable(items: Vec<TrendItem>, world: String) -> impl IntoView {
                     let world = world.clone();
                     let item_id = item.item_id;
                     let item_data = tracked_data().items.get(&xiv_gen::ItemId(item_id));
-                    let item_name = item_data.map(|i| i.name.as_str()).unwrap_or("Unknown Item").to_string();
+                    let item_name = item_data.map(|i| i.name.to_string()).unwrap_or_else(|| t_string!(i18n, unknown_item).to_string());
                     let icon_loading = if index < 20 { "eager" } else { "" };
 
                     let classes = if (index % 2) == 0 {
@@ -78,7 +80,7 @@ fn TrendsTable(items: Vec<TrendItem>, world: String) -> impl IntoView {
                         <div class=classes role="row-group">
                             <div role="cell" class="px-2 py-2 w-[40px] flex items-center justify-center">
                                 {if item.hq {
-                                    Some(view! { <span class="px-2 py-0.5 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)]">"HQ"</span> })
+                                    Some(view! { <span class="px-2 py-0.5 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)]">{t!(i18n, hq)}</span> })
                                 } else {
                                     None
                                 }}
@@ -115,6 +117,7 @@ fn TrendsTable(items: Vec<TrendItem>, world: String) -> impl IntoView {
 
 #[component]
 fn TrendsWorldNavigator() -> impl IntoView {
+    let i18n = use_i18n();
     let nav = use_navigate();
     let params = use_params_map();
     let worlds = use_context::<LocalWorldData>()
@@ -149,7 +152,7 @@ fn TrendsWorldNavigator() -> impl IntoView {
 
     view! {
         <div class="flex flex-col md:flex-row items-center gap-2">
-            <label class="text-[color:var(--brand-fg)] font-semibold">"Select World:"</label>
+            <label class="text-[color:var(--brand-fg)] font-semibold">{t!(i18n, select_world)}</label>
             <div class="w-full md:w-auto min-w-[200px]">
                 <WorldOnlyPicker
                     current_world=current_world.into()
@@ -169,6 +172,7 @@ enum TrendTab {
 
 #[component]
 pub fn Trends() -> impl IntoView {
+    let i18n = use_i18n();
     let params = use_params_map();
     let world = move || params.with(|params| params.get("world").unwrap_or_default());
     let (selected_tab, set_selected_tab) = signal(TrendTab::Velocity);
@@ -181,8 +185,8 @@ pub fn Trends() -> impl IntoView {
     });
 
     view! {
-        <MetaTitle title="Market Trends - Ultros" />
-        <MetaDescription text="View market trends for Final Fantasy 14 items, including high velocity, rising prices, and falling prices." />
+        <MetaTitle title=t_string!(i18n, trends_meta_title).to_string() />
+        <MetaDescription text=t_string!(i18n, trends_meta_desc).to_string() />
 
         <div class="main-content p-6">
             <div class="container mx-auto max-w-7xl">
@@ -199,7 +203,7 @@ pub fn Trends() -> impl IntoView {
                     <div class="panel p-6 rounded-2xl">
                         <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
                             <div class="text-sm text-[color:var(--color-text-muted)]">
-                                "World context: " <span class="font-semibold text-brand-300">{world}</span>
+                                {t!(i18n, trends_world_context_prefix)} <span class="font-semibold text-brand-300">{world}</span>
                             </div>
                             <TrendsWorldNavigator />
                         </div>
@@ -219,7 +223,7 @@ pub fn Trends() -> impl IntoView {
                                 }
                                 on:click=move |_| set_selected_tab.set(TrendTab::Velocity)
                             >
-                                "High Velocity"
+                                {t!(i18n, trends_tab_high_velocity)}
                             </button>
                             <button
                                 class=move || if selected_tab.get() == TrendTab::Rising {
@@ -229,7 +233,7 @@ pub fn Trends() -> impl IntoView {
                                 }
                                 on:click=move |_| set_selected_tab.set(TrendTab::Rising)
                             >
-                                "Rising Prices"
+                                {t!(i18n, trends_tab_rising)}
                             </button>
                             <button
                                 class=move || if selected_tab.get() == TrendTab::Falling {
@@ -239,7 +243,7 @@ pub fn Trends() -> impl IntoView {
                                 }
                                 on:click=move |_| set_selected_tab.set(TrendTab::Falling)
                             >
-                                "Falling Prices"
+                                {t!(i18n, trends_tab_falling)}
                             </button>
                         </div>
                     </div>
@@ -258,7 +262,7 @@ pub fn Trends() -> impl IntoView {
                                     if items.is_empty() {
                                         view! {
                                             <div class="text-xl text-[color:var(--color-text)] text-center p-8 bg-brand-900/20 rounded-2xl border border-white/10">
-                                                "No trends data available for this category."
+                                                {t!(i18n, trends_empty)}
                                             </div>
                                         }.into_any()
                                     } else {
@@ -267,12 +271,12 @@ pub fn Trends() -> impl IntoView {
                                 },
                                 Some(Ok(None)) => view! {
                                     <div class="text-xl text-[color:var(--color-text)] text-center p-8 bg-brand-900/20 rounded-2xl border border-white/10">
-                                        "Please select a valid world."
+                                        {t!(i18n, trends_select_valid_world)}
                                     </div>
                                 }.into_any(),
                                 Some(Err(e)) => view! {
                                     <div class="text-xl text-red-400 text-center p-8 bg-red-950/20 rounded-2xl border border-red-500/30">
-                                        {format!("Error loading trends: {}", e)}
+                                        {t!(i18n, trends_error_loading, error = e.to_string())}
                                     </div>
                                 }.into_any(),
                                 None => view! { <BoxSkeleton /> }.into_any(),
