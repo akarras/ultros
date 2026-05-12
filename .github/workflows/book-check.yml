@@ -2,6 +2,9 @@ name: Book Check
 
 on:
     pull_request:
+        paths:
+            - "userguide/**"
+            - ".github/workflows/book-check.yml"
 
 permissions:
     contents: read
