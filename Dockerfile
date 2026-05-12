@@ -16,15 +16,24 @@ RUN cargo binstall wasm-bindgen-cli@0.2.121 -y
 # Install a recent binaryen so cargo-leptos picks up wasm-opt from PATH instead
 # of its bundled (older) version, which can't decode DWARF emitted by recent
 # nightly rustc ("unknown subopcode 225 ... unsupported version of DWARF").
-ARG BINARYEN_VERSION=version_128
-RUN curl -L --proto '=https' --tlsv1.2 -sSf \
-    "https://github.com/WebAssembly/binaryen/releases/download/${BINARYEN_VERSION}/binaryen-${BINARYEN_VERSION}-x86_64-linux.tar.gz" \
-    | tar -xz -C /tmp \
-    && cp "/tmp/binaryen-${BINARYEN_VERSION}/bin/wasm-opt" /usr/local/bin/ \
-    && cp -r "/tmp/binaryen-${BINARYEN_VERSION}/lib/." /usr/local/lib/ \
-    && rm -rf "/tmp/binaryen-${BINARYEN_VERSION}" \
-    && ldconfig \
-    && wasm-opt --version
+# Binaryen ships libbinaryen.so alongside the binary, so we copy lib/* into
+# /usr/local/lib and ldconfig before invoking wasm-opt.
+ARG BINARYEN_VERSION=version_129
+RUN set -eux; \
+    arch="$(uname -m)"; \
+    case "$arch" in \
+        x86_64) asset="binaryen-${BINARYEN_VERSION}-x86_64-linux.tar.gz" ;; \
+        aarch64) asset="binaryen-${BINARYEN_VERSION}-aarch64-linux.tar.gz" ;; \
+        *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
+    esac; \
+    curl -L --proto '=https' --tlsv1.2 -fsSL \
+        "https://github.com/WebAssembly/binaryen/releases/download/${BINARYEN_VERSION}/${asset}" \
+        | tar -xz -C /tmp; \
+    cp "/tmp/binaryen-${BINARYEN_VERSION}/bin/wasm-opt" /usr/local/bin/; \
+    cp -r "/tmp/binaryen-${BINARYEN_VERSION}/lib/." /usr/local/lib/; \
+    rm -rf "/tmp/binaryen-${BINARYEN_VERSION}"; \
+    ldconfig; \
+    wasm-opt --version
 # RUN cargo install --locked cargo-leptos --version 0.2.43 -v
 COPY ./rust-toolchain .
 RUN rustup update
