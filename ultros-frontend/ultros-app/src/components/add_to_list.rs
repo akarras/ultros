@@ -118,7 +118,7 @@ fn AddToListModal(
                                     .map(|lwp| {
                                         let permission = lwp.permission;
                                         let list = lwp.list;
-                                        let can_write = !matches!(permission, ListPermission::Read);
+                                        let can_write = permission >= ListPermission::Write;
                                         let (saved, set_saved) = signal(false);
                                         let (running, set_running) = signal(false);
                                         let (error, set_error) = signal(Option::<String>::None);
