@@ -28,6 +28,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::time::timeout;
+use tower::ServiceBuilder;
 use tower_http::compression::predicate::{NotForContentType, SizeAbove};
 use tower_http::compression::{CompressionLayer, Predicate};
 use tower_http::trace::TraceLayer;
@@ -1151,6 +1152,15 @@ pub(crate) async fn start_web(state: WebState) {
         .route_layer(middleware::from_fn(track_metrics))
         .layer(middleware::from_fn(redirect_legacy_book_host))
         .layer(TraceLayer::new_for_http())
+        // Sentry/Glitchtip: bind a fresh Hub per request and decorate captured
+        // events with HTTP context (method, URL, status). NewSentryLayer must
+        // come before SentryHttpLayer; ServiceBuilder applies in declared
+        // order so this is correct.
+        .layer(
+            ServiceBuilder::new()
+                .layer(sentry_tower::NewSentryLayer::new_from_top())
+                .layer(sentry_tower::SentryHttpLayer::new().enable_transaction()),
+        )
         .layer(
             CompressionLayer::new().compress_when(
                 SizeAbove::new(256)
