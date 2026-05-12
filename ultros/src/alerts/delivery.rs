@@ -26,6 +26,40 @@ pub(crate) fn get_serenity_ctx() -> Option<Arc<serenity_prelude::Context>> {
     SERENITY_CTX.get().cloned()
 }
 
+/// VAPID configuration required to sign + send Web Push messages.
+///
+/// Operators must generate the keypair offline (one-shot, then keep the private key
+/// secret) — we do **not** generate it at runtime, because rotating keys would
+/// invalidate every existing subscription. See `docs/push.md` for the openssl
+/// recipe.
+#[derive(Debug, Clone)]
+pub struct WebPushConfig {
+    /// Base64url-encoded uncompressed P-256 public key (no padding). Served verbatim
+    /// to the frontend, which decodes it to a `Uint8Array` for `applicationServerKey`.
+    pub public_key_b64url: String,
+    /// PEM-encoded EC private key. Fed straight to `VapidSignatureBuilder::from_pem`.
+    pub private_key_pem: String,
+    /// `mailto:` URI placed in the JWT's `sub` claim. Some push services reject
+    /// non-`mailto:` values.
+    pub contact_email: String,
+}
+
+/// Process-wide Web Push configuration. Mirrors the [`SERENITY_CTX`] bridge: set
+/// once at startup from env vars, read by both the public-key endpoint and the
+/// delivery path. `None` means push is disabled (env vars absent) — handlers map
+/// that to a 503.
+static WEB_PUSH_CONFIG: OnceLock<WebPushConfig> = OnceLock::new();
+
+/// Install the global Web Push config. Idempotent — second call wins nothing.
+pub fn set_web_push_config(cfg: WebPushConfig) {
+    let _ = WEB_PUSH_CONFIG.set(cfg);
+}
+
+/// Fetch the global Web Push config, if one was installed at startup.
+pub(crate) fn get_web_push_config() -> Option<&'static WebPushConfig> {
+    WEB_PUSH_CONFIG.get()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(tag = "method")]
 pub(crate) enum EndpointConfig {

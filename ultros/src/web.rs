@@ -1063,6 +1063,10 @@ pub(crate) async fn start_web(state: WebState) {
         )
         .route("/api/v1/endpoints/{id}/test", post(test_endpoint))
         .route(
+            "/api/v1/push/vapid-public-key",
+            get(crate::web::api::push::get_vapid_public_key),
+        )
+        .route(
             "/api/v1/listings/{world}/{itemid}",
             get(world_item_listings),
         )

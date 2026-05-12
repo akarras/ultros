@@ -3,6 +3,7 @@ mod best_deals;
 mod cheapest_per_world;
 pub(crate) mod endpoint_validation;
 pub(crate) mod endpoints;
+pub(crate) mod push;
 pub(crate) mod real_time_data;
 mod recent_sales;
 mod trends;
