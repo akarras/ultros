@@ -172,7 +172,8 @@ fn RecipeAnalyzerTable(
             return vec![];
         }
 
-        // Hoist cookie + on-hand lookups ONCE before the per-recipe loop.
+        // Hoist context lookups ONCE; the on-hand SNAPSHOT is rebuilt
+        // per recipe inside the loop because compute_cost consumes it.
         let opts_cookie = use_context::<Cookies>()
             .unwrap()
             .use_cookie_typed::<_, CraftOptions>("CRAFT_OPTIONS")
@@ -184,16 +185,7 @@ fn RecipeAnalyzerTable(
             ShardsMode::IncludeMarket
         };
         let on_hand_map = use_context::<OnHandMap>();
-        let local = on_hand_map
-            .map(|m: OnHandMap| LocalOnHand::from_map(m.0.get_untracked()))
-            .unwrap_or_else(|| LocalOnHand::from_map(Default::default()));
-        let empty = EmptyOnHand;
         let use_on_hand = use_on_hand_url().unwrap_or(opts_value.use_on_hand);
-        let active: Box<dyn crate::components::crafting_cost::OnHand> = if use_on_hand {
-            Box::new(local)
-        } else {
-            Box::new(empty)
-        };
 
         for recipe in recipes.values() {
             // Filter by job and level
@@ -254,6 +246,18 @@ fn RecipeAnalyzerTable(
                 .or(market_price_summary.hq.map(|d| d.world_id))
                 .unwrap_or(0);
 
+            // Fresh on-hand snapshot per recipe — compute_cost consumes
+            // from the snapshot, and reusing one across recipes would
+            // wrongly deplete the user's stockpile after the first recipe.
+            let local = on_hand_map
+                .map(|m: OnHandMap| LocalOnHand::from_map(m.0.get_untracked()))
+                .unwrap_or_else(|| LocalOnHand::from_map(Default::default()));
+            let empty = EmptyOnHand;
+            let active: Box<dyn crate::components::crafting_cost::OnHand> = if use_on_hand {
+                Box::new(local)
+            } else {
+                Box::new(empty)
+            };
             let opts = CraftingCostOptions {
                 require_hq: require_hq_flag,
                 max_subcraft_depth: if use_sub { 2 } else { 0 },
