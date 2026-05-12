@@ -1,4 +1,10 @@
+use crate::components::crafting_cost::{
+    CraftingCostOptions, EmptyOnHand, ShardsMode, compute_cost,
+};
 use crate::components::meta::{MetaDescription, MetaTitle};
+use crate::components::on_hand_input::{LocalOnHand, OnHandMap};
+use crate::components::related_items::is_shard_item;
+use crate::global_state::craft_options::CraftOptions;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use crate::{
@@ -24,12 +30,7 @@ use ultros_api_types::{
 };
 use xiv_gen::{ItemId, Recipe, RecipeLevelTableId};
 
-#[derive(Clone, Debug, PartialEq)]
-struct SubcraftInfo {
-    item_id: ItemId,
-    amount: i32,
-    unit_cost: i32,
-}
+use crate::components::crafting_cost::SubcraftInfo;
 
 #[derive(Clone, Debug, PartialEq)]
 struct RecipeProfitData {
@@ -76,87 +77,6 @@ impl Display for SortMode {
         };
         f.write_str(val)
     }
-}
-
-fn calculate_crafting_cost(
-    recipe: &'static Recipe,
-    prices: &CheapestListingsMap,
-    recipes_by_output: &HashMap<ItemId, Vec<&'static Recipe>>,
-    depth: i32,
-    max_depth: i32,
-    use_subcrafts: bool,
-    require_hq: bool,
-) -> (i32, Vec<SubcraftInfo>) {
-    // Use 64-bit intermediates with saturating math to avoid overflow in debug builds.
-    let mut cost: i64 = 0;
-    let mut sub_crafts = Vec::new();
-
-    for i in 0..8 {
-        let item_id = ItemId(recipe.ingredient[i]);
-        let amount = recipe.amount_ingredient[i];
-        if item_id.0 == 0 || amount == 0 {
-            continue;
-        }
-
-        let price_summary = prices.find_matching_listings(item_id.0);
-        let market_price = if require_hq {
-            price_summary.price_preferring_hq().unwrap_or(999_999_999) as i64
-        } else {
-            price_summary.lowest_gil().unwrap_or(999_999_999) as i64
-        };
-
-        let mut item_cost = market_price;
-        let mut best_sub_crafts = Vec::new();
-
-        if use_subcrafts
-            && depth < max_depth
-            && let Some(sub_recipes) = recipes_by_output.get(&item_id)
-        {
-            // Find cheapest way to craft this ingredient
-            for sub_recipe in sub_recipes {
-                let (craft_cost, sub_details) = calculate_crafting_cost(
-                    sub_recipe,
-                    prices,
-                    recipes_by_output,
-                    depth + 1,
-                    max_depth,
-                    use_subcrafts,
-                    require_hq,
-                );
-                let craft_cost = craft_cost as i64;
-                if craft_cost < item_cost {
-                    item_cost = craft_cost;
-                    best_sub_crafts = sub_details;
-                    // Add the direct subcraft itself
-                    best_sub_crafts.push(SubcraftInfo {
-                        item_id,
-                        amount: 1, // Will be scaled by 'amount' later
-                        unit_cost: craft_cost as i32,
-                    });
-                }
-            }
-        }
-
-        if item_cost < market_price {
-            // Scale subcrafts by the amount needed
-            for mut sub in best_sub_crafts {
-                sub.amount *= amount;
-                sub_crafts.push(sub);
-            }
-        }
-
-        let amount = amount as i64;
-        cost = cost.saturating_add(item_cost.saturating_mul(amount));
-    }
-    let clamped_cost = if cost < 0 {
-        0
-    } else if cost > i32::MAX as i64 {
-        i32::MAX
-    } else {
-        cost as i32
-    };
-
-    (clamped_cost, sub_crafts)
 }
 
 #[component]
@@ -210,6 +130,8 @@ fn RecipeAnalyzerTable(
     let (min_daily_sales, set_min_daily_sales) = query_signal::<f32>("min-sales");
     let (require_hq, set_require_hq) = query_signal::<bool>("require-hq");
     let (filter_outliers, set_filter_outliers) = query_signal::<bool>("filter-outliers");
+    let (exclude_shards_url, set_exclude_shards) = query_signal::<bool>("shards-exclude");
+    let (use_on_hand_url, set_use_on_hand) = query_signal::<bool>("on-hand");
 
     let cookies = use_context::<Cookies>().unwrap();
     let (crafter_levels, _) = cookies.use_cookie_typed::<_, CrafterLevels>("CRAFTER_LEVELS");
@@ -249,6 +171,29 @@ fn RecipeAnalyzerTable(
         if !has_levels() {
             return vec![];
         }
+
+        // Hoist cookie + on-hand lookups ONCE before the per-recipe loop.
+        let opts_cookie = use_context::<Cookies>()
+            .unwrap()
+            .use_cookie_typed::<_, CraftOptions>("CRAFT_OPTIONS")
+            .0;
+        let opts_value = opts_cookie.get().unwrap_or_default();
+        let shards = if exclude_shards_url().unwrap_or(opts_value.exclude_shards) {
+            ShardsMode::ExcludeShards
+        } else {
+            ShardsMode::IncludeMarket
+        };
+        let on_hand_map = use_context::<OnHandMap>();
+        let local = on_hand_map
+            .map(|m: OnHandMap| LocalOnHand::from_map(m.0.get_untracked()))
+            .unwrap_or_else(|| LocalOnHand::from_map(Default::default()));
+        let empty = EmptyOnHand;
+        let use_on_hand = use_on_hand_url().unwrap_or(opts_value.use_on_hand);
+        let active: Box<dyn crate::components::crafting_cost::OnHand> = if use_on_hand {
+            Box::new(local)
+        } else {
+            Box::new(empty)
+        };
 
         for recipe in recipes.values() {
             // Filter by job and level
@@ -309,15 +254,16 @@ fn RecipeAnalyzerTable(
                 .or(market_price_summary.hq.map(|d| d.world_id))
                 .unwrap_or(0);
 
-            let (craft_cost, sub_crafts) = calculate_crafting_cost(
-                recipe,
-                &prices,
-                &recipes_by_output,
-                0,
-                if use_sub { 2 } else { 0 }, // Limit recursion depth
-                use_sub,
-                require_hq_flag,
-            );
+            let opts = CraftingCostOptions {
+                require_hq: require_hq_flag,
+                max_subcraft_depth: if use_sub { 2 } else { 0 },
+                shards,
+                on_hand: active.as_ref(),
+            };
+            let breakdown =
+                compute_cost(recipe, &prices, &recipes_by_output, &opts, &is_shard_item);
+            let craft_cost = breakdown.cost;
+            let sub_crafts = breakdown.sub_crafts.clone();
 
             // craft_cost represents the cost to perform the recipe once.
             // This is effectively a per-result-unit cost for recipes that yield a single item.
@@ -523,6 +469,32 @@ fn RecipeAnalyzerTable(
                     />
                     <label for="filter-outliers">"Filter Outliers"</label>
                     <div class="text-brand-300 cursor-help" title="If enabled, sales outliers will be removed from the average price calculation using the Interquartile Range (IQR) method.">
+                        <Icon icon=i::AiQuestionCircleOutlined />
+                    </div>
+                </div>
+                <div class="flex flex-row gap-4 flex-wrap">
+                    <input
+                        type="checkbox"
+                        id="exclude-shards"
+                        class="checkbox"
+                        prop:checked=move || exclude_shards_url().unwrap_or(true)
+                        on:change=move |ev| set_exclude_shards(Some(event_target_checked(&ev)))
+                    />
+                    <label for="exclude-shards">"Exclude shards/crystals"</label>
+                    <div class="text-brand-300 cursor-help" title="If enabled, crystal/shard/cluster ingredient costs are not counted toward the craft cost. Most crafters keep a stockpile.">
+                        <Icon icon=i::AiQuestionCircleOutlined />
+                    </div>
+                </div>
+                <div class="flex flex-row gap-4 flex-wrap">
+                    <input
+                        type="checkbox"
+                        id="use-on-hand"
+                        class="checkbox"
+                        prop:checked=move || use_on_hand_url().unwrap_or(false)
+                        on:change=move |ev| set_use_on_hand(Some(event_target_checked(&ev)))
+                    />
+                    <label for="use-on-hand">"Use on-hand inventory"</label>
+                    <div class="text-brand-300 cursor-help" title="Deduct ingredients you already own from the craft cost. Set per-ingredient totals on the item page.">
                         <Icon icon=i::AiQuestionCircleOutlined />
                     </div>
                 </div>
