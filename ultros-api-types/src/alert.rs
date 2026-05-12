@@ -74,9 +74,38 @@ pub struct AlertEvent {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "method", rename_all = "PascalCase")]
 pub enum EndpointMethod {
-    DiscordDm { user_id: i64 },
-    DiscordChannel { channel_id: i64 },
-    Webhook { url: String },
+    DiscordDm {
+        user_id: i64,
+    },
+    DiscordChannel {
+        channel_id: i64,
+    },
+    Webhook {
+        url: String,
+    },
+    /// Browser-side push subscription, owned by a row in `push_subscription`.
+    /// Created via `POST /api/v1/push/subscribe`, not the generic endpoints CRUD.
+    WebPush {
+        subscription_id: i32,
+    },
+}
+
+/// Body for `POST /api/v1/push/subscribe`. The browser obtains `endpoint`, `p256dh`,
+/// and `auth` from the result of `PushManager.subscribe(...)`; `user_agent` is
+/// `navigator.userAgent` (best-effort, used only for the endpoint label).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreatePushSubscriptionRequest {
+    pub endpoint: String,
+    pub p256dh: String,
+    pub auth: String,
+    pub user_agent: Option<String>,
+}
+
+/// Response shape for `GET /api/v1/push/vapid-public-key`. Single field so the
+/// frontend doesn't have to special-case a bare string.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VapidPublicKey {
+    pub key: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

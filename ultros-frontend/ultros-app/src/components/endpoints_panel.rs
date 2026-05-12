@@ -86,6 +86,7 @@ pub fn EndpointsPanel() -> impl IntoView {
                                         EndpointMethod::DiscordDm { .. } => "Discord DM",
                                         EndpointMethod::DiscordChannel { .. } => "Discord Channel",
                                         EndpointMethod::Webhook { .. } => "Webhook",
+                                        EndpointMethod::WebPush { .. } => "Browser push",
                                     };
                                     let id = e.id;
                                     view! {
