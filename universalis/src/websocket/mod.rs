@@ -11,7 +11,7 @@ use bson::Document;
 use futures::future::Either;
 
 use futures::{SinkExt, Stream, StreamExt};
-use log::{error, info, warn};
+use tracing::{error, info, warn};
 
 use async_tungstenite::WebSocketStream;
 use futures::stream::FusedStream;
