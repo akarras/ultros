@@ -115,6 +115,51 @@ fn error_reporting_script() -> Option<String> {
         }});
     }};
 
+    // Patterns for unactionable noise from the Sentry browser SDK's
+    // global unhandledrejection handler — almost always users navigating
+    // away during WASM streaming compile, ad blockers, or corporate
+    // proxies cutting off a /pkg/<hash>/ultros.wasm fetch. See
+    // GlitchTip issues #21 (~880 events), #2374, and #2404.
+    var ULTROS_PKG_BUNDLE_RE = /\/pkg\/[a-f0-9]+\/ultros\.(?:js|wasm)(?:$|\?)/;
+
+    function isUltrosWasmFetchAbort(event) {{
+        try {{
+            var ex = event && event.exception && event.exception.values && event.exception.values[0];
+            if (!ex) return false;
+
+            // "WebAssembly compilation aborted: ..." — always network/abort.
+            if (ex.type === "TypeError" && typeof ex.value === "string"
+                && ex.value.indexOf("WebAssembly compilation aborted") === 0) {{
+                return true;
+            }}
+
+            // "TypeError: Failed to fetch" originating from the wasm-bindgen
+            // glue loading /pkg/<hash>/ultros.{{js,wasm}}.
+            if (ex.type === "TypeError" && ex.value === "Failed to fetch") {{
+                var frames = (ex.stacktrace && ex.stacktrace.frames) || [];
+                for (var i = 0; i < frames.length; i++) {{
+                    var fname = frames[i] && frames[i].filename;
+                    if (typeof fname === "string" && ULTROS_PKG_BUNDLE_RE.test(fname)) {{
+                        return true;
+                    }}
+                }}
+            }}
+        }} catch (_) {{ /* be defensive — never let the filter throw */ }}
+        return false;
+    }}
+
+    var existingBeforeSend = config && config.beforeSend;
+    config = config || {{}};
+    config.beforeSend = function(event, hint) {{
+        if (isUltrosWasmFetchAbort(event)) {{
+            return null;
+        }}
+        if (typeof existingBeforeSend === "function") {{
+            return existingBeforeSend(event, hint);
+        }}
+        return event;
+    }};
+
     var init = function() {{
         if (!window.Sentry || !window.Sentry.init) {{
             return;
