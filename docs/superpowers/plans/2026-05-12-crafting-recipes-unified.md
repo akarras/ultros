@@ -256,7 +256,7 @@ Append to `crafting_cost.rs` inside `mod tests`:
                 item_id,
                 hq,
                 world_id,
-                price,
+                cheapest_price: price,
             }],
         };
         CheapestListingsMap::from(listings)
@@ -273,13 +273,13 @@ Append to `crafting_cost.rs` inside `mod tests`:
                     item_id: a.0,
                     hq: a.1,
                     world_id,
-                    price: a.2,
+                    cheapest_price: a.2,
                 },
                 ultros_api_types::cheapest_listings::CheapestListingItem {
                     item_id: b.0,
                     hq: b.1,
                     world_id,
-                    price: b.2,
+                    cheapest_price: b.2,
                 },
             ],
         };
@@ -503,8 +503,8 @@ pub fn fixture_simple_recipe_prices() -> CheapestListingsMap {
     // item 1000 LQ @ 100g, item 2000 LQ @ 50g (output).
     CheapestListingsMap::from(CheapestListings {
         cheapest_listings: vec![
-            CheapestListingItem { item_id: 1000, hq: false, world_id: 1, price: 100 },
-            CheapestListingItem { item_id: 2000, hq: false, world_id: 1, price: 50 },
+            CheapestListingItem { item_id: 1000, hq: false, world_id: 1, cheapest_price: 100 },
+            CheapestListingItem { item_id: 2000, hq: false, world_id: 1, cheapest_price: 50 },
         ],
     })
 }
@@ -514,8 +514,8 @@ pub fn fixture_simple_recipe_prices() -> CheapestListingsMap {
 pub fn fixture_shard_recipe_prices() -> CheapestListingsMap {
     CheapestListingsMap::from(CheapestListings {
         cheapest_listings: vec![
-            CheapestListingItem { item_id: 1000, hq: false, world_id: 1, price: 100 },
-            CheapestListingItem { item_id: 1001, hq: false, world_id: 1, price: 5 },
+            CheapestListingItem { item_id: 1000, hq: false, world_id: 1, cheapest_price: 100 },
+            CheapestListingItem { item_id: 1001, hq: false, world_id: 1, cheapest_price: 5 },
         ],
     })
 }
@@ -795,8 +795,8 @@ Append to `mod tests`:
         // With subcrafts enabled, cost should be 30 not 50.
         let prices = CheapestListingsMap::from(CheapestListings {
             cheapest_listings: vec![
-                CheapestListingItem { item_id: 1000, hq: false, world_id: 1, price: 30 },
-                CheapestListingItem { item_id: 2000, hq: false, world_id: 1, price: 50 },
+                CheapestListingItem { item_id: 1000, hq: false, world_id: 1, cheapest_price: 30 },
+                CheapestListingItem { item_id: 2000, hq: false, world_id: 1, cheapest_price: 50 },
             ],
         });
         let cats = fixture_categories();
@@ -826,8 +826,8 @@ Append to `mod tests`:
     fn compute_cost_subcraft_disabled_when_depth_zero() {
         let prices = CheapestListingsMap::from(CheapestListings {
             cheapest_listings: vec![
-                CheapestListingItem { item_id: 1000, hq: false, world_id: 1, price: 30 },
-                CheapestListingItem { item_id: 2000, hq: false, world_id: 1, price: 50 },
+                CheapestListingItem { item_id: 1000, hq: false, world_id: 1, cheapest_price: 30 },
+                CheapestListingItem { item_id: 2000, hq: false, world_id: 1, cheapest_price: 50 },
             ],
         });
         let cats = fixture_categories();

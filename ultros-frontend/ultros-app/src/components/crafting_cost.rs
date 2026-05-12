@@ -239,7 +239,7 @@ mod tests {
         inner: std::collections::HashMap<i32, Cell<i32>>,
     }
     impl MapOnHand {
-        fn from(pairs: &[(i32, i32)]) -> Self {
+        fn new(pairs: &[(i32, i32)]) -> Self {
             Self {
                 inner: pairs.iter().map(|(id, q)| (*id, Cell::new(*q))).collect(),
             }
@@ -277,7 +277,7 @@ mod tests {
     #[test]
     fn ingredient_cost_on_hand_clamps_to_need() {
         let prices = one_listing(100, false, 50, 1);
-        let oh = MapOnHand::from(&[(100, 999)]);
+        let oh = MapOnHand::new(&[(100, 999)]);
         let opts = CraftingCostOptions {
             require_hq: false,
             max_subcraft_depth: 0,
@@ -293,7 +293,7 @@ mod tests {
     #[test]
     fn ingredient_cost_on_hand_partial() {
         let prices = one_listing(100, false, 50, 1);
-        let oh = MapOnHand::from(&[(100, 3)]);
+        let oh = MapOnHand::new(&[(100, 3)]);
         let opts = CraftingCostOptions {
             require_hq: false,
             max_subcraft_depth: 0,
