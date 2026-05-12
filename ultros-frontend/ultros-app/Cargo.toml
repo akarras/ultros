@@ -32,10 +32,14 @@ web-sys = { version = "0.3", optional = true, features = [
     "Document",
     "Element",
     "PointerEvent",
+    "WebSocket",
+    "MessageEvent",
+    "CloseEvent",
+    "Event",
 ] }
 ultros-api-types = { path = "../../ultros-api-types" }
 ultros-db = { path = "../../ultros-db", optional = true }
-serde = { version = "1", features = ["rc", "derive"] }
+serde = { workspace = true, features = ["rc"] }
 thousands = "0.2.0"
 timeago = "0.4.0"
 chrono.workspace = true
@@ -43,15 +47,15 @@ itertools.workspace = true
 futures = "0.3"
 humantime = "2.1"
 colorsys = "0.6.6"
-thiserror = "2.0.17"
+thiserror = { workspace = true }
 log = "0.4.29"
-anyhow = "1.0.100"
+anyhow = { workspace = true }
 cookie = { version = "0.18", features = ["percent-encode"] }
 wasm-bindgen = { version = "0.2", optional = true }
 time = "0.3.20"
 js-sys = { version = "0.3.61", optional = true }
 tracing = "0.1"
-serde_json = "1.0.145"
+serde_json = { workspace = true }
 ultros-charts = { path = "../ultros-charts" }
 leptos-chartistry = "0.2"
 icondata.workspace = true

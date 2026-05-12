@@ -4,6 +4,7 @@ pub mod analyzer;
 pub mod currency_exchange;
 pub mod edit_retainers;
 pub mod fc_crafting_analyzer;
+pub mod help;
 pub mod history;
 pub mod home_page;
 pub mod item_explorer;

@@ -5,8 +5,18 @@ on:
         branches: ["main"]
         # Publish semver tags as releases.
         tags: ["v*.*.*"]
+        paths-ignore:
+            - "userguide/**"
+            - "**/*.md"
+            - ".github/workflows/book.yml"
+            - ".github/workflows/book-check.yml"
     pull_request:
         branches: ["main"]
+        paths-ignore:
+            - "userguide/**"
+            - "**/*.md"
+            - ".github/workflows/book.yml"
+            - ".github/workflows/book-check.yml"
 
 env:
     CARGO_TERM_COLOR: always

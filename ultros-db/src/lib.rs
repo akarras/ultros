@@ -21,7 +21,7 @@ use migration::{Migrator, MigratorTrait};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::NotSet, ColumnTrait, ConnectOptions, Database,
     DatabaseConnection, DbErr, EntityTrait, FromQueryResult, IntoActiveModel, ModelTrait,
-    QueryFilter, QuerySelect, Set,
+    QueryFilter, QueryOrder, QuerySelect, Set,
 };
 
 use tracing::{error, info, instrument};
@@ -206,9 +206,17 @@ impl UltrosDb {
         hq: bool,
         limit: u64,
     ) -> Result<Vec<active_listing::Model>> {
+        use active_listing::*;
         let join = futures::future::try_join_all(world_id.flat_map(|world| {
-            item.clone()
-                .map(move |i| self.get_listings_for_world(world, i))
+            item.clone().map(move |i| {
+                Entity::find()
+                    .filter(Column::ItemId.eq(i.0))
+                    .filter(Column::WorldId.eq(world.0))
+                    .filter(Column::Hq.eq(hq))
+                    .order_by_asc(Column::PricePerUnit)
+                    .limit(limit)
+                    .all(&self.db)
+            })
         }))
         .await?;
         Ok(join.into_iter().flat_map(|l| l.into_iter()).collect())

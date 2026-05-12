@@ -1,5 +1,5 @@
 use clap::Parser;
-use log::info;
+use tracing::info;
 use universalis::websocket::SocketRx;
 use universalis::websocket::event_types::{EventChannel, SubscribeMode};
 use universalis::{ItemId, UniversalisClient, WebsocketClient};
@@ -16,7 +16,7 @@ struct Args {
 #[tokio::main]
 async fn main() {
     // subscribe to several items
-    pretty_env_logger::init();
+    tracing_subscriber::fmt::init();
     let universalis_client = UniversalisClient::new("ultros-universalis-examples");
     let worlds = universalis_client.get_worlds().await.unwrap();
     let args = Args::parse();

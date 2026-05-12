@@ -312,11 +312,12 @@ impl UltrosDb {
         &self,
         alert_id: i32,
     ) -> Result<Option<notification_endpoint::Model>> {
-        let rules = alert_notification_rule::Entity::find()
+        let rule = alert_notification_rule::Entity::find()
             .filter(alert_notification_rule::Column::AlertId.eq(alert_id))
-            .all(&self.db)
+            .limit(1)
+            .one(&self.db)
             .await?;
-        if let Some(rule) = rules.first() {
+        if let Some(rule) = rule {
             Ok(notification_endpoint::Entity::find_by_id(rule.endpoint_id)
                 .one(&self.db)
                 .await?)
@@ -342,18 +343,9 @@ impl UltrosDb {
         owner: i64,
         limit: u64,
     ) -> Result<Vec<alert_event::Model>> {
-        let alert_ids: Vec<i32> = alert::Entity::find()
-            .filter(alert::Column::Owner.eq(owner))
-            .all(&self.db)
-            .await?
-            .into_iter()
-            .map(|a| a.id)
-            .collect();
-        if alert_ids.is_empty() {
-            return Ok(vec![]);
-        }
         Ok(alert_event::Entity::find()
-            .filter(alert_event::Column::AlertId.is_in(alert_ids))
+            .inner_join(alert::Entity)
+            .filter(alert::Column::Owner.eq(owner))
             .order_by_desc(alert_event::Column::FiredAt)
             .limit(limit)
             .all(&self.db)
