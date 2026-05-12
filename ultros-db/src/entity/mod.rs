@@ -22,6 +22,7 @@ pub mod list_shared_user;
 pub mod listing_last_updated;
 pub mod materia_listing;
 pub mod notification_endpoint;
+pub mod push_subscription;
 pub mod owned_ffxiv_character;
 pub mod owned_retainers;
 pub mod region;

@@ -20,6 +20,7 @@ pub use super::list_shared_user::Entity as ListSharedUser;
 pub use super::listing_last_updated::Entity as ListingLastUpdated;
 pub use super::materia_listing::Entity as MateriaListing;
 pub use super::notification_endpoint::Entity as NotificationEndpoint;
+pub use super::push_subscription::Entity as PushSubscription;
 pub use super::owned_ffxiv_character::Entity as OwnedFfxivCharacter;
 pub use super::owned_retainers::Entity as OwnedRetainers;
 pub use super::region::Entity as Region;
