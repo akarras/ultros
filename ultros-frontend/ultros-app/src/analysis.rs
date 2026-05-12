@@ -19,8 +19,12 @@ pub struct SaleSummary {
     pub num_sold: usize,
     /// Average time between sales across `num_sold`. None if no sales.
     pub avg_sale_duration: Option<Duration>,
+    /// Time since the most-recent sale. None if no sales.
+    pub days_since_last_sale: Option<Duration>,
     pub max_price: i32,
     pub avg_price: i32,
+    /// Robust midpoint of the clamped sales, used as the realistic seller estimate.
+    pub median_price: i32,
     pub min_price: i32,
 }
 
