@@ -17,11 +17,8 @@ fn DealItem(deal: ResaleStatsDto, home_world_name: String) -> impl IntoView {
     view! {
         <a
             href=format!("/item/{}/{}", home_world_name, deal.item_id)
-            class="card group block relative overflow-hidden"
+            class="group block relative overflow-hidden rounded-lg p-2 -mx-2 hover:bg-[color:color-mix(in_srgb,var(--brand-bg)_10%,transparent)] transition-colors"
         >
-            <div class="absolute top-0 right-0 p-2 opacity-10 group-hover:opacity-20 transition-opacity pointer-events-none">
-                 <Icon icon=i::FaMoneyBillTrendUpSolid width="3em" height="3em" />
-            </div>
             <div class="flex items-start gap-4 relative z-10">
                 <ItemIcon item_id=deal.item_id icon_size=IconSize::Medium />
                 <div class="flex-1 min-w-0">
