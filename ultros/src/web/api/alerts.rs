@@ -4,7 +4,7 @@ use axum::{
 };
 use ultros_api_types::alert::{
     Alert, AlertDelivery, AlertEvent as ApiAlertEvent, AlertTrigger, CreateAlertRequest,
-    UpdateAlertRequest,
+    ResendResult, UpdateAlertRequest,
 };
 use ultros_db::UltrosDb;
 
@@ -216,6 +216,64 @@ pub(crate) async fn list_alert_events(
             })
             .collect(),
     ))
+}
+
+/// Resend an alert event through every endpoint linked to its alert. Returns
+/// `ResendResult { delivered, error }` rather than bailing out — the UI shows
+/// per-event status, so a soft failure (no endpoints, all endpoints errored) is
+/// reported as `delivered: false` with the last error message captured.
+///
+/// Path: `POST /api/v1/alerts/events/{id}/resend`.
+pub(crate) async fn resend_alert_event(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(event_id): Path<i64>,
+) -> Result<Json<ResendResult>, ApiError> {
+    let event = db
+        .get_alert_event_by_id_owned_by(user.id as i64, event_id)
+        .await
+        .map_err(ApiError::from)?;
+    let endpoints = db
+        .get_notification_endpoints_for_alert(event.alert_id)
+        .await
+        .map_err(ApiError::from)?;
+    if endpoints.is_empty() {
+        return Ok(Json(ResendResult {
+            delivered: false,
+            error: Some("alert has no endpoints".into()),
+        }));
+    }
+    let Some(serenity_ctx) = crate::alerts::delivery::get_serenity_ctx() else {
+        return Ok(Json(ResendResult {
+            delivered: false,
+            error: Some("Discord client not ready".into()),
+        }));
+    };
+    let title = "Ultros alert (resend)";
+    let body = format!(
+        "Resending alert for item {} (matched price: {:?})",
+        event.item_id, event.matched_price
+    );
+    let mut last_err: Option<String> = None;
+    let mut any_ok = false;
+    for endpoint in endpoints {
+        match crate::alerts::delivery::deliver_to_endpoint(
+            &endpoint,
+            title,
+            &body,
+            &db,
+            &serenity_ctx,
+        )
+        .await
+        {
+            Ok(()) => any_ok = true,
+            Err(e) => last_err = Some(format!("{e}")),
+        }
+    }
+    Ok(Json(ResendResult {
+        delivered: any_ok,
+        error: last_err,
+    }))
 }
 
 #[cfg(test)]

@@ -59,7 +59,7 @@ use crate::event::{EventSenders, EventType};
 use crate::leptos::create_leptos_app;
 use crate::search_service::SearchService;
 use crate::web::api::alerts::{
-    create_alert, delete_alert, list_alert_events, list_alerts, update_alert,
+    create_alert, delete_alert, list_alert_events, list_alerts, resend_alert_event, update_alert,
 };
 use crate::web::api::real_time_data::real_time_data;
 use crate::web::api::{cheapest_per_world, get_best_deals, get_trends, recent_sales};
@@ -1041,6 +1041,10 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/best_deals/{world}", get(get_best_deals))
         .route("/api/v1/recentSales/{world}", get(recent_sales))
         .route("/api/v1/alerts/events", get(list_alert_events))
+        .route(
+            "/api/v1/alerts/events/{id}/resend",
+            post(resend_alert_event),
+        )
         .route("/api/v1/alerts", get(list_alerts).post(create_alert))
         .route(
             "/api/v1/alerts/{id}",

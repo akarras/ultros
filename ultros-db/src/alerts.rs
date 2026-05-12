@@ -338,6 +338,26 @@ impl UltrosDb {
         Ok(())
     }
 
+    /// Fetch an alert event by id, but only if the underlying alert is owned by `owner`.
+    /// Returns `Err` for both "no such event" and "event belongs to someone else" so the
+    /// caller doesn't leak existence to non-owners.
+    pub async fn get_alert_event_by_id_owned_by(
+        &self,
+        owner: i64,
+        event_id: i64,
+    ) -> Result<alert_event::Model> {
+        let event = alert_event::Entity::find_by_id(event_id)
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| anyhow::Error::msg("alert event not found"))?;
+        alert::Entity::find_by_id(event.alert_id)
+            .filter(alert::Column::Owner.eq(owner))
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| anyhow::Error::msg("alert event not found"))?;
+        Ok(event)
+    }
+
     pub async fn get_recent_alert_events_for_user(
         &self,
         owner: i64,
