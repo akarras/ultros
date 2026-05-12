@@ -177,6 +177,13 @@ impl WorldHelper {
         Self { world_data }
     }
 
+    /// Borrowed view of the underlying world data. Used by the server when
+    /// inlining the world data into the initial HTML response so the client
+    /// can skip the `/api/v1/world_data` fetch on hydration.
+    pub fn world_data(&self) -> &WorldData {
+        &self.world_data
+    }
+
     /// Ignores case and looks up the world name
     pub fn lookup_world_by_name(&self, name: &str) -> Option<AnyResult<'_>> {
         let mut worlds = self.world_data.regions.iter().flat_map(|region| {

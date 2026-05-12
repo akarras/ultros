@@ -12,7 +12,7 @@ include!(concat!(env!("OUT_DIR"), "/i18n/mod.rs"));
 use i18n::*;
 
 use crate::components::recently_viewed::RecentItems;
-pub use crate::global_state::{LocalWorldData, home_world::GuessedRegion};
+pub use crate::global_state::{BootstrapUser, LocalWorldData, home_world::GuessedRegion};
 use crate::global_state::{
     cheapest_prices::CheapestPrices,
     clipboard_text::GlobalLastCopiedText,
@@ -143,7 +143,7 @@ fn error_reporting_script() -> Option<String> {
     ))
 }
 
-pub fn shell(options: LeptosOptions) -> impl IntoView {
+pub fn shell(options: LeptosOptions, bootstrap_script: String) -> impl IntoView {
     let sheet_url = ["/", options.site_pkg_dir.as_ref(), "/ultros.css"].concat();
     let error_reporting_script = error_reporting_script();
     view! {
@@ -155,6 +155,10 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
                 <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png" />
                 <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png" />
                 <link rel="manifest" href="/static/site.webmanifest" />
+                // Bootstrap data injected by the SSR handler. Reading this in
+                // hydrate() lets us skip the /world_data, /detectregion, and
+                // /current_user round-trips on every cold load.
+                <script inner_html=bootstrap_script />
                 <script>
     "(function(){try{var d=document.documentElement;var ls=localStorage;var g=function(k){try{return ls.getItem(k)}catch(_){return null}};var gc=function(n){var m=document.cookie.match(new RegExp('(?:^|; )'+n+'=([^;]+)'));return m?decodeURIComponent(m[1]):null};var mode=g('theme.mode')||gc('theme_mode')||'system';if(mode==='system'){mode=(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light'};d.setAttribute('data-theme',mode==='light'?'light':'dark');var palette=g('theme.palette')||gc('theme_palette')||'violet';d.setAttribute('data-palette',palette)}catch(_){}})();"
                 </script>
