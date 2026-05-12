@@ -199,6 +199,14 @@ async fn get_region() -> String {
         .unwrap()
 }
 
+fn dispatch_boot_event(name: &str) {
+    if let Some(window) = web_sys::window()
+        && let Ok(event) = web_sys::Event::new(name)
+    {
+        let _ = window.dispatch_event(&event);
+    }
+}
+
 #[wasm_bindgen]
 pub fn hydrate() {
     console_error_panic_hook::set_once();
@@ -207,6 +215,7 @@ pub fn hydrate() {
     // check that we have the right client version data
     let _ = Executor::init_wasm_bindgen();
     log::info!("hydrate mode - hydrating");
+    dispatch_boot_event("ultros:wasm-loaded");
     spawn_local(async move {
         info!("fetching..");
         let (_, (worlds, region)) = join(
@@ -223,5 +232,6 @@ pub fn hydrate() {
             provide_context(LocalWorldData(worlds));
             view! { <App /> }
         });
+        dispatch_boot_event("ultros:hydrated");
     });
 }
