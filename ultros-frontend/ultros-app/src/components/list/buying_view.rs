@@ -3,6 +3,7 @@ use crate::components::icon::Icon;
 use crate::components::item_icon::*;
 use crate::global_state::LocalWorldData;
 use crate::global_state::xiv_data::tracked_data;
+use crate::i18n::{t, t_string, use_i18n};
 use icondata as i;
 use leptos::either::Either;
 use leptos::prelude::*;
@@ -30,12 +31,14 @@ pub fn BuyingView(
     items: Vec<(ListItem, Vec<ActiveListing>)>,
     edit_item: Action<ListItem, Result<(), crate::error::AppError>>,
 ) -> impl IntoView {
+    let i18n = use_i18n();
     let world_data = use_context::<LocalWorldData>()
         .expect("LocalWorldData should be available")
         .0
         .expect("LocalWorldData should be loaded");
     let data = tracked_data();
     let game_items = &data.items;
+    let unknown_item_label = t_string!(i18n, unknown_item).to_string();
 
     let mut selected_listings: Vec<(i32, GroupedListing)> = Vec::new();
 
@@ -60,7 +63,7 @@ pub fn BuyingView(
             let item_name = game_items
                 .get(&ItemId(list_item.item_id))
                 .map(|i| i.name.to_string())
-                .unwrap_or_else(|| "Unknown Item".to_string());
+                .unwrap_or_else(|| unknown_item_label.clone());
 
             selected_listings.push((
                 listing.world_id,
@@ -115,12 +118,12 @@ pub fn BuyingView(
     sorted_dcs.sort_by(|a, b| a.1.cmp(&b.1));
 
     view! {
-        <div class="flex flex-col gap-6">
+        <div class="flex flex-col gap-4">
             {if sorted_dcs.is_empty() {
                 Either::Left(
                     view! {
-                        <div class="text-center py-8 text-[color:var(--color-text-muted)] italic">
-                            "No items left to buy! 🎉"
+                        <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] p-8 text-center text-[color:var(--color-text-muted)]">
+                            {t!(i18n, list_buying_view_empty_state)}
                         </div>
                     },
                 )
@@ -132,22 +135,24 @@ pub fn BuyingView(
                             key=|(dc_id, _, _)| *dc_id
                             children=move |(_dc_id, dc_name, worlds)| {
                                 view! {
-                                    <div class="flex flex-col gap-4">
-                                        <div class="text-2xl font-bold text-brand-400 border-b-2 border-brand-900/50 pb-1">
-                                            {dc_name}
+                                    <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] overflow-hidden">
+                                        <div class="flex items-center justify-between border-b border-[color:var(--color-outline)] px-4 py-3">
+                                            <div class="text-lg font-bold text-[color:var(--brand-fg)]">
+                                                {dc_name}
+                                            </div>
                                         </div>
-                                        <div class="flex flex-col gap-6 pl-2">
+                                        <div class="divide-y divide-[color:var(--color-outline)]">
                                             <For
                                                 each=move || worlds.clone()
                                                 key=|(world_id, _, _)| *world_id
                                                 children=move |(_world_id, world_name, listings)| {
                                                     view! {
-                                                        <div class="flex flex-col gap-2">
-                                                            <div class="text-xl font-semibold text-brand-200 flex items-center gap-2">
+                                                        <div class="p-4">
+                                                            <div class="mb-3 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-text-muted)]">
                                                                 <Icon icon=i::BiMapRegular />
                                                                 {world_name}
                                                             </div>
-                                                            <div class="flex flex-col gap-1 pl-6">
+                                                            <div class="grid gap-2">
                                                                 <For
                                                                     each=move || listings.clone()
                                                                     key=|listing| listing.listing_id
@@ -156,35 +161,37 @@ pub fn BuyingView(
                                                                         let mut list_item = listing.list_item.clone();
                                                                         let quantity_to_add = listing.quantity;
                                                                         view! {
-                                                                            <div class="flex flex-row items-center gap-3 py-2 hover:bg-brand-900/20 rounded-lg px-3 group transition-colors">
-                                                                                <ItemIcon
-                                                                                    item_id=listing.item_id
-                                                                                    icon_size=IconSize::Medium
-                                                                                />
-                                                                                <div class="flex-1 flex flex-col">
-                                                                                    <div class="flex items-center gap-2">
-                                                                                        <span class="font-bold text-lg">
-                                                                                            {listing.quantity}
-                                                                                        </span>
-                                                                                        <span class="text-[color:var(--color-text)]">
-                                                                                            {listing.item_name}
-                                                                                        </span>
-                                                                                        {listing
-                                                                                            .hq
-                                                                                            .then(|| {
-                                                                                                view! {
-                                                                                                    <span class="text-brand-400">"HQ"</span>
-                                                                                                }
-                                                                                            })}
-                                                                                    </div>
-                                                                                    <div class="flex items-center gap-1 text-sm text-[color:var(--color-text-muted)]">
-                                                                                        "@"
-                                                                                        <Gil amount=Signal::derive(move || listing.price) />
-                                                                                        "each"
+                                                                            <div class="group flex flex-col gap-3 rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-elevated)] px-3 py-3 transition-colors hover:border-[color:var(--color-outline-strong)] sm:flex-row sm:items-center">
+                                                                                <div class="flex min-w-0 flex-1 items-center gap-3">
+                                                                                    <ItemIcon
+                                                                                        item_id=listing.item_id
+                                                                                        icon_size=IconSize::Medium
+                                                                                    />
+                                                                                    <div class="min-w-0 flex-1">
+                                                                                        <div class="flex min-w-0 flex-wrap items-center gap-2">
+                                                                                            <span class="rounded-md bg-[color:var(--brand-bg)]/30 px-2 py-0.5 text-sm font-bold text-[color:var(--brand-fg)]">
+                                                                                                {listing.quantity}
+                                                                                            </span>
+                                                                                            <span class="min-w-0 truncate font-semibold text-[color:var(--color-text)]">
+                                                                                                {listing.item_name}
+                                                                                            </span>
+                                                                                            {listing
+                                                                                                .hq
+                                                                                                .then(|| {
+                                                                                                    view! {
+                                                                                                        <span class="rounded-md border border-[color:var(--brand-ring)]/40 px-2 py-0.5 text-xs font-bold text-[color:var(--brand-fg)]">{t!(i18n, list_view_hq)}</span>
+                                                                                                    }
+                                                                                                })}
+                                                                                        </div>
+                                                                                        <div class="mt-1 flex items-center gap-1 text-sm text-[color:var(--color-text-muted)]">
+                                                                                            "@"
+                                                                                            <Gil amount=Signal::derive(move || listing.price) />
+                                                                                            {t!(i18n, list_buying_view_each)}
+                                                                                        </div>
                                                                                     </div>
                                                                                 </div>
                                                                                 <button
-                                                                                    class="btn btn-primary opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-2"
+                                                                                    class="btn-primary shrink-0"
                                                                                     on:click=move |_| {
                                                                                         list_item.acquired = Some(
                                                                                             list_item.acquired.unwrap_or(0) + quantity_to_add,
@@ -193,7 +200,7 @@ pub fn BuyingView(
                                                                                     }
                                                                                 >
                                                                                     <Icon icon=i::BiCheckRegular />
-                                                                                    <span>"Mark Purchased"</span>
+                                                                                    <span>{t!(i18n, list_buying_view_mark_purchased)}</span>
                                                                                 </button>
                                                                             </div>
                                                                         }

@@ -1,6 +1,7 @@
 use chrono::Utc;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
+    ActiveValue, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
+    sea_query::OnConflict,
 };
 use universalis::{ItemId, WorldId};
 
@@ -12,25 +13,22 @@ impl UltrosDb {
         world_id: WorldId,
         item_id: ItemId,
     ) -> Result<(), anyhow::Error> {
-        // just assume most items have an update, handle the failure case manually
         let model = listing_last_updated::ActiveModel {
             item_id: ActiveValue::Set(item_id.0),
             world_id: ActiveValue::Set(world_id.0),
             date_time: ActiveValue::Set(Utc::now().naive_utc()),
         };
-        let updated = model.clone().update(&self.db).await;
-        match updated {
-            Ok(_updated) => {}
-            Err(_e) => {
-                match model.clone().insert(&self.db).await {
-                    Ok(_ok) => {}
-                    Err(_e) => {
-                        // ok now can we update?
-                        model.clone().update(&self.db).await?;
-                    }
-                }
-            }
-        }
+        listing_last_updated::Entity::insert(model)
+            .on_conflict(
+                OnConflict::columns([
+                    listing_last_updated::Column::ItemId,
+                    listing_last_updated::Column::WorldId,
+                ])
+                .update_column(listing_last_updated::Column::DateTime)
+                .to_owned(),
+            )
+            .exec(&self.db)
+            .await?;
         Ok(())
     }
 

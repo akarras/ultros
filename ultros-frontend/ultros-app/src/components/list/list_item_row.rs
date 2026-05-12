@@ -2,6 +2,7 @@ use crate::components::alert_config_drawer::AlertConfigDrawer;
 use crate::components::icon::Icon;
 use crate::components::{clipboard::*, item_icon::*, price_viewer::*, tooltip::*};
 use crate::global_state::xiv_data::tracked_data;
+use crate::i18n::{t, t_string, use_i18n};
 use icondata as i;
 use leptos::either::Either;
 use leptos::prelude::*;
@@ -32,6 +33,7 @@ pub fn ListItemRow(
     delete_item: Action<i32, Result<(), crate::error::AppError>>,
     edit_item: Action<ListItem, Result<(), crate::error::AppError>>,
 ) -> impl IntoView {
+    let i18n = use_i18n();
     let data = tracked_data();
     let game_items = &data.items;
 
@@ -42,14 +44,17 @@ pub fn ListItemRow(
     let listings = RwSignal::new(listings);
 
     view! {
-        <tr>
+        <tr class="group transition-colors hover:bg-[color:var(--color-background-panel)]">
             {move || {
                 if !edit() || edit_list_mode() {
                     Either::Left(
                         view! {
-                            <td class:hidden=move || !edit_list_mode()>
+                            <td class="px-3 py-3 align-middle" class:hidden=move || !edit_list_mode()>
                                 <input
                                     type="checkbox"
+                                    prop:checked=move || {
+                                        selected_items.with(|u| u.contains(&item.with(|i| i.id)))
+                                    }
                                     on:click=move |_| {
                                         selected_items
                                             .update(|u| {
@@ -64,34 +69,55 @@ pub fn ListItemRow(
                                 />
 
                             </td>
-                            <td>{item.with(|i| i.hq).and_then(|hq| hq.then_some("✅"))}</td>
-                            <td>
-                                <div class="flex-row">
+                            <td class="px-3 py-3 align-middle">
+                                {move || {
+                                    item
+                                        .with(|i| i.hq)
+                                        .and_then(|hq| {
+                                            hq.then_some(
+                                                view! {
+                                                    <span class="inline-flex rounded-md border border-[color:var(--brand-ring)]/40 px-2 py-0.5 text-xs font-bold text-[color:var(--brand-fg)]">
+                                                        "HQ"
+                                                    </span>
+                                                },
+                                            )
+                                        })
+                                }}
+                            </td>
+                            <td class="px-3 py-3 align-middle">
+                                <div class="flex min-w-0 items-center gap-3">
                                     <ItemIcon item_id=item.with(|i| i.item_id) icon_size=IconSize::Small />
-                                    {game_items
-                                        .get(&ItemId(item.with(|i| i.item_id)))
-                                        .map(|item| item.name.as_str())}
-                                    <Clipboard clipboard_text=game_items
-                                        .get(&ItemId(item.with(|i| i.item_id)))
-                                        .map(|item| item.name.to_string())
-                                        .unwrap_or_default() />
-                                    {game_items
-                                        .get(&ItemId(item.with(|i| i.item_id)))
-                                        .map(|item| item.item_search_category <= 1)
-                                        .unwrap_or_default()
-                                        .then(move || {
-                                            view! {
-                                                <div>
-                                                    <Tooltip tooltip_text="This item is not available on the market board">
-                                                        <Icon icon=i::BiTrashSolid />
-                                                    </Tooltip>
-                                                </div>
-                                            }
-                                        })}
+                                    <div class="min-w-0">
+                                        <div class="flex min-w-0 items-center gap-2">
+                                            <span class="min-w-0 truncate font-semibold">
+                                                {game_items
+                                                    .get(&ItemId(item.with(|i| i.item_id)))
+                                                    .map(|item| item.name.as_str())}
+                                            </span>
+                                            <Clipboard clipboard_text=game_items
+                                                .get(&ItemId(item.with(|i| i.item_id)))
+                                                .map(|item| item.name.to_string())
+                                                .unwrap_or_default() />
+                                        </div>
+                                        {game_items
+                                            .get(&ItemId(item.with(|i| i.item_id)))
+                                            .map(|item| item.item_search_category <= 1)
+                                            .unwrap_or_default()
+                                            .then(move || {
+                                                view! {
+                                                    <div class="mt-1 inline-flex items-center gap-1 rounded-md bg-red-500/10 px-2 py-0.5 text-xs text-red-200">
+                                                        <Tooltip tooltip_text=t_string!(i18n, list_item_row_not_marketable_tooltip).to_string()>
+                                                            <Icon icon=i::AiExclamationOutlined />
+                                                        </Tooltip>
+                                                        <span>{t!(i18n, list_item_row_unavailable_on_market)}</span>
+                                                    </div>
+                                                }
+                                            })}
+                                    </div>
 
                                 </div>
                             </td>
-                            <td>
+                            <td class="px-3 py-3 align-middle">
                                 {move || {
                                     let item = item.get();
                                     let q = item.quantity.unwrap_or(1);
@@ -101,7 +127,7 @@ pub fn ListItemRow(
                                             <div class="flex flex-col gap-1 w-full">
                                                 <span>{format!("{a} / {q}")}</span>
                                                 <progress
-                                                    class="progress progress-primary w-full h-2 rounded"
+                                                    class="progress progress-primary h-2 w-full rounded"
                                                     value=a
                                                     max=q
                                                 ></progress>
@@ -114,7 +140,7 @@ pub fn ListItemRow(
                                 }}
 
                             </td>
-                            <td>
+                            <td class="px-3 py-3 align-middle">
                                 {move || {
                                     let q = item.with(|i| i.quantity.unwrap_or(1));
                                     let a = item.with(|i| i.acquired.unwrap_or(0));
@@ -129,20 +155,20 @@ pub fn ListItemRow(
                                 }}
 
                             </td>
-                            <td class:hidden=edit_list_mode>
-                                <div class="flex gap-1">
-                                    <Tooltip tooltip_text="Create price alert">
+                            <td class="px-3 py-3 align-middle" class:hidden=edit_list_mode>
+                                <div class="flex justify-end gap-1">
+                                    <Tooltip tooltip_text=t_string!(i18n, list_item_row_create_alert).to_string()>
                                         <button
-                                            class="btn"
-                                            aria-label="Create price alert"
+                                            class="btn-secondary h-8 w-8 p-0"
+                                            aria-label=t_string!(i18n, list_item_row_create_alert)
                                             on:click=move |_| set_alert_drawer_open.set(true)
                                         >
                                             <Icon icon=i::BsBell />
                                         </button>
                                     </Tooltip>
                                     <button
-                                        class="btn"
-                                        aria-label="Delete item"
+                                        class="btn-secondary h-8 w-8 p-0 hover:text-red-200"
+                                        aria-label=t_string!(i18n, list_item_row_delete_aria)
                                         on:click=move |_| {
                                             let _ = delete_item.dispatch(item.with(|i| i.id));
                                         }
@@ -150,8 +176,8 @@ pub fn ListItemRow(
                                         <Icon icon=i::BiTrashSolid />
                                     </button>
                                     <button
-                                        class="btn"
-                                        aria-label=move || if edit() { "Save edit" } else { "Edit item" }
+                                        class="btn-secondary h-8 w-8 p-0"
+                                        aria-label=move || if edit() { t_string!(i18n, list_item_row_save_edit_aria) } else { t_string!(i18n, list_item_row_edit_item_aria) }
                                         on:click=move |_| {
                                             if temp_item() != item() {
                                                 let _ = edit_item.dispatch(temp_item());
@@ -163,10 +189,10 @@ pub fn ListItemRow(
                                             if edit() { i::BsCheck } else { i::BsPencilFill }
                                         }) />
                                     </button>
-                                    <Tooltip tooltip_text="Mark as acquired">
+                                    <Tooltip tooltip_text=t_string!(i18n, list_item_row_mark_acquired).to_string()>
                                         <button
-                                            class="btn"
-                                            aria-label="Mark as acquired"
+                                            class="btn-secondary h-8 w-8 p-0"
+                                            aria-label=t_string!(i18n, list_item_row_mark_acquired)
                                             on:click=move |_| {
                                                 item.update(|i| {
                                                     i.acquired = i.quantity;
@@ -185,7 +211,7 @@ pub fn ListItemRow(
                     let item = item();
                     Either::Right(
                         view! {
-                            <td>
+                            <td class="px-3 py-3 align-middle">
                                 <input
                                     type="checkbox"
                                     prop:checked=move || temp_item.with(|i| i.hq)
@@ -195,35 +221,42 @@ pub fn ListItemRow(
                                 />
 
                             </td>
-                            <td>
-                                <div class="flex-row">
+                            <td class="px-3 py-3 align-middle">
+                                <div class="flex min-w-0 items-center gap-3">
                                     <ItemIcon item_id=item.item_id icon_size=IconSize::Small />
-                                    {game_items
-                                        .get(&ItemId(item.item_id))
-                                        .map(|item| item.name.as_str())}
-                                    <Clipboard clipboard_text=game_items
-                                        .get(&ItemId(item.item_id))
-                                        .map(|item| item.name.to_string())
-                                        .unwrap_or_default() />
-                                    {game_items
-                                        .get(&ItemId(item.item_id))
-                                        .map(|item| item.item_search_category <= 1)
-                                        .unwrap_or_default()
-                                        .then(move || {
-                                            view! {
-                                                <div>
-                                                    <Tooltip tooltip_text="This item is not available on the market board">
-                                                        <Icon icon=i::AiExclamationOutlined />
-                                                    </Tooltip>
-                                                </div>
-                                            }
-                                        })}
+                                    <div class="min-w-0">
+                                        <div class="flex min-w-0 items-center gap-2">
+                                            <span class="min-w-0 truncate font-semibold">
+                                                {game_items
+                                                    .get(&ItemId(item.item_id))
+                                                    .map(|item| item.name.as_str())}
+                                            </span>
+                                            <Clipboard clipboard_text=game_items
+                                                .get(&ItemId(item.item_id))
+                                                .map(|item| item.name.to_string())
+                                                .unwrap_or_default() />
+                                        </div>
+                                        {game_items
+                                            .get(&ItemId(item.item_id))
+                                            .map(|item| item.item_search_category <= 1)
+                                            .unwrap_or_default()
+                                            .then(move || {
+                                                view! {
+                                                    <div class="mt-1 inline-flex items-center gap-1 rounded-md bg-red-500/10 px-2 py-0.5 text-xs text-red-200">
+                                                        <Tooltip tooltip_text=t_string!(i18n, list_item_row_not_marketable_tooltip).to_string()>
+                                                            <Icon icon=i::AiExclamationOutlined />
+                                                        </Tooltip>
+                                                        <span>{t!(i18n, list_item_row_unavailable_on_market)}</span>
+                                                    </div>
+                                                }
+                                            })}
 
+                                    </div>
                                 </div>
                             </td>
-                            <td>
+                            <td class="px-3 py-3 align-middle">
                                 <div class="flex flex-col gap-1">
-                                    <label class="text-xs">"Qty"</label>
+                                    <label class="text-xs">{t_string!(i18n, list_item_row_qty_label)}</label>
                                     <input
                                         class="input w-20"
                                         prop:value=move || temp_item.with(|i| i.quantity)
@@ -237,7 +270,7 @@ pub fn ListItemRow(
                                         }
                                     />
 
-                                    <label class="text-xs">"Acquired"</label>
+                                    <label class="text-xs">{t_string!(i18n, list_item_row_acquired_label)}</label>
                                     <input
                                         class="input w-20"
                                         prop:value=move || temp_item.with(|i| i.acquired.unwrap_or(0))
@@ -251,9 +284,34 @@ pub fn ListItemRow(
                                         }
                                     />
 
+                                    <label class="text-xs">{t!(i18n, list_item_row_target_price_label)}</label>
+                                    <input
+                                        class="input w-24"
+                                        type="number"
+                                        min="0"
+                                        placeholder=move || t_string!(i18n, none).to_string()
+                                        prop:value=move || {
+                                            temp_item
+                                                .with(|i| {
+                                                    i.target_price.map(|v| v.to_string()).unwrap_or_default()
+                                                })
+                                        }
+                                        on:input=move |e| {
+                                            let v = event_target_value(&e);
+                                            temp_item
+                                                .update(|i| {
+                                                    i.target_price = if v.trim().is_empty() {
+                                                        None
+                                                    } else {
+                                                        v.parse::<i64>().ok().filter(|n| *n >= 0)
+                                                    };
+                                                })
+                                        }
+                                    />
+
                                 </div>
                             </td>
-                            <td>
+                            <td class="px-3 py-3 align-middle">
                                 {move || {
                                     let q = item.quantity.unwrap_or(1);
                                     let a = item.acquired.unwrap_or(0);
@@ -268,19 +326,19 @@ pub fn ListItemRow(
                                 }}
 
                             </td>
-                            <td>
-                                <Tooltip tooltip_text="Create price alert">
+                            <td class="px-3 py-3 align-middle">
+                                <Tooltip tooltip_text=t_string!(i18n, list_item_row_create_alert).to_string()>
                                     <button
-                                        class="btn"
-                                        aria-label="Create price alert"
+                                        class="btn-secondary h-8 w-8 p-0"
+                                        aria-label=t_string!(i18n, list_item_row_create_alert)
                                         on:click=move |_| set_alert_drawer_open.set(true)
                                     >
                                         <Icon icon=i::BsBell />
                                     </button>
                                 </Tooltip>
                                 <button
-                                    class="btn"
-                                    aria-label="Delete item"
+                                    class="btn-secondary h-8 w-8 p-0 hover:text-red-200"
+                                    aria-label=t_string!(i18n, list_item_row_delete_aria)
                                     on:click=move |_| {
                                         let _ = delete_item.dispatch(item.id);
                                     }
@@ -288,8 +346,8 @@ pub fn ListItemRow(
                                     <Icon icon=i::BiTrashSolid />
                                 </button>
                                 <button
-                                    class="btn"
-                                    aria-label=move || if edit() { "Save edit" } else { "Edit item" }
+                                    class="btn-secondary h-8 w-8 p-0"
+                                    aria-label=move || if edit() { t_string!(i18n, list_item_row_save_edit_aria) } else { t_string!(i18n, list_item_row_edit_item_aria) }
                                     on:click=move |_| {
                                         if temp_item() != item {
                                             let _ = edit_item.dispatch(temp_item());

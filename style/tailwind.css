@@ -181,6 +181,42 @@
     border-color: var(--color-outline);
 }
 
+/* leptos-chartistry emits inline SVG/HTML; scope theme fixes to price charts. */
+.price-history-chart ._chartistry {
+    width: 100% !important;
+    height: 100% !important;
+    color: var(--color-text);
+}
+
+.price-history-chart ._chartistry svg {
+    width: 100%;
+    height: 100%;
+}
+
+.price-history-chart ._chartistry_tick_label text,
+.price-history-chart ._chartistry_rotated_label text {
+    fill: var(--color-text-muted);
+}
+
+.price-history-chart ._chartistry_line:has(> ._chartistry_line_markers circle) > path {
+    stroke: transparent;
+}
+
+.price-history-chart ._chartistry_tooltip {
+    background-color: var(--color-background-elevated) !important;
+    color: var(--color-text) !important;
+    border-color: var(--color-outline-strong) !important;
+    border-radius: 0.5rem;
+    box-shadow:
+        0 18px 45px rgba(0, 0, 0, 0.35),
+        0 0 0 1px color-mix(in srgb, var(--brand-ring) 18%, transparent);
+    pointer-events: none;
+}
+
+.price-history-chart ._chartistry_tooltip h2 {
+    color: var(--brand-fg);
+}
+
 /* Runtime-swappable brand palettes */
 :root[data-palette="violet"],
 [data-theme="light"][data-palette="violet"] {
@@ -529,7 +565,7 @@
         overflow-y: scroll;
         overflow-x: hidden;
         opacity: 0;
-        z-index: 100;
+        z-index: 200;
         margin-top: -2px;
         border: 1px solid var(--color-outline);
         border-radius: 0 0 5px 5px;
@@ -1416,21 +1452,25 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     animation: float 6s ease-in-out infinite;
 }
 
+/* Legacy app-route-shell kept for back-compat with any route body that
+   wraps itself in this class. It no longer contributes to the global
+   layout — AppShell owns that. */
 .app-route-shell {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
+    display: block;
     width: 100%;
     max-width: 80rem;
     margin-inline: auto;
-    padding: 1rem 0;
-    gap: 2rem;
-    align-items: start;
+    padding: 1rem;
 }
-
 .app-route-content {
     min-width: 0;
 }
 
+/* Legacy ad classes — still referenced by DesktopAdRail (<aside class="app-ad-rail">
+   ...<div class="ad-rail-slot">) and routes/currency_exchange.rs (.app-inline-ad).
+   The new .app-shell-ad-rail wrapper handles outer grid placement; these rules
+   continue to provide inner sizing and the mobile-hide / desktop-show toggle for
+   the inline ad. Don't remove without auditing those callers. */
 .app-ad-rail {
     display: none;
 }
@@ -1443,24 +1483,7 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     width: 10rem;
 }
 
-@media (min-width: 640px) {
-    .app-route-shell {
-        padding: 1.5rem 1rem;
-    }
-}
-
-@media (min-width: 1024px) {
-    .app-route-shell {
-        padding-inline: 1.5rem;
-    }
-}
-
 @media (min-width: 1536px) {
-    .app-route-shell {
-        max-width: calc(80rem + 10rem + 2rem + 3rem);
-        grid-template-columns: minmax(0, 80rem) 10rem;
-    }
-
     .app-ad-rail {
         display: block;
         min-width: 0;
@@ -1476,12 +1499,325 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 }
 
 @media (min-width: 1660px) {
-    .app-route-shell {
-        max-width: calc(80rem + 18.75rem + 2rem + 3rem);
-        grid-template-columns: minmax(0, 80rem) 18.75rem;
-    }
-
     .ad-rail-slot {
         width: 18.75rem;
     }
+}
+
+/* New application shell — grid that owns sidebar + topbar + content + ad rail. */
+.app-shell {
+    display: grid;
+    grid-template-columns: 240px minmax(0, 1fr);
+    grid-template-rows: 56px minmax(0, 1fr);
+    grid-template-areas:
+        "side  top"
+        "side  main";
+    min-height: 100vh;
+    width: 100%;
+}
+
+.app-shell > .side-nav {
+    grid-area: side;
+}
+.app-shell > .top-bar {
+    grid-area: top;
+}
+.app-shell > .app-shell-content {
+    grid-area: main;
+    min-width: 0;
+    padding: 1rem;
+}
+.app-shell > .app-shell-ad-rail {
+    display: none;
+}
+.app-shell > .app-shell-backdrop {
+    display: none;
+}
+
+/* Collapsed sidebar: 56px icon-only — desktop only.
+   On mobile, .app-shell-collapsed must NOT override the single-column
+   grid (the sidebar is position: fixed and doesn't need a grid track). */
+@media (min-width: 1024px) {
+    .app-shell.app-shell-collapsed {
+        grid-template-columns: 56px minmax(0, 1fr);
+    }
+}
+
+/* Mobile (< 1024px): sidebar becomes an overlay drawer. */
+@media (max-width: 1023px) {
+    .app-shell {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-areas:
+            "top"
+            "main";
+    }
+    .app-shell > .side-nav {
+        position: fixed;
+        grid-area: auto; /* sidebar is fixed-positioned, doesn't need a grid cell */
+        top: 0;
+        bottom: 0;
+        left: 0;
+        width: 280px;
+        z-index: 60;
+        transform: translateX(-100%);
+        transition: transform var(--transition-quick) ease;
+    }
+    .app-shell.app-shell-drawer-open > .side-nav {
+        transform: translateX(0);
+    }
+    .app-shell.app-shell-drawer-open > .app-shell-backdrop {
+        display: block;
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        background-color: color-mix(in srgb, black 50%, transparent);
+    }
+}
+
+/* Wide viewport: ad rail appears in the third column. */
+@media (min-width: 1536px) {
+    .app-shell {
+        grid-template-columns: 240px minmax(0, 1fr) 240px;
+        grid-template-areas:
+            "side  top   top"
+            "side  main  ads";
+    }
+    .app-shell.app-shell-collapsed {
+        grid-template-columns: 56px minmax(0, 1fr) 240px;
+    }
+    .app-shell > .app-shell-ad-rail {
+        display: block;
+        grid-area: ads;
+        min-width: 0;
+        padding: 1rem;
+    }
+    .app-shell > .app-shell-ad-rail:has(.ad.hidden) {
+        display: none;
+    }
+    .app-shell > .app-shell-content {
+        padding: 1.5rem;
+    }
+}
+
+@media (min-width: 1660px) {
+    .app-shell {
+        grid-template-columns: 240px minmax(0, 1fr) 300px;
+        grid-template-areas:
+            "side  top   top"
+            "side  main  ads";
+    }
+    .app-shell.app-shell-collapsed {
+        grid-template-columns: 56px minmax(0, 1fr) 300px;
+    }
+}
+
+/* ----- Sidebar component styles ----- */
+@utility side-nav {
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--color-outline);
+    background-color: var(--color-background-panel);
+    overflow-y: auto;
+}
+.side-nav-brand {
+    display: flex;
+    align-items: center;
+    height: 56px;
+    padding: 0 1rem;
+    border-bottom: 1px solid var(--color-outline);
+}
+.side-nav-brand-link {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    color: var(--color-text);
+    text-decoration: none;
+}
+.side-nav-brand-text {
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    font-size: 0.95rem;
+}
+.side-nav-collapse {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 0.375rem;
+    color: var(--color-text-muted);
+    background: transparent;
+    border: 1px solid transparent;
+}
+.side-nav-collapse:hover {
+    background-color: color-mix(in srgb, var(--brand-ring) 14%, transparent);
+    color: var(--color-text);
+}
+.app-shell-collapsed .side-nav-collapse > svg {
+    transform: rotate(180deg);
+}
+.side-nav-sections {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+    padding: 0.5rem;
+    flex: 1;
+}
+.side-nav-section-header {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: var(--color-text-muted);
+    padding: 0.75rem 0.75rem 0.25rem;
+}
+.side-nav-item {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.5rem;
+    color: var(--color-text);
+    text-decoration: none;
+    font-size: 0.9rem;
+    transition: background-color 120ms ease;
+}
+.side-nav-item:hover {
+    background-color: color-mix(in srgb, var(--brand-ring) 14%, transparent);
+}
+.side-nav-item[aria-current="page"] {
+    background-color: color-mix(in srgb, var(--brand-ring) 24%, transparent);
+}
+.side-nav-item > svg {
+    width: 1.1em;
+    height: 1.1em;
+    flex-shrink: 0;
+}
+.side-nav-label {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.side-nav-footer {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    border-top: 1px solid var(--color-outline);
+}
+.side-nav-icon-link {
+    color: var(--color-text-muted);
+    padding: 0.25rem;
+}
+.side-nav-icon-link:hover {
+    color: var(--color-text);
+}
+.side-nav-version {
+    margin-left: auto;
+    font-family: monospace;
+    font-size: 0.7rem;
+    color: var(--color-text-muted);
+    text-decoration: none;
+}
+
+/* Collapsed sidebar: hide labels and section headers (desktop only). */
+@media (min-width: 1024px) {
+    .app-shell-collapsed .side-nav-label,
+    .app-shell-collapsed .side-nav-section-header,
+    .app-shell-collapsed .side-nav-brand-text,
+    .app-shell-collapsed .side-nav-version {
+        display: none;
+    }
+    .app-shell-collapsed .side-nav-item {
+        justify-content: center;
+    }
+    .app-shell-collapsed .side-nav-brand-link {
+        justify-content: center;
+    }
+}
+
+/* ----- Topbar component styles ----- */
+@utility top-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    height: 56px;
+    padding: 0 1rem;
+    border-bottom: 1px solid var(--color-outline);
+    background-color: color-mix(in srgb, var(--color-background) 70%, transparent);
+    backdrop-filter: blur(20px);
+    z-index: 40;
+}
+.top-bar-hamburger {
+    display: none; /* hidden on desktop; mobile media query below re-shows it */
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 0.5rem;
+    color: var(--color-text);
+    background: transparent;
+    border: 1px solid transparent;
+}
+.top-bar-hamburger:hover {
+    background-color: color-mix(in srgb, var(--brand-ring) 14%, transparent);
+}
+@media (max-width: 1023px) {
+    .top-bar-hamburger {
+        display: inline-flex;
+    }
+}
+.top-bar-search {
+    flex: 1;
+    max-width: 480px;
+    margin-inline: auto;
+    min-width: 0;
+}
+.top-bar-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-left: auto;
+}
+
+/* ----- Toolbar primitive (consumed by Track 3) ----- */
+@utility toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--color-outline);
+    border-radius: 0.5rem;
+    background-color: var(--color-background-panel);
+}
+.toolbar-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 8rem;
+}
+.toolbar-field-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-text-muted);
+}
+.toolbar-pills {
+    display: inline-flex;
+    border: 1px solid var(--color-outline);
+    border-radius: 0.5rem;
+    overflow: hidden;
+}
+.toolbar-pills > button {
+    padding: 0.4rem 0.75rem;
+    background: transparent;
+    color: var(--color-text);
+    font-size: 0.85rem;
+}
+.toolbar-pills > button[aria-pressed="true"] {
+    background-color: color-mix(in srgb, var(--brand-ring) 22%, transparent);
+}
+.toolbar-spacer {
+    flex: 1;
 }

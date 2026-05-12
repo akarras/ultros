@@ -1,9 +1,11 @@
 use crate::global_state::cookies::Cookies;
 use crate::global_state::crafter_levels::CrafterLevels;
+use crate::i18n::*;
 use leptos::prelude::*;
 
 #[component]
 pub fn CrafterSettings() -> impl IntoView {
+    let i18n = use_i18n();
     let cookies = use_context::<Cookies>().unwrap();
     let (levels, set_levels) = cookies.use_cookie_typed::<_, CrafterLevels>("CRAFTER_LEVELS");
 
@@ -23,31 +25,42 @@ pub fn CrafterSettings() -> impl IntoView {
         set_levels(Some(current));
     };
     type CrafterCallback = fn(&CrafterLevels) -> i32;
-    let jobs: [(&str, &str, CrafterCallback); 8] = [
-        ("CRP", "Carpenter", |l: &CrafterLevels| l.carpenter),
-        ("BSM", "Blacksmith", |l: &CrafterLevels| l.blacksmith),
-        ("ARM", "Armorer", |l: &CrafterLevels| l.armorer),
-        ("GSM", "Goldsmith", |l: &CrafterLevels| l.goldsmith),
-        ("LTW", "Leatherworker", |l: &CrafterLevels| l.leatherworker),
-        ("WVR", "Weaver", |l: &CrafterLevels| l.weaver),
-        ("ALC", "Alchemist", |l: &CrafterLevels| l.alchemist),
-        ("CUL", "Culinarian", |l: &CrafterLevels| l.culinarian),
+    let jobs: [(&str, CrafterCallback); 8] = [
+        ("CRP", |l: &CrafterLevels| l.carpenter),
+        ("BSM", |l: &CrafterLevels| l.blacksmith),
+        ("ARM", |l: &CrafterLevels| l.armorer),
+        ("GSM", |l: &CrafterLevels| l.goldsmith),
+        ("LTW", |l: &CrafterLevels| l.leatherworker),
+        ("WVR", |l: &CrafterLevels| l.weaver),
+        ("ALC", |l: &CrafterLevels| l.alchemist),
+        ("CUL", |l: &CrafterLevels| l.culinarian),
     ];
 
     view! {
         <div class="panel p-6 rounded-xl">
-            <h3 class="text-2xl font-bold text-[color:var(--brand-fg)] mb-4">"Crafter Levels"</h3>
+            <h3 class="text-2xl font-bold text-[color:var(--brand-fg)] mb-4">{t!(i18n, crafter_levels_title)}</h3>
             <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {jobs.into_iter()
-                    .map(|(code, name, getter)| {
+                    .map(|(code, getter)| {
                         let id = format!("crafter-level-{}", code);
+                        let label = match code {
+                            "CRP" => view! { {t!(i18n, carpenter)} }.into_any(),
+                            "BSM" => view! { {t!(i18n, blacksmith)} }.into_any(),
+                            "ARM" => view! { {t!(i18n, armorer)} }.into_any(),
+                            "GSM" => view! { {t!(i18n, goldsmith)} }.into_any(),
+                            "LTW" => view! { {t!(i18n, leatherworker)} }.into_any(),
+                            "WVR" => view! { {t!(i18n, weaver)} }.into_any(),
+                            "ALC" => view! { {t!(i18n, alchemist)} }.into_any(),
+                            "CUL" => view! { {t!(i18n, culinarian)} }.into_any(),
+                            _ => view! { {t!(i18n, unknown)} }.into_any(),
+                        };
                         view! {
                             <div class="space-y-1">
                                 <label
                                     class="text-sm font-medium text-[color:var(--color-text-muted)]"
                                     for=id.clone()
                                 >
-                                    {name}
+                                    {label}
                                 </label>
                                 <div class="relative">
                                     <input
@@ -66,7 +79,7 @@ pub fn CrafterSettings() -> impl IntoView {
                                         }
                                     />
                                     <span class="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[color:var(--color-text-muted)] pointer-events-none">
-                                        "Lv"
+                                        {t!(i18n, item_explorer_lv_prefix)}
                                     </span>
                                 </div>
                             </div>
@@ -75,7 +88,7 @@ pub fn CrafterSettings() -> impl IntoView {
                     .collect::<Vec<_>>()}
             </div>
             <p class="mt-4 text-sm text-gray-400">
-                "Set your crafter levels to filter recipes in the Recipe Analyzer."
+                {t!(i18n, crafter_levels_help)}
             </p>
         </div>
     }

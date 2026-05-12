@@ -17,16 +17,17 @@ ultros-api-types = { path = "../../ultros-api-types" }
 leptos = { workspace = true, default-features = false, features = ["hydrate", "nightly"] }
 log = "0.4"
 wasm-bindgen = "0.2"
+js-sys = "0.3"
 console_error_panic_hook = "0.1"
 leptos_meta = { workspace = true, default-features = false }
 gloo-net.workspace = true
 xiv-gen-db = { path = "../../xiv-gen-db" }
 xiv-gen = { path = "../../xiv-gen" }
 futures = "0.3"
-serde = { version = "1.0.228", features = ["derive"] }
+serde = { workspace = true }
 serde-wasm-bindgen = "0.6.3"
 serde_bytes = "0.11"
-serde_json = "1.0.145"
+serde_json = { workspace = true }
 anyhow.workspace = true
 rexie = "0.5"
 any_spawner = "0.3"

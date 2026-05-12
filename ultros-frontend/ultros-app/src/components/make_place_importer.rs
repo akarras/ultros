@@ -1,6 +1,7 @@
 use std::num::ParseIntError;
 
 use crate::global_state::xiv_data::tracked_data;
+use crate::i18n::{t, t_string, use_i18n};
 use leptos::{either::Either, prelude::*};
 use thiserror::Error;
 use ultros_api_types::list::ListItem;
@@ -60,6 +61,7 @@ pub fn MakePlaceImporter<R>(list_id: Signal<i32>, refresh: R) -> impl IntoView
 where
     R: Fn() + 'static + Copy + Send + Sync,
 {
+    let i18n = use_i18n();
     let (list, set_list) = signal("".to_string());
     let add_items_to_list = Action::new(move |list_items: &Vec<MakePlaceItemData>| {
         let list_items = list_items.clone();
@@ -79,13 +81,15 @@ where
         }
     });
     let parsed_items = move || match parse_list(&list()) {
-        Ok(l) => Either::Left(view! { <span>{l.len()} " items ready to add"</span> }),
+        Ok(l) => Either::Left(
+            view! { <span>{t_string!(i18n, make_place_items_ready, count = l.len()).to_string()}</span> },
+        ),
         Err(e) => Either::Right(view! { <span>{format!("{e:?}")}</span> }),
     };
     view! {
         <div class="flex-column">
             <label>
-                "Copy+Paste a list with a bunch of items in it formatted as Item1: Quantity. Make place users can paste their furniture+dye lists here."
+                {t!(i18n, make_place_instructions)}
             </label>
             <textarea
                 class="input h-96"
@@ -101,7 +105,7 @@ where
 
                 class="btn"
             >
-                "Bulk add"
+                {t!(i18n, make_place_bulk_add)}
             </button>
             {move || add_items_to_list.pending()().then(|| view! { <Loading /> })}
             <div>
@@ -109,12 +113,12 @@ where
                     add_items_to_list
                         .value().with(|result| result.as_ref()
                         .map(|result| match result {
-                            Ok(_) => Either::Left(view! { <span>"Added items to list!"</span> }),
+                            Ok(_) => Either::Left(view! { <span>{t!(i18n, make_place_added_success)}</span> }),
                             Err(e) => {
                                 Either::Right(
                                     view! {
                                         <span>
-                                            "Error adding items to list :( " {format!("{e:?}")}
+                                            {t!(i18n, make_place_error_prefix)} {format!("{e:?}")}
                                         </span>
                                     },
                                 )

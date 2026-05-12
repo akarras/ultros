@@ -1,17 +1,21 @@
 use leptos::prelude::*;
 
+use crate::i18n::*;
+
 #[component]
 pub fn SingleLineSkeleton() -> impl IntoView {
+    let i18n = use_i18n();
     view! {
         <div class="animate-pulse">
             <div class="w-full h-3 bg-gradient-to-r from-[color:color-mix(in_srgb,_var(--brand-ring)_20%,_transparent)] via-[color:color-mix(in_srgb,_var(--brand-ring)_10%,_transparent)] to-transparent rounded-md background-animate"></div>
-            <div class="sr-only">"Loading"</div>
+            <div class="sr-only">{t!(i18n, loading)}</div>
         </div>
     }.into_any()
 }
 
 #[component]
 pub fn BoxSkeleton() -> impl IntoView {
+    let i18n = use_i18n();
     view! {
         <div class="w-full h-full animate-pulse">
             <div class="space-y-2">
@@ -58,7 +62,7 @@ pub fn BoxSkeleton() -> impl IntoView {
                     </div>
                 </div>
             </div>
-            <div class="sr-only">"loading"</div>
+            <div class="sr-only">{t!(i18n, loading)}</div>
         </div>
     }.into_any()
 }

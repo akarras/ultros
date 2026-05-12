@@ -13,13 +13,45 @@ use anyhow::anyhow;
 use futures::future::try_join_all;
 use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, Condition, EntityTrait, IntoActiveModel, JoinType,
-    ModelTrait, QueryFilter, QuerySelect, RelationTrait, TransactionTrait,
-    sea_query::Expr,
+    ModelTrait, QueryFilter, QuerySelect, RelationTrait, TransactionTrait, sea_query::Expr,
 };
 use std::{collections::HashMap, sync::Arc};
+use thiserror::Error;
 use tracing::instrument;
 use ultros_api_types::list::ListPermission;
 use universalis::ItemId;
+
+#[derive(Debug, Error)]
+pub enum ListError {
+    #[error("List not found")]
+    NotFound,
+    #[error("{0}")]
+    Forbidden(&'static str),
+    #[error("{0}")]
+    BadRequest(&'static str),
+    #[error("Invite not found")]
+    InviteNotFound,
+    #[error("Invite has reached max uses")]
+    InviteExhausted,
+}
+
+fn validate_share_permission(permission: ListPermission) -> Result<()> {
+    match permission {
+        ListPermission::Read | ListPermission::Write => Ok(()),
+        ListPermission::None => {
+            Err(ListError::BadRequest("Sharing requires Read or Write permission").into())
+        }
+        ListPermission::Owner => {
+            Err(ListError::BadRequest("Owner permission cannot be granted by sharing").into())
+        }
+    }
+}
+
+fn new_invite_id() -> Result<String> {
+    let mut bytes = [0_u8; 24];
+    getrandom::fill(&mut bytes)?;
+    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
+}
 
 impl TryFrom<&list::Model> for AnySelector {
     type Error = anyhow::Error;
@@ -45,7 +77,7 @@ impl UltrosDb {
         let list = list::Entity::find_by_id(list_id)
             .one(&self.db)
             .await?
-            .ok_or_else(|| anyhow!("List not found"))?;
+            .ok_or(ListError::NotFound)?;
 
         if list.owner == user_id {
             return Ok(ListPermission::Owner);
@@ -77,7 +109,10 @@ impl UltrosDb {
                 JoinType::InnerJoin,
                 list_shared_group::Relation::UserGroup.def(),
             )
-            .join(JoinType::InnerJoin, user_group::Relation::UserGroupMember.def())
+            .join(
+                JoinType::InnerJoin,
+                user_group::Relation::UserGroupMember.def(),
+            )
             .filter(list_shared_group::Column::ListId.eq(list_id))
             .filter(user_group_member::Column::UserId.eq(user_id))
             .into_tuple()
@@ -85,6 +120,26 @@ impl UltrosDb {
             .await?;
 
         for perm in group_perms {
+            let p = ListPermission::from(perm);
+            if p > max_permission {
+                max_permission = p;
+            }
+        }
+
+        let owned_group_perms: Vec<i16> = list_shared_group::Entity::find()
+            .select_only()
+            .column(list_shared_group::Column::Permission)
+            .join(
+                JoinType::InnerJoin,
+                list_shared_group::Relation::UserGroup.def(),
+            )
+            .filter(list_shared_group::Column::ListId.eq(list_id))
+            .filter(user_group::Column::OwnerId.eq(user_id))
+            .into_tuple()
+            .all(&self.db)
+            .await?;
+
+        for perm in owned_group_perms {
             let p = ListPermission::from(perm);
             if p > max_permission {
                 max_permission = p;
@@ -134,13 +189,13 @@ impl UltrosDb {
         T: FnOnce(&mut list::ActiveModel),
     {
         let permission = self.get_permission(list_id, discord_user).await?;
-        if permission < ListPermission::Write {
-            return Err(anyhow!("Insufficient permissions to update list"));
+        if permission < ListPermission::Owner {
+            return Err(ListError::Forbidden("Only the owner can update list settings").into());
         }
         let list = list::Entity::find_by_id(list_id)
             .one(&self.db)
             .await?
-            .ok_or(anyhow!("Unable to find list"))?;
+            .ok_or(ListError::NotFound)?;
         let mut model = list.into_active_model();
         update(&mut model);
         Ok(model.update(&self.db).await?)
@@ -151,12 +206,12 @@ impl UltrosDb {
     pub async fn delete_list(&self, list_id: i32, discord_user: i64) -> Result<()> {
         let permission = self.get_permission(list_id, discord_user).await?;
         if permission < ListPermission::Owner {
-            return Err(anyhow!("Insufficient permissions to delete list"));
+            return Err(ListError::Forbidden("Only the owner can delete the list").into());
         }
         let list = list::Entity::find_by_id(list_id)
             .one(&self.db)
             .await?
-            .ok_or(anyhow::anyhow!("Failed to find list with that ID"))?;
+            .ok_or(ListError::NotFound)?;
         let txn = self.db.begin().await?;
         let _items = list_item::Entity::delete_many()
             .filter(list_item::Column::ListId.eq(list.id))
@@ -206,12 +261,12 @@ impl UltrosDb {
     pub async fn get_list(&self, list_id: i32, discord_user: i64) -> Result<list::Model> {
         let permission = self.get_permission(list_id, discord_user).await?;
         if permission < ListPermission::Read {
-            return Err(anyhow!("Insufficient permissions to read list"));
+            return Err(ListError::Forbidden("Insufficient permissions to read list").into());
         }
         let list = list::Entity::find_by_id(list_id)
             .one(&self.db)
             .await?
-            .ok_or(anyhow!("List not found"))?;
+            .ok_or(ListError::NotFound)?;
         Ok(list)
     }
 
@@ -222,7 +277,7 @@ impl UltrosDb {
     ) -> Result<Vec<list_item::Model>> {
         let permission = self.get_permission(list_id, discord_user).await?;
         if permission < ListPermission::Read {
-            return Err(anyhow!("Insufficient permissions to read list items"));
+            return Err(ListError::Forbidden("Insufficient permissions to read list items").into());
         }
         Ok(list_item::Entity::find()
             .filter(list_item::Column::ListId.eq(list_id))
@@ -243,9 +298,9 @@ impl UltrosDb {
     ) -> Result<list_item::Model> {
         let permission = self.get_permission(list.id, discord_user).await?;
         if permission < ListPermission::Write {
-            return Err(anyhow::anyhow!(
-                "Insufficient permissions to add item to list"
-            ));
+            return Err(
+                ListError::Forbidden("Insufficient permissions to add item to list").into(),
+            );
         }
         // if the item already exists in the list, just update the existing list
         let existing = list_item::Entity::find()
@@ -267,6 +322,7 @@ impl UltrosDb {
                 hq: ActiveValue::Set(hq),
                 quantity: ActiveValue::Set(quantity),
                 acquired: ActiveValue::Set(acquired),
+                target_price: ActiveValue::Set(None),
             }
             .insert(&self.db)
             .await?)
@@ -284,20 +340,65 @@ impl UltrosDb {
             .get_permission(updated_item.list_id, discord_user)
             .await?;
         if permission < ListPermission::Write {
-            return Err(anyhow!("Insufficient permissions to update list item"));
+            return Err(
+                ListError::Forbidden("Insufficient permissions to update list item").into(),
+            );
         }
         let mut item = list_item::Entity::find_by_id(updated_item.id)
             .one(&self.db)
             .await?
-            .ok_or(anyhow!("Item not found"))?
+            .ok_or(ListError::BadRequest("Item not found"))?
             .into_active_model();
         item.hq.cmp_set_value(updated_item.hq);
         item.quantity.cmp_set_value(updated_item.quantity);
+        item.target_price.cmp_set_value(updated_item.target_price);
         if item.is_changed() {
             Ok(item.update(&self.db).await?)
         } else {
             Ok(updated_item)
         }
+    }
+
+    /// Update only the `target_price` on a list_item. Requires `Write`
+    /// permission on the owning list. Pass `None` to clear an existing target.
+    #[instrument(skip(self))]
+    pub async fn set_list_item_target_price(
+        &self,
+        owner: i64,
+        list_item_id: i32,
+        target_price: Option<i64>,
+    ) -> Result<()> {
+        let item = list_item::Entity::find_by_id(list_item_id)
+            .one(&self.db)
+            .await?
+            .ok_or(ListError::BadRequest("Item not found"))?;
+        let permission = self.get_permission(item.list_id, owner).await?;
+        if permission < ListPermission::Write {
+            return Err(
+                ListError::Forbidden("Insufficient permissions to update list item").into(),
+            );
+        }
+        let mut active: list_item::ActiveModel = item.into_active_model();
+        active.target_price = ActiveValue::Set(target_price);
+        active.update(&self.db).await?;
+        Ok(())
+    }
+
+    /// Return all list_items for `list_id` that have a non-null `target_price`.
+    /// Used by the price tracker to pre-compute per-list thresholds on refresh.
+    pub async fn get_list_items_with_target(&self, list_id: i32) -> Result<Vec<list_item::Model>> {
+        Ok(list_item::Entity::find()
+            .filter(list_item::Column::ListId.eq(list_id))
+            .filter(list_item::Column::TargetPrice.is_not_null())
+            .all(&self.db)
+            .await?)
+    }
+
+    /// Look up a list by id without a permission check. Used by internal code
+    /// (the price tracker dispatch path) that has already authorized the
+    /// operation via the `alert_list_threshold` row.
+    pub async fn get_list_by_id(&self, list_id: i32) -> Result<Option<list::Model>> {
+        Ok(list::Entity::find_by_id(list_id).one(&self.db).await?)
     }
 
     // #[instrument(skip(self))]
@@ -309,9 +410,9 @@ impl UltrosDb {
     ) -> Result<u64> {
         let permission = self.get_permission(list.id, discord_user).await?;
         if permission < ListPermission::Write {
-            return Err(anyhow::anyhow!(
-                "Insufficient permissions to add items to list"
-            ));
+            return Err(
+                ListError::Forbidden("Insufficient permissions to add items to list").into(),
+            );
         }
         // for items that are already matching our list, we should update and insert
         let mut existing_list_items: HashMap<_, _> = list
@@ -348,6 +449,7 @@ impl UltrosDb {
                 hq,
                 quantity,
                 acquired,
+                target_price,
                 ..
             } = item;
             let list_id = list.id;
@@ -358,6 +460,7 @@ impl UltrosDb {
                 hq: ActiveValue::Set(hq),
                 quantity: ActiveValue::Set(quantity),
                 acquired: ActiveValue::Set(acquired),
+                target_price: ActiveValue::Set(target_price),
             }
         }))
         .exec_without_returning(&self.db)
@@ -374,10 +477,12 @@ impl UltrosDb {
         let list_item = list_item::Entity::find_by_id(list_item_id)
             .one(&self.db)
             .await?
-            .ok_or(anyhow!("No list item"))?;
+            .ok_or(ListError::BadRequest("No list item"))?;
         let permission = self.get_permission(list_item.list_id, discord_user).await?;
         if permission < ListPermission::Write {
-            return Err(anyhow!("Insufficient permissions to remove item from list"));
+            return Err(
+                ListError::Forbidden("Insufficient permissions to remove item from list").into(),
+            );
         }
         list_item.clone().delete(&self.db).await?;
         Ok(list_item)
@@ -397,10 +502,10 @@ impl UltrosDb {
         let list = list::Entity::find_by_id(list_id)
             .one(&self.db)
             .await?
-            .ok_or(anyhow!("List not found"))?;
+            .ok_or(ListError::NotFound)?;
         let permission = self.get_permission(list_id, discord_user).await?;
         if permission < ListPermission::Read {
-            return Err(anyhow!("Insufficient permissions to read list"));
+            return Err(ListError::Forbidden("Insufficient permissions to read list").into());
         }
         let selector = AnySelector::try_from(&list)?;
         let result = world_cache.lookup_selector(&selector)?;
@@ -423,22 +528,31 @@ impl UltrosDb {
     // --- Group Management ---
 
     pub async fn create_group(&self, name: String, owner_id: i64) -> Result<user_group::Model> {
-        Ok(user_group::ActiveModel {
+        let txn = self.db.begin().await?;
+        let group = user_group::ActiveModel {
             id: Default::default(),
             name: ActiveValue::Set(name),
             owner_id: ActiveValue::Set(owner_id),
         }
-        .insert(&self.db)
-        .await?)
+        .insert(&txn)
+        .await?;
+        user_group_member::ActiveModel {
+            group_id: ActiveValue::Set(group.id),
+            user_id: ActiveValue::Set(owner_id),
+        }
+        .insert(&txn)
+        .await?;
+        txn.commit().await?;
+        Ok(group)
     }
 
     pub async fn delete_group(&self, group_id: i32, owner_id: i64) -> Result<()> {
         let group = user_group::Entity::find_by_id(group_id)
             .one(&self.db)
             .await?
-            .ok_or_else(|| anyhow!("Group not found"))?;
+            .ok_or(ListError::BadRequest("Group not found"))?;
         if group.owner_id != owner_id {
-            return Err(anyhow!("Only the owner can delete the group"));
+            return Err(ListError::Forbidden("Only the owner can delete the group").into());
         }
         group.delete(&self.db).await?;
         Ok(())
@@ -448,9 +562,9 @@ impl UltrosDb {
         let group = user_group::Entity::find_by_id(group_id)
             .one(&self.db)
             .await?
-            .ok_or_else(|| anyhow!("Group not found"))?;
+            .ok_or(ListError::BadRequest("Group not found"))?;
         if group.owner_id != owner_id {
-            return Err(anyhow!("Only the owner can add members"));
+            return Err(ListError::Forbidden("Only the owner can add members").into());
         }
         user_group_member::ActiveModel {
             group_id: ActiveValue::Set(group_id),
@@ -470,11 +584,12 @@ impl UltrosDb {
         let group = user_group::Entity::find_by_id(group_id)
             .one(&self.db)
             .await?
-            .ok_or_else(|| anyhow!("Group not found"))?;
+            .ok_or(ListError::BadRequest("Group not found"))?;
         if group.owner_id != owner_id && user_id != owner_id {
-            return Err(anyhow!(
-                "Only the owner or the user themselves can remove a member"
-            ));
+            return Err(ListError::Forbidden(
+                "Only the owner or the user themselves can remove a member",
+            )
+            .into());
         }
         user_group_member::Entity::delete_by_id((group_id, user_id))
             .exec(&self.db)
@@ -510,11 +625,9 @@ impl UltrosDb {
     ) -> Result<()> {
         let current_perm = self.get_permission(list_id, owner_id).await?;
         if current_perm < ListPermission::Owner {
-            return Err(anyhow!("Only the owner can share the list"));
+            return Err(ListError::Forbidden("Only the owner can share the list").into());
         }
-        if permission >= ListPermission::Owner {
-            return Err(anyhow!("Cannot grant Owner permission via sharing"));
-        }
+        validate_share_permission(permission)?;
         list_shared_user::Entity::insert(list_shared_user::ActiveModel {
             list_id: ActiveValue::Set(list_id),
             user_id: ActiveValue::Set(user_id),
@@ -542,10 +655,18 @@ impl UltrosDb {
     ) -> Result<()> {
         let current_perm = self.get_permission(list_id, owner_id).await?;
         if current_perm < ListPermission::Owner {
-            return Err(anyhow!("Only the owner can share the list"));
+            return Err(ListError::Forbidden("Only the owner can share the list").into());
         }
-        if permission >= ListPermission::Owner {
-            return Err(anyhow!("Cannot grant Owner permission via sharing"));
+        validate_share_permission(permission)?;
+        let group = user_group::Entity::find_by_id(group_id)
+            .one(&self.db)
+            .await?
+            .ok_or(ListError::BadRequest("Group not found"))?;
+        if group.owner_id != owner_id {
+            return Err(ListError::Forbidden(
+                "Only the group owner can share a list with that group",
+            )
+            .into());
         }
         list_shared_group::Entity::insert(list_shared_group::ActiveModel {
             list_id: ActiveValue::Set(list_id),
@@ -573,7 +694,7 @@ impl UltrosDb {
     ) -> Result<()> {
         let current_perm = self.get_permission(list_id, owner_id).await?;
         if current_perm < ListPermission::Owner && owner_id != user_id {
-            return Err(anyhow!("Only the owner can unshare the list"));
+            return Err(ListError::Forbidden("Only the owner can unshare the list").into());
         }
         list_shared_user::Entity::delete_by_id((list_id, user_id))
             .exec(&self.db)
@@ -589,7 +710,7 @@ impl UltrosDb {
     ) -> Result<()> {
         let current_perm = self.get_permission(list_id, owner_id).await?;
         if current_perm < ListPermission::Owner {
-            return Err(anyhow!("Only the owner can unshare the list"));
+            return Err(ListError::Forbidden("Only the owner can unshare the list").into());
         }
         list_shared_group::Entity::delete_by_id((list_id, group_id))
             .exec(&self.db)
@@ -608,15 +729,13 @@ impl UltrosDb {
     ) -> Result<list_invite::Model> {
         let current_perm = self.get_permission(list_id, owner_id).await?;
         if current_perm < ListPermission::Owner {
-            return Err(anyhow!("Only the owner can create invites"));
+            return Err(ListError::Forbidden("Only the owner can create invites").into());
         }
-        if permission >= ListPermission::Owner {
-            return Err(anyhow!("Invites cannot grant Owner permission"));
+        validate_share_permission(permission)?;
+        if matches!(max_uses, Some(max_uses) if max_uses <= 0) {
+            return Err(ListError::BadRequest("Invite max uses must be positive").into());
         }
-        // generate a random 16-char string for the invite ID
-        let id: String = std::iter::repeat_with(fastrand::alphanumeric)
-            .take(16)
-            .collect();
+        let id = new_invite_id()?;
 
         Ok(list_invite::ActiveModel {
             id: ActiveValue::Set(id),
@@ -666,9 +785,9 @@ impl UltrosDb {
                 .await?
                 .is_some();
             return Err(if exists {
-                anyhow!("Invite has reached max uses")
+                ListError::InviteExhausted.into()
             } else {
-                anyhow!("Invite not found")
+                ListError::InviteNotFound.into()
             });
         }
 
@@ -677,15 +796,30 @@ impl UltrosDb {
         let invite = list_invite::Entity::find_by_id(invite_id)
             .one(&txn)
             .await?
-            .ok_or_else(|| anyhow!("Invite vanished after redemption"))?;
+            .ok_or(ListError::InviteNotFound)?;
 
-        let shared = list_shared_user::ActiveModel {
+        list_shared_user::Entity::insert(list_shared_user::ActiveModel {
             list_id: ActiveValue::Set(invite.list_id),
             user_id: ActiveValue::Set(user_id),
             permission: ActiveValue::Set(invite.permission),
-        }
-        .insert(&txn)
+        })
+        .on_conflict(
+            sea_orm::sea_query::OnConflict::columns([
+                list_shared_user::Column::ListId,
+                list_shared_user::Column::UserId,
+            ])
+            .update_column(list_shared_user::Column::Permission)
+            .to_owned(),
+        )
+        .exec(&txn)
         .await?;
+
+        let shared = list_shared_user::Entity::find_by_id((invite.list_id, user_id))
+            .one(&txn)
+            .await?
+            .ok_or(ListError::BadRequest(
+                "Invite redemption did not create a share",
+            ))?;
 
         txn.commit().await?;
         Ok(shared)
@@ -695,10 +829,10 @@ impl UltrosDb {
         let invite = list_invite::Entity::find_by_id(invite_id)
             .one(&self.db)
             .await?
-            .ok_or_else(|| anyhow!("Invite not found"))?;
+            .ok_or(ListError::InviteNotFound)?;
         let permission = self.get_permission(invite.list_id, owner_id).await?;
         if permission < ListPermission::Owner {
-            return Err(anyhow!("Only the owner can delete invites"));
+            return Err(ListError::Forbidden("Only the owner can delete invites").into());
         }
         invite.delete(&self.db).await?;
         Ok(())
@@ -711,7 +845,7 @@ impl UltrosDb {
     ) -> Result<Vec<list_invite::Model>> {
         let permission = self.get_permission(list_id, user_id).await?;
         if permission < ListPermission::Owner {
-            return Err(anyhow!("Only the owner can view invites"));
+            return Err(ListError::Forbidden("Only the owner can view invites").into());
         }
         Ok(list_invite::Entity::find()
             .filter(list_invite::Column::ListId.eq(list_id))
@@ -726,7 +860,7 @@ impl UltrosDb {
     ) -> Result<Vec<ListSharedUserReturn>> {
         let permission = self.get_permission(list_id, user_id).await?;
         if permission < ListPermission::Owner {
-            return Err(anyhow!("Only the owner can view shares"));
+            return Err(ListError::Forbidden("Only the owner can view shares").into());
         }
         Ok(list_shared_user::Entity::find()
             .filter(list_shared_user::Column::ListId.eq(list_id))
@@ -745,7 +879,7 @@ impl UltrosDb {
     ) -> Result<Vec<ListSharedGroupReturn>> {
         let permission = self.get_permission(list_id, user_id).await?;
         if permission < ListPermission::Owner {
-            return Err(anyhow!("Only the owner can view shares"));
+            return Err(ListError::Forbidden("Only the owner can view shares").into());
         }
         Ok(list_shared_group::Entity::find()
             .filter(list_shared_group::Column::ListId.eq(list_id))
@@ -765,7 +899,7 @@ impl UltrosDb {
         let group = user_group::Entity::find_by_id(group_id)
             .one(&self.db)
             .await?
-            .ok_or_else(|| anyhow!("Group not found"))?;
+            .ok_or(ListError::BadRequest("Group not found"))?;
 
         // Owner sees all; otherwise the requester must already be a member.
         let is_member = user_group_member::Entity::find()
@@ -776,9 +910,10 @@ impl UltrosDb {
             .is_some();
 
         if group.owner_id != user_id && !is_member {
-            return Err(anyhow!(
-                "You must be a member of the group to see other members"
-            ));
+            return Err(ListError::Forbidden(
+                "You must be a member of the group to see other members",
+            )
+            .into());
         }
 
         Ok(user_group_member::Entity::find()
@@ -789,5 +924,27 @@ impl UltrosDb {
             .into_iter()
             .filter_map(|(member, user)| user.map(|u| UserGroupMemberReturn(member, u)))
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn share_permission_accepts_only_read_or_write() {
+        assert!(validate_share_permission(ListPermission::Read).is_ok());
+        assert!(validate_share_permission(ListPermission::Write).is_ok());
+        assert!(validate_share_permission(ListPermission::None).is_err());
+        assert!(validate_share_permission(ListPermission::Owner).is_err());
+    }
+
+    #[test]
+    fn invite_ids_are_hex_encoded_24_random_bytes() {
+        let first = new_invite_id().unwrap();
+        let second = new_invite_id().unwrap();
+        assert_eq!(first.len(), 48);
+        assert!(first.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(first, second);
     }
 }

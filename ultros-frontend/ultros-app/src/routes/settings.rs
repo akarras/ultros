@@ -315,13 +315,13 @@ fn LanguageSettings() -> impl IntoView {
     view! {
         <div class="panel p-6 rounded-xl">
             <h3 class="text-2xl font-bold text-[color:var(--brand-fg)] mb-4">{t!(i18n, language)}</h3>
-            <div class="grid md:grid-cols-3 gap-6">
-                <div class="space-y-2">
+            <div class="grid lg:grid-cols-[minmax(0,18rem)_1fr] gap-6">
+                <div class="space-y-2 max-w-prose">
                     <p class="text-[color:var(--color-text)]">
                         {t!(i18n, language_desc)}
                     </p>
                 </div>
-                <div>
+                <div class="min-w-0">
                     <LanguagePicker />
                 </div>
             </div>
@@ -486,7 +486,7 @@ pub fn Profile() -> impl IntoView {
                                                                         text-gray-400 hover:text-red-400
                                                                         opacity-0 group-hover:opacity-100
                                                                         transition-all duration-200"
-                                                                        aria-label="Remove character"
+                                                                        aria-label=t_string!(i18n, settings_remove_character_aria)
                                                                         on:click=move |_| {
                                                                             let _ = unclaim_character.dispatch(character.id);
                                                                         }
