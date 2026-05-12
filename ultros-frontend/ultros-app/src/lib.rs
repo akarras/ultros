@@ -30,6 +30,7 @@ use crate::{
         about::*,
         alerts::Alerts,
         analyzer::*,
+        bot::BotGuide,
         currency_exchange::{CurrencyExchange, CurrencySelection, ExchangeItem},
         edit_retainers::*,
         fc_crafting_analyzer::*,
@@ -365,6 +366,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                                 <Route path=path!("privacy") view=PrivacyPolicy />
                                 <Route path=path!("cookie-policy") view=CookiePolicy />
                                 <Route path=path!("about") view=About />
+                                <Route path=path!("bot") view=BotGuide />
                                 <Route path=path!("history") view=History />
                                 <ParentRoute path=path!("currency-exchange") view=CurrencyExchange>
                                     <Route path=path!(":id") view=ExchangeItem />

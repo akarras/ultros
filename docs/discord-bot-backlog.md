@@ -93,7 +93,7 @@ The bot works but is unforgiving to first-time users. The `prices` group is the 
 
 The bot has zero end-user documentation today. Build it once, keep it auto-generated.
 
-### B-3.1 · Build `/bot` page in the frontend · P0 · L
+### [shipped 2026-05-12 — static v1; auto-generation is a follow-up] B-3.1 · Build `/bot` page in the frontend · P0 · L
 **Problem.** No documentation anywhere; users discover commands by typing `/` and hoping. README only mentions Discord OAuth, not the bot. [userguide/src](userguide/src/) has no chapter.
 
 **Proposal.** Add a frontend route at `/bot` (or `/discord`) with three sections:
