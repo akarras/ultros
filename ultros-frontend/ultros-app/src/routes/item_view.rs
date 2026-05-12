@@ -11,7 +11,7 @@ use crate::components::{
 use crate::error::AppError;
 use crate::global_state::LocalWorldData;
 use crate::global_state::cheapest_prices::CheapestPrices;
-use crate::global_state::home_world::{get_price_zone, use_home_world};
+use crate::global_state::home_world::{get_price_zone, locale_preferred_region, use_home_world};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::{t, t_string};
 use crate::ws::realtime::{RealtimeSubscription, use_realtime};
@@ -170,6 +170,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
     let current_world = world_name;
     let world_data = use_context::<LocalWorldData>().unwrap().0.unwrap();
     let (home_world, _) = use_home_world();
+    let i18n = crate::i18n::use_i18n();
 
     view! {
         <div class="sticky top-0 z-10">
@@ -179,7 +180,9 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                         {move || {
                             let world = world_name();
                             let world_name = Url::unescape(&world);
-                            let all_regions = world_data.get_inner_data().regions.iter().map(|r| {
+                            let preferred = locale_preferred_region(i18n.get_locale());
+                            let ordered_regions = world_data.regions_ordered(preferred);
+                            let all_regions = ordered_regions.into_iter().map(|r| {
                                 view! {
                                     <WorldButton
                                         current_world=current_world
@@ -1037,10 +1040,6 @@ pub fn ItemView() -> impl IntoView {
         recently_viewed.add_item(item_id());
     });
 
-    let data = &tracked_data();
-    let items = &data.items;
-    let categories = &data.item_ui_categorys;
-    let search_categories = &data.item_search_categorys;
     let (price_zone, _) = get_price_zone();
 
     let world = Memo::new(move |_| {
@@ -1054,31 +1053,41 @@ pub fn ItemView() -> impl IntoView {
         })
     });
 
+    // Each closure calls `tracked_data()` inside its own reactive scope so it
+    // re-subscribes to `DataRevision` and re-reads after a locale swap.
     let item_name = move || {
-        items
+        tracked_data()
+            .items
             .get(&ItemId(item_id()))
             .map(|item| item.name.as_str())
             .unwrap_or_default()
+            .to_string()
     };
 
-    let item = move || items.get(&ItemId(item_id()));
+    let item = move || tracked_data().items.get(&ItemId(item_id()));
 
     let item_description = move || {
-        items
+        tracked_data()
+            .items
             .get(&ItemId(item_id()))
             .map(|item| item.description.as_str())
             .unwrap_or_default()
+            .to_string()
     };
 
     let item_category = move || {
-        items
-            .get(&ItemId(item_id()))
-            .and_then(|item| categories.get(&ItemUiCategoryId(item.item_ui_category)))
+        let data = tracked_data();
+        data.items.get(&ItemId(item_id())).and_then(|item| {
+            data.item_ui_categorys
+                .get(&ItemUiCategoryId(item.item_ui_category))
+        })
     };
 
     let item_search_category = move || {
-        items.get(&ItemId(item_id())).and_then(|item| {
-            search_categories.get(&ItemSearchCategoryId(item.item_search_category))
+        let data = tracked_data();
+        data.items.get(&ItemId(item_id())).and_then(|item| {
+            data.item_search_categorys
+                .get(&ItemSearchCategoryId(item.item_search_category))
         })
     };
 
