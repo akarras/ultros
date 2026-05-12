@@ -40,36 +40,22 @@ impl TryFrom<&list::Model> for AnySelector {
 }
 
 impl UltrosDb {
-    pub async fn get_permission(&self, list_id: i32, user_id: i64) -> Result<ListPermission> {
-        let list = list::Entity::find_by_id(list_id)
-            .one(&self.db)
-            .await?
-            .ok_or_else(|| anyhow!("List not found"))?;
-
+    /// Compute the requesting user's permission on a list, given the loaded list model.
+    ///
+    /// Issues the shared_user + group_perm lookups in parallel via `try_join!`.
+    /// Owner short-circuits without hitting the DB.
+    async fn permission_for(&self, list: &list::Model, user_id: i64) -> Result<ListPermission> {
         if list.owner == user_id {
             return Ok(ListPermission::Owner);
         }
-
-        // Check shared users
-        let shared_user = list_shared_user::Entity::find()
-            .filter(list_shared_user::Column::ListId.eq(list_id))
+        let shared_fut = list_shared_user::Entity::find()
+            .filter(list_shared_user::Column::ListId.eq(list.id))
             .filter(list_shared_user::Column::UserId.eq(user_id))
-            .one(&self.db)
-            .await?;
-
-        let mut max_permission = shared_user
-            .map(|s| ListPermission::from(s.permission))
-            .unwrap_or(ListPermission::None);
-
-        if max_permission == ListPermission::Owner {
-            return Ok(ListPermission::Owner);
-        }
-
-        // Check shared groups: single JOIN across list_shared_group and
-        // user_group_member, filtered by (list_id, user_id). Replaces the
-        // previous 1+N pattern of fetching every shared group then probing
-        // membership in a loop.
-        let group_perms: Vec<i16> = list_shared_group::Entity::find()
+            .one(&self.db);
+        // Single JOIN across list_shared_group and user_group_member, filtered by
+        // (list_id, user_id). Replaces the previous 1+N pattern of fetching every
+        // shared group then probing membership in a loop.
+        let group_fut = list_shared_group::Entity::find()
             .select_only()
             .column(list_shared_group::Column::Permission)
             .join(
@@ -80,11 +66,15 @@ impl UltrosDb {
                 JoinType::InnerJoin,
                 user_group::Relation::UserGroupMember.def(),
             )
-            .filter(list_shared_group::Column::ListId.eq(list_id))
+            .filter(list_shared_group::Column::ListId.eq(list.id))
             .filter(user_group_member::Column::UserId.eq(user_id))
-            .into_tuple()
-            .all(&self.db)
-            .await?;
+            .into_tuple::<i16>()
+            .all(&self.db);
+        let (shared_user, group_perms) = futures::try_join!(shared_fut, group_fut)?;
+
+        let mut max_permission = shared_user
+            .map(|s| ListPermission::from(s.permission))
+            .unwrap_or(ListPermission::None);
 
         for perm in group_perms {
             let p = ListPermission::from(perm);
@@ -94,6 +84,58 @@ impl UltrosDb {
         }
 
         Ok(max_permission)
+    }
+
+    /// Look up `list_id` and the requesting user's permission on it in one helper.
+    /// Returns an error if the list doesn't exist.
+    async fn list_and_permission(
+        &self,
+        list_id: i32,
+        user_id: i64,
+    ) -> Result<(list::Model, ListPermission)> {
+        let list = list::Entity::find_by_id(list_id)
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| anyhow!("List not found"))?;
+        let perm = self.permission_for(&list, user_id).await?;
+        Ok((list, perm))
+    }
+
+    pub async fn get_permission(&self, list_id: i32, user_id: i64) -> Result<ListPermission> {
+        let (_list, perm) = self.list_and_permission(list_id, user_id).await?;
+        Ok(perm)
+    }
+
+    /// Verify the requesting user has at least `min_perm` on the list and return the
+    /// loaded list model. Centralises the "fetch list + check permission" pattern that
+    /// was previously duplicated across many handlers as `get_permission(...)` +
+    /// `list::Entity::find_by_id(...)` — two queries for the same row.
+    async fn require_list_permission(
+        &self,
+        list_id: i32,
+        user_id: i64,
+        min_perm: ListPermission,
+        denied_msg: &'static str,
+    ) -> Result<list::Model> {
+        let (list, perm) = self.list_and_permission(list_id, user_id).await?;
+        if perm < min_perm {
+            return Err(anyhow!(denied_msg));
+        }
+        Ok(list)
+    }
+
+    /// Like [`require_list_permission`] but discards the loaded list model for callers
+    /// that only need to gate on the permission check.
+    async fn require_permission(
+        &self,
+        list_id: i32,
+        user_id: i64,
+        min_perm: ListPermission,
+        denied_msg: &'static str,
+    ) -> Result<()> {
+        self.require_list_permission(list_id, user_id, min_perm, denied_msg)
+            .await?;
+        Ok(())
     }
 
     /// Creates a list for the given Discord user with the given name
@@ -135,14 +177,14 @@ impl UltrosDb {
     where
         T: FnOnce(&mut list::ActiveModel),
     {
-        let permission = self.get_permission(list_id, discord_user).await?;
-        if permission < ListPermission::Write {
-            return Err(anyhow!("Insufficient permissions to update list"));
-        }
-        let list = list::Entity::find_by_id(list_id)
-            .one(&self.db)
-            .await?
-            .ok_or(anyhow!("Unable to find list"))?;
+        let list = self
+            .require_list_permission(
+                list_id,
+                discord_user,
+                ListPermission::Write,
+                "Insufficient permissions to update list",
+            )
+            .await?;
         let mut model = list.into_active_model();
         update(&mut model);
         Ok(model.update(&self.db).await?)
@@ -151,14 +193,14 @@ impl UltrosDb {
     /// Deletes the given list assuming that it is owned by the Discord user
     #[instrument(skip(self))]
     pub async fn delete_list(&self, list_id: i32, discord_user: i64) -> Result<()> {
-        let permission = self.get_permission(list_id, discord_user).await?;
-        if permission < ListPermission::Owner {
-            return Err(anyhow!("Insufficient permissions to delete list"));
-        }
-        let list = list::Entity::find_by_id(list_id)
-            .one(&self.db)
-            .await?
-            .ok_or(anyhow::anyhow!("Failed to find list with that ID"))?;
+        let list = self
+            .require_list_permission(
+                list_id,
+                discord_user,
+                ListPermission::Owner,
+                "Insufficient permissions to delete list",
+            )
+            .await?;
         let txn = self.db.begin().await?;
         let _items = list_item::Entity::delete_many()
             .filter(list_item::Column::ListId.eq(list.id))
@@ -205,15 +247,13 @@ impl UltrosDb {
     }
 
     pub async fn get_list(&self, list_id: i32, discord_user: i64) -> Result<list::Model> {
-        let permission = self.get_permission(list_id, discord_user).await?;
-        if permission < ListPermission::Read {
-            return Err(anyhow!("Insufficient permissions to read list"));
-        }
-        let list = list::Entity::find_by_id(list_id)
-            .one(&self.db)
-            .await?
-            .ok_or(anyhow!("List not found"))?;
-        Ok(list)
+        self.require_list_permission(
+            list_id,
+            discord_user,
+            ListPermission::Read,
+            "Insufficient permissions to read list",
+        )
+        .await
     }
 
     pub async fn get_list_items(
@@ -221,10 +261,13 @@ impl UltrosDb {
         list_id: i32,
         discord_user: i64,
     ) -> Result<Vec<list_item::Model>> {
-        let permission = self.get_permission(list_id, discord_user).await?;
-        if permission < ListPermission::Read {
-            return Err(anyhow!("Insufficient permissions to read list items"));
-        }
+        self.require_permission(
+            list_id,
+            discord_user,
+            ListPermission::Read,
+            "Insufficient permissions to read list items",
+        )
+        .await?;
         Ok(list_item::Entity::find()
             .filter(list_item::Column::ListId.eq(list_id))
             .all(&self.db)
@@ -242,12 +285,13 @@ impl UltrosDb {
         quantity: Option<i32>,
         acquired: Option<i32>,
     ) -> Result<list_item::Model> {
-        let permission = self.get_permission(list.id, discord_user).await?;
-        if permission < ListPermission::Write {
-            return Err(anyhow::anyhow!(
-                "Insufficient permissions to add item to list"
-            ));
-        }
+        self.require_permission(
+            list.id,
+            discord_user,
+            ListPermission::Write,
+            "Insufficient permissions to add item to list",
+        )
+        .await?;
         // if the item already exists in the list, just update the existing list
         let existing = list_item::Entity::find()
             .filter(list_item::Column::ListId.eq(list.id))
@@ -281,12 +325,13 @@ impl UltrosDb {
         updated_item: list_item::Model,
         discord_user: i64,
     ) -> Result<list_item::Model> {
-        let permission = self
-            .get_permission(updated_item.list_id, discord_user)
-            .await?;
-        if permission < ListPermission::Write {
-            return Err(anyhow!("Insufficient permissions to update list item"));
-        }
+        self.require_permission(
+            updated_item.list_id,
+            discord_user,
+            ListPermission::Write,
+            "Insufficient permissions to update list item",
+        )
+        .await?;
         let mut item = list_item::Entity::find_by_id(updated_item.id)
             .one(&self.db)
             .await?
@@ -308,12 +353,13 @@ impl UltrosDb {
         discord_user: i64,
         items: impl Iterator<Item = list_item::Model>,
     ) -> Result<u64> {
-        let permission = self.get_permission(list.id, discord_user).await?;
-        if permission < ListPermission::Write {
-            return Err(anyhow::anyhow!(
-                "Insufficient permissions to add items to list"
-            ));
-        }
+        self.require_permission(
+            list.id,
+            discord_user,
+            ListPermission::Write,
+            "Insufficient permissions to add items to list",
+        )
+        .await?;
         // for items that are already matching our list, we should update and insert
         let mut existing_list_items: HashMap<_, _> = list
             .find_related(list_item::Entity)
@@ -376,10 +422,13 @@ impl UltrosDb {
             .one(&self.db)
             .await?
             .ok_or(anyhow!("No list item"))?;
-        let permission = self.get_permission(list_item.list_id, discord_user).await?;
-        if permission < ListPermission::Write {
-            return Err(anyhow!("Insufficient permissions to remove item from list"));
-        }
+        self.require_permission(
+            list_item.list_id,
+            discord_user,
+            ListPermission::Write,
+            "Insufficient permissions to remove item from list",
+        )
+        .await?;
         list_item.clone().delete(&self.db).await?;
         Ok(list_item)
     }
@@ -395,14 +444,14 @@ impl UltrosDb {
             Vec<(active_listing::Model, Option<retainer::Model>)>,
         )>,
     > {
-        let list = list::Entity::find_by_id(list_id)
-            .one(&self.db)
-            .await?
-            .ok_or(anyhow!("List not found"))?;
-        let permission = self.get_permission(list_id, discord_user).await?;
-        if permission < ListPermission::Read {
-            return Err(anyhow!("Insufficient permissions to read list"));
-        }
+        let list = self
+            .require_list_permission(
+                list_id,
+                discord_user,
+                ListPermission::Read,
+                "Insufficient permissions to read list",
+            )
+            .await?;
         let selector = AnySelector::try_from(&list)?;
         let result = world_cache.lookup_selector(&selector)?;
         let worlds = world_cache
@@ -509,10 +558,13 @@ impl UltrosDb {
         user_id: i64,
         permission: ListPermission,
     ) -> Result<()> {
-        let current_perm = self.get_permission(list_id, owner_id).await?;
-        if current_perm < ListPermission::Owner {
-            return Err(anyhow!("Only the owner can share the list"));
-        }
+        self.require_permission(
+            list_id,
+            owner_id,
+            ListPermission::Owner,
+            "Only the owner can share the list",
+        )
+        .await?;
         if permission >= ListPermission::Owner {
             return Err(anyhow!("Cannot grant Owner permission via sharing"));
         }
@@ -541,10 +593,13 @@ impl UltrosDb {
         group_id: i32,
         permission: ListPermission,
     ) -> Result<()> {
-        let current_perm = self.get_permission(list_id, owner_id).await?;
-        if current_perm < ListPermission::Owner {
-            return Err(anyhow!("Only the owner can share the list"));
-        }
+        self.require_permission(
+            list_id,
+            owner_id,
+            ListPermission::Owner,
+            "Only the owner can share the list",
+        )
+        .await?;
         if permission >= ListPermission::Owner {
             return Err(anyhow!("Cannot grant Owner permission via sharing"));
         }
@@ -572,9 +627,15 @@ impl UltrosDb {
         owner_id: i64,
         user_id: i64,
     ) -> Result<()> {
-        let current_perm = self.get_permission(list_id, owner_id).await?;
-        if current_perm < ListPermission::Owner && owner_id != user_id {
-            return Err(anyhow!("Only the owner can unshare the list"));
+        // Owner can unshare anyone; a non-owner can only remove themselves.
+        if owner_id != user_id {
+            self.require_permission(
+                list_id,
+                owner_id,
+                ListPermission::Owner,
+                "Only the owner can unshare the list",
+            )
+            .await?;
         }
         list_shared_user::Entity::delete_by_id((list_id, user_id))
             .exec(&self.db)
@@ -588,10 +649,13 @@ impl UltrosDb {
         owner_id: i64,
         group_id: i32,
     ) -> Result<()> {
-        let current_perm = self.get_permission(list_id, owner_id).await?;
-        if current_perm < ListPermission::Owner {
-            return Err(anyhow!("Only the owner can unshare the list"));
-        }
+        self.require_permission(
+            list_id,
+            owner_id,
+            ListPermission::Owner,
+            "Only the owner can unshare the list",
+        )
+        .await?;
         list_shared_group::Entity::delete_by_id((list_id, group_id))
             .exec(&self.db)
             .await?;
@@ -607,10 +671,13 @@ impl UltrosDb {
         permission: ListPermission,
         max_uses: Option<i32>,
     ) -> Result<list_invite::Model> {
-        let current_perm = self.get_permission(list_id, owner_id).await?;
-        if current_perm < ListPermission::Owner {
-            return Err(anyhow!("Only the owner can create invites"));
-        }
+        self.require_permission(
+            list_id,
+            owner_id,
+            ListPermission::Owner,
+            "Only the owner can create invites",
+        )
+        .await?;
         if permission >= ListPermission::Owner {
             return Err(anyhow!("Invites cannot grant Owner permission"));
         }
@@ -697,10 +764,13 @@ impl UltrosDb {
             .one(&self.db)
             .await?
             .ok_or_else(|| anyhow!("Invite not found"))?;
-        let permission = self.get_permission(invite.list_id, owner_id).await?;
-        if permission < ListPermission::Owner {
-            return Err(anyhow!("Only the owner can delete invites"));
-        }
+        self.require_permission(
+            invite.list_id,
+            owner_id,
+            ListPermission::Owner,
+            "Only the owner can delete invites",
+        )
+        .await?;
         invite.delete(&self.db).await?;
         Ok(())
     }
@@ -710,10 +780,13 @@ impl UltrosDb {
         list_id: i32,
         user_id: i64,
     ) -> Result<Vec<list_invite::Model>> {
-        let permission = self.get_permission(list_id, user_id).await?;
-        if permission < ListPermission::Owner {
-            return Err(anyhow!("Only the owner can view invites"));
-        }
+        self.require_permission(
+            list_id,
+            user_id,
+            ListPermission::Owner,
+            "Only the owner can view invites",
+        )
+        .await?;
         Ok(list_invite::Entity::find()
             .filter(list_invite::Column::ListId.eq(list_id))
             .all(&self.db)
@@ -725,10 +798,13 @@ impl UltrosDb {
         list_id: i32,
         user_id: i64,
     ) -> Result<Vec<ListSharedUserReturn>> {
-        let permission = self.get_permission(list_id, user_id).await?;
-        if permission < ListPermission::Owner {
-            return Err(anyhow!("Only the owner can view shares"));
-        }
+        self.require_permission(
+            list_id,
+            user_id,
+            ListPermission::Owner,
+            "Only the owner can view shares",
+        )
+        .await?;
         Ok(list_shared_user::Entity::find()
             .filter(list_shared_user::Column::ListId.eq(list_id))
             .find_also_related(discord_user::Entity)
@@ -744,10 +820,13 @@ impl UltrosDb {
         list_id: i32,
         user_id: i64,
     ) -> Result<Vec<ListSharedGroupReturn>> {
-        let permission = self.get_permission(list_id, user_id).await?;
-        if permission < ListPermission::Owner {
-            return Err(anyhow!("Only the owner can view shares"));
-        }
+        self.require_permission(
+            list_id,
+            user_id,
+            ListPermission::Owner,
+            "Only the owner can view shares",
+        )
+        .await?;
         Ok(list_shared_group::Entity::find()
             .filter(list_shared_group::Column::ListId.eq(list_id))
             .find_also_related(user_group::Entity)
