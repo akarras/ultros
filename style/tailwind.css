@@ -1828,7 +1828,10 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     flex-wrap: nowrap;
     gap: 0.5rem;
     overflow-x: auto;
-    padding: 0.25rem 0.25rem 0.5rem 0.25rem;
+    /* Right padding keeps the last chip clear of the mask gradient's
+       fade zone — otherwise the chip is paint-clipped but still
+       hit-testing, which looks broken on touch. */
+    padding: 0.25rem 2.5rem 0.5rem 0.25rem;
     scrollbar-width: thin;
     -webkit-mask-image: linear-gradient(
         to right,
