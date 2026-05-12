@@ -24,6 +24,7 @@ mod m20240203_230653_add_list_item_owned_quantity;
 mod m20240424_000001_create_notification_endpoints;
 mod m20240520_000001_shared_lists;
 mod m20260510_000001_price_alert_phase1;
+mod m20260512_000001_notification_endpoint_created_at_tz;
 
 pub struct Migrator;
 
@@ -57,6 +58,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20240424_000001_create_notification_endpoints::Migration),
             Box::new(m20240520_000001_shared_lists::Migration),
             Box::new(m20260510_000001_price_alert_phase1::Migration),
+            Box::new(m20260512_000001_notification_endpoint_created_at_tz::Migration),
         ]
     }
 }
