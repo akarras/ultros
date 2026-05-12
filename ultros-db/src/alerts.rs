@@ -486,6 +486,43 @@ impl UltrosDb {
         Ok(())
     }
 
+    /// Create an alert + alert_item_threshold in a single transaction, without
+    /// creating any notification endpoint or rules. The caller is expected to
+    /// bind endpoint rules via `set_alert_rules` afterward.
+    pub async fn create_threshold_alert_without_endpoint(
+        &self,
+        owner: i64,
+        item_id: i32,
+        world_selector_json: JsonValue,
+        price_threshold: i32,
+        hq_only: bool,
+        cooldown_seconds: i32,
+    ) -> Result<alert::Model> {
+        use sea_orm::TransactionTrait;
+        let txn = self.db.begin().await?;
+        let alert = alert::Entity::insert(alert::ActiveModel {
+            id: ActiveValue::default(),
+            owner: Set(owner),
+            enabled: Set(true),
+            last_fired_at: Set(None),
+            cooldown_seconds: Set(cooldown_seconds),
+        })
+        .exec_with_returning(&txn)
+        .await?;
+        alert_item_threshold::Entity::insert(alert_item_threshold::ActiveModel {
+            id: ActiveValue::default(),
+            alert_id: Set(alert.id),
+            item_id: Set(item_id),
+            world_selector: Set(world_selector_json),
+            price_threshold: Set(price_threshold),
+            hq_only: Set(hq_only),
+        })
+        .exec(&txn)
+        .await?;
+        txn.commit().await?;
+        Ok(alert)
+    }
+
     /// Return the endpoint ids attached to an alert, in order of attachment.
     pub async fn list_endpoint_ids_for_alert(&self, alert_id: i32) -> Result<Vec<i32>> {
         let rules = alert_notification_rule::Entity::find()

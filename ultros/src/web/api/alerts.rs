@@ -56,11 +56,58 @@ pub(crate) async fn create_alert(
 
     validate_price_threshold(price_threshold)?;
 
-    // Legacy path: `delivery` is required while endpoints are not yet wired up through
-    // `endpoint_ids`. Task 11 of the Notification Tier 1 plan migrates this away.
-    let delivery = req.delivery.clone().ok_or_else(|| {
+    // AnySelector is Copy — passed by value here, also Copied into the response below.
+    let world_selector_json = serde_json::to_value(world_selector)
+        .map_err(|e| ApiError::from(anyhow::anyhow!("invalid world_selector: {}", e)))?;
+
+    // Two paths:
+    //  1. endpoint_ids non-empty → create alert + bind to those endpoints (preferred)
+    //  2. endpoint_ids empty AND delivery provided → legacy path: create endpoint inline,
+    //     bind one rule
+    //  3. neither → error
+    if !req.endpoint_ids.is_empty() {
+        // Verify all endpoints belong to this user before creating the alert.
+        for &eid in &req.endpoint_ids {
+            db.get_endpoint_owned_by(owner, eid)
+                .await
+                .map_err(ApiError::from)?;
+        }
+        let alert = db
+            .create_threshold_alert_without_endpoint(
+                owner,
+                item_id,
+                world_selector_json,
+                price_threshold,
+                hq_only,
+                cooldown,
+            )
+            .await
+            .map_err(ApiError::from)?;
+        db.set_alert_rules(owner, alert.id, &req.endpoint_ids)
+            .await
+            .map_err(ApiError::from)?;
+
+        return Ok(Json(Alert {
+            id: alert.id,
+            trigger: AlertTrigger::BelowThreshold {
+                item_id,
+                world_selector,
+                price_threshold,
+                hq_only,
+            },
+            // deprecated fallback; real delivery is described by endpoint_ids
+            delivery: AlertDelivery::DiscordDm,
+            endpoint_ids: req.endpoint_ids,
+            enabled: alert.enabled,
+            cooldown_seconds: alert.cooldown_seconds,
+            last_fired_at: alert.last_fired_at.map(|t| t.with_timezone(&chrono::Utc)),
+        }));
+    }
+
+    // Legacy path: `delivery` is required when no endpoint_ids are provided.
+    let delivery = req.delivery.ok_or_else(|| {
         ApiError::from(anyhow::anyhow!(
-            "delivery is required (endpoint_ids not yet supported on this handler)"
+            "either endpoint_ids or delivery must be supplied"
         ))
     })?;
 
@@ -81,10 +128,6 @@ pub(crate) async fn create_alert(
             }
         };
 
-    // AnySelector is Copy — passed by value here, also Copied into the response below.
-    let world_selector_json = serde_json::to_value(world_selector)
-        .map_err(|e| ApiError::from(anyhow::anyhow!("invalid world_selector: {}", e)))?;
-
     let alert = db
         .create_threshold_alert(
             owner,
@@ -100,6 +143,10 @@ pub(crate) async fn create_alert(
         .await
         .map_err(ApiError::from)?;
 
+    let endpoint_ids = db
+        .list_endpoint_ids_for_alert(alert.id)
+        .await
+        .map_err(ApiError::from)?;
     Ok(Json(Alert {
         id: alert.id,
         trigger: AlertTrigger::BelowThreshold {
@@ -109,7 +156,7 @@ pub(crate) async fn create_alert(
             hq_only,
         },
         delivery,
-        endpoint_ids: vec![],
+        endpoint_ids,
         enabled: alert.enabled,
         cooldown_seconds: alert.cooldown_seconds,
         last_fired_at: alert.last_fired_at.map(|t| t.with_timezone(&chrono::Utc)),
@@ -128,6 +175,10 @@ pub(crate) async fn list_alerts(
     for (a, t) in rows {
         let world_selector = serde_json::from_value(t.world_selector.clone())
             .map_err(|e| ApiError::from(anyhow::anyhow!("bad world_selector in db: {}", e)))?;
+        let endpoint_ids = db
+            .list_endpoint_ids_for_alert(a.id)
+            .await
+            .map_err(ApiError::from)?;
         let delivery = match db
             .get_first_endpoint_for_alert(a.id)
             .await
@@ -153,7 +204,7 @@ pub(crate) async fn list_alerts(
                 hq_only: t.hq_only,
             },
             delivery,
-            endpoint_ids: vec![],
+            endpoint_ids,
             enabled: a.enabled,
             cooldown_seconds: a.cooldown_seconds,
             last_fired_at: a.last_fired_at.map(|t| t.with_timezone(&chrono::Utc)),
