@@ -28,7 +28,7 @@ use crate::{
 
 use super::{cheapest_price::*, gil::*, small_item_display::*};
 
-fn is_shard_item(item_id: ItemId) -> bool {
+pub(crate) fn is_shard_item(item_id: ItemId) -> bool {
     tracked_data()
         .items
         .get(&item_id)
@@ -183,17 +183,11 @@ fn CraftOptionsToggleRow() -> impl IntoView {
         set_opts(Some(current));
     };
 
+    // The item-page recipe panel always shows both HQ and LQ chips, so a
+    // "Require HQ" toggle would be a no-op here. The analyzers (Tasks 8-9)
+    // get their own filter cards that read/write the same cookie field.
     view! {
         <div class="flex flex-row items-center gap-3 text-xs flex-wrap">
-            <label class="flex flex-row items-center gap-1">
-                <input
-                    type="checkbox"
-                    class="checkbox checkbox-xs"
-                    prop:checked=move || opts().require_hq
-                    on:change=move |_| toggle(Box::new(|o| o.require_hq = !o.require_hq))
-                />
-                "Require HQ"
-            </label>
             <label class="flex flex-row items-center gap-1">
                 <input
                     type="checkbox"
@@ -225,7 +219,7 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
             view! {
                 <div class="flex items-center justify-between gap-2 py-0.5">
                     <div class="flex items-center gap-2">
-                        <span class="px-1.5 py-0.5 rounded-md bg-[color:color-mix(in_srgb,_var(--brand_ring)_14%,_transparent)] text-[color:var(--color-text)] text-xs">{amount.to_string()}</span>
+                        <span class="px-1.5 py-0.5 rounded-md bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] text-[color:var(--color-text)] text-xs">{amount.to_string()}</span>
                         <SmallItemDisplay item=ingredient />
                     </div>
                     <div class="text-xs"><CheapestPrice item_id=ingredient.key_id /></div>
