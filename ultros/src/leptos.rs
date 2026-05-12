@@ -166,3 +166,23 @@ pub(crate) async fn create_leptos_app(
     // .with_state(state)
     // .layer(Extension(Arc::new(leptos_options))))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::escape_for_script_tag;
+
+    #[test]
+    fn script_bootstrap_json_cannot_close_script_tag() {
+        let payload = format!(
+            r#"{{"name":"</script><script>alert(1)</script>&{}{}"}}"#,
+            '\u{2028}', '\u{2029}'
+        );
+        let escaped = escape_for_script_tag(&payload);
+
+        assert!(!escaped.contains("</script>"));
+        assert!(escaped.contains("\\u003c/script\\u003e"));
+        assert!(escaped.contains("\\u0026"));
+        assert!(escaped.contains("\\u2028"));
+        assert!(escaped.contains("\\u2029"));
+    }
+}

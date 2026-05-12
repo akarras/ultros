@@ -305,7 +305,7 @@ pub fn hydrate() {
             (
                 Ok(Arc::new(WorldHelper::from(b.world_data))),
                 b.region,
-                b.current_user,
+                Some(b.current_user),
             )
         } else {
             info!("bootstrap missing — falling back to HTTP for world_data + region");
@@ -314,7 +314,7 @@ pub fn hydrate() {
                 join(get_world_data(), get_region()),
             )
             .await;
-            // current_user remains None here; ProfileDisplay will hit
+            // current_user remains absent here; ProfileDisplay will hit
             // /api/v1/current_user via the existing fetch path.
             (worlds, region, None)
         };
@@ -332,7 +332,9 @@ pub fn hydrate() {
             let current_user = current_user.clone();
             provide_context(GuessedRegion(region));
             provide_context(world_data);
-            provide_context(BootstrapUser(current_user));
+            if let Some(current_user) = current_user {
+                provide_context(BootstrapUser(current_user));
+            }
             view! { <App /> }
         });
     });
