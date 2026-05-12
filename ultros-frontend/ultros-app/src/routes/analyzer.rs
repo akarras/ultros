@@ -4,9 +4,20 @@ use crate::i18n::*;
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
-        add_to_list::AddToList, clipboard::*, filter_card::*, gil::*, icon::Icon, item_icon::*,
-        meta::*, query_button::QueryButton, skeleton::BoxSkeleton, toggle::Toggle, tool_help::*,
-        tooltip::*, virtual_scroller::*, world_picker::*,
+        add_to_list::AddToList,
+        clipboard::*,
+        gil::*,
+        icon::Icon,
+        item_icon::*,
+        meta::*,
+        query_button::QueryButton,
+        skeleton::BoxSkeleton,
+        toggle::Toggle,
+        tool_help::*,
+        toolbar::{Toolbar, ToolbarField, ToolbarPills, ToolbarSpacer},
+        tooltip::*,
+        virtual_scroller::*,
+        world_picker::*,
     },
     error::AppError,
     global_state::LocalWorldData,
@@ -342,6 +353,7 @@ fn AnalyzerTable(
     });
 
     let (last_sold_within, set_last_sold_within) = query_signal::<String>("last-sold");
+    let show_more = RwSignal::new(false);
     let last_sold_duration =
         Memo::new(move |_| last_sold_within().and_then(|d| parse_duration(d.as_str()).ok()));
     let last_sold_string = Memo::new(move |_| {
@@ -471,53 +483,144 @@ fn AnalyzerTable(
     });
     view! {
         <div class="flex flex-col gap-6">
-            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                <FilterCard
-                    title=t_string!(i18n, analyzer_minimum_profit).to_string()
-                    description=t_string!(i18n, analyzer_minimum_profit_desc).to_string()
-                >
-                    <div class="flex flex-col gap-2">
-                        <div class="text-brand-300">
-                            {move || {
-                                minimum_profit()
-                                    .map(|profit| Either::Left(view! { <Gil amount=profit /> }))
-                                    .unwrap_or(Either::Right("---"))
-                            }}
-                        </div>
-                        <input
-                            class="input"
-                            min=0
-                            max=100000
-                            step=1000
-                            placeholder="e.g. 100000"
-                            type="number"
-                            prop:value=minimum_profit
-                            on:input=move |input| {
-                                let value = event_target_value(&input);
-                                if let Ok(profit) = value.parse::<i32>() {
-                                    set_minimum_profit(Some(profit))
-                                } else if value.is_empty() {
-                                    set_minimum_profit(None);
-                                }
+            // Primary filter toolbar
+            <Toolbar>
+                <ToolbarField label="Profit (Min)">
+                    <input
+                        class="input input-sm w-32"
+                        min=0
+                        max=100000
+                        step=1000
+                        placeholder="e.g. 100000"
+                        type="number"
+                        prop:value=minimum_profit
+                        on:input=move |input| {
+                            let value = event_target_value(&input);
+                            if let Ok(profit) = value.parse::<i32>() {
+                                set_minimum_profit(Some(profit));
+                            } else if value.is_empty() {
+                                set_minimum_profit(None);
                             }
-                        />
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title=t_string!(i18n, analyzer_profit_per_day).to_string()
-                    description=t_string!(i18n, analyzer_profit_per_day_desc).to_string()
+                        }
+                    />
+                </ToolbarField>
+                <ToolbarField label="ROI (Min)">
+                    <input
+                        class="input input-sm w-28"
+                        min=0
+                        max=100000
+                        step=10
+                        placeholder="e.g. 200"
+                        type="number"
+                        prop:value=minimum_roi
+                        on:input=move |input| {
+                            let value = event_target_value(&input);
+                            if let Ok(roi) = value.parse::<i32>() {
+                                set_minimum_roi(Some(roi));
+                            } else if value.is_empty() {
+                                set_minimum_roi(None);
+                            }
+                        }
+                    />
+                </ToolbarField>
+                <ToolbarField label="Sales (Min)">
+                    <input
+                        class="input input-sm w-24"
+                        min=0
+                        max=1000
+                        step=1
+                        placeholder="e.g. 5"
+                        type="number"
+                        prop:value=minimum_sales
+                        on:input=move |input| {
+                            let value = event_target_value(&input);
+                            if let Ok(sales) = value.parse::<usize>() {
+                                set_minimum_sales(Some(sales));
+                            } else if value.is_empty() {
+                                set_minimum_sales(None);
+                            }
+                        }
+                    />
+                </ToolbarField>
+                <ToolbarField label="Buy Price (Max)">
+                    <input
+                        class="input input-sm w-32"
+                        min=0
+                        step=1000
+                        placeholder="e.g. 500000"
+                        type="number"
+                        prop:value=max_purchase_price
+                        on:input=move |input| {
+                            let value = event_target_value(&input);
+                            if let Ok(p) = value.parse::<i32>() {
+                                set_max_purchase_price(Some(p));
+                            } else if value.is_empty() {
+                                set_max_purchase_price(None);
+                            }
+                        }
+                    />
+                </ToolbarField>
+                <ToolbarField label="Category">
+                    <select
+                        class="input input-sm"
+                        on:change=move |ev| {
+                            let val = event_target_value(&ev);
+                            if let Ok(id) = val.parse::<i32>() {
+                                set_category_filter(Some(id));
+                            } else {
+                                set_category_filter(None);
+                            }
+                        }
+                        prop:value=move || category_filter().map(|c| c.to_string()).unwrap_or_default()
+                    >
+                        <option value="">{t!(i18n, analyzer_all_categories)}</option>
+                        {
+                            let mut categories = tracked_data().item_search_categorys
+                                .iter()
+                                .filter(|(_, cat)| !cat.name.is_empty())
+                                .map(|(id, cat)| (id.0, cat.name.clone()))
+                                .collect::<Vec<_>>();
+                            categories.sort_by(|a, b| a.1.cmp(&b.1));
+                            categories.into_iter().map(|(id, name)| {
+                                view! { <option value=id.to_string() selected=move || category_filter() == Some(id)>{name}</option> }
+                            }).collect_view()
+                        }
+                    </select>
+                </ToolbarField>
+                <ToolbarField label="Prices">
+                    // tax_enabled semantics: Some(true) = post-tax (5% deducted), None/Some(false) = pre-tax
+                    // Default unwrap_or(true) means post-tax is the default
+                    <ToolbarPills>
+                        <button
+                            aria-pressed={if tax_enabled().unwrap_or(true) { "false" } else { "true" }}
+                            on:click=move |_| set_tax_enabled(Some(false))
+                        >
+                            "Pre-tax"
+                        </button>
+                        <button
+                            aria-pressed={if tax_enabled().unwrap_or(true) { "true" } else { "false" }}
+                            on:click=move |_| set_tax_enabled(Some(true))
+                        >
+                            "Post-tax"
+                        </button>
+                    </ToolbarPills>
+                </ToolbarField>
+                <ToolbarSpacer />
+                <button
+                    class="btn-secondary flex items-center gap-2"
+                    on:click=move |_| show_more.update(|v| *v = !*v)
                 >
-                    <div class="flex flex-col gap-2">
-                        <div class="text-brand-300">
-                            {move || {
-                                minimum_profit_per_day()
-                                    .map(|profit| Either::Left(view! { <Gil amount=profit /> }))
-                                    .unwrap_or(Either::Right("---"))
-                            }}
-                        </div>
+                    <Icon icon=i::FaFilterSolid />
+                    {move || if show_more.get() { "Fewer Filters" } else { "More Filters" }}
+                </button>
+            </Toolbar>
+
+            // Secondary filter toolbar (expanded)
+            {move || show_more.get().then(|| view! {
+                <Toolbar>
+                    <ToolbarField label="Profit/Day (Min)">
                         <input
-                            class="input"
+                            class="input input-sm w-32"
                             min=0
                             max=100000
                             step=1000
@@ -527,157 +630,16 @@ fn AnalyzerTable(
                             on:input=move |input| {
                                 let value = event_target_value(&input);
                                 if let Ok(profit) = value.parse::<i32>() {
-                                    set_minimum_profit_per_day(Some(profit))
+                                    set_minimum_profit_per_day(Some(profit));
                                 } else if value.is_empty() {
                                     set_minimum_profit_per_day(None);
                                 }
                             }
                         />
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title=t_string!(i18n, analyzer_item_category).to_string()
-                    description=t_string!(i18n, analyzer_item_category_desc).to_string()
-                >
-                    <div class="flex flex-col gap-2">
-                         <select
-                            class="input"
-                            on:change=move |ev| {
-                                let val = event_target_value(&ev);
-                                if let Ok(id) = val.parse::<i32>() {
-                                    set_category_filter(Some(id));
-                                } else {
-                                    set_category_filter(None);
-                                }
-                            }
-                            prop:value=move || category_filter().map(|c| c.to_string()).unwrap_or_default()
-                        >
-                            <option value="">{t!(i18n, analyzer_all_categories)}</option>
-                            {
-                                let mut categories = tracked_data().item_search_categorys
-                                    .iter()
-                                    .filter(|(_, cat)| !cat.name.is_empty())
-                                    .map(|(id, cat)| (id.0, cat.name.clone()))
-                                    .collect::<Vec<_>>();
-                                categories.sort_by(|a, b| a.1.cmp(&b.1));
-                                categories.into_iter().map(|(id, name)| {
-                                    view! { <option value=id.to_string() selected=move || category_filter() == Some(id)>{name}</option> }
-                                }).collect_view()
-                            }
-                        </select>
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title=t_string!(i18n, analyzer_minimum_sales).to_string()
-                    description=t_string!(i18n, analyzer_minimum_sales_desc).to_string()
-                >
-                    <div class="flex flex-col gap-2">
-                        <div class="text-brand-300">
-                            {move || {
-                                minimum_sales()
-                                    .map(|sales| format!("{} sales", sales))
-                                    .unwrap_or("---".to_string())
-                            }}
-                        </div>
+                    </ToolbarField>
+                    <ToolbarField label="Min Buy Price">
                         <input
-                            class="input"
-                            min=0
-                            max=1000
-                            step=1
-                            placeholder="e.g. 5"
-                            type="number"
-                            prop:value=minimum_sales
-                            on:input=move |input| {
-                                let value = event_target_value(&input);
-                                if let Ok(sales) = value.parse::<usize>() {
-                                    set_minimum_sales(Some(sales));
-                                } else if value.is_empty() {
-                                    set_minimum_sales(None);
-                                }
-                            }
-                        />
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title=t_string!(i18n, analyzer_minimum_roi).to_string()
-                    description=t_string!(i18n, analyzer_minimum_roi_desc).to_string()
-                >
-                    <div class="flex flex-col gap-2">
-                        <div class="text-brand-300">
-                            {move || {
-                                minimum_roi()
-                                    .map(|roi| format!("{roi}%"))
-                                    .unwrap_or("---".to_string())
-                            }}
-                        </div>
-                        <input
-                            class="input"
-                            min=0
-                            max=100000
-                            step=10
-                            placeholder="e.g. 200"
-                            type="number"
-                            prop:value=minimum_roi
-                            on:input=move |input| {
-                                let value = event_target_value(&input);
-                                if let Ok(roi) = value.parse::<i32>() {
-                                    set_minimum_roi(Some(roi));
-                                } else if value.is_empty() {
-                                    set_minimum_roi(None);
-                                }
-                            }
-                        />
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title="Maximum Budget"
-                    description="Set the maximum purchase price per item"
-                >
-                    <div class="flex flex-col gap-2">
-                        <div class="text-brand-300">
-                            {move || {
-                                max_purchase_price()
-                                    .map(|p| Either::Left(view! { <Gil amount=p /> }))
-                                    .unwrap_or(Either::Right("---"))
-                            }}
-                        </div>
-                        <input
-                            class="input"
-                            min=0
-                            step=1000
-                            placeholder="e.g. 500000"
-                            type="number"
-                            prop:value=max_purchase_price
-                            on:input=move |input| {
-                                let value = event_target_value(&input);
-                                if let Ok(p) = value.parse::<i32>() {
-                                    set_max_purchase_price(Some(p));
-                                } else if value.is_empty() {
-                                    set_max_purchase_price(None);
-                                }
-                            }
-                        />
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title=t_string!(i18n, analyzer_minimum_buy_price).to_string()
-                    description=t_string!(i18n, analyzer_minimum_buy_price_desc).to_string()
-                >
-                    <div class="flex flex-col gap-2">
-                        <div class="text-brand-300">
-                            {move || {
-                                min_buy_price()
-                                    .map(|p| Either::Left(view! { <Gil amount=p /> }))
-                                    .unwrap_or(Either::Right("---"))
-                            }}
-                        </div>
-                        <input
-                            class="input"
+                            class="input input-sm w-32"
                             min=0
                             step=1000
                             placeholder="e.g. 5000"
@@ -692,61 +654,33 @@ fn AnalyzerTable(
                                 }
                             }
                         />
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title=t_string!(i18n, analyzer_sale_time_prediction).to_string()
-                    description=t_string!(i18n, analyzer_sale_time_prediction_desc).to_string()
-                >
-                    <div class="flex flex-col gap-2">
-                        <div class="text-brand-300">{predicted_time_string}</div>
+                    </ToolbarField>
+                    <ToolbarField label="Max Sale Time">
                         <input
-                            class="input"
+                            class="input input-sm w-32"
                             placeholder="e.g. 7d 12h"
                             title="Accepts formats like 1h 30m, 7d, 1M (month), etc."
                             prop:value=move || max_predicted_time().unwrap_or_default()
                             on:input=move |input| {
                                 let value = event_target_value(&input);
-                                set_max_predicted_time(Some(value))
+                                set_max_predicted_time(Some(value));
                             }
                         />
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title=t_string!(i18n, analyzer_last_sold_within).to_string()
-                    description=t_string!(i18n, analyzer_last_sold_within_desc).to_string()
-                >
-                    <div class="flex flex-col gap-2">
-                        <div class="text-brand-300">{last_sold_string}</div>
+                    </ToolbarField>
+                    <ToolbarField label="Last Sold Within">
                         <input
-                            class="input"
+                            class="input input-sm w-32"
                             placeholder="e.g. 7d"
                             title="Accepts formats like 1h 30m, 7d, 1M (month), etc."
                             prop:value=move || last_sold_within().unwrap_or_default()
                             on:input=move |input| {
                                 let value = event_target_value(&input);
-                                set_last_sold_within(Some(value))
+                                set_last_sold_within(Some(value));
                             }
                         />
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title=t_string!(i18n, analyzer_tax_calculation).to_string()
-                    description=t_string!(i18n, analyzer_tax_calculation_desc).to_string()
-                >
-                    <div class="flex items-center">
-                        <Toggle
-                            checked=Signal::derive(move || tax_enabled().unwrap_or(true))
-                            set_checked=SignalSetter::map(move |val: bool| set_tax_enabled(val.then_some(true)))
-                            checked_label=Oco::Owned(t_string!(i18n, analyzer_tax_enabled).to_string())
-                            unchecked_label=Oco::Owned(t_string!(i18n, analyzer_tax_disabled).to_string())
-                        />
-                    </div>
-                </FilterCard>
-            </div>
+                    </ToolbarField>
+                </Toolbar>
+            })}
 
             // Results summary
             <div class="panel px-4 py-3 flex flex-col md:flex-row md:items-center gap-3 md:gap-0 md:justify-between">
