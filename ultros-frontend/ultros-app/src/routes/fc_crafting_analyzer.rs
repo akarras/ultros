@@ -4,12 +4,18 @@ use crate::i18n::*;
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
-        filter_card::*, gil::*, item_icon::*, query_button::QueryButton, skeleton::BoxSkeleton,
-        tool_help::*, virtual_scroller::*, world_picker::WorldOnlyPicker,
+        gil::*,
+        item_icon::*,
+        query_button::QueryButton,
+        skeleton::BoxSkeleton,
+        tool_help::*,
+        toolbar::{Toolbar, ToolbarField},
+        virtual_scroller::*,
+        world_picker::WorldOnlyPicker,
     },
     global_state::{home_world::use_home_world, region_for_world::use_region_for_world},
 };
-use leptos::{either::Either, prelude::*};
+use leptos::prelude::*;
 use leptos_meta::{Meta, Title};
 use leptos_router::hooks::{query_signal, use_params_map};
 use std::{cmp::Reverse, collections::HashMap, fmt::Display, str::FromStr, sync::Arc};
@@ -273,98 +279,62 @@ fn FCCraftingAnalyzerTable(
 
     view! {
         <div class="flex flex-col gap-6">
-            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                <FilterCard
-                    title=t_string!(i18n, fc_crafting_analyzer_minimum_profit).to_string()
-                    description=t_string!(i18n, fc_crafting_analyzer_minimum_profit_desc).to_string()
-                >
-                     <div class="flex flex-col gap-2">
-                        <div class="text-brand-300">
-                            {move || {
-                                minimum_profit()
-                                    .map(|profit| Either::Left(view! { <Gil amount=profit /> }))
-                                    .unwrap_or(Either::Right("---"))
-                            }}
-                        </div>
-                        <input
-                            class="input"
-                            min=0
-                            step=100000
-                            type="number"
-                            prop:value=minimum_profit
-                            on:input=move |input| {
-                                let value = event_target_value(&input);
-                                if let Ok(profit) = value.parse::<i32>() {
-                                    set_minimum_profit(Some(profit))
-                                } else if value.is_empty() {
-                                    set_minimum_profit(None);
-                                }
+            <Toolbar>
+                <ToolbarField label="Profit (Min)">
+                    <input
+                        class="input input-sm w-32"
+                        min=0
+                        step=100000
+                        type="number"
+                        placeholder="e.g. 100000"
+                        prop:value=minimum_profit
+                        on:input=move |input| {
+                            let value = event_target_value(&input);
+                            if let Ok(profit) = value.parse::<i32>() {
+                                set_minimum_profit(Some(profit))
+                            } else if value.is_empty() {
+                                set_minimum_profit(None);
                             }
-                        />
-                    </div>
-                </FilterCard>
-
-                 <FilterCard
-                    title=t_string!(i18n, fc_crafting_analyzer_minimum_roi).to_string()
-                    description=t_string!(i18n, fc_crafting_analyzer_minimum_roi_desc).to_string()
-                >
-                    <div class="flex flex-col gap-2">
-                         <div class="text-brand-300">
-                            {move || {
-                                minimum_roi()
-                                    .map(|roi| format!("{roi}%"))
-                                    .unwrap_or("---".to_string())
-                            }}
-                        </div>
-                        <input
-                            class="input"
-                            min=0
-                            step=10
-                            type="number"
-                            prop:value=minimum_roi
-                            on:input=move |input| {
-                                let value = event_target_value(&input);
-                                if let Ok(roi) = value.parse::<i32>() {
-                                    set_minimum_roi(Some(roi));
-                                } else if value.is_empty() {
-                                    set_minimum_roi(None);
-                                }
+                        }
+                    />
+                </ToolbarField>
+                <ToolbarField label="ROI (Min)">
+                    <input
+                        class="input input-sm w-28"
+                        min=0
+                        step=10
+                        type="number"
+                        placeholder="e.g. 50"
+                        prop:value=minimum_roi
+                        on:input=move |input| {
+                            let value = event_target_value(&input);
+                            if let Ok(roi) = value.parse::<i32>() {
+                                set_minimum_roi(Some(roi));
+                            } else if value.is_empty() {
+                                set_minimum_roi(None);
                             }
-                        />
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title=t_string!(i18n, fc_crafting_analyzer_minimum_daily_sales).to_string()
-                    description=t_string!(i18n, fc_crafting_analyzer_minimum_daily_sales_desc).to_string()
-                >
-                    <div class="flex flex-col gap-2">
-                        <div class="text-brand-300">
-                             {move || {
-                                min_daily_sales()
-                                    .map(|s| format!("{:.1} / day", s))
-                                    .unwrap_or("---".to_string())
-                            }}
-                        </div>
-                        <input
-                            class="input"
-                            type="number"
-                            min="0"
-                            step="0.1"
-                            placeholder=t_string!(i18n, placeholder_eg_0_1)
-                            prop:value=min_daily_sales
-                            on:input=move |input| {
-                                let value = event_target_value(&input);
-                                if let Ok(s) = value.parse::<f32>() {
-                                    set_min_daily_sales(Some(s));
-                                } else if value.is_empty() {
-                                    set_min_daily_sales(None);
-                                }
+                        }
+                    />
+                </ToolbarField>
+                <ToolbarField label="Daily Sales (Min)">
+                    <input
+                        class="input input-sm w-28"
+                        type="number"
+                        min="0"
+                        step="0.1"
+                        placeholder="e.g. 0.1"
+                        prop:value=min_daily_sales
+                        on:input=move |input| {
+                            let value = event_target_value(&input);
+                            if let Ok(s) = value.parse::<f32>() {
+                                set_min_daily_sales(Some(s));
+                            } else if value.is_empty() {
+                                set_min_daily_sales(None);
                             }
-                        />
-                    </div>
-                </FilterCard>
-            </div>
+                        }
+                    />
+                </ToolbarField>
+            </Toolbar>
 
             <div class="rounded-2xl panel content-visible contain-layout contain-paint will-change-scroll forced-layer">
                  <VirtualScroller
@@ -421,12 +391,11 @@ fn FCCraftingAnalyzerTable(
                         } else {
                             "flex flex-row items-center flex-nowrap h-15 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_8%,transparent)] transition-colors"
                         };
-                         let sales_tooltip = t_string!(
-                            i18n,
-                            fc_crafting_analyzer_sales_tooltip,
-                            count = data.total_sales,
-                            days = format!("{:.1}", data.total_sales as f32 / data.daily_sales.max(0.001))
-                        ).to_string();
+                         let sales_tooltip = format!(
+                            "Based on {} sales over {:.1} days",
+                            data.total_sales,
+                            (data.total_sales as f32 / data.daily_sales.max(0.001))
+                        );
                         let material_rows = data
                             .materials
                             .iter()
@@ -435,7 +404,7 @@ fn FCCraftingAnalyzerTable(
                                 let material_name = items
                                     .get(&material.item_id)
                                     .map(|item| item.name.as_str().to_string())
-                                    .unwrap_or_else(|| t_string!(i18n, fc_crafting_analyzer_unknown_material).to_string());
+                                    .unwrap_or_else(|| "Unknown material".to_string());
                                 (
                                     material_name,
                                     material.total_quantity,

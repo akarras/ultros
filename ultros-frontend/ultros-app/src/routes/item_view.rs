@@ -455,8 +455,8 @@ fn MarketStatsPanel(
                             };
 
                             view! {
-                                <div class="panel p-3 sm:p-5 h-full">
-                                    <div class="flex items-center justify-between gap-3 mb-3 sm:mb-4">
+                                <div class="flex flex-col rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4 h-full">
+                                    <div class="flex items-center justify-between gap-3 mb-2 sm:mb-3">
                                         <div>
                                             <h2 class="text-lg sm:text-xl font-bold text-[color:var(--color-text)] leading-tight">
                                                 {t!(i18n, cheapest_found)}
@@ -617,7 +617,7 @@ pub fn ChartWrapper(
                     });
 
                     view! {
-                        <div class="panel p-4 text-[color:var(--color-text)] h-full">
+                        <div class="rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4 text-[color:var(--color-text)] h-full">
                             <div class="flex flex-col gap-3">
                                 <div class="flex flex-wrap items-start justify-between gap-3">
                                     <div>
@@ -755,7 +755,7 @@ fn HighQualityTable(
                     });
                     view! {
                         <div
-                            class="panel p-4 sm:p-6"
+                            class="flex flex-col gap-4 rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4"
                             class:hidden=move || hq_listings.with(|l| l.is_empty())
                         >
                             <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
@@ -802,7 +802,7 @@ fn LowQualityTable(
                     });
                     view! {
                         <div
-                            class="panel p-4 sm:p-6"
+                            class="flex flex-col gap-4 rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4"
                             class:hidden=move || lq_listings.with(|l| l.is_empty())
                         >
                             <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
@@ -840,14 +840,14 @@ fn SalesDetails(
 
                 view! {
                     <div class="flex flex-col gap-6 h-full"> // Use flex col to stack table and insights
-                        <div class="panel p-4 sm:p-6 flex-1">
+                        <div class="flex flex-col rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4 flex-1">
                             <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
                                 {move || t_string!(i18n, sale_history).to_string()}
                             </h2>
                             <SaleHistoryTable sales=sales.into() />
                         </div>
 
-                        <div class="panel p-4 sm:p-6">
+                        <div class="flex flex-col rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4">
                             <SalesInsights sales=sales.into() />
                         </div>
                     </div>
@@ -1105,12 +1105,12 @@ pub fn ItemView() -> impl IntoView {
         <Link rel="canonical" prop:href=move || format!("https://ultros.app/item/{}", item_id()) />
         <div class="min-h-screen">
             <div class="w-full px-0 sm:px-4 pt-4 sm:pt-5 pb-3">
-                <div class="flex flex-col gap-4 p-4 sm:p-5 panel">
+                <div class="flex flex-col gap-4 p-3 sm:p-4 border-b border-[color:var(--color-outline)] pb-6">
                     <div class="flex flex-col md:flex-row items-start gap-4">
                         <div class="flex items-center gap-4 flex-1">
                             <ItemIcon item_id icon_size=IconSize::Large />
                             <div class="flex flex-col min-w-0">
-                                <h1 class="text-2xl sm:text-3xl font-bold text-[color:var(--color-text)] flex items-center gap-2 leading-tight">
+                                <h1 class="text-3xl sm:text-4xl font-bold text-[color:var(--color-text)] flex items-center gap-2 leading-tight">
                                     {item_name}
                                     <Clipboard clipboard_text=Signal::derive(move || {
                                         item_name().to_string()

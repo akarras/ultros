@@ -4,6 +4,7 @@ pub mod cookies;
 pub mod home_world;
 mod local_world_data;
 pub mod region_for_world;
+pub mod side_nav;
 pub mod theme;
 pub mod user;
 pub use local_world_data::LocalWorldData;

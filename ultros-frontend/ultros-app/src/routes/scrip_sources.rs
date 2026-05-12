@@ -3,8 +3,14 @@ use crate::global_state::xiv_data::tracked_data;
 use crate::{
     api::get_cheapest_listings,
     components::{
-        gil::*, item_icon::*, query_button::QueryButton, skeleton::BoxSkeleton, tool_help::*,
-        virtual_scroller::*, world_picker::WorldOnlyPicker,
+        gil::*,
+        item_icon::*,
+        query_button::QueryButton,
+        skeleton::BoxSkeleton,
+        tool_help::*,
+        toolbar::{Toolbar, ToolbarField},
+        virtual_scroller::*,
+        world_picker::WorldOnlyPicker,
     },
     global_state::{
         LocalWorldData, home_world::use_home_world, region_for_world::use_region_for_world,
@@ -279,11 +285,10 @@ fn ScripSourceTable(
 
     view! {
         <div class="flex flex-col gap-6">
-             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                 <div class="panel p-6 flex flex-col w-full bg-[color:var(--color-background-elevated)] bg-opacity-100 z-20">
-                    <h3 class="font-bold text-xl mb-2 text-[color:var(--brand-fg)]">{t!(i18n, scrip_sources_scrip_type)}</h3>
+            <Toolbar>
+                <ToolbarField label=t_string!(i18n, scrip_sources_scrip_type).to_string()>
                     <select
-                        class="input"
+                        class="input input-sm w-48"
                         on:change=move |ev| {
                             let val = event_target_value(&ev);
                             if val.is_empty() {
@@ -301,12 +306,10 @@ fn ScripSourceTable(
                         <option value="PurpleGatherers" selected=move || scrip_filter() == Some("PurpleGatherers".to_string())>{t!(i18n, scrip_sources_purple_gatherers)}</option>
                         <option value="WhiteGatherers" selected=move || scrip_filter() == Some("WhiteGatherers".to_string())>{t!(i18n, scrip_sources_white_gatherers)}</option>
                     </select>
-                </div>
-
-                <div class="panel p-6 flex flex-col w-full bg-[color:var(--color-background-elevated)] bg-opacity-100 z-20">
-                    <h3 class="font-bold text-xl mb-2 text-[color:var(--brand-fg)]">{t!(i18n, scrip_sources_job_filter)}</h3>
-                     <select
-                        class="input"
+                </ToolbarField>
+                <ToolbarField label=t_string!(i18n, scrip_sources_job_filter).to_string()>
+                    <select
+                        class="input input-sm w-40"
                         on:change=move |ev| {
                             let val = event_target_value(&ev);
                             if val.is_empty() {
@@ -326,8 +329,8 @@ fn ScripSourceTable(
                         <option value="Alchemist" selected=move || job_filter() == Some("Alchemist".to_string())>{t!(i18n, alchemist)}</option>
                         <option value="Culinarian" selected=move || job_filter() == Some("Culinarian".to_string())>{t!(i18n, culinarian)}</option>
                     </select>
-                </div>
-            </div>
+                </ToolbarField>
+            </Toolbar>
 
             <div class="rounded-2xl overflow-x-auto panel content-visible contain-layout contain-paint will-change-scroll forced-layer">
                 <VirtualScroller
@@ -519,15 +522,14 @@ pub fn ScripSources() -> impl IntoView {
                     help_body="Scrip Sources assumes high collectability rewards and calculates ingredient cost from market listings. Use scrip type and job filters to narrow to what you can actually turn in."
                 />
 
-                <div class="flex flex-col md:flex-row items-center gap-2">
-                    <label class="text-[color:var(--brand-fg)] font-semibold">{t!(i18n, scrip_sources_select_world)}</label>
-                    <div class="w-full md:w-auto">
+                <Toolbar>
+                    <ToolbarField label=t_string!(i18n, scrip_sources_select_world).to_string()>
                         <WorldOnlyPicker
                             current_world=selected_world.into()
                             set_current_world=set_selected_world.into()
                         />
-                    </div>
-                </div>
+                    </ToolbarField>
+                </Toolbar>
 
                 <div class="text-sm text-[color:var(--color-text-muted)]">
                     {t!(i18n, scrip_sources_description)}

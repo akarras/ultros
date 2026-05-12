@@ -14,25 +14,16 @@ use crate::components::{
 };
 
 #[component]
-fn FeatureCard(
-    href: &'static str,
-    title: AnyView,
-    description: AnyView,
-    #[prop(optional)] external: bool,
-    #[prop(optional)] badge: Option<AnyView>,
-    children: ChildrenFn,
-) -> impl IntoView {
-    let rel = if external { Some("external") } else { None };
+fn ToolChip(href: &'static str, label: AnyView, children: ChildrenFn) -> impl IntoView {
     view! {
-        <A href=href attr:rel=rel attr:class="group focus:outline-none rounded-2xl">
-            <div class="feature-card w-full aspect-square flex flex-col items-center justify-center text-center gap-3">
-                <div aria-hidden="true">
-                    {children().into_view()}
-                </div>
-                {badge.map(|b| view! { <span class="feature-badge">{b}</span> })}
-                <h3 class="font-extrabold tracking-tight text-[color:var(--color-text)]">{title}</h3>
-                <span class="feature-card-desc" style="color: var(--color-text)">{description}</span>
-            </div>
+        <A
+            href=href
+            attr:class="group flex flex-col items-center justify-center gap-2 px-4 py-3 rounded-lg border border-[color:var(--color-outline)] hover:border-[color:color-mix(in_srgb,var(--brand-ring)_40%,var(--color-outline))] hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)] transition-colors min-w-[120px] text-center"
+        >
+            <span class="text-[color:var(--brand-ring)] group-hover:text-[color:var(--color-text)] transition-colors" aria-hidden="true">
+                {children().into_view()}
+            </span>
+            <span class="text-sm font-medium text-[color:var(--color-text)] whitespace-nowrap">{label}</span>
         </A>
     }
     .into_any()
@@ -47,7 +38,7 @@ pub fn HomePage() -> impl IntoView {
         <MetaTitle title=move || t_string!(i18n, meta_title).to_string() />
         <MetaDescription text=move || t_string!(i18n, meta_description).to_string() />
         <div class="main-content p-2 sm:p-6">
-            <div class="container flex flex-col gap-6 lg:flex-row-reverse mx-auto items-start max-w-7xl">
+            <div class="container flex w-full min-w-0 flex-col gap-6 lg:flex-row-reverse mx-auto items-start max-w-7xl">
                 // Right sidebar
                 <div class="flex flex-col w-full lg:w-[424px] gap-6 sticky top-4">
                     <LiveSaleTicker />
@@ -56,18 +47,18 @@ pub fn HomePage() -> impl IntoView {
                 </div>
 
                 // Main content
-                <div class="flex flex-col grow gap-8">
+                <div class="flex w-full min-w-0 flex-col grow gap-8">
                     {move || needs_onboarding.get().then(|| view! {
                         <A
                             href="/welcome"
                             attr:class="group focus:outline-none rounded-2xl"
                             attr:aria-label=move || t_string!(i18n, home_onboarding_banner_cta).to_string()
                         >
-                            <div class="panel p-5 sm:p-6 rounded-2xl border-l-4 border-brand-300/70 flex flex-wrap items-center gap-4 hover:border-brand-300 transition-colors">
+                            <div class="panel p-5 sm:p-6 rounded-2xl border-l-4 border-brand-300/70 flex flex-col items-start gap-4 hover:border-brand-300 transition-colors sm:flex-row sm:items-center">
                                 <div class="p-3 rounded-xl bg-[color:var(--brand-bg)] text-[color:var(--brand-fg)] shrink-0">
                                     <Icon icon=i::FaMapLocationDotSolid width="1.75em" height="1.75em" />
                                 </div>
-                                <div class="flex-1 min-w-[16rem]">
+                                <div class="min-w-0 flex-1">
                                     <h2 class="text-xl font-bold text-[color:var(--brand-fg)]">
                                         {t!(i18n, home_onboarding_banner_title)}
                                     </h2>
@@ -75,14 +66,14 @@ pub fn HomePage() -> impl IntoView {
                                         {t!(i18n, home_onboarding_banner_body)}
                                     </p>
                                 </div>
-                                <span class="btn-primary py-2 px-4 group-hover:translate-x-0.5 transition-transform">
+                                <span class="btn-primary w-full justify-center py-2 px-4 group-hover:translate-x-0.5 transition-transform sm:w-auto">
                                     <span>{t!(i18n, home_onboarding_banner_cta)}</span>
                                     <Icon icon=i::FaArrowRightSolid width="0.9em" height="0.9em" />
                                 </span>
                             </div>
                         </A>
                     })}
-                    <div class="panel p-4 sm:p-8 overflow-hidden relative">
+                    <div class="p-4 sm:p-6 overflow-hidden relative">
                         <div class="flex flex-col md:flex-row items-center gap-6 md:gap-10">
                             <div class="flex-1 space-y-4 z-10">
                                 <h1 class="text-6xl sm:text-8xl font-extrabold leading-none tracking-tighter drop-shadow-2xl">
@@ -113,7 +104,7 @@ pub fn HomePage() -> impl IntoView {
                                     </a>
                                 </div>
                             </div>
-                            <div class="w-full md:w-72 lg:w-80 aspect-square rounded-2xl elevated surface-blur flex items-center justify-center animate-float">
+                            <div class="hidden md:flex md:w-56 lg:w-64 aspect-square items-center justify-center animate-float opacity-60">
                                 <Icon icon=i::FaMoneyBillTrendUpSolid width="4.5em" height="4.5em" attr:class="text-brand-300" />
                             </div>
                         </div>
@@ -121,91 +112,41 @@ pub fn HomePage() -> impl IntoView {
 
                     <TopDeals />
 
-                    // Feature cards grid
-                                        <div class="feature-grid">
-                        <FeatureCard href="/items?menu-open=true" title=t!(i18n, item_explorer).into_any() description=t!(i18n, item_explorer_desc).into_any() badge=t!(i18n, badge_new).into_any()>
-                            <Icon
-                                attr:class="feature-card-icon"
-                                width="3.5em"
-                                height="3.5em"
-                                icon=i::FaScrewdriverWrenchSolid
-                            />
-                        </FeatureCard>
-                        <FeatureCard href="/flip-finder" title=t!(i18n, flip_finder).into_any() description=t!(i18n, flip_finder_desc).into_any()>
-                            <Icon
-                                attr:class="feature-card-icon"
-                                width="3.5em"
-                                height="3.5em"
-                                icon=i::FaMoneyBillTrendUpSolid
-                            />
-                        </FeatureCard>
-                        <FeatureCard href="/vendor-resale" title=t!(i18n, vendor_resale).into_any() description=t!(i18n, vendor_resale_desc).into_any()>
-                            <Icon
-                                attr:class="feature-card-icon"
-                                width="3.5em"
-                                height="3.5em"
-                                icon=i::FaShopSolid
-                            />
-                        </FeatureCard>
-                        <FeatureCard href="/recipe-analyzer" title=t!(i18n, recipe_analyzer).into_any() description=t!(i18n, recipe_analyzer_desc).into_any() badge=t!(i18n, badge_new).into_any()>
-                            <Icon
-                                attr:class="feature-card-icon"
-                                width="3.5em"
-                                height="3.5em"
-                                icon=i::FaHammerSolid
-                            />
-                        </FeatureCard>
-                        <FeatureCard href="/leve-analyzer" title=t!(i18n, leve_analyzer).into_any() description=t!(i18n, leve_analyzer_desc).into_any() badge=t!(i18n, badge_new).into_any()>
-                            <Icon
-                                attr:class="feature-card-icon"
-                                width="3.5em"
-                                height="3.5em"
-                                icon=i::FaScrollSolid
-                            />
-                        </FeatureCard>
-                        <FeatureCard href="/trends" title=t!(i18n, market_trends).into_any() description=t!(i18n, market_trends_desc).into_any() badge=t!(i18n, badge_new).into_any()>
-                            <Icon
-                                attr:class="feature-card-icon"
-                                width="3.5em"
-                                height="3.5em"
-                                icon=i::FaChartLineSolid
-                            />
-                        </FeatureCard>
-                        <FeatureCard href="/retainers" title=t!(i18n, retainers).into_any() description=t!(i18n, retainers_desc).into_any()>
-                            <Icon
-                                attr:class="feature-card-icon"
-                                width="3.5em"
-                                height="3.5em"
-                                icon=i::BiGroupSolid
-                            />
-                        </FeatureCard>
-                        <FeatureCard href="/list" title=t!(i18n, lists).into_any() description=t!(i18n, lists_desc).into_any()>
-                            <Icon
-                                attr:class="feature-card-icon"
-                                width="3.5em"
-                                height="3.5em"
-                                icon=i::AiOrderedListOutlined
-                            />
-                        </FeatureCard>
-                        <FeatureCard href="/invitebot" external=true title=t!(i18n, discord_bot).into_any() description=t!(i18n, discord_bot_desc).into_any()>
-                            <Icon
-                                attr:class="feature-card-icon"
-                                width="3.5em"
-                                height="3.5em"
-                                icon=i::BsDiscord
-                            />
-                        </FeatureCard>
-                        <FeatureCard href="/currency-exchange" title=t!(i18n, currency_exchange).into_any() description=t!(i18n, currency_exchange_desc).into_any()>
-                            <Icon
-                                attr:class="feature-card-icon"
-                                width="3.5em"
-                                height="3.5em"
-                                icon=i::RiExchangeFinanceLine
-                            />
-                        </FeatureCard>
+                    // Tool rail — flat chips instead of card grid
+                    <div>
+                        <h2 class="text-sm uppercase tracking-wider text-[color:var(--color-text-muted)] mb-3 px-1">{t!(i18n, side_nav_tools)}</h2>
+                        <div class="flex max-w-full gap-3 overflow-x-auto pb-2 -mx-2 px-2 scroll-snap-x snap-x">
+                            <ToolChip href="/items?menu-open=true" label=t!(i18n, item_explorer).into_any()>
+                                <Icon width="1.75em" height="1.75em" icon=i::FaScrewdriverWrenchSolid />
+                            </ToolChip>
+                            <ToolChip href="/flip-finder" label=t!(i18n, flip_finder).into_any()>
+                                <Icon width="1.75em" height="1.75em" icon=i::FaMoneyBillTrendUpSolid />
+                            </ToolChip>
+                            <ToolChip href="/vendor-resale" label=t!(i18n, vendor_resale).into_any()>
+                                <Icon width="1.75em" height="1.75em" icon=i::FaShopSolid />
+                            </ToolChip>
+                            <ToolChip href="/recipe-analyzer" label=t!(i18n, recipe_analyzer).into_any()>
+                                <Icon width="1.75em" height="1.75em" icon=i::FaHammerSolid />
+                            </ToolChip>
+                            <ToolChip href="/leve-analyzer" label=t!(i18n, leve_analyzer).into_any()>
+                                <Icon width="1.75em" height="1.75em" icon=i::FaScrollSolid />
+                            </ToolChip>
+                            <ToolChip href="/trends" label=t!(i18n, market_trends).into_any()>
+                                <Icon width="1.75em" height="1.75em" icon=i::FaChartLineSolid />
+                            </ToolChip>
+                            <ToolChip href="/retainers" label=t!(i18n, retainers).into_any()>
+                                <Icon width="1.75em" height="1.75em" icon=i::BiGroupSolid />
+                            </ToolChip>
+                            <ToolChip href="/list" label=t!(i18n, lists).into_any()>
+                                <Icon width="1.75em" height="1.75em" icon=i::AiOrderedListOutlined />
+                            </ToolChip>
+                            <ToolChip href="/currency-exchange" label=t!(i18n, currency_exchange).into_any()>
+                                <Icon width="1.75em" height="1.75em" icon=i::RiExchangeFinanceLine />
+                            </ToolChip>
+                        </div>
                     </div>
 
-                    <Ad class="w-96 aspect-[21/9] rounded-2xl overflow-hidden" />
+                    <Ad class="w-full max-w-96 aspect-[21/9] rounded-2xl overflow-hidden" />
                 </div>
             </div>
         </div>

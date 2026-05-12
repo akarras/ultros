@@ -5,9 +5,18 @@ use crate::{
     analysis::{SalesStats, analyze_sales, roi_badge_class},
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
-        add_recipe_to_list::AddRecipeToList, crafter_settings::CrafterSettings, gil::*, icon::Icon,
-        item_icon::*, query_button::QueryButton, skeleton::BoxSkeleton, tool_help::*,
-        tooltip::Tooltip, virtual_scroller::*, world_picker::WorldOnlyPicker,
+        add_recipe_to_list::AddRecipeToList,
+        crafter_settings::CrafterSettings,
+        gil::*,
+        icon::Icon,
+        item_icon::*,
+        query_button::QueryButton,
+        skeleton::BoxSkeleton,
+        tool_help::*,
+        toolbar::{Toolbar, ToolbarField, ToolbarPills, ToolbarSpacer},
+        tooltip::Tooltip,
+        virtual_scroller::*,
+        world_picker::WorldOnlyPicker,
     },
     global_state::{
         cookies::Cookies, crafter_levels::CrafterLevels, home_world::use_home_world,
@@ -15,7 +24,7 @@ use crate::{
     },
 };
 use icondata as i;
-use leptos::{either::Either, prelude::*};
+use leptos::prelude::*;
 use leptos_router::hooks::{query_signal, use_params_map};
 use std::{cmp::Reverse, collections::HashMap, fmt::Display, str::FromStr, sync::Arc};
 use ultros_api_types::{
@@ -156,24 +165,6 @@ fn calculate_crafting_cost(
     };
 
     (clamped_cost, sub_crafts)
-}
-
-#[component]
-fn FilterCard<T>(
-    #[prop(into)] title: Oco<'static, str>,
-    #[prop(into)] description: Oco<'static, str>,
-    children: TypedChildren<T>,
-) -> impl IntoView
-where
-    T: IntoView,
-{
-    view! {
-        <div class="panel p-6 flex flex-col w-full bg-[color:var(--color-background-elevated)] bg-opacity-100 z-20" style="backdrop-filter: none; background-image: none;">
-            <h3 class="font-bold text-xl mb-2 text-[color:var(--brand-fg)]">{title}</h3>
-            <p class="mb-4 text-[color:var(--color-text-muted)]">{description}</p>
-            {children.into_inner()().into_view()}
-        </div>
-    }
 }
 
 #[component]
@@ -381,173 +372,141 @@ fn RecipeAnalyzerTable(
 
     view! {
         <div class="flex flex-col gap-6">
-            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                 <FilterCard
-                    title=t_string!(i18n, minimum_profit).to_string()
-                    description=t_string!(i18n, set_minimum_profit_margin).to_string()
-                >
-                    <div class="flex flex-col gap-2">
-                        <div class="text-brand-300">
-                            {move || {
-                                minimum_profit()
-                                    .map(|profit| Either::Left(view! { <Gil amount=profit /> }))
-                                    .unwrap_or(Either::Right("---"))
-                            }}
-                        </div>
-                        <input
-                            class="input"
-                            min=0
-                            step=1000
-                            type="number"
-                            prop:value=minimum_profit
-                            on:input=move |input| {
-                                let value = event_target_value(&input);
-                                if let Ok(profit) = value.parse::<i32>() {
-                                    set_minimum_profit(Some(profit))
-                                } else if value.is_empty() {
-                                    set_minimum_profit(None);
-                                }
-                            }
-                        />
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title=t_string!(i18n, minimum_roi).to_string()
-                    description=t_string!(i18n, set_minimum_roi_percent).to_string()
-                >
-                    <div class="flex flex-col gap-2">
-                         <div class="text-brand-300">
-                            {move || {
-                                minimum_roi()
-                                    .map(|roi| format!("{roi}%"))
-                                    .unwrap_or("---".to_string())
-                            }}
-                        </div>
-                        <input
-                            class="input"
-                            min=0
-                            step=10
-                            type="number"
-                            prop:value=minimum_roi
-                            on:input=move |input| {
-                                let value = event_target_value(&input);
-                                if let Ok(roi) = value.parse::<i32>() {
-                                    set_minimum_roi(Some(roi));
-                                } else if value.is_empty() {
-                                    set_minimum_roi(None);
-                                }
-                            }
-                        />
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title=t_string!(i18n, minimum_daily_sales).to_string()
-                    description=t_string!(i18n, filter_by_sales_velocity).to_string()
-                >
-                    <div class="flex flex-col gap-2">
-                        <div class="text-brand-300">
-                             {move || {
-                                min_daily_sales()
-                                    .map(|s| t_string!(i18n, recipe_analyzer_sales_per_day, sales = format!("{:.1}", s)).to_string())
-                                    .unwrap_or("---".to_string())
-                            }}
-                        </div>
-                        <input
-                            class="input"
-                            type="number"
-                            min="0"
-                            step="0.1"
-                            placeholder=t_string!(i18n, placeholder_eg_1_0)
-                            prop:value=min_daily_sales
-                            on:input=move |input| {
-                                let value = event_target_value(&input);
-                                if let Ok(s) = value.parse::<f32>() {
-                                    set_min_daily_sales(Some(s));
-                                } else if value.is_empty() {
-                                    set_min_daily_sales(None);
-                                }
-                            }
-                        />
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title=t_string!(i18n, options).to_string()
-                    description=t_string!(i18n, configure_calculation_options).to_string()
-                >
-                     <div class="flex flex-col gap-4">
-                <Show when=move || !has_levels()>
-                    <div class="text-center p-8 text-brand-300 bg-brand-900/20 rounded-lg border border-brand-800">
-                    <h3 class="text-xl font-bold mb-2">{t!(i18n, no_crafter_levels_configured)}</h3>
-                    <p>{t!(i18n, please_configure_crafter_levels)}</p>
-                </div>
-                </Show>
-
-                <div class="flex flex-row gap-4 flex-wrap">
+            // Primary filter toolbar
+            <Toolbar>
+                <ToolbarField label="Profit (Min)">
                     <input
-                        type="checkbox"
-                        id="subcrafts"
-                        class="checkbox"
-                        prop:checked=move || use_subcrafts().unwrap_or(false)
-                        on:change=move |ev| set_use_subcrafts(Some(event_target_checked(&ev)))
-                    />
-                    <label for="subcrafts">{t!(i18n, include_subcrafts)}</label>
-                    <div class="text-brand-300 cursor-help" title=t_string!(i18n, recipe_analyzer_subcrafts_tooltip)>
-                        <Icon icon=i::AiQuestionCircleOutlined />
-                    </div>
-                </div>
-                <div class="flex flex-row gap-4 flex-wrap">
-                    <input
-                        type="checkbox"
-                        id="require-hq"
-                        class="checkbox"
-                        prop:checked=move || require_hq().unwrap_or(false)
-                        on:change=move |ev| set_require_hq(Some(event_target_checked(&ev)))
-                    />
-                    <label for="require-hq">{t!(i18n, require_hq_ingredients)}</label>
-                    <div class="text-brand-300 cursor-help" title=t_string!(i18n, recipe_analyzer_require_hq_tooltip)>
-                        <Icon icon=i::AiQuestionCircleOutlined />
-                    </div>
-                </div>
-                <div class="flex flex-row gap-4 flex-wrap">
-                    <input
-                        type="checkbox"
-                        id="filter-outliers"
-                        class="checkbox"
-                        prop:checked=move || filter_outliers().unwrap_or(false)
-                        on:change=move |ev| set_filter_outliers(Some(event_target_checked(&ev)))
-                    />
-                    <label for="filter-outliers">{t!(i18n, filter_outliers)}</label>
-                    <div class="text-brand-300 cursor-help" title=t_string!(i18n, leve_analyzer_filter_outliers_tooltip)>
-                        <Icon icon=i::AiQuestionCircleOutlined />
-                    </div>
-                </div>
-                        <select
-                            class="input"
-                            on:change=move |ev| {
-                                let val = event_target_value(&ev);
-                                if val.is_empty() {
-                                    set_job_filter(None);
-                                } else {
-                                    set_job_filter(Some(val));
-                                }
+                        class="input input-sm w-32"
+                        min=0
+                        step=1000
+                        placeholder="e.g. 10000"
+                        type="number"
+                        prop:value=minimum_profit
+                        on:input=move |input| {
+                            let value = event_target_value(&input);
+                            if let Ok(profit) = value.parse::<i32>() {
+                                set_minimum_profit(Some(profit));
+                            } else if value.is_empty() {
+                                set_minimum_profit(None);
                             }
+                        }
+                    />
+                </ToolbarField>
+                <ToolbarField label="ROI (Min)">
+                    <input
+                        class="input input-sm w-28"
+                        min=0
+                        step=10
+                        placeholder="e.g. 200"
+                        type="number"
+                        prop:value=minimum_roi
+                        on:input=move |input| {
+                            let value = event_target_value(&input);
+                            if let Ok(roi) = value.parse::<i32>() {
+                                set_minimum_roi(Some(roi));
+                            } else if value.is_empty() {
+                                set_minimum_roi(None);
+                            }
+                        }
+                    />
+                </ToolbarField>
+                <ToolbarField label="Daily Sales (Min)">
+                    <input
+                        class="input input-sm w-24"
+                        type="number"
+                        min="0"
+                        step="0.1"
+                        placeholder="e.g. 1.0"
+                        prop:value=min_daily_sales
+                        on:input=move |input| {
+                            let value = event_target_value(&input);
+                            if let Ok(s) = value.parse::<f32>() {
+                                set_min_daily_sales(Some(s));
+                            } else if value.is_empty() {
+                                set_min_daily_sales(None);
+                            }
+                        }
+                    />
+                </ToolbarField>
+                <ToolbarField label="Job">
+                    <select
+                        class="input input-sm w-40"
+                        on:change=move |ev| {
+                            let val = event_target_value(&ev);
+                            if val.is_empty() {
+                                set_job_filter(None);
+                            } else {
+                                set_job_filter(Some(val));
+                            }
+                        }
+                    >
+                        <option value="">{t!(i18n, all_jobs)}</option>
+                        <option value="CRP" selected=move || job_filter() == Some("CRP".to_string())>{t!(i18n, carpenter)}</option>
+                        <option value="BSM" selected=move || job_filter() == Some("BSM".to_string())>{t!(i18n, blacksmith)}</option>
+                        <option value="ARM" selected=move || job_filter() == Some("ARM".to_string())>{t!(i18n, armorer)}</option>
+                        <option value="GSM" selected=move || job_filter() == Some("GSM".to_string())>{t!(i18n, goldsmith)}</option>
+                        <option value="LTW" selected=move || job_filter() == Some("LTW".to_string())>{t!(i18n, leatherworker)}</option>
+                        <option value="WVR" selected=move || job_filter() == Some("WVR".to_string())>{t!(i18n, weaver)}</option>
+                        <option value="ALC" selected=move || job_filter() == Some("ALC".to_string())>{t!(i18n, alchemist)}</option>
+                        <option value="CUL" selected=move || job_filter() == Some("CUL".to_string())>{t!(i18n, culinarian)}</option>
+                    </select>
+                </ToolbarField>
+                <ToolbarField label="Sub-crafts">
+                    <ToolbarPills>
+                        <button
+                            aria-pressed=move || if use_subcrafts().unwrap_or(false) { "false" } else { "true" }
+                            title="If enabled, the analyzer will check if it's cheaper to craft intermediate ingredients rather than buying them from the market board."
+                            on:click=move |_| set_use_subcrafts(Some(!use_subcrafts().unwrap_or(false)))
                         >
-                            <option value="">{t!(i18n, all_jobs)}</option>
-                            <option value="CRP" selected=move || job_filter() == Some("CRP".to_string())>{t!(i18n, carpenter)}</option>
-                            <option value="BSM" selected=move || job_filter() == Some("BSM".to_string())>{t!(i18n, blacksmith)}</option>
-                            <option value="ARM" selected=move || job_filter() == Some("ARM".to_string())>{t!(i18n, armorer)}</option>
-                            <option value="GSM" selected=move || job_filter() == Some("GSM".to_string())>{t!(i18n, goldsmith)}</option>
-                            <option value="LTW" selected=move || job_filter() == Some("LTW".to_string())>{t!(i18n, leatherworker)}</option>
-                            <option value="WVR" selected=move || job_filter() == Some("WVR".to_string())>{t!(i18n, weaver)}</option>
-                            <option value="ALC" selected=move || job_filter() == Some("ALC".to_string())>{t!(i18n, alchemist)}</option>
-                            <option value="CUL" selected=move || job_filter() == Some("CUL".to_string())>{t!(i18n, culinarian)}</option>
-                        </select>
-                     </div>
-                </FilterCard>
-            </div>
+                            "Off"
+                        </button>
+                        <button
+                            aria-pressed=move || if use_subcrafts().unwrap_or(false) { "true" } else { "false" }
+                            title="If enabled, the analyzer will check if it's cheaper to craft intermediate ingredients rather than buying them from the market board."
+                            on:click=move |_| set_use_subcrafts(Some(!use_subcrafts().unwrap_or(false)))
+                        >
+                            "On"
+                        </button>
+                    </ToolbarPills>
+                </ToolbarField>
+                <ToolbarField label="Require HQ">
+                    <ToolbarPills>
+                        <button
+                            aria-pressed=move || if require_hq().unwrap_or(false) { "false" } else { "true" }
+                            title="If enabled, ingredient costs will prefer HQ listings when available. Falls back to LQ if no HQ listing exists."
+                            on:click=move |_| set_require_hq(Some(!require_hq().unwrap_or(false)))
+                        >
+                            "Off"
+                        </button>
+                        <button
+                            aria-pressed=move || if require_hq().unwrap_or(false) { "true" } else { "false" }
+                            title="If enabled, ingredient costs will prefer HQ listings when available. Falls back to LQ if no HQ listing exists."
+                            on:click=move |_| set_require_hq(Some(!require_hq().unwrap_or(false)))
+                        >
+                            "On"
+                        </button>
+                    </ToolbarPills>
+                </ToolbarField>
+                <ToolbarField label="Filter Outliers">
+                    <ToolbarPills>
+                        <button
+                            aria-pressed=move || if filter_outliers().unwrap_or(false) { "false" } else { "true" }
+                            title="If enabled, sales outliers will be removed from the average price calculation using the Interquartile Range (IQR) method."
+                            on:click=move |_| set_filter_outliers(Some(!filter_outliers().unwrap_or(false)))
+                        >
+                            "Off"
+                        </button>
+                        <button
+                            aria-pressed=move || if filter_outliers().unwrap_or(false) { "true" } else { "false" }
+                            title="If enabled, sales outliers will be removed from the average price calculation using the Interquartile Range (IQR) method."
+                            on:click=move |_| set_filter_outliers(Some(!filter_outliers().unwrap_or(false)))
+                        >
+                            "On"
+                        </button>
+                    </ToolbarPills>
+                </ToolbarField>
+                <ToolbarSpacer />
+            </Toolbar>
 
             <Show when=move || !has_levels()>
                 <ActionableEmptyState
@@ -568,7 +527,7 @@ fn RecipeAnalyzerTable(
                     variable_height=false
                     header=view! {
                         <div class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]" role="rowgroup">
-                             <div role="columnheader" class="w-64 md:w-80 shrink-0 p-4">{t!(i18n, item)}</div>
+                             <div role="columnheader" class="w-64 md:w-80 shrink-0 p-4">"Item"</div>
                              <div role="columnheader" class="w-32 shrink-0 p-4">
                                 <QueryButton
                                     class="!text-brand-300 hover:text-brand-200"
@@ -576,7 +535,7 @@ fn RecipeAnalyzerTable(
                                     key="sort"
                                     value="profit"
                                 >
-                                    {t!(i18n, profit)}
+                                    "Profit"
                                 </QueryButton>
                              </div>
                              <div role="columnheader" class="w-32 shrink-0 p-4">
@@ -586,11 +545,11 @@ fn RecipeAnalyzerTable(
                                     key="sort"
                                     value="roi"
                                 >
-                                    {t!(i18n, roi)}
+                                    "ROI"
                                 </QueryButton>
                              </div>
-                             <div role="columnheader" class="w-32 shrink-0 p-4">{t!(i18n, cost_per_unit)}</div>
-                             <div role="columnheader" class="w-32 shrink-0 p-4">{t!(i18n, price)}</div>
+                             <div role="columnheader" class="w-32 shrink-0 p-4">"Cost / unit"</div>
+                             <div role="columnheader" class="w-32 shrink-0 p-4">"Price"</div>
                              <div role="columnheader" class="w-32 shrink-0 p-4 hidden md:block">
                                 <QueryButton
                                     class="!text-brand-300 hover:text-brand-200"
@@ -598,11 +557,11 @@ fn RecipeAnalyzerTable(
                                     key="sort"
                                     value="velocity"
                                 >
-                                    {t!(i18n, daily_sales)}
+                                    "Daily Sales"
                                 </QueryButton>
                              </div>
-                             <div role="columnheader" class="w-32 shrink-0 p-4 hidden md:block">{t!(i18n, avg_price)}</div>
-                             <div role="columnheader" class="w-20 shrink-0 p-4">{t!(i18n, actions)}</div>
+                             <div role="columnheader" class="w-32 shrink-0 p-4 hidden md:block">"Avg Price"</div>
+                             <div role="columnheader" class="w-20 shrink-0 p-4">"Actions"</div>
                         </div>
                     }.into_any()
                     each=computed_data.into()
@@ -611,8 +570,7 @@ fn RecipeAnalyzerTable(
                         // Clone data for use in closures to avoid moving the Arc
                         let data_clone = data.clone();
                         let item_id = ItemId(data.recipe.item_result);
-                        let unknown_item = t_string!(i18n, unknown_item).to_string();
-                        let item = items.get(&item_id).map(|i| i.name.to_string()).unwrap_or_else(|| unknown_item.clone());
+                        let item = items.get(&item_id).map(|i| i.name.as_str()).unwrap_or("Unknown");
                         let item_level = items.get(&item_id).map(|i| i.level_item).unwrap_or(0);
                         let classes = if (index % 2) == 0 {
                             "flex flex-row items-center flex-nowrap h-15 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_6%,transparent)] transition-colors"
@@ -632,12 +590,11 @@ fn RecipeAnalyzerTable(
                             _ => "",
                         };
 
-                        let sales_tooltip = t_string!(
-                            i18n,
-                            recipe_analyzer_sales_tooltip,
-                            count = data.total_sales,
-                            days = format!("{:.1}", data.total_sales as f32 / data.daily_sales.max(0.001))
-                        ).to_string();
+                        let sales_tooltip = format!(
+                            "Based on {} sales over {:.1} days",
+                            data.total_sales,
+                            (data.total_sales as f32 / data.daily_sales.max(0.001)) // approximate duration back
+                        );
 
                         view! {
                             <div class=classes role="row-group">
@@ -652,7 +609,7 @@ fn RecipeAnalyzerTable(
                                         <div class="flex flex-col">
                                             <span>{item}</span>
                                             <span class="text-xs text-[color:var(--color-text-muted)]">
-                                                {t!(i18n, recipe_analyzer_item_level_label, level = data.required_level, ilvl = item_level)} " " {job_abbrev}
+                                                "Lv " {data.required_level} " • iLv " {item_level} " " {job_abbrev}
                                             </span>
                                         </div>
                                     </a>
@@ -681,16 +638,14 @@ fn RecipeAnalyzerTable(
                                                     view! {
                                                         <Tooltip
                                                             tooltip_text={
-                                                                let unknown_sub = t_string!(i18n, unknown_item).to_string();
                                                                 let sub_crafts_details: Vec<(String, i32, i32)> = sub_crafts_for_text.iter().map(|sub| {
-                                                                    let name = items.get(&sub.item_id).map(|i| i.name.to_string()).unwrap_or_else(|| unknown_sub.clone());
+                                                                    let name = items.get(&sub.item_id).map(|i| i.name.to_string()).unwrap_or("Unknown".to_string());
                                                                     (name, sub.amount, sub.unit_cost)
                                                                 }).collect();
-                                                                let header = t_string!(i18n, recipe_analyzer_subcraft_header).to_string();
                                                                 Signal::derive(move || {
-                                                                    let mut tooltip = header.clone();
+                                                                    let mut tooltip = String::from("Includes sub-crafts:\n");
                                                                     for (name, amount, cost) in &sub_crafts_details {
-                                                                        tooltip.push_str(&t_string!(i18n, recipe_analyzer_subcraft_row, count = *amount, name = name.clone(), gil = *cost).to_string());
+                                                                        tooltip.push_str(&format!("• {}x {} ({} gil)\n", amount, name, cost));
                                                                     }
                                                                     tooltip
                                                                 })
@@ -698,7 +653,7 @@ fn RecipeAnalyzerTable(
                                                         >
                                                             <div class="text-xs text-brand-300 flex items-center justify-end gap-1 cursor-help">
                                                                 <Icon icon=i::FaHammerSolid width="0.8em" height="0.8em" />
-                                                                <span>{count} " " {t!(i18n, recipe_analyzer_sub_suffix)}</span>
+                                                                <span>{count} " sub"</span>
                                                             </div>
                                                         </Tooltip>
                                                     }
@@ -712,7 +667,7 @@ fn RecipeAnalyzerTable(
                                 </div>
                                 <div role="cell" class="px-4 py-2 w-32 shrink-0 text-right hidden md:block">
                                     <span class="text-xs text-[color:var(--color-text-muted)]" title=sales_tooltip>
-                                        {t!(i18n, recipe_analyzer_sales_per_day, sales = format!("{:.1}", data.daily_sales))}
+                                        {format!("{:.1} / day", data.daily_sales)}
                                     </span>
                                 </div>
                                 <div role="cell" class="px-4 py-2 w-32 shrink-0 text-right hidden md:block">
@@ -744,7 +699,6 @@ fn CollapseIcon(collapsed: Signal<bool>) -> impl IntoView {
 
 #[component]
 pub fn RecipeAnalyzer() -> impl IntoView {
-    let i18n = use_i18n();
     let params = use_params_map();
     let (home_world, _) = use_home_world();
 
@@ -774,25 +728,25 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     let recent_sales_clone = recent_sales.clone();
     view! {
         <div class="flex flex-col gap-4 h-full">
-            <MetaTitle title=t_string!(i18n, recipe_analyzer_title).to_string() />
-            <MetaDescription text=t_string!(i18n, recipe_analyzer_meta_desc).to_string() />
+            <MetaTitle title="Recipe Analyzer - Ultros" />
+            <MetaDescription text="Analyze crafting recipes for profitability" />
 
             <div class="flex flex-col gap-4">
                 <ToolHeader
-                    title=t_string!(i18n, recipe_analyzer).to_string()
-                    summary=t_string!(i18n, recipe_analyzer_tool_summary).to_string()
-                    context=t_string!(i18n, recipe_analyzer_tool_context).to_string()
+                    title="Recipe Analyzer"
+                    summary="Find recipes where estimated craft cost is lower than the market price for the finished item."
+                    context="Configure crafter levels first so the results match recipes you can actually make."
                     help_href="/help/recipe-analyzer"
-                    help_body=t_string!(i18n, recipe_analyzer_tool_help).to_string()
+                    help_body="Recipe Analyzer uses cheapest ingredient listings, optional subcraft checks, your crafter levels, and recent sales. A profitable recipe is strongest when the output also sells regularly."
                 />
                 <div class="flex flex-row justify-end items-center">
                     <div class="flex flex-row gap-2 items-center">
-                        <Suspense fallback=move || view! { <div class="text-brand-300 text-sm animate-pulse">{t!(i18n, loading_sales_data)}</div> }>
+                        <Suspense fallback=|| view! { <div class="text-brand-300 text-sm animate-pulse">"Loading sales data..."</div> }>
                             {move || {
                                 recent_sales_clone
                                     .get()
                                     .and_then(|r| r.err())
-                                    .map(|_| view! { <div class="text-red-400 text-sm">{t!(i18n, error_loading_sales_data)}</div> })
+                                    .map(|_| view! { <div class="text-red-400 text-sm">"Error loading sales data"</div> })
                             }}
                         </Suspense>
                     </div>
@@ -806,7 +760,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                                 on:click=move |_| set_show_settings.update(|v| *v = !*v)
                             >
                                 <Icon icon=i::AiSettingOutlined />
-                                {t!(i18n, adjust_crafter_levels)}
+                                "Adjust Crafter Levels"
                                 <CollapseIcon collapsed=show_settings.into() />
                             </button>
                             <div class=move || {
@@ -834,7 +788,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
 
                 <Show when=move || selected_world.get().is_some()>
                     <div class="flex flex-col md:flex-row items-center gap-2">
-                        <label class="text-[color:var(--brand-fg)] font-semibold">{t!(i18n, select_world_for_sales_data)}</label>
+                        <label class="text-[color:var(--brand-fg)] font-semibold">"Select World for Sales Data:"</label>
                         <div class="w-full md:w-auto">
                             <WorldOnlyPicker
                                 current_world=selected_world.into()
@@ -870,7 +824,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                             (Some(Err(e)), _) => {
                                 view! {
                                     <div class="text-red-400">
-                                        {t!(i18n, error_loading_listings)} {e.to_string()}
+                                        "Error loading listings: " {e.to_string()}
                                     </div>
                                 }.into_any()
                             }

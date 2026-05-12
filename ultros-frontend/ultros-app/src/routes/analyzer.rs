@@ -4,9 +4,20 @@ use crate::i18n::*;
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
-        add_to_list::AddToList, clipboard::*, filter_card::*, gil::*, icon::Icon, item_icon::*,
-        meta::*, query_button::QueryButton, skeleton::BoxSkeleton, toggle::Toggle, tool_help::*,
-        tooltip::*, virtual_scroller::*, world_picker::*,
+        add_to_list::AddToList,
+        clipboard::*,
+        gil::*,
+        icon::Icon,
+        item_icon::*,
+        meta::*,
+        query_button::QueryButton,
+        skeleton::BoxSkeleton,
+        toggle::Toggle,
+        tool_help::*,
+        toolbar::{Toolbar, ToolbarField, ToolbarPills, ToolbarSpacer},
+        tooltip::*,
+        virtual_scroller::*,
+        world_picker::*,
     },
     error::AppError,
     global_state::LocalWorldData,
@@ -342,6 +353,7 @@ fn AnalyzerTable(
     });
 
     let (last_sold_within, set_last_sold_within) = query_signal::<String>("last-sold");
+    let show_more = RwSignal::new(false);
     let last_sold_duration =
         Memo::new(move |_| last_sold_within().and_then(|d| parse_duration(d.as_str()).ok()));
     let last_sold_string = Memo::new(move |_| {
@@ -471,213 +483,163 @@ fn AnalyzerTable(
     });
     view! {
         <div class="flex flex-col gap-6">
-            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                <FilterCard
-                    title=t_string!(i18n, analyzer_minimum_profit).to_string()
-                    description=t_string!(i18n, analyzer_minimum_profit_desc).to_string()
-                >
-                    <div class="flex flex-col gap-2">
-                        <div class="text-brand-300">
-                            {move || {
-                                minimum_profit()
-                                    .map(|profit| Either::Left(view! { <Gil amount=profit /> }))
-                                    .unwrap_or(Either::Right("---"))
-                            }}
-                        </div>
-                        <input
-                            class="input"
-                            min=0
-                            max=100000
-                            step=1000
-                            placeholder=t_string!(i18n, placeholder_eg_100000)
-                            type="number"
-                            prop:value=minimum_profit
-                            on:input=move |input| {
-                                let value = event_target_value(&input);
-                                if let Ok(profit) = value.parse::<i32>() {
-                                    set_minimum_profit(Some(profit))
-                                } else if value.is_empty() {
-                                    set_minimum_profit(None);
-                                }
+            // Primary filter toolbar
+            <Toolbar>
+                <ToolbarField label="Profit (Min)">
+                    <input
+                        class="input input-sm w-32"
+                        min=0
+                        max=100000
+                        step=1000
+                        placeholder="e.g. 100000"
+                        type="number"
+                        prop:value=minimum_profit
+                        on:input=move |input| {
+                            let value = event_target_value(&input);
+                            if let Ok(profit) = value.parse::<i32>() {
+                                set_minimum_profit(Some(profit));
+                            } else if value.is_empty() {
+                                set_minimum_profit(None);
                             }
-                        />
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title=t_string!(i18n, analyzer_profit_per_day).to_string()
-                    description=t_string!(i18n, analyzer_profit_per_day_desc).to_string()
+                        }
+                    />
+                </ToolbarField>
+                <ToolbarField label="ROI (Min)">
+                    <input
+                        class="input input-sm w-28"
+                        min=0
+                        max=100000
+                        step=10
+                        placeholder="e.g. 200"
+                        type="number"
+                        prop:value=minimum_roi
+                        on:input=move |input| {
+                            let value = event_target_value(&input);
+                            if let Ok(roi) = value.parse::<i32>() {
+                                set_minimum_roi(Some(roi));
+                            } else if value.is_empty() {
+                                set_minimum_roi(None);
+                            }
+                        }
+                    />
+                </ToolbarField>
+                <ToolbarField label="Sales (Min)">
+                    <input
+                        class="input input-sm w-24"
+                        min=0
+                        max=1000
+                        step=1
+                        placeholder="e.g. 5"
+                        type="number"
+                        prop:value=minimum_sales
+                        on:input=move |input| {
+                            let value = event_target_value(&input);
+                            if let Ok(sales) = value.parse::<usize>() {
+                                set_minimum_sales(Some(sales));
+                            } else if value.is_empty() {
+                                set_minimum_sales(None);
+                            }
+                        }
+                    />
+                </ToolbarField>
+                <ToolbarField label="Buy Price (Max)">
+                    <input
+                        class="input input-sm w-32"
+                        min=0
+                        step=1000
+                        placeholder="e.g. 500000"
+                        type="number"
+                        prop:value=max_purchase_price
+                        on:input=move |input| {
+                            let value = event_target_value(&input);
+                            if let Ok(p) = value.parse::<i32>() {
+                                set_max_purchase_price(Some(p));
+                            } else if value.is_empty() {
+                                set_max_purchase_price(None);
+                            }
+                        }
+                    />
+                </ToolbarField>
+                <ToolbarField label="Category">
+                    <select
+                        class="input input-sm"
+                        on:change=move |ev| {
+                            let val = event_target_value(&ev);
+                            if let Ok(id) = val.parse::<i32>() {
+                                set_category_filter(Some(id));
+                            } else {
+                                set_category_filter(None);
+                            }
+                        }
+                        prop:value=move || category_filter().map(|c| c.to_string()).unwrap_or_default()
+                    >
+                        <option value="">{t!(i18n, analyzer_all_categories)}</option>
+                        {
+                            let mut categories = tracked_data().item_search_categorys
+                                .iter()
+                                .filter(|(_, cat)| !cat.name.is_empty())
+                                .map(|(id, cat)| (id.0, cat.name.clone()))
+                                .collect::<Vec<_>>();
+                            categories.sort_by(|a, b| a.1.cmp(&b.1));
+                            categories.into_iter().map(|(id, name)| {
+                                view! { <option value=id.to_string() selected=move || category_filter() == Some(id)>{name}</option> }
+                            }).collect_view()
+                        }
+                    </select>
+                </ToolbarField>
+                <ToolbarField label="Prices">
+                    // tax_enabled semantics: Some(true) = post-tax (5% deducted), None/Some(false) = pre-tax
+                    // Default unwrap_or(true) means post-tax is the default
+                    <ToolbarPills>
+                        <button
+                            aria-pressed={if tax_enabled().unwrap_or(true) { "false" } else { "true" }}
+                            on:click=move |_| set_tax_enabled(Some(false))
+                        >
+                            "Pre-tax"
+                        </button>
+                        <button
+                            aria-pressed={if tax_enabled().unwrap_or(true) { "true" } else { "false" }}
+                            on:click=move |_| set_tax_enabled(Some(true))
+                        >
+                            "Post-tax"
+                        </button>
+                    </ToolbarPills>
+                </ToolbarField>
+                <ToolbarSpacer />
+                <button
+                    class="btn-secondary flex items-center gap-2"
+                    on:click=move |_| show_more.update(|v| *v = !*v)
                 >
-                    <div class="flex flex-col gap-2">
-                        <div class="text-brand-300">
-                            {move || {
-                                minimum_profit_per_day()
-                                    .map(|profit| Either::Left(view! { <Gil amount=profit /> }))
-                                    .unwrap_or(Either::Right("---"))
-                            }}
-                        </div>
+                    <Icon icon=i::FaFilterSolid />
+                    {move || if show_more.get() { "Fewer Filters" } else { "More Filters" }}
+                </button>
+            </Toolbar>
+
+            // Secondary filter toolbar (expanded)
+            {move || show_more.get().then(|| view! {
+                <Toolbar>
+                    <ToolbarField label="Profit/Day (Min)">
                         <input
-                            class="input"
+                            class="input input-sm w-32"
                             min=0
                             max=100000
                             step=1000
-                            placeholder=t_string!(i18n, placeholder_eg_10000)
+                            placeholder="e.g. 10000"
                             type="number"
                             prop:value=minimum_profit_per_day
                             on:input=move |input| {
                                 let value = event_target_value(&input);
                                 if let Ok(profit) = value.parse::<i32>() {
-                                    set_minimum_profit_per_day(Some(profit))
+                                    set_minimum_profit_per_day(Some(profit));
                                 } else if value.is_empty() {
                                     set_minimum_profit_per_day(None);
                                 }
                             }
                         />
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title=t_string!(i18n, analyzer_item_category).to_string()
-                    description=t_string!(i18n, analyzer_item_category_desc).to_string()
-                >
-                    <div class="flex flex-col gap-2">
-                         <select
-                            class="input"
-                            on:change=move |ev| {
-                                let val = event_target_value(&ev);
-                                if let Ok(id) = val.parse::<i32>() {
-                                    set_category_filter(Some(id));
-                                } else {
-                                    set_category_filter(None);
-                                }
-                            }
-                            prop:value=move || category_filter().map(|c| c.to_string()).unwrap_or_default()
-                        >
-                            <option value="">{t!(i18n, analyzer_all_categories)}</option>
-                            {
-                                let mut categories = tracked_data().item_search_categorys
-                                    .iter()
-                                    .filter(|(_, cat)| !cat.name.is_empty())
-                                    .map(|(id, cat)| (id.0, cat.name.clone()))
-                                    .collect::<Vec<_>>();
-                                categories.sort_by(|a, b| a.1.cmp(&b.1));
-                                categories.into_iter().map(|(id, name)| {
-                                    view! { <option value=id.to_string() selected=move || category_filter() == Some(id)>{name}</option> }
-                                }).collect_view()
-                            }
-                        </select>
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title=t_string!(i18n, analyzer_minimum_sales).to_string()
-                    description=t_string!(i18n, analyzer_minimum_sales_desc).to_string()
-                >
-                    <div class="flex flex-col gap-2">
-                        <div class="text-brand-300">
-                            {move || {
-                                minimum_sales()
-                                    .map(|sales| t_string!(i18n, analyzer_n_sales, count = sales).to_string())
-                                    .unwrap_or("---".to_string())
-                            }}
-                        </div>
+                    </ToolbarField>
+                    <ToolbarField label="Min Buy Price">
                         <input
-                            class="input"
-                            min=0
-                            max=1000
-                            step=1
-                            placeholder=t_string!(i18n, placeholder_eg_5)
-                            type="number"
-                            prop:value=minimum_sales
-                            on:input=move |input| {
-                                let value = event_target_value(&input);
-                                if let Ok(sales) = value.parse::<usize>() {
-                                    set_minimum_sales(Some(sales));
-                                } else if value.is_empty() {
-                                    set_minimum_sales(None);
-                                }
-                            }
-                        />
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title=t_string!(i18n, analyzer_minimum_roi).to_string()
-                    description=t_string!(i18n, analyzer_minimum_roi_desc).to_string()
-                >
-                    <div class="flex flex-col gap-2">
-                        <div class="text-brand-300">
-                            {move || {
-                                minimum_roi()
-                                    .map(|roi| format!("{roi}%"))
-                                    .unwrap_or("---".to_string())
-                            }}
-                        </div>
-                        <input
-                            class="input"
-                            min=0
-                            max=100000
-                            step=10
-                            placeholder=t_string!(i18n, placeholder_eg_200)
-                            type="number"
-                            prop:value=minimum_roi
-                            on:input=move |input| {
-                                let value = event_target_value(&input);
-                                if let Ok(roi) = value.parse::<i32>() {
-                                    set_minimum_roi(Some(roi));
-                                } else if value.is_empty() {
-                                    set_minimum_roi(None);
-                                }
-                            }
-                        />
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title=t_string!(i18n, analyzer_maximum_budget).to_string()
-                    description=t_string!(i18n, analyzer_maximum_budget_desc).to_string()
-                >
-                    <div class="flex flex-col gap-2">
-                        <div class="text-brand-300">
-                            {move || {
-                                max_purchase_price()
-                                    .map(|p| Either::Left(view! { <Gil amount=p /> }))
-                                    .unwrap_or(Either::Right("---"))
-                            }}
-                        </div>
-                        <input
-                            class="input"
-                            min=0
-                            step=1000
-                            placeholder=t_string!(i18n, placeholder_eg_500000)
-                            type="number"
-                            prop:value=max_purchase_price
-                            on:input=move |input| {
-                                let value = event_target_value(&input);
-                                if let Ok(p) = value.parse::<i32>() {
-                                    set_max_purchase_price(Some(p));
-                                } else if value.is_empty() {
-                                    set_max_purchase_price(None);
-                                }
-                            }
-                        />
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title=t_string!(i18n, analyzer_minimum_buy_price).to_string()
-                    description=t_string!(i18n, analyzer_minimum_buy_price_desc).to_string()
-                >
-                    <div class="flex flex-col gap-2">
-                        <div class="text-brand-300">
-                            {move || {
-                                min_buy_price()
-                                    .map(|p| Either::Left(view! { <Gil amount=p /> }))
-                                    .unwrap_or(Either::Right("---"))
-                            }}
-                        </div>
-                        <input
-                            class="input"
+                            class="input input-sm w-32"
                             min=0
                             step=1000
                             placeholder="e.g. 5000"
@@ -692,61 +654,33 @@ fn AnalyzerTable(
                                 }
                             }
                         />
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title=t_string!(i18n, analyzer_sale_time_prediction).to_string()
-                    description=t_string!(i18n, analyzer_sale_time_prediction_desc).to_string()
-                >
-                    <div class="flex flex-col gap-2">
-                        <div class="text-brand-300">{predicted_time_string}</div>
+                    </ToolbarField>
+                    <ToolbarField label="Max Sale Time">
                         <input
-                            class="input"
-                            placeholder=t_string!(i18n, vendor_resale_placeholder_7d_12h)
-                            title=t_string!(i18n, vendor_resale_duration_format_title)
+                            class="input input-sm w-32"
+                            placeholder="e.g. 7d 12h"
+                            title="Accepts formats like 1h 30m, 7d, 1M (month), etc."
                             prop:value=move || max_predicted_time().unwrap_or_default()
                             on:input=move |input| {
                                 let value = event_target_value(&input);
-                                set_max_predicted_time(Some(value))
+                                set_max_predicted_time(Some(value));
                             }
                         />
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title=t_string!(i18n, analyzer_last_sold_within).to_string()
-                    description=t_string!(i18n, analyzer_last_sold_within_desc).to_string()
-                >
-                    <div class="flex flex-col gap-2">
-                        <div class="text-brand-300">{last_sold_string}</div>
+                    </ToolbarField>
+                    <ToolbarField label="Last Sold Within">
                         <input
-                            class="input"
+                            class="input input-sm w-32"
                             placeholder="e.g. 7d"
                             title="Accepts formats like 1h 30m, 7d, 1M (month), etc."
                             prop:value=move || last_sold_within().unwrap_or_default()
                             on:input=move |input| {
                                 let value = event_target_value(&input);
-                                set_last_sold_within(Some(value))
+                                set_last_sold_within(Some(value));
                             }
                         />
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title=t_string!(i18n, analyzer_tax_calculation).to_string()
-                    description=t_string!(i18n, analyzer_tax_calculation_desc).to_string()
-                >
-                    <div class="flex items-center">
-                        <Toggle
-                            checked=Signal::derive(move || tax_enabled().unwrap_or(true))
-                            set_checked=SignalSetter::map(move |val: bool| set_tax_enabled(val.then_some(true)))
-                            checked_label=Oco::Owned(t_string!(i18n, analyzer_tax_enabled).to_string())
-                            unchecked_label=Oco::Owned(t_string!(i18n, analyzer_tax_disabled).to_string())
-                        />
-                    </div>
-                </FilterCard>
-            </div>
+                    </ToolbarField>
+                </Toolbar>
+            })}
 
             // Results summary
             <div class="panel px-4 py-3 flex flex-col md:flex-row md:items-center gap-3 md:gap-0 md:justify-between">
@@ -760,7 +694,7 @@ fn AnalyzerTable(
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
                                     {t!(i18n, analyzer_profit_gte)} <Gil amount=p />
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_profit(None)>
+                                    <button aria-label="Remove filter" class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_profit(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -770,7 +704,7 @@ fn AnalyzerTable(
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
                                     {t!(i18n, analyzer_profit_per_day_gte)} <Gil amount=p />
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_profit_per_day(None)>
+                                    <button aria-label="Remove filter" class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_profit_per_day(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -781,11 +715,11 @@ fn AnalyzerTable(
                                 .item_search_categorys
                                 .get(&xiv_gen::ItemSearchCategoryId(cat_id))
                                 .map(|c| c.name.clone())
-                                .unwrap_or_else(|| t_string!(i18n, analyzer_category_fallback, id = cat_id).to_string());
+                                .unwrap_or_else(|| format!("Category {}", cat_id));
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
                                     {t!(i18n, analyzer_category_label)} {cat_name}
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_category_filter(None)>
+                                    <button aria-label="Remove filter" class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_category_filter(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -795,7 +729,7 @@ fn AnalyzerTable(
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
                                     {t!(i18n, analyzer_sales_gte)} {sales}
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_sales(None)>
+                                    <button aria-label="Remove filter" class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_sales(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -805,7 +739,7 @@ fn AnalyzerTable(
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
                                     {t!(i18n, analyzer_roi_gte)} {format!("{roi}%")}
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_roi(None)>
+                                    <button aria-label="Remove filter" class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_roi(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -814,8 +748,8 @@ fn AnalyzerTable(
                         if let Some(p) = max_purchase_price() {
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    {t!(i18n, analyzer_budget_lte)} <Gil amount=p />
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_max_purchase_price(None)>
+                                    "Budget ≤ " <Gil amount=p />
+                                    <button class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_max_purchase_price(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -835,7 +769,7 @@ fn AnalyzerTable(
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
                                     {t!(i18n, analyzer_next_sale_lte)} {predicted_time_string()}
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_max_predicted_time(None)>
+                                    <button aria-label="Remove filter" class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_max_predicted_time(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -855,7 +789,7 @@ fn AnalyzerTable(
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
                                     {t!(i18n, analyzer_world_label)} {w.clone()}
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_world_filter(None)>
+                                    <button aria-label="Remove filter" class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_world_filter(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -865,7 +799,7 @@ fn AnalyzerTable(
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
                                     {t!(i18n, analyzer_datacenter_label)} {dc.clone()}
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_datacenter_filter(None)>
+                                    <button aria-label="Remove filter" class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_datacenter_filter(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -878,7 +812,7 @@ fn AnalyzerTable(
                         }
                     }}
                 </div>
-                <button aria-label=t_string!(i18n, aria_clear_all_filters) class="text-sm text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] self-start md:self-auto" on:click=move |_| {
+                <button aria-label="Clear all filters" class="text-sm text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] self-start md:self-auto" on:click=move |_| {
                     set_minimum_profit(None);
                     set_minimum_profit_per_day(None);
                     set_minimum_roi(None);
@@ -896,22 +830,22 @@ fn AnalyzerTable(
             </div>
 
             // Results table
-            <div class="rounded-2xl overflow-x-auto panel content-visible contain-layout contain-paint will-change-scroll forced-layer">
+            <div class="rounded-lg overflow-x-auto border border-[color:var(--color-outline)] content-visible contain-layout contain-paint will-change-scroll forced-layer">
                 <VirtualScroller
                         viewport_height=720.0
                         row_height=40.0
                         overscan=8
-                        header_height=64.0
+                        header_height=56.0
                         variable_height=false
                         header=view! {
-                            <div class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]" role="rowgroup">
-                                <div role="columnheader" class="w-[40px] p-4 text-center">
+                            <div class="flex flex-row items-center h-14 text-xs font-semibold uppercase tracking-wider text-[color:var(--color-text-muted)] border-b border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]" role="rowgroup">
+                                <div role="columnheader" class="w-[44px] px-2 text-center">
                                     {t!(i18n, analyzer_col_hq)}
                                 </div>
-                                <div role="columnheader" class="w-84 p-4">
+                                <div role="columnheader" class="flex-1 min-w-[14rem] px-3">
                                     {t!(i18n, analyzer_col_item)}
                                 </div>
-                                <div role="columnheader" class="w-30 p-4">
+                                <div role="columnheader" class="w-28 px-3 text-right">
                                     <QueryButton
                                         class="!text-brand-300 hover:text-brand-200"
                                         active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
@@ -927,7 +861,7 @@ fn AnalyzerTable(
                                         </div>
                                     </QueryButton>
                                 </div>
-                                <div role="columnheader" class="w-30 p-4">
+                                <div role="columnheader" class="w-28 px-3 py-2">
                                     <QueryButton
                                         class="!text-brand-300 hover:text-brand-200"
                                         active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
@@ -943,7 +877,7 @@ fn AnalyzerTable(
                                         </div>
                                     </QueryButton>
                                 </div>
-                                <div role="columnheader" class="w-30 p-4">
+                                <div role="columnheader" class="w-28 px-3 py-2">
                                     <QueryButton
                                         class="!text-brand-300 hover:text-brand-200"
                                         active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
@@ -960,10 +894,10 @@ fn AnalyzerTable(
                                         </div>
                                     </QueryButton>
                                 </div>
-                                <div role="columnheader" class="w-30 p-4">
+                                <div role="columnheader" class="w-28 px-3 py-2">
                                     {t!(i18n, analyzer_col_buy_price)}
                                 </div>
-                                <div role="columnheader" class="w-30 p-4 flex flex-row gap-2 hidden lg:flex">
+                                <div role="columnheader" class="w-28 px-3 py-2 flex flex-row gap-2 hidden lg:flex">
                                     {t!(i18n, analyzer_col_world)}
                                     <div>
                                         {move || {
@@ -983,7 +917,7 @@ fn AnalyzerTable(
                                         }}
                                     </div>
                                 </div>
-                                <div role="columnheader" class="w-30 p-4 flex flex-row gap-2 hidden xl:flex">
+                                <div role="columnheader" class="w-28 px-3 py-2 flex flex-row gap-2 hidden xl:flex">
                                     {t!(i18n, analyzer_col_datacenter)}
                                     <div>
                                         {move || {
@@ -1003,10 +937,10 @@ fn AnalyzerTable(
                                         }}
                                     </div>
                                 </div>
-                                <div role="columnheader" class="w-30 p-4 hidden md:block">
+                                <div role="columnheader" class="w-28 px-3 py-2 hidden md:block">
                                     {t!(i18n, analyzer_col_avg_sale_time)}
                                 </div>
-                                <div role="columnheader" class="w-30 p-4 hidden md:block">
+                                <div role="columnheader" class="w-28 px-3 py-2 hidden md:block">
                                     {t!(i18n, analyzer_col_last_sold)}
                                 </div>
                             </div>
@@ -1058,7 +992,7 @@ fn AnalyzerTable(
                                             None
                                         }}
                                     </div>
-                                    <div role="cell" class="px-4 py-2 flex flex-row w-84 items-center gap-2">
+                                    <div role="cell" class="px-4 py-2 flex flex-row flex-1 min-w-[14rem] items-center gap-2">
                                         <a
                                             class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip w-full"
                                             href=format!("/item/{}/{item_id}", world())
@@ -1071,13 +1005,13 @@ fn AnalyzerTable(
                                         <AddToList item_id />
                                         <Clipboard clipboard_text=item.to_string() />
                                     </div>
-                                    <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
+                                    <div role="cell" class="px-3 py-2 w-28 text-right flex items-center justify-end">
                                         <Gil amount=data.profit />
                                     </div>
-                                    <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
+                                    <div role="cell" class="px-3 py-2 w-28 text-right flex items-center justify-end">
                                         <Gil amount=data.profit_per_day />
                                     </div>
-                                    <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
+                                    <div role="cell" class="px-3 py-2 w-28 text-right flex items-center justify-end">
                                         <span class={
                                             let data = data_clone.clone();
                                             move || roi_badge_class(data.return_on_investment)
@@ -1085,10 +1019,10 @@ fn AnalyzerTable(
                                             {format!("{}%", data.return_on_investment)}
                                         </span>
                                     </div>
-                                    <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
+                                    <div role="cell" class="px-3 py-2 w-28 text-right flex items-center justify-end">
                                         <Gil amount=data.inner.cheapest_price />
                                     </div>
-                                    <div role="cell" class="px-4 py-2 w-30 hidden lg:block flex items-center">
+                                    <div role="cell" class="px-3 py-2 w-28 hidden lg:block flex items-center">
                                         <Tooltip tooltip_text=Signal::derive(move || {
                                             t_string!(i18n, analyzer_only_show_world).to_string().replace("%world%", &world())
                                         })>
@@ -1103,7 +1037,7 @@ fn AnalyzerTable(
                                             </QueryButton>
                                         </Tooltip>
                                     </div>
-                                    <div role="cell" class="px-4 py-2 w-30 hidden xl:block flex items-center">
+                                    <div role="cell" class="px-3 py-2 w-28 hidden xl:block flex items-center">
                                         <Tooltip tooltip_text=Signal::derive(move || {
                                             t_string!(i18n, analyzer_only_show_world).to_string().replace("%world%", &datacenter())
                                         })>
@@ -1118,7 +1052,7 @@ fn AnalyzerTable(
                                             </QueryButton>
                                         </Tooltip>
                                     </div>
-                                    <div role="cell" class="px-4 py-2 w-30 truncate hidden md:block flex items-center">
+                                    <div role="cell" class="px-3 py-2 w-28 truncate hidden md:block flex items-center">
                                         {data.inner
                                             .sale_summary
                                             .avg_sale_duration
@@ -1126,7 +1060,7 @@ fn AnalyzerTable(
                                             .map(|duration| format_duration_short(duration.as_secs()))
                                             .unwrap_or_else(|| "---".to_string())}
                                     </div>
-                                    <div role="cell" class="px-4 py-2 w-30 truncate hidden md:block flex items-center">
+                                    <div role="cell" class="px-3 py-2 w-28 truncate hidden md:block flex items-center">
                                         {data.inner
                                             .sale_summary
                                             .days_since_last_sale
@@ -1230,8 +1164,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     view! {
         <div class="main-content p-2 sm:p-6">
             <MetaTitle title=move || t_string!(i18n, analyzer_meta_title).to_string().replace("%world%", &world()) />
-            <div class="container mx-auto max-w-7xl">
-                <div class="flex flex-col gap-8">
+            <div class="flex flex-col gap-8">
                     <ToolHeader
                         title="Flip Finder"
                         summary="Find likely buy-low/sell-high opportunities by comparing cheap listings against recent sale prices."
@@ -1393,7 +1326,6 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                         </Suspense>
                     </div>
                 </div>
-            </div>
         </div>
     }
 }
@@ -1454,8 +1386,7 @@ pub fn Analyzer() -> impl IntoView {
         <MetaDescription text=t_string!(i18n, analyzer_index_meta_desc).to_string() />
 
         <div class="main-content p-2 sm:p-6">
-            <div class="container mx-auto max-w-7xl">
-                <div class="flex flex-col gap-8">
+            <div class="flex flex-col gap-8">
                     // Hero Section
                     <div class="panel p-4 sm:p-8 rounded-2xl">
                         <h1 class="text-3xl font-bold text-[color:var(--brand-fg)] mb-4">
@@ -1536,7 +1467,6 @@ pub fn Analyzer() -> impl IntoView {
                         </ul>
                     </div>
                 </div>
-            </div>
         </div>
     }
 }
