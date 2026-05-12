@@ -114,6 +114,10 @@ pathfinder_simd = { git = "https://github.com/servo/pathfinder.git" } # needed o
 # lto = true
 opt-level = "z"
 # codegen-units = 1
+# Keep line tables only so Glitchtip can resolve server stack frames to
+# file:line without bloating the binary with full DWARF type info.
+debug = "line-tables-only"
+strip = "none"
 
 [profile.wasm-release]
 inherits = "release"
@@ -137,8 +141,8 @@ opt-level = 1
 name = "ultros"
 bin-package = "ultros"
 lib-package = "ultros-client"
-output-name = "ultros"
 lib-profile-release = "wasm-release"
+output-name = "ultros"
 wasm-opt-features = [
     "-Oz",
     "-g",
