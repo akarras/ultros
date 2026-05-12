@@ -971,5 +971,14 @@
     "recipe_analyzer_tool_summary": "Find recipes where estimated craft cost is lower than the market price for the finished item.",
     "recipe_analyzer_tool_context": "Configure crafter levels first so the results match recipes you can actually make.",
     "recipe_analyzer_tool_help": "Recipe Analyzer uses cheapest ingredient listings, optional subcraft checks, your crafter levels, and recent sales. A profitable recipe is strongest when the output also sells regularly.",
-    "trends_world_context_prefix": "World context: "
+    "trends_world_context_prefix": "World context: ",
+    "lists_page_title": "Lists",
+    "list_shared_editor_badge": "Shared · Editor",
+    "list_shared_viewer_badge": "Shared · Viewer",
+    "shared_with_me": "Shared With Me",
+    "no_owned_lists_but_shared": "You don't own any lists yet — but others have shared {{count}} with you.",
+    "leave_list": "Leave list",
+    "leave_list_confirm": "Stop following this shared list?",
+    "leave_list_tooltip": "Remove yourself from this shared list",
+    "add_to_list_read_only": "Read-only — can't add items"
 }
