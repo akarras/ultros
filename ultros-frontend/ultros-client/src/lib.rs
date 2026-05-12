@@ -174,29 +174,40 @@ async fn populate_xiv_gen_data() -> anyhow::Result<()> {
     try_populate_xiv_gen_data().await
 }
 
-async fn get_world_data() -> Arc<WorldHelper> {
+async fn fetch_world_data() -> anyhow::Result<Arc<WorldHelper>> {
     let json: WorldData = gloo_net::http::Request::get("/api/v1/world_data")
         .send()
         .await
-        .map_err(|e| {
-            error!("{e}");
-            e
-        })
-        .unwrap()
+        .map_err(|e| anyhow!("world_data send failed: {e}"))?
         .json()
         .await
-        .unwrap();
-    Arc::new(WorldHelper::from(json))
+        .map_err(|e| anyhow!("world_data json failed: {e}"))?;
+    Ok(Arc::new(WorldHelper::from(json)))
+}
+
+async fn get_world_data() -> anyhow::Result<Arc<WorldHelper>> {
+    retry(fetch_world_data, 3).await
+}
+
+async fn fetch_region() -> anyhow::Result<String> {
+    let text = gloo_net::http::Request::get("/api/v1/detectregion")
+        .send()
+        .await
+        .map_err(|e| anyhow!("detectregion send failed: {e}"))?
+        .text()
+        .await
+        .map_err(|e| anyhow!("detectregion text failed: {e}"))?;
+    Ok(text)
 }
 
 async fn get_region() -> String {
-    gloo_net::http::Request::get("/api/v1/detectregion")
-        .send()
-        .await
-        .unwrap()
-        .text()
-        .await
-        .unwrap()
+    match retry(fetch_region, 3).await {
+        Ok(region) => region,
+        Err(e) => {
+            error!("falling back to default region after retries: {e}");
+            "North-America".to_string()
+        }
+    }
 }
 
 #[wasm_bindgen]
@@ -214,13 +225,16 @@ pub fn hydrate() {
             join(get_world_data(), get_region()),
         )
         .await;
+        let local_world_data = LocalWorldData(worlds.map_err(|e| {
+            error!("world_data unavailable after retries; rendering with error context: {e}");
+            e.into()
+        }));
         info!("hydrating body");
         hydrate_body(move || {
-            let worlds = worlds.clone();
+            let worlds = local_world_data.clone();
             let region = region.clone();
-            let worlds = Ok(worlds);
             provide_context(GuessedRegion(region));
-            provide_context(LocalWorldData(worlds));
+            provide_context(worlds);
             view! { <App /> }
         });
     });
