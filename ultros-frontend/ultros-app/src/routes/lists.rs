@@ -189,7 +189,7 @@ pub fn EditLists() -> impl IntoView {
                                         <input
                                             class="input w-full"
                                             id="new-list-name"
-                                            placeholder="My Awesome List"
+                                            placeholder=t_string!(i18n, lists_new_list_placeholder)
                                             prop:value=new_list
                                             on:input=move |input| set_new_list(event_target_value(&input))
                                         />

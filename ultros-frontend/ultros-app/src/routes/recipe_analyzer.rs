@@ -415,8 +415,8 @@ fn RecipeAnalyzerTable(
                 </FilterCard>
 
                 <FilterCard
-                    title="Minimum ROI"
-                    description="Set the minimum return on investment %"
+                    title=t_string!(i18n, minimum_roi).to_string()
+                    description=t_string!(i18n, set_minimum_roi_percent).to_string()
                 >
                     <div class="flex flex-col gap-2">
                          <div class="text-brand-300">
@@ -445,14 +445,14 @@ fn RecipeAnalyzerTable(
                 </FilterCard>
 
                 <FilterCard
-                    title="Minimum Daily Sales"
-                    description="Filter items by sales velocity (sales/day)"
+                    title=t_string!(i18n, minimum_daily_sales).to_string()
+                    description=t_string!(i18n, filter_by_sales_velocity).to_string()
                 >
                     <div class="flex flex-col gap-2">
                         <div class="text-brand-300">
                              {move || {
                                 min_daily_sales()
-                                    .map(|s| format!("{:.1} / day", s))
+                                    .map(|s| t_string!(i18n, recipe_analyzer_sales_per_day, sales = format!("{:.1}", s)).to_string())
                                     .unwrap_or("---".to_string())
                             }}
                         </div>
@@ -461,7 +461,7 @@ fn RecipeAnalyzerTable(
                             type="number"
                             min="0"
                             step="0.1"
-                            placeholder="e.g. 1.0"
+                            placeholder=t_string!(i18n, placeholder_eg_1_0)
                             prop:value=min_daily_sales
                             on:input=move |input| {
                                 let value = event_target_value(&input);
@@ -476,14 +476,14 @@ fn RecipeAnalyzerTable(
                 </FilterCard>
 
                 <FilterCard
-                    title="Options"
-                    description="Configure calculation options"
+                    title=t_string!(i18n, options).to_string()
+                    description=t_string!(i18n, configure_calculation_options).to_string()
                 >
                      <div class="flex flex-col gap-4">
                 <Show when=move || !has_levels()>
                     <div class="text-center p-8 text-brand-300 bg-brand-900/20 rounded-lg border border-brand-800">
-                    <h3 class="text-xl font-bold mb-2">"No Crafter Levels Configured"</h3>
-                    <p>"Please configure your crafter levels above to see profitable recipes."</p>
+                    <h3 class="text-xl font-bold mb-2">{t!(i18n, no_crafter_levels_configured)}</h3>
+                    <p>{t!(i18n, please_configure_crafter_levels)}</p>
                 </div>
                 </Show>
 
@@ -495,8 +495,8 @@ fn RecipeAnalyzerTable(
                         prop:checked=move || use_subcrafts().unwrap_or(false)
                         on:change=move |ev| set_use_subcrafts(Some(event_target_checked(&ev)))
                     />
-                    <label for="subcrafts">"Include Sub-crafts"</label>
-                    <div class="text-brand-300 cursor-help" title="If enabled, the analyzer will check if it's cheaper to craft intermediate ingredients rather than buying them from the market board.">
+                    <label for="subcrafts">{t!(i18n, include_subcrafts)}</label>
+                    <div class="text-brand-300 cursor-help" title=t_string!(i18n, recipe_analyzer_subcrafts_tooltip)>
                         <Icon icon=i::AiQuestionCircleOutlined />
                     </div>
                 </div>
@@ -508,8 +508,8 @@ fn RecipeAnalyzerTable(
                         prop:checked=move || require_hq().unwrap_or(false)
                         on:change=move |ev| set_require_hq(Some(event_target_checked(&ev)))
                     />
-                    <label for="require-hq">"Require HQ Ingredients"</label>
-                    <div class="text-brand-300 cursor-help" title="If enabled, ingredient costs will prefer HQ listings when available. Falls back to LQ if no HQ listing exists.">
+                    <label for="require-hq">{t!(i18n, require_hq_ingredients)}</label>
+                    <div class="text-brand-300 cursor-help" title=t_string!(i18n, recipe_analyzer_require_hq_tooltip)>
                         <Icon icon=i::AiQuestionCircleOutlined />
                     </div>
                 </div>
@@ -521,8 +521,8 @@ fn RecipeAnalyzerTable(
                         prop:checked=move || filter_outliers().unwrap_or(false)
                         on:change=move |ev| set_filter_outliers(Some(event_target_checked(&ev)))
                     />
-                    <label for="filter-outliers">"Filter Outliers"</label>
-                    <div class="text-brand-300 cursor-help" title="If enabled, sales outliers will be removed from the average price calculation using the Interquartile Range (IQR) method.">
+                    <label for="filter-outliers">{t!(i18n, filter_outliers)}</label>
+                    <div class="text-brand-300 cursor-help" title=t_string!(i18n, leve_analyzer_filter_outliers_tooltip)>
                         <Icon icon=i::AiQuestionCircleOutlined />
                     </div>
                 </div>
@@ -537,15 +537,15 @@ fn RecipeAnalyzerTable(
                                 }
                             }
                         >
-                            <option value="">"All Jobs"</option>
-                            <option value="CRP" selected=move || job_filter() == Some("CRP".to_string())>"Carpenter"</option>
-                            <option value="BSM" selected=move || job_filter() == Some("BSM".to_string())>"Blacksmith"</option>
-                            <option value="ARM" selected=move || job_filter() == Some("ARM".to_string())>"Armorer"</option>
-                            <option value="GSM" selected=move || job_filter() == Some("GSM".to_string())>"Goldsmith"</option>
-                            <option value="LTW" selected=move || job_filter() == Some("LTW".to_string())>"Leatherworker"</option>
-                            <option value="WVR" selected=move || job_filter() == Some("WVR".to_string())>"Weaver"</option>
-                            <option value="ALC" selected=move || job_filter() == Some("ALC".to_string())>"Alchemist"</option>
-                            <option value="CUL" selected=move || job_filter() == Some("CUL".to_string())>"Culinarian"</option>
+                            <option value="">{t!(i18n, all_jobs)}</option>
+                            <option value="CRP" selected=move || job_filter() == Some("CRP".to_string())>{t!(i18n, carpenter)}</option>
+                            <option value="BSM" selected=move || job_filter() == Some("BSM".to_string())>{t!(i18n, blacksmith)}</option>
+                            <option value="ARM" selected=move || job_filter() == Some("ARM".to_string())>{t!(i18n, armorer)}</option>
+                            <option value="GSM" selected=move || job_filter() == Some("GSM".to_string())>{t!(i18n, goldsmith)}</option>
+                            <option value="LTW" selected=move || job_filter() == Some("LTW".to_string())>{t!(i18n, leatherworker)}</option>
+                            <option value="WVR" selected=move || job_filter() == Some("WVR".to_string())>{t!(i18n, weaver)}</option>
+                            <option value="ALC" selected=move || job_filter() == Some("ALC".to_string())>{t!(i18n, alchemist)}</option>
+                            <option value="CUL" selected=move || job_filter() == Some("CUL".to_string())>{t!(i18n, culinarian)}</option>
                         </select>
                      </div>
                 </FilterCard>
@@ -561,7 +561,7 @@ fn RecipeAnalyzerTable(
                     variable_height=false
                     header=view! {
                         <div class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]" role="rowgroup">
-                             <div role="columnheader" class="w-64 md:w-80 shrink-0 p-4">"Item"</div>
+                             <div role="columnheader" class="w-64 md:w-80 shrink-0 p-4">{t!(i18n, item)}</div>
                              <div role="columnheader" class="w-32 shrink-0 p-4">
                                 <QueryButton
                                     class="!text-brand-300 hover:text-brand-200"
@@ -569,7 +569,7 @@ fn RecipeAnalyzerTable(
                                     key="sort"
                                     value="profit"
                                 >
-                                    "Profit"
+                                    {t!(i18n, profit)}
                                 </QueryButton>
                              </div>
                              <div role="columnheader" class="w-32 shrink-0 p-4">
@@ -579,11 +579,11 @@ fn RecipeAnalyzerTable(
                                     key="sort"
                                     value="roi"
                                 >
-                                    "ROI"
+                                    {t!(i18n, roi)}
                                 </QueryButton>
                              </div>
-                             <div role="columnheader" class="w-32 shrink-0 p-4">"Cost / unit"</div>
-                             <div role="columnheader" class="w-32 shrink-0 p-4">"Price"</div>
+                             <div role="columnheader" class="w-32 shrink-0 p-4">{t!(i18n, cost_per_unit)}</div>
+                             <div role="columnheader" class="w-32 shrink-0 p-4">{t!(i18n, price)}</div>
                              <div role="columnheader" class="w-32 shrink-0 p-4 hidden md:block">
                                 <QueryButton
                                     class="!text-brand-300 hover:text-brand-200"
@@ -591,11 +591,11 @@ fn RecipeAnalyzerTable(
                                     key="sort"
                                     value="velocity"
                                 >
-                                    "Daily Sales"
+                                    {t!(i18n, daily_sales)}
                                 </QueryButton>
                              </div>
-                             <div role="columnheader" class="w-32 shrink-0 p-4 hidden md:block">"Avg Price"</div>
-                             <div role="columnheader" class="w-20 shrink-0 p-4">"Actions"</div>
+                             <div role="columnheader" class="w-32 shrink-0 p-4 hidden md:block">{t!(i18n, avg_price)}</div>
+                             <div role="columnheader" class="w-20 shrink-0 p-4">{t!(i18n, actions)}</div>
                         </div>
                     }.into_any()
                     each=computed_data.into()
@@ -604,7 +604,8 @@ fn RecipeAnalyzerTable(
                         // Clone data for use in closures to avoid moving the Arc
                         let data_clone = data.clone();
                         let item_id = ItemId(data.recipe.item_result);
-                        let item = items.get(&item_id).map(|i| i.name.as_str()).unwrap_or("Unknown");
+                        let unknown_item = t_string!(i18n, unknown_item).to_string();
+                        let item = items.get(&item_id).map(|i| i.name.to_string()).unwrap_or_else(|| unknown_item.clone());
                         let item_level = items.get(&item_id).map(|i| i.level_item).unwrap_or(0);
                         let classes = if (index % 2) == 0 {
                             "flex flex-row items-center flex-nowrap h-15 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_6%,transparent)] transition-colors"
@@ -624,11 +625,12 @@ fn RecipeAnalyzerTable(
                             _ => "",
                         };
 
-                        let sales_tooltip = format!(
-                            "Based on {} sales over {:.1} days",
-                            data.total_sales,
-                            (data.total_sales as f32 / data.daily_sales.max(0.001)) // approximate duration back
-                        );
+                        let sales_tooltip = t_string!(
+                            i18n,
+                            recipe_analyzer_sales_tooltip,
+                            count = data.total_sales,
+                            days = format!("{:.1}", data.total_sales as f32 / data.daily_sales.max(0.001))
+                        ).to_string();
 
                         view! {
                             <div class=classes role="row-group">
@@ -643,7 +645,7 @@ fn RecipeAnalyzerTable(
                                         <div class="flex flex-col">
                                             <span>{item}</span>
                                             <span class="text-xs text-[color:var(--color-text-muted)]">
-                                                "Lv " {data.required_level} " • iLv " {item_level} " " {job_abbrev}
+                                                {t!(i18n, recipe_analyzer_item_level_label, level = data.required_level, ilvl = item_level)} " " {job_abbrev}
                                             </span>
                                         </div>
                                     </a>
@@ -676,14 +678,16 @@ fn RecipeAnalyzerTable(
                                                     view! {
                                                         <Tooltip
                                                             tooltip_text={
+                                                                let unknown_sub = t_string!(i18n, unknown_item).to_string();
                                                                 let sub_crafts_details: Vec<(String, i32, i32)> = sub_crafts_for_text.iter().map(|sub| {
-                                                                    let name = items.get(&sub.item_id).map(|i| i.name.to_string()).unwrap_or("Unknown".to_string());
+                                                                    let name = items.get(&sub.item_id).map(|i| i.name.to_string()).unwrap_or_else(|| unknown_sub.clone());
                                                                     (name, sub.amount, sub.unit_cost)
                                                                 }).collect();
+                                                                let header = t_string!(i18n, recipe_analyzer_subcraft_header).to_string();
                                                                 Signal::derive(move || {
-                                                                    let mut tooltip = String::from("Includes sub-crafts:\n");
+                                                                    let mut tooltip = header.clone();
                                                                     for (name, amount, cost) in &sub_crafts_details {
-                                                                        tooltip.push_str(&format!("• {}x {} ({} gil)\n", amount, name, cost));
+                                                                        tooltip.push_str(&t_string!(i18n, recipe_analyzer_subcraft_row, count = *amount, name = name.clone(), gil = *cost).to_string());
                                                                     }
                                                                     tooltip
                                                                 })
@@ -691,7 +695,7 @@ fn RecipeAnalyzerTable(
                                                         >
                                                             <div class="text-xs text-brand-300 flex items-center justify-end gap-1 cursor-help">
                                                                 <Icon icon=i::FaHammerSolid width="0.8em" height="0.8em" />
-                                                                <span>{count} " sub"</span>
+                                                                <span>{count} " " {t!(i18n, recipe_analyzer_sub_suffix)}</span>
                                                             </div>
                                                         </Tooltip>
                                                     }
@@ -705,7 +709,7 @@ fn RecipeAnalyzerTable(
                                 </div>
                                 <div role="cell" class="px-4 py-2 w-32 shrink-0 text-right hidden md:block">
                                     <span class="text-xs text-[color:var(--color-text-muted)]" title=sales_tooltip>
-                                        {format!("{:.1} / day", data.daily_sales)}
+                                        {t!(i18n, recipe_analyzer_sales_per_day, sales = format!("{:.1}", data.daily_sales))}
                                     </span>
                                 </div>
                                 <div role="cell" class="px-4 py-2 w-32 shrink-0 text-right hidden md:block">
@@ -737,6 +741,7 @@ fn CollapseIcon(collapsed: Signal<bool>) -> impl IntoView {
 
 #[component]
 pub fn RecipeAnalyzer() -> impl IntoView {
+    let i18n = use_i18n();
     let params = use_params_map();
     let (home_world, _) = use_home_world();
 
@@ -791,19 +796,19 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     let recent_sales_clone = recent_sales.clone();
     view! {
         <div class="flex flex-col gap-4 h-full">
-            <MetaTitle title="Recipe Analyzer - Ultros" />
-            <MetaDescription text="Analyze crafting recipes for profitability" />
+            <MetaTitle title=t_string!(i18n, recipe_analyzer_title).to_string() />
+            <MetaDescription text=t_string!(i18n, recipe_analyzer_meta_desc).to_string() />
 
             <div class="flex flex-col gap-4 p-4 bg-brand-900/50 rounded-lg border border-brand-800">
                 <div class="flex flex-row justify-between items-center">
-                    <h1 class="text-2xl font-bold text-brand-100">"Recipe Analyzer"</h1>
+                    <h1 class="text-2xl font-bold text-brand-100">{t!(i18n, recipe_analyzer)}</h1>
                     <div class="flex flex-row gap-2 items-center">
-                        <Suspense fallback=|| view! { <div class="text-brand-300 text-sm animate-pulse">"Loading sales data..."</div> }>
+                        <Suspense fallback=move || view! { <div class="text-brand-300 text-sm animate-pulse">{t!(i18n, loading_sales_data)}</div> }>
                             {move || {
                                 recent_sales_clone
                                     .get()
                                     .and_then(|r| r.err())
-                                    .map(|_| view! { <div class="text-red-400 text-sm">"Error loading sales data"</div> })
+                                    .map(|_| view! { <div class="text-red-400 text-sm">{t!(i18n, error_loading_sales_data)}</div> })
                             }}
                         </Suspense>
                     </div>
@@ -817,7 +822,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                                 on:click=move |_| set_show_settings.update(|v| *v = !*v)
                             >
                                 <Icon icon=i::AiSettingOutlined />
-                                "Adjust Crafter Levels"
+                                {t!(i18n, adjust_crafter_levels)}
                                 <CollapseIcon collapsed=show_settings.into() />
                             </button>
                             <div class=move || {
@@ -835,7 +840,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
 
                 <Show when=move || selected_world.get().is_some()>
                     <div class="flex flex-col md:flex-row items-center gap-2">
-                        <label class="text-[color:var(--brand-fg)] font-semibold">"Select World for Sales Data:"</label>
+                        <label class="text-[color:var(--brand-fg)] font-semibold">{t!(i18n, select_world_for_sales_data)}</label>
                         <div class="w-full md:w-auto">
                             <WorldOnlyPicker
                                 current_world=selected_world.into()
@@ -871,7 +876,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                             (Some(Err(e)), _) => {
                                 view! {
                                     <div class="text-red-400">
-                                        "Error loading listings: " {e.to_string()}
+                                        {t!(i18n, error_loading_listings)} {e.to_string()}
                                     </div>
                                 }.into_any()
                             }

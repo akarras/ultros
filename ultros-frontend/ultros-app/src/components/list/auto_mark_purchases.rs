@@ -1,5 +1,6 @@
 use crate::api::edit_list_item;
 use crate::components::icon::Icon;
+use crate::i18n::{t, t_string, use_i18n};
 use icondata as i;
 use leptos::prelude::*;
 use ultros_api_types::ActiveListing;
@@ -15,6 +16,7 @@ type ListViewResult = Result<
 
 #[component]
 pub fn AutoMarkPurchases(list_view: Resource<ListViewResult>) -> impl IntoView {
+    let i18n = use_i18n();
     let (watch_character_name, set_watch_character_name) = signal("".to_string());
     let (is_watching, set_is_watching) = signal(false);
 
@@ -105,19 +107,19 @@ pub fn AutoMarkPurchases(list_view: Resource<ListViewResult>) -> impl IntoView {
                 <summary class="flex items-center justify-between p-4 cursor-pointer list-none">
                     <div class="flex items-center gap-2">
                          <Icon icon=i::BiPurchaseTagSolid />
-                         <span class="font-bold">"Auto-mark Purchases"</span>
-                         <span class="text-xs text-[color:var(--color-text-muted)] ml-2">"Experimental"</span>
+                         <span class="font-bold">{t!(i18n, list_auto_mark_title)}</span>
+                         <span class="text-xs text-[color:var(--color-text-muted)] ml-2">{t!(i18n, list_auto_mark_experimental_badge)}</span>
                     </div>
                     <Icon icon=i::BiChevronDownRegular attr:class="transition-transform group-open:rotate-180" />
                 </summary>
                 <div class="p-4 pt-0 border-t border-white/5 mt-2 pt-4 flex flex-col gap-3">
                     <p class="text-sm text-[color:var(--color-text-muted)]">
-                        "Enter your character name below. When you purchase an item on the market board, it will automatically be marked as acquired in this list."
+                        {t!(i18n, list_auto_mark_description)}
                     </p>
                     <div class="join w-full max-w-md">
                         <input
                             class="input input-bordered join-item flex-1"
-                            placeholder="Character Name"
+                            placeholder=t_string!(i18n, list_auto_mark_character_name_placeholder)
                             prop:value=watch_character_name
                             on:input=move |e| set_watch_character_name(event_target_value(&e))
                             disabled=move || is_watching.get()
@@ -127,7 +129,7 @@ pub fn AutoMarkPurchases(list_view: Resource<ListViewResult>) -> impl IntoView {
                             class:btn-success=move || is_watching.get()
                             on:click=move |_| set_is_watching.update(|w| *w = !*w)
                         >
-                            {move || if is_watching.get() { "Watching..." } else { "Start Watching" }}
+                            {move || if is_watching.get() { t_string!(i18n, list_auto_mark_watching) } else { t_string!(i18n, list_auto_mark_start_watching) }}
                         </button>
                     </div>
                 </div>

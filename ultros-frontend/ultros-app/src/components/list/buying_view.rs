@@ -3,6 +3,7 @@ use crate::components::icon::Icon;
 use crate::components::item_icon::*;
 use crate::global_state::LocalWorldData;
 use crate::global_state::xiv_data::tracked_data;
+use crate::i18n::{t, t_string, use_i18n};
 use icondata as i;
 use leptos::either::Either;
 use leptos::prelude::*;
@@ -30,12 +31,14 @@ pub fn BuyingView(
     items: Vec<(ListItem, Vec<ActiveListing>)>,
     edit_item: Action<ListItem, Result<(), crate::error::AppError>>,
 ) -> impl IntoView {
+    let i18n = use_i18n();
     let world_data = use_context::<LocalWorldData>()
         .expect("LocalWorldData should be available")
         .0
         .expect("LocalWorldData should be loaded");
     let data = tracked_data();
     let game_items = &data.items;
+    let unknown_item_label = t_string!(i18n, unknown_item).to_string();
 
     let mut selected_listings: Vec<(i32, GroupedListing)> = Vec::new();
 
@@ -60,7 +63,7 @@ pub fn BuyingView(
             let item_name = game_items
                 .get(&ItemId(list_item.item_id))
                 .map(|i| i.name.to_string())
-                .unwrap_or_else(|| "Unknown Item".to_string());
+                .unwrap_or_else(|| unknown_item_label.clone());
 
             selected_listings.push((
                 listing.world_id,
@@ -120,7 +123,7 @@ pub fn BuyingView(
                 Either::Left(
                     view! {
                         <div class="text-center py-8 text-[color:var(--color-text-muted)] italic">
-                            "No items left to buy! 🎉"
+                            {t!(i18n, list_buying_view_empty_state)}
                         </div>
                     },
                 )
@@ -173,14 +176,14 @@ pub fn BuyingView(
                                                                                             .hq
                                                                                             .then(|| {
                                                                                                 view! {
-                                                                                                    <span class="text-brand-400">"HQ"</span>
+                                                                                                    <span class="text-brand-400">{t!(i18n, list_view_hq)}</span>
                                                                                                 }
                                                                                             })}
                                                                                     </div>
                                                                                     <div class="flex items-center gap-1 text-sm text-[color:var(--color-text-muted)]">
                                                                                         "@"
                                                                                         <Gil amount=Signal::derive(move || listing.price) />
-                                                                                        "each"
+                                                                                        {t!(i18n, list_buying_view_each)}
                                                                                     </div>
                                                                                 </div>
                                                                                 <button
@@ -193,7 +196,7 @@ pub fn BuyingView(
                                                                                     }
                                                                                 >
                                                                                     <Icon icon=i::BiCheckRegular />
-                                                                                    <span>"Mark Purchased"</span>
+                                                                                    <span>{t!(i18n, list_buying_view_mark_purchased)}</span>
                                                                                 </button>
                                                                             </div>
                                                                         }

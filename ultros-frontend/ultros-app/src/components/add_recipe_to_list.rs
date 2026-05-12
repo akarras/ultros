@@ -6,6 +6,7 @@ use crate::components::{
     toggle::Toggle, tooltip::Tooltip,
 };
 use crate::global_state::xiv_data::tracked_data;
+use crate::i18n::{t, t_string, use_i18n};
 use icondata::RiPlayListAddMediaLine;
 use leptos::either::Either;
 use leptos::prelude::*;
@@ -25,24 +26,25 @@ struct IngredientState {
 
 #[component]
 pub fn AddRecipeToList(recipe: &'static Recipe) -> impl IntoView {
+    let i18n = use_i18n();
     let (modal_visible, set_modal_visible) = signal(false);
     let items = &tracked_data().items;
     let result_item = items.get(&ItemId(recipe.item_result));
     view! {
-        <Tooltip tooltip_text="Add recipe ingredients to a list">
+        <Tooltip tooltip_text=t_string!(i18n, add_recipe_tooltip).to_string()>
             <button
                 class="btn-primary"
                 attr:aria-label=move || {
                     result_item
-                        .map(|i| format!("Add {} recipe to a list", i.name))
-                        .unwrap_or_else(|| "Add recipe to a list".to_string())
+                        .map(|i| t_string!(i18n, add_recipe_aria_with_name, name = i.name.as_str().to_string()).to_string())
+                        .unwrap_or_else(|| t_string!(i18n, add_recipe_aria_fallback).to_string())
                 }
                 on:click=move |_| {
                     set_modal_visible(!modal_visible());
                 }
             >
                 <Icon icon=RiPlayListAddMediaLine />
-                <div class="sr-only">"Add To List"</div>
+                <div class="sr-only">{t!(i18n, add_recipe_sr_only)}</div>
                 <Show when=modal_visible>
                     <AddRecipeToListModal recipe set_visible=set_modal_visible />
                 </Show>
@@ -56,6 +58,7 @@ fn AddRecipeToListModal(
     recipe: &'static Recipe,
     #[prop(into)] set_visible: SignalSetter<bool>,
 ) -> impl IntoView {
+    let i18n = use_i18n();
     let data = tracked_data();
     let items = &data.items;
     let result_item = move || items.get(&ItemId(recipe.item_result));
@@ -120,19 +123,19 @@ fn AddRecipeToListModal(
                     </div>
                     <div class="min-w-0 flex-1">
                         <div class="text-xl font-extrabold text-[color:var(--brand-fg)]">
-                            "Add Recipe to List"
+                            {t!(i18n, add_recipe_title)}
                         </div>
                         <div class="text-[color:var(--color-text-muted)] truncate">
-                            {move || result_item().map(|i| i.name.as_str()).unwrap_or("unknown item")}
+                            {move || result_item().map(|i| i.name.to_string()).unwrap_or_else(|| t_string!(i18n, add_recipe_unknown_item).to_string())}
                         </div>
                     </div>
                     <button class="btn-secondary" on:click=move |_| set_visible(false)>
-                        "close"
+                        {t!(i18n, add_recipe_close)}
                     </button>
                 </div>
 
                 <div class="flex flex-wrap items-center gap-3">
-                    <label class="text-sm text-[color:var(--color-text-muted)]" for=move || format!("craft-qty-{}", recipe.key_id.0)>"Number of crafts"</label>
+                    <label class="text-sm text-[color:var(--color-text-muted)]" for=move || format!("craft-qty-{}", recipe.key_id.0)>{t!(i18n, add_recipe_number_of_crafts)}</label>
                     <input
                         id=move || format!("craft-qty-{}", recipe.key_id.0)
                         type="number"
@@ -148,15 +151,15 @@ fn AddRecipeToListModal(
                     <Toggle
                         checked=hq
                         set_checked=set_hq
-                        checked_label="HQ Ingredients"
-                        unchecked_label="Normal Quality"
+                        checked_label=t_string!(i18n, add_recipe_hq_ingredients).to_string()
+                        unchecked_label=t_string!(i18n, add_recipe_normal_quality).to_string()
                     />
                     <div class="h-6 w-px bg-[color:var(--color-outline)] mx-1"></div>
                     <Toggle
                         checked=ignore_crystals
                         set_checked=set_ignore_crystals
-                        checked_label="Ignore Crystals"
-                        unchecked_label="Include Crystals"
+                        checked_label=t_string!(i18n, add_recipe_ignore_crystals).to_string()
+                        unchecked_label=t_string!(i18n, add_recipe_include_crystals).to_string()
                     />
                 </div>
                 <div class="flex flex-col gap-2">
@@ -195,7 +198,7 @@ fn AddRecipeToListModal(
                             let Ok(lists) = lists.get()? else {
                                 return Some(Either::Right(view! {
                                     <div class="text-red-400 text-sm">
-                                        "unable to load your lists — are you logged in?"
+                                        {t!(i18n, add_recipe_unable_to_load_lists)}
                                     </div>
                                 }));
                             };
@@ -247,9 +250,9 @@ fn AddRecipeToListModal(
                                                     >
                                                         <Show
                                                             when=add_bulk_action.pending()
-                                                            fallback=|| view! { <span>"Add"</span> }
+                                                            fallback=move || view! { <span>{t!(i18n, add_recipe_add_button)}</span> }
                                                         >
-                                                            <span>"Adding..."</span>
+                                                            <span>{t!(i18n, add_recipe_adding_button)}</span>
                                                         </Show>
                                                     </button>
                                                 </div>

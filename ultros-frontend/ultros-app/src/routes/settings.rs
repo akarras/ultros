@@ -486,7 +486,7 @@ pub fn Profile() -> impl IntoView {
                                                                         text-gray-400 hover:text-red-400
                                                                         opacity-0 group-hover:opacity-100
                                                                         transition-all duration-200"
-                                                                        aria-label="Remove character"
+                                                                        aria-label=t_string!(i18n, settings_remove_character_aria)
                                                                         on:click=move |_| {
                                                                             let _ = unclaim_character.dispatch(character.id);
                                                                         }

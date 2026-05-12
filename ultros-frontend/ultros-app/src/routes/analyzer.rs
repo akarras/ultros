@@ -435,7 +435,7 @@ fn AnalyzerTable(
                             min=0
                             max=100000
                             step=1000
-                            placeholder="e.g. 100000"
+                            placeholder=t_string!(i18n, placeholder_eg_100000)
                             type="number"
                             prop:value=minimum_profit
                             on:input=move |input| {
@@ -467,7 +467,7 @@ fn AnalyzerTable(
                             min=0
                             max=100000
                             step=1000
-                            placeholder="e.g. 10000"
+                            placeholder=t_string!(i18n, placeholder_eg_10000)
                             type="number"
                             prop:value=minimum_profit_per_day
                             on:input=move |input| {
@@ -523,7 +523,7 @@ fn AnalyzerTable(
                         <div class="text-brand-300">
                             {move || {
                                 minimum_sales()
-                                    .map(|sales| format!("{} sales", sales))
+                                    .map(|sales| t_string!(i18n, analyzer_n_sales, count = sales).to_string())
                                     .unwrap_or("---".to_string())
                             }}
                         </div>
@@ -532,7 +532,7 @@ fn AnalyzerTable(
                             min=0
                             max=1000
                             step=1
-                            placeholder="e.g. 5"
+                            placeholder=t_string!(i18n, placeholder_eg_5)
                             type="number"
                             prop:value=minimum_sales
                             on:input=move |input| {
@@ -564,7 +564,7 @@ fn AnalyzerTable(
                             min=0
                             max=100000
                             step=10
-                            placeholder="e.g. 200"
+                            placeholder=t_string!(i18n, placeholder_eg_200)
                             type="number"
                             prop:value=minimum_roi
                             on:input=move |input| {
@@ -580,8 +580,8 @@ fn AnalyzerTable(
                 </FilterCard>
 
                 <FilterCard
-                    title="Maximum Budget"
-                    description="Set the maximum purchase price per item"
+                    title=t_string!(i18n, analyzer_maximum_budget).to_string()
+                    description=t_string!(i18n, analyzer_maximum_budget_desc).to_string()
                 >
                     <div class="flex flex-col gap-2">
                         <div class="text-brand-300">
@@ -595,7 +595,7 @@ fn AnalyzerTable(
                             class="input"
                             min=0
                             step=1000
-                            placeholder="e.g. 500000"
+                            placeholder=t_string!(i18n, placeholder_eg_500000)
                             type="number"
                             prop:value=max_purchase_price
                             on:input=move |input| {
@@ -618,8 +618,8 @@ fn AnalyzerTable(
                         <div class="text-brand-300">{predicted_time_string}</div>
                         <input
                             class="input"
-                            placeholder="e.g. 7d 12h"
-                            title="Accepts formats like 1h 30m, 7d, 1M (month), etc."
+                            placeholder=t_string!(i18n, vendor_resale_placeholder_7d_12h)
+                            title=t_string!(i18n, vendor_resale_duration_format_title)
                             prop:value=move || max_predicted_time().unwrap_or_default()
                             on:input=move |input| {
                                 let value = event_target_value(&input);
@@ -656,7 +656,7 @@ fn AnalyzerTable(
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
                                     {t!(i18n, analyzer_profit_gte)} <Gil amount=p />
-                                    <button aria-label="Remove filter" class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_profit(None)>
+                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_profit(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -666,7 +666,7 @@ fn AnalyzerTable(
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
                                     {t!(i18n, analyzer_profit_per_day_gte)} <Gil amount=p />
-                                    <button aria-label="Remove filter" class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_profit_per_day(None)>
+                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_profit_per_day(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -677,11 +677,11 @@ fn AnalyzerTable(
                                 .item_search_categorys
                                 .get(&xiv_gen::ItemSearchCategoryId(cat_id))
                                 .map(|c| c.name.clone())
-                                .unwrap_or_else(|| format!("Category {}", cat_id));
+                                .unwrap_or_else(|| t_string!(i18n, analyzer_category_fallback, id = cat_id).to_string());
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
                                     {t!(i18n, analyzer_category_label)} {cat_name}
-                                    <button aria-label="Remove filter" class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_category_filter(None)>
+                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_category_filter(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -691,7 +691,7 @@ fn AnalyzerTable(
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
                                     {t!(i18n, analyzer_sales_gte)} {sales}
-                                    <button aria-label="Remove filter" class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_sales(None)>
+                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_sales(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -701,7 +701,7 @@ fn AnalyzerTable(
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
                                     {t!(i18n, analyzer_roi_gte)} {format!("{roi}%")}
-                                    <button aria-label="Remove filter" class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_roi(None)>
+                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_roi(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -710,8 +710,8 @@ fn AnalyzerTable(
                         if let Some(p) = max_purchase_price() {
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    "Budget ≤ " <Gil amount=p />
-                                    <button class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_max_purchase_price(None)>
+                                    {t!(i18n, analyzer_budget_lte)} <Gil amount=p />
+                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_max_purchase_price(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -721,7 +721,7 @@ fn AnalyzerTable(
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
                                     {t!(i18n, analyzer_next_sale_lte)} {predicted_time_string()}
-                                    <button aria-label="Remove filter" class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_max_predicted_time(None)>
+                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_max_predicted_time(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -731,7 +731,7 @@ fn AnalyzerTable(
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
                                     {t!(i18n, analyzer_world_label)} {w.clone()}
-                                    <button aria-label="Remove filter" class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_world_filter(None)>
+                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_world_filter(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -741,7 +741,7 @@ fn AnalyzerTable(
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
                                     {t!(i18n, analyzer_datacenter_label)} {dc.clone()}
-                                    <button aria-label="Remove filter" class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_datacenter_filter(None)>
+                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_datacenter_filter(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -754,7 +754,7 @@ fn AnalyzerTable(
                         }
                     }}
                 </div>
-                <button aria-label="Clear all filters" class="text-sm text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] self-start md:self-auto" on:click=move |_| {
+                <button aria-label=t_string!(i18n, aria_clear_all_filters) class="text-sm text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] self-start md:self-auto" on:click=move |_| {
                     set_minimum_profit(None);
                     set_minimum_profit_per_day(None);
                     set_minimum_roi(None);

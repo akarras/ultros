@@ -60,18 +60,6 @@ impl ScripType {
         }
     }
 
-    fn name(&self) -> &'static str {
-        match self {
-            ScripType::OrangeCrafters => "Orange Crafters' Scrip",
-            ScripType::OrangeGatherers => "Orange Gatherers' Scrip",
-            ScripType::WhiteCrafters => "White Crafters' Scrip",
-            ScripType::PurpleCrafters => "Purple Crafters' Scrip",
-            ScripType::WhiteGatherers => "White Gatherers' Scrip",
-            ScripType::PurpleGatherers => "Purple Gatherers' Scrip",
-            ScripType::Other(_) => "Other",
-        }
-    }
-
     fn color_class(&self) -> &'static str {
         match self {
             ScripType::OrangeCrafters | ScripType::OrangeGatherers => "text-orange-400",
@@ -261,18 +249,18 @@ fn ScripSourceTable(
                     level: item_def.level_item as u16,
                     job_category_name: if let Some(r) = recipe {
                         match r.craft_type {
-                            0 => "Carpenter".to_string(),
-                            1 => "Blacksmith".to_string(),
-                            2 => "Armorer".to_string(),
-                            3 => "Goldsmith".to_string(),
-                            4 => "Leatherworker".to_string(),
-                            5 => "Weaver".to_string(),
-                            6 => "Alchemist".to_string(),
-                            7 => "Culinarian".to_string(),
-                            _ => "Unknown".to_string(),
+                            0 => t_string!(i18n, scrip_sources_carpenter).to_string(),
+                            1 => t_string!(i18n, scrip_sources_blacksmith).to_string(),
+                            2 => t_string!(i18n, scrip_sources_armorer).to_string(),
+                            3 => t_string!(i18n, scrip_sources_goldsmith).to_string(),
+                            4 => t_string!(i18n, scrip_sources_leatherworker).to_string(),
+                            5 => t_string!(i18n, scrip_sources_weaver).to_string(),
+                            6 => t_string!(i18n, scrip_sources_alchemist).to_string(),
+                            7 => t_string!(i18n, scrip_sources_culinarian).to_string(),
+                            _ => t_string!(i18n, unknown_item).to_string(),
                         }
                     } else {
-                        "Gathering".to_string()
+                        t_string!(i18n, scrip_sources_gathering).to_string()
                     },
                     scrip_type,
                     scrip_amount,
@@ -438,7 +426,15 @@ fn ScripSourceTable(
                                 </div>
                                 <div role="cell" class="px-4 py-2 w-40 text-right hidden md:block">
                                     <span class={format!("text-xs {}", data.scrip_type.color_class())}>
-                                        {data.scrip_type.name()}
+                                        {match data.scrip_type {
+                                            ScripType::OrangeCrafters => t_string!(i18n, scrip_sources_orange_crafters).to_string(),
+                                            ScripType::OrangeGatherers => t_string!(i18n, scrip_sources_orange_gatherers).to_string(),
+                                            ScripType::WhiteCrafters => t_string!(i18n, scrip_sources_white_crafters).to_string(),
+                                            ScripType::PurpleCrafters => t_string!(i18n, scrip_sources_purple_crafters).to_string(),
+                                            ScripType::WhiteGatherers => t_string!(i18n, scrip_sources_white_gatherers).to_string(),
+                                            ScripType::PurpleGatherers => t_string!(i18n, scrip_sources_purple_gatherers).to_string(),
+                                            ScripType::Other(_) => t_string!(i18n, scrip_sources_other_name).to_string(),
+                                        }}
                                     </span>
                                 </div>
                             </div>

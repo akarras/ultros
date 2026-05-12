@@ -1,6 +1,7 @@
 use leptos::prelude::*;
 
 use super::{datacenter_name::*, gil::*, world_name::*};
+use crate::i18n::*;
 use ultros_api_types::{ActiveListing, world_helper::AnySelector};
 
 fn get_cheapest_listing(
@@ -28,6 +29,7 @@ fn get_cheapest_listing(
 
 #[component]
 pub fn PriceViewer(quantity: i32, hq: Option<bool>, listings: Vec<ActiveListing>) -> impl IntoView {
+    let i18n = use_i18n();
     let cheapest_listings = get_cheapest_listing(listings, quantity, hq);
     view! {
         <div class="flex-column">
@@ -36,7 +38,7 @@ pub fn PriceViewer(quantity: i32, hq: Option<bool>, listings: Vec<ActiveListing>
                 .map(|listing| {
                     view! {
                         <div class="flex flex-row gap-1">
-                            {listing.quantity} "x" <Gil amount=listing.price_per_unit /> " on "
+                            {listing.quantity} "x" <Gil amount=listing.price_per_unit /> {t!(i18n, price_viewer_on)}
                             <WorldName id=AnySelector::World(listing.world_id) /> "-"
                             <DatacenterName world_id=listing.world_id />
                         </div>

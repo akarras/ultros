@@ -8,6 +8,7 @@ use ultros_api_types::{
 use crate::api::create_alert;
 use crate::components::{icon::Icon, modal::Modal, world_picker::WorldPicker};
 use crate::global_state::toasts::use_toast;
+use crate::i18n::{t, t_string, use_i18n};
 
 #[component]
 pub fn AlertConfigDrawer(
@@ -18,6 +19,7 @@ pub fn AlertConfigDrawer(
     default_world: Signal<Option<AnySelector>>,
     set_visible: SignalSetter<bool>,
 ) -> impl IntoView {
+    let i18n = use_i18n();
     let (world, set_world) = signal::<Option<AnySelector>>(default_world.get_untracked());
     let (price_threshold, set_price_threshold) = signal::<String>("".to_string());
     let (hq_only, set_hq_only) = signal(false);
@@ -29,22 +31,30 @@ pub fn AlertConfigDrawer(
     let submit = move |_| {
         set_error.set(None);
         let Some(world_selector) = world.get() else {
-            set_error.set(Some("Pick a world or DC".into()));
+            set_error.set(Some(
+                t_string!(i18n, alert_drawer_err_pick_world).to_string(),
+            ));
             return;
         };
         let Ok(threshold) = price_threshold.get().parse::<i32>() else {
-            set_error.set(Some("Price threshold must be a positive integer".into()));
+            set_error.set(Some(
+                t_string!(i18n, alert_drawer_err_threshold_int).to_string(),
+            ));
             return;
         };
         if threshold <= 0 {
-            set_error.set(Some("Price threshold must be positive".into()));
+            set_error.set(Some(
+                t_string!(i18n, alert_drawer_err_threshold_positive).to_string(),
+            ));
             return;
         }
         let delivery = match delivery_kind.get() {
             "webhook" => {
                 let url = webhook_url.get();
                 if url.trim().is_empty() {
-                    set_error.set(Some("Webhook URL required".into()));
+                    set_error.set(Some(
+                        t_string!(i18n, alert_drawer_err_webhook_required).to_string(),
+                    ));
                     return;
                 }
                 AlertDelivery::Webhook { url }
@@ -65,7 +75,7 @@ pub fn AlertConfigDrawer(
             match create_alert(req).await {
                 Ok(_) => {
                     if let Some(t) = toasts {
-                        t.success("Alert created");
+                        t.success(t_string!(i18n, alert_drawer_created_toast));
                     }
                     set_visible.set(false);
                 }
@@ -79,10 +89,10 @@ pub fn AlertConfigDrawer(
     view! {
         <Modal set_visible>
             <div class="p-4 space-y-4 w-[28rem]">
-                <h2 class="text-xl font-bold">"Create price alert: " {item_name.clone()}</h2>
+                <h2 class="text-xl font-bold">{t!(i18n, alert_drawer_title)} {item_name.clone()}</h2>
 
                 <div class="space-y-1">
-                    <label class="text-sm font-semibold">"World / DC / Region"</label>
+                    <label class="text-sm font-semibold">{t!(i18n, alert_drawer_world_label)}</label>
                     <WorldPicker
                         current_world=world.into()
                         set_current_world=set_world.into()
@@ -90,12 +100,12 @@ pub fn AlertConfigDrawer(
                 </div>
 
                 <div class="space-y-1">
-                    <label class="text-sm font-semibold">"Price threshold (gil)"</label>
+                    <label class="text-sm font-semibold">{t!(i18n, alert_drawer_threshold_label)}</label>
                     <input
                         class="input w-full"
                         type="number"
                         min="1"
-                        placeholder="e.g. 150000"
+                        placeholder=t_string!(i18n, alert_drawer_threshold_placeholder)
                         prop:value=price_threshold
                         on:input=move |e| set_price_threshold.set(event_target_value(&e))
                     />
@@ -107,11 +117,11 @@ pub fn AlertConfigDrawer(
                         prop:checked=hq_only
                         on:change=move |e| set_hq_only.set(event_target_checked(&e))
                     />
-                    <span class="text-sm">"HQ only"</span>
+                    <span class="text-sm">{t!(i18n, hq_only)}</span>
                 </label>
 
                 <div class="space-y-1">
-                    <label class="text-sm font-semibold">"Delivery"</label>
+                    <label class="text-sm font-semibold">{t!(i18n, alert_drawer_delivery_label)}</label>
                     <div class="flex gap-3">
                         <label class="flex items-center gap-1">
                             <input
@@ -120,7 +130,7 @@ pub fn AlertConfigDrawer(
                                 prop:checked=move || delivery_kind.get() == "discord_dm"
                                 on:change=move |_| set_delivery_kind.set("discord_dm")
                             />
-                            "Discord DM"
+                            {t!(i18n, alert_drawer_discord_dm)}
                         </label>
                         <label class="flex items-center gap-1">
                             <input
@@ -129,14 +139,14 @@ pub fn AlertConfigDrawer(
                                 prop:checked=move || delivery_kind.get() == "webhook"
                                 on:change=move |_| set_delivery_kind.set("webhook")
                             />
-                            "Webhook"
+                            {t!(i18n, alert_drawer_webhook)}
                         </label>
                     </div>
                 </div>
 
                 <Show when=move || delivery_kind.get() == "webhook">
                     <div class="space-y-1">
-                        <label class="text-sm font-semibold">"Discord webhook URL"</label>
+                        <label class="text-sm font-semibold">{t!(i18n, alert_drawer_webhook_url_label)}</label>
                         <input
                             class="input w-full"
                             type="url"
@@ -145,7 +155,7 @@ pub fn AlertConfigDrawer(
                             on:input=move |e| set_webhook_url.set(event_target_value(&e))
                         />
                         <p class="text-xs opacity-70">
-                            "Get a webhook URL from a channel's Integrations settings in Discord."
+                            {t!(i18n, alert_drawer_webhook_hint)}
                         </p>
                     </div>
                 </Show>
@@ -156,11 +166,11 @@ pub fn AlertConfigDrawer(
 
                 <div class="flex justify-end gap-2 pt-2">
                     <button class="btn-ghost" on:click=move |_| set_visible.set(false)>
-                        "Cancel"
+                        {t!(i18n, cancel)}
                     </button>
                     <button class="btn" on:click=submit>
                         <Icon icon=i::BsBell width="1em" height="1em" />
-                        <span class="ml-1">"Create alert"</span>
+                        <span class="ml-1">{t!(i18n, alert_drawer_submit)}</span>
                     </button>
                 </div>
             </div>
