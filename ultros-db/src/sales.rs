@@ -197,6 +197,26 @@ impl UltrosDb {
         Ok(data)
     }
 
+    /// Lean projection of recent sale history for charting. Returns up to `limit` rows
+    /// across all `world_ids`, sorted newest-first. Skips the buyer-name join that
+    /// `get_sale_history_from_multiple_worlds` performs, which is the dominant cost
+    /// when callers don't need names (e.g. the chart).
+    pub async fn get_compact_sale_history(
+        &self,
+        world_ids: impl Iterator<Item = i32>,
+        item_id: i32,
+        limit: u64,
+    ) -> Result<Vec<sale_history::Model>, anyhow::Error> {
+        let per_world = futures::future::try_join_all(
+            world_ids.map(|world_id| self.get_sale_history_for_item(world_id, item_id, limit)),
+        )
+        .await?;
+        let mut sales: Vec<sale_history::Model> = per_world.into_iter().flatten().collect();
+        sales.sort_by_key(|s| std::cmp::Reverse(s.sold_date));
+        sales.truncate(limit as usize);
+        Ok(sales)
+    }
+
     pub async fn last_n_sales(
         &self,
         n_sales: i32,

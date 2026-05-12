@@ -1,4 +1,4 @@
-use crate::api::get_listings;
+use crate::api::{get_extended_sale_history, get_listings};
 use crate::components::gil::Gil;
 use crate::components::icon::Icon;
 use crate::components::price_history_chart::PriceHistoryChart;
@@ -572,6 +572,19 @@ pub fn ChartWrapper(
     let (hq_only, set_hq_only) = signal(false);
     let (filter_outliers, set_filter_outliers) = signal(true);
     let (days_range, set_days_range) = signal(30i32); // 0 = All
+    // When the user clicks "Load extended history", we replace the chart's sales with
+    // a larger compact pull. Stored as Option<Vec<_>>: None means "use base resource".
+    let (extended_sales, set_extended_sales) = signal::<Option<Vec<SaleHistory>>>(None);
+    let (extended_loading, set_extended_loading) = signal(false);
+    let (extended_error, set_extended_error) = signal::<Option<String>>(None);
+    // Reset extended pull when the user navigates to a different item/world so the
+    // chart doesn't keep stale data from the previous item.
+    Effect::new(move |_| {
+        let _ = item_id.get();
+        let _ = world.get();
+        set_extended_sales.set(None);
+        set_extended_error.set(None);
+    });
 
     /* moved into Transition branch to avoid reading resource outside Suspense/Transition */
 
@@ -598,6 +611,9 @@ pub fn ChartWrapper(
                     }.into_any()
                 } else {
                     let base_sales = Memo::new(move |_| {
+                        if let Some(ext) = extended_sales.get() {
+                            return ext;
+                        }
                         listing_resource
                             .with(|l| {
                                 l.as_ref()
@@ -680,6 +696,56 @@ pub fn ChartWrapper(
                                             checked_label=t_string!(i18n, filtering_outliers).to_string()
                                             unchecked_label=t_string!(i18n, no_filter).to_string()
                                         />
+                                        <button
+                                            class="btn-secondary text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                                            type="button"
+                                            disabled=move || extended_loading.get() || extended_sales.with(Option::is_some)
+                                            on:click=move |_| {
+                                                use leptos::task::spawn_local;
+                                                set_extended_loading.set(true);
+                                                set_extended_error.set(None);
+                                                let world_name = world();
+                                                let id = item_id();
+                                                spawn_local(async move {
+                                                    match get_extended_sale_history(id, &world_name, 5000).await {
+                                                        Ok(payload) => {
+                                                            let converted: Vec<SaleHistory> = payload
+                                                                .sales
+                                                                .into_iter()
+                                                                .map(|s| SaleHistory {
+                                                                    id: 0,
+                                                                    quantity: s.quantity,
+                                                                    price_per_item: s.price_per_item,
+                                                                    buying_character_id: 0,
+                                                                    hq: s.hq,
+                                                                    sold_item_id: id,
+                                                                    sold_date: s.sold_date,
+                                                                    world_id: s.world_id,
+                                                                    buyer_name: None,
+                                                                })
+                                                                .collect();
+                                                            set_extended_sales.set(Some(converted));
+                                                        }
+                                                        Err(e) => {
+                                                            set_extended_error.set(Some(e.to_string()));
+                                                        }
+                                                    }
+                                                    set_extended_loading.set(false);
+                                                });
+                                            }
+                                            title=move || t_string!(i18n, load_extended_history_help).to_string()
+                                        >
+                                            {move || {
+                                                if extended_loading.get() {
+                                                    t_string!(i18n, loading).to_string()
+                                                } else if extended_sales.with(Option::is_some) {
+                                                    let n = base_sales.with(|s| s.len());
+                                                    t_string!(i18n, extended_history_loaded).to_string().replace("{n}", &n.to_string())
+                                                } else {
+                                                    t_string!(i18n, load_extended_history).to_string()
+                                                }
+                                            }}
+                                        </button>
                                         <a
                                             class="btn-primary text-sm"
                                             target="_blank"
@@ -690,6 +756,12 @@ pub fn ChartWrapper(
                                     </div>
                                 </div>
 
+                                {move || extended_error.get().map(|msg| view! {
+                                    <div role="alert" class="bg-red-900/30 text-red-200 border border-red-700/40 rounded-xl px-3 py-2 text-sm">
+                                        {msg}
+                                    </div>
+                                })}
+
                                 {move || {
                                     if filtered_sales.with(|sales| sales.is_empty()) {
                                         view! {
@@ -699,7 +771,7 @@ pub fn ChartWrapper(
                                         }.into_any()
                                     } else {
                                         view! {
-                                            <PriceHistoryChart sales=filtered_sales filter_outliers scope_name=world />
+                                            <PriceHistoryChart sales=filtered_sales filter_outliers scope_name=world days_range=days_range />
                                         }.into_any()
                                     }
                                 }}
