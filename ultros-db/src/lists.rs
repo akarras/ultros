@@ -386,10 +386,7 @@ impl UltrosDb {
 
     /// Return all list_items for `list_id` that have a non-null `target_price`.
     /// Used by the price tracker to pre-compute per-list thresholds on refresh.
-    pub async fn get_list_items_with_target(
-        &self,
-        list_id: i32,
-    ) -> Result<Vec<list_item::Model>> {
+    pub async fn get_list_items_with_target(&self, list_id: i32) -> Result<Vec<list_item::Model>> {
         Ok(list_item::Entity::find()
             .filter(list_item::Column::ListId.eq(list_id))
             .filter(list_item::Column::TargetPrice.is_not_null())
