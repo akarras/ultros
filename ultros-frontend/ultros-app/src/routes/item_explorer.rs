@@ -8,7 +8,7 @@ use crate::components::icon::Icon;
 use crate::components::loading::Loading;
 use crate::components::query_button::QueryButton;
 use crate::components::toggle::Toggle;
-use crate::components::{add_to_list::*, cheapest_price::*, fonts::*, item_icon::*, meta::*};
+use crate::components::{add_to_list::*, cheapest_price::*, item_icon::*, meta::*};
 use crate::global_state::home_world::get_price_zone;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
@@ -16,68 +16,12 @@ use icondata as i;
 use itertools::Itertools;
 use leptos::prelude::*;
 use leptos::reactive::wrappers::write::SignalSetter;
-use leptos::text_prop::TextProp;
 use leptos_router::components::A;
 use leptos_router::components::Outlet;
-use leptos_router::hooks::{query_signal, use_location, use_params_map};
-use leptos_router::location::Url;
+use leptos_router::hooks::{query_signal, use_params_map};
 use paginate::Pages;
 use percent_encoding::percent_decode_str;
 use xiv_gen::{ClassJobCategory, ClassJobCategoryId, Item, ItemId};
-
-#[component]
-fn SideMenuButton<T>(href: String, children: TypedChildrenFn<T>) -> impl IntoView
-where
-    T: RenderHtml + 'static,
-{
-    let children = children.into_inner();
-    view! {
-        <APersistQuery href remove_values=&["page", "menu-open"]>
-            <div class="flex items-center gap-3 px-3 py-2 rounded-md
-            transition-all duration-200
-            text-sm font-medium
-            text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]
-            hover:bg-white/5
-            aria-[current]:text-brand-300 aria-[current]:bg-brand-500/10
-            group">
-                {children()}
-            </div>
-        </APersistQuery>
-    }
-}
-
-/// Displays buttons of categories
-#[component]
-fn CategoryView(category: u8) -> impl IntoView {
-    let data = tracked_data();
-    let search_categories = &data.item_search_categorys;
-    // let item_ui_category = &data.item_ui_categorys;
-    let mut categories = search_categories
-        .iter()
-        .filter(|(_, cat)| cat.category == category)
-        .map(|(id, cat)| {
-            // lookup the ID for the map
-            (cat.order, &cat.name, id)
-        })
-        .collect::<Vec<_>>();
-    categories.sort_by_key(|(order, _, _)| *order);
-    view! {
-        <div class="flex flex-col text-xl">
-            {categories
-                .into_iter()
-                .map(|(_, name, id)| {
-                    view! {
-                        <SideMenuButton href=["/items/category/", &name.replace("/", "%2F")]
-                            .concat()>
-                            <ItemSearchCategoryIcon id=*id />
-                            {name.as_str()}
-                        </SideMenuButton>
-                    }
-                })
-                .collect::<Vec<_>>()}
-        </div>
-    }
-}
 
 /// Return true if the given acronym is in the given class job category
 fn job_category_lookup(class_job_category: &ClassJobCategory, job_acronym: &str) -> bool {
@@ -179,32 +123,6 @@ fn job_category_lookup(class_job_category: &ClassJobCategory, job_acronym: &str)
             tracing::warn!(job_acronym, "Unknown job acronym");
             false
         }
-    }
-}
-
-#[component]
-fn JobsList() -> impl IntoView {
-    let jobs = &tracked_data().class_jobs;
-    let mut jobs: Vec<_> = jobs.iter().collect();
-    jobs.sort_by_key(|(_, job)| job.ui_priority);
-    view! {
-        <div class="flex flex-col text-xl">
-            {jobs
-                .into_iter()
-                .filter(|(_, job)| job.job_index > 0 || job.doh_dol_job_index >= 0)
-                .filter(|(_, job)| !job.abbreviation.is_empty() || !job.name.is_empty())
-                .map(|(_id, job)| {
-                    let seg = if job.abbreviation.is_empty() { job.name.as_str() } else { job.abbreviation.as_str() };
-                    let href = ["/items/jobset/", &seg.replace("/", "%2F")].concat();
-                    view! {
-                        <SideMenuButton href=href>
-                            <ClassJobIcon id=job.key_id />
-                            {seg}
-                        </SideMenuButton>
-                    }
-                })
-                .collect::<Vec<_>>()}
-        </div>
     }
 }
 
@@ -403,40 +321,6 @@ impl Display for SortDirection {
             SortDirection::Desc => "desc",
         };
         f.write_str(val)
-    }
-}
-
-/// A URL that copies the existing query string but replaces the path
-#[component]
-pub fn APersistQuery<T>(
-    #[prop(into)] href: TextProp,
-    children: TypedChildren<T>,
-    #[prop(optional)] remove_values: &'static [&'static str],
-) -> impl IntoView
-where
-    T: IntoView,
-{
-    let location = use_location();
-    let query = location.query;
-    let path = location.pathname;
-    let href_2 = href.clone();
-    let query = Memo::new(move |_| {
-        let mut query = query();
-        for value in remove_values {
-            query.remove(value);
-        }
-        query
-    });
-    let url = move || format!("{}{}", href_2.get(), query().to_query_string());
-    let is_active = Memo::new(move |_| {
-        let link_path = href.get();
-
-        path.with(|path| &Url::escape(&link_path) == path)
-    });
-    view! {
-        <a aria-current=move || is_active.get().then_some("page") href=url>
-            {children.into_inner()().into_view()}
-        </a>
     }
 }
 
@@ -725,126 +609,16 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
 }
 
 #[component]
-fn CategorySection(
-    title: &'static str,
-    #[prop(into)] open: Signal<bool>,
-    #[prop(optional)] category: Option<u8>,
-    #[prop(optional)] children: Option<Children>,
-) -> impl IntoView {
-    view! {
-        <details class="group/section" open=open>
-            <summary class="flex items-center justify-between w-full px-2 py-2 cursor-pointer
-                           text-xs font-bold uppercase tracking-wider text-[color:var(--color-text-muted)]
-                           hover:text-[color:var(--color-text)] transition-colors select-none list-none">
-                <span>{title}</span>
-                <Icon icon=i::BiChevronDownRegular attr:class="transition-transform group-open/section:rotate-180" />
-            </summary>
-            <div class="pl-2 space-y-0.5 mt-1 border-l border-white/5 ml-2">
-                {category.map(|cat| view! { <CategoryView category=cat /> })}
-                {children.map(|c| c())}
-            </div>
-        </details>
-    }
-    .into_any()
-}
-
-#[component]
 pub fn ItemExplorer() -> impl IntoView {
-    let i18n = use_i18n();
-    let params = use_params_map();
-    let data = tracked_data();
-    let (menu_open, set_open) = query_signal("menu-open");
-    let menu_open = Memo::new(move |_| menu_open().unwrap_or(false));
-    let active_category_group = Memo::new(move |_| {
-        let params = params();
-        if params.get("jobset").is_some() {
-            return Some(5);
-        }
-
-        #[allow(clippy::collapsible_if)]
-        if let Some(cat_raw) = params.get("category") {
-            if let Ok(cat_name) = percent_encoding::percent_decode_str(&cat_raw).decode_utf8() {
-                for cat in data.item_search_categorys.values() {
-                    if cat.name == cat_name {
-                        return Some(cat.category);
-                    }
-                }
-            }
-        }
-        None
-    });
-    let is_open = move |id: u8| {
-        Signal::derive(move || {
-            active_category_group.with(|active| active.map(|a| a == id).unwrap_or(true))
-        })
-    };
-
     view! {
-        <div class="flex flex-col min-h-[calc(100vh-64px)]">
-            // Mobile Header / Toggle
-            <div class="lg:hidden p-4 border-b border-white/5 bg-[color:var(--bg-panel)] sticky top-0 z-30 flex items-center justify-between">
-                <span class="font-bold text-lg">{t!(i18n, item_explorer_title_main)}</span>
-                <A
-                    href=move || if menu_open() { "?" } else { "?menu-open=true" }.to_string()
-                    attr:class="btn-secondary !p-2"
-                >
-                    <Icon icon=i::BiMenuRegular width="24" height="24" />
-                </A>
-            </div>
-
-            <div class="flex flex-row grow relative">
-                // Sidebar (Desktop Sticky / Mobile Drawer)
-                <aside
-                    class="fixed inset-y-0 left-0 z-[80] bg-[color:var(--bg-panel)] border-r border-white/5
-                           lg:static lg:block lg:z-auto w-[280px] shrink-0
-                           transition-transform duration-300 ease-in-out"
-                    class=("translate-x-0", move || menu_open())
-                    class=("-translate-x-full", move || !menu_open())
-                    class=("lg:translate-x-0", true)
-                >
-                    <div class="h-full overflow-y-auto scrollbar-thin p-4 space-y-6">
-                        <div class="flex items-center justify-between lg:hidden mb-6">
-                            <span class="font-bold text-xl">{t!(i18n, item_explorer_categories)}</span>
-                            <A href="?" attr:class="btn-ghost p-1">
-                                <Icon icon=i::BiXRegular width="24" height="24" />
-                            </A>
-                        </div>
-
-                        <div class="space-y-1">
-                            <CategorySection title=t_string!(i18n, item_explorer_weapons) category=1 open=is_open(1) />
-                            <CategorySection title=t_string!(i18n, item_explorer_armor) category=2 open=is_open(2) />
-                            <CategorySection title=t_string!(i18n, item_explorer_items) category=3 open=is_open(3) />
-                            <CategorySection title=t_string!(i18n, item_explorer_housing) category=4 open=is_open(4) />
-                            <CategorySection title=t_string!(i18n, item_explorer_job_sets) open=is_open(5)>
-                                <JobsList />
-                            </CategorySection>
-                        </div>
-                    </div>
-                </aside>
-
-                // Mobile Backend Backdrop
-                {move || {
-                    if menu_open() {
-                        view! {
-                            <div
-                                class="fixed inset-0 bg-black/50 backdrop-blur-sm z-[70] lg:hidden"
-                                on:click=move |_| set_open.set(Some(false))
-                            />
-                        }.into_any()
-                    } else {
-                        view! { <div class="hidden" /> }.into_any()
-                    }
-                }}
-
-                // Main Content Area
-                <main class="flex-1 min-w-0 bg-[color:var(--bg-body)]">
-                    <div class="p-4 lg:p-8 max-w-[1600px] mx-auto">
-                        <Outlet />
-                    </div>
-                </main>
+        <div class="flex flex-col min-h-[calc(100vh-56px)]">
+            <div class="p-4 lg:p-8 max-w-[1600px] mx-auto w-full">
+                <crate::routes::item_explorer_toolbar::ItemExplorerToolbar />
+                <Outlet />
             </div>
         </div>
     }
+    .into_any()
 }
 
 #[cfg(test)]

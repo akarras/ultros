@@ -154,7 +154,7 @@ pub fn AppsMenu() -> impl IntoView {
                         </A>
 
                         <A
-                            href="/items?menu-open=true"
+                            href="/items"
                             attr:class="nav-link w-full justify-start"
                             on:click=close_menu
                         >
