@@ -312,11 +312,12 @@ impl UltrosDb {
         &self,
         alert_id: i32,
     ) -> Result<Option<notification_endpoint::Model>> {
-        let rules = alert_notification_rule::Entity::find()
+        let rule = alert_notification_rule::Entity::find()
             .filter(alert_notification_rule::Column::AlertId.eq(alert_id))
-            .all(&self.db)
+            .limit(1)
+            .one(&self.db)
             .await?;
-        if let Some(rule) = rules.first() {
+        if let Some(rule) = rule {
             Ok(notification_endpoint::Entity::find_by_id(rule.endpoint_id)
                 .one(&self.db)
                 .await?)
@@ -337,26 +338,530 @@ impl UltrosDb {
         Ok(())
     }
 
+    /// Fetch an alert event by id, but only if the underlying alert is owned by `owner`.
+    /// Returns `Err` for both "no such event" and "event belongs to someone else" so the
+    /// caller doesn't leak existence to non-owners.
+    pub async fn get_alert_event_by_id_owned_by(
+        &self,
+        owner: i64,
+        event_id: i64,
+    ) -> Result<alert_event::Model> {
+        let event = alert_event::Entity::find_by_id(event_id)
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| anyhow::Error::msg("alert event not found"))?;
+        alert::Entity::find_by_id(event.alert_id)
+            .filter(alert::Column::Owner.eq(owner))
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| anyhow::Error::msg("alert event not found"))?;
+        Ok(event)
+    }
+
     pub async fn get_recent_alert_events_for_user(
         &self,
         owner: i64,
         limit: u64,
     ) -> Result<Vec<alert_event::Model>> {
-        let alert_ids: Vec<i32> = alert::Entity::find()
-            .filter(alert::Column::Owner.eq(owner))
-            .all(&self.db)
-            .await?
-            .into_iter()
-            .map(|a| a.id)
-            .collect();
-        if alert_ids.is_empty() {
-            return Ok(vec![]);
-        }
         Ok(alert_event::Entity::find()
-            .filter(alert_event::Column::AlertId.is_in(alert_ids))
+            .inner_join(alert::Entity)
+            .filter(alert::Column::Owner.eq(owner))
             .order_by_desc(alert_event::Column::FiredAt)
             .limit(limit)
             .all(&self.db)
             .await?)
+    }
+
+    pub async fn list_endpoints(&self, owner: i64) -> Result<Vec<notification_endpoint::Model>> {
+        Ok(notification_endpoint::Entity::find()
+            .filter(notification_endpoint::Column::UserId.eq(owner))
+            .order_by_asc(notification_endpoint::Column::Id)
+            .all(&self.db)
+            .await?)
+    }
+
+    pub async fn create_endpoint(
+        &self,
+        owner: i64,
+        name: &str,
+        method: &str,
+        config: JsonValue,
+    ) -> Result<i32> {
+        let model = notification_endpoint::Entity::insert(notification_endpoint::ActiveModel {
+            id: ActiveValue::default(),
+            user_id: Set(owner),
+            name: Set(name.to_string()),
+            method: Set(method.to_string()),
+            config: Set(config),
+            created_at: Set(chrono::Utc::now()),
+        })
+        .exec_with_returning(&self.db)
+        .await?;
+        Ok(model.id)
+    }
+
+    pub async fn update_endpoint(
+        &self,
+        owner: i64,
+        endpoint_id: i32,
+        name: Option<String>,
+        method_and_config: Option<(String, JsonValue)>,
+    ) -> Result<()> {
+        let existing = notification_endpoint::Entity::find_by_id(endpoint_id)
+            .filter(notification_endpoint::Column::UserId.eq(owner))
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| anyhow::Error::msg("endpoint not found"))?;
+        let mut active: notification_endpoint::ActiveModel = existing.into();
+        if let Some(n) = name {
+            active.name = Set(n);
+        }
+        if let Some((m, c)) = method_and_config {
+            active.method = Set(m);
+            active.config = Set(c);
+        }
+        active.update(&self.db).await?;
+        Ok(())
+    }
+
+    pub async fn delete_endpoint(&self, owner: i64, endpoint_id: i32) -> Result<()> {
+        let existing = notification_endpoint::Entity::find_by_id(endpoint_id)
+            .filter(notification_endpoint::Column::UserId.eq(owner))
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| anyhow::Error::msg("endpoint not found"))?;
+        existing.delete(&self.db).await?;
+        Ok(())
+    }
+
+    pub async fn get_endpoint_owned_by(
+        &self,
+        owner: i64,
+        endpoint_id: i32,
+    ) -> Result<notification_endpoint::Model> {
+        notification_endpoint::Entity::find_by_id(endpoint_id)
+            .filter(notification_endpoint::Column::UserId.eq(owner))
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| anyhow::Error::msg("endpoint not found"))
+    }
+
+    /// Replace the set of endpoint rules for an alert with the provided list.
+    /// Verifies all endpoints belong to `owner` and the alert belongs to `owner`.
+    pub async fn set_alert_rules(
+        &self,
+        owner: i64,
+        alert_id: i32,
+        endpoint_ids: &[i32],
+    ) -> Result<()> {
+        use sea_orm::TransactionTrait;
+        // Ownership check on the alert
+        alert::Entity::find_by_id(alert_id)
+            .filter(alert::Column::Owner.eq(owner))
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| anyhow::Error::msg("alert not found"))?;
+        // Ownership check on every endpoint id (no orphans, no cross-user)
+        for &eid in endpoint_ids {
+            notification_endpoint::Entity::find_by_id(eid)
+                .filter(notification_endpoint::Column::UserId.eq(owner))
+                .one(&self.db)
+                .await?
+                .ok_or_else(|| anyhow::Error::msg(format!("endpoint {eid} not owned by user")))?;
+        }
+        let txn = self.db.begin().await?;
+        alert_notification_rule::Entity::delete_many()
+            .filter(alert_notification_rule::Column::AlertId.eq(alert_id))
+            .exec(&txn)
+            .await?;
+        for &eid in endpoint_ids {
+            alert_notification_rule::Entity::insert(alert_notification_rule::ActiveModel {
+                alert_id: Set(alert_id),
+                endpoint_id: Set(eid),
+            })
+            .exec(&txn)
+            .await?;
+        }
+        txn.commit().await?;
+        Ok(())
+    }
+
+    /// Create an alert + alert_item_threshold in a single transaction, without
+    /// creating any notification endpoint or rules. The caller is expected to
+    /// bind endpoint rules via `set_alert_rules` afterward.
+    pub async fn create_threshold_alert_without_endpoint(
+        &self,
+        owner: i64,
+        item_id: i32,
+        world_selector_json: JsonValue,
+        price_threshold: i32,
+        hq_only: bool,
+        cooldown_seconds: i32,
+    ) -> Result<alert::Model> {
+        use sea_orm::TransactionTrait;
+        let txn = self.db.begin().await?;
+        let alert = alert::Entity::insert(alert::ActiveModel {
+            id: ActiveValue::default(),
+            owner: Set(owner),
+            enabled: Set(true),
+            last_fired_at: Set(None),
+            cooldown_seconds: Set(cooldown_seconds),
+        })
+        .exec_with_returning(&txn)
+        .await?;
+        alert_item_threshold::Entity::insert(alert_item_threshold::ActiveModel {
+            id: ActiveValue::default(),
+            alert_id: Set(alert.id),
+            item_id: Set(item_id),
+            world_selector: Set(world_selector_json),
+            price_threshold: Set(price_threshold),
+            hq_only: Set(hq_only),
+        })
+        .exec(&txn)
+        .await?;
+        txn.commit().await?;
+        Ok(alert)
+    }
+
+    /// Create an alert + alert_list_threshold in a single transaction and bind
+    /// the supplied notification endpoints. Caller MUST have already checked
+    /// that `owner` has at least `Read` permission on `list_id`.
+    pub async fn create_list_threshold_alert(
+        &self,
+        owner: i64,
+        list_id: i32,
+        cooldown_seconds: i32,
+        endpoint_ids: &[i32],
+    ) -> Result<alert::Model> {
+        use sea_orm::TransactionTrait;
+        // Ownership check on every endpoint id before we open a transaction.
+        for &eid in endpoint_ids {
+            notification_endpoint::Entity::find_by_id(eid)
+                .filter(notification_endpoint::Column::UserId.eq(owner))
+                .one(&self.db)
+                .await?
+                .ok_or_else(|| anyhow::Error::msg(format!("endpoint {eid} not owned by user")))?;
+        }
+        let txn = self.db.begin().await?;
+        let alert = alert::Entity::insert(alert::ActiveModel {
+            id: ActiveValue::default(),
+            owner: Set(owner),
+            enabled: Set(true),
+            last_fired_at: Set(None),
+            cooldown_seconds: Set(cooldown_seconds),
+        })
+        .exec_with_returning(&txn)
+        .await?;
+        alert_list_threshold::Entity::insert(alert_list_threshold::ActiveModel {
+            id: ActiveValue::default(),
+            alert_id: Set(alert.id),
+            list_id: Set(list_id),
+        })
+        .exec(&txn)
+        .await?;
+        for &eid in endpoint_ids {
+            alert_notification_rule::Entity::insert(alert_notification_rule::ActiveModel {
+                alert_id: Set(alert.id),
+                endpoint_id: Set(eid),
+            })
+            .exec(&txn)
+            .await?;
+        }
+        txn.commit().await?;
+        Ok(alert)
+    }
+
+    /// Return the user's list-threshold alerts (alert row + junction row).
+    pub async fn get_user_list_threshold_alerts(
+        &self,
+        owner: i64,
+    ) -> Result<Vec<(alert::Model, alert_list_threshold::Model)>> {
+        let rows = alert::Entity::find()
+            .filter(alert::Column::Owner.eq(owner))
+            .find_with_related(alert_list_threshold::Entity)
+            .all(&self.db)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .flat_map(|(a, ts)| ts.into_iter().map(move |t| (a.clone(), t)))
+            .collect())
+    }
+
+    /// Return all enabled list-threshold alerts. Used by the price tracker on
+    /// each `refresh_from` to rebuild its in-memory index.
+    pub async fn get_all_active_list_threshold_alerts(
+        &self,
+    ) -> Result<Vec<(alert::Model, alert_list_threshold::Model)>> {
+        let rows = alert::Entity::find()
+            .filter(alert::Column::Enabled.eq(true))
+            .find_with_related(alert_list_threshold::Entity)
+            .all(&self.db)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .flat_map(|(a, ts)| ts.into_iter().map(move |t| (a.clone(), t)))
+            .collect())
+    }
+
+    /// Return the endpoint ids attached to an alert, in order of attachment.
+    pub async fn list_endpoint_ids_for_alert(&self, alert_id: i32) -> Result<Vec<i32>> {
+        let rules = alert_notification_rule::Entity::find()
+            .filter(alert_notification_rule::Column::AlertId.eq(alert_id))
+            .all(&self.db)
+            .await?;
+        Ok(rules.into_iter().map(|r| r.endpoint_id).collect())
+    }
+
+    /// Find an existing endpoint owned by `owner` whose method+config matches; otherwise
+    /// create a new one. Returns the endpoint id. Used by bot commands to bind alerts to
+    /// the caller's default DM endpoint without dup-ing rows on repeat use.
+    pub async fn get_or_create_dm_endpoint(&self, owner: i64, name: &str) -> Result<i32> {
+        let cfg = serde_json::json!({ "user_id": owner });
+        if let Some(existing) = notification_endpoint::Entity::find()
+            .filter(notification_endpoint::Column::UserId.eq(owner))
+            .filter(notification_endpoint::Column::Method.eq("DiscordDm"))
+            .filter(Expr::cust_with_values(
+                "config::jsonb = ?::jsonb",
+                vec![cfg.clone()],
+            ))
+            .one(&self.db)
+            .await?
+        {
+            return Ok(existing.id);
+        }
+        self.create_endpoint(owner, name, "DiscordDm", cfg).await
+    }
+
+    /// Same as `get_or_create_dm_endpoint` but for a DiscordChannel pointed at `channel_id`.
+    pub async fn get_or_create_channel_endpoint(
+        &self,
+        owner: i64,
+        channel_id: i64,
+        name: &str,
+    ) -> Result<i32> {
+        let cfg = serde_json::json!({ "channel_id": channel_id });
+        if let Some(existing) = notification_endpoint::Entity::find()
+            .filter(notification_endpoint::Column::UserId.eq(owner))
+            .filter(notification_endpoint::Column::Method.eq("DiscordChannel"))
+            .filter(Expr::cust_with_values(
+                "config::jsonb = ?::jsonb",
+                vec![cfg.clone()],
+            ))
+            .one(&self.db)
+            .await?
+        {
+            return Ok(existing.id);
+        }
+        self.create_endpoint(owner, name, "DiscordChannel", cfg)
+            .await
+    }
+
+    /// Same as `get_or_create_dm_endpoint` but for a WebPush endpoint pointing
+    /// at a persisted browser subscription.
+    pub async fn get_or_create_webpush_endpoint(
+        &self,
+        owner: i64,
+        subscription_id: i32,
+        name: &str,
+    ) -> Result<i32> {
+        let cfg = serde_json::json!({ "subscription_id": subscription_id });
+        if let Some(existing) = notification_endpoint::Entity::find()
+            .filter(notification_endpoint::Column::UserId.eq(owner))
+            .filter(notification_endpoint::Column::Method.eq("WebPush"))
+            .filter(Expr::cust_with_values(
+                "config::jsonb = ?::jsonb",
+                vec![cfg.clone()],
+            ))
+            .one(&self.db)
+            .await?
+        {
+            return Ok(existing.id);
+        }
+        self.create_endpoint(owner, name, "WebPush", cfg).await
+    }
+
+    /// Insert (or upsert) a per-browser Web Push subscription. The unique key is
+    /// `(user_id, endpoint)` — browsers may rotate `p256dh`/`auth` on the same
+    /// endpoint URL, so we update those + `last_seen_at` on conflict rather than
+    /// erroring. Returns the row id (new or existing).
+    pub async fn create_push_subscription(
+        &self,
+        owner: i64,
+        endpoint: &str,
+        p256dh: &str,
+        auth: &str,
+        user_agent: Option<&str>,
+    ) -> Result<i32> {
+        use migration::OnConflict;
+        let now = chrono::Utc::now();
+        let model = push_subscription::Entity::insert(push_subscription::ActiveModel {
+            id: ActiveValue::default(),
+            user_id: Set(owner),
+            endpoint: Set(endpoint.to_string()),
+            p256dh: Set(p256dh.to_string()),
+            auth: Set(auth.to_string()),
+            user_agent: Set(user_agent.map(|s| s.to_string())),
+            created_at: Set(now),
+            last_seen_at: Set(now),
+        })
+        .on_conflict(
+            OnConflict::columns([
+                push_subscription::Column::UserId,
+                push_subscription::Column::Endpoint,
+            ])
+            .update_columns([
+                push_subscription::Column::P256dh,
+                push_subscription::Column::Auth,
+                push_subscription::Column::UserAgent,
+                push_subscription::Column::LastSeenAt,
+            ])
+            .to_owned(),
+        )
+        .exec_with_returning(&self.db)
+        .await?;
+        Ok(model.id)
+    }
+
+    /// Look up a single push subscription by id (no ownership check — callers
+    /// that need one should filter by `user_id` themselves, or use this from
+    /// internal delivery code that has already authorized the operation).
+    pub async fn get_push_subscription_by_id(&self, id: i32) -> Result<push_subscription::Model> {
+        push_subscription::Entity::find_by_id(id)
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| anyhow::Error::msg("push subscription not found"))
+    }
+
+    /// Delete a push subscription owned by `owner`. Used both when a user
+    /// explicitly removes their browser endpoint and when delivery discovers
+    /// the subscription has been revoked by the push service.
+    pub async fn delete_push_subscription_by_id(&self, owner: i64, id: i32) -> Result<()> {
+        let existing = push_subscription::Entity::find_by_id(id)
+            .filter(push_subscription::Column::UserId.eq(owner))
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| anyhow::Error::msg("push subscription not found"))?;
+        existing.delete(&self.db).await?;
+        Ok(())
+    }
+
+    /// Bump `last_seen_at` after a successful push delivery. Best-effort —
+    /// callers ignore the result.
+    pub async fn touch_push_subscription_last_seen(&self, id: i32) -> Result<()> {
+        push_subscription::Entity::update_many()
+            .filter(push_subscription::Column::Id.eq(id))
+            .col_expr(
+                push_subscription::Column::LastSeenAt,
+                Expr::value(chrono::Utc::now()),
+            )
+            .exec(&self.db)
+            .await?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod endpoint_tests {
+    use super::*;
+
+    /// Connect to a live test database. No `test_helpers::test_db` convention
+    /// currently exists in this crate (see CLAUDE.md / ultros-db tests); these
+    /// tests are therefore `#[ignore]`d and only exercised when a developer
+    /// runs them explicitly with `DATABASE_URL` pointed at a disposable DB:
+    ///
+    /// ```bash
+    /// cargo test -p ultros-db endpoint_tests -- --ignored --test-threads=1
+    /// ```
+    async fn test_db() -> UltrosDb {
+        UltrosDb::connect().await.expect("connect to test DB")
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live DB; no test_helpers scaffolding in this crate yet"]
+    async fn create_endpoint_and_list_returns_it() {
+        let db = test_db().await;
+        let id = db
+            .create_endpoint(42, "My DM", "DiscordDm", serde_json::json!({"user_id": 42}))
+            .await
+            .unwrap();
+        let list = db.list_endpoints(42).await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, id);
+        assert_eq!(list[0].name, "My DM");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live DB; no test_helpers scaffolding in this crate yet"]
+    async fn list_endpoints_scopes_by_user() {
+        let db = test_db().await;
+        db.create_endpoint(1, "A", "DiscordDm", serde_json::json!({"user_id": 1}))
+            .await
+            .unwrap();
+        db.create_endpoint(2, "B", "DiscordDm", serde_json::json!({"user_id": 2}))
+            .await
+            .unwrap();
+        let only_user_1 = db.list_endpoints(1).await.unwrap();
+        assert_eq!(only_user_1.len(), 1);
+        assert_eq!(only_user_1[0].user_id, 1);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live DB; no test_helpers scaffolding in this crate yet"]
+    async fn delete_endpoint_refuses_other_users_endpoint() {
+        let db = test_db().await;
+        let id = db
+            .create_endpoint(1, "A", "DiscordDm", serde_json::json!({"user_id": 1}))
+            .await
+            .unwrap();
+        let err = db.delete_endpoint(2, id).await;
+        assert!(err.is_err(), "expected delete by non-owner to fail");
+        // and the row should still be there
+        assert_eq!(db.list_endpoints(1).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live DB; no test_helpers scaffolding in this crate yet"]
+    async fn set_alert_rules_replaces_the_set() {
+        let db = test_db().await;
+        let e1 = db
+            .create_endpoint(1, "A", "DiscordDm", serde_json::json!({"user_id": 1}))
+            .await
+            .unwrap();
+        let e2 = db
+            .create_endpoint(
+                1,
+                "B",
+                "Webhook",
+                serde_json::json!({"url": "https://discord.com/api/webhooks/1/x"}),
+            )
+            .await
+            .unwrap();
+        let alert = db
+            .create_threshold_alert(
+                1,
+                5057,
+                serde_json::json!({"World": 22}),
+                1000,
+                false,
+                3600,
+                "DiscordDm",
+                serde_json::json!({"user_id": 1}),
+                "tmp",
+            )
+            .await
+            .unwrap();
+        db.set_alert_rules(1, alert.id, &[e1, e2]).await.unwrap();
+        let endpoints = db
+            .get_notification_endpoints_for_alert(alert.id)
+            .await
+            .unwrap();
+        assert_eq!(endpoints.len(), 2);
+        db.set_alert_rules(1, alert.id, &[e1]).await.unwrap();
+        let endpoints = db
+            .get_notification_endpoints_for_alert(alert.id)
+            .await
+            .unwrap();
+        assert_eq!(endpoints.len(), 1);
+        assert_eq!(endpoints[0].id, e1);
     }
 }

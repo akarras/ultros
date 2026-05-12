@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::fmt::Display;
 use std::{collections::HashSet, str::FromStr};
 
@@ -236,8 +235,8 @@ pub fn CategoryItems() -> impl IntoView {
             .get("category")
             .as_ref()
             .and_then(|cat| percent_decode_str(cat).decode_utf8().ok())
-            .unwrap_or(Cow::from("Category View"))
-            .to_string()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| crate::i18n::t_string!(i18n, category_view_default).to_string())
     });
     view! {
         <MetaTitle title=move || crate::i18n::t_string!(i18n, item_explorer_title).to_string().replace("%name%", &category_view_name()) />
@@ -309,7 +308,7 @@ pub fn JobItems() -> impl IntoView {
             .as_ref()
             .and_then(|s| percent_encoding::percent_decode_str(s).decode_utf8().ok())
             .map(|s| s.to_string())
-            .unwrap_or("Job Set".to_string())
+            .unwrap_or_else(|| crate::i18n::t_string!(i18n, job_set_default).to_string())
     });
     view! {
         <MetaTitle title=move || crate::i18n::t_string!(i18n, item_explorer_title).to_string().replace("%name%", &job_set()) />
@@ -622,10 +621,10 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                 <div class="flex-1" />
                                 <div class="flex flex-col gap-3 mt-2 pt-3 border-t border-white/5">
                                     <div class="flex flex-col gap-2 text-sm">
-                                        <CheapestPrice item_id=*id show_hq=false label="NQ" />
+                                        <CheapestPrice item_id=*id show_hq=false label=t_string!(i18n, nq).to_string() />
                                         {if item.can_be_hq {
                                             view! {
-                                                <CheapestPrice item_id=*id show_hq=true label="HQ" />
+                                                <CheapestPrice item_id=*id show_hq=true label=t_string!(i18n, hq).to_string() />
                                             }.into_any()
                                         } else {
                                             view! { <div/> }.into_any()

@@ -3,7 +3,7 @@ use std::{sync::Arc, time::Duration};
 use futures::{StreamExt, stream};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, instrument};
+use tracing::{error, info, instrument};
 use ultros_api_types::websocket::{ListingEventData, SaleEventData};
 use ultros_db::{
     UltrosDb,
@@ -56,7 +56,7 @@ impl UpdateService {
                     info!("{world:?}");
                     let world = service.check_for_missed_items_on_world(world).await;
                     if let Err(w) = world {
-                        info!("{w:?}");
+                        error!(error = ?w, "check_for_missed_items_on_world failed");
                     }
                 }
                 tokio::time::sleep_until(next_interval).await;

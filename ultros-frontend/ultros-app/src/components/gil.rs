@@ -1,6 +1,8 @@
 use leptos::prelude::*;
 use thousands::Separable;
 
+use crate::i18n::*;
+
 #[cfg(feature = "hydrate")]
 fn spawn_gil_party(mut x: f64, mut y: f64) {
     let document = document();
@@ -76,11 +78,12 @@ fn spawn_gil_party(mut x: f64, mut y: f64) {
 
 #[component]
 fn GilIcon() -> impl IntoView {
+    let i18n = use_i18n();
     view! {
         <button
             type="button"
             class="h-7 w-7 -m-1 aspect-square p-1 cursor-pointer hover:scale-110 transition-transform active:scale-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-[var(--brand-ring)] rounded-full bg-transparent border-none appearance-none"
-            aria-label="Spawn gil party"
+            aria-label=move || t_string!(i18n, gil_spawn_party_aria).to_string()
             on:click=move |ev| {
                 #[cfg(feature = "hydrate")]
                 #[allow(clippy::unnecessary_cast)] // client_x() is i32 in WASM, f64 in SSR

@@ -13,6 +13,7 @@ pub struct Model {
     pub hq: Option<bool>,
     pub quantity: Option<i32>,
     pub acquired: Option<i32>,
+    pub target_price: Option<i64>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

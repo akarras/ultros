@@ -14,6 +14,7 @@ use crate::global_state::cheapest_prices::CheapestPrices;
 use crate::global_state::home_world::{get_price_zone, use_home_world};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::{t, t_string};
+use crate::ws::realtime::{RealtimeSubscription, use_realtime};
 use chrono::{TimeDelta, Utc};
 use leptos::prelude::*;
 use leptos_meta::{Link, Meta};
@@ -21,9 +22,12 @@ use leptos_router::components::A;
 use leptos_router::hooks::use_params_map;
 use leptos_router::location::Url;
 use std::sync::Arc;
-use ultros_api_types::CurrentlyShownItem;
+use ultros_api_types::websocket::{
+    EventType, FilterPredicate, ListingEventData, SaleEventData, ServerClient, SocketMessageType,
+};
 use ultros_api_types::world_helper::AnySelector;
 use ultros_api_types::world_helper::{AnyResult, OwnedResult};
+use ultros_api_types::{ActiveListing, CurrentlyShownItem, Retainer, SaleHistory};
 use xiv_gen::{ItemId, ItemSearchCategoryId, ItemUiCategoryId};
 
 #[component]
@@ -375,7 +379,7 @@ fn MarketStatsPanel(
                                         )
                                     } else if recipe_exists {
                                         let summary_view = view! {
-                                            <Suspense fallback=move || "Craftable">
+                                            <Suspense fallback=move || t_string!(i18n, craftable).to_string()>
                                                 {move || {
                                                     if let Some(recipe) = recipe_tree_iter(ItemId(item_id)).next() {
                                                         if let Some(prices) = cheapest_prices.as_ref() {
@@ -451,8 +455,8 @@ fn MarketStatsPanel(
                             };
 
                             view! {
-                                <div class="panel p-3 sm:p-5 h-full">
-                                    <div class="flex items-center justify-between gap-3 mb-3 sm:mb-4">
+                                <div class="flex flex-col rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4 h-full">
+                                    <div class="flex items-center justify-between gap-3 mb-2 sm:mb-3">
                                         <div>
                                             <h2 class="text-lg sm:text-xl font-bold text-[color:var(--color-text)] leading-tight">
                                                 {t!(i18n, cheapest_found)}
@@ -466,7 +470,7 @@ fn MarketStatsPanel(
 
                                     <div class="grid grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2 gap-2 sm:gap-3">
                                         <a href="#listings" class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)] p-2 sm:p-3 min-h-24">
-                                            <div class="text-xs font-bold uppercase text-brand-300 mb-1">"NQ"</div>
+                                            <div class="text-xs font-bold uppercase text-brand-300 mb-1">{t!(i18n, nq)}</div>
                                             {if let Some((listing, _)) = cheapest_nq.clone() {
                                                 view! {
                                                     <div>
@@ -486,7 +490,7 @@ fn MarketStatsPanel(
                                         <a href="#listings" class="rounded-lg border border-[color:var(--color-outline)] bg-[#95c521]/10 p-2 sm:p-3 min-h-24">
                                             <div class="text-xs font-bold uppercase text-[#95c521] mb-1 flex items-center gap-1">
                                                 <Icon icon=icondata::FaStarSolid attr:class="text-[10px]" />
-                                                "HQ"
+                                                {t!(i18n, hq)}
                                             </div>
                                             {if let Some((listing, _)) = cheapest_hq.clone() {
                                                 view! {
@@ -512,7 +516,8 @@ fn MarketStatsPanel(
                                                     .unwrap_or_else(|| view! { <span class="text-[color:var(--color-text-muted)]">{t!(i18n, no_data)}</span> }.into_any())}
                                             </div>
                                             <div class="text-xs text-[color:var(--color-text-muted)] mt-2">
-                                                "Median "
+                                                {t!(i18n, median_label)}
+                                                " "
                                                 {median_price
                                                     .map(|price| view! { <Gil amount=price /> }.into_any())
                                                     .unwrap_or_else(|| view! { <span>{t!(i18n, no_data)}</span> }.into_any())}
@@ -612,7 +617,7 @@ pub fn ChartWrapper(
                     });
 
                     view! {
-                        <div class="panel p-4 text-[color:var(--color-text)] h-full">
+                        <div class="rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4 text-[color:var(--color-text)] h-full">
                             <div class="flex flex-col gap-3">
                                 <div class="flex flex-wrap items-start justify-between gap-3">
                                     <div>
@@ -630,7 +635,7 @@ pub fn ChartWrapper(
                                                 ].join(" ")
                                                 on:click=move |_| set_days_range(7)
                                             >
-                                                "7d"
+                                                {t!(i18n, chart_range_7d)}
                                             </button>
                                             <button
                                                 class=move || [
@@ -639,7 +644,7 @@ pub fn ChartWrapper(
                                                 ].join(" ")
                                                 on:click=move |_| set_days_range(30)
                                             >
-                                                "30d"
+                                                {t!(i18n, chart_range_30d)}
                                             </button>
                                             <button
                                                 class=move || [
@@ -648,7 +653,7 @@ pub fn ChartWrapper(
                                                 ].join(" ")
                                                 on:click=move |_| set_days_range(90)
                                             >
-                                                "90d"
+                                                {t!(i18n, chart_range_90d)}
                                             </button>
                                             <button
                                                 class=move || [
@@ -657,7 +662,7 @@ pub fn ChartWrapper(
                                                 ].join(" ")
                                                 on:click=move |_| set_days_range(0)
                                             >
-                                                "All"
+                                                {t!(i18n, chart_range_all)}
                                             </button>
                                         </div>
                                         <Toggle
@@ -669,8 +674,8 @@ pub fn ChartWrapper(
                                         <Toggle
                                             checked=filter_outliers
                                             set_checked=set_filter_outliers
-                                            checked_label="Filtering outliers"
-                                            unchecked_label="No filter"
+                                            checked_label=t_string!(i18n, filtering_outliers).to_string()
+                                            unchecked_label=t_string!(i18n, no_filter).to_string()
                                         />
                                         <a
                                             class="btn-primary text-sm"
@@ -691,7 +696,7 @@ pub fn ChartWrapper(
                                         }.into_any()
                                     } else {
                                         view! {
-                                            <PriceHistoryChart sales=filtered_sales filter_outliers />
+                                            <PriceHistoryChart sales=filtered_sales filter_outliers scope_name=world />
                                         }.into_any()
                                     }
                                 }}
@@ -750,7 +755,7 @@ fn HighQualityTable(
                     });
                     view! {
                         <div
-                            class="panel p-4 sm:p-6"
+                            class="flex flex-col gap-4 rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4"
                             class:hidden=move || hq_listings.with(|l| l.is_empty())
                         >
                             <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
@@ -797,7 +802,7 @@ fn LowQualityTable(
                     });
                     view! {
                         <div
-                            class="panel p-4 sm:p-6"
+                            class="flex flex-col gap-4 rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4"
                             class:hidden=move || lq_listings.with(|l| l.is_empty())
                         >
                             <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
@@ -835,14 +840,14 @@ fn SalesDetails(
 
                 view! {
                     <div class="flex flex-col gap-6 h-full"> // Use flex col to stack table and insights
-                        <div class="panel p-4 sm:p-6 flex-1">
+                        <div class="flex flex-col rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4 flex-1">
                             <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
                                 {move || t_string!(i18n, sale_history).to_string()}
                             </h2>
                             <SaleHistoryTable sales=sales.into() />
                         </div>
 
-                        <div class="panel p-4 sm:p-6">
+                        <div class="flex flex-col rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4">
                             <SalesInsights sales=sales.into() />
                         </div>
                     </div>
@@ -852,6 +857,77 @@ fn SalesDetails(
         </Transition>
     }
     .into_any()
+}
+
+fn update_current_item(
+    listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
+    update: impl FnOnce(&mut CurrentlyShownItem),
+) {
+    listing_resource.update(|current| {
+        if let Some(Ok(current)) = current {
+            let mut updated = current.as_ref().clone();
+            update(&mut updated);
+            *current = Arc::new(updated);
+        }
+    });
+}
+
+fn apply_listing_event(data: &mut CurrentlyShownItem, event: EventType<ListingEventData>) {
+    match event {
+        EventType::Added(event) | EventType::Updated(event) => {
+            upsert_listings(data, event.listings);
+        }
+        EventType::Removed(event) => {
+            remove_listings(data, event.listings);
+        }
+    }
+    data.listings
+        .sort_by_key(|(listing, _)| (listing.hq, listing.price_per_unit));
+}
+
+fn upsert_listings(data: &mut CurrentlyShownItem, listings: Vec<(ActiveListing, Retainer)>) {
+    for incoming in listings {
+        data.listings
+            .retain(|(listing, _)| listing.id != incoming.0.id);
+        data.listings.push(incoming);
+    }
+}
+
+fn remove_listings(data: &mut CurrentlyShownItem, listings: Vec<(ActiveListing, Retainer)>) {
+    for (removed, _) in listings {
+        data.listings
+            .retain(|(listing, _)| listing.id != removed.id);
+    }
+}
+
+fn apply_sales_event(data: &mut CurrentlyShownItem, event: EventType<SaleEventData>) {
+    match event {
+        EventType::Added(event) | EventType::Updated(event) => {
+            upsert_sales(
+                data,
+                event
+                    .sales
+                    .into_iter()
+                    .map(|(sale, _)| sale)
+                    .collect::<Vec<_>>(),
+            );
+        }
+        EventType::Removed(event) => {
+            for (removed, _) in event.sales {
+                data.sales.retain(|sale| sale.id != removed.id);
+            }
+        }
+    }
+    data.sales
+        .sort_by_key(|sale| std::cmp::Reverse(sale.sold_date));
+    data.sales.truncate(200);
+}
+
+fn upsert_sales(data: &mut CurrentlyShownItem, sales: Vec<SaleHistory>) {
+    for incoming in sales {
+        data.sales.retain(|sale| sale.id != incoming.id);
+        data.sales.push(incoming);
+    }
 }
 
 #[component]
@@ -868,6 +944,58 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
     Effect::new(move |_| {
         let val = listing_resource.get();
         tracing::info!(?val, "Listings updated");
+    });
+    let realtime = use_realtime();
+    let world_data = use_context::<LocalWorldData>().unwrap().0.unwrap();
+    let market_subscriptions = StoredValue::new(Vec::<RealtimeSubscription>::new());
+    Effect::new(move |_| {
+        market_subscriptions.update_value(|subscriptions| subscriptions.clear());
+        let item_id = item_id();
+        let world = Url::unescape(&world());
+        let Some(realtime) = realtime.clone() else {
+            return;
+        };
+        let Some(selector) = world_data
+            .lookup_world_by_name(&world)
+            .map(|world| AnySelector::from(&world))
+        else {
+            return;
+        };
+        if item_id == 0 {
+            return;
+        }
+
+        let filter = FilterPredicate::World(selector).and(FilterPredicate::Item(item_id));
+        let listings_subscription = realtime.subscribe_market(
+            filter.clone(),
+            SocketMessageType::Listings,
+            move |message| match message {
+                ServerClient::Listings(event) => {
+                    update_current_item(listing_resource, |data| {
+                        apply_listing_event(data, event);
+                    });
+                }
+                ServerClient::Stale { .. } => listing_resource.refetch(),
+                _ => {}
+            },
+        );
+        let sales_subscription = realtime.subscribe_market(
+            filter,
+            SocketMessageType::Sales,
+            move |message| match message {
+                ServerClient::Sales(event) => {
+                    update_current_item(listing_resource, |data| {
+                        apply_sales_event(data, event);
+                    });
+                }
+                ServerClient::Stale { .. } => listing_resource.refetch(),
+                _ => {}
+            },
+        );
+        market_subscriptions.set_value(vec![listings_subscription, sales_subscription]);
+    });
+    on_cleanup(move || {
+        market_subscriptions.update_value(|subscriptions| subscriptions.clear());
     });
     view! {
         <div class="w-full py-4 sm:py-6 text-[color:var(--color-text)]">
@@ -976,16 +1104,18 @@ pub fn ItemView() -> impl IntoView {
     };
 
     let description = Memo::new(move |_| {
-        format!(
-            "Current market board listings for {} within {}. Find the lowest prices in your region.",
-            item_name(),
-            world(),
+        t_string!(
+            i18n,
+            item_view_meta_description,
+            name = item_name().to_string(),
+            world = world()
         )
+        .to_string()
     });
 
     view! {
         <MetaTitle title=move || {
-            format!("{} - 🌍{} - Market board - Ultros", item_name(), world())
+            t_string!(i18n, item_view_meta_title, name = item_name().to_string(), world = world()).to_string()
         } />
         <MetaDescription text=description />
         <MetaImage url=move || format!("https://ultros.app/itemcard/{}/{}", world(), item_id()) />
@@ -996,12 +1126,12 @@ pub fn ItemView() -> impl IntoView {
         <Link rel="canonical" prop:href=move || format!("https://ultros.app/item/{}", item_id()) />
         <div class="min-h-screen">
             <div class="w-full px-0 sm:px-4 pt-4 sm:pt-5 pb-3">
-                <div class="flex flex-col gap-4 p-4 sm:p-5 panel">
+                <div class="flex flex-col gap-4 p-3 sm:p-4 border-b border-[color:var(--color-outline)] pb-6">
                     <div class="flex flex-col md:flex-row items-start gap-4">
                         <div class="flex items-center gap-4 flex-1">
                             <ItemIcon item_id icon_size=IconSize::Large />
                             <div class="flex flex-col min-w-0">
-                                <h1 class="text-2xl sm:text-3xl font-bold text-[color:var(--color-text)] flex items-center gap-2 leading-tight">
+                                <h1 class="text-3xl sm:text-4xl font-bold text-[color:var(--color-text)] flex items-center gap-2 leading-tight">
                                     {item_name}
                                     <Clipboard clipboard_text=Signal::derive(move || {
                                         item_name().to_string()
@@ -1039,19 +1169,19 @@ pub fn ItemView() -> impl IntoView {
                                 class="btn-primary"
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                aria-label="Open Universalis market page in a new tab"
+                                aria-label=move || t_string!(i18n, open_universalis_aria_label).to_string()
                                 href=move || format!("https://universalis.app/market/{}", item_id())
                             >
-                                "Universalis"
+                                {t!(i18n, universalis)}
                             </a>
                             <a
                                 class="btn-primary"
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                aria-label="Open Garlandtools item page in a new tab"
+                                aria-label=move || t_string!(i18n, open_garlandtools_aria_label).to_string()
                                 href=move || format!("https://garlandtools.org/db/#item/{}", item_id())
                             >
-                                "Garlandtools"
+                                {t!(i18n, garlandtools)}
                             </a>
                         </div>
                     </div>
