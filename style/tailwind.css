@@ -1518,6 +1518,12 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 
 .app-shell > .side-nav {
     grid-area: side;
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 240px;
+    z-index: 30;
 }
 .app-shell > .top-bar {
     grid-area: top;
@@ -1540,6 +1546,9 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 @media (min-width: 1024px) {
     .app-shell.app-shell-collapsed {
         grid-template-columns: 56px minmax(0, 1fr);
+    }
+    .app-shell.app-shell-collapsed > .side-nav {
+        width: 56px;
     }
 }
 
