@@ -351,11 +351,57 @@ impl UltrosDb {
             .into_active_model();
         item.hq.cmp_set_value(updated_item.hq);
         item.quantity.cmp_set_value(updated_item.quantity);
+        item.target_price.cmp_set_value(updated_item.target_price);
         if item.is_changed() {
             Ok(item.update(&self.db).await?)
         } else {
             Ok(updated_item)
         }
+    }
+
+    /// Update only the `target_price` on a list_item. Requires `Write`
+    /// permission on the owning list. Pass `None` to clear an existing target.
+    #[instrument(skip(self))]
+    pub async fn set_list_item_target_price(
+        &self,
+        owner: i64,
+        list_item_id: i32,
+        target_price: Option<i64>,
+    ) -> Result<()> {
+        let item = list_item::Entity::find_by_id(list_item_id)
+            .one(&self.db)
+            .await?
+            .ok_or(ListError::BadRequest("Item not found"))?;
+        let permission = self.get_permission(item.list_id, owner).await?;
+        if permission < ListPermission::Write {
+            return Err(
+                ListError::Forbidden("Insufficient permissions to update list item").into(),
+            );
+        }
+        let mut active: list_item::ActiveModel = item.into_active_model();
+        active.target_price = ActiveValue::Set(target_price);
+        active.update(&self.db).await?;
+        Ok(())
+    }
+
+    /// Return all list_items for `list_id` that have a non-null `target_price`.
+    /// Used by the price tracker to pre-compute per-list thresholds on refresh.
+    pub async fn get_list_items_with_target(
+        &self,
+        list_id: i32,
+    ) -> Result<Vec<list_item::Model>> {
+        Ok(list_item::Entity::find()
+            .filter(list_item::Column::ListId.eq(list_id))
+            .filter(list_item::Column::TargetPrice.is_not_null())
+            .all(&self.db)
+            .await?)
+    }
+
+    /// Look up a list by id without a permission check. Used by internal code
+    /// (the price tracker dispatch path) that has already authorized the
+    /// operation via the `alert_list_threshold` row.
+    pub async fn get_list_by_id(&self, list_id: i32) -> Result<Option<list::Model>> {
+        Ok(list::Entity::find_by_id(list_id).one(&self.db).await?)
     }
 
     // #[instrument(skip(self))]
