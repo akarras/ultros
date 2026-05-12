@@ -5,14 +5,23 @@ use crate::{
     analysis::{SalesStats, analyze_sales},
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
-        gil::*, icon::Icon, item_icon::*, query_button::QueryButton, skeleton::BoxSkeleton,
-        virtual_scroller::*, world_picker::WorldOnlyPicker,
+        gil::*,
+        icon::Icon,
+        item_icon::*,
+        query_button::QueryButton,
+        skeleton::BoxSkeleton,
+        tool_help::*,
+        toolbar::{Toolbar, ToolbarField},
+        virtual_scroller::*,
+        world_picker::WorldOnlyPicker,
     },
-    global_state::{LocalWorldData, home_world::use_home_world},
+    global_state::{
+        LocalWorldData, home_world::use_home_world, region_for_world::use_region_for_world,
+    },
 };
 use icondata as i;
 use itertools::Itertools;
-use leptos::{either::Either, prelude::*};
+use leptos::prelude::*;
 use leptos_router::{
     NavigateOptions,
     hooks::{query_signal, use_location, use_navigate, use_query_map},
@@ -25,7 +34,6 @@ use std::{
 use ultros_api_types::{
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     recent_sales::{RecentSales, SaleData},
-    world_helper::AnyResult,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -170,11 +178,10 @@ fn VentureAnalyzerTable(
                 continue;
             }
 
-            #[allow(clippy::collapsible_if)]
-            if let Some(ids) = &selected_ids {
-                if !ids.contains(&task.class_job_category) {
-                    continue;
-                }
+            if let Some(ids) = &selected_ids
+                && !ids.contains(&task.class_job_category)
+            {
+                continue;
             }
 
             // Check if `task.task` (RowId) corresponds to a RetainerTaskNormal
@@ -213,10 +220,10 @@ fn VentureAnalyzerTable(
                     }
                 };
 
-                let venture_cost_gil = 0; // Placeholder
-
+                // Ventures cost venture coins (not gil), so "profit" here is gross revenue.
+                // If we ever convert ventures to a gil-equivalent cost, subtract it here.
                 let revenue = market_price * quantity;
-                let profit = revenue - venture_cost_gil;
+                let profit = revenue;
 
                 if let Some(min) = minimum_profit()
                     && profit < min
@@ -252,70 +259,28 @@ fn VentureAnalyzerTable(
 
     view! {
         <div class="flex flex-col gap-6">
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                <div class="panel p-6 flex flex-col w-full bg-[color:var(--color-background-elevated)] bg-opacity-100 z-20">
-                    <h3 class="font-bold text-xl mb-2 text-[color:var(--brand-fg)]">{t!(i18n, venture_analyzer_filter_by_job)}</h3>
-                    <div class="flex flex-wrap gap-2">
-                        {move || {
-                            let selected = selected_jobs_set.get();
-                            categories
-                                .get()
-                                .into_iter()
-                                .map(|(_id, name)| {
-                                    let is_selected = selected.contains(&name);
-                                    let name_clone = name.clone();
-                                    let toggle_job = toggle_job.clone();
-                                    view! {
-                                        <button
-                                            class=move || {
-                                                if is_selected {
-                                                    "px-3 py-1 rounded-full text-xs font-bold bg-brand-600 text-white transition-colors border border-brand-500"
-                                                } else {
-                                                    "px-3 py-1 rounded-full text-xs font-bold bg-[color:var(--color-base)] hover:bg-[color:var(--brand-ring)]/20 text-[color:var(--color-text)] transition-colors border border-[color:var(--color-outline)]"
-                                                }
-                                            }
-                                            on:click=move |_| toggle_job(name_clone.clone())
-                                        >
-                                            {name}
-                                        </button>
-                                    }
-                                })
-                                .collect_view()
-                        }}
-                    </div>
-                </div>
-                <div class="panel p-6 flex flex-col w-full bg-[color:var(--color-background-elevated)] bg-opacity-100 z-20">
-                    <h3 class="font-bold text-xl mb-2 text-[color:var(--brand-fg)]">{t!(i18n, venture_analyzer_minimum_profit)}</h3>
-                    <p class="mb-4 text-[color:var(--color-text-muted)]">{t!(i18n, venture_analyzer_minimum_profit_desc)}</p>
-                    <div class="flex flex-col gap-2">
-                        <div class="text-brand-300">
-                            {move || {
-                                minimum_profit()
-                                    .map(|profit| Either::Left(view! { <Gil amount=profit /> }))
-                                    .unwrap_or(Either::Right("---"))
-                            }}
-                        </div>
-                        <input
-                            class="input"
-                            min=0
-                            step=1000
-                            type="number"
-                            prop:value=minimum_profit
-                            on:input=move |input| {
-                                let value = event_target_value(&input);
-                                if let Ok(profit) = value.parse::<i32>() {
-                                    set_minimum_profit(Some(profit))
-                                } else if value.is_empty() {
-                                    set_minimum_profit(None);
-                                }
+            // Simple scalar filters in a Toolbar row
+            <Toolbar>
+                <ToolbarField label="Profit (Min)">
+                    <input
+                        class="input input-sm w-36"
+                        min=0
+                        step=1000
+                        placeholder="e.g. 50000"
+                        type="number"
+                        prop:value=minimum_profit
+                        on:input=move |input| {
+                            let value = event_target_value(&input);
+                            if let Ok(profit) = value.parse::<i32>() {
+                                set_minimum_profit(Some(profit))
+                            } else if value.is_empty() {
+                                set_minimum_profit(None);
                             }
-                        />
-                    </div>
-                </div>
-
-                <div class="panel p-6 flex flex-col w-full bg-[color:var(--color-background-elevated)] bg-opacity-100 z-20">
-                    <h3 class="font-bold text-xl mb-2 text-[color:var(--brand-fg)]">{t!(i18n, venture_analyzer_options)}</h3>
-                    <div class="flex flex-row gap-4 flex-wrap">
+                        }
+                    />
+                </ToolbarField>
+                <ToolbarField label="Filter Outliers">
+                    <div class="flex flex-row gap-2 items-center">
                         <input
                             type="checkbox"
                             id="filter-outliers"
@@ -323,11 +288,43 @@ fn VentureAnalyzerTable(
                             prop:checked=move || filter_outliers().unwrap_or(false)
                             on:change=move |ev| set_filter_outliers(Some(event_target_checked(&ev)))
                         />
-                        <label for="filter-outliers">{t!(i18n, venture_analyzer_filter_outliers)}</label>
                         <div class="text-brand-300 cursor-help" title=move || t_string!(i18n, venture_analyzer_filter_outliers_tooltip).to_string()>
                             <Icon icon=i::AiQuestionCircleOutlined />
                         </div>
                     </div>
+                </ToolbarField>
+            </Toolbar>
+
+            // Job category multi-select: complex tag-cloud widget, kept as panel
+            <div class="panel p-4 flex flex-col w-full bg-[color:var(--color-background-elevated)] bg-opacity-100 z-20">
+                <h3 class="font-bold text-base mb-2 text-[color:var(--brand-fg)]">{t!(i18n, venture_analyzer_filter_by_job)}</h3>
+                <div class="flex flex-wrap gap-2">
+                    {move || {
+                        let selected = selected_jobs_set.get();
+                        categories
+                            .get()
+                            .into_iter()
+                            .map(|(_id, name)| {
+                                let is_selected = selected.contains(&name);
+                                let name_clone = name.clone();
+                                let toggle_job = toggle_job.clone();
+                                view! {
+                                    <button
+                                        class=move || {
+                                            if is_selected {
+                                                "px-3 py-1 rounded-full text-xs font-bold bg-brand-600 text-white transition-colors border border-brand-500"
+                                            } else {
+                                                "px-3 py-1 rounded-full text-xs font-bold bg-[color:var(--color-base)] hover:bg-[color:var(--brand-ring)]/20 text-[color:var(--color-text)] transition-colors border border-[color:var(--color-outline)]"
+                                            }
+                                        }
+                                        on:click=move |_| toggle_job(name_clone.clone())
+                                    >
+                                        {name}
+                                    </button>
+                                }
+                            })
+                            .collect_view()
+                    }}
                 </div>
             </div>
 
@@ -370,7 +367,7 @@ fn VentureAnalyzerTable(
                     key=move |(index, data): &(usize, Arc<VentureProfitData>)| (*index, data.item_id)
                     view=move |(index, data): (usize, Arc<VentureProfitData>)| {
                         let item_id = data.item_id;
-                        let item = items.get(&xiv_gen::ItemId(item_id)).map(|i| i.name.as_str().to_string()).unwrap_or_else(|| t_string!(i18n, venture_analyzer_unknown_item).to_string());
+                        let item = items.get(&xiv_gen::ItemId(item_id)).map(|i| i.name.as_str().to_string()).unwrap_or_else(|| t_string!(i18n, unknown).to_string());
 
                         let classes = if (index % 2) == 0 {
                             "flex flex-row items-center flex-nowrap h-15 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_6%,transparent)] transition-colors"
@@ -431,25 +428,7 @@ pub fn VentureAnalyzer() -> impl IntoView {
     let (home_world, _) = use_home_world();
     let nav = use_navigate();
 
-    let region = Memo::new(move |_| {
-        let worlds = use_context::<LocalWorldData>()
-            .expect("Worlds should always be populated here")
-            .0
-            .unwrap();
-        // Default to home world region or North-America
-        let world_name = query
-            .with(|p| p.get("world").clone())
-            .or_else(|| home_world.get().map(|w| w.name))
-            .unwrap_or_else(|| "North-America".to_string());
-
-        worlds
-            .lookup_world_by_name(&world_name)
-            .map(|world| {
-                let region = worlds.get_region(world);
-                AnyResult::Region(region).get_name().to_string()
-            })
-            .unwrap_or_else(|| "North-America".to_string())
-    });
+    let region = use_region_for_world(move || query.with(|p| p.get("world").clone()));
 
     let global_cheapest_listings = ArcResource::new(region, move |region: String| async move {
         get_cheapest_listings(&region).await
@@ -521,9 +500,15 @@ pub fn VentureAnalyzer() -> impl IntoView {
             <MetaTitle title=move || t_string!(i18n, venture_analyzer_meta_title).to_string() />
             <MetaDescription text=move || t_string!(i18n, venture_analyzer_meta_desc).to_string() />
 
-            <div class="flex flex-col gap-4 p-4 bg-brand-900/50 rounded-lg border border-brand-800">
-                <div class="flex flex-row justify-between items-center">
-                    <h1 class="text-2xl font-bold text-brand-100">{t!(i18n, venture_analyzer_title)}</h1>
+            <div class="flex flex-col gap-4">
+                <ToolHeader
+                    title="Venture Analyzer"
+                    summary="Rank normal retainer ventures by gross market value and recent sales activity."
+                    context="Profit is gross revenue in this first pass; venture token cost and opportunity cost are not modeled."
+                    help_href="/help/venture-analyzer"
+                    help_body="Venture Analyzer multiplies venture output quantity by current market price, then uses recent sales to help separate practical choices from slow-moving rare drops."
+                />
+                <div class="flex flex-row justify-end items-center">
                     <div class="flex flex-row gap-2 items-center">
                         <Suspense fallback=move || view! { <div class="text-brand-300 text-sm animate-pulse">{t!(i18n, venture_analyzer_loading_sales)}</div> }>
                             {move || {
@@ -536,14 +521,23 @@ pub fn VentureAnalyzer() -> impl IntoView {
                     </div>
                 </div>
 
-                <div class="flex flex-col md:flex-row items-center gap-2">
-                    <label class="text-[color:var(--brand-fg)] font-semibold">{t!(i18n, venture_analyzer_select_world)}</label>
-                    <div class="w-full md:w-auto">
+                <Toolbar>
+                    <ToolbarField label="World">
                         <WorldOnlyPicker
                             current_world=selected_world.into()
                             set_current_world=set_selected_world.into()
                         />
-                    </div>
+                    </ToolbarField>
+                </Toolbar>
+                <CalculationSummary
+                    title="Gross revenue model"
+                    formula="profit = output quantity * current market price"
+                    details="This does not subtract venture token value or the opportunity cost of sending a retainer on another task."
+                />
+                <div class="flex flex-wrap gap-2">
+                    <AssumptionBadge text="Gross revenue only" />
+                    <AssumptionBadge text="Normal ventures only" />
+                    <AssumptionBadge text="Recent sales affect confidence" />
                 </div>
 
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>

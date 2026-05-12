@@ -10,6 +10,7 @@ use ultros_api_types::icon_size::IconSize;
 use xiv_gen::ItemId;
 
 use crate::components::{item_icon::ItemIcon, skeleton::BoxSkeleton};
+use crate::i18n::*;
 
 #[derive(Clone, Copy)]
 pub struct RecentItems {
@@ -58,6 +59,7 @@ impl RecentItems {
 
 #[component]
 pub fn RecentlyViewed() -> impl IntoView {
+    let i18n = use_i18n();
     let item_data = use_context::<RecentItems>().unwrap();
     let items = item_data.reader();
     let local_items = LocalResource::new(move || async move { items() });
@@ -79,7 +81,7 @@ pub fn RecentlyViewed() -> impl IntoView {
                     }
                 >
                     <div class="flex items-center justify-between">
-                        <h4 class="text-xl font-bold text-[color:var(--color-text)]">"Recently Viewed"</h4>
+                        <h4 class="text-xl font-bold text-[color:var(--color-text)]">{t!(i18n, recently_viewed_title)}</h4>
                         <button
                             class="text-sm text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] transition-colors focus:outline-none focus:ring-2 focus:ring-[color:var(--brand-ring)] rounded px-2"
                             on:click=move |_| {
@@ -95,7 +97,13 @@ pub fn RecentlyViewed() -> impl IntoView {
                                 }
                             }
                         >
-                            {move || if confirm_clear.get() { "Confirm Clear?" } else { "Clear All" }}
+                            {move || {
+                                if confirm_clear.get() {
+                                    t_string!(i18n, recently_viewed_confirm_clear).to_string()
+                                } else {
+                                    t_string!(i18n, recently_viewed_clear_all).to_string()
+                                }
+                            }}
                         </button>
                     </div>
 
@@ -114,7 +122,7 @@ pub fn RecentlyViewed() -> impl IntoView {
                                         view! {
                                             <A href=format!("/item/{item_id}")>
 
-                                                <div class="card p-3 transition-colors duration-200 group">
+                                                <div class="px-2 py-2 rounded-lg hover:bg-[color:color-mix(in_srgb,var(--brand-bg)_10%,transparent)] transition-colors duration-200 group">
                                                     <div class="flex items-center gap-4 w-full transform transition-transform duration-200 group-hover:translate-x-1">
                                                         <ItemIcon item_id icon_size=IconSize::Medium />
 
@@ -140,7 +148,7 @@ pub fn RecentlyViewed() -> impl IntoView {
                             href="/history"
                             class="text-sm text-[color:var(--color-text-muted)] hover:text-[color:var(--brand-fg)] transition-colors"
                         >
-                            "View All Recently Viewed"
+                            {t!(i18n, recently_viewed_view_all)}
                         </a>
                     </div>
                 </div>

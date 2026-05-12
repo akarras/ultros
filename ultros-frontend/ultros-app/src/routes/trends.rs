@@ -15,6 +15,8 @@ use crate::{
         item_icon::ItemIcon,
         meta::{MetaDescription, MetaTitle},
         skeleton::BoxSkeleton,
+        tool_help::*,
+        toolbar::{Toolbar, ToolbarField, ToolbarPills},
         virtual_scroller::VirtualScroller,
         world_picker::WorldOnlyPicker,
     },
@@ -147,15 +149,10 @@ fn TrendsWorldNavigator() -> impl IntoView {
     });
 
     view! {
-        <div class="flex flex-col md:flex-row items-center gap-2">
-            <label class="text-[color:var(--brand-fg)] font-semibold">"Select World:"</label>
-            <div class="w-full md:w-auto min-w-[200px]">
-                <WorldOnlyPicker
-                    current_world=current_world.into()
-                    set_current_world=set_current_world.into()
-                />
-            </div>
-        </div>
+        <WorldOnlyPicker
+            current_world=current_world.into()
+            set_current_world=set_current_world.into()
+        />
     }
 }
 
@@ -184,92 +181,85 @@ pub fn Trends() -> impl IntoView {
         <MetaDescription text="View market trends for Final Fantasy 14 items, including high velocity, rising prices, and falling prices." />
 
         <div class="main-content p-6">
-            <div class="container mx-auto max-w-7xl">
-                <div class="flex flex-col gap-8">
-                    // Header Section
-                    <div class="panel p-8 rounded-2xl">
-                        <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
-                            <div>
-                                <h1 class="text-3xl font-bold text-[color:var(--brand-fg)] mb-2">
-                                    "Market Trends"
-                                </h1>
-                                <p class="text-lg text-[color:var(--color-text)]/90">
-                                    "Analyze item price movements and sales velocity for " <span class="font-semibold text-brand-300">{world}</span>
-                                </p>
-                            </div>
-                            <TrendsWorldNavigator />
-                        </div>
+            <div class="flex flex-col gap-8">
+                <ToolHeader
+                    title="Market Trends"
+                    summary="Review high-velocity, rising-price, and falling-price items for the selected world."
+                    context="Trends are directional signals. Open an item page before treating a movement as a buying decision."
+                    help_href="/help/market-trends"
+                    help_body="Market Trends groups items by recent sales and price movement. High velocity is best for demand checks; rising and falling prices are prompts to investigate item history."
+                />
 
-                        // Tab Selection
-                        <div class="flex flex-wrap gap-2 mt-6">
+                // Filter toolbar
+                <Toolbar>
+                    <ToolbarField label="World">
+                        <TrendsWorldNavigator />
+                    </ToolbarField>
+                    <ToolbarField label="Category">
+                        <ToolbarPills>
                             <button
-                                class=move || if selected_tab.get() == TrendTab::Velocity {
-                                    "btn bg-brand-600 hover:bg-brand-500 text-white border-none"
-                                } else {
-                                    "btn btn-outline text-[color:var(--color-text)] hover:bg-[color:var(--brand-ring)] hover:border-transparent"
-                                }
+                                aria-pressed=move || (selected_tab.get() == TrendTab::Velocity).to_string()
                                 on:click=move |_| set_selected_tab.set(TrendTab::Velocity)
                             >
                                 "High Velocity"
                             </button>
                             <button
-                                class=move || if selected_tab.get() == TrendTab::Rising {
-                                    "btn bg-brand-600 hover:bg-brand-500 text-white border-none"
-                                } else {
-                                    "btn btn-outline text-[color:var(--color-text)] hover:bg-[color:var(--brand-ring)] hover:border-transparent"
-                                }
+                                aria-pressed=move || (selected_tab.get() == TrendTab::Rising).to_string()
                                 on:click=move |_| set_selected_tab.set(TrendTab::Rising)
                             >
                                 "Rising Prices"
                             </button>
                             <button
-                                class=move || if selected_tab.get() == TrendTab::Falling {
-                                    "btn bg-brand-600 hover:bg-brand-500 text-white border-none"
-                                } else {
-                                    "btn btn-outline text-[color:var(--color-text)] hover:bg-[color:var(--brand-ring)] hover:border-transparent"
-                                }
+                                aria-pressed=move || (selected_tab.get() == TrendTab::Falling).to_string()
                                 on:click=move |_| set_selected_tab.set(TrendTab::Falling)
                             >
                                 "Falling Prices"
                             </button>
-                        </div>
-                    </div>
+                        </ToolbarPills>
+                    </ToolbarField>
+                </Toolbar>
 
-                    // Content
-                    <div class="min-h-[500px]">
-                        <Suspense fallback=BoxSkeleton>
-                            {move || match trends.get() {
-                                Some(Ok(Some(data))) => {
-                                    let items = match selected_tab.get() {
-                                        TrendTab::Velocity => data.high_velocity,
-                                        TrendTab::Rising => data.rising_price,
-                                        TrendTab::Falling => data.falling_price,
-                                    };
+                // Metric explainers
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <MetricExplainer label="High Velocity" explanation="Items selling frequently enough to be useful for demand and restock decisions." />
+                    <MetricExplainer label="Rising Prices" explanation="Items whose recent price movement points upward. Treat this as a prompt to inspect supply, not a guarantee." />
+                    <MetricExplainer label="Falling Prices" explanation="Items whose recent price movement points downward, often from oversupply or cooling demand." />
+                </div>
 
-                                    if items.is_empty() {
-                                        view! {
-                                            <div class="text-xl text-[color:var(--color-text)] text-center p-8 bg-brand-900/20 rounded-2xl border border-white/10">
-                                                "No trends data available for this category."
-                                            </div>
-                                        }.into_any()
-                                    } else {
-                                        view! { <TrendsTable items=items world=world() /> }.into_any()
-                                    }
-                                },
-                                Some(Ok(None)) => view! {
-                                    <div class="text-xl text-[color:var(--color-text)] text-center p-8 bg-brand-900/20 rounded-2xl border border-white/10">
-                                        "Please select a valid world."
-                                    </div>
-                                }.into_any(),
-                                Some(Err(e)) => view! {
-                                    <div class="text-xl text-red-400 text-center p-8 bg-red-950/20 rounded-2xl border border-red-500/30">
-                                        {format!("Error loading trends: {}", e)}
-                                    </div>
-                                }.into_any(),
-                                None => view! { <BoxSkeleton /> }.into_any(),
-                            }}
-                        </Suspense>
-                    </div>
+                // Content
+                <div class="min-h-[500px]">
+                    <Suspense fallback=BoxSkeleton>
+                        {move || match trends.get() {
+                            Some(Ok(Some(data))) => {
+                                let items = match selected_tab.get() {
+                                    TrendTab::Velocity => data.high_velocity,
+                                    TrendTab::Rising => data.rising_price,
+                                    TrendTab::Falling => data.falling_price,
+                                };
+
+                                if items.is_empty() {
+                                    view! {
+                                        <div class="text-xl text-[color:var(--color-text)] text-center p-8 bg-brand-900/20 rounded-2xl border border-white/10">
+                                            "No trends data available for this category."
+                                        </div>
+                                    }.into_any()
+                                } else {
+                                    view! { <TrendsTable items=items world=world() /> }.into_any()
+                                }
+                            },
+                            Some(Ok(None)) => view! {
+                                <div class="text-xl text-[color:var(--color-text)] text-center p-8 bg-brand-900/20 rounded-2xl border border-white/10">
+                                    "Please select a valid world."
+                                </div>
+                            }.into_any(),
+                            Some(Err(e)) => view! {
+                                <div class="text-xl text-red-400 text-center p-8 bg-red-950/20 rounded-2xl border border-red-500/30">
+                                    {format!("Error loading trends: {}", e)}
+                                </div>
+                            }.into_any(),
+                            None => view! { <BoxSkeleton /> }.into_any(),
+                        }}
+                    </Suspense>
                 </div>
             </div>
         </div>

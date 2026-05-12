@@ -6,15 +6,25 @@ use tracing::error;
 use tracing::instrument;
 use ultros_api_types::{
     ActiveListing, CurrentlyShownItem, FfxivCharacter, FfxivCharacterVerification,
-    alert::{Alert, AlertEvent, CreateAlertRequest, UpdateAlertRequest},
+    alert::{
+        Alert, AlertEvent, CreateAlertRequest, CreateEndpointRequest,
+        CreatePushSubscriptionRequest, Endpoint, ResendResult, UpdateAlertRequest,
+        UpdateEndpointRequest, VapidPublicKey,
+    },
     cheapest_listings::{CheapestListings, CheapestListingsMap},
-    list::{CreateList, List, ListItem},
+    list::{
+        CreateInvite, CreateList, List, ListInvite, ListItem, ListSharedGroup, ListSharedUser,
+        ListWithPermission, ShareListGroup, ShareListUser,
+    },
     recent_sales::RecentSales,
     result::JsonErrorWrapper,
     retainer::{Retainer, RetainerListings},
     search::SearchResult,
     trends::TrendsData,
-    user::{OwnedRetainer, UserData, UserRetainerListings, UserRetainers},
+    user::{
+        OwnedRetainer, UserData, UserRetainerListings, UserRetainers,
+        group::{CreateGroup, UserGroup},
+    },
 };
 
 use crate::error::{AppError, AppResult};
@@ -32,8 +42,22 @@ pub(crate) async fn get_listings(item_id: i32, world: &str) -> AppResult<Current
     fetch_api(&format!("/api/v1/listings/{world}/{item_id}")).await
 }
 
-/// This is okay because the client will send our login cookie
+/// This is okay because the client will send our login cookie.
+///
+/// Before falling back to the network, consult `BootstrapUser` — the SSR
+/// handler resolves the user from the auth cookie on every page render, and
+/// the client mirrors that into context on hydration from the bootstrap
+/// script. When the context is present we never have to hit
+/// `/api/v1/current_user`.
 pub(crate) async fn get_login() -> AppResult<UserData> {
+    use leptos::prelude::use_context;
+    if let Some(crate::global_state::BootstrapUser(user)) =
+        use_context::<crate::global_state::BootstrapUser>()
+    {
+        return user.ok_or(AppError::ApiError(
+            ultros_api_types::result::ApiError::NotAuthenticated,
+        ));
+    }
     fetch_api("/api/v1/current_user").await
 }
 
@@ -222,13 +246,21 @@ pub(crate) async fn search_characters(character: String) -> AppResult<Vec<FfxivC
     fetch_api(&format!("/api/v1/characters/search/{character}")).await
 }
 
-pub(crate) async fn get_lists() -> AppResult<Vec<List>> {
+pub(crate) async fn get_lists_with_permissions() -> AppResult<Vec<ListWithPermission>> {
     fetch_api("/api/v1/list").await
+}
+
+pub(crate) async fn get_lists() -> AppResult<Vec<List>> {
+    Ok(get_lists_with_permissions()
+        .await?
+        .into_iter()
+        .map(|entry| entry.list)
+        .collect())
 }
 
 pub(crate) async fn get_list_items_with_listings(
     list_id: i32,
-) -> AppResult<(List, Vec<(ListItem, Vec<ActiveListing>)>)> {
+) -> AppResult<(ListWithPermission, Vec<(ListItem, Vec<ActiveListing>)>)> {
     if list_id == 0 {
         return Err(AppError::BadList);
     }
@@ -237,6 +269,10 @@ pub(crate) async fn get_list_items_with_listings(
 
 pub(crate) async fn delete_list(list_id: i32) -> AppResult<()> {
     delete_api(&format!("/api/v1/list/{list_id}/delete")).await
+}
+
+pub(crate) async fn leave_list(list_id: i32, self_user_id: u64) -> AppResult<()> {
+    delete_api(&format!("/api/v1/list/{list_id}/share/user/{self_user_id}")).await
 }
 
 pub(crate) async fn create_list(list: CreateList) -> AppResult<()> {
@@ -270,6 +306,63 @@ pub(crate) async fn delete_list_items(list_items: Vec<i32>) -> AppResult<()> {
     post_api("/api/v1/list/item/delete", list_items).await
 }
 
+pub(crate) async fn get_groups() -> AppResult<Vec<UserGroup>> {
+    fetch_api("/api/v1/group").await
+}
+
+pub(crate) async fn create_group(group: CreateGroup) -> AppResult<UserGroup> {
+    post_api("/api/v1/group/create", group).await
+}
+
+pub(crate) async fn add_group_member(group_id: i32, user_id: i64) -> AppResult<()> {
+    post_api(
+        &format!("/api/v1/group/{group_id}/member/add/{user_id}"),
+        (),
+    )
+    .await
+}
+
+pub(crate) async fn get_list_shares(
+    list_id: i32,
+) -> AppResult<(Vec<ListSharedUser>, Vec<ListSharedGroup>)> {
+    fetch_api(&format!("/api/v1/list/{list_id}/shares")).await
+}
+
+pub(crate) async fn share_list_with_user(list_id: i32, share: ShareListUser) -> AppResult<()> {
+    post_api(&format!("/api/v1/list/{list_id}/share/user"), share).await
+}
+
+pub(crate) async fn share_list_with_group(list_id: i32, share: ShareListGroup) -> AppResult<()> {
+    post_api(&format!("/api/v1/list/{list_id}/share/group"), share).await
+}
+
+pub(crate) async fn unshare_list_from_user(list_id: i32, user_id: i64) -> AppResult<()> {
+    delete_api(&format!("/api/v1/list/{list_id}/share/user/{user_id}")).await
+}
+
+pub(crate) async fn unshare_list_from_group(list_id: i32, group_id: i32) -> AppResult<()> {
+    delete_api(&format!("/api/v1/list/{list_id}/share/group/{group_id}")).await
+}
+
+pub(crate) async fn get_list_invites(list_id: i32) -> AppResult<Vec<ListInvite>> {
+    fetch_api(&format!("/api/v1/list/{list_id}/invites")).await
+}
+
+pub(crate) async fn create_list_invite(
+    list_id: i32,
+    invite: CreateInvite,
+) -> AppResult<ListInvite> {
+    post_api(&format!("/api/v1/list/{list_id}/invite/create"), invite).await
+}
+
+pub(crate) async fn use_list_invite(invite_id: String) -> AppResult<i32> {
+    post_api(&format!("/api/v1/invite/{invite_id}/use"), ()).await
+}
+
+pub(crate) async fn delete_list_invite(invite_id: String) -> AppResult<()> {
+    delete_api(&format!("/api/v1/invite/{invite_id}")).await
+}
+
 pub(crate) async fn update_retainer_order(retainers: Vec<OwnedRetainer>) -> AppResult<()> {
     post_api("/api/v1/retainer/reorder", retainers).await
 }
@@ -292,6 +385,52 @@ pub(crate) async fn delete_alert(id: i32) -> AppResult<()> {
 
 pub(crate) async fn get_alert_events() -> AppResult<Vec<AlertEvent>> {
     fetch_api("/api/v1/alerts/events").await
+}
+
+pub(crate) async fn list_endpoints() -> AppResult<Vec<Endpoint>> {
+    fetch_api("/api/v1/endpoints").await
+}
+
+pub(crate) async fn create_endpoint(req: CreateEndpointRequest) -> AppResult<Endpoint> {
+    post_api("/api/v1/endpoints", req).await
+}
+
+#[allow(dead_code)]
+pub(crate) async fn update_endpoint(id: i32, req: UpdateEndpointRequest) -> AppResult<()> {
+    patch_api(&format!("/api/v1/endpoints/{id}"), req).await
+}
+
+pub(crate) async fn delete_endpoint(id: i32) -> AppResult<()> {
+    delete_api(&format!("/api/v1/endpoints/{id}")).await
+}
+
+pub(crate) async fn test_endpoint(id: i32) -> AppResult<ResendResult> {
+    post_api(&format!("/api/v1/endpoints/{id}/test"), ()).await
+}
+
+pub(crate) async fn resend_alert_event(event_id: i64) -> AppResult<ResendResult> {
+    post_api(&format!("/api/v1/alerts/events/{event_id}/resend"), ()).await
+}
+
+/// Fetch the server's VAPID public key. Used by the browser to call
+/// `pushManager.subscribe({applicationServerKey})`.
+///
+/// SSR builds never invoke this — the browser-side subscribe flow lives behind
+/// `cfg(all(feature = "hydrate", target_arch = "wasm32"))` — so this is "dead"
+/// on the server. The allow is targeted, not a `#[allow]` smell.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub(crate) async fn get_vapid_public_key() -> AppResult<VapidPublicKey> {
+    fetch_api("/api/v1/push/vapid-public-key").await
+}
+
+/// Persist the browser's PushSubscription on the server and create a matching
+/// notification endpoint of method=WebPush. SSR-dead, same reasoning as
+/// [`get_vapid_public_key`].
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub(crate) async fn create_push_subscription(
+    req: CreatePushSubscriptionRequest,
+) -> AppResult<Endpoint> {
+    post_api("/api/v1/push/subscribe", req).await
 }
 
 /// Return the T, or try and return an AppError
@@ -373,7 +512,8 @@ where
     });
     let req_parts = use_context::<Parts>().ok_or(AppError::ParamMissing)?;
     let headers = req_parts.headers;
-    let hostname = "http://localhost:8080";
+    let hostname =
+        std::env::var("HOSTNAME").unwrap_or_else(|_| "http://localhost:8080".to_string());
     let path = format!("{hostname}{path}");
     // headers.remove("Accept-Encoding");
     // this is only necessary because reqwest isn't updated to http 1.0- and I'm being lazy
@@ -457,7 +597,8 @@ where
     });
     let req_parts = use_context::<Parts>().ok_or(AppError::ParamMissing)?;
     let headers = req_parts.headers;
-    let hostname = "http://localhost:8080";
+    let hostname =
+        std::env::var("HOSTNAME").unwrap_or_else(|_| "http://localhost:8080".to_string());
     let path = format!("{hostname}{path}");
     // this is only necessary because reqwest isn't updated to http 1.0- and I'm being lazy
     let mut new_map = reqwest::header::HeaderMap::new();

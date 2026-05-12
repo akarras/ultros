@@ -18,6 +18,22 @@ Two paths:
 
 Either way, *do not commit and push without running fmt-check* — every formatting mistake will fail CI and waste a round trip.
 
+## Windows: OpenSSL via vendored build
+
+`web-push` (Tier 3 of the notification work) pulls in `openssl` transitively via the `ece` crate. The `ultros` crate pins `openssl = { features = ["vendored"] }` so cargo compiles OpenSSL from source via `openssl-src` instead of needing a system library. This means **no `libssl-dev` / OpenSSL-dev-headers required** on Linux or Windows for `cargo build`.
+
+Vendored builds need **Perl + a C compiler** to configure and build OpenSSL from source:
+
+- **Linux**: `perl` is almost always present; if not, `apt install perl`. The CI image already has both.
+- **Windows**: install [Strawberry Perl](https://strawberryperl.com/) (`winget install StrawberryPerl.StrawberryPerl`). Make sure `C:\Strawberry\perl\bin` is on PATH **before** Git's bundled MSYS Perl (`C:\Program Files\Git\usr\bin`) — the MSYS Perl is too minimal to run OpenSSL's `Configure` script and you'll get a `Locale::Maketext::Simple` error. From a fresh PowerShell:
+  ```powershell
+  $env:PATH = "C:\Strawberry\perl\bin;C:\Strawberry\c\bin;" + $env:PATH
+  cargo build  # or ./check_ci.sh from Git Bash with the same PATH
+  ```
+  In Git Bash, prepend `/c/Strawberry/perl/bin:/c/Strawberry/c/bin:` to `$PATH`.
+
+The first build takes ~10 minutes (compiling OpenSSL from source); subsequent builds reuse the cached artifact.
+
 ## Optional: install git hooks
 
 `./scripts/install-hooks.sh` wires `core.hooksPath` to `scripts/hooks/`. Pre-commit runs fmt-check (fast); pre-push runs the full `check_ci.sh`. Bypass with `--no-verify` if you must.

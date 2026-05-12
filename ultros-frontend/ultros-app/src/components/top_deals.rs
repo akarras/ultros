@@ -5,23 +5,27 @@ use crate::components::item_icon::{IconSize, ItemIcon};
 use crate::components::skeleton::BoxSkeleton;
 use crate::global_state::home_world::use_home_world;
 use crate::global_state::xiv_data::tracked_data;
+use crate::i18n::*;
 use icondata as i;
 use leptos::prelude::*;
 use xiv_gen::ItemId;
 
 #[component]
 fn DealItem(deal: ResaleStatsDto, home_world_name: String) -> impl IntoView {
-    let item = tracked_data().items.get(&ItemId(deal.item_id));
-    let name = item.map(|i| i.name.as_str()).unwrap_or("Unknown Item");
+    let i18n = use_i18n();
+    let name = move || {
+        tracked_data()
+            .items
+            .get(&ItemId(deal.item_id))
+            .map(|i| i.name.as_str().to_string())
+            .unwrap_or_else(|| t_string!(i18n, unknown_item).to_string())
+    };
 
     view! {
         <a
             href=format!("/item/{}/{}", home_world_name, deal.item_id)
-            class="card group block relative overflow-hidden"
+            class="group block relative overflow-hidden rounded-lg p-2 -mx-2 hover:bg-[color:color-mix(in_srgb,var(--brand-bg)_10%,transparent)] transition-colors"
         >
-            <div class="absolute top-0 right-0 p-2 opacity-10 group-hover:opacity-20 transition-opacity pointer-events-none">
-                 <Icon icon=i::FaMoneyBillTrendUpSolid width="3em" height="3em" />
-            </div>
             <div class="flex items-start gap-4 relative z-10">
                 <ItemIcon item_id=deal.item_id icon_size=IconSize::Medium />
                 <div class="flex-1 min-w-0">
@@ -30,10 +34,10 @@ fn DealItem(deal: ResaleStatsDto, home_world_name: String) -> impl IntoView {
                         <div class="flex items-center gap-1 text-[color:var(--color-text-success)] font-mono font-medium">
                             <span class="text-xs flex items-center"><Icon icon=i::FaArrowTrendUpSolid /></span>
                             <Gil amount=deal.profit />
-                            <span class="text-xs opacity-80 ml-1">"profit"</span>
+                            <span class="text-xs opacity-80 ml-1">{t!(i18n, top_deals_profit_label)}</span>
                         </div>
                         <div class="flex items-center gap-1 text-[color:var(--color-text-muted)]">
-                            <span class="text-xs">"ROI"</span>
+                            <span class="text-xs">{t!(i18n, top_deals_roi_label)}</span>
                             <span class="font-mono">{format!("{:.0}%", deal.return_on_investment)}</span>
                         </div>
                     </div>
@@ -45,6 +49,7 @@ fn DealItem(deal: ResaleStatsDto, home_world_name: String) -> impl IntoView {
 
 #[component]
 pub fn TopDeals() -> impl IntoView {
+    let i18n = use_i18n();
     let (home_world, _) = use_home_world();
 
     let deals = Resource::new(
@@ -72,10 +77,10 @@ pub fn TopDeals() -> impl IntoView {
                     </div>
                     <div>
                         <h2 class="text-2xl font-extrabold tracking-tight text-[color:var(--color-text)]">
-                            "Market Movers"
+                            {t!(i18n, top_deals_title)}
                         </h2>
                         <p class="text-sm text-[color:var(--color-text-muted)]">
-                            "Top flips in your region right now"
+                            {t!(i18n, top_deals_subtitle)}
                         </p>
                     </div>
                 </div>
@@ -83,7 +88,8 @@ pub fn TopDeals() -> impl IntoView {
                     href=view_all_href
                     class="text-sm font-medium text-[color:var(--brand-fg)] hover:text-[color:var(--brand-fg-hover)] hover:underline flex items-center gap-1 transition-colors"
                 >
-                    "View All" <span class="text-xs flex items-center"><Icon icon=i::FaArrowRightSolid /></span>
+                    {t!(i18n, top_deals_view_all)}
+                    <span class="text-xs flex items-center"><Icon icon=i::FaArrowRightSolid /></span>
                 </a>
             </div>
 
@@ -103,8 +109,8 @@ pub fn TopDeals() -> impl IntoView {
                                     <div class="mb-2 opacity-50 mx-auto w-8 h-8 flex items-center justify-center">
                                         <Icon icon=i::FaBoxOpenSolid width="2em" height="2em" />
                                     </div>
-                                    <p>"No hot deals found right now."</p>
-                                    <p class="text-sm">"Check back later or try the full Flip Finder."</p>
+                                    <p>{t!(i18n, top_deals_empty_title)}</p>
+                                    <p class="text-sm">{t!(i18n, top_deals_empty_subtitle)}</p>
                                 </div>
                             }.into_any()
                         } else {

@@ -19,81 +19,121 @@ use tokio::{sync::broadcast::error::SendError, time::error::Elapsed};
 use tracing::{error, info};
 use ultros_api_types::result::JsonErrorWrapper;
 use ultros_db::{
-    SeaDbErr, common_type_conversions::ApiConversionError, world_data::world_cache::WorldCacheError,
+    SeaDbErr, common_type_conversions::ApiConversionError, lists::ListError,
+    world_data::world_cache::WorldCacheError,
 };
 
 use crate::{analyzer_service::AnalyzerError, event};
 
 use super::character_verifier_service::VerifierError;
 
-#[derive(Debug, Error)]
-pub enum ApiError {
-    #[error("OAuth configuration error {0}")]
-    ConfigurationError(#[from] ConfigurationError),
-    #[error("Error creating oauth token {0}")]
-    RequestErrorToken(
-        #[from]
-        RequestTokenError<
-            oauth2::reqwest::Error<reqwest::Error>,
-            StandardErrorResponse<RevocationErrorResponseType>,
-        >,
-    ),
-    #[error("Generic error {0}")]
-    AnyhowError(#[from] anyhow::Error),
-    #[error("Parse int failed {0}")]
-    ParseIntError(#[from] ParseIntError),
-    #[error("{0}")]
-    WorldSelectError(#[from] WorldCacheError),
-    #[error("Db Error {0}")]
-    DbError(#[from] SeaDbErr),
-    #[error("Error communicaing with universalis {0}")]
-    UniversalisError(#[from] universalis::Error),
-    #[error("Error sending listing update {0}")]
-    ListingSendError(
-        #[from] SendError<event::EventType<Arc<Vec<ultros_db::entity::active_listing::Model>>>>,
-    ),
-    #[error("Error making an internal HTTP request {0}")]
-    ReqwestError(#[from] reqwest::Error),
-    #[error("Internal HTTP Error {0}")]
-    AxumError(#[from] axum::http::Error),
-    #[error("IO Error {0}")]
-    StdError(#[from] std::io::Error),
-    #[error("Error reading lodestone server name {0}")]
-    LodestoneServerParse(#[from] lodestone::model::server::ServerParseError),
-    #[error("Lodestone error {0}")]
-    LodestoneError(#[from] lodestone::LodestoneError),
-    // this is kind of bad if I ever use the elapsed error for something else but I'll pretend
-    #[error("Universalis is being slow. {0}. Will continue waiting")]
-    TimeoutElapsed(#[from] Elapsed),
-    #[error("Analyzer Error: {0}")]
-    AnalyzerError(#[from] AnalyzerError),
-    #[error("Verifier error {0}")]
-    VerificationError(#[from] VerifierError),
-    #[error("Error generating sitemap {0}")]
-    SiteMapError(#[from] SitemapIndexError),
-    #[error("Error generating url set {0}")]
-    UrlSetError(#[from] UrlSetError),
-    #[error("Token error {0}")]
-    TokenError(
-        #[from]
-        RequestTokenError<
-            oauth2::reqwest::Error<reqwest::Error>,
-            StandardErrorResponse<BasicErrorResponseType>,
-        >,
-    ),
+/// Generates an `Error`-deriving enum with the variants shared between `ApiError` and `WebError`.
+/// The shared variants and their `#[from]` / `#[error]` attributes are kept in one place so the
+/// two enums can't drift. Caller passes in any enum-specific variants between braces.
+macro_rules! define_error_enum {
+    ($name:ident { $($extra:tt)* }) => {
+        #[derive(Debug, Error)]
+        pub enum $name {
+            #[error("OAuth configuration error {0}")]
+            ConfigurationError(#[from] ConfigurationError),
+            #[error("Error creating oauth token {0}")]
+            RequestErrorToken(
+                #[from]
+                RequestTokenError<
+                    oauth2::reqwest::Error<reqwest::Error>,
+                    StandardErrorResponse<RevocationErrorResponseType>,
+                >,
+            ),
+            #[error("Generic error {0}")]
+            AnyhowError(#[from] anyhow::Error),
+            #[error("Parse int failed {0}")]
+            ParseIntError(#[from] ParseIntError),
+            #[error("{0}")]
+            WorldSelectError(#[from] WorldCacheError),
+            #[error("Db Error {0}")]
+            DbError(#[from] SeaDbErr),
+            #[error("Error communicaing with universalis {0}")]
+            UniversalisError(#[from] universalis::Error),
+            #[error("Error sending listing update {0}")]
+            ListingSendError(
+                #[from] SendError<event::EventType<Arc<Vec<ultros_db::entity::active_listing::Model>>>>,
+            ),
+            #[error("Error making an internal HTTP request {0}")]
+            ReqwestError(#[from] reqwest::Error),
+            #[error("Internal HTTP Error {0}")]
+            AxumError(#[from] axum::http::Error),
+            #[error("IO Error {0}")]
+            StdError(#[from] std::io::Error),
+            #[error("Error reading lodestone server name {0}")]
+            LodestoneServerParse(#[from] lodestone::model::server::ServerParseError),
+            #[error("Lodestone error {0}")]
+            LodestoneError(#[from] lodestone::LodestoneError),
+            // this is kind of bad if I ever use the elapsed error for something else but I'll pretend
+            #[error("Universalis is being slow. {0}. Will continue waiting")]
+            TimeoutElapsed(#[from] Elapsed),
+            #[error("Analyzer Error: {0}")]
+            AnalyzerError(#[from] AnalyzerError),
+            #[error("Verifier error {0}")]
+            VerificationError(#[from] VerifierError),
+            #[error("Error generating sitemap {0}")]
+            SiteMapError(#[from] SitemapIndexError),
+            #[error("Error generating url set {0}")]
+            UrlSetError(#[from] UrlSetError),
+            #[error("Token error {0}")]
+            TokenError(
+                #[from]
+                RequestTokenError<
+                    oauth2::reqwest::Error<reqwest::Error>,
+                    StandardErrorResponse<BasicErrorResponseType>,
+                >,
+            ),
+            $($extra)*
+        }
+    };
+}
+
+define_error_enum!(ApiError {
     #[error("API conversions error {0}")]
     ApiConversionError(#[from] ApiConversionError),
     #[error("No Auth Cookie")]
     NoAuthCookie,
     #[error("Discord token was invalid")]
     DiscordTokenInvalid(PrivateCookieJar<Key>),
-}
+});
 
 impl ApiError {
     fn as_status_code(&self) -> StatusCode {
         match self {
             ApiError::NoAuthCookie => StatusCode::OK, // In this case I don't want a real error.
+            ApiError::AnyhowError(e) => match e.downcast_ref::<ListError>() {
+                Some(ListError::Forbidden(_)) => StatusCode::FORBIDDEN,
+                Some(ListError::NotFound | ListError::InviteNotFound) => StatusCode::NOT_FOUND,
+                Some(ListError::BadRequest(_) | ListError::InviteExhausted) => {
+                    StatusCode::BAD_REQUEST
+                }
+                None => StatusCode::INTERNAL_SERVER_ERROR,
+            },
             _ => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
+
+    fn as_api_error(&self) -> ultros_api_types::result::ApiError {
+        match self {
+            ApiError::NoAuthCookie => ultros_api_types::result::ApiError::NotAuthenticated,
+            ApiError::AnyhowError(e) => match e.downcast_ref::<ListError>() {
+                Some(ListError::Forbidden(_)) => ultros_api_types::result::ApiError::Forbidden,
+                Some(ListError::NotFound | ListError::InviteNotFound) => {
+                    ultros_api_types::result::ApiError::NotFound
+                }
+                Some(ListError::BadRequest(msg)) => {
+                    ultros_api_types::result::ApiError::BadRequest((*msg).into())
+                }
+                Some(ListError::InviteExhausted) => ultros_api_types::result::ApiError::BadRequest(
+                    "Invite has reached max uses".into(),
+                ),
+                None => ultros_api_types::result::ApiError::Message(self.to_string()),
+            },
+            _ => ultros_api_types::result::ApiError::Message(self.to_string()),
         }
     }
 }
@@ -112,77 +152,21 @@ impl IntoResponse for ApiError {
             )
                 .into_response();
         }
-        if let ApiError::NoAuthCookie = self {
-            return (
-                self.as_status_code(),
-                Json(JsonErrorWrapper::ApiError(
-                    ultros_api_types::result::ApiError::NotAuthenticated,
-                )),
-            )
-                .into_response();
+        let status = self.as_status_code();
+        if status.is_server_error() {
+            error!(error = ?self, "Generic API error");
         }
-        error!(error = ?self, "Generic API error");
-        (self.as_status_code(), Json(JsonErrorWrapper::from(self))).into_response()
+        (
+            status,
+            Json(JsonErrorWrapper::ApiError(self.as_api_error())),
+        )
+            .into_response()
     }
 }
 
-#[derive(Debug, Error)]
-pub enum WebError {
+define_error_enum!(WebError {
     #[error("Not authorized to view this page")]
     NotAuthenticated,
-    #[error("OAuth configuration error {0}")]
-    ConfigurationError(#[from] ConfigurationError),
-    #[error("Error creating oauth token {0}")]
-    RequestErrorToken(
-        #[from]
-        RequestTokenError<
-            oauth2::reqwest::Error<reqwest::Error>,
-            StandardErrorResponse<RevocationErrorResponseType>,
-        >,
-    ),
-    #[error("Generic error {0}")]
-    AnyhowError(#[from] anyhow::Error),
-    #[error("Parse int failed {0}")]
-    ParseIntError(#[from] ParseIntError),
-    #[error("{0}")]
-    WorldSelectError(#[from] WorldCacheError),
-    #[error("Db Error {0}")]
-    DbError(#[from] SeaDbErr),
-    #[error("Error communicaing with universalis {0}")]
-    UniversalisError(#[from] universalis::Error),
-    #[error("Error sending listing update {0}")]
-    ListingSendError(
-        #[from] SendError<event::EventType<Arc<Vec<ultros_db::entity::active_listing::Model>>>>,
-    ),
-    #[error("Error making an internal HTTP request {0}")]
-    ReqwestError(#[from] reqwest::Error),
-    #[error("Internal HTTP Error {0}")]
-    AxumError(#[from] axum::http::Error),
-    #[error("IO Error {0}")]
-    StdError(#[from] std::io::Error),
-    #[error("Error reading lodestone server name {0}")]
-    LodestoneServerParse(#[from] lodestone::model::server::ServerParseError),
-    #[error("Lodestone error {0}")]
-    LodestoneError(#[from] lodestone::LodestoneError),
-    // this is kind of bad if I ever use the elapsed error for something else but I'll pretend
-    #[error("Universalis is being slow. {0}. Will continue waiting")]
-    TimeoutElapsed(#[from] Elapsed),
-    #[error("Analyzer Error: {0}")]
-    AnalyzerError(#[from] AnalyzerError),
-    #[error("Verifier error {0}")]
-    VerificationError(#[from] VerifierError),
-    #[error("Error generating sitemap {0}")]
-    SiteMapError(#[from] SitemapIndexError),
-    #[error("Error generating url set {0}")]
-    UrlSetError(#[from] UrlSetError),
-    #[error("Token error {0}")]
-    TokenError(
-        #[from]
-        RequestTokenError<
-            oauth2::reqwest::Error<reqwest::Error>,
-            StandardErrorResponse<BasicErrorResponseType>,
-        >,
-    ),
     #[error("Item id {0} is not valid")]
     InvalidItemId(i32),
     #[error("World not found {0}")]
@@ -191,7 +175,7 @@ pub enum WebError {
     NotFound,
     #[error("Bad request")]
     BadRequest,
-}
+});
 
 impl WebError {
     fn as_status_code(&self) -> StatusCode {

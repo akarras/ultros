@@ -16,6 +16,23 @@ use super::{
 const HOMEWORLD_COOKIE_NAME: &str = "HOME_WORLD";
 const DEFAULT_PRICE_ZONE: &str = "PRICE_ZONE";
 
+/// Maps a UI locale to the FFXIV region (by name) that locale's players are most
+/// likely to care about. Used to reorder region/world pickers so the relevant
+/// region appears first. Returns `None` if there's no strong region preference
+/// for that locale (e.g. English — falls back to the existing region order).
+pub fn locale_preferred_region(locale: crate::i18n::Locale) -> Option<&'static str> {
+    use crate::i18n::Locale;
+    match locale {
+        Locale::ja => Some("Japan"),
+        Locale::de | Locale::fr => Some("Europe"),
+        Locale::cn => Some("中国"),
+        Locale::ko => Some("한국"),
+        // English and Traditional Chinese have no single canonical region; leave
+        // the original order alone.
+        Locale::en | Locale::tc => None,
+    }
+}
+
 #[derive(Clone)]
 pub struct GuessedRegion(pub String);
 

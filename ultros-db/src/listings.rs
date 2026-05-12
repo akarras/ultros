@@ -184,13 +184,13 @@ impl UltrosDb {
     #[instrument(skip(self))]
     pub async fn get_all_listings_in_worlds(
         &self,
-        worlds: &Vec<i32>,
+        worlds: &[i32],
         item: ItemId,
     ) -> Result<Vec<active_listing::Model>> {
         // OPTIMIZATION: Fetch all listings in one query
         let listings = active_listing::Entity::find()
             .filter(active_listing::Column::ItemId.eq(item.0))
-            .filter(active_listing::Column::WorldId.is_in(worlds.clone()))
+            .filter(active_listing::Column::WorldId.is_in(worlds.iter().copied()))
             .all(&self.db)
             .await?;
         Ok(listings)

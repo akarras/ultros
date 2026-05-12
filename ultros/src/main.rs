@@ -30,8 +30,10 @@ use std::sync::Arc;
 #[cfg(all(not(target_env = "msvc"), feature = "jemalloc"))]
 use tikv_jemallocator::Jemalloc;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 use ultros_api_types::websocket::{ListingEventData, SaleEventData};
 use ultros_api_types::world::WorldData;
 use ultros_api_types::world_helper::WorldHelper;
@@ -196,14 +198,43 @@ async fn main() -> Result<()> {
     // Load environment variables from `.env` file, if present
     dotenv().ok();
 
+    // Glitchtip / Sentry error reporting. No-op when GLITCHTIP_DSN is unset, so
+    // local dev runs without it. The guard must be held for the duration of
+    // main() so the background transport can flush on shutdown.
+    //
+    // GLITCHTIP_TRACES_SAMPLE_RATE controls performance/transaction sampling:
+    // 0.0 disables (default — matches prior behavior), 1.0 sends every request.
+    // Glitchtip 4.x and Sentry both accept transaction envelopes.
+    let _sentry_guard = std::env::var("GLITCHTIP_DSN").ok().map(|dsn| {
+        let traces_sample_rate = std::env::var("GLITCHTIP_TRACES_SAMPLE_RATE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.0);
+        sentry::init((
+            dsn,
+            sentry::ClientOptions {
+                release: sentry::release_name!(),
+                environment: std::env::var("GLITCHTIP_ENVIRONMENT").ok().map(Into::into),
+                traces_sample_rate,
+                attach_stacktrace: true,
+                send_default_pii: false,
+                ..Default::default()
+            },
+        ))
+    });
+
     // Create the db before we proceed
     let filter: EnvFilter =
         EnvFilter::try_from_default_env().unwrap_or("warn,ultros=info,ultros-app=info".into());
-    tracing_subscriber::fmt::fmt()
-        .with_file(true)
-        .with_line_number(true)
-        .with_env_filter(filter)
-        .pretty()
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_file(true)
+                .with_line_number(true)
+                .pretty(),
+        )
+        .with(sentry_tracing::layer())
         .init();
     #[cfg(feature = "profiling")]
     tokio::spawn(async move { start_profiling_server().await });
@@ -259,6 +290,36 @@ async fn main() -> Result<()> {
         key,
         discord_token,
     } = config;
+
+    // Web Push (VAPID) bootstrap: env vars are optional — push is feature-gated
+    // at runtime. Keys must be generated offline (see docs/push.md); rotating
+    // them invalidates every active browser subscription, so we explicitly never
+    // generate them at startup.
+    match (
+        std::env::var("VAPID_PUBLIC_KEY")
+            .ok()
+            .filter(|s| !s.is_empty()),
+        std::env::var("VAPID_PRIVATE_KEY")
+            .ok()
+            .filter(|s| !s.is_empty()),
+        std::env::var("VAPID_CONTACT_EMAIL")
+            .ok()
+            .filter(|s| !s.is_empty()),
+    ) {
+        (Some(public_key_b64url), Some(private_key_pem), Some(contact_email)) => {
+            crate::alerts::delivery::set_web_push_config(crate::alerts::delivery::WebPushConfig {
+                public_key_b64url,
+                private_key_pem,
+                contact_email,
+            });
+            info!("Web Push enabled");
+        }
+        _ => {
+            warn!(
+                "Web Push disabled (set VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_CONTACT_EMAIL to enable)"
+            );
+        }
+    }
 
     tokio::spawn(start_discord(
         db.clone(),

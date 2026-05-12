@@ -1,13 +1,6 @@
 use std::ops::Deref;
 
 use crate::Cookies;
-use crate::api::get_login;
-use crate::components::icon::Icon;
-use crate::components::language_picker::LanguagePicker;
-use crate::components::theme_picker::QuickThemeToggle;
-use crate::i18n::{t, use_i18n};
-use icondata as i;
-use leptos::either::Either;
 use leptos::{html::Ins, prelude::*};
 use leptos_router::components::A;
 use leptos_use::{UseMutationObserverOptions, use_mutation_observer_with_options};
@@ -39,12 +32,6 @@ pub fn Ad(#[prop(optional)] class: Option<&'static str>) -> impl IntoView {
         },
         UseMutationObserverOptions::default().attributes(true),
     );
-    // let location = use_location();
-    // let pathname = location.pathname;
-    // let search = location.search;
-
-    // let _ = pathname(); // reading from the path to reload this component on page load
-    // let _ = search();
     let ads_visible = Signal::derive(move || !hide_ads.get().unwrap_or_default());
     view! {
         <Show when=ads_visible>
@@ -84,73 +71,14 @@ pub fn DesktopAdRail() -> impl IntoView {
     let cookies = use_context::<Cookies>().unwrap();
     let (hide_ads, _) = cookies.use_cookie_typed::<_, bool>("HIDE_ADS");
     let ads_visible = Signal::derive(move || !hide_ads.get().unwrap_or_default());
-    let i18n = use_i18n();
-    let user = Resource::new(move || {}, move |_| async move { get_login().await.ok() });
-
-    let library_section = move || {
-        user.get().flatten().map(|_| {
-            view! {
-                <div class="side-rail-section">
-                    <div class="side-rail-heading">{t!(i18n, library)}</div>
-                    <A href="/list" attr:class="nav-link w-full justify-start">
-                        <Icon height="1.1em" width="1.1em" icon=i::AiOrderedListOutlined />
-                        <span class="ml-2">{t!(i18n, lists)}</span>
-                    </A>
-                    <A href="/alerts" attr:class="nav-link w-full justify-start">
-                        <Icon height="1.1em" width="1.1em" icon=i::BsBell />
-                        <span class="ml-2">{t!(i18n, alerts)}</span>
-                    </A>
-                    <A href="/retainers/listings" attr:class="nav-link w-full justify-start">
-                        <Icon height="1.1em" width="1.1em" icon=i::BiGroupSolid />
-                        <span class="ml-2">{t!(i18n, retainers)}</span>
-                    </A>
-                </div>
-            }
-        })
-    };
-
-    let auth_links = move || match user.get().flatten() {
-        Some(_) => Either::Left(view! {
-            <a rel="external" href="/invitebot" class="nav-link w-full justify-start">
-                <Icon height="1.1em" width="1.1em" icon=i::BsDiscord />
-                <span class="ml-2">{t!(i18n, invite_bot)}</span>
-            </a>
-            <a rel="external" href="/logout" class="nav-link w-full justify-start">
-                <Icon height="1.1em" width="1.1em" icon=i::BiLogOutRegular />
-                <span class="ml-2">{t!(i18n, logout)}</span>
-            </a>
-        }),
-        None => Either::Right(view! {
-            <a rel="external" href="/login" class="nav-link w-full justify-start">
-                <Icon height="1.1em" width="1.1em" icon=i::BsDiscord />
-                <span class="ml-2">{t!(i18n, login_with_discord)}</span>
-            </a>
-        }),
-    };
 
     view! {
-        <aside class="app-ad-rail" aria-label="Side rail">
-            <Suspense>
-                {library_section}
-            </Suspense>
-            <Show when=ads_visible>
-                <div class="ad-rail-slot">
+        <Show when=ads_visible>
+            <aside class="app-ad-rail" aria-label="Advertisements">
+                <div class="ad-rail-slot sticky top-24">
                     <Ad class="h-[600px] w-full" />
                 </div>
-            </Show>
-            <div class="side-rail-bottom">
-                <A href="/settings" attr:class="nav-link w-full justify-start">
-                    <Icon height="1.1em" width="1.1em" icon=i::IoSettingsSharp />
-                    <span class="ml-2">{t!(i18n, settings)}</span>
-                </A>
-                <div class="flex items-center gap-2">
-                    <LanguagePicker />
-                    <QuickThemeToggle />
-                </div>
-                <Suspense>
-                    {auth_links}
-                </Suspense>
-            </div>
-        </aside>
+            </aside>
+        </Show>
     }
 }

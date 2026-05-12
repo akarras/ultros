@@ -1,4 +1,8 @@
-use std::{error::Error, sync::Arc};
+use std::{
+    collections::HashSet,
+    error::Error,
+    sync::{Arc, Mutex},
+};
 
 use axum::{
     extract::{
@@ -27,6 +31,8 @@ use crate::web::error::ApiError;
 use crate::web::oauth::AuthDiscordUser;
 use ultros_api_types::list::ListPermission;
 use ultros_db::UltrosDb;
+
+const MAX_SUBSCRIPTIONS_PER_SOCKET: usize = 64;
 
 pub(crate) async fn real_time_data(
     ws: WebSocketUpgrade,
@@ -131,6 +137,8 @@ async fn handle_socket(
     } = events;
     let (mut sender, mut receiver) = socket.split();
     let mut subscriptions = SelectAll::<BoxStream<ServerClient>>::new();
+    let active_subscriptions = Arc::new(Mutex::new(HashSet::new()));
+    let mut next_subscription_id = 1u64;
     subscriptions.push(Box::pin(futures::stream::pending()));
     sender
         .send(Message::Text(
@@ -149,16 +157,62 @@ async fn handle_socket(
                         Message::Text(text) => {
                             let msg: ClientMessage = serde_json::from_str(&text)?;
                             match msg {
-                                ClientMessage::AddSubscribe { filter, msg_type } => {
+                                ClientMessage::AddSubscribe {
+                                    subscription_id,
+                                    filter,
+                                    msg_type,
+                                } => {
+                                    let subscription_id = subscription_id.unwrap_or_else(|| {
+                                        let id = next_subscription_id;
+                                        next_subscription_id += 1;
+                                        id
+                                    });
+                                    if !activate_subscription(
+                                        &active_subscriptions,
+                                        subscription_id,
+                                    ) {
+                                        sender
+                                            .send(Message::Text(
+                                                serde_json::to_string(&ServerClient::Error {
+                                                    message: format!(
+                                                        "too many active subscriptions, max is {MAX_SUBSCRIPTIONS_PER_SOCKET}"
+                                                    ),
+                                                })?
+                                                .into(),
+                                            ))
+                                            .await?;
+                                        continue;
+                                    }
                                     match msg_type {
                                         SocketMessageType::Listings => {
                                             let l_worlds = world_cache.clone();
+                                            let active = active_subscriptions.clone();
                                             let stream =
                                                 BroadcastStream::new(listings.resubscribe())
                                                     .map(move |map| {
-                                                        let filter = &filter;
-                                                        let worlds = &l_worlds;
-                                                        process_listings(map.ok(), filter, worlds)
+                                                        if !is_subscription_active(
+                                                            &active,
+                                                            subscription_id,
+                                                        ) {
+                                                            return None;
+                                                        }
+                                                        match map {
+                                                            Ok(map) => {
+                                                                let filter = &filter;
+                                                                let worlds = &l_worlds;
+                                                                wrap_subscription_event(
+                                                                    subscription_id,
+                                                                    process_listings(
+                                                                        Some(map),
+                                                                        filter,
+                                                                        worlds,
+                                                                    ),
+                                                                )
+                                                            }
+                                                            Err(_) => Some(ServerClient::Stale {
+                                                                subscription_id,
+                                                            }),
+                                                        }
                                                     })
                                                     .filter_map(move |f| async move { f });
 
@@ -166,57 +220,171 @@ async fn handle_socket(
                                         }
                                         SocketMessageType::Sales => {
                                             let s_worlds = world_cache.clone();
+                                            let active = active_subscriptions.clone();
                                             info!(
                                                 "Adding sales subscription with filter {filter:?}"
                                             );
                                             let stream =
                                                 BroadcastStream::new(history.resubscribe())
                                                     .map(move |map| {
-                                                        let filter = &filter;
-                                                        let worlds = &s_worlds;
-                                                        process_sales(map.ok(), filter, worlds)
+                                                        if !is_subscription_active(
+                                                            &active,
+                                                            subscription_id,
+                                                        ) {
+                                                            return None;
+                                                        }
+                                                        match map {
+                                                            Ok(map) => {
+                                                                let filter = &filter;
+                                                                let worlds = &s_worlds;
+                                                                wrap_subscription_event(
+                                                                    subscription_id,
+                                                                    process_sales(
+                                                                        Some(map),
+                                                                        filter,
+                                                                        worlds,
+                                                                    ),
+                                                                )
+                                                            }
+                                                            Err(_) => Some(ServerClient::Stale {
+                                                                subscription_id,
+                                                            }),
+                                                        }
                                                     })
                                                     .filter_map(move |l| async move { l });
 
                                             subscriptions.push(Box::pin(stream));
                                         }
                                     }
+                                    sender
+                                        .send(Message::Text(
+                                            serde_json::to_string(&ServerClient::Subscribed {
+                                                subscription_id,
+                                            })?
+                                            .into(),
+                                        ))
+                                        .await?;
                                 }
-                                ClientMessage::SubscribeList { list_id } => {
+                                ClientMessage::Unsubscribe { subscription_id } => {
+                                    deactivate_subscription(&active_subscriptions, subscription_id);
+                                    sender
+                                        .send(Message::Text(
+                                            serde_json::to_string(&ServerClient::Unsubscribed {
+                                                subscription_id,
+                                            })?
+                                            .into(),
+                                        ))
+                                        .await?;
+                                }
+                                ClientMessage::SubscribeList {
+                                    subscription_id,
+                                    list_id,
+                                } => {
+                                    let subscription_id = subscription_id.unwrap_or_else(|| {
+                                        let id = next_subscription_id;
+                                        next_subscription_id += 1;
+                                        id
+                                    });
+                                    if !activate_subscription(
+                                        &active_subscriptions,
+                                        subscription_id,
+                                    ) {
+                                        sender
+                                            .send(Message::Text(
+                                                serde_json::to_string(&ServerClient::Error {
+                                                    message: format!(
+                                                        "too many active subscriptions, max is {MAX_SUBSCRIPTIONS_PER_SOCKET}"
+                                                    ),
+                                                })?
+                                                .into(),
+                                            ))
+                                            .await?;
+                                        continue;
+                                    }
                                     let user_id = user.as_ref().map(|u| u.id as i64).unwrap_or(0);
                                     let permission = db.get_permission(list_id, user_id).await?;
                                     if permission >= ListPermission::Read {
-                                        let stream = BroadcastStream::new(lists.resubscribe())
-                                            .filter_map(move |l| async move {
-                                                let l = l.ok()?;
-                                                let id = match &l {
-                                                    crate::event::EventType::Add(inner)
-                                                    | crate::event::EventType::Remove(inner)
-                                                    | crate::event::EventType::Update(inner) => {
-                                                        match inner.as_ref() {
-                                                            ListEventData::List(l) => l.id,
-                                                            ListEventData::ListItem(l) => l.list_id,
+                                        let active = active_subscriptions.clone();
+                                        let stream =
+                                            BroadcastStream::new(lists.resubscribe()).filter_map(
+                                                move |l| {
+                                                    let active = active.clone();
+                                                    async move {
+                                                        if !is_subscription_active(
+                                                            &active,
+                                                            subscription_id,
+                                                        ) {
+                                                            return None;
+                                                        }
+                                                        let l = match l {
+                                                            Ok(l) => l,
+                                                            Err(_) => {
+                                                                return Some(ServerClient::Stale {
+                                                                    subscription_id,
+                                                                });
+                                                            }
+                                                        };
+                                                        let id = match &l {
+                                                            crate::event::EventType::Add(inner)
+                                                            | crate::event::EventType::Remove(
+                                                                inner,
+                                                            )
+                                                            | crate::event::EventType::Update(
+                                                                inner,
+                                                            ) => match inner.as_ref() {
+                                                                ListEventData::List(l) => l.id,
+                                                                ListEventData::ListItem(l) => {
+                                                                    l.list_id
+                                                                }
+                                                            },
+                                                        };
+                                                        if id == list_id {
+                                                            let event = match l {
+                                                                EventType::Add(a) => {
+                                                                    WEvent::Added((*a).clone())
+                                                                }
+                                                                EventType::Remove(r) => {
+                                                                    WEvent::Removed((*r).clone())
+                                                                }
+                                                                EventType::Update(u) => {
+                                                                    WEvent::Updated((*u).clone())
+                                                                }
+                                                            };
+                                                            wrap_subscription_event(
+                                                                subscription_id,
+                                                                Some(ServerClient::ListUpdate(
+                                                                    event,
+                                                                )),
+                                                            )
+                                                        } else {
+                                                            None
                                                         }
                                                     }
-                                                };
-                                                if id == list_id {
-                                                    let event = match l {
-                                                        EventType::Add(a) => {
-                                                            WEvent::Added((*a).clone())
-                                                        }
-                                                        EventType::Remove(r) => {
-                                                            WEvent::Removed((*r).clone())
-                                                        }
-                                                        EventType::Update(u) => {
-                                                            WEvent::Updated((*u).clone())
-                                                        }
-                                                    };
-                                                    Some(ServerClient::ListUpdate(event))
-                                                } else {
-                                                    None
-                                                }
-                                            });
+                                                },
+                                            );
                                         subscriptions.push(Box::pin(stream));
+                                        sender
+                                            .send(Message::Text(
+                                                serde_json::to_string(&ServerClient::Subscribed {
+                                                    subscription_id,
+                                                })?
+                                                .into(),
+                                            ))
+                                            .await?;
+                                    } else {
+                                        deactivate_subscription(
+                                            &active_subscriptions,
+                                            subscription_id,
+                                        );
+                                        sender
+                                            .send(Message::Text(
+                                                serde_json::to_string(&ServerClient::Error {
+                                                    message: "not authorized to subscribe to list"
+                                                        .to_string(),
+                                                })?
+                                                .into(),
+                                            ))
+                                            .await?;
                                     }
                                 }
                             }
@@ -259,4 +427,38 @@ async fn handle_socket(
     }
 
     Ok(())
+}
+
+fn activate_subscription(active_subscriptions: &Arc<Mutex<HashSet<u64>>>, id: u64) -> bool {
+    let Ok(mut active) = active_subscriptions.lock() else {
+        return false;
+    };
+    if !active.contains(&id) && active.len() >= MAX_SUBSCRIPTIONS_PER_SOCKET {
+        return false;
+    }
+    active.insert(id);
+    true
+}
+
+fn deactivate_subscription(active_subscriptions: &Arc<Mutex<HashSet<u64>>>, id: u64) {
+    if let Ok(mut active) = active_subscriptions.lock() {
+        active.remove(&id);
+    }
+}
+
+fn is_subscription_active(active_subscriptions: &Arc<Mutex<HashSet<u64>>>, id: u64) -> bool {
+    active_subscriptions
+        .lock()
+        .map(|active| active.contains(&id))
+        .unwrap_or(false)
+}
+
+fn wrap_subscription_event(
+    subscription_id: u64,
+    event: Option<ServerClient>,
+) -> Option<ServerClient> {
+    event.map(|event| ServerClient::SubscriptionEvent {
+        subscription_id,
+        event: Box::new(event),
+    })
 }
