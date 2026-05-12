@@ -14,8 +14,9 @@ use xiv_gen::{ClassJob, ItemSearchCategoryId};
 /// directly from `ParamsMap::get(...).as_deref()` at the call site, so
 /// this helper has no router dependency and is trivial to unit-test.
 ///
-/// `#[allow(dead_code)]`: called only through `view!`-macro closures
-/// inside `ItemExplorerToolbar`, which the dead_code lint can't trace.
+/// `#[allow(dead_code)]`: `ItemExplorerToolbar` is not yet wired into
+/// any route (Task 4), so this helper has no reachable call site from
+/// the crate root. Remove this annotation when Task 4 lands.
 #[allow(dead_code)]
 pub(crate) fn active_group_from_route(jobset: Option<&str>, category: Option<&str>) -> Option<u8> {
     if jobset.is_some() {
@@ -103,9 +104,7 @@ pub fn ItemExplorerToolbar() -> impl IntoView {
 
     // When the route changes (e.g. browser back), follow it.
     Effect::new(move |_| {
-        if let Some(group) = active_group.get() {
-            selected_group.set(group);
-        }
+        selected_group.set(active_group.get().unwrap_or(1));
     });
 
     let pill = move |group: u8, label_view: AnyView| {
