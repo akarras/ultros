@@ -282,6 +282,31 @@ pub fn ListItemRow(
                                         }
                                     />
 
+                                    <label class="text-xs">"Target price (gil)"</label>
+                                    <input
+                                        class="input w-24"
+                                        type="number"
+                                        min="0"
+                                        placeholder="None"
+                                        prop:value=move || {
+                                            temp_item
+                                                .with(|i| {
+                                                    i.target_price.map(|v| v.to_string()).unwrap_or_default()
+                                                })
+                                        }
+                                        on:input=move |e| {
+                                            let v = event_target_value(&e);
+                                            temp_item
+                                                .update(|i| {
+                                                    i.target_price = if v.trim().is_empty() {
+                                                        None
+                                                    } else {
+                                                        v.parse::<i64>().ok().filter(|n| *n >= 0)
+                                                    };
+                                                })
+                                        }
+                                    />
+
                                 </div>
                             </td>
                             <td class="px-3 py-3 align-middle">

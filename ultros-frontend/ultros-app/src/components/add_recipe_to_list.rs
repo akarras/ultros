@@ -236,6 +236,7 @@ fn AddRecipeToListModal(
                                                                         hq: Some(hq_only && can_be_hq),
                                                                         quantity: Some(quantity),
                                                                         acquired: None,
+                                                                        target_price: None,
                                                                     })
                                                                 })
                                                                 .collect::<Vec<_>>();

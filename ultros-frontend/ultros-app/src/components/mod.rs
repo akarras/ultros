@@ -18,6 +18,7 @@ pub mod icon;
 pub mod item_icon;
 pub mod language_picker;
 pub mod list;
+pub mod list_subscribe_drawer;
 pub mod listings_table;
 pub mod live_sale_ticker;
 pub mod loading;
