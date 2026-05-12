@@ -54,6 +54,11 @@ pub struct ListItem {
     pub hq: Option<bool>,
     pub quantity: Option<i32>,
     pub acquired: Option<i32>,
+    /// Per-item price target for the list-scoped price alert trigger. When set,
+    /// `AlertTrigger::ListItemThreshold` rules fire when a listing meets or
+    /// undercuts this price.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_price: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

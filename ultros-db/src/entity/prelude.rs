@@ -5,6 +5,7 @@ pub use super::alert::Entity as Alert;
 pub use super::alert_discord_destination::Entity as AlertDiscordDestination;
 pub use super::alert_event::Entity as AlertEvent;
 pub use super::alert_item_threshold::Entity as AlertItemThreshold;
+pub use super::alert_list_threshold::Entity as AlertListThreshold;
 pub use super::alert_notification_rule::Entity as AlertNotificationRule;
 pub use super::alert_price::Entity as AlertPrice;
 pub use super::alert_retainer_undercut::Entity as AlertRetainerUndercut;

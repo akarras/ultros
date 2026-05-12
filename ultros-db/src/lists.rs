@@ -322,6 +322,7 @@ impl UltrosDb {
                 hq: ActiveValue::Set(hq),
                 quantity: ActiveValue::Set(quantity),
                 acquired: ActiveValue::Set(acquired),
+                target_price: ActiveValue::Set(None),
             }
             .insert(&self.db)
             .await?)
@@ -405,6 +406,7 @@ impl UltrosDb {
                 hq,
                 quantity,
                 acquired,
+                target_price,
                 ..
             } = item;
             let list_id = list.id;
@@ -415,6 +417,7 @@ impl UltrosDb {
                 hq: ActiveValue::Set(hq),
                 quantity: ActiveValue::Set(quantity),
                 acquired: ActiveValue::Set(acquired),
+                target_price: ActiveValue::Set(target_price),
             }
         }))
         .exec_without_returning(&self.db)
