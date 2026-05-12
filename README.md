@@ -10,7 +10,7 @@ The project is built using:
 
 The live version is hosted at [https://ultros.app](https://ultros.app).
 
-A comprehensive user guide is available [here](https://book.ultros.app).
+Feature help now lives inside the app at [https://ultros.app/help](https://ultros.app/help).
 
 ## Ads
 

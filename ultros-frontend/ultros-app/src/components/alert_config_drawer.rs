@@ -1,11 +1,12 @@
 use icondata as i;
 use leptos::{prelude::*, reactive::wrappers::write::SignalSetter, task::spawn_local};
+use std::collections::HashSet;
 use ultros_api_types::{
-    alert::{AlertDelivery, AlertTrigger, CreateAlertRequest},
+    alert::{AlertTrigger, CreateAlertRequest},
     world_helper::AnySelector,
 };
 
-use crate::api::create_alert;
+use crate::api::{create_alert, list_endpoints};
 use crate::components::{icon::Icon, modal::Modal, world_picker::WorldPicker};
 use crate::global_state::toasts::use_toast;
 use crate::i18n::{t, t_string, use_i18n};
@@ -23,10 +24,18 @@ pub fn AlertConfigDrawer(
     let (world, set_world) = signal::<Option<AnySelector>>(default_world.get_untracked());
     let (price_threshold, set_price_threshold) = signal::<String>("".to_string());
     let (hq_only, set_hq_only) = signal(false);
-    let (delivery_kind, set_delivery_kind) = signal::<&'static str>("discord_dm");
-    let (webhook_url, set_webhook_url) = signal::<String>("".to_string());
+    let endpoints = Resource::new(|| (), |_| list_endpoints());
+    let selected = RwSignal::new(HashSet::<i32>::new());
     let (error, set_error) = signal::<Option<String>>(None);
     let toasts = use_toast();
+
+    let toggle = move |id: i32| {
+        selected.update(|s| {
+            if !s.insert(id) {
+                s.remove(&id);
+            }
+        });
+    };
 
     let submit = move |_| {
         set_error.set(None);
@@ -48,19 +57,13 @@ pub fn AlertConfigDrawer(
             ));
             return;
         }
-        let delivery = match delivery_kind.get() {
-            "webhook" => {
-                let url = webhook_url.get();
-                if url.trim().is_empty() {
-                    set_error.set(Some(
-                        t_string!(i18n, alert_drawer_err_webhook_required).to_string(),
-                    ));
-                    return;
-                }
-                AlertDelivery::Webhook { url }
-            }
-            _ => AlertDelivery::DiscordDm,
-        };
+        let endpoint_ids: Vec<i32> = selected.get().into_iter().collect();
+        if endpoint_ids.is_empty() {
+            set_error.set(Some(
+                t_string!(i18n, alert_drawer_err_endpoint_required).to_string(),
+            ));
+            return;
+        }
         let req = CreateAlertRequest {
             trigger: AlertTrigger::BelowThreshold {
                 item_id,
@@ -68,7 +71,8 @@ pub fn AlertConfigDrawer(
                 price_threshold: threshold,
                 hq_only: hq_only.get(),
             },
-            delivery,
+            delivery: None,
+            endpoint_ids,
             cooldown_seconds: None,
         };
         spawn_local(async move {
@@ -121,44 +125,45 @@ pub fn AlertConfigDrawer(
                 </label>
 
                 <div class="space-y-1">
-                    <label class="text-sm font-semibold">{t!(i18n, alert_drawer_delivery_label)}</label>
-                    <div class="flex gap-3">
-                        <label class="flex items-center gap-1">
-                            <input
-                                type="radio"
-                                name="delivery"
-                                prop:checked=move || delivery_kind.get() == "discord_dm"
-                                on:change=move |_| set_delivery_kind.set("discord_dm")
-                            />
-                            {t!(i18n, alert_drawer_discord_dm)}
-                        </label>
-                        <label class="flex items-center gap-1">
-                            <input
-                                type="radio"
-                                name="delivery"
-                                prop:checked=move || delivery_kind.get() == "webhook"
-                                on:change=move |_| set_delivery_kind.set("webhook")
-                            />
-                            {t!(i18n, alert_drawer_webhook)}
-                        </label>
-                    </div>
+                    <label class="text-sm font-semibold">{t!(i18n, alert_drawer_deliver_to)}</label>
+                    <Suspense fallback=move || {
+                        view! { <div class="text-sm opacity-70">{t!(i18n, alert_drawer_loading_endpoints)}</div> }
+                    }>
+                        {move || endpoints.get().map(|r| match r {
+                            Ok(list) if list.is_empty() => view! {
+                                <p class="text-sm opacity-70">
+                                    {t!(i18n, alert_drawer_no_endpoints_prefix)}
+                                    <a href="/alerts" class="underline">{t!(i18n, alert_drawer_no_endpoints_link)}</a>
+                                    {t!(i18n, alert_drawer_no_endpoints_suffix)}
+                                </p>
+                            }.into_any(),
+                            Ok(list) => view! {
+                                <ul class="space-y-1">
+                                    {list.into_iter().map(|e| {
+                                        let id = e.id;
+                                        let is_sel = move || selected.get().contains(&id);
+                                        view! {
+                                            <li>
+                                                <label class="flex items-center gap-2">
+                                                    <input
+                                                        type="checkbox"
+                                                        prop:checked=is_sel
+                                                        on:change=move |_| toggle(id)
+                                                    />
+                                                    <span>{e.name}</span>
+                                                </label>
+                                            </li>
+                                        }
+                                    }).collect_view()}
+                                </ul>
+                            }.into_any(),
+                            Err(e) => view! {
+                                <div class="text-red-500">{format!("{e}")}</div>
+                            }.into_any(),
+                        })}
+                    </Suspense>
                 </div>
 
-                <Show when=move || delivery_kind.get() == "webhook">
-                    <div class="space-y-1">
-                        <label class="text-sm font-semibold">{t!(i18n, alert_drawer_webhook_url_label)}</label>
-                        <input
-                            class="input w-full"
-                            type="url"
-                            placeholder="https://discord.com/api/webhooks/..."
-                            prop:value=webhook_url
-                            on:input=move |e| set_webhook_url.set(event_target_value(&e))
-                        />
-                        <p class="text-xs opacity-70">
-                            {t!(i18n, alert_drawer_webhook_hint)}
-                        </p>
-                    </div>
-                </Show>
 
                 <Show when=move || error.get().is_some()>
                     <div class="text-sm text-red-500">{move || error.get().unwrap_or_default()}</div>

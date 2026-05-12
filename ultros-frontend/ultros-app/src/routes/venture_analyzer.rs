@@ -6,9 +6,11 @@ use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
         gil::*, icon::Icon, item_icon::*, query_button::QueryButton, skeleton::BoxSkeleton,
-        virtual_scroller::*, world_picker::WorldOnlyPicker,
+        tool_help::*, virtual_scroller::*, world_picker::WorldOnlyPicker,
     },
-    global_state::{LocalWorldData, home_world::use_home_world},
+    global_state::{
+        LocalWorldData, home_world::use_home_world, region_for_world::use_region_for_world,
+    },
 };
 use icondata as i;
 use itertools::Itertools;
@@ -25,7 +27,6 @@ use std::{
 use ultros_api_types::{
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     recent_sales::{RecentSales, SaleData},
-    world_helper::AnyResult,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -170,11 +171,10 @@ fn VentureAnalyzerTable(
                 continue;
             }
 
-            #[allow(clippy::collapsible_if)]
-            if let Some(ids) = &selected_ids {
-                if !ids.contains(&task.class_job_category) {
-                    continue;
-                }
+            if let Some(ids) = &selected_ids
+                && !ids.contains(&task.class_job_category)
+            {
+                continue;
             }
 
             // Check if `task.task` (RowId) corresponds to a RetainerTaskNormal
@@ -213,10 +213,10 @@ fn VentureAnalyzerTable(
                     }
                 };
 
-                let venture_cost_gil = 0; // Placeholder
-
+                // Ventures cost venture coins (not gil), so "profit" here is gross revenue.
+                // If we ever convert ventures to a gil-equivalent cost, subtract it here.
                 let revenue = market_price * quantity;
-                let profit = revenue - venture_cost_gil;
+                let profit = revenue;
 
                 if let Some(min) = minimum_profit()
                     && profit < min
@@ -370,7 +370,7 @@ fn VentureAnalyzerTable(
                     key=move |(index, data): &(usize, Arc<VentureProfitData>)| (*index, data.item_id)
                     view=move |(index, data): (usize, Arc<VentureProfitData>)| {
                         let item_id = data.item_id;
-                        let item = items.get(&xiv_gen::ItemId(item_id)).map(|i| i.name.as_str().to_string()).unwrap_or_else(|| t_string!(i18n, venture_analyzer_unknown_item).to_string());
+                        let item = items.get(&xiv_gen::ItemId(item_id)).map(|i| i.name.as_str().to_string()).unwrap_or_else(|| t_string!(i18n, unknown).to_string());
 
                         let classes = if (index % 2) == 0 {
                             "flex flex-row items-center flex-nowrap h-15 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_6%,transparent)] transition-colors"
@@ -431,25 +431,7 @@ pub fn VentureAnalyzer() -> impl IntoView {
     let (home_world, _) = use_home_world();
     let nav = use_navigate();
 
-    let region = Memo::new(move |_| {
-        let worlds = use_context::<LocalWorldData>()
-            .expect("Worlds should always be populated here")
-            .0
-            .unwrap();
-        // Default to home world region or North-America
-        let world_name = query
-            .with(|p| p.get("world").clone())
-            .or_else(|| home_world.get().map(|w| w.name))
-            .unwrap_or_else(|| "North-America".to_string());
-
-        worlds
-            .lookup_world_by_name(&world_name)
-            .map(|world| {
-                let region = worlds.get_region(world);
-                AnyResult::Region(region).get_name().to_string()
-            })
-            .unwrap_or_else(|| "North-America".to_string())
-    });
+    let region = use_region_for_world(move || query.with(|p| p.get("world").clone()));
 
     let global_cheapest_listings = ArcResource::new(region, move |region: String| async move {
         get_cheapest_listings(&region).await
@@ -521,9 +503,15 @@ pub fn VentureAnalyzer() -> impl IntoView {
             <MetaTitle title=move || t_string!(i18n, venture_analyzer_meta_title).to_string() />
             <MetaDescription text=move || t_string!(i18n, venture_analyzer_meta_desc).to_string() />
 
-            <div class="flex flex-col gap-4 p-4 bg-brand-900/50 rounded-lg border border-brand-800">
-                <div class="flex flex-row justify-between items-center">
-                    <h1 class="text-2xl font-bold text-brand-100">{t!(i18n, venture_analyzer_title)}</h1>
+            <div class="flex flex-col gap-4">
+                <ToolHeader
+                    title="Venture Analyzer"
+                    summary="Rank normal retainer ventures by gross market value and recent sales activity."
+                    context="Profit is gross revenue in this first pass; venture token cost and opportunity cost are not modeled."
+                    help_href="/help/venture-analyzer"
+                    help_body="Venture Analyzer multiplies venture output quantity by current market price, then uses recent sales to help separate practical choices from slow-moving rare drops."
+                />
+                <div class="flex flex-row justify-end items-center">
                     <div class="flex flex-row gap-2 items-center">
                         <Suspense fallback=move || view! { <div class="text-brand-300 text-sm animate-pulse">{t!(i18n, venture_analyzer_loading_sales)}</div> }>
                             {move || {
@@ -544,6 +532,16 @@ pub fn VentureAnalyzer() -> impl IntoView {
                             set_current_world=set_selected_world.into()
                         />
                     </div>
+                </div>
+                <CalculationSummary
+                    title="Gross revenue model"
+                    formula="profit = output quantity * current market price"
+                    details="This does not subtract venture token value or the opportunity cost of sending a retainer on another task."
+                />
+                <div class="flex flex-wrap gap-2">
+                    <AssumptionBadge text="Gross revenue only" />
+                    <AssumptionBadge text="Normal ventures only" />
+                    <AssumptionBadge text="Recent sales affect confidence" />
                 </div>
 
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>

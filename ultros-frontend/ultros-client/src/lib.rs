@@ -11,6 +11,7 @@ use std::sync::Arc;
 use ultros_api_types::{world::WorldData, world_helper::WorldHelper};
 use ultros_app::*;
 use wasm_bindgen::prelude::wasm_bindgen;
+use wasm_bindgen::{JsCast, JsValue};
 
 #[derive(Serialize, Deserialize)]
 struct Data {
@@ -174,34 +175,84 @@ async fn populate_xiv_gen_data() -> anyhow::Result<()> {
     try_populate_xiv_gen_data().await
 }
 
-async fn get_world_data() -> Arc<WorldHelper> {
-    let json: WorldData = gloo_net::http::Request::get("/api/v1/world_data")
+async fn get_world_data() -> Result<Arc<WorldHelper>, anyhow::Error> {
+    let json: WorldData = Request::get("/api/v1/world_data")
         .send()
         .await
-        .map_err(|e| {
-            error!("{e}");
-            e
-        })
-        .unwrap()
+        .map_err(|e| anyhow!("failed to fetch world data: {e}"))?
         .json()
         .await
-        .unwrap();
-    Arc::new(WorldHelper::from(json))
+        .map_err(|e| anyhow!("failed to parse world data: {e}"))?;
+    Ok(Arc::new(WorldHelper::from(json)))
 }
 
 async fn get_region() -> String {
-    gloo_net::http::Request::get("/api/v1/detectregion")
-        .send()
-        .await
-        .unwrap()
-        .text()
-        .await
-        .unwrap()
+    let response = match Request::get("/api/v1/detectregion").send().await {
+        Ok(resp) => resp,
+        Err(e) => {
+            error!("failed to fetch region: {e}");
+            return String::new();
+        }
+    };
+    match response.text().await {
+        Ok(text) => text,
+        Err(e) => {
+            error!("failed to read region response: {e}");
+            String::new()
+        }
+    }
+}
+
+fn set_panic_hook() {
+    std::panic::set_hook(Box::new(|panic_info| {
+        console_error_panic_hook::hook(panic_info);
+        report_rust_panic(panic_info);
+    }));
+}
+
+fn report_rust_panic(panic_info: &std::panic::PanicHookInfo<'_>) {
+    let global = js_sys::global();
+    let reporter = js_sys::Reflect::get(&global, &JsValue::from_str("__ultrosReportRustPanic"));
+    let Ok(reporter) = reporter else {
+        return;
+    };
+    let Some(reporter) = reporter.dyn_ref::<js_sys::Function>() else {
+        return;
+    };
+
+    let message = panic_info
+        .payload()
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| {
+            panic_info
+                .payload()
+                .downcast_ref::<String>()
+                .map(String::as_str)
+        })
+        .unwrap_or("Rust WASM panic");
+    let location = panic_info
+        .location()
+        .map(|location| {
+            format!(
+                "{}:{}:{}",
+                location.file(),
+                location.line(),
+                location.column()
+            )
+        })
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let _ = reporter.call2(
+        &JsValue::NULL,
+        &JsValue::from_str(message),
+        &JsValue::from_str(&location),
+    );
 }
 
 #[wasm_bindgen]
 pub fn hydrate() {
-    console_error_panic_hook::set_once();
+    set_panic_hook();
     // tracing_wasm::set_as_global_default();
     console_log::init_with_level(Level::Info).unwrap();
     // check that we have the right client version data
@@ -215,12 +266,18 @@ pub fn hydrate() {
         )
         .await;
         info!("hydrating body");
+        let world_data = match worlds {
+            Ok(worlds) => LocalWorldData(Ok(worlds)),
+            Err(e) => {
+                error!("failed to load world data: {e}");
+                LocalWorldData::failed(e.to_string())
+            }
+        };
         hydrate_body(move || {
-            let worlds = worlds.clone();
+            let world_data = world_data.clone();
             let region = region.clone();
-            let worlds = Ok(worlds);
             provide_context(GuessedRegion(region));
-            provide_context(LocalWorldData(worlds));
+            provide_context(world_data);
             view! { <App /> }
         });
     });

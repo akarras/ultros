@@ -1,6 +1,6 @@
 use crate::global_state::cookies::Cookies;
 use crate::global_state::crafter_levels::CrafterLevels;
-use crate::i18n::{t, t_string, use_i18n};
+use crate::i18n::*;
 use leptos::prelude::*;
 
 #[component]
@@ -25,47 +25,15 @@ pub fn CrafterSettings() -> impl IntoView {
         set_levels(Some(current));
     };
     type CrafterCallback = fn(&CrafterLevels) -> i32;
-    let jobs: [(&str, String, CrafterCallback); 8] = [
-        (
-            "CRP",
-            t_string!(i18n, carpenter).to_string(),
-            (|l: &CrafterLevels| l.carpenter) as CrafterCallback,
-        ),
-        (
-            "BSM",
-            t_string!(i18n, blacksmith).to_string(),
-            (|l: &CrafterLevels| l.blacksmith) as CrafterCallback,
-        ),
-        (
-            "ARM",
-            t_string!(i18n, armorer).to_string(),
-            (|l: &CrafterLevels| l.armorer) as CrafterCallback,
-        ),
-        (
-            "GSM",
-            t_string!(i18n, goldsmith).to_string(),
-            (|l: &CrafterLevels| l.goldsmith) as CrafterCallback,
-        ),
-        (
-            "LTW",
-            t_string!(i18n, leatherworker).to_string(),
-            (|l: &CrafterLevels| l.leatherworker) as CrafterCallback,
-        ),
-        (
-            "WVR",
-            t_string!(i18n, weaver).to_string(),
-            (|l: &CrafterLevels| l.weaver) as CrafterCallback,
-        ),
-        (
-            "ALC",
-            t_string!(i18n, alchemist).to_string(),
-            (|l: &CrafterLevels| l.alchemist) as CrafterCallback,
-        ),
-        (
-            "CUL",
-            t_string!(i18n, culinarian).to_string(),
-            (|l: &CrafterLevels| l.culinarian) as CrafterCallback,
-        ),
+    let jobs: [(&str, CrafterCallback); 8] = [
+        ("CRP", |l: &CrafterLevels| l.carpenter),
+        ("BSM", |l: &CrafterLevels| l.blacksmith),
+        ("ARM", |l: &CrafterLevels| l.armorer),
+        ("GSM", |l: &CrafterLevels| l.goldsmith),
+        ("LTW", |l: &CrafterLevels| l.leatherworker),
+        ("WVR", |l: &CrafterLevels| l.weaver),
+        ("ALC", |l: &CrafterLevels| l.alchemist),
+        ("CUL", |l: &CrafterLevels| l.culinarian),
     ];
 
     view! {
@@ -73,15 +41,26 @@ pub fn CrafterSettings() -> impl IntoView {
             <h3 class="text-2xl font-bold text-[color:var(--brand-fg)] mb-4">{t!(i18n, crafter_levels_title)}</h3>
             <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {jobs.into_iter()
-                    .map(|(code, name, getter)| {
+                    .map(|(code, getter)| {
                         let id = format!("crafter-level-{}", code);
+                        let label = match code {
+                            "CRP" => view! { {t!(i18n, carpenter)} }.into_any(),
+                            "BSM" => view! { {t!(i18n, blacksmith)} }.into_any(),
+                            "ARM" => view! { {t!(i18n, armorer)} }.into_any(),
+                            "GSM" => view! { {t!(i18n, goldsmith)} }.into_any(),
+                            "LTW" => view! { {t!(i18n, leatherworker)} }.into_any(),
+                            "WVR" => view! { {t!(i18n, weaver)} }.into_any(),
+                            "ALC" => view! { {t!(i18n, alchemist)} }.into_any(),
+                            "CUL" => view! { {t!(i18n, culinarian)} }.into_any(),
+                            _ => view! { {t!(i18n, unknown)} }.into_any(),
+                        };
                         view! {
                             <div class="space-y-1">
                                 <label
                                     class="text-sm font-medium text-[color:var(--color-text-muted)]"
                                     for=id.clone()
                                 >
-                                    {name}
+                                    {label}
                                 </label>
                                 <div class="relative">
                                     <input

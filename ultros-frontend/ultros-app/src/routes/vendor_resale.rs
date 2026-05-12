@@ -1,9 +1,10 @@
+use crate::analysis::{SaleSummary, format_duration_short, roi_badge_class};
 use crate::global_state::xiv_data::tracked_data;
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
         add_to_list::AddToList, clipboard::*, filter_card::*, gil::*, icon::Icon, item_icon::*,
-        meta::*, query_button::QueryButton, skeleton::BoxSkeleton, toggle::Toggle,
+        meta::*, query_button::QueryButton, skeleton::BoxSkeleton, toggle::Toggle, tool_help::*,
         virtual_scroller::*, world_picker::*,
     },
     error::AppError,
@@ -22,23 +23,8 @@ use std::{cmp::Reverse, collections::HashMap, str::FromStr, sync::Arc};
 use ultros_api_types::{
     cheapest_listings::CheapestListings,
     recent_sales::{RecentSales, SaleData},
-    world_helper::WorldHelper,
 };
 use xiv_gen::ItemId;
-
-/// Computed sale stats
-#[derive(Hash, Clone, Debug, PartialEq)]
-struct SaleSummary {
-    item_id: i32,
-    hq: bool,
-    /// this value is limited by the summary returned by the API
-    num_sold: usize,
-    /// Represents the average time between sales within the `num_sold`
-    avg_sale_duration: Option<Duration>,
-    max_price: i32,
-    avg_price: i32,
-    min_price: i32,
-}
 
 #[derive(Hash, Clone, Debug, PartialEq, Eq)]
 struct VendorProfitKey {
@@ -92,13 +78,31 @@ fn compute_summary(sale: SaleData) -> SaleSummary {
         .last()
         .map(|last| (last.sale_date - now).num_milliseconds().abs() / sales.len() as i64);
     let avg_sale_duration = t.map(Duration::milliseconds);
+    let days_since_last_sale = sales
+        .first()
+        .map(|first| Duration::milliseconds((now - first.sale_date).num_milliseconds().max(0)));
+    let mut prices = sales
+        .iter()
+        .map(|price| price.price_per_unit)
+        .collect::<Vec<_>>();
+    prices.sort_unstable();
+    let median_price = match prices.as_slice() {
+        [] => 0,
+        values if values.len() % 2 == 1 => values[values.len() / 2],
+        values => {
+            let upper = values.len() / 2;
+            ((values[upper - 1] as i64 + values[upper] as i64) / 2) as i32
+        }
+    };
     SaleSummary {
         item_id,
         hq,
         num_sold: sales.len(),
         avg_sale_duration,
+        days_since_last_sale,
         max_price,
         avg_price,
+        median_price,
         min_price,
     }
 }
@@ -196,7 +200,6 @@ impl VendorProfitTable {
 fn VendorResaleTable(
     sales: RecentSales,
     world_cheapest_listings: CheapestListings,
-    _worlds: Arc<WorldHelper>,
     world: Signal<String>,
 ) -> impl IntoView {
     let i18n = use_i18n();
@@ -647,23 +650,7 @@ fn VendorResaleTable(
                                     </div>
                                     <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
                                         <span class={
-                                            move || {
-                                                let roi = data_clone.return_on_investment;
-                                                let tint = if roi >= 500 {
-                                                    "24%"
-                                                } else if roi >= 200 {
-                                                    "20%"
-                                                } else if roi >= 100 {
-                                                    "16%"
-                                                } else if roi >= 50 {
-                                                    "12%"
-                                                } else {
-                                                    "10%"
-                                                };
-                                                format!(
-                                                    "inline-flex items-center justify-end px-2 py-1 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_{tint},transparent)]"
-                                                )
-                                            }
+                                            move || roi_badge_class(data_clone.return_on_investment)
                                         }>
                                             {format!("{}%", data.return_on_investment)}
                                         </span>
@@ -680,19 +667,7 @@ fn VendorResaleTable(
                                             .as_ref()
                                             .and_then(|s| s.avg_sale_duration)
                                             .and_then(|duration| duration.to_std().ok())
-                                            .map(|duration| {
-                                                let secs = duration.as_secs();
-                                                let days = secs / 86_400;
-                                                let hours = (secs % 86_400) / 3_600;
-                                                let minutes = (secs % 3_600) / 60;
-                                                let seconds = secs % 60;
-                                                let mut parts = Vec::new();
-                                                if days > 0 { parts.push(format!("{}d", days)); }
-                                                if hours > 0 { parts.push(format!("{}h", hours)); }
-                                                if minutes > 0 && parts.len() < 2 { parts.push(format!("{}m", minutes)); }
-                                                if seconds > 0 && parts.len() < 2 { parts.push(format!("{}s", seconds)); }
-                                                if parts.is_empty() { "0s".to_string() } else { parts[..parts.len().min(2)].join(" ") }
-                                            })
+                                            .map(|duration| format_duration_short(duration.as_secs()))
                                             .unwrap_or_else(|| "---".to_string())}
                                     </div>
                                 </div>
@@ -726,21 +701,22 @@ pub fn VendorWorldView() -> impl IntoView {
             get_cheapest_listings(&world).await
         },
     );
-    let worlds = use_context::<LocalWorldData>()
-        .expect("Worlds should always be populated here")
-        .0
-        .unwrap();
 
     view! {
         <div class="main-content p-2 sm:p-6">
             <MetaTitle title=move || format!("{} - {}", t_string!(i18n, vendor_resale_title), world()) />
             <div class="container mx-auto max-w-7xl">
                 <div class="flex flex-col gap-8">
-                    // Header Section
-                    <div class="panel p-4 sm:p-8 rounded-2xl">
-                        <h1 class="text-3xl font-bold text-[color:var(--brand-fg)] mb-4">
-                            {t!(i18n, vendor_resale_for)} " " {world}
-                        </h1>
+                    <ToolHeader
+                        title="Vendor Resale"
+                        summary="Find NPC vendor items that may be worth buying as NQ items and reselling on the selected world."
+                        context="HQ market listings are excluded because vendor purchases are normal quality. Specific NPC source names are not available yet."
+                        help_href="/help/vendor-resale"
+                        help_body="Vendor Resale is useful for low-risk market checks where the buy price is fixed. Favor results with recent sales; high ROI on an item that rarely sells is still slow gil."
+                    />
+
+                    // Controls Section
+                    <div class="panel p-4 sm:p-6 rounded-2xl">
                         <div class="flex flex-col gap-4">
                             <MetaDescription text=move || {
                                 t_string!(i18n, vendor_resale_meta_desc).to_string().replace("%world%", &world())
@@ -763,6 +739,16 @@ pub fn VendorWorldView() -> impl IntoView {
                                 />
                                 <PresetFilterButton href="?profit=50000" label=t_string!(i18n, vendor_resale_preset_50k_profit).to_string() />
                             </div>
+                            <CalculationSummary
+                                title="How profit is estimated"
+                                formula="profit = market price - vendor price - market tax"
+                                details="Vendor items are treated as NQ. The table compares fixed NPC cost against current market-board listings and recent sale speed."
+                            />
+                            <div class="flex flex-wrap gap-2">
+                                <AssumptionBadge text="NQ vendor purchase" />
+                                <AssumptionBadge text="HQ listings excluded" />
+                                <AssumptionBadge text="Vendor source names not shown yet" />
+                            </div>
                         </div>
                     </div>
 
@@ -772,8 +758,6 @@ pub fn VendorWorldView() -> impl IntoView {
                             {move || {
                                 let world_cheapest = world_cheapest_listings.get();
                                 let sales = sales.get();
-                                let worlds = worlds.clone();
-
                                 match (world_cheapest, sales) {
                                     (Some(Ok(w)), Some(Ok(s))) => {
                                         Either::Left(
@@ -781,7 +765,6 @@ pub fn VendorWorldView() -> impl IntoView {
                                                 <VendorResaleTable
                                                     sales=s
                                                     world_cheapest_listings=w
-                                                    _worlds=worlds
                                                     world=world.into()
                                                 />
                                             },

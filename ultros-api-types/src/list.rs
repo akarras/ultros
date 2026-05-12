@@ -39,6 +39,12 @@ pub struct List {
     pub wdr_filter: AnySelector,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ListWithPermission {
+    pub list: List,
+    pub permission: ListPermission,
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone, Default, Eq, PartialEq, PartialOrd, Ord)]
 pub struct ListItem {
     pub id: i32,
@@ -118,6 +124,23 @@ mod tests {
         assert!(ListPermission::None < ListPermission::Read);
         assert!(ListPermission::Read < ListPermission::Write);
         assert!(ListPermission::Write < ListPermission::Owner);
+    }
+
+    #[test]
+    fn list_with_permission_serde_roundtrip() {
+        let list = ListWithPermission {
+            list: List {
+                id: 1,
+                owner: 2,
+                name: "Shared".into(),
+                wdr_filter: AnySelector::World(3),
+            },
+            permission: ListPermission::Write,
+        };
+        let s = serde_json::to_string(&list).unwrap();
+        let back: ListWithPermission = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.list.id, 1);
+        assert_eq!(back.permission, ListPermission::Write);
     }
 
     #[test]

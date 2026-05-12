@@ -3,8 +3,28 @@ use poise::serenity_prelude::{
     self, Color, CreateAllowedMentions, CreateEmbed, CreateMessage, UserId,
 };
 use serde::Deserialize;
+use std::sync::{Arc, OnceLock};
 use tracing::error;
 use ultros_db::UltrosDb;
+
+/// Process-wide handle to the running Discord client's `serenity::Context`.
+///
+/// The bot owns the live context, but web handlers (`/test`, `/resend`) also need to send
+/// Discord messages. The Discord setup hook calls [`set_serenity_ctx`] once during startup;
+/// any later caller can [`get_serenity_ctx`] it back out. Returns `None` before the bot has
+/// finished initializing — handlers should map that to a user-facing error.
+static SERENITY_CTX: OnceLock<Arc<serenity_prelude::Context>> = OnceLock::new();
+
+/// Install the global serenity context. Called once during Discord framework setup.
+/// Subsequent calls are ignored (OnceLock semantics).
+pub fn set_serenity_ctx(ctx: serenity_prelude::Context) {
+    let _ = SERENITY_CTX.set(Arc::new(ctx));
+}
+
+/// Fetch the global serenity context, if the bot has finished initializing.
+pub(crate) fn get_serenity_ctx() -> Option<Arc<serenity_prelude::Context>> {
+    SERENITY_CTX.get().cloned()
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(tag = "method")]
@@ -37,6 +57,29 @@ pub(crate) fn parse_endpoint_config(
         .map_err(|e| anyhow!("bad endpoint config: {e}"))
 }
 
+/// Deliver a single message to one endpoint. Returns `Ok(())` on success.
+///
+/// Used by [`dispatch_alert`] (fan-out from the price-alert tracker) and by the web handlers
+/// for endpoint test + alert-event resend. The `_db` arg is unused today but kept in the
+/// signature so future endpoint methods (e.g. ones that need to look up retainer info) can
+/// be added without rippling the call sites.
+pub(crate) async fn deliver_to_endpoint(
+    endpoint: &ultros_db::entity::notification_endpoint::Model,
+    title: &str,
+    body: &str,
+    _db: &UltrosDb,
+    ctx: &serenity_prelude::Context,
+) -> Result<()> {
+    let parsed = parse_endpoint_config(&endpoint.method, &endpoint.config)?;
+    match parsed {
+        EndpointConfig::DiscordChannel { channel_id } => {
+            send_to_channel(channel_id, title, body, ctx).await
+        }
+        EndpointConfig::DiscordDm { user_id } => send_dm(user_id, title, body, ctx).await,
+        EndpointConfig::Webhook { url } => send_webhook(&url, title, body).await,
+    }
+}
+
 /// Look up all notification endpoints for an alert and dispatch the message via each.
 /// Returns Ok(()) if at least one delivered; Err describing the last failure otherwise.
 pub(crate) async fn dispatch_alert(
@@ -56,22 +99,7 @@ pub(crate) async fn dispatch_alert(
     let mut any_ok = false;
 
     for endpoint in endpoints {
-        let parsed = match parse_endpoint_config(&endpoint.method, &endpoint.config) {
-            Ok(p) => p,
-            Err(e) => {
-                last_err = Some(anyhow!("bad endpoint config for {}: {e}", endpoint.id));
-                continue;
-            }
-        };
-
-        let result = match parsed {
-            EndpointConfig::DiscordChannel { channel_id } => {
-                send_to_channel(channel_id, title, body, ctx).await
-            }
-            EndpointConfig::DiscordDm { user_id } => send_dm(user_id, title, body, ctx).await,
-            EndpointConfig::Webhook { url } => send_webhook(&url, title, body).await,
-        };
-        match result {
+        match deliver_to_endpoint(&endpoint, title, body, db, ctx).await {
             Ok(()) => any_ok = true,
             Err(e) => {
                 error!("delivery failed for alert {alert_id}: {e}");
