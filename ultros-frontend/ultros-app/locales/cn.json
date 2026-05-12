@@ -980,5 +980,13 @@
     "leave_list": "Leave list",
     "leave_list_confirm": "Stop following this shared list?",
     "leave_list_tooltip": "Remove yourself from this shared list",
-    "add_to_list_read_only": "Read-only — can't add items"
+    "add_to_list_read_only": "Read-only — can't add items",
+    "list_view_subscribe_tooltip": "Subscribe to price alerts on every priced item in this list",
+    "list_view_subscribe_aria": "Notify me on this list",
+    "list_view_subscribe_button": "Notify me",
+    "list_subscribe_success_toast": "Subscribed to list",
+    "list_subscribe_title": "Notify me on this list: {{name}}",
+    "list_subscribe_description": "You'll be notified when any item in this list drops to or below its target price. Set per-item targets from the list page.",
+    "list_subscribe_submit": "Subscribe",
+    "list_item_row_target_price_label": "Target price (gil)"
 }

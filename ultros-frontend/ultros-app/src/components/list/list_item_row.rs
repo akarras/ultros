@@ -284,12 +284,12 @@ pub fn ListItemRow(
                                         }
                                     />
 
-                                    <label class="text-xs">"Target price (gil)"</label>
+                                    <label class="text-xs">{t!(i18n, list_item_row_target_price_label)}</label>
                                     <input
                                         class="input w-24"
                                         type="number"
                                         min="0"
-                                        placeholder="None"
+                                        placeholder=move || t_string!(i18n, none).to_string()
                                         prop:value=move || {
                                             temp_item
                                                 .with(|i| {
