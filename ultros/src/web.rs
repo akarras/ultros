@@ -61,6 +61,9 @@ use crate::search_service::SearchService;
 use crate::web::api::alerts::{
     create_alert, delete_alert, list_alert_events, list_alerts, resend_alert_event, update_alert,
 };
+use crate::web::api::endpoints::{
+    create_endpoint, delete_endpoint, list_endpoints, test_endpoint, update_endpoint,
+};
 use crate::web::api::real_time_data::real_time_data;
 use crate::web::api::{cheapest_per_world, get_best_deals, get_trends, recent_sales};
 use crate::web::sitemap::{generic_pages_sitemap, item_sitemap, sitemap_index, world_sitemap};
@@ -1050,6 +1053,15 @@ pub(crate) async fn start_web(state: WebState) {
             "/api/v1/alerts/{id}",
             axum::routing::patch(update_alert).delete(delete_alert),
         )
+        .route(
+            "/api/v1/endpoints",
+            get(list_endpoints).post(create_endpoint),
+        )
+        .route(
+            "/api/v1/endpoints/{id}",
+            axum::routing::patch(update_endpoint).delete(delete_endpoint),
+        )
+        .route("/api/v1/endpoints/{id}/test", post(test_endpoint))
         .route(
             "/api/v1/listings/{world}/{itemid}",
             get(world_item_listings),
