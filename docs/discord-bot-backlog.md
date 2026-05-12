@@ -27,6 +27,8 @@ The single most important epic. Retainer-ownership currently has no proof of own
 - Trying to claim a retainer that already has an owner row for a different user returns an explicit conflict error.
 - Existing tests still pass; new test covers cross-user claim attempt.
 
+**Shipped behavior (2026-05-12).** The `retainer` entity has no `character_id` column — the only character→retainer link in the schema is `owned_retainers.character_id`, which is always null today. Shipped as a **world-level filter**: autocomplete returns all retainers whose `world_id` matches one of the caller's verified characters' worlds. This is meaningfully stricter than the prior global filter (must have ≥1 verified character; cross-region retainers are rejected) but is broader than the original "≤ caller's character's retainer count" acceptance criterion. Per-character scoping deferred until `owned_retainers.character_id` is backfilled on claim (see also B-1.2 for the DB-layer ownership work).
+
 ### B-1.2 · DB-layer ownership checks on list mutations · P1 · M
 **Problem.** [`/ffxiv list remove`](ultros/src/discord/ffxiv/lists.rs:89), [`add_item`](ultros/src/discord/ffxiv/lists.rs:120), [`remove_item`](ultros/src/discord/ffxiv/lists.rs:160) trust the handler-layer Discord-ID filter. A future refactor that bypasses that filter would silently expose lists.
 
