@@ -23,6 +23,7 @@ pub mod make_place_importer;
 pub mod meta;
 pub mod modal;
 pub mod number_input;
+pub mod on_hand_input;
 pub mod patreon;
 pub mod price_history_chart;
 pub mod price_viewer;

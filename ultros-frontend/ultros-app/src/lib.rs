@@ -23,8 +23,9 @@ use crate::global_state::{
 };
 use crate::{
     components::{
-        ad::DesktopAdRail, apps_menu::*, language_picker::*, patreon::*, search_box::*,
-        theme_picker::*, toast::*, tooltip::*,
+        ad::DesktopAdRail, apps_menu::*, language_picker::*,
+        on_hand_input::provide_on_hand_context, patreon::*, search_box::*, theme_picker::*,
+        toast::*, tooltip::*,
     },
     routes::{
         about::*,
@@ -286,6 +287,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
     provide_theme_settings();
     provide_toast_context();
     provide_xiv_data_revision();
+    provide_on_hand_context();
     // AnimationContext::provide();
     let root_node_ref = NodeRef::<Div>::new();
     #[cfg(feature = "hydrate")]
