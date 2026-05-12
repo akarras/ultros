@@ -1081,6 +1081,10 @@ pub(crate) async fn start_web(state: WebState) {
             get(crate::web::api::push::get_vapid_public_key),
         )
         .route(
+            "/api/v1/push/subscribe",
+            post(crate::web::api::push::create_push_subscription),
+        )
+        .route(
             "/api/v1/listings/{world}/{itemid}",
             get(world_item_listings),
         )
