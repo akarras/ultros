@@ -1371,7 +1371,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                     label=t_string!(i18n, analyzer_preset_500_return).to_string()
                                 />
                                 <PresetFilterButton
-                                    href="?min-buy=1000&profit=100000"
+                                    href="?min-buy=1000&last-sold=30d&profit=100000"
                                     label=t_string!(i18n, analyzer_preset_100k_profit).to_string()
                                 />
                             </div>
