@@ -29,7 +29,8 @@ Net: the product can ship Shared Lists end-to-end in roughly a week of frontend 
 
 - **No new permission levels.** Stays at None/Read/Write/Owner; no fine-grained per-item permissions, no "expiring share", no transfer-ownership UI.
 - **No general in-app notifications system.** "X shared a list with you" via a bell icon is a separate spec. Discord *channel* notifications for list events are in scope (Tier 2b) because they reuse the existing alert-delivery pipeline. In-app and Discord-DM notifications are not.
-- **No `GUILD_MEMBERS` privileged intent.** That intent requires Discord verification past 100 guilds and a privacy review. We resolve guild role membership lazily via per-user REST calls at OAuth callback time — see Tier 2b.4. If the bot ever needs to react to live role changes (someone gets promoted mid-session), that's a future expansion, not this spec.
+- **No `GUILD_MEMBERS` privileged intent.** That intent requires Discord verification past 100 guilds and a privacy review. We resolve guild role membership lazily via the bot's own REST calls — see Tier 2b.4. If the bot ever needs to react to live role changes (someone gets promoted mid-session), that's a future expansion, not this spec.
+- **No new OAuth scopes.** We continue to request only `Identify`. The Discord user id we already have is sufficient — the *bot* is the source of truth for guild membership and roles. Existing users do not get re-prompted.
 - **No tutorial / interactive walkthrough.** Onboarding is contextual nudges, not a guided tour.
 - **No public lists.** A list is private, shared with named users, shared with groups the owner controls, invite-link gated, or guild-bound (Tier 2b). No "discoverable to all" mode.
 - **No mobile-specific layout work beyond responsive defaults.**
@@ -159,11 +160,13 @@ Wire two handlers in [ultros/src/discord/mod.rs](ultros/src/discord/mod.rs):
 
 These events are part of the **non-privileged** GUILD intent set; no Discord verification needed.
 
-### 2b.2 OAuth scope upgrade: add `guilds`
+### 2b.2 Bot-side guild discovery (no OAuth scope change)
 
-Currently [`ultros/src/main.rs` requests only `Identify`](ultros/src/main.rs). Add `guilds`. On the next login each existing user will be re-prompted by Discord to grant the additional scope; this is normal Discord UX and we don't try to hide it. The scope yields a list of guilds the user belongs to plus per-guild `permissions` (a bitfield — we read `MANAGE_GUILD` to identify "officer-level" users for the bind UI).
+OAuth stays at `Identify` — we already have the Discord user id, and that's all we need. The bot is the source of truth for "what guilds does this user share with us, and what roles do they have."
 
-We do **not** request `guilds.members.read`. We don't need the full member list; we resolve a single user's roles in a single guild on demand (see 2b.4).
+To populate the bind UI ("guilds where you're an officer and Ultros is present"), the web handler iterates the bot's known guild list (from `discord_guild`), calls `GET /guilds/{g}/members/{user_id}` via the bot's REST client for each, and filters to those where (a) the call returns 200 (user is a member) and (b) the member's role-permission bitfield includes `MANAGE_GUILD`. Results are cached per `(user_id, guild_id)` for ~5 minutes to keep modal opens cheap.
+
+Worst case the bot is in N guilds and the call is O(N) per modal open. Ultros today is in a small number of guilds; if that ever grows past a few hundred, switch to a more scalable strategy (e.g., subscribe to `GUILD_MEMBER_UPDATE` events under the `GUILD_MEMBERS` privileged intent, or maintain a `discord_guild_member` cache). Not this spec.
 
 ### 2b.3 Binding schema
 
@@ -175,17 +178,19 @@ New tables:
 
 All three FK to `discord_guild(id)` with `ON DELETE CASCADE` so removing the bot tears down bindings cleanly. The `list_id` / `group_id` FKs also cascade.
 
-Authorization invariant: to create any binding, the calling user must have `MANAGE_GUILD` on the guild (read from the OAuth `guilds` payload, cached in their session). This is checked in the Axum handler — the bot never trusts client-supplied guild ids.
+Authorization invariant: to create any binding, the calling user must have `MANAGE_GUILD` on the guild (computed from the bot's `GET /guilds/{g}/members/{user_id}` call described in 2b.2, not from anything the client supplied). The Axum handler runs this check before each binding mutation; the cached result from 2b.2 is acceptable for the read path but revalidated server-side on every write.
 
 ### 2b.4 Lazy membership resolution
 
-We don't subscribe to live member events. Instead, role membership is re-evaluated at well-defined moments:
+We don't subscribe to live member events. Instead, role membership is re-evaluated at well-defined moments, all going through the bot's REST client:
 
-- **At OAuth login.** After the existing `Identify` callback, for each guild in `discord_guild_list_binding ∪ discord_guild_group_binding` that the user belongs to (intersection of bot-known guilds and the user's guild list from OAuth), call `GET /guilds/{guild_id}/members/{user_id}` via the bot token. The response includes the member's role list. Upsert/delete the corresponding `list_shared_user` and `user_group_member` rows so the user's access matches their current roles.
-- **On binding create / edit.** When an officer creates or modifies a binding, enqueue a one-shot resolution for every Ultros user currently linked to that guild (find them via the OAuth `guilds` cache from their last login). This is bounded by users-who-have-logged-in, not the full guild member count.
+- **At login.** After the existing `Identify` callback, for each guild that has at least one binding (`discord_guild_list_binding ∪ discord_guild_group_binding`), call `GET /guilds/{guild_id}/members/{user_id}` via the bot. 404 means "not a member, no bindings apply"; 200 returns the role list. Upsert/delete the corresponding `list_shared_user` and `user_group_member` rows so the user's access matches their current roles.
+- **On binding create / edit.** When an officer creates or modifies a binding, enqueue a one-shot resolution for every Ultros user we've seen log in recently. Bounded by `discord_user` rows with a recent `last_login`, not the full guild member count. (Implies adding `last_login` to `discord_user` — small, useful elsewhere too.)
 - **Hourly drift sweep.** A background tokio task re-resolves users who logged in more than 24 hours ago, capped at N per minute. Nice to have, not required for shipping.
 
-Lazy resolution intentionally accepts a "user gets promoted on Discord, doesn't see Editor permission on Ultros until they refresh / re-login" lag. The product reads as "permissions sync on login" — that's an acceptable mental model and saves us the privileged intent.
+Lazy resolution intentionally accepts a "user gets promoted on Discord, doesn't see Editor permission on Ultros until they refresh / re-login" lag. The product reads as "permissions sync on login" — an acceptable mental model that saves us the privileged intent.
+
+Iterating per-binding-guild at login is cheap (a binding-set is small per user; most users are in zero bound guilds). For users in many bound guilds, calls fan out in parallel with a per-request timeout so a slow Discord API doesn't gate the login.
 
 ### 2b.5 Notification dispatch
 
@@ -205,8 +210,7 @@ A fourth tab in the share modal (alongside Groups, Invite link, and the deferred
 
 Visible only to the list owner. Content:
 
-- If the user has not granted the `guilds` scope yet → "Connect your Discord guilds to bind roles" with a re-auth button.
-- Else, a dropdown of guilds where the user has `MANAGE_GUILD` *and* the Ultros bot is present. For guilds where bot is missing, show an "Invite Ultros to this guild" link with the bot install URL and the minimum required permissions (`Send Messages`, `Embed Links`, `Read Roles` — guild-only, no member-list, no message-content).
+- A dropdown sourced from a new endpoint `GET /api/v1/discord/eligible-guilds` that returns the bot-known guilds where the calling user has `MANAGE_GUILD` (computed via 2b.2). If the list is empty, show "Invite Ultros to a Discord server where you're an admin" with the bot install URL and the minimum required permissions (`Send Messages`, `Embed Links` — guild-only, no member-list intent, no message-content intent).
 - After picking a guild:
   - **Roles**: list current `discord_guild_list_binding` rows for this guild+list. Each row: role-name pill (with guild's color), permission selector (Read/Write), revoke. "Add binding" → role dropdown + permission selector. `@everyone` is one of the role choices, prefixed with an icon to differentiate.
   - **Notifications**: list current `discord_guild_notification` rows. Each row: channel name, event-type checkboxes, revoke. "Add notification" → channel dropdown (filtered to text channels the bot can post to) + event checkboxes.
@@ -218,6 +222,35 @@ The `/groups` page (Tier 2.3) gains the same guild-binding UI per group, scoped 
 ### 2b.8 Bot slash command (optional, post-Tier-2b)
 
 A `/ffxiv list` already exists ([ultros/src/discord/ffxiv/mod.rs:20-28](ultros/src/discord/ffxiv/mod.rs:20)). Extend with `/ffxiv list link` — an officer-only slash command that links the calling guild to an Ultros list by id (the user must own the list on Ultros). Convenience over the web UI; nice to have, not required for the tier.
+
+### 2b.9 `DiscordGuildClient` trait — the seam for testability
+
+Every cross-process call to Discord goes through one trait. The web handlers, list-event dispatcher, lazy resolver, and binding-create endpoints all depend on a `&dyn DiscordGuildClient` (or `Arc<dyn DiscordGuildClient>` for tasks), never on `serenity::Http` directly.
+
+```rust
+#[async_trait]
+pub trait DiscordGuildClient: Send + Sync {
+    async fn list_bot_guilds(&self) -> Result<Vec<GuildInfo>, DiscordError>;
+    async fn get_guild_roles(&self, guild_id: GuildId) -> Result<Vec<RoleInfo>, DiscordError>;
+    async fn get_guild_text_channels(&self, guild_id: GuildId)
+        -> Result<Vec<ChannelInfo>, DiscordError>;
+    async fn get_member(&self, guild_id: GuildId, user_id: UserId)
+        -> Result<Option<MemberInfo>, DiscordError>; // None = 404 / not a member
+    async fn send_channel_embed(&self, channel_id: ChannelId, embed: Embed)
+        -> Result<(), DiscordError>;
+}
+```
+
+Two implementations:
+
+- **`SerenityGuildClient`** — production. Wraps `serenity::CacheAndHttp`. Lives next to the existing bot bootstrap in [ultros/src/discord/mod.rs](ultros/src/discord/mod.rs). Built once at startup, shared via the existing app-state pattern.
+- **`MockGuildClient`** — tests. `HashMap`-backed; tests preload guilds/roles/members and assert on captured `send_channel_embed` calls. Lives in a `#[cfg(test)]` module under the same crate.
+
+The web handlers take `Arc<dyn DiscordGuildClient>` as Axum state. The list-event dispatcher takes it as a constructor arg. The lazy resolver takes it as a function arg. No production code path constructs the serenity client directly except `main.rs`. This makes the entire Tier 2b unit-testable without a live bot.
+
+`MemberInfo`, `RoleInfo`, `ChannelInfo`, `GuildInfo` are local structs in `ultros/src/discord/types.rs` — not serenity types. Keeps the trait's surface stable across serenity major-version bumps and prevents serenity types leaking into web handlers.
+
+**General-pattern note (not required for shipping this spec):** the codebase has no pervasive mocking pattern today. Adopting `DiscordGuildClient` is a deliberate first beachhead; if the pattern works, it can extend to the universalis HTTP client and the FFXIV character-fetcher next. We do **not** retrofit existing untested code in this spec — only the new Tier 2b code is built behind a trait. That keeps scope honest while still leaving the codebase in a better testable state than we found it.
 
 ---
 
@@ -299,18 +332,20 @@ Recipient opens invite URL
 
 Officer binds a guild role             (Tier 2b)
    └─→ <ShareListModal /> "Discord" tab
-        ├─ pick guild (must have MANAGE_GUILD + bot present)
+        ├─ GET /api/v1/discord/eligible-guilds
+        │     └─ DiscordGuildClient.list_bot_guilds() ⨯ get_member(g, user)
+        │        filtered to MANAGE_GUILD = "officer in a bot-present guild"
         ├─ pick role + permission → POST /api/v1/list/{id}/guild-binding
-        │     └─ enqueue lazy resolve for each linked Ultros user in that guild
+        │     └─ enqueue lazy resolve for recently-active Ultros users
         └─ pick channel + events → POST /api/v1/list/{id}/guild-notification
 
 User logs in
-   └─→ /oauth callback
+   └─→ /oauth callback (Identify only — no scope change)
         ├─ existing flow: upsert discord_user, set session cookie
-        └─ new (Tier 2b.4): for each guild they're in that has a binding,
-                            GET /guilds/{g}/members/{u} via bot token,
-                            reconcile list_shared_user + user_group_member
-                            rows against current roles
+        └─ new (Tier 2b.4): for each guild with at least one binding,
+                            DiscordGuildClient.get_member(g, user_id)
+                            → reconcile list_shared_user + user_group_member
+                              rows against current roles
 
 List event fires (item added, edited, invite used)
    └─→ list_event_dispatcher (Tier 2b.5)
@@ -340,7 +375,7 @@ State on the recipient side:
 - **Unit**: event coalescer (2b.5) — N rapid `ItemAddedRemoved` events for the same list collapse to one embed.
 - **Integration / e2e**: the existing Puppeteer harness in [integration/](integration/) gains:
   - **Invite redemption**: log in as user A, create list, generate invite, redeem as user B (via test-auth login flow added in commit 1cbf5b4c), assert list appears in B's `/list` with "Shared · Editor" pill.
-  - **Guild bind dry-run**: stub the Discord bot API behind a feature flag (test-mode delivery sink instead of real channel send), assert binding creation triggers a fake-resolve and that notifications hit the sink. The bot itself does not run in CI; mock its REST surface.
+  - **Guild bind happy path**: the e2e server is started with `MockGuildClient` as the `DiscordGuildClient` Axum-state binding instead of the serenity-backed one. Preload it with a fake guild + roles + a fake member. Assert that creating a binding + logging in user B reconciles their permissions, and that an item-add fires a captured `send_channel_embed` call on the mock. The real bot never runs in CI.
 - **Visual**: screenshots of `/list` with owned-only, shared-only, and mixed states; `<ShareListModal />` Groups/Invite/Discord tabs; `/groups` page.
 
 ## Roadmap / explicitly deferred
@@ -362,4 +397,5 @@ Sketched for context; not in scope:
 - **Tier 2b**: does the bot need any additional Discord OAuth permissions at install time beyond `Send Messages + Embed Links`? `View Channels` is implicit; `Read Message History` is not needed. Pin during planning.
 - **Tier 2b**: bot install URL — generate per-deploy or hard-code the application id? Hard-code is fine; the bot's application id is public.
 - **Tier 2b**: how do we handle a guild where the bot was removed but bindings still exist? Lazy resolution stops syncing (the REST call fails); UI shows a "bot removed from this guild" warning on the binding row with a re-invite link. Don't auto-delete bindings — the officer may re-add the bot.
-- **Tier 2b**: the `guilds` OAuth scope re-prompt on first login after deploy will surprise existing users. Communicate via a small in-app banner ("We added Discord guild integration — log out and back in to enable") rather than forcing a hard re-auth.
+- **Tier 2b**: `eligible-guilds` cache TTL — start at 5 minutes. If users complain that newly-added bots don't appear in the picker, drop to 1 minute or add a "refresh" button.
+- **Tier 2b**: should `DiscordGuildClient` be a workspace-level trait (in `ultros-api-types` or a new `ultros-discord` crate) or stay private to the `ultros` binary? Lean private — only one consumer today. Promote if a second crate ever needs it.
