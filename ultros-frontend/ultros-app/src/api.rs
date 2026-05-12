@@ -368,17 +368,10 @@ pub(crate) async fn get_alert_events() -> AppResult<Vec<AlertEvent>> {
     fetch_api("/api/v1/alerts/events").await
 }
 
-// Notification endpoint + resend stubs: callers (EndpointsPanel, HistoryPanel,
-// AlertRulesPanel, alert_config_drawer) are not yet wired into a route in this
-// commit; Task 11 will wire them up. Until then `#[allow(dead_code)]` keeps
-// `cargo clippy -D warnings` happy.
-
-#[allow(dead_code)]
 pub(crate) async fn list_endpoints() -> AppResult<Vec<Endpoint>> {
     fetch_api("/api/v1/endpoints").await
 }
 
-#[allow(dead_code)]
 pub(crate) async fn create_endpoint(req: CreateEndpointRequest) -> AppResult<Endpoint> {
     post_api("/api/v1/endpoints", req).await
 }
@@ -388,17 +381,14 @@ pub(crate) async fn update_endpoint(id: i32, req: UpdateEndpointRequest) -> AppR
     patch_api(&format!("/api/v1/endpoints/{id}"), req).await
 }
 
-#[allow(dead_code)]
 pub(crate) async fn delete_endpoint(id: i32) -> AppResult<()> {
     delete_api(&format!("/api/v1/endpoints/{id}")).await
 }
 
-#[allow(dead_code)]
 pub(crate) async fn test_endpoint(id: i32) -> AppResult<ResendResult> {
     post_api(&format!("/api/v1/endpoints/{id}/test"), ()).await
 }
 
-#[allow(dead_code)]
 pub(crate) async fn resend_alert_event(event_id: i64) -> AppResult<ResendResult> {
     post_api(&format!("/api/v1/alerts/events/{event_id}/resend"), ()).await
 }

@@ -1,9 +1,3 @@
-// Until Task 11 wires this panel into `/alerts`, the leptos `#[component]` macro's
-// generated `EndpointCreateFormProps.on_created` field appears unread to clippy
-// (it's only consumed via `Callback::run` inside a `move ||` submit closure that
-// clippy can't follow through the macro). Suppress at module scope.
-#![allow(dead_code)]
-
 use icondata as i;
 use leptos::{prelude::*, task::spawn_local};
 use ultros_api_types::alert::{CreateEndpointRequest, Endpoint, EndpointMethod};
