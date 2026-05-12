@@ -1,3 +1,8 @@
+//! Shared craft-options cookie state. Consumed by the recipe analyzer,
+//! FC analyzer, and item-page recipe panel in Tasks 7-9.
+// TODO(Task 7): drop this allow once the first UI consumer lands.
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 use std::{fmt::Display, str::FromStr};
 
@@ -47,7 +52,6 @@ impl FromStr for CraftOptions {
     }
 }
 
-#[allow(dead_code)]
 pub const COOKIE_NAME: &str = "CRAFT_OPTIONS";
 
 #[cfg(test)]
