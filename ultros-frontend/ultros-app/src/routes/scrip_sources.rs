@@ -27,7 +27,7 @@ struct ScripSourceData {
     item_id: ItemId,
     item_name: String,
     level: u16,
-    job_category_name: String,
+    craft_type: Option<i32>,
     scrip_type: ScripType,
     scrip_amount: u32,
     cost: i32,
@@ -259,21 +259,7 @@ fn ScripSourceTable(
                     item_id: ItemId(item_id),
                     item_name: item_def.name.to_string(),
                     level: item_def.level_item as u16,
-                    job_category_name: if let Some(r) = recipe {
-                        match r.craft_type {
-                            0 => "Carpenter".to_string(),
-                            1 => "Blacksmith".to_string(),
-                            2 => "Armorer".to_string(),
-                            3 => "Goldsmith".to_string(),
-                            4 => "Leatherworker".to_string(),
-                            5 => "Weaver".to_string(),
-                            6 => "Alchemist".to_string(),
-                            7 => "Culinarian".to_string(),
-                            _ => "Unknown".to_string(),
-                        }
-                    } else {
-                        "Gathering".to_string()
-                    },
+                    craft_type: recipe.map(|r| r.craft_type),
                     scrip_type,
                     scrip_amount,
                     cost,
@@ -343,15 +329,15 @@ fn ScripSourceTable(
                             }
                         }
                     >
-                        <option value="">{t!(i18n, scrip_sources_all_jobs)}</option>
-                        <option value="Carpenter" selected=move || job_filter() == Some("Carpenter".to_string())>{t!(i18n, scrip_sources_carpenter)}</option>
-                        <option value="Blacksmith" selected=move || job_filter() == Some("Blacksmith".to_string())>{t!(i18n, scrip_sources_blacksmith)}</option>
-                        <option value="Armorer" selected=move || job_filter() == Some("Armorer".to_string())>{t!(i18n, scrip_sources_armorer)}</option>
-                        <option value="Goldsmith" selected=move || job_filter() == Some("Goldsmith".to_string())>{t!(i18n, scrip_sources_goldsmith)}</option>
-                        <option value="Leatherworker" selected=move || job_filter() == Some("Leatherworker".to_string())>{t!(i18n, scrip_sources_leatherworker)}</option>
-                        <option value="Weaver" selected=move || job_filter() == Some("Weaver".to_string())>{t!(i18n, scrip_sources_weaver)}</option>
-                        <option value="Alchemist" selected=move || job_filter() == Some("Alchemist".to_string())>{t!(i18n, scrip_sources_alchemist)}</option>
-                        <option value="Culinarian" selected=move || job_filter() == Some("Culinarian".to_string())>{t!(i18n, scrip_sources_culinarian)}</option>
+                        <option value="">{t!(i18n, all_jobs)}</option>
+                        <option value="Carpenter" selected=move || job_filter() == Some("Carpenter".to_string())>{t!(i18n, carpenter)}</option>
+                        <option value="Blacksmith" selected=move || job_filter() == Some("Blacksmith".to_string())>{t!(i18n, blacksmith)}</option>
+                        <option value="Armorer" selected=move || job_filter() == Some("Armorer".to_string())>{t!(i18n, armorer)}</option>
+                        <option value="Goldsmith" selected=move || job_filter() == Some("Goldsmith".to_string())>{t!(i18n, goldsmith)}</option>
+                        <option value="Leatherworker" selected=move || job_filter() == Some("Leatherworker".to_string())>{t!(i18n, leatherworker)}</option>
+                        <option value="Weaver" selected=move || job_filter() == Some("Weaver".to_string())>{t!(i18n, weaver)}</option>
+                        <option value="Alchemist" selected=move || job_filter() == Some("Alchemist".to_string())>{t!(i18n, alchemist)}</option>
+                        <option value="Culinarian" selected=move || job_filter() == Some("Culinarian".to_string())>{t!(i18n, culinarian)}</option>
                     </select>
                 </div>
             </div>
@@ -422,7 +408,18 @@ fn ScripSourceTable(
                                         <div class="flex flex-col truncate">
                                             <span class="font-semibold">{data.item_name.clone()}</span>
                                             <span class="text-xs text-[color:var(--color-text-muted)] truncate">
-                                                {t!(i18n, scrip_sources_lv_prefix)} " " {data.level} " " {data.job_category_name.clone()}
+                                                {t!(i18n, scrip_sources_lv_prefix)} " " {data.level} " " {match data.craft_type {
+                                                    None => view! { {t!(i18n, gathering)} }.into_any(),
+                                                    Some(0) => view! { {t!(i18n, carpenter)} }.into_any(),
+                                                    Some(1) => view! { {t!(i18n, blacksmith)} }.into_any(),
+                                                    Some(2) => view! { {t!(i18n, armorer)} }.into_any(),
+                                                    Some(3) => view! { {t!(i18n, goldsmith)} }.into_any(),
+                                                    Some(4) => view! { {t!(i18n, leatherworker)} }.into_any(),
+                                                    Some(5) => view! { {t!(i18n, weaver)} }.into_any(),
+                                                    Some(6) => view! { {t!(i18n, alchemist)} }.into_any(),
+                                                    Some(7) => view! { {t!(i18n, culinarian)} }.into_any(),
+                                                    _ => view! { {t!(i18n, unknown)} }.into_any(),
+                                                }}
                                             </span>
                                         </div>
                                     </a>

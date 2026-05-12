@@ -212,19 +212,17 @@ impl UltrosDb {
     }
 
     pub async fn get_lists_for_user(&self, discord_user: i64) -> Result<Vec<list::Model>> {
-        // This should probably also include lists shared with the user
-        let owned_lists = list::Entity::find()
+        // Owned, shared-with-user, and shared-with-group are independent queries — issue
+        // them in parallel and merge in Rust (dedup because a list can appear in multiple
+        // sources).
+        let owned_fut = list::Entity::find()
             .filter(list::Column::Owner.eq(discord_user))
-            .all(&self.db)
-            .await?;
-
-        let shared_lists = list::Entity::find()
+            .all(&self.db);
+        let shared_fut = list::Entity::find()
             .inner_join(list_shared_user::Entity)
             .filter(list_shared_user::Column::UserId.eq(discord_user))
-            .all(&self.db)
-            .await?;
-
-        let group_lists = list::Entity::find()
+            .all(&self.db);
+        let group_fut = list::Entity::find()
             .inner_join(list_shared_group::Entity)
             .join(
                 JoinType::InnerJoin,
@@ -235,8 +233,9 @@ impl UltrosDb {
                 user_group::Relation::UserGroupMember.def(),
             )
             .filter(user_group_member::Column::UserId.eq(discord_user))
-            .all(&self.db)
-            .await?;
+            .all(&self.db);
+        let (owned_lists, shared_lists, group_lists) =
+            futures::try_join!(owned_fut, shared_fut, group_fut)?;
 
         let mut all_lists = owned_lists;
         all_lists.extend(shared_lists);

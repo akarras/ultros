@@ -20,6 +20,6 @@ anyhow.workspace = true
 
 [build-dependencies]
 xiv-gen = {workspace = true, features = ["csv_to_bincode"]}
-serde = {version = "1.0.143", features = ["derive"]}
+serde = { workspace = true }
 bincode = {version = "2.0.0-rc.3"}
 flate2 = "1.0.24"

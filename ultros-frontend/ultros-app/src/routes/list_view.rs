@@ -26,6 +26,8 @@ use crate::components::{
     tooltip::*,
 };
 use crate::i18n::*;
+use crate::ws::realtime::{RealtimeSubscription, use_realtime};
+use ultros_api_types::websocket::{FilterPredicate, ServerClient, SocketMessageType};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum MenuState {
@@ -78,21 +80,57 @@ pub fn ListView() -> impl IntoView {
         move |(id, _)| get_list_items_with_listings(id),
     );
 
-    #[cfg(not(feature = "ssr"))]
-    {
-        use crate::ws::live_data::subscribe_to_list;
-        Effect::new(move |_| {
-            let id = list_id.get();
-            if id != 0 {
-                leptos::task::spawn_local(async move {
-                    let _ = subscribe_to_list(id, move || {
-                        list_view.refetch();
-                    })
-                    .await;
-                });
+    let realtime = use_realtime();
+    let list_subscription = StoredValue::new(None::<RealtimeSubscription>);
+    let list_market_subscription = StoredValue::new(None::<RealtimeSubscription>);
+    let realtime_for_list = realtime.clone();
+    Effect::new(move |_| {
+        list_subscription.update_value(|sub| *sub = None);
+        let id = list_id.get();
+        let Some(realtime) = realtime_for_list.clone() else {
+            return;
+        };
+        if id != 0 {
+            let sub = realtime.subscribe_list(id, move |message| match message {
+                ServerClient::ListUpdate(_) | ServerClient::Stale { .. } => {
+                    list_view.refetch();
+                }
+                _ => {}
+            });
+            list_subscription.set_value(Some(sub));
+        }
+    });
+    let realtime_for_market = realtime.clone();
+    Effect::new(move |_| {
+        list_market_subscription.update_value(|sub| *sub = None);
+        let Some(Ok((list, items))) = list_view.get() else {
+            return;
+        };
+        let item_ids = items
+            .iter()
+            .map(|(item, _)| item.item_id)
+            .collect::<Vec<_>>();
+        if item_ids.is_empty() {
+            return;
+        }
+        let Some(realtime) = realtime_for_market.clone() else {
+            return;
+        };
+        let filter = FilterPredicate::World(list.wdr_filter).and(FilterPredicate::Items(item_ids));
+        let sub = realtime.subscribe_market(filter, SocketMessageType::Listings, move |message| {
+            if matches!(
+                message,
+                ServerClient::Listings(_) | ServerClient::Stale { .. }
+            ) {
+                list_view.refetch();
             }
         });
-    }
+        list_market_subscription.set_value(Some(sub));
+    });
+    on_cleanup(move || {
+        list_subscription.update_value(|sub| *sub = None);
+        list_market_subscription.update_value(|sub| *sub = None);
+    });
 
     let (menu, set_menu) = signal(MenuState::None);
     let (recipe_modal_open, set_recipe_modal_open) = signal(false);
