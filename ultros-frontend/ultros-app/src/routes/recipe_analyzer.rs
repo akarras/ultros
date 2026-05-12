@@ -6,8 +6,8 @@ use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
         add_recipe_to_list::AddRecipeToList, crafter_settings::CrafterSettings, gil::*, icon::Icon,
-        item_icon::*, query_button::QueryButton, skeleton::BoxSkeleton, tooltip::Tooltip,
-        virtual_scroller::*, world_picker::WorldOnlyPicker,
+        item_icon::*, query_button::QueryButton, skeleton::BoxSkeleton, tool_help::*,
+        tooltip::Tooltip, virtual_scroller::*, world_picker::WorldOnlyPicker,
     },
     global_state::{
         LocalWorldData, cookies::Cookies, crafter_levels::CrafterLevels, home_world::use_home_world,
@@ -551,6 +551,15 @@ fn RecipeAnalyzerTable(
                 </FilterCard>
             </div>
 
+            <Show when=move || !has_levels()>
+                <ActionableEmptyState
+                    title="Set crafter levels to see recipe recommendations"
+                    body="Recipe Analyzer filters to crafts your character can make. Open the crafting profile section above and enter at least one crafter level."
+                    action_href="/help/recipe-analyzer"
+                    action_label="Read recipe help"
+                />
+            </Show>
+
             // Results Table
              <div class="rounded-2xl overflow-x-auto panel content-visible contain-layout contain-paint will-change-scroll forced-layer">
                 <VirtualScroller
@@ -794,9 +803,15 @@ pub fn RecipeAnalyzer() -> impl IntoView {
             <MetaTitle title="Recipe Analyzer - Ultros" />
             <MetaDescription text="Analyze crafting recipes for profitability" />
 
-            <div class="flex flex-col gap-4 p-4 bg-brand-900/50 rounded-lg border border-brand-800">
-                <div class="flex flex-row justify-between items-center">
-                    <h1 class="text-2xl font-bold text-brand-100">"Recipe Analyzer"</h1>
+            <div class="flex flex-col gap-4">
+                <ToolHeader
+                    title="Recipe Analyzer"
+                    summary="Find recipes where estimated craft cost is lower than the market price for the finished item."
+                    context="Configure crafter levels first so the results match recipes you can actually make."
+                    help_href="/help/recipe-analyzer"
+                    help_body="Recipe Analyzer uses cheapest ingredient listings, optional subcraft checks, your crafter levels, and recent sales. A profitable recipe is strongest when the output also sells regularly."
+                />
+                <div class="flex flex-row justify-end items-center">
                     <div class="flex flex-row gap-2 items-center">
                         <Suspense fallback=|| view! { <div class="text-brand-300 text-sm animate-pulse">"Loading sales data..."</div> }>
                             {move || {
@@ -832,6 +847,16 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                         </div>
                     }
                 }
+                <CalculationSummary
+                    title="Ingredient policy"
+                    formula="profit = output market price - ingredient cost"
+                    details="Ingredient cost uses the cheapest matching listings. Subcraft mode checks whether crafting intermediate ingredients is cheaper than buying them directly."
+                />
+                <div class="flex flex-wrap gap-2">
+                    <AssumptionBadge text="Crafter levels filter available recipes" />
+                    <AssumptionBadge text="Subcraft recursion is limited" />
+                    <AssumptionBadge text="Sales velocity affects confidence" />
+                </div>
 
                 <Show when=move || selected_world.get().is_some()>
                     <div class="flex flex-col md:flex-row items-center gap-2">

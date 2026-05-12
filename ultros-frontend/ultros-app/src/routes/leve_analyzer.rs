@@ -6,7 +6,7 @@ use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
         gil::*, icon::Icon, item_icon::*, query_button::QueryButton, skeleton::BoxSkeleton,
-        virtual_scroller::*, world_picker::WorldOnlyPicker,
+        tool_help::*, virtual_scroller::*, world_picker::WorldOnlyPicker,
     },
     global_state::{LocalWorldData, home_world::use_home_world},
 };
@@ -586,9 +586,15 @@ pub fn LeveAnalyzer() -> impl IntoView {
             <MetaTitle title=move || t_string!(i18n, leve_analyzer_meta_title).to_string() />
             <MetaDescription text=move || t_string!(i18n, leve_analyzer_meta_desc).to_string() />
 
-            <div class="flex flex-col gap-4 p-4 bg-brand-900/50 rounded-lg border border-brand-800">
-                <div class="flex flex-row justify-between items-center">
-                    <h1 class="text-2xl font-bold text-brand-100">{t!(i18n, leve_analyzer_title)}</h1>
+            <div class="flex flex-col gap-4">
+                <ToolHeader
+                    title="Leve Analyzer"
+                    summary="Estimate levequest value by comparing turn-in item cost against gil and expected item rewards."
+                    context="Reward item value is an estimate. Use it as a leveling shortlist, then confirm item supply before buying in bulk."
+                    help_href="/help/leve-analyzer"
+                    help_body="Leve Analyzer mixes guaranteed gil rewards with expected market value from reward items. The first pass assumes baseline NQ turn-ins."
+                />
+                <div class="flex flex-row justify-end items-center">
                     <div class="flex flex-row gap-2 items-center">
                         <Suspense fallback=move || view! { <div class="text-brand-300 text-sm animate-pulse">{t!(i18n, leve_analyzer_loading_sales)}</div> }>
                             {move || {
@@ -609,6 +615,16 @@ pub fn LeveAnalyzer() -> impl IntoView {
                             set_current_world=set_selected_world.into()
                         />
                     </div>
+                </div>
+                <CalculationSummary
+                    title="What revenue includes"
+                    formula="profit = gil reward + expected reward item value - turn-in cost"
+                    details="Expected reward value depends on market prices and reward probabilities, so it is not the same as guaranteed gil."
+                />
+                <div class="flex flex-wrap gap-2">
+                    <AssumptionBadge text="Baseline NQ turn-in" />
+                    <AssumptionBadge text="Reward items use expected value" />
+                    <AssumptionBadge text="Recent sales shape confidence" />
                 </div>
 
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>

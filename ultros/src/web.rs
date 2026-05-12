@@ -74,6 +74,45 @@ use crate::web::{
 };
 use crate::web_metrics::{start_metrics_server, track_metrics};
 
+fn legacy_book_help_path(path: &str) -> &'static str {
+    match path.trim_end_matches(".html").trim_end_matches('/') {
+        "" | "/" | "/intro/intro" | "/intro/homeworld" => "/help/getting-started",
+        "/search/search" | "/item_explorer" => "/help/getting-started",
+        "/retainers/retainers"
+        | "/retainers/managing"
+        | "/retainers/viewing"
+        | "/retainers/alerts"
+        | "/characters/characters"
+        | "/characters/add_character" => "/help/lists-alerts-retainers",
+        "/lists/lists" | "/lists/import_makeplace" => "/help/lists-alerts-retainers",
+        "/analyzer/analyzer" => "/help/flip-finder",
+        "/analyzer/recipe" => "/help/recipe-analyzer",
+        "/analyzer/leve" => "/help/leve-analyzer",
+        "/currency/exchange" => "/help/scrip-sources",
+        _ => "/help",
+    }
+}
+
+async fn redirect_legacy_book_host(
+    req: axum::extract::Request,
+    next: middleware::Next,
+) -> axum::response::Response {
+    let is_book_host = req
+        .headers()
+        .get(header::HOST)
+        .and_then(|host| host.to_str().ok())
+        .map(|host| host.split(':').next().unwrap_or(host))
+        .map(|host| host.eq_ignore_ascii_case("book.ultros.app"))
+        .unwrap_or(false);
+
+    if is_book_host {
+        let target = legacy_book_help_path(req.uri().path());
+        Redirect::permanent(&format!("https://ultros.app{target}")).into_response()
+    } else {
+        next.run(req).await
+    }
+}
+
 async fn add_retainer(
     State(db): State<UltrosDb>,
     current_user: AuthDiscordUser,
@@ -1224,6 +1263,7 @@ pub(crate) async fn start_web(state: WebState) {
         ))
         .with_state(state)
         .route_layer(middleware::from_fn(track_metrics))
+        .layer(middleware::from_fn(redirect_legacy_book_host))
         .layer(TraceLayer::new_for_http())
         .layer(
             CompressionLayer::new().compress_when(

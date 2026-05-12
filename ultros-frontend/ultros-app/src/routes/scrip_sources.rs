@@ -3,7 +3,7 @@ use crate::global_state::xiv_data::tracked_data;
 use crate::{
     api::get_cheapest_listings,
     components::{
-        gil::*, item_icon::*, query_button::QueryButton, skeleton::BoxSkeleton,
+        gil::*, item_icon::*, query_button::QueryButton, skeleton::BoxSkeleton, tool_help::*,
         virtual_scroller::*, world_picker::WorldOnlyPicker,
     },
     global_state::{LocalWorldData, home_world::use_home_world},
@@ -536,10 +536,14 @@ pub fn ScripSources() -> impl IntoView {
             <MetaTitle title=t_string!(i18n, scrip_sources_meta_title).to_string() />
             <MetaDescription text=t_string!(i18n, scrip_sources_meta_desc).to_string() />
 
-            <div class="flex flex-col gap-4 p-4 bg-brand-900/50 rounded-lg border border-brand-800">
-                <div class="flex flex-row justify-between items-center">
-                    <h1 class="text-2xl font-bold text-brand-100">{t!(i18n, scrip_sources_title)}</h1>
-                </div>
+            <div class="flex flex-col gap-4">
+                <ToolHeader
+                    title="Scrip Sources"
+                    summary="Find collectables with the lowest estimated gil cost per scrip."
+                    context="The default sort optimizes efficiency: lower cost per scrip is better."
+                    help_href="/help/scrip-sources"
+                    help_body="Scrip Sources assumes high collectability rewards and calculates ingredient cost from market listings. Use scrip type and job filters to narrow to what you can actually turn in."
+                />
 
                 <div class="flex flex-col md:flex-row items-center gap-2">
                     <label class="text-[color:var(--brand-fg)] font-semibold">{t!(i18n, scrip_sources_select_world)}</label>
@@ -553,6 +557,16 @@ pub fn ScripSources() -> impl IntoView {
 
                 <div class="text-sm text-[color:var(--color-text-muted)]">
                     {t!(i18n, scrip_sources_description)}
+                </div>
+                <CalculationSummary
+                    title="Efficiency model"
+                    formula="cost per scrip = ingredient cost / high collectability scrip reward"
+                    details="The high reward is used as the max collectability target. Gathering and non-craftable sources are intentionally limited in this pass."
+                />
+                <div class="flex flex-wrap gap-2">
+                    <AssumptionBadge text="High collectability reward" />
+                    <AssumptionBadge text="Market ingredient cost" />
+                    <AssumptionBadge text="Lower cost per scrip is better" />
                 </div>
 
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>

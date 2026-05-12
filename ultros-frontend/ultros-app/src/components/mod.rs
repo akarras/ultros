@@ -40,6 +40,7 @@ pub mod stats_display;
 pub mod theme_picker;
 pub mod toast;
 pub mod toggle;
+pub mod tool_help;
 pub mod tooltip;
 pub mod top_deals;
 pub mod ui_text;

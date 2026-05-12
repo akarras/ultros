@@ -33,6 +33,7 @@ use crate::{
         currency_exchange::{CurrencyExchange, CurrencySelection, ExchangeItem},
         edit_retainers::*,
         fc_crafting_analyzer::*,
+        help::*,
         history::*,
         home_page::*,
         item_explorer::*,
@@ -130,12 +131,12 @@ pub fn Footer() -> impl IntoView {
                             <span>{t!(i18n, patreon)}</span>
                         </a>
                     </PatreonWrapper>
-                    <a
-                        href="https://book.ultros.app"
-                        class="btn-ghost opacity-80 hover:opacity-100"
+                    <A
+                        href="/help"
+                        attr:class="btn-ghost opacity-80 hover:opacity-100"
                     >
-                        <Icon icon=i::BsBook width="1.2em" height="1.2em" /><span>{t!(i18n, book)}</span>
-                    </a>
+                        <Icon icon=i::BsBook width="1.2em" height="1.2em" /><span>"Help"</span>
+                    </A>
                     <A
                         href="/about"
                         attr:class="btn-ghost opacity-80 hover:opacity-100"
@@ -361,6 +362,8 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                                 <Route path=path!("trends") view=Trends />
                                 <Route path=path!("settings") view=Settings />
                                 <Route path=path!("welcome") view=Welcome />
+                                <Route path=path!("help") view=HelpIndex />
+                                <Route path=path!("help/:topic") view=HelpArticle />
                                 <Route path=path!("profile") view=Profile />
                                 <Route path=path!("privacy") view=PrivacyPolicy />
                                 <Route path=path!("cookie-policy") view=CookiePolicy />
