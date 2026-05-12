@@ -269,45 +269,42 @@ async fn add(
     retainer_id: i32,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
-    let characters = ctx
-        .data()
-        .db
-        .get_all_characters_for_discord_user(ctx.author().id.get() as i64)
-        .await?;
-    if characters.is_empty() {
-        ctx.send(
-            poise::CreateReply::default().embed(
-                poise::serenity_prelude::CreateEmbed::new()
-                    .title("Verify a character first")
-                    .description(
-                        "Claiming a retainer requires a verified FFXIV character. \
-                         Visit https://ultros.app and link your character via the \
-                         Lodestone challenge, then come back and run this command.",
-                    )
-                    .color(Color::from_rgb(200, 80, 80)),
-            ),
-        )
-        .await?;
-        return Ok(());
-    }
-    // Defense in depth: even though autocomplete only shows claimable retainers,
-    // a power user can type a raw retainer_id. Reject if it doesn't belong to
-    // one of the caller's characters.
     let claimable = ctx
         .data()
         .db
         .get_retainers_for_user_characters(ctx.author().id.get())
         .await?;
     if !claimable.iter().any(|r| r.id == retainer_id) {
+        // claimable may be empty for two reasons: the user has no verified
+        // characters at all, or they have characters but the retainer isn't on
+        // any of those characters' worlds. Disambiguate only on the error path
+        // so we can show the right next-step text.
+        let has_characters = !ctx
+            .data()
+            .db
+            .get_all_characters_for_discord_user(ctx.author().id.get() as i64)
+            .await?
+            .is_empty();
+        let (title, description) = if !has_characters {
+            (
+                "Verify a character first",
+                "Claiming a retainer requires a verified FFXIV character. \
+                 Visit https://ultros.app and link your character via the \
+                 Lodestone challenge, then come back and run this command.",
+            )
+        } else {
+            (
+                "Retainer not claimable",
+                "That retainer doesn't belong to any of your verified characters. \
+                 If this is your retainer, make sure the character it belongs to \
+                 is verified on ultros.app.",
+            )
+        };
         ctx.send(
             poise::CreateReply::default().embed(
                 poise::serenity_prelude::CreateEmbed::new()
-                    .title("Retainer not claimable")
-                    .description(
-                        "That retainer doesn't belong to any of your verified characters. \
-                         If this is your retainer, make sure the character it belongs to \
-                         is verified on ultros.app.",
-                    )
+                    .title(title)
+                    .description(description)
                     .color(Color::from_rgb(200, 80, 80)),
             ),
         )
@@ -327,7 +324,11 @@ async fn add(
         poise::CreateReply::default().embed(
             poise::serenity_prelude::CreateEmbed::new()
                 .title("Added retainer")
-                .description("added retainer!")
+                .description(
+                    "Retainer claimed! Run `/ffxiv retainer check_listings` to see your \
+                     active listings, or `/ffxiv retainer add_undercut_alert` to start \
+                     receiving undercut alerts in this channel.",
+                )
                 .color(Color::from_rgb(123, 0, 123)),
         ),
     )
