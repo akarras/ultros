@@ -69,6 +69,8 @@ pub(crate) enum EndpointConfig {
     DiscordDm { user_id: i64 },
     #[serde(rename = "Webhook")]
     Webhook { url: String },
+    #[serde(rename = "WebPush")]
+    WebPush { subscription_id: i32 },
 }
 
 /// Parse a notification endpoint row's `(method, config)` pair into a typed [`EndpointConfig`].
@@ -101,7 +103,7 @@ pub(crate) async fn deliver_to_endpoint(
     endpoint: &ultros_db::entity::notification_endpoint::Model,
     title: &str,
     body: &str,
-    _db: &UltrosDb,
+    db: &UltrosDb,
     ctx: &serenity_prelude::Context,
 ) -> Result<()> {
     let parsed = parse_endpoint_config(&endpoint.method, &endpoint.config)?;
@@ -111,6 +113,11 @@ pub(crate) async fn deliver_to_endpoint(
         }
         EndpointConfig::DiscordDm { user_id } => send_dm(user_id, title, body, ctx).await,
         EndpointConfig::Webhook { url } => send_webhook(&url, title, body).await,
+        EndpointConfig::WebPush { subscription_id } => {
+            let cfg = get_web_push_config()
+                .ok_or_else(|| anyhow!("web push not configured on this deployment"))?;
+            send_webpush(subscription_id, title, body, db, cfg).await
+        }
     }
 }
 
@@ -195,6 +202,72 @@ async fn send_dm(
     Ok(())
 }
 
+/// Send a Web Push notification to a single subscription. Body is JSON-encoded
+/// `{title, body, url}` — the service worker decodes that in its `push` handler.
+///
+/// On `EndpointNotFound`/`EndpointNotValid` (the push service signaling the
+/// subscription has been revoked), soft-delete the row so we don't keep trying
+/// to send to a dead endpoint. Other errors propagate to the caller as-is,
+/// which lets `alert_event.delivery_error` capture the failure.
+async fn send_webpush(
+    subscription_id: i32,
+    title: &str,
+    body: &str,
+    db: &UltrosDb,
+    config: &WebPushConfig,
+) -> Result<()> {
+    use web_push::{
+        ContentEncoding, IsahcWebPushClient, SubscriptionInfo, VapidSignatureBuilder,
+        WebPushClient, WebPushError, WebPushMessageBuilder,
+    };
+
+    let sub = db.get_push_subscription_by_id(subscription_id).await?;
+
+    let info = SubscriptionInfo::new(&sub.endpoint, &sub.p256dh, &sub.auth);
+
+    // VAPID signature: parse the operator's PEM private key, attach the
+    // `sub` claim with their contact email, then sign.
+    let mut sig_builder = VapidSignatureBuilder::from_pem(config.private_key_pem.as_bytes(), &info)
+        .map_err(|e| anyhow!("VAPID PEM parse failed: {e:?}"))?;
+    sig_builder.add_claim("sub", config.contact_email.as_str());
+    let signature = sig_builder
+        .build()
+        .map_err(|e| anyhow!("VAPID build failed: {e:?}"))?;
+
+    // Payload is the JSON the service worker will see in `event.data.json()`.
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "title": title,
+        "body": body,
+        "url": "/alerts",
+    }))?;
+
+    let mut builder = WebPushMessageBuilder::new(&info);
+    builder.set_payload(ContentEncoding::Aes128Gcm, &payload);
+    builder.set_vapid_signature(signature);
+    let message = builder
+        .build()
+        .map_err(|e| anyhow!("web push build failed: {e:?}"))?;
+
+    let client =
+        IsahcWebPushClient::new().map_err(|e| anyhow!("isahc client init failed: {e:?}"))?;
+
+    match client.send(message).await {
+        Ok(()) => {
+            // Best-effort touch — if the update fails we still report success
+            // since the push itself went through.
+            let _ = db.touch_push_subscription_last_seen(subscription_id).await;
+            Ok(())
+        }
+        Err(WebPushError::EndpointNotFound(_)) | Err(WebPushError::EndpointNotValid(_)) => {
+            let _ = db
+                .delete_push_subscription_by_id(sub.user_id, subscription_id)
+                .await;
+            Err(anyhow!("push subscription expired"))
+        }
+        Err(e) => Err(anyhow!("push send failed: {e:?}")),
+    }
+}
+
 async fn send_webhook(url: &str, title: &str, body: &str) -> Result<()> {
     // Discord webhook expects JSON with `embeds`. allowed_mentions parse=[] suppresses pings.
     let payload = serde_json::json!({
@@ -235,6 +308,18 @@ mod tests {
         let cfg = json!({ "channel_id": 99 });
         let parsed = parse_endpoint_config("DiscordChannel", &cfg).unwrap();
         assert_eq!(parsed, EndpointConfig::DiscordChannel { channel_id: 99 });
+    }
+
+    #[test]
+    fn parses_webpush_from_method_plus_config() {
+        let cfg = json!({ "subscription_id": 42 });
+        let parsed = parse_endpoint_config("WebPush", &cfg).unwrap();
+        assert_eq!(
+            parsed,
+            EndpointConfig::WebPush {
+                subscription_id: 42
+            }
+        );
     }
 
     #[test]
