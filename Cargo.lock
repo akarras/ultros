@@ -10023,6 +10023,7 @@ dependencies = [
  "ultros-db",
  "uuid",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "web-sys",
  "xiv-gen",
  "xiv-gen-db",
