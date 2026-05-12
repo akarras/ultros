@@ -11,6 +11,7 @@ use ultros_api_types::alert::{AlertTrigger, CreateAlertRequest};
 use crate::api::{create_alert, list_endpoints};
 use crate::components::{icon::Icon, modal::Modal};
 use crate::global_state::toasts::use_toast;
+use crate::i18n::*;
 
 #[component]
 pub fn ListSubscribeDrawer(
@@ -18,6 +19,7 @@ pub fn ListSubscribeDrawer(
     list_name: String,
     set_visible: SignalSetter<bool>,
 ) -> impl IntoView {
+    let i18n = use_i18n();
     let endpoints = Resource::new(|| (), |_| list_endpoints());
     let selected = RwSignal::new(HashSet::<i32>::new());
     let (error, set_error) = signal::<Option<String>>(None);
@@ -35,7 +37,9 @@ pub fn ListSubscribeDrawer(
         set_error.set(None);
         let endpoint_ids: Vec<i32> = selected.get().into_iter().collect();
         if endpoint_ids.is_empty() {
-            set_error.set(Some("Pick at least one endpoint".into()));
+            set_error.set(Some(
+                t_string!(i18n, alert_drawer_err_endpoint_required).to_string(),
+            ));
             return;
         }
         let req = CreateAlertRequest {
@@ -48,7 +52,7 @@ pub fn ListSubscribeDrawer(
             match create_alert(req).await {
                 Ok(_) => {
                     if let Some(t) = toasts {
-                        t.success("Subscribed to list");
+                        t.success(t_string!(i18n, list_subscribe_success_toast));
                     }
                     set_visible.set(false);
                 }
@@ -62,23 +66,22 @@ pub fn ListSubscribeDrawer(
     view! {
         <Modal set_visible>
             <div class="p-4 space-y-4 w-[28rem]">
-                <h2 class="text-xl font-bold">"Notify me on this list: " {list_name.clone()}</h2>
+                <h2 class="text-xl font-bold">{t!(i18n, list_subscribe_title, name = list_name.clone())}</h2>
                 <p class="text-sm opacity-80">
-                    "You'll be notified when any item in this list drops to or below its target price. "
-                    "Set per-item targets from the list page."
+                    {t!(i18n, list_subscribe_description)}
                 </p>
 
                 <div class="space-y-1">
-                    <label class="text-sm font-semibold">"Deliver to"</label>
+                    <label class="text-sm font-semibold">{t!(i18n, alert_drawer_deliver_to)}</label>
                     <Suspense fallback=move || {
-                        view! { <div class="text-sm opacity-70">"Loading endpoints..."</div> }
+                        view! { <div class="text-sm opacity-70">{t!(i18n, alert_drawer_loading_endpoints)}</div> }
                     }>
                         {move || endpoints.get().map(|r| match r {
                             Ok(list) if list.is_empty() => view! {
                                 <p class="text-sm opacity-70">
-                                    "No endpoints yet. "
-                                    <a href="/alerts" class="underline">"Add one"</a>
-                                    " before subscribing."
+                                    {t!(i18n, alert_drawer_no_endpoints_prefix)}
+                                    <a href="/alerts" class="underline">{t!(i18n, alert_drawer_no_endpoints_link)}</a>
+                                    {t!(i18n, alert_drawer_no_endpoints_suffix)}
                                 </p>
                             }.into_any(),
                             Ok(list) => view! {
@@ -114,11 +117,11 @@ pub fn ListSubscribeDrawer(
 
                 <div class="flex justify-end gap-2 pt-2">
                     <button class="btn-ghost" on:click=move |_| set_visible.set(false)>
-                        "Cancel"
+                        {t!(i18n, cancel)}
                     </button>
                     <button class="btn" on:click=submit>
                         <Icon icon=i::BsBell width="1em" height="1em" />
-                        <span class="ml-1">"Subscribe"</span>
+                        <span class="ml-1">{t!(i18n, list_subscribe_submit)}</span>
                     </button>
                 </div>
             </div>

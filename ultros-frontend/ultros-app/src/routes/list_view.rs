@@ -194,14 +194,14 @@ pub fn ListView() -> impl IntoView {
                     </div>
 
                     <div class="flex flex-wrap gap-2 self-start lg:self-auto">
-                        <Tooltip tooltip_text="Subscribe to price alerts on every priced item in this list".to_string()>
+                        <Tooltip tooltip_text=t_string!(i18n, list_view_subscribe_tooltip).to_string()>
                             <button
                                 class="btn-secondary"
-                                aria-label="Notify me on this list"
+                                aria-label=t_string!(i18n, list_view_subscribe_aria)
                                 on:click=move |_| set_subscribe_open(true)
                             >
                                 <Icon icon=i::BsBell />
-                                <span>"Notify me"</span>
+                                <span>{t!(i18n, list_view_subscribe_button)}</span>
                             </button>
                         </Tooltip>
                         <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_purchasing_view).to_string()>

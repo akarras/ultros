@@ -70,13 +70,16 @@ pub(crate) fn format_threshold_alert_message(
 /// subscribes to multiple lists.
 pub(crate) fn format_list_threshold_alert_message(
     list_name: &str,
+    list_id: i32,
     item_name: &str,
     item_id: i32,
     matched_price: i32,
     target_price: i64,
 ) -> (String, String) {
     let title = format!("📋 {list_name}: {item_name} at {matched_price} gil");
-    let body = format!("Target: {target_price} gil\nhttps://ultros.app/item/{item_id}");
+    let body = format!(
+        "Target: {target_price} gil\nItem: https://ultros.app/item/{item_id}\nList: https://ultros.app/list/{list_id}"
+    );
     (title, body)
 }
 
@@ -435,6 +438,7 @@ async fn handle_added(
         let item_name = resolve_item_name(rule.item_id);
         let (title, body) = format_list_threshold_alert_message(
             &rule.list_name,
+            rule.list_id,
             &item_name,
             rule.item_id,
             matched_price,

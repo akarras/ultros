@@ -980,5 +980,13 @@
     "recipe_analyzer_tool_summary": "Find recipes where estimated craft cost is lower than the market price for the finished item.",
     "recipe_analyzer_tool_context": "Configure crafter levels first so the results match recipes you can actually make.",
     "recipe_analyzer_tool_help": "Recipe Analyzer uses cheapest ingredient listings, optional subcraft checks, your crafter levels, and recent sales. A profitable recipe is strongest when the output also sells regularly.",
-    "trends_world_context_prefix": "World context: "
+    "trends_world_context_prefix": "World context: ",
+    "list_view_subscribe_tooltip": "Subscribe to price alerts on every priced item in this list",
+    "list_view_subscribe_aria": "Notify me on this list",
+    "list_view_subscribe_button": "Notify me",
+    "list_subscribe_success_toast": "Subscribed to list",
+    "list_subscribe_title": "Notify me on this list: {{name}}",
+    "list_subscribe_description": "You'll be notified when any item in this list drops to or below its target price. Set per-item targets from the list page.",
+    "list_subscribe_submit": "Subscribe",
+    "list_item_row_target_price_label": "Target price (gil)"
 }
