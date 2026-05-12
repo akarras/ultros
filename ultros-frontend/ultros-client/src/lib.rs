@@ -174,29 +174,32 @@ async fn populate_xiv_gen_data() -> anyhow::Result<()> {
     try_populate_xiv_gen_data().await
 }
 
-async fn get_world_data() -> Arc<WorldHelper> {
-    let json: WorldData = gloo_net::http::Request::get("/api/v1/world_data")
+async fn get_world_data() -> Result<Arc<WorldHelper>, anyhow::Error> {
+    let json: WorldData = Request::get("/api/v1/world_data")
         .send()
         .await
-        .map_err(|e| {
-            error!("{e}");
-            e
-        })
-        .unwrap()
+        .map_err(|e| anyhow!("failed to fetch world data: {e}"))?
         .json()
         .await
-        .unwrap();
-    Arc::new(WorldHelper::from(json))
+        .map_err(|e| anyhow!("failed to parse world data: {e}"))?;
+    Ok(Arc::new(WorldHelper::from(json)))
 }
 
 async fn get_region() -> String {
-    gloo_net::http::Request::get("/api/v1/detectregion")
-        .send()
-        .await
-        .unwrap()
-        .text()
-        .await
-        .unwrap()
+    let response = match Request::get("/api/v1/detectregion").send().await {
+        Ok(resp) => resp,
+        Err(e) => {
+            error!("failed to fetch region: {e}");
+            return String::new();
+        }
+    };
+    match response.text().await {
+        Ok(text) => text,
+        Err(e) => {
+            error!("failed to read region response: {e}");
+            String::new()
+        }
+    }
 }
 
 #[wasm_bindgen]
@@ -215,12 +218,18 @@ pub fn hydrate() {
         )
         .await;
         info!("hydrating body");
+        let world_data = match worlds {
+            Ok(worlds) => LocalWorldData(Ok(worlds)),
+            Err(e) => {
+                error!("failed to load world data: {e}");
+                LocalWorldData::failed(e.to_string())
+            }
+        };
         hydrate_body(move || {
-            let worlds = worlds.clone();
+            let world_data = world_data.clone();
             let region = region.clone();
-            let worlds = Ok(worlds);
             provide_context(GuessedRegion(region));
-            provide_context(LocalWorldData(worlds));
+            provide_context(world_data);
             view! { <App /> }
         });
     });
