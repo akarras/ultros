@@ -4,6 +4,9 @@ on:
     push:
         branches:
             - main
+        paths:
+            - "userguide/**"
+            - ".github/workflows/book.yml"
     workflow_dispatch:
 
 permissions:

@@ -4,6 +4,11 @@ on:
     push:
         branches:
             - "main"
+        paths-ignore:
+            - "userguide/**"
+            - "**/*.md"
+            - ".github/workflows/book.yml"
+            - ".github/workflows/book-check.yml"
 
 env:
     # Use ghcr.io for GitHub Container Registry
