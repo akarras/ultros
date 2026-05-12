@@ -197,7 +197,10 @@ fn compute_cost_inner(
         line.is_shard = is_shard(item_id);
 
         // Subcraft check: is it cheaper to craft this ingredient than buy it?
+        // Track best candidate separately so losing sub-recipes don't leak
+        // their sub_crafts into the final breakdown.
         let mut unit_cost = line.unit_price;
+        let mut best_sub_crafts: Vec<SubcraftInfo> = Vec::new();
         if depth < opts.max_subcraft_depth
             && line.used_from_market > 0
             && let Some(sub_recipes) = recipes_by_output.get(&item_id)
@@ -205,22 +208,31 @@ fn compute_cost_inner(
             for sub in sub_recipes {
                 let sub_breakdown =
                     compute_cost_inner(sub, prices, recipes_by_output, opts, is_shard, depth + 1);
-                let sub_unit = sub_breakdown.cost;
+                // sub_breakdown.cost is the total cost of one execution of the
+                // sub-recipe, which yields `amount_result` units. Divide by the
+                // yield to get a per-unit comparable price.
+                let yield_per_craft = sub.amount_result.max(1);
+                let sub_unit = sub_breakdown.cost / yield_per_craft;
                 if sub_unit > 0 && sub_unit < unit_cost {
                     unit_cost = sub_unit;
-                    sub_crafts.extend(sub_breakdown.sub_crafts.iter().cloned());
-                    sub_crafts.push(SubcraftInfo {
+                    let mut winner = sub_breakdown.sub_crafts;
+                    winner.push(SubcraftInfo {
                         item_id,
                         amount: line.used_from_market,
                         unit_cost: sub_unit,
                     });
+                    best_sub_crafts = winner;
                 }
             }
-            // Re-price the market portion at the subcraft unit cost.
+            // Promote the winning candidate (if any) and re-price the line.
+            sub_crafts.extend(best_sub_crafts.into_iter());
             line.unit_price = unit_cost;
         }
 
         let line_market_cost = (line.used_from_market as i64) * (unit_cost as i64);
+        // On-hand is valued at the same unit cost as the market portion — i.e.
+        // "what would I have paid to acquire this if I didn't already have it",
+        // which is the cheapest of market/subcraft after the search above.
         let line_on_hand_value = (line.used_from_on_hand as i64) * (line.unit_price as i64);
 
         if line.is_shard {
@@ -433,6 +445,14 @@ mod tests {
     use xiv_gen::Recipe;
 
     fn make_recipe(ingredients: &[(i32, i32)]) -> Recipe {
+        make_recipe_yielding(ingredients, 0, 1)
+    }
+
+    fn make_recipe_yielding(
+        ingredients: &[(i32, i32)],
+        item_result: i32,
+        yield_qty: i32,
+    ) -> Recipe {
         // Recipe in xiv_gen has fixed-size arrays for ingredient[8] and amount_ingredient[8].
         let mut ing = [0i32; 8];
         let mut amt = [0i32; 8];
@@ -442,8 +462,8 @@ mod tests {
         }
         Recipe {
             key_id: xiv_gen::RecipeId::default(),
-            item_result: 0,
-            amount_result: 0,
+            item_result,
+            amount_result: yield_qty,
             ingredient: ing,
             amount_ingredient: amt,
             craft_type: 0,
@@ -646,5 +666,145 @@ mod tests {
         // Depth=0 means no recursion — pay market price of 50.
         assert_eq!(cb.cost, 50);
         assert_eq!(cb.sub_crafts.len(), 0);
+    }
+
+    #[test]
+    fn compute_cost_subcraft_divides_by_recipe_yield() {
+        // Outer needs 1x item 2000 (market @ 50g).
+        // Sub-recipe makes 3 of item 2000 from 1x item 1000 (market @ 30g).
+        // Per-craft sub cost = 30g; per-unit sub cost = 30/3 = 10g.
+        // Cheapest path: subcraft at 10g/unit, total cost for 1 unit = 10g.
+        let prices = CheapestListingsMap::from(CheapestListings {
+            cheapest_listings: vec![
+                CheapestListingItem {
+                    item_id: 1000,
+                    hq: false,
+                    world_id: 1,
+                    cheapest_price: 30,
+                },
+                CheapestListingItem {
+                    item_id: 2000,
+                    hq: false,
+                    world_id: 1,
+                    cheapest_price: 50,
+                },
+            ],
+        });
+        let cats = fixture_categories();
+
+        let outer = make_recipe(&[(2000, 1)]);
+        let inner = make_recipe_yielding(&[(1000, 1)], 2000, 3);
+        let leaked: &'static Recipe = Box::leak(Box::new(inner));
+        let mut recipes_by_output: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
+        recipes_by_output.insert(ItemId(2000), vec![leaked]);
+
+        let oh = EmptyOnHand;
+        let opts = CraftingCostOptions {
+            require_hq: false,
+            max_subcraft_depth: 2,
+            shards: ShardsMode::IncludeMarket,
+            on_hand: &oh,
+        };
+        let is_shard = |id: ItemId| cats.get(&id.0) == Some(&59);
+
+        let cb = compute_cost(&outer, &prices, &recipes_by_output, &opts, &is_shard);
+        assert_eq!(cb.cost, 10);
+        assert_eq!(cb.sub_crafts.len(), 1);
+        assert_eq!(cb.sub_crafts[0].unit_cost, 10);
+    }
+
+    #[test]
+    fn compute_cost_on_hand_savings_use_subcraft_cost_when_cheaper() {
+        // Outer needs 2x item 2000 (market @ 50g, subcraft makes 1 from 1000@30g).
+        // 1 unit on-hand. The 1 market unit costs 30g (subcraft).
+        // On-hand savings should also reflect the subcraft cost (30g, not 50g).
+        let prices = CheapestListingsMap::from(CheapestListings {
+            cheapest_listings: vec![
+                CheapestListingItem {
+                    item_id: 1000,
+                    hq: false,
+                    world_id: 1,
+                    cheapest_price: 30,
+                },
+                CheapestListingItem {
+                    item_id: 2000,
+                    hq: false,
+                    world_id: 1,
+                    cheapest_price: 50,
+                },
+            ],
+        });
+        let cats = fixture_categories();
+
+        let outer = make_recipe(&[(2000, 2)]);
+        let inner = make_recipe_yielding(&[(1000, 1)], 2000, 1);
+        let leaked: &'static Recipe = Box::leak(Box::new(inner));
+        let mut recipes_by_output: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
+        recipes_by_output.insert(ItemId(2000), vec![leaked]);
+
+        let oh = MapOnHand::new(&[(2000, 1)]);
+        let opts = CraftingCostOptions {
+            require_hq: false,
+            max_subcraft_depth: 2,
+            shards: ShardsMode::IncludeMarket,
+            on_hand: &oh,
+        };
+        let is_shard = |id: ItemId| cats.get(&id.0) == Some(&59);
+
+        let cb = compute_cost(&outer, &prices, &recipes_by_output, &opts, &is_shard);
+        assert_eq!(cb.cost, 30); // 1 market unit at subcraft cost
+        assert_eq!(cb.on_hand_savings, 30); // on-hand valued at the same subcraft cost
+    }
+
+    #[test]
+    fn compute_cost_subcraft_keeps_only_winning_sub_crafts() {
+        // Two sub-recipes for item 2000: one expensive (40g), one cheap (20g).
+        // sub_crafts should contain only the winner's entry, not both candidates.
+        let prices = CheapestListingsMap::from(CheapestListings {
+            cheapest_listings: vec![
+                CheapestListingItem {
+                    item_id: 1000,
+                    hq: false,
+                    world_id: 1,
+                    cheapest_price: 20,
+                },
+                CheapestListingItem {
+                    item_id: 1100,
+                    hq: false,
+                    world_id: 1,
+                    cheapest_price: 40,
+                },
+                CheapestListingItem {
+                    item_id: 2000,
+                    hq: false,
+                    world_id: 1,
+                    cheapest_price: 50,
+                },
+            ],
+        });
+        let cats = fixture_categories();
+
+        let outer = make_recipe(&[(2000, 1)]);
+        let expensive = make_recipe_yielding(&[(1100, 1)], 2000, 1);
+        let cheap = make_recipe_yielding(&[(1000, 1)], 2000, 1);
+        let leaked_expensive: &'static Recipe = Box::leak(Box::new(expensive));
+        let leaked_cheap: &'static Recipe = Box::leak(Box::new(cheap));
+        let mut recipes_by_output: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
+        recipes_by_output.insert(ItemId(2000), vec![leaked_expensive, leaked_cheap]);
+
+        let oh = EmptyOnHand;
+        let opts = CraftingCostOptions {
+            require_hq: false,
+            max_subcraft_depth: 2,
+            shards: ShardsMode::IncludeMarket,
+            on_hand: &oh,
+        };
+        let is_shard = |id: ItemId| cats.get(&id.0) == Some(&59);
+
+        let cb = compute_cost(&outer, &prices, &recipes_by_output, &opts, &is_shard);
+        assert_eq!(cb.cost, 20);
+        // Only the winning sub-recipe contributes a SubcraftInfo.
+        assert_eq!(cb.sub_crafts.len(), 1);
+        assert_eq!(cb.sub_crafts[0].unit_cost, 20);
     }
 }
