@@ -170,11 +170,10 @@ fn VentureAnalyzerTable(
                 continue;
             }
 
-            #[allow(clippy::collapsible_if)]
-            if let Some(ids) = &selected_ids {
-                if !ids.contains(&task.class_job_category) {
-                    continue;
-                }
+            if let Some(ids) = &selected_ids
+                && !ids.contains(&task.class_job_category)
+            {
+                continue;
             }
 
             // Check if `task.task` (RowId) corresponds to a RetainerTaskNormal
@@ -213,10 +212,10 @@ fn VentureAnalyzerTable(
                     }
                 };
 
-                let venture_cost_gil = 0; // Placeholder
-
+                // Ventures cost venture coins (not gil), so "profit" here is gross revenue.
+                // If we ever convert ventures to a gil-equivalent cost, subtract it here.
                 let revenue = market_price * quantity;
-                let profit = revenue - venture_cost_gil;
+                let profit = revenue;
 
                 if let Some(min) = minimum_profit()
                     && profit < min
@@ -370,7 +369,7 @@ fn VentureAnalyzerTable(
                     key=move |(index, data): &(usize, Arc<VentureProfitData>)| (*index, data.item_id)
                     view=move |(index, data): (usize, Arc<VentureProfitData>)| {
                         let item_id = data.item_id;
-                        let item = items.get(&xiv_gen::ItemId(item_id)).map(|i| i.name.as_str().to_string()).unwrap_or_else(|| t_string!(i18n, venture_analyzer_unknown_item).to_string());
+                        let item = items.get(&xiv_gen::ItemId(item_id)).map(|i| i.name.as_str().to_string()).unwrap_or_else(|| t_string!(i18n, unknown).to_string());
 
                         let classes = if (index % 2) == 0 {
                             "flex flex-row items-center flex-nowrap h-15 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_6%,transparent)] transition-colors"
