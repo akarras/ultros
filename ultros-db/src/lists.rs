@@ -13,8 +13,7 @@ use anyhow::anyhow;
 use futures::future::try_join_all;
 use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, Condition, EntityTrait, IntoActiveModel, JoinType,
-    ModelTrait, QueryFilter, QuerySelect, RelationTrait, TransactionTrait,
-    sea_query::Expr,
+    ModelTrait, QueryFilter, QuerySelect, RelationTrait, TransactionTrait, sea_query::Expr,
 };
 use std::{collections::HashMap, sync::Arc};
 use tracing::instrument;
@@ -77,7 +76,10 @@ impl UltrosDb {
                 JoinType::InnerJoin,
                 list_shared_group::Relation::UserGroup.def(),
             )
-            .join(JoinType::InnerJoin, user_group::Relation::UserGroupMember.def())
+            .join(
+                JoinType::InnerJoin,
+                user_group::Relation::UserGroupMember.def(),
+            )
             .filter(list_shared_group::Column::ListId.eq(list_id))
             .filter(user_group_member::Column::UserId.eq(user_id))
             .into_tuple()
