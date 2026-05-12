@@ -80,11 +80,45 @@ pub(crate) async fn show_lists(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
+async fn autocomplete_list_name(
+    ctx: Context<'_>,
+    partial: &str,
+) -> impl Iterator<Item = poise::serenity_prelude::AutocompleteChoice> {
+    let partial = partial.to_ascii_lowercase();
+    ctx.data()
+        .db
+        .get_lists_for_user(ctx.author().id.get() as i64)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(move |l| l.name.to_ascii_lowercase().contains(&partial))
+        .map(|l| poise::serenity_prelude::AutocompleteChoice::new(l.name.clone(), l.name))
+}
+
+async fn autocomplete_item_name_global(
+    _ctx: Context<'_>,
+    partial: &str,
+) -> impl Iterator<Item = poise::serenity_prelude::AutocompleteChoice> {
+    let partial = partial.to_ascii_lowercase();
+    let items = &xiv_gen_db::data().items;
+    items
+        .iter()
+        .filter(move |(_, i)| !i.name.is_empty() && i.name.to_ascii_lowercase().contains(&partial))
+        .take(25)
+        .map(|(_, i)| {
+            poise::serenity_prelude::AutocompleteChoice::new(i.name.clone(), i.name.clone())
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+}
+
 /// Share a list directly with a Discord user
 #[poise::command(slash_command, prefix_command)]
 async fn share_user(
     ctx: Context<'_>,
-    #[description = "Name of the list to share"] list_name: String,
+    #[description = "Name of the list to share"]
+    #[autocomplete = "autocomplete_list_name"]
+    list_name: String,
     #[description = "Discord user to share with"] user: User,
     #[description = "read or write. Defaults to read"] permission: Option<String>,
 ) -> Result<(), Error> {
@@ -133,7 +167,9 @@ async fn share_user(
 #[poise::command(slash_command, prefix_command)]
 async fn create_invite(
     ctx: Context<'_>,
-    #[description = "Name of the list to invite people to"] list_name: String,
+    #[description = "Name of the list to invite people to"]
+    #[autocomplete = "autocomplete_list_name"]
+    list_name: String,
     #[description = "read or write. Defaults to read"] permission: Option<String>,
     #[description = "Maximum invite uses. Leave blank for unlimited"] max_uses: Option<i32>,
 ) -> Result<(), Error> {
@@ -240,7 +276,9 @@ async fn create(
 #[poise::command(slash_command, prefix_command)]
 async fn remove(
     ctx: Context<'_>,
-    #[description = "Name of the list to remove"] list_name: String,
+    #[description = "Name of the list to remove"]
+    #[autocomplete = "autocomplete_list_name"]
+    list_name: String,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     let user_lists = ctx
@@ -271,8 +309,12 @@ async fn remove(
 #[poise::command(slash_command, prefix_command)]
 async fn add_item(
     ctx: Context<'_>,
-    #[description = "name of the list to add an item to"] list_name: String,
-    #[description = "item to add"] item_name: String,
+    #[description = "name of the list to add an item to"]
+    #[autocomplete = "autocomplete_list_name"]
+    list_name: String,
+    #[description = "item to add"]
+    #[autocomplete = "autocomplete_item_name_global"]
+    item_name: String,
     #[description = "quantity of the item to add. Leave blank for no quantity"] quantity: Option<
         i32,
     >,
@@ -311,7 +353,9 @@ async fn add_item(
 #[poise::command(slash_command, prefix_command)]
 async fn remove_item(
     ctx: Context<'_>,
-    #[description = "name of the list to remove an item from"] list_name: String,
+    #[description = "name of the list to remove an item from"]
+    #[autocomplete = "autocomplete_list_name"]
+    list_name: String,
     #[description = "item to remove"] item_name: String,
 ) -> Result<(), Error> {
     let items = &xiv_gen_db::data().items;
@@ -343,7 +387,9 @@ async fn remove_item(
 #[poise::command(slash_command, prefix_command)]
 async fn show_list(
     ctx: Context<'_>,
-    #[description = "list to show"] list_name: String,
+    #[description = "list to show"]
+    #[autocomplete = "autocomplete_list_name"]
+    list_name: String,
 ) -> Result<(), Error> {
     ctx.defer_or_broadcast().await?;
     let discord_user = ctx.author().id.get() as i64;

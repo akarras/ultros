@@ -24,6 +24,19 @@ pub fn Alerts() -> impl IntoView {
     view! {
         <div class="p-4 space-y-6">
             <h1 class="text-2xl font-bold">{t!(i18n, alerts_page_heading)}</h1>
+
+            <div class="rounded-lg border border-brand-500/30 bg-brand-500/5 p-4 flex flex-col gap-2">
+                <p class="font-semibold text-brand-200">"Prefer Discord-native alerts?"</p>
+                <p class="text-sm text-[color:var(--color-text-muted)]">
+                    "Run "
+                    <code class="rounded bg-black/40 px-1.5 py-0.5">"/ffxiv retainer add_undercut_alert"</code>
+                    " in any channel where the bot is installed. "
+                    <a href="/bot#getting-started" class="text-brand-300 underline hover:text-brand-200">
+                        "See the bot guide →"
+                    </a>
+                </p>
+            </div>
+
             <div class="flex gap-2">
                 {tab_btn("endpoints", t_string!(i18n, alerts_tab_endpoints).to_string())}
                 {tab_btn("rules", t_string!(i18n, alerts_tab_rules).to_string())}

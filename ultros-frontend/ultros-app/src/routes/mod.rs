@@ -1,6 +1,7 @@
 pub mod about;
 pub mod alerts;
 pub mod analyzer;
+pub mod bot;
 pub mod currency_exchange;
 pub mod edit_retainers;
 pub mod fc_crafting_analyzer;
