@@ -30,7 +30,7 @@ use std::sync::Arc;
 #[cfg(all(not(target_env = "msvc"), feature = "jemalloc"))]
 use tikv_jemallocator::Jemalloc;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -283,6 +283,36 @@ async fn main() -> Result<()> {
         key,
         discord_token,
     } = config;
+
+    // Web Push (VAPID) bootstrap: env vars are optional — push is feature-gated
+    // at runtime. Keys must be generated offline (see docs/push.md); rotating
+    // them invalidates every active browser subscription, so we explicitly never
+    // generate them at startup.
+    match (
+        std::env::var("VAPID_PUBLIC_KEY")
+            .ok()
+            .filter(|s| !s.is_empty()),
+        std::env::var("VAPID_PRIVATE_KEY")
+            .ok()
+            .filter(|s| !s.is_empty()),
+        std::env::var("VAPID_CONTACT_EMAIL")
+            .ok()
+            .filter(|s| !s.is_empty()),
+    ) {
+        (Some(public_key_b64url), Some(private_key_pem), Some(contact_email)) => {
+            crate::alerts::delivery::set_web_push_config(crate::alerts::delivery::WebPushConfig {
+                public_key_b64url,
+                private_key_pem,
+                contact_email,
+            });
+            info!("Web Push enabled");
+        }
+        _ => {
+            warn!(
+                "Web Push disabled (set VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_CONTACT_EMAIL to enable)"
+            );
+        }
+    }
 
     tokio::spawn(start_discord(
         db.clone(),

@@ -24,6 +24,10 @@ pub(crate) fn method_to_db(m: &EndpointMethod) -> (&'static str, JsonValue) {
             serde_json::json!({ "channel_id": channel_id }),
         ),
         EndpointMethod::Webhook { url } => ("Webhook", serde_json::json!({ "url": url })),
+        EndpointMethod::WebPush { subscription_id } => (
+            "WebPush",
+            serde_json::json!({ "subscription_id": subscription_id }),
+        ),
     }
 }
 
@@ -48,6 +52,13 @@ pub(crate) fn db_to_method(method: &str, config: &JsonValue) -> anyhow::Result<E
                 .ok_or_else(|| anyhow::anyhow!("Webhook missing url"))?
                 .to_string(),
         }),
+        "WebPush" => Ok(EndpointMethod::WebPush {
+            subscription_id: config
+                .get("subscription_id")
+                .and_then(|v| v.as_i64())
+                .and_then(|v| i32::try_from(v).ok())
+                .ok_or_else(|| anyhow::anyhow!("WebPush missing subscription_id"))?,
+        }),
         other => Err(anyhow::anyhow!("unknown method {other}")),
     }
 }
@@ -58,6 +69,21 @@ pub(crate) fn validate_endpoint_method(m: &EndpointMethod) -> Result<(), ApiErro
         EndpointMethod::Webhook { url } => validate_discord_webhook_url(url),
         EndpointMethod::DiscordChannel { channel_id } => validate_discord_channel_id(*channel_id),
         EndpointMethod::DiscordDm { .. } => Ok(()),
+        EndpointMethod::WebPush { subscription_id } => {
+            // WebPush endpoints are created via POST /api/v1/push/subscribe, never
+            // through the generic CRUD — the row is meaningless without a real
+            // push_subscription on the other side. The id check is belt-and-braces:
+            // even if a caller squeezes past the create route restriction, an
+            // obviously-bogus id (0, negative) is rejected here.
+            if *subscription_id <= 0 {
+                return Err(ApiError::AnyhowError(anyhow::anyhow!(
+                    "invalid WebPush subscription_id"
+                )));
+            }
+            Err(ApiError::AnyhowError(anyhow::anyhow!(
+                "WebPush endpoints must be created via /api/v1/push/subscribe"
+            )))
+        }
     }
 }
 

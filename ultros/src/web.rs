@@ -249,7 +249,9 @@ async fn refresh_world_item_listings(
 }
 
 pub(crate) use self::state::WebState;
-use self::static_files::{fallback_item_icon, favicon, get_item_icon, robots, static_path};
+use self::static_files::{
+    fallback_item_icon, favicon, get_item_icon, robots, service_worker_js, static_path,
+};
 
 pub(crate) async fn invite() -> Redirect {
     let client_id = std::env::var("DISCORD_CLIENT_ID").expect("Unable to get DISCORD_CLIENT_ID");
@@ -1077,6 +1079,14 @@ pub(crate) async fn start_web(state: WebState) {
         )
         .route("/api/v1/endpoints/{id}/test", post(test_endpoint))
         .route(
+            "/api/v1/push/vapid-public-key",
+            get(crate::web::api::push::get_vapid_public_key),
+        )
+        .route(
+            "/api/v1/push/subscribe",
+            post(crate::web::api::push::create_push_subscription),
+        )
+        .route(
             "/api/v1/listings/{world}/{itemid}",
             get(world_item_listings),
         )
@@ -1161,6 +1171,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/invitebot", get(invite))
         .route("/favicon.ico", get(favicon))
         .route("/robots.txt", get(robots))
+        .route("/service-worker.js", get(service_worker_js))
         .route("/itemcard/{world}/{id}", get(item_card))
         .route("/sitemap/world/{s}", get(world_sitemap))
         .route("/sitemap/items.xml", get(item_sitemap))

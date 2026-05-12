@@ -22,6 +22,7 @@ pub use super::materia_listing::Entity as MateriaListing;
 pub use super::notification_endpoint::Entity as NotificationEndpoint;
 pub use super::owned_ffxiv_character::Entity as OwnedFfxivCharacter;
 pub use super::owned_retainers::Entity as OwnedRetainers;
+pub use super::push_subscription::Entity as PushSubscription;
 pub use super::region::Entity as Region;
 pub use super::retainer::Entity as Retainer;
 pub use super::retainer_city::Entity as RetainerCity;

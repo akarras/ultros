@@ -7,8 +7,9 @@ use tracing::instrument;
 use ultros_api_types::{
     ActiveListing, CurrentlyShownItem, FfxivCharacter, FfxivCharacterVerification,
     alert::{
-        Alert, AlertEvent, CreateAlertRequest, CreateEndpointRequest, Endpoint, ResendResult,
-        UpdateAlertRequest, UpdateEndpointRequest,
+        Alert, AlertEvent, CreateAlertRequest, CreateEndpointRequest,
+        CreatePushSubscriptionRequest, Endpoint, ResendResult, UpdateAlertRequest,
+        UpdateEndpointRequest, VapidPublicKey,
     },
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     list::{
@@ -395,6 +396,27 @@ pub(crate) async fn test_endpoint(id: i32) -> AppResult<ResendResult> {
 
 pub(crate) async fn resend_alert_event(event_id: i64) -> AppResult<ResendResult> {
     post_api(&format!("/api/v1/alerts/events/{event_id}/resend"), ()).await
+}
+
+/// Fetch the server's VAPID public key. Used by the browser to call
+/// `pushManager.subscribe({applicationServerKey})`.
+///
+/// SSR builds never invoke this — the browser-side subscribe flow lives behind
+/// `cfg(all(feature = "hydrate", target_arch = "wasm32"))` — so this is "dead"
+/// on the server. The allow is targeted, not a `#[allow]` smell.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub(crate) async fn get_vapid_public_key() -> AppResult<VapidPublicKey> {
+    fetch_api("/api/v1/push/vapid-public-key").await
+}
+
+/// Persist the browser's PushSubscription on the server and create a matching
+/// notification endpoint of method=WebPush. SSR-dead, same reasoning as
+/// [`get_vapid_public_key`].
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub(crate) async fn create_push_subscription(
+    req: CreatePushSubscriptionRequest,
+) -> AppResult<Endpoint> {
+    post_api("/api/v1/push/subscribe", req).await
 }
 
 /// Return the T, or try and return an AppError

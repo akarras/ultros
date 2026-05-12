@@ -24,6 +24,7 @@ pub mod materia_listing;
 pub mod notification_endpoint;
 pub mod owned_ffxiv_character;
 pub mod owned_retainers;
+pub mod push_subscription;
 pub mod region;
 pub mod retainer;
 pub mod retainer_city;

@@ -29,6 +29,7 @@ pub mod patreon;
 pub mod price_history_chart;
 pub mod price_viewer;
 pub mod profile_display;
+pub(crate) mod push_subscribe;
 pub mod query_button;
 pub mod recently_viewed;
 pub mod related_items;
