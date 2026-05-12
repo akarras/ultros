@@ -113,6 +113,7 @@ pathfinder_simd = { git = "https://github.com/servo/pathfinder.git" } # needed o
 [profile.release]
 # lto = true
 opt-level = "z"
+strip = "debuginfo"
 # codegen-units = 1
 # Keep line tables only so Glitchtip can resolve server stack frames to
 # file:line without bloating the binary with full DWARF type info.
