@@ -894,6 +894,27 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
 }
 
 #[component]
+fn DiscordCommandChip(
+    #[prop(into)] item_name: Signal<String>,
+    #[prop(into)] world_name: Signal<String>,
+) -> impl IntoView {
+    let command = Signal::derive(move || {
+        format!(
+            "/ffxiv prices current item:{} world:{}",
+            item_name.get(),
+            world_name.get(),
+        )
+    });
+    view! {
+        <div class="inline-flex items-center gap-2 rounded-md border border-brand-500/30 bg-black/30 px-2.5 py-1 text-xs">
+            <span class="text-[color:var(--color-text-muted)]">"Discord:"</span>
+            <code class="font-mono">{move || command.get()}</code>
+            <Clipboard clipboard_text=command />
+        </div>
+    }
+}
+
+#[component]
 pub fn ItemView() -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
     let params = use_params_map();
@@ -1002,6 +1023,12 @@ pub fn ItemView() -> impl IntoView {
                                                 }
                                             })
                                     }}
+                                </div>
+                                <div class="mt-1.5">
+                                    <DiscordCommandChip
+                                        item_name=Signal::derive(move || item_name().to_string())
+                                        world_name=Signal::derive(move || world.get())
+                                    />
                                 </div>
                             </div>
                         </div>

@@ -124,7 +124,7 @@ Currently the web app and the bot are siloed. The user can hit the same intent o
 **Treatment.** Inline tip near the delivery-method selector: *"Prefer Discord-native? Run `/ffxiv retainer add_undercut_alert` in any channel where the bot is installed."* Copy-to-clipboard button on the command string.
 **Why this one first.** Highest intent overlap — users on this page are already configuring alerts.
 
-### B-4.2 · Item-page Discord chip · P1 · S
+### [shipped 2026-05-12] B-4.2 · Item-page Discord chip · P1 · S
 **Location.** Item-detail pages (`/item/:world/:id`).
 **Treatment.** Small chip showing the slash command to look up the same item: `/ffxiv prices current item:<Name> world:<World>` — pre-filled, copyable.
 **Why.** Lowest effort, broadest reach (every item page).
