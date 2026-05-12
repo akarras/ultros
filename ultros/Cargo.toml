@@ -31,6 +31,14 @@ tokio = { workspace = true }
 tokio-util = { version = "0.7.17" }
 tracing = { workspace = true }
 tracing-subscriber = "0.3"
+sentry = { version = "0.45", default-features = false, features = [
+    "backtrace",
+    "contexts",
+    "panic",
+    "reqwest",
+    "rustls",
+    "tracing",
+] }
 futures = { workspace = true }
 oauth2 = "4.1"
 async-trait = '0.1'

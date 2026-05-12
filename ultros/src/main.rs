@@ -32,6 +32,8 @@ use tikv_jemallocator::Jemalloc;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 use ultros_api_types::websocket::{ListingEventData, SaleEventData};
 use ultros_api_types::world::WorldData;
 use ultros_api_types::world_helper::WorldHelper;
@@ -199,11 +201,37 @@ async fn main() -> Result<()> {
     // Create the db before we proceed
     let filter: EnvFilter =
         EnvFilter::try_from_default_env().unwrap_or("warn,ultros=info,ultros-app=info".into());
-    tracing_subscriber::fmt::fmt()
+
+    // Glitchtip / Sentry: init before the subscriber so the layer has a client
+    // to talk to. The guard must outlive `main` for events to flush on exit.
+    // If `GLITCHTIP_DSN` is unset the layer is registered but no-ops.
+    let _sentry_guard = std::env::var("GLITCHTIP_DSN")
+        .ok()
+        .filter(|d| !d.is_empty())
+        .map(|dsn| {
+            let traces_sample_rate = std::env::var("GLITCHTIP_TRACES_SAMPLE_RATE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0.1);
+            sentry::init((
+                dsn,
+                sentry::ClientOptions {
+                    release: sentry::release_name!(),
+                    traces_sample_rate,
+                    ..Default::default()
+                },
+            ))
+        });
+
+    let fmt_layer = tracing_subscriber::fmt::layer()
         .with_file(true)
         .with_line_number(true)
-        .with_env_filter(filter)
-        .pretty()
+        .pretty();
+
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(fmt_layer)
+        .with(sentry::integrations::tracing::layer())
         .init();
     #[cfg(feature = "profiling")]
     tokio::spawn(async move { start_profiling_server().await });
