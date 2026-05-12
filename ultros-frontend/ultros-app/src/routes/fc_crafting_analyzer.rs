@@ -1,14 +1,21 @@
+use crate::components::crafting_cost::{
+    CRYSTAL_SEARCH_CATEGORY, CraftingCostOptions, EmptyOnHand, OnHand, ShardsMode,
+    compute_ingredient_cost,
+};
+use crate::components::on_hand_input::{LocalOnHand, OnHandMap};
+use crate::global_state::craft_options::CraftOptions;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
-        filter_card::*, gil::*, item_icon::*, query_button::QueryButton, skeleton::BoxSkeleton,
-        virtual_scroller::*, world_picker::WorldOnlyPicker,
+        filter_card::*, gil::*, icon::Icon, item_icon::*, query_button::QueryButton,
+        skeleton::BoxSkeleton, virtual_scroller::*, world_picker::WorldOnlyPicker,
     },
-    global_state::{LocalWorldData, home_world::use_home_world},
+    global_state::{LocalWorldData, cookies::Cookies, home_world::use_home_world},
 };
 use chrono::Utc;
+use icondata as i;
 use leptos::{either::Either, prelude::*};
 use leptos_meta::{Meta, Title};
 use leptos_router::hooks::{query_signal, use_params_map};
@@ -42,6 +49,8 @@ struct FCCraftProfitData {
     daily_sales: f32,
     avg_price: i32,
     total_sales: usize,
+    shard_cost: i32,
+    on_hand_savings: i32,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -79,8 +88,13 @@ fn calculate_fc_project_cost(
     sequence: &'static CompanyCraftSequence,
     prices: &CheapestListingsMap,
     data: &'static xiv_gen::Data,
-) -> (i32, Vec<MaterialInfo>) {
-    let mut total_cost: i64 = 0;
+    opts: &CraftingCostOptions<'_>,
+) -> (
+    i32,
+    Vec<MaterialInfo>,
+    i32, /* shard_cost */
+    i32, /* on_hand_savings */
+) {
     let mut materials_map: HashMap<ItemId, i32> = HashMap::new();
 
     for part_id in sequence.company_craft_part {
@@ -90,11 +104,6 @@ fn calculate_fc_project_cost(
                     .company_craft_processs
                     .get(&CompanyCraftProcessId(process_link))
                 {
-                    // Iterate through the 12 possible supply items
-                    // Based on the JSON, these are flattened as supply_item_0, etc.
-                    // I'll create a helper macro or just list them out.
-                    // Listing them out is safer for now.
-
                     for i in 0..12 {
                         let supply_item_link = process.supply_item[i];
                         let quantity_per_set = process.set_quantity[i];
@@ -102,7 +111,6 @@ fn calculate_fc_project_cost(
                         if quantity_per_set == 0 || sets_required == 0 {
                             continue;
                         }
-
                         if let Some(supply_item) = data
                             .company_craft_supply_items
                             .get(&CompanyCraftSupplyItemId(supply_item_link))
@@ -110,7 +118,6 @@ fn calculate_fc_project_cost(
                             if supply_item.item == 0 {
                                 continue;
                             }
-
                             let total_quantity = quantity_per_set * sets_required;
                             *materials_map.entry(ItemId(supply_item.item)).or_default() +=
                                 total_quantity;
@@ -121,28 +128,56 @@ fn calculate_fc_project_cost(
         }
     }
 
+    let mut total_cost: i64 = 0;
+    let mut shard_cost: i64 = 0;
+    let mut on_hand_savings: i64 = 0;
     let mut material_infos = Vec::new();
-    for (item_id, quantity) in materials_map {
-        let price_summary = prices.find_matching_listings(item_id.0);
-        let unit_cost = price_summary.lowest_gil().unwrap_or(999_999_999) as i64;
 
-        // Cost calc
-        total_cost = total_cost.saturating_add(unit_cost.saturating_mul(quantity as i64));
+    for (item_id, quantity) in materials_map {
+        let line = compute_ingredient_cost(item_id, quantity, prices, opts);
+        let is_shard = data
+            .items
+            .get(&item_id)
+            .map(|i| i.item_search_category == CRYSTAL_SEARCH_CATEGORY)
+            .unwrap_or(false);
+
+        let line_market = (line.used_from_market as i64) * (line.unit_price as i64);
+        let line_on_hand = (line.used_from_on_hand as i64) * (line.unit_price as i64);
+
+        if is_shard {
+            shard_cost = shard_cost.saturating_add(line_market + line_on_hand);
+            if matches!(opts.shards, ShardsMode::IncludeMarket) {
+                total_cost = total_cost.saturating_add(line_market);
+                on_hand_savings = on_hand_savings.saturating_add(line_on_hand);
+            }
+        } else {
+            total_cost = total_cost.saturating_add(line_market);
+            on_hand_savings = on_hand_savings.saturating_add(line_on_hand);
+        }
 
         material_infos.push(MaterialInfo {
             item_id,
             total_quantity: quantity,
-            unit_cost: unit_cost as i32,
+            unit_cost: line.unit_price,
         });
     }
 
-    let clamped_cost = if total_cost > i32::MAX as i64 {
-        i32::MAX
-    } else {
-        total_cost as i32
+    let clamp = |v: i64| -> i32 {
+        if v > i32::MAX as i64 {
+            i32::MAX
+        } else if v < 0 {
+            0
+        } else {
+            v as i32
+        }
     };
 
-    (clamped_cost, material_infos)
+    (
+        clamp(total_cost),
+        material_infos,
+        clamp(shard_cost),
+        clamp(on_hand_savings),
+    )
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -205,6 +240,8 @@ fn FCCraftingAnalyzerTable(
     let (minimum_profit, set_minimum_profit) = query_signal::<i32>("profit");
     let (minimum_roi, set_minimum_roi) = query_signal::<i32>("roi");
     let (min_daily_sales, set_min_daily_sales) = query_signal::<f32>("min-sales");
+    let (exclude_shards_url, set_exclude_shards) = query_signal::<bool>("shards-exclude");
+    let (use_on_hand_url, set_use_on_hand) = query_signal::<bool>("on-hand");
 
     let computed_data = Memo::new(move |_| {
         let sales_map: HashMap<i32, Vec<&SaleData>> = if let Some(ref sales) = recent_sales {
@@ -217,6 +254,21 @@ fn FCCraftingAnalyzerTable(
             HashMap::new()
         };
 
+        // Hoist context lookups ONCE; the on-hand SNAPSHOT is rebuilt
+        // per sequence inside the loop because compute_ingredient_cost consumes it.
+        let opts_cookie = use_context::<Cookies>()
+            .unwrap()
+            .use_cookie_typed::<_, CraftOptions>("CRAFT_OPTIONS")
+            .0;
+        let opts_value = opts_cookie.get().unwrap_or_default();
+        let shards = if exclude_shards_url().unwrap_or(opts_value.exclude_shards) {
+            ShardsMode::ExcludeShards
+        } else {
+            ShardsMode::IncludeMarket
+        };
+        let on_hand_map = use_context::<OnHandMap>();
+        let use_on_hand = use_on_hand_url().unwrap_or(opts_value.use_on_hand);
+
         let mut results = Vec::new();
 
         for sequence in sequences.values() {
@@ -224,12 +276,6 @@ fn FCCraftingAnalyzerTable(
             if sequence.result_item == 0 {
                 continue;
             }
-
-            // Also some sequences might not have valid parts (e.g. unfinished content)
-            // We can check if part 0 exists as a proxy
-            // Wait, part is a link (key), so we check if the key is valid when fetching.
-            // But we can pre-check if the key is 0/invalid?
-            // The generated code uses keys, let's assume valid keys if present.
 
             let sales_stats = if let Some(item_sales) = sales_map.get(&{ sequence.result_item }) {
                 analyze_sales(item_sales)
@@ -254,7 +300,27 @@ fn FCCraftingAnalyzerTable(
                 .or(market_price_summary.hq.map(|d| d.world_id))
                 .unwrap_or(0);
 
-            let (cost, materials) = calculate_fc_project_cost(sequence, &prices, data);
+            // Fresh on-hand snapshot per sequence — compute_ingredient_cost consumes
+            // from the snapshot, and reusing one across sequences would wrongly deplete
+            // the user's stockpile after the first sequence.
+            let local = on_hand_map
+                .map(|m: OnHandMap| LocalOnHand::from_map(m.0.get_untracked()))
+                .unwrap_or_else(|| LocalOnHand::from_map(Default::default()));
+            let empty = EmptyOnHand;
+            let active: Box<dyn OnHand> = if use_on_hand {
+                Box::new(local)
+            } else {
+                Box::new(empty)
+            };
+            let opts = CraftingCostOptions {
+                require_hq: false,
+                max_subcraft_depth: 0,
+                shards,
+                on_hand: active.as_ref(),
+            };
+
+            let (cost, materials, shard_cost, on_hand_savings) =
+                calculate_fc_project_cost(sequence, &prices, data, &opts);
 
             if cost == 0 {
                 // Cost 0 means probably missing data or no materials required (unlikely for valid projects)
@@ -283,6 +349,8 @@ fn FCCraftingAnalyzerTable(
                 daily_sales: sales_stats.daily_sales,
                 avg_price: sales_stats.avg_price,
                 total_sales: sales_stats.total_sales,
+                shard_cost,
+                on_hand_savings,
             });
         }
 
@@ -407,6 +475,40 @@ fn FCCraftingAnalyzerTable(
                                 }
                             }
                         />
+                    </div>
+                </FilterCard>
+
+                <FilterCard
+                    title="Options"
+                    description="Configure cost calculation options"
+                >
+                    <div class="flex flex-col gap-4">
+                        <div class="flex flex-row gap-4 flex-wrap">
+                            <input
+                                type="checkbox"
+                                id="exclude-shards"
+                                class="checkbox"
+                                prop:checked=move || exclude_shards_url().unwrap_or(true)
+                                on:change=move |ev| set_exclude_shards(Some(event_target_checked(&ev)))
+                            />
+                            <label for="exclude-shards">"Exclude shards/crystals"</label>
+                            <div class="text-brand-300 cursor-help" title="If enabled, crystal/shard/cluster ingredient costs are not counted toward the craft cost. Most crafters keep a stockpile.">
+                                <Icon icon=i::AiQuestionCircleOutlined />
+                            </div>
+                        </div>
+                        <div class="flex flex-row gap-4 flex-wrap">
+                            <input
+                                type="checkbox"
+                                id="use-on-hand"
+                                class="checkbox"
+                                prop:checked=move || use_on_hand_url().unwrap_or(false)
+                                on:change=move |ev| set_use_on_hand(Some(event_target_checked(&ev)))
+                            />
+                            <label for="use-on-hand">"Use on-hand inventory"</label>
+                            <div class="text-brand-300 cursor-help" title="Deduct ingredients you already own from the craft cost. Set per-ingredient totals on the item page.">
+                                <Icon icon=i::AiQuestionCircleOutlined />
+                            </div>
+                        </div>
                     </div>
                 </FilterCard>
             </div>

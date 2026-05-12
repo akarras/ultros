@@ -1,6 +1,6 @@
 //! Crafting cost types and computation — scaffolded in Task 1, implemented in Tasks 2-4.
-// TODO(Tasks 8-9): remove this allow once CRYSTAL_SEARCH_CATEGORY and item_page_default
-// gain callers in the analyzer routes.
+// TODO(Task 10+): remove this allow once `item_page_default` gains a non-test caller
+// (CRYSTAL_SEARCH_CATEGORY now has one via fc_crafting_analyzer).
 #![allow(dead_code)]
 
 use std::collections::HashMap;
