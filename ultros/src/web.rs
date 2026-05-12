@@ -408,22 +408,20 @@ pub(crate) async fn get_lists(
 
 pub(crate) async fn get_list(
     State(db): State<UltrosDb>,
-    Path(id): Path<i32>,
-    user: AuthDiscordUser,
+    perm: crate::web::list_permission::RequireListPermission<{ crate::web::list_permission::READ }>,
 ) -> Result<Json<(ListWithPermission, Vec<ListItem>)>, ApiError> {
     let (list, list_items) = futures::future::try_join(
-        db.get_list(id, user.id as i64),
-        db.get_list_items(id, user.id as i64),
+        db.get_list(perm.list_id, perm.user_id),
+        db.get_list_items(perm.list_id, perm.user_id),
     )
     .await?;
-    let permission = db.get_permission(id, user.id as i64).await?;
     let list_items = list_items
         .into_iter()
         .map(ListItem::from)
         .collect::<Vec<_>>();
     let list = ListWithPermission {
         list: List::try_from(list)?,
-        permission,
+        permission: perm.permission,
     };
     Ok(Json((list, list_items)))
 }
@@ -478,11 +476,12 @@ pub(crate) async fn get_list_with_listings(
 pub(crate) async fn delete_list(
     State(db): State<UltrosDb>,
     State(senders): State<EventSenders>,
-    Path(list_id): Path<i32>,
-    user: AuthDiscordUser,
+    perm: crate::web::list_permission::RequireListPermission<
+        { crate::web::list_permission::OWNER },
+    >,
 ) -> Result<Json<()>, ApiError> {
-    let list = db.get_list(list_id, user.id as i64).await?;
-    db.delete_list(list_id, user.id as i64).await?;
+    let list = db.get_list(perm.list_id, perm.user_id).await?;
+    db.delete_list(perm.list_id, perm.user_id).await?;
     send_list_event(
         &senders,
         EventType::removed(ListEventData::List(List::try_from(list)?)),
@@ -537,11 +536,12 @@ pub(crate) async fn edit_list(
 pub(crate) async fn post_item_to_list(
     State(db): State<UltrosDb>,
     State(senders): State<EventSenders>,
-    Path(id): Path<i32>,
-    user: AuthDiscordUser,
+    perm: crate::web::list_permission::RequireListPermission<
+        { crate::web::list_permission::WRITE },
+    >,
     Json(item): Json<ListItem>,
 ) -> Result<Json<()>, ApiError> {
-    let list = db.get_list(id, user.id as i64).await?;
+    let list = db.get_list(perm.list_id, perm.user_id).await?;
     let ListItem {
         item_id,
         hq,
@@ -550,7 +550,7 @@ pub(crate) async fn post_item_to_list(
         ..
     } = item;
     let item = db
-        .add_item_to_list(&list, user.id as i64, item_id, hq, quantity, acquired)
+        .add_item_to_list(&list, perm.user_id, item_id, hq, quantity, acquired)
         .await?;
     send_list_event(
         &senders,
