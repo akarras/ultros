@@ -9,6 +9,7 @@ use ultros_api_types::{
 use crate::api::{create_alert, list_endpoints};
 use crate::components::{icon::Icon, modal::Modal, world_picker::WorldPicker};
 use crate::global_state::toasts::use_toast;
+use crate::i18n::{t, t_string, use_i18n};
 
 #[component]
 pub fn AlertConfigDrawer(
@@ -19,6 +20,7 @@ pub fn AlertConfigDrawer(
     default_world: Signal<Option<AnySelector>>,
     set_visible: SignalSetter<bool>,
 ) -> impl IntoView {
+    let i18n = use_i18n();
     let (world, set_world) = signal::<Option<AnySelector>>(default_world.get_untracked());
     let (price_threshold, set_price_threshold) = signal::<String>("".to_string());
     let (hq_only, set_hq_only) = signal(false);
@@ -38,20 +40,28 @@ pub fn AlertConfigDrawer(
     let submit = move |_| {
         set_error.set(None);
         let Some(world_selector) = world.get() else {
-            set_error.set(Some("Pick a world or DC".into()));
+            set_error.set(Some(
+                t_string!(i18n, alert_drawer_err_pick_world).to_string(),
+            ));
             return;
         };
         let Ok(threshold) = price_threshold.get().parse::<i32>() else {
-            set_error.set(Some("Price threshold must be a positive integer".into()));
+            set_error.set(Some(
+                t_string!(i18n, alert_drawer_err_threshold_int).to_string(),
+            ));
             return;
         };
         if threshold <= 0 {
-            set_error.set(Some("Price threshold must be positive".into()));
+            set_error.set(Some(
+                t_string!(i18n, alert_drawer_err_threshold_positive).to_string(),
+            ));
             return;
         }
         let endpoint_ids: Vec<i32> = selected.get().into_iter().collect();
         if endpoint_ids.is_empty() {
-            set_error.set(Some("Pick at least one endpoint".into()));
+            set_error.set(Some(
+                t_string!(i18n, alert_drawer_err_endpoint_required).to_string(),
+            ));
             return;
         }
         let req = CreateAlertRequest {
@@ -69,7 +79,7 @@ pub fn AlertConfigDrawer(
             match create_alert(req).await {
                 Ok(_) => {
                     if let Some(t) = toasts {
-                        t.success("Alert created");
+                        t.success(t_string!(i18n, alert_drawer_created_toast));
                     }
                     set_visible.set(false);
                 }
@@ -83,10 +93,10 @@ pub fn AlertConfigDrawer(
     view! {
         <Modal set_visible>
             <div class="p-4 space-y-4 w-[28rem]">
-                <h2 class="text-xl font-bold">"Create price alert: " {item_name.clone()}</h2>
+                <h2 class="text-xl font-bold">{t!(i18n, alert_drawer_title)} {item_name.clone()}</h2>
 
                 <div class="space-y-1">
-                    <label class="text-sm font-semibold">"World / DC / Region"</label>
+                    <label class="text-sm font-semibold">{t!(i18n, alert_drawer_world_label)}</label>
                     <WorldPicker
                         current_world=world.into()
                         set_current_world=set_world.into()
@@ -94,12 +104,12 @@ pub fn AlertConfigDrawer(
                 </div>
 
                 <div class="space-y-1">
-                    <label class="text-sm font-semibold">"Price threshold (gil)"</label>
+                    <label class="text-sm font-semibold">{t!(i18n, alert_drawer_threshold_label)}</label>
                     <input
                         class="input w-full"
                         type="number"
                         min="1"
-                        placeholder="e.g. 150000"
+                        placeholder=t_string!(i18n, alert_drawer_threshold_placeholder)
                         prop:value=price_threshold
                         on:input=move |e| set_price_threshold.set(event_target_value(&e))
                     />
@@ -111,20 +121,20 @@ pub fn AlertConfigDrawer(
                         prop:checked=hq_only
                         on:change=move |e| set_hq_only.set(event_target_checked(&e))
                     />
-                    <span class="text-sm">"HQ only"</span>
+                    <span class="text-sm">{t!(i18n, hq_only)}</span>
                 </label>
 
                 <div class="space-y-1">
-                    <label class="text-sm font-semibold">"Deliver to"</label>
+                    <label class="text-sm font-semibold">{t!(i18n, alert_drawer_deliver_to)}</label>
                     <Suspense fallback=move || {
-                        view! { <div class="text-sm opacity-70">"Loading endpoints..."</div> }
+                        view! { <div class="text-sm opacity-70">{t!(i18n, alert_drawer_loading_endpoints)}</div> }
                     }>
                         {move || endpoints.get().map(|r| match r {
                             Ok(list) if list.is_empty() => view! {
                                 <p class="text-sm opacity-70">
-                                    "No endpoints yet. "
-                                    <a href="/alerts" class="underline">"Add one"</a>
-                                    " before creating alerts."
+                                    {t!(i18n, alert_drawer_no_endpoints_prefix)}
+                                    <a href="/alerts" class="underline">{t!(i18n, alert_drawer_no_endpoints_link)}</a>
+                                    {t!(i18n, alert_drawer_no_endpoints_suffix)}
                                 </p>
                             }.into_any(),
                             Ok(list) => view! {
@@ -154,17 +164,18 @@ pub fn AlertConfigDrawer(
                     </Suspense>
                 </div>
 
+
                 <Show when=move || error.get().is_some()>
                     <div class="text-sm text-red-500">{move || error.get().unwrap_or_default()}</div>
                 </Show>
 
                 <div class="flex justify-end gap-2 pt-2">
                     <button class="btn-ghost" on:click=move |_| set_visible.set(false)>
-                        "Cancel"
+                        {t!(i18n, cancel)}
                     </button>
                     <button class="btn" on:click=submit>
                         <Icon icon=i::BsBell width="1em" height="1em" />
-                        <span class="ml-1">"Create alert"</span>
+                        <span class="ml-1">{t!(i18n, alert_drawer_submit)}</span>
                     </button>
                 </div>
             </div>

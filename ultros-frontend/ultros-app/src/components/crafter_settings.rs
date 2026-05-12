@@ -38,7 +38,7 @@ pub fn CrafterSettings() -> impl IntoView {
 
     view! {
         <div class="panel p-6 rounded-xl">
-            <h3 class="text-2xl font-bold text-[color:var(--brand-fg)] mb-4">"Crafter Levels"</h3>
+            <h3 class="text-2xl font-bold text-[color:var(--brand-fg)] mb-4">{t!(i18n, crafter_levels_title)}</h3>
             <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {jobs.into_iter()
                     .map(|(code, getter)| {
@@ -79,7 +79,7 @@ pub fn CrafterSettings() -> impl IntoView {
                                         }
                                     />
                                     <span class="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[color:var(--color-text-muted)] pointer-events-none">
-                                        "Lv"
+                                        {t!(i18n, item_explorer_lv_prefix)}
                                     </span>
                                 </div>
                             </div>
@@ -88,7 +88,7 @@ pub fn CrafterSettings() -> impl IntoView {
                     .collect::<Vec<_>>()}
             </div>
             <p class="mt-4 text-sm text-gray-400">
-                "Set your crafter levels to filter recipes in the Recipe Analyzer."
+                {t!(i18n, crafter_levels_help)}
             </p>
         </div>
     }

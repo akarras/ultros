@@ -1,85 +1,87 @@
+use crate::i18n::*;
 use leptos::prelude::*;
 
 #[component]
 pub fn CookiePolicy() -> impl IntoView {
+    let i18n = use_i18n();
     view! {
-        <h1>Cookie Policy for Ultros</h1>
+        <h1>{t!(i18n, cookie_policy_title)}</h1>
         <p>
-            "This is the Cookie Policy for Ultros, accessible from "
+            {t!(i18n, cookie_policy_intro)}
             <a href="https://ultros.app/cookie-policy">"https://ultros.app/cookie-policy"</a>
         </p>
         <p>
-            <strong>What Are Cookies</strong>
+            <strong>{t!(i18n, cookie_policy_what_are_cookies)}</strong>
         </p>
         <p>
-            "As is common practice with almost all professional websites this site uses cookies, which are tiny files that are downloaded to your computer, to improve your experience. This page describes what information they gather, how we use it and why we sometimes need to store these cookies. We will also share how you can prevent these cookies from being stored however this may downgrade or 'break' certain elements of the sites functionality."
+            {t!(i18n, cookie_policy_what_are_cookies_body)}
         </p>
         <p>
-            <strong>How We Use Cookies</strong>
+            <strong>{t!(i18n, cookie_policy_how_we_use)}</strong>
         </p>
         <p>
-            We use cookies for a variety of reasons detailed below. Unfortunately in most cases there are no industry standard options for disabling cookies without completely disabling the functionality and features they add to this site. It is recommended that you leave on all cookies if you are not sure whether you need them or not in case they are used to provide a service that you use.
+            {t!(i18n, cookie_policy_how_we_use_body)}
         </p>
         <p>
-            <strong>Disabling Cookies</strong>
+            <strong>{t!(i18n, cookie_policy_disabling)}</strong>
         </p>
         <p>
-            You can prevent the setting of cookies by adjusting the settings on your browser (see your browser Help for how to do this). Be aware that disabling cookies will affect the functionality of this and many other websites that you visit. Disabling cookies will usually result in also disabling certain functionality and features of the this site. Therefore it is recommended that you do not disable cookies. This Cookies Policy was created with the help of the
+            {t!(i18n, cookie_policy_disabling_body)}
             <a href="https://www.cookiepolicygenerator.com/cookie-policy-generator/">
-                Cookies Policy Generator
+                {t!(i18n, cookie_policy_generator_link)}
             </a>.
         </p>
         <p>
-            <strong>The Cookies We Set</strong>
+            <strong>{t!(i18n, cookie_policy_cookies_we_set)}</strong>
         </p>
         <ul>
             <li>
-                <p>Account related cookies</p>
+                <p>{t!(i18n, cookie_policy_account_cookies_title)}</p>
                 <p>
-                    If you create an account with us then we will use cookies for the management of the signup process and general administration. These cookies will usually be deleted when you log out however in some cases they may remain afterwards to remember your site preferences when logged out.
+                    {t!(i18n, cookie_policy_account_cookies_body)}
                 </p>
             </li>
             <li>
-                <p>Login related cookies</p>
+                <p>{t!(i18n, cookie_policy_login_cookies_title)}</p>
                 <p>
-                    We use cookies when you are logged in so that we can remember this fact. This prevents you from having to log in every single time you visit a new page. These cookies are typically removed or cleared when you log out to ensure that you can only access restricted features and areas when logged in.
+                    {t!(i18n, cookie_policy_login_cookies_body)}
                 </p>
             </li>
         </ul>
         <p>
-            <strong>Third Party Cookies</strong>
+            <strong>{t!(i18n, cookie_policy_third_party)}</strong>
         </p>
         <p>
-            In some special cases we also use cookies provided by trusted third parties. The following section details which third party cookies you might encounter through this site.
+            {t!(i18n, cookie_policy_third_party_body)}
         </p>
         <ul>
             <li>
                 <p>
-                    The Google AdSense service we use to serve advertising uses a DoubleClick cookie to serve more relevant ads across the web and limit the number of times that a given ad is shown to you.
+                    {t!(i18n, cookie_policy_adsense_body)}
                 </p>
                 <p>
-                    For more information on Google AdSense see the official Google AdSense privacy FAQ.
+                    {t!(i18n, cookie_policy_adsense_faq)}
                 </p>
             </li>
         </ul>
 
         <p>
-            <strong>More Information</strong>
+            <strong>{t!(i18n, cookie_policy_more_info)}</strong>
         </p>
         <p>
-            "Hopefully that has clarified things for you and as was previously mentioned if there is something that you aren't sure whether you need or not it's usually safer to leave cookies enabled in case it does interact with one of the features you use on our site."
+            {t!(i18n, cookie_policy_more_info_body)}
         </p>
         <p>
-            "For more general information on cookies, please read "
+            {t!(i18n, cookie_policy_more_info_link_intro)}
             <a href="https://www.cookiepolicygenerator.com/sample-cookies-policy/">
-                "the Cookies Policy article"
+                {t!(i18n, cookie_policy_article_link)}
             </a> "."
         </p>
         <p>
-            "However if you are still looking for more information then you can contact us through one of our preferred contact methods:"
+            {t!(i18n, cookie_policy_contact_intro)}
         </p>
         <ul>
-            <li>"Email: aaron@akarras.com"</li>
+            <li>{t!(i18n, cookie_policy_contact_email)}</li>
 
         </ul>
     }
