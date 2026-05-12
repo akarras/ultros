@@ -1,3 +1,4 @@
+use crate::analysis::{SaleSummary, format_duration_short, roi_badge_class};
 use crate::global_state::xiv_data::tracked_data;
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
@@ -22,23 +23,8 @@ use std::{cmp::Reverse, collections::HashMap, str::FromStr, sync::Arc};
 use ultros_api_types::{
     cheapest_listings::CheapestListings,
     recent_sales::{RecentSales, SaleData},
-    world_helper::WorldHelper,
 };
 use xiv_gen::ItemId;
-
-/// Computed sale stats
-#[derive(Hash, Clone, Debug, PartialEq)]
-struct SaleSummary {
-    item_id: i32,
-    hq: bool,
-    /// this value is limited by the summary returned by the API
-    num_sold: usize,
-    /// Represents the average time between sales within the `num_sold`
-    avg_sale_duration: Option<Duration>,
-    max_price: i32,
-    avg_price: i32,
-    min_price: i32,
-}
 
 #[derive(Hash, Clone, Debug, PartialEq, Eq)]
 struct VendorProfitKey {
@@ -196,7 +182,6 @@ impl VendorProfitTable {
 fn VendorResaleTable(
     sales: RecentSales,
     world_cheapest_listings: CheapestListings,
-    _worlds: Arc<WorldHelper>,
     world: Signal<String>,
 ) -> impl IntoView {
     let i18n = use_i18n();
@@ -647,23 +632,7 @@ fn VendorResaleTable(
                                     </div>
                                     <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
                                         <span class={
-                                            move || {
-                                                let roi = data_clone.return_on_investment;
-                                                let tint = if roi >= 500 {
-                                                    "24%"
-                                                } else if roi >= 200 {
-                                                    "20%"
-                                                } else if roi >= 100 {
-                                                    "16%"
-                                                } else if roi >= 50 {
-                                                    "12%"
-                                                } else {
-                                                    "10%"
-                                                };
-                                                format!(
-                                                    "inline-flex items-center justify-end px-2 py-1 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_{tint},transparent)]"
-                                                )
-                                            }
+                                            move || roi_badge_class(data_clone.return_on_investment)
                                         }>
                                             {format!("{}%", data.return_on_investment)}
                                         </span>
@@ -680,19 +649,7 @@ fn VendorResaleTable(
                                             .as_ref()
                                             .and_then(|s| s.avg_sale_duration)
                                             .and_then(|duration| duration.to_std().ok())
-                                            .map(|duration| {
-                                                let secs = duration.as_secs();
-                                                let days = secs / 86_400;
-                                                let hours = (secs % 86_400) / 3_600;
-                                                let minutes = (secs % 3_600) / 60;
-                                                let seconds = secs % 60;
-                                                let mut parts = Vec::new();
-                                                if days > 0 { parts.push(format!("{}d", days)); }
-                                                if hours > 0 { parts.push(format!("{}h", hours)); }
-                                                if minutes > 0 && parts.len() < 2 { parts.push(format!("{}m", minutes)); }
-                                                if seconds > 0 && parts.len() < 2 { parts.push(format!("{}s", seconds)); }
-                                                if parts.is_empty() { "0s".to_string() } else { parts[..parts.len().min(2)].join(" ") }
-                                            })
+                                            .map(|duration| format_duration_short(duration.as_secs()))
                                             .unwrap_or_else(|| "---".to_string())}
                                     </div>
                                 </div>
@@ -726,10 +683,6 @@ pub fn VendorWorldView() -> impl IntoView {
             get_cheapest_listings(&world).await
         },
     );
-    let worlds = use_context::<LocalWorldData>()
-        .expect("Worlds should always be populated here")
-        .0
-        .unwrap();
 
     view! {
         <div class="main-content p-2 sm:p-6">
@@ -772,8 +725,6 @@ pub fn VendorWorldView() -> impl IntoView {
                             {move || {
                                 let world_cheapest = world_cheapest_listings.get();
                                 let sales = sales.get();
-                                let worlds = worlds.clone();
-
                                 match (world_cheapest, sales) {
                                     (Some(Ok(w)), Some(Ok(s))) => {
                                         Either::Left(
@@ -781,7 +732,6 @@ pub fn VendorWorldView() -> impl IntoView {
                                                 <VendorResaleTable
                                                     sales=s
                                                     world_cheapest_listings=w
-                                                    _worlds=worlds
                                                     world=world.into()
                                                 />
                                             },

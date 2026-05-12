@@ -15,7 +15,6 @@ pub fn ListItemRow(
     item: ListItem,
     listings: Vec<ActiveListing>,
     edit_list_mode: Signal<bool>,
-    can_write: bool,
     #[prop(into)] selected_items: RwSignal<HashSet<i32>>,
     // The return type of delete_list_item is impl Future<Output = Result<(), AppError>> so in Action it becomes () for the output if we don't care about the result, but wait. Action<I, O>. The original code used Action::new. Let's check original.
     // original: let delete_item = Action::new(move |list_item: &i32| delete_list_item(*list_item));
@@ -43,14 +42,17 @@ pub fn ListItemRow(
     let listings = RwSignal::new(listings);
 
     view! {
-        <tr>
+        <tr class="group transition-colors hover:bg-[color:var(--color-background-panel)]">
             {move || {
                 if !edit() || edit_list_mode() {
                     Either::Left(
                         view! {
-                            <td class:hidden=move || !edit_list_mode()>
+                            <td class="px-3 py-3 align-middle" class:hidden=move || !edit_list_mode()>
                                 <input
                                     type="checkbox"
+                                    prop:checked=move || {
+                                        selected_items.with(|u| u.contains(&item.with(|i| i.id)))
+                                    }
                                     on:click=move |_| {
                                         selected_items
                                             .update(|u| {
@@ -65,34 +67,55 @@ pub fn ListItemRow(
                                 />
 
                             </td>
-                            <td>{item.with(|i| i.hq).and_then(|hq| hq.then_some("✅"))}</td>
-                            <td>
-                                <div class="flex-row">
+                            <td class="px-3 py-3 align-middle">
+                                {move || {
+                                    item
+                                        .with(|i| i.hq)
+                                        .and_then(|hq| {
+                                            hq.then_some(
+                                                view! {
+                                                    <span class="inline-flex rounded-md border border-[color:var(--brand-ring)]/40 px-2 py-0.5 text-xs font-bold text-[color:var(--brand-fg)]">
+                                                        "HQ"
+                                                    </span>
+                                                },
+                                            )
+                                        })
+                                }}
+                            </td>
+                            <td class="px-3 py-3 align-middle">
+                                <div class="flex min-w-0 items-center gap-3">
                                     <ItemIcon item_id=item.with(|i| i.item_id) icon_size=IconSize::Small />
-                                    {game_items
-                                        .get(&ItemId(item.with(|i| i.item_id)))
-                                        .map(|item| item.name.as_str())}
-                                    <Clipboard clipboard_text=game_items
-                                        .get(&ItemId(item.with(|i| i.item_id)))
-                                        .map(|item| item.name.to_string())
-                                        .unwrap_or_default() />
-                                    {game_items
-                                        .get(&ItemId(item.with(|i| i.item_id)))
-                                        .map(|item| item.item_search_category <= 1)
-                                        .unwrap_or_default()
-                                        .then(move || {
-                                            view! {
-                                                <div>
-                                                    <Tooltip tooltip_text="This item is not available on the market board">
-                                                        <Icon icon=i::BiTrashSolid />
-                                                    </Tooltip>
-                                                </div>
-                                            }
-                                        })}
+                                    <div class="min-w-0">
+                                        <div class="flex min-w-0 items-center gap-2">
+                                            <span class="min-w-0 truncate font-semibold">
+                                                {game_items
+                                                    .get(&ItemId(item.with(|i| i.item_id)))
+                                                    .map(|item| item.name.as_str())}
+                                            </span>
+                                            <Clipboard clipboard_text=game_items
+                                                .get(&ItemId(item.with(|i| i.item_id)))
+                                                .map(|item| item.name.to_string())
+                                                .unwrap_or_default() />
+                                        </div>
+                                        {game_items
+                                            .get(&ItemId(item.with(|i| i.item_id)))
+                                            .map(|item| item.item_search_category <= 1)
+                                            .unwrap_or_default()
+                                            .then(move || {
+                                                view! {
+                                                    <div class="mt-1 inline-flex items-center gap-1 rounded-md bg-red-500/10 px-2 py-0.5 text-xs text-red-200">
+                                                        <Tooltip tooltip_text="This item is not available on the market board">
+                                                            <Icon icon=i::AiExclamationOutlined />
+                                                        </Tooltip>
+                                                        <span>"Unavailable on market board"</span>
+                                                    </div>
+                                                }
+                                            })}
+                                    </div>
 
                                 </div>
                             </td>
-                            <td>
+                            <td class="px-3 py-3 align-middle">
                                 {move || {
                                     let item = item.get();
                                     let q = item.quantity.unwrap_or(1);
@@ -102,7 +125,7 @@ pub fn ListItemRow(
                                             <div class="flex flex-col gap-1 w-full">
                                                 <span>{format!("{a} / {q}")}</span>
                                                 <progress
-                                                    class="progress progress-primary w-full h-2 rounded"
+                                                    class="progress progress-primary h-2 w-full rounded"
                                                     value=a
                                                     max=q
                                                 ></progress>
@@ -115,7 +138,7 @@ pub fn ListItemRow(
                                 }}
 
                             </td>
-                            <td>
+                            <td class="px-3 py-3 align-middle">
                                 {move || {
                                     let q = item.with(|i| i.quantity.unwrap_or(1));
                                     let a = item.with(|i| i.acquired.unwrap_or(0));
@@ -130,67 +153,63 @@ pub fn ListItemRow(
                                 }}
 
                             </td>
-                            <td class:hidden=edit_list_mode>
-                                <div class="flex gap-1">
+                            <td class="px-3 py-3 align-middle" class:hidden=edit_list_mode>
+                                <div class="flex justify-end gap-1">
                                     <Tooltip tooltip_text="Create price alert">
                                         <button
-                                            class="btn"
+                                            class="btn-secondary h-8 w-8 p-0"
                                             aria-label="Create price alert"
                                             on:click=move |_| set_alert_drawer_open.set(true)
                                         >
                                             <Icon icon=i::BsBell />
                                         </button>
                                     </Tooltip>
-                                    <Show when=move || can_write>
+                                    <button
+                                        class="btn-secondary h-8 w-8 p-0 hover:text-red-200"
+                                        aria-label="Delete item"
+                                        on:click=move |_| {
+                                            let _ = delete_item.dispatch(item.with(|i| i.id));
+                                        }
+                                    >
+                                        <Icon icon=i::BiTrashSolid />
+                                    </button>
+                                    <button
+                                        class="btn-secondary h-8 w-8 p-0"
+                                        aria-label=move || if edit() { "Save edit" } else { "Edit item" }
+                                        on:click=move |_| {
+                                            if temp_item() != item() {
+                                                let _ = edit_item.dispatch(temp_item());
+                                            }
+                                            set_edit(!edit())
+                                        }
+                                    >
+                                        <Icon icon=Signal::derive(move || {
+                                            if edit() { i::BsCheck } else { i::BsPencilFill }
+                                        }) />
+                                    </button>
+                                    <Tooltip tooltip_text="Mark as acquired">
                                         <button
-                                            class="btn"
-                                            aria-label="Delete item"
+                                            class="btn-secondary h-8 w-8 p-0"
+                                            aria-label="Mark as acquired"
                                             on:click=move |_| {
-                                                let _ = delete_item.dispatch(item.with(|i| i.id));
+                                                item.update(|i| {
+                                                    i.acquired = i.quantity;
+                                                });
+                                                let _ = edit_item.dispatch(item());
                                             }
                                         >
-                                            <Icon icon=i::BiTrashSolid />
+                                            <Icon icon=i::BiCheckRegular />
                                         </button>
-                                        <button
-                                            class="btn"
-                                            aria-label=move || if edit() { "Save edit" } else { "Edit item" }
-                                            on:click=move |_| {
-                                                if temp_item() != item() {
-                                                    let _ = edit_item.dispatch(temp_item());
-                                                }
-                                                set_edit(!edit())
-                                            }
-                                        >
-                                            <Icon icon=Signal::derive(move || {
-                                                if edit() { i::BsCheck } else { i::BsPencilFill }
-                                            }) />
-                                        </button>
-                                        <Tooltip tooltip_text="Mark as acquired">
-                                            <button
-                                                class="btn"
-                                                aria-label="Mark as acquired"
-                                                on:click=move |_| {
-                                                    item.update(|i| {
-                                                        i.acquired = i.quantity;
-                                                    });
-                                                    let _ = edit_item.dispatch(item());
-                                                }
-                                            >
-                                                <Icon icon=i::BiCheckRegular />
-                                            </button>
-                                        </Tooltip>
-                                    </Show>
+                                    </Tooltip>
                                 </div>
                             </td>
                         },
                     )
                 } else {
-                    let item_signal = item;
-                    let snapshot = item.get();
-                    let item_id = snapshot.id;
+                    let item = item();
                     Either::Right(
                         view! {
-                            <td>
+                            <td class="px-3 py-3 align-middle">
                                 <input
                                     type="checkbox"
                                     prop:checked=move || temp_item.with(|i| i.hq)
@@ -200,33 +219,40 @@ pub fn ListItemRow(
                                 />
 
                             </td>
-                            <td>
-                                <div class="flex-row">
-                                    <ItemIcon item_id=snapshot.item_id icon_size=IconSize::Small />
-                                    {game_items
-                                        .get(&ItemId(snapshot.item_id))
-                                        .map(|item| item.name.as_str())}
-                                    <Clipboard clipboard_text=game_items
-                                        .get(&ItemId(snapshot.item_id))
-                                        .map(|item| item.name.to_string())
-                                        .unwrap_or_default() />
-                                    {game_items
-                                        .get(&ItemId(snapshot.item_id))
-                                        .map(|item| item.item_search_category <= 1)
-                                        .unwrap_or_default()
-                                        .then(move || {
-                                            view! {
-                                                <div>
-                                                    <Tooltip tooltip_text="This item is not available on the market board">
-                                                        <Icon icon=i::AiExclamationOutlined />
-                                                    </Tooltip>
-                                                </div>
-                                            }
-                                        })}
+                            <td class="px-3 py-3 align-middle">
+                                <div class="flex min-w-0 items-center gap-3">
+                                    <ItemIcon item_id=item.item_id icon_size=IconSize::Small />
+                                    <div class="min-w-0">
+                                        <div class="flex min-w-0 items-center gap-2">
+                                            <span class="min-w-0 truncate font-semibold">
+                                                {game_items
+                                                    .get(&ItemId(item.item_id))
+                                                    .map(|item| item.name.as_str())}
+                                            </span>
+                                            <Clipboard clipboard_text=game_items
+                                                .get(&ItemId(item.item_id))
+                                                .map(|item| item.name.to_string())
+                                                .unwrap_or_default() />
+                                        </div>
+                                        {game_items
+                                            .get(&ItemId(item.item_id))
+                                            .map(|item| item.item_search_category <= 1)
+                                            .unwrap_or_default()
+                                            .then(move || {
+                                                view! {
+                                                    <div class="mt-1 inline-flex items-center gap-1 rounded-md bg-red-500/10 px-2 py-0.5 text-xs text-red-200">
+                                                        <Tooltip tooltip_text="This item is not available on the market board">
+                                                            <Icon icon=i::AiExclamationOutlined />
+                                                        </Tooltip>
+                                                        <span>"Unavailable on market board"</span>
+                                                    </div>
+                                                }
+                                            })}
 
+                                    </div>
                                 </div>
                             </td>
-                            <td>
+                            <td class="px-3 py-3 align-middle">
                                 <div class="flex flex-col gap-1">
                                     <label class="text-xs">"Qty"</label>
                                     <input
@@ -258,56 +284,54 @@ pub fn ListItemRow(
 
                                 </div>
                             </td>
-                            <td>
+                            <td class="px-3 py-3 align-middle">
                                 {move || {
-                                    let q = snapshot.quantity.unwrap_or(1);
-                                    let a = snapshot.acquired.unwrap_or(0);
+                                    let q = item.quantity.unwrap_or(1);
+                                    let a = item.acquired.unwrap_or(0);
                                     let remaining = q.saturating_sub(a);
                                     view! {
                                         <PriceViewer
                                             quantity=remaining
-                                            hq=snapshot.hq
+                                            hq=item.hq
                                             listings=listings()
                                         />
                                     }
                                 }}
 
                             </td>
-                            <td>
+                            <td class="px-3 py-3 align-middle">
                                 <Tooltip tooltip_text="Create price alert">
                                     <button
-                                        class="btn"
+                                        class="btn-secondary h-8 w-8 p-0"
                                         aria-label="Create price alert"
                                         on:click=move |_| set_alert_drawer_open.set(true)
                                     >
                                         <Icon icon=i::BsBell />
                                     </button>
                                 </Tooltip>
-                                <Show when=move || can_write>
-                                    <button
-                                        class="btn"
-                                        aria-label="Delete item"
-                                        on:click=move |_| {
-                                            let _ = delete_item.dispatch(item_id);
+                                <button
+                                    class="btn-secondary h-8 w-8 p-0 hover:text-red-200"
+                                    aria-label="Delete item"
+                                    on:click=move |_| {
+                                        let _ = delete_item.dispatch(item.id);
+                                    }
+                                >
+                                    <Icon icon=i::BiTrashSolid />
+                                </button>
+                                <button
+                                    class="btn-secondary h-8 w-8 p-0"
+                                    aria-label=move || if edit() { "Save edit" } else { "Edit item" }
+                                    on:click=move |_| {
+                                        if temp_item() != item {
+                                            let _ = edit_item.dispatch(temp_item());
                                         }
-                                    >
-                                        <Icon icon=i::BiTrashSolid />
-                                    </button>
-                                    <button
-                                        class="btn"
-                                        aria-label=move || if edit() { "Save edit" } else { "Edit item" }
-                                        on:click=move |_| {
-                                            if temp_item() != item_signal.get_untracked() {
-                                                let _ = edit_item.dispatch(temp_item());
-                                            }
-                                            set_edit(!edit())
-                                        }
-                                    >
-                                        <Icon icon=Signal::derive(move || {
-                                            if edit() { i::BsCheck } else { i::BsPencilFill }
-                                        }) />
-                                    </button>
-                                </Show>
+                                        set_edit(!edit())
+                                    }
+                                >
+                                    <Icon icon=Signal::derive(move || {
+                                        if edit() { i::BsCheck } else { i::BsPencilFill }
+                                    }) />
+                                </button>
                             </td>
                         },
                     )
