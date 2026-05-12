@@ -89,6 +89,8 @@ function getRoutes() {
     "/currency-exchange",
     "/history",
     "/settings",
+    "/help",
+    "/help/flip-finder",
     "/privacy",
     "/cookie-policy",
   ];

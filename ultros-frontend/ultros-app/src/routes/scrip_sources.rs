@@ -3,10 +3,18 @@ use crate::global_state::xiv_data::tracked_data;
 use crate::{
     api::get_cheapest_listings,
     components::{
-        gil::*, item_icon::*, query_button::QueryButton, skeleton::BoxSkeleton,
-        virtual_scroller::*, world_picker::WorldOnlyPicker,
+        gil::*,
+        item_icon::*,
+        query_button::QueryButton,
+        skeleton::BoxSkeleton,
+        tool_help::*,
+        toolbar::{Toolbar, ToolbarField},
+        virtual_scroller::*,
+        world_picker::WorldOnlyPicker,
     },
-    global_state::{LocalWorldData, home_world::use_home_world},
+    global_state::{
+        LocalWorldData, home_world::use_home_world, region_for_world::use_region_for_world,
+    },
 };
 use leptos::prelude::*;
 use leptos_router::{
@@ -14,10 +22,7 @@ use leptos_router::{
     hooks::{query_signal, use_navigate, use_query_map},
 };
 use std::{cmp::Reverse, sync::Arc};
-use ultros_api_types::{
-    cheapest_listings::{CheapestListings, CheapestListingsMap},
-    world_helper::AnyResult,
-};
+use ultros_api_types::cheapest_listings::{CheapestListings, CheapestListingsMap};
 use xiv_gen::{CollectablesShopRewardScripId, ItemId, Recipe};
 
 use crate::i18n::*;
@@ -27,7 +32,7 @@ struct ScripSourceData {
     item_id: ItemId,
     item_name: String,
     level: u16,
-    job_category_name: String,
+    craft_type: Option<i32>,
     scrip_type: ScripType,
     scrip_amount: u32,
     cost: i32,
@@ -57,18 +62,6 @@ impl ScripType {
             25200 => ScripType::WhiteGatherers,
             33914 => ScripType::PurpleGatherers,
             _ => ScripType::Other(id),
-        }
-    }
-
-    fn name(&self) -> &'static str {
-        match self {
-            ScripType::OrangeCrafters => "Orange Crafters' Scrip",
-            ScripType::OrangeGatherers => "Orange Gatherers' Scrip",
-            ScripType::WhiteCrafters => "White Crafters' Scrip",
-            ScripType::PurpleCrafters => "Purple Crafters' Scrip",
-            ScripType::WhiteGatherers => "White Gatherers' Scrip",
-            ScripType::PurpleGatherers => "Purple Gatherers' Scrip",
-            ScripType::Other(_) => "Other",
         }
     }
 
@@ -259,21 +252,7 @@ fn ScripSourceTable(
                     item_id: ItemId(item_id),
                     item_name: item_def.name.to_string(),
                     level: item_def.level_item as u16,
-                    job_category_name: if let Some(r) = recipe {
-                        match r.craft_type {
-                            0 => "Carpenter".to_string(),
-                            1 => "Blacksmith".to_string(),
-                            2 => "Armorer".to_string(),
-                            3 => "Goldsmith".to_string(),
-                            4 => "Leatherworker".to_string(),
-                            5 => "Weaver".to_string(),
-                            6 => "Alchemist".to_string(),
-                            7 => "Culinarian".to_string(),
-                            _ => "Unknown".to_string(),
-                        }
-                    } else {
-                        "Gathering".to_string()
-                    },
+                    craft_type: recipe.map(|r| r.craft_type),
                     scrip_type,
                     scrip_amount,
                     cost,
@@ -306,11 +285,10 @@ fn ScripSourceTable(
 
     view! {
         <div class="flex flex-col gap-6">
-             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                 <div class="panel p-6 flex flex-col w-full bg-[color:var(--color-background-elevated)] bg-opacity-100 z-20">
-                    <h3 class="font-bold text-xl mb-2 text-[color:var(--brand-fg)]">{t!(i18n, scrip_sources_scrip_type)}</h3>
+            <Toolbar>
+                <ToolbarField label=t_string!(i18n, scrip_sources_scrip_type).to_string()>
                     <select
-                        class="input"
+                        class="input input-sm w-48"
                         on:change=move |ev| {
                             let val = event_target_value(&ev);
                             if val.is_empty() {
@@ -328,12 +306,10 @@ fn ScripSourceTable(
                         <option value="PurpleGatherers" selected=move || scrip_filter() == Some("PurpleGatherers".to_string())>{t!(i18n, scrip_sources_purple_gatherers)}</option>
                         <option value="WhiteGatherers" selected=move || scrip_filter() == Some("WhiteGatherers".to_string())>{t!(i18n, scrip_sources_white_gatherers)}</option>
                     </select>
-                </div>
-
-                <div class="panel p-6 flex flex-col w-full bg-[color:var(--color-background-elevated)] bg-opacity-100 z-20">
-                    <h3 class="font-bold text-xl mb-2 text-[color:var(--brand-fg)]">{t!(i18n, scrip_sources_job_filter)}</h3>
-                     <select
-                        class="input"
+                </ToolbarField>
+                <ToolbarField label=t_string!(i18n, scrip_sources_job_filter).to_string()>
+                    <select
+                        class="input input-sm w-40"
                         on:change=move |ev| {
                             let val = event_target_value(&ev);
                             if val.is_empty() {
@@ -343,18 +319,18 @@ fn ScripSourceTable(
                             }
                         }
                     >
-                        <option value="">{t!(i18n, scrip_sources_all_jobs)}</option>
-                        <option value="Carpenter" selected=move || job_filter() == Some("Carpenter".to_string())>{t!(i18n, scrip_sources_carpenter)}</option>
-                        <option value="Blacksmith" selected=move || job_filter() == Some("Blacksmith".to_string())>{t!(i18n, scrip_sources_blacksmith)}</option>
-                        <option value="Armorer" selected=move || job_filter() == Some("Armorer".to_string())>{t!(i18n, scrip_sources_armorer)}</option>
-                        <option value="Goldsmith" selected=move || job_filter() == Some("Goldsmith".to_string())>{t!(i18n, scrip_sources_goldsmith)}</option>
-                        <option value="Leatherworker" selected=move || job_filter() == Some("Leatherworker".to_string())>{t!(i18n, scrip_sources_leatherworker)}</option>
-                        <option value="Weaver" selected=move || job_filter() == Some("Weaver".to_string())>{t!(i18n, scrip_sources_weaver)}</option>
-                        <option value="Alchemist" selected=move || job_filter() == Some("Alchemist".to_string())>{t!(i18n, scrip_sources_alchemist)}</option>
-                        <option value="Culinarian" selected=move || job_filter() == Some("Culinarian".to_string())>{t!(i18n, scrip_sources_culinarian)}</option>
+                        <option value="">{t!(i18n, all_jobs)}</option>
+                        <option value="Carpenter" selected=move || job_filter() == Some("Carpenter".to_string())>{t!(i18n, carpenter)}</option>
+                        <option value="Blacksmith" selected=move || job_filter() == Some("Blacksmith".to_string())>{t!(i18n, blacksmith)}</option>
+                        <option value="Armorer" selected=move || job_filter() == Some("Armorer".to_string())>{t!(i18n, armorer)}</option>
+                        <option value="Goldsmith" selected=move || job_filter() == Some("Goldsmith".to_string())>{t!(i18n, goldsmith)}</option>
+                        <option value="Leatherworker" selected=move || job_filter() == Some("Leatherworker".to_string())>{t!(i18n, leatherworker)}</option>
+                        <option value="Weaver" selected=move || job_filter() == Some("Weaver".to_string())>{t!(i18n, weaver)}</option>
+                        <option value="Alchemist" selected=move || job_filter() == Some("Alchemist".to_string())>{t!(i18n, alchemist)}</option>
+                        <option value="Culinarian" selected=move || job_filter() == Some("Culinarian".to_string())>{t!(i18n, culinarian)}</option>
                     </select>
-                </div>
-            </div>
+                </ToolbarField>
+            </Toolbar>
 
             <div class="rounded-2xl overflow-x-auto panel content-visible contain-layout contain-paint will-change-scroll forced-layer">
                 <VirtualScroller
@@ -422,7 +398,18 @@ fn ScripSourceTable(
                                         <div class="flex flex-col truncate">
                                             <span class="font-semibold">{data.item_name.clone()}</span>
                                             <span class="text-xs text-[color:var(--color-text-muted)] truncate">
-                                                {t!(i18n, scrip_sources_lv_prefix)} " " {data.level} " " {data.job_category_name.clone()}
+                                                {t!(i18n, scrip_sources_lv_prefix)} " " {data.level} " " {match data.craft_type {
+                                                    None => view! { {t!(i18n, gathering)} }.into_any(),
+                                                    Some(0) => view! { {t!(i18n, carpenter)} }.into_any(),
+                                                    Some(1) => view! { {t!(i18n, blacksmith)} }.into_any(),
+                                                    Some(2) => view! { {t!(i18n, armorer)} }.into_any(),
+                                                    Some(3) => view! { {t!(i18n, goldsmith)} }.into_any(),
+                                                    Some(4) => view! { {t!(i18n, leatherworker)} }.into_any(),
+                                                    Some(5) => view! { {t!(i18n, weaver)} }.into_any(),
+                                                    Some(6) => view! { {t!(i18n, alchemist)} }.into_any(),
+                                                    Some(7) => view! { {t!(i18n, culinarian)} }.into_any(),
+                                                    _ => view! { {t!(i18n, unknown)} }.into_any(),
+                                                }}
                                             </span>
                                         </div>
                                     </a>
@@ -438,7 +425,15 @@ fn ScripSourceTable(
                                 </div>
                                 <div role="cell" class="px-4 py-2 w-40 text-right hidden md:block">
                                     <span class={format!("text-xs {}", data.scrip_type.color_class())}>
-                                        {data.scrip_type.name()}
+                                        {match data.scrip_type {
+                                            ScripType::OrangeCrafters => t_string!(i18n, scrip_sources_orange_crafters).to_string(),
+                                            ScripType::OrangeGatherers => t_string!(i18n, scrip_sources_orange_gatherers).to_string(),
+                                            ScripType::WhiteCrafters => t_string!(i18n, scrip_sources_white_crafters).to_string(),
+                                            ScripType::PurpleCrafters => t_string!(i18n, scrip_sources_purple_crafters).to_string(),
+                                            ScripType::WhiteGatherers => t_string!(i18n, scrip_sources_white_gatherers).to_string(),
+                                            ScripType::PurpleGatherers => t_string!(i18n, scrip_sources_purple_gatherers).to_string(),
+                                            ScripType::Other(_) => t_string!(i18n, scrip_sources_other_name).to_string(),
+                                        }}
                                     </span>
                                 </div>
                             </div>
@@ -457,25 +452,7 @@ pub fn ScripSources() -> impl IntoView {
     let (home_world, _) = use_home_world();
     let nav = use_navigate();
 
-    let region = Memo::new(move |_| {
-        let worlds = use_context::<LocalWorldData>()
-            .expect("Worlds should always be populated here")
-            .0
-            .unwrap();
-        // Default to home world region or North-America
-        let world_name = query
-            .with(|p| p.get("world").clone())
-            .or_else(|| home_world.get().map(|w| w.name))
-            .unwrap_or_else(|| "North-America".to_string());
-
-        worlds
-            .lookup_world_by_name(&world_name)
-            .map(|world| {
-                let region = worlds.get_region(world);
-                AnyResult::Region(region).get_name().to_string()
-            })
-            .unwrap_or_else(|| "North-America".to_string())
-    });
+    let region = use_region_for_world(move || query.with(|p| p.get("world").clone()));
 
     let global_cheapest_listings = ArcResource::new(region, move |region: String| async move {
         get_cheapest_listings(&region).await
@@ -536,23 +513,36 @@ pub fn ScripSources() -> impl IntoView {
             <MetaTitle title=t_string!(i18n, scrip_sources_meta_title).to_string() />
             <MetaDescription text=t_string!(i18n, scrip_sources_meta_desc).to_string() />
 
-            <div class="flex flex-col gap-4 p-4 bg-brand-900/50 rounded-lg border border-brand-800">
-                <div class="flex flex-row justify-between items-center">
-                    <h1 class="text-2xl font-bold text-brand-100">{t!(i18n, scrip_sources_title)}</h1>
-                </div>
+            <div class="flex flex-col gap-4">
+                <ToolHeader
+                    title="Scrip Sources"
+                    summary="Find collectables with the lowest estimated gil cost per scrip."
+                    context="The default sort optimizes efficiency: lower cost per scrip is better."
+                    help_href="/help/scrip-sources"
+                    help_body="Scrip Sources assumes high collectability rewards and calculates ingredient cost from market listings. Use scrip type and job filters to narrow to what you can actually turn in."
+                />
 
-                <div class="flex flex-col md:flex-row items-center gap-2">
-                    <label class="text-[color:var(--brand-fg)] font-semibold">{t!(i18n, scrip_sources_select_world)}</label>
-                    <div class="w-full md:w-auto">
+                <Toolbar>
+                    <ToolbarField label=t_string!(i18n, scrip_sources_select_world).to_string()>
                         <WorldOnlyPicker
                             current_world=selected_world.into()
                             set_current_world=set_selected_world.into()
                         />
-                    </div>
-                </div>
+                    </ToolbarField>
+                </Toolbar>
 
                 <div class="text-sm text-[color:var(--color-text-muted)]">
                     {t!(i18n, scrip_sources_description)}
+                </div>
+                <CalculationSummary
+                    title="Efficiency model"
+                    formula="cost per scrip = ingredient cost / high collectability scrip reward"
+                    details="The high reward is used as the max collectability target. Gathering and non-craftable sources are intentionally limited in this pass."
+                />
+                <div class="flex flex-wrap gap-2">
+                    <AssumptionBadge text="High collectability reward" />
+                    <AssumptionBadge text="Market ingredient cost" />
+                    <AssumptionBadge text="Lower cost per scrip is better" />
                 </div>
 
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>

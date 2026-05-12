@@ -4,6 +4,7 @@ use xiv_gen::ItemId;
 use super::{gil::*, world_name::*};
 use crate::{
     components::skeleton::SingleLineSkeleton, global_state::cheapest_prices::CheapestPrices,
+    i18n::*,
 };
 use ultros_api_types::world_helper::AnySelector;
 
@@ -14,6 +15,7 @@ pub fn CheapestPrice(
     #[prop(optional)] show_hq: Option<bool>,
     #[prop(optional, into)] label: Option<String>,
 ) -> impl IntoView {
+    let i18n = use_i18n();
     let cheapest = use_context::<CheapestPrices>().unwrap().read_listings;
     view! {
         <Suspense fallback=move || {
@@ -28,8 +30,9 @@ pub fn CheapestPrice(
                                     .ok()
                                     .and_then(|data| {
                                         let listing_data = data.find_matching_listings(item_id.0);
-                                        let hq = listing_data.hq.map(|hq| ("HQ: ", hq));
-                                        let lq = listing_data.lq.map(|lq| ("", lq));
+                                        let hq_prefix = t_string!(i18n, cheapest_hq_prefix).to_string();
+                                        let hq = listing_data.hq.map(|hq| (hq_prefix.clone(), hq));
+                                        let lq = listing_data.lq.map(|lq| (String::new(), lq));
                                         let data = match show_hq {
                                             Some(true) => hq,
                                             Some(false) => lq,

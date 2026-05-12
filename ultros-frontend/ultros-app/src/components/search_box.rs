@@ -72,6 +72,38 @@ static STATIC_PAGES: LazyLock<Vec<SearchResult>> = LazyLock::new(|| {
         },
         SearchResult {
             score: 100.0,
+            title: "Help".to_string(),
+            result_type: "Page".to_string(),
+            url: "/help".to_string(),
+            icon_id: None,
+            category: Some("System".to_string()),
+        },
+        SearchResult {
+            score: 100.0,
+            title: "Flip Finder Help".to_string(),
+            result_type: "Help".to_string(),
+            url: "/help/flip-finder".to_string(),
+            icon_id: None,
+            category: Some("Market Analysis".to_string()),
+        },
+        SearchResult {
+            score: 100.0,
+            title: "Recipe Analyzer Help".to_string(),
+            result_type: "Help".to_string(),
+            url: "/help/recipe-analyzer".to_string(),
+            icon_id: None,
+            category: Some("Crafting".to_string()),
+        },
+        SearchResult {
+            score: 100.0,
+            title: "Venture Analyzer Help".to_string(),
+            result_type: "Help".to_string(),
+            url: "/help/venture-analyzer".to_string(),
+            icon_id: None,
+            category: Some("Retainers".to_string()),
+        },
+        SearchResult {
+            score: 100.0,
             title: "History".to_string(),
             result_type: "Page".to_string(),
             url: "/history".to_string(),
@@ -367,35 +399,33 @@ pub fn SearchBox() -> impl IntoView {
                         each=search_results.into()
                         key={move |result: &Arc<SearchResult>| result.url.clone()}
                         view={move |result: Arc<SearchResult>| {
-                            let url = result.url.clone();
                             let navigate = navigate.clone();
 
-                            // Clone URL for different closures to satisfy borrow checker
-                            let url_for_class = url.clone();
-                            let url_for_aria = url.clone();
-                            let url_for_click = url.clone();
-                            let url_for_id = url.clone();
+                            // Clone Arc for different closures to satisfy borrow checker
+                            let res_for_aria = result.clone();
+                            let res_for_class = result.clone();
+                            let res_for_click = result.clone();
 
                             view! {
                                 <div
-                                    id=get_id_from_url(&url_for_id)
+                                    id=get_id_from_url(&result.url)
                                     role="option"
                                     aria-selected=move || {
                                         match focused_url.get() {
-                                            Some(f) if f == url_for_aria => "true",
+                                            Some(f) if f == res_for_aria.url => "true",
                                             _ => "false",
                                         }
                                     }
                                     class=move || {
                                         let hl = match focused_url.get() {
-                                            Some(f) if f == url_for_class => " bg-[color:var(--color-background-elevated)]",
+                                            Some(f) if f == res_for_class.url => " bg-[color:var(--color-background-elevated)]",
                                             _ => "",
                                         };
                                         format!("p-2 hover:bg-[color:var(--color-background-elevated)] cursor-pointer flex items-center gap-2{}", hl)
                                     }
                                     on:click=move |_| {
                                         navigate(
-                                            &url_for_click,
+                                            &res_for_click.url,
                                             NavigateOptions {
                                                 scroll: false,
                                                 ..Default::default()
@@ -457,18 +487,14 @@ pub fn SearchBox() -> impl IntoView {
                                         <span class="font-medium">{result.title.clone()}</span>
                                         <span class="text-xs text-[color:var(--color-text-muted)]">
                                             {
-                                                let category = result.category.clone();
-                                                let result_type = result.result_type.clone();
-                                                move || {
-                                                    if let Some(cat) = &category {
-                                                        if !cat.is_empty() {
-                                                            format!("{} - {}", result_type, cat)
-                                                        } else {
-                                                            result_type.clone()
-                                                        }
+                                                if let Some(cat) = &result.category {
+                                                    if !cat.is_empty() {
+                                                        format!("{} - {}", result.result_type, cat)
                                                     } else {
-                                                        result_type.clone()
+                                                        result.result_type.clone()
                                                     }
+                                                } else {
+                                                    result.result_type.clone()
                                                 }
                                             }
                                         </span>

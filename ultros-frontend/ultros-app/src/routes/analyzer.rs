@@ -1,11 +1,23 @@
+use crate::analysis::{SaleSummary, format_duration_short, roi_badge_class};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
-        add_to_list::AddToList, clipboard::*, filter_card::*, gil::*, icon::Icon, item_icon::*,
-        meta::*, query_button::QueryButton, skeleton::BoxSkeleton, toggle::Toggle, tooltip::*,
-        virtual_scroller::*, world_picker::*,
+        add_to_list::AddToList,
+        clipboard::*,
+        gil::*,
+        icon::Icon,
+        item_icon::*,
+        meta::*,
+        query_button::QueryButton,
+        skeleton::BoxSkeleton,
+        toggle::Toggle,
+        tool_help::*,
+        toolbar::{Toolbar, ToolbarField, ToolbarPills, ToolbarSpacer},
+        tooltip::*,
+        virtual_scroller::*,
+        world_picker::*,
     },
     error::AppError,
     global_state::LocalWorldData,
@@ -31,20 +43,6 @@ use ultros_api_types::{
     world_helper::{AnyResult, AnySelector, WorldHelper},
 };
 use xiv_gen::ItemId;
-
-/// Computed sale stats
-#[derive(Hash, Clone, Debug, PartialEq)]
-struct SaleSummary {
-    item_id: i32,
-    hq: bool,
-    /// this value is limited by the summary returned by the API
-    num_sold: usize,
-    /// Represents the average time between sales within the `num_sold`
-    avg_sale_duration: Option<Duration>,
-    max_price: i32,
-    avg_price: i32,
-    min_price: i32,
-}
 
 #[derive(Hash, Clone, Debug, PartialEq, Eq)]
 struct ProfitKey {
@@ -94,29 +92,57 @@ fn listings_to_map(listings: CheapestListings) -> HashMap<ProfitKey, (i32, i32)>
         .collect()
 }
 
-fn compute_summary(
-    sale: SaleData,
-    hq_data: Option<&SaleData>,
-    filter_outliers: bool,
-) -> SaleSummary {
+/// Sniper-clamp threshold: drop any sale priced below this fraction of the raw median.
+const SNIPER_FRACTION: f64 = 0.1;
+
+fn median_i32(sorted: &[i32]) -> i32 {
+    if sorted.is_empty() {
+        return 0;
+    }
+    let n = sorted.len();
+    if n % 2 == 1 {
+        sorted[n / 2]
+    } else {
+        ((sorted[n / 2 - 1] as i64 + sorted[n / 2] as i64) / 2) as i32
+    }
+}
+
+fn compute_summary(sale: SaleData, filter_outliers: bool) -> SaleSummary {
     let now = Utc::now().naive_utc();
     let SaleData { item_id, hq, sales } = sale;
-    let min_price = hq_data
-        .map(|sales| sales.sales.iter())
-        .into_iter()
-        .flatten()
-        .chain(sales.iter())
-        .map(|price| price.price_per_unit)
-        .min()
-        .unwrap_or_default();
-    let max_price = sales
-        .iter()
-        .map(|price| price.price_per_unit)
-        .max()
-        .unwrap_or_default();
 
+    if sales.is_empty() {
+        return SaleSummary {
+            item_id,
+            hq,
+            num_sold: 0,
+            avg_sale_duration: None,
+            days_since_last_sale: None,
+            max_price: 0,
+            avg_price: 0,
+            median_price: 0,
+            min_price: 0,
+        };
+    }
+
+    // 1. Raw-median pass for the sniper threshold.
+    let mut raw: Vec<i32> = sales.iter().map(|s| s.price_per_unit).collect();
+    raw.sort_unstable();
+    let raw_median = median_i32(&raw);
+    let floor = (raw_median as f64 * SNIPER_FRACTION) as i32;
+
+    // 2. Build the clamped vector. If the clamp would remove everything, keep the raw set.
+    let mut clamped: Vec<i32> = raw.iter().copied().filter(|p| *p >= floor).collect();
+    if clamped.is_empty() {
+        clamped = raw;
+    }
+    let median_price = median_i32(&clamped);
+    let min_price = *clamped.first().unwrap_or(&0);
+    let max_price = *clamped.last().unwrap_or(&0);
+
+    // 3. Average price respects the existing IQR filter-outliers toggle.
     let avg_price = if filter_outliers {
-        let mut prices: Vec<i32> = sales.iter().map(|s| s.price_per_unit).collect();
+        let mut prices = clamped.clone();
         let filtered = filter_outliers_iqr_in_place(&mut prices);
         if filtered.is_empty() {
             0
@@ -124,24 +150,28 @@ fn compute_summary(
             (filtered.iter().map(|&p| p as i64).sum::<i64>() / filtered.len() as i64) as i32
         }
     } else {
-        (sales
-            .iter()
-            .map(|price| price.price_per_unit as i64)
-            .sum::<i64>()
-            / sales.len() as i64) as i32
+        (clamped.iter().map(|&p| p as i64).sum::<i64>() / clamped.len() as i64) as i32
     };
 
-    let t = sales
-        .last()
-        .map(|last| (last.sale_date - now).num_milliseconds().abs() / sales.len() as i64);
-    let avg_sale_duration = t.map(Duration::milliseconds);
+    // 4. Velocity. Newest first in the API's response.
+    let newest = sales.first().map(|s| s.sale_date);
+    let oldest = sales.last().map(|s| s.sale_date);
+    let avg_sale_duration = oldest.map(|last| {
+        let ms = (last - now).num_milliseconds().abs() / sales.len() as i64;
+        Duration::milliseconds(ms)
+    });
+    let days_since_last_sale =
+        newest.map(|n| Duration::milliseconds((now - n).num_milliseconds().max(0)));
+
     SaleSummary {
         item_id,
         hq,
         num_sold: sales.len(),
         avg_sale_duration,
+        days_since_last_sale,
         max_price,
         avg_price,
+        median_price,
         min_price,
     }
 }
@@ -171,6 +201,14 @@ impl std::fmt::Display for SortMode {
     }
 }
 
+/// Listings whose price is at least this multiple of the row's median sale are treated as troll
+/// listings and ignored when picking the world floor.
+const TROLL_MULTIPLE: i64 = 50;
+
+fn is_troll_listing(price: i32, median: i32) -> bool {
+    median > 0 && (price as i64) > (median as i64).saturating_mul(TROLL_MULTIPLE)
+}
+
 impl ProfitTable {
     fn new(
         sales: RecentSales,
@@ -181,11 +219,9 @@ impl ProfitTable {
     ) -> Self {
         let mut region_cheapest = listings_to_map(global_cheapest_listings);
         let world_cheapest = listings_to_map(world_cheapest_listings);
-        let cross_region = cross_region.into_iter().map(listings_to_map);
 
-        // merge cross regions into region cheapest
-        for cross_region in cross_region {
-            for (key, (new_price, world_id)) in cross_region {
+        for cross in cross_region.into_iter().map(listings_to_map) {
+            for (key, (new_price, world_id)) in cross {
                 match region_cheapest.entry(key) {
                     Entry::Occupied(mut entry) => {
                         let (current_price, _) = entry.get();
@@ -200,13 +236,6 @@ impl ProfitTable {
             }
         }
 
-        let hq_sales: HashMap<i32, SaleData> = sales
-            .sales
-            .iter()
-            .filter(|sales| sales.hq)
-            .map(|sale| (sale.item_id, sale.clone()))
-            .collect();
-
         let table = sales
             .sales
             .into_iter()
@@ -214,26 +243,35 @@ impl ProfitTable {
                 let item_id = sale.item_id;
                 let hq = sale.hq;
                 let key = ProfitKey { item_id, hq };
-                let (cheapest_price, cheapest_world_id) = *region_cheapest.get(&key)?;
-                let summary = compute_summary(
-                    sale,
-                    (!hq).then(|| hq_sales.get(&item_id)).flatten(),
-                    filter_outliers,
-                );
+                let (raw_region_price, region_world_id) = *region_cheapest.get(&key)?;
+                let summary = compute_summary(sale, filter_outliers);
 
-                // Use the world's price as estimated sale price
-                let estimated_sale_price =
-                    if let Some((world_cheapest, _)) = world_cheapest.get(&key) {
-                        summary.min_price.min(*world_cheapest)
+                // Troll-listing guard: if the region floor is implausibly high vs the median,
+                // drop the row entirely — the displayed "deal" would be fictional.
+                if is_troll_listing(raw_region_price, summary.median_price) {
+                    return None;
+                }
+
+                // Same guard on the local world floor — if it's a troll, ignore it and fall
+                // through to the median as the estimate.
+                let world_floor = world_cheapest.get(&key).and_then(|(price, _)| {
+                    if is_troll_listing(*price, summary.median_price) {
+                        None
                     } else {
-                        summary.min_price
-                    };
+                        Some(*price)
+                    }
+                });
+
+                let estimated_sale_price = match world_floor {
+                    Some(floor) => summary.median_price.min(floor),
+                    None => summary.median_price,
+                };
 
                 Some(ProfitData {
                     estimated_sale_price,
                     sale_summary: summary,
-                    cheapest_world_id,
-                    cheapest_price,
+                    cheapest_world_id: region_world_id,
+                    cheapest_price: raw_region_price,
                 })
             })
             .map(Arc::new)
@@ -286,6 +324,7 @@ fn AnalyzerTable(
     let (minimum_sales, set_minimum_sales) = query_signal::<usize>("sales");
     let (category_filter, set_category_filter) = query_signal::<i32>("category");
     let (max_purchase_price, set_max_purchase_price) = query_signal::<i32>("max-price");
+    let (min_buy_price, set_min_buy_price) = query_signal::<i32>("min-buy");
 
     let world_clone = worlds.clone();
     let world_filter_list = Memo::new(move |_| {
@@ -310,6 +349,16 @@ fn AnalyzerTable(
     let predicted_time_string = Memo::new(move |_| {
         predicted_time()
             .map(|duration| format_duration(duration).to_string())
+            .unwrap_or("---".to_string())
+    });
+
+    let (last_sold_within, set_last_sold_within) = query_signal::<String>("last-sold");
+    let show_more = RwSignal::new(false);
+    let last_sold_duration =
+        Memo::new(move |_| last_sold_within().and_then(|d| parse_duration(d.as_str()).ok()));
+    let last_sold_string = Memo::new(move |_| {
+        last_sold_duration()
+            .map(|d| format_duration(d).to_string())
             .unwrap_or("---".to_string())
     });
 
@@ -382,12 +431,29 @@ fn AnalyzerTable(
                     .unwrap_or(true)
             })
             .filter(move |data| {
+                min_buy_price()
+                    .map(|min| data.inner.cheapest_price >= min)
+                    .unwrap_or(true)
+            })
+            .filter(move |data| {
                 predicted_time()
                     .map(|time| {
                         data.inner
                             .sale_summary
                             .avg_sale_duration
                             .map(|dur| dur.to_std().ok().map(|dur| dur < time).unwrap_or(false))
+                            .unwrap_or(false)
+                    })
+                    .unwrap_or(true)
+            })
+            .filter(move |data| {
+                last_sold_duration()
+                    .map(|max_age| {
+                        data.inner
+                            .sale_summary
+                            .days_since_last_sale
+                            .and_then(|d| d.to_std().ok())
+                            .map(|d| d <= max_age)
                             .unwrap_or(false)
                     })
                     .unwrap_or(true)
@@ -417,53 +483,144 @@ fn AnalyzerTable(
     });
     view! {
         <div class="flex flex-col gap-6">
-            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                <FilterCard
-                    title=t_string!(i18n, analyzer_minimum_profit).to_string()
-                    description=t_string!(i18n, analyzer_minimum_profit_desc).to_string()
-                >
-                    <div class="flex flex-col gap-2">
-                        <div class="text-brand-300">
-                            {move || {
-                                minimum_profit()
-                                    .map(|profit| Either::Left(view! { <Gil amount=profit /> }))
-                                    .unwrap_or(Either::Right("---"))
-                            }}
-                        </div>
-                        <input
-                            class="input"
-                            min=0
-                            max=100000
-                            step=1000
-                            placeholder="e.g. 100000"
-                            type="number"
-                            prop:value=minimum_profit
-                            on:input=move |input| {
-                                let value = event_target_value(&input);
-                                if let Ok(profit) = value.parse::<i32>() {
-                                    set_minimum_profit(Some(profit))
-                                } else if value.is_empty() {
-                                    set_minimum_profit(None);
-                                }
+            // Primary filter toolbar
+            <Toolbar>
+                <ToolbarField label="Profit (Min)">
+                    <input
+                        class="input input-sm w-32"
+                        min=0
+                        max=100000
+                        step=1000
+                        placeholder="e.g. 100000"
+                        type="number"
+                        prop:value=minimum_profit
+                        on:input=move |input| {
+                            let value = event_target_value(&input);
+                            if let Ok(profit) = value.parse::<i32>() {
+                                set_minimum_profit(Some(profit));
+                            } else if value.is_empty() {
+                                set_minimum_profit(None);
                             }
-                        />
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title=t_string!(i18n, analyzer_profit_per_day).to_string()
-                    description=t_string!(i18n, analyzer_profit_per_day_desc).to_string()
+                        }
+                    />
+                </ToolbarField>
+                <ToolbarField label="ROI (Min)">
+                    <input
+                        class="input input-sm w-28"
+                        min=0
+                        max=100000
+                        step=10
+                        placeholder="e.g. 200"
+                        type="number"
+                        prop:value=minimum_roi
+                        on:input=move |input| {
+                            let value = event_target_value(&input);
+                            if let Ok(roi) = value.parse::<i32>() {
+                                set_minimum_roi(Some(roi));
+                            } else if value.is_empty() {
+                                set_minimum_roi(None);
+                            }
+                        }
+                    />
+                </ToolbarField>
+                <ToolbarField label="Sales (Min)">
+                    <input
+                        class="input input-sm w-24"
+                        min=0
+                        max=1000
+                        step=1
+                        placeholder="e.g. 5"
+                        type="number"
+                        prop:value=minimum_sales
+                        on:input=move |input| {
+                            let value = event_target_value(&input);
+                            if let Ok(sales) = value.parse::<usize>() {
+                                set_minimum_sales(Some(sales));
+                            } else if value.is_empty() {
+                                set_minimum_sales(None);
+                            }
+                        }
+                    />
+                </ToolbarField>
+                <ToolbarField label="Buy Price (Max)">
+                    <input
+                        class="input input-sm w-32"
+                        min=0
+                        step=1000
+                        placeholder="e.g. 500000"
+                        type="number"
+                        prop:value=max_purchase_price
+                        on:input=move |input| {
+                            let value = event_target_value(&input);
+                            if let Ok(p) = value.parse::<i32>() {
+                                set_max_purchase_price(Some(p));
+                            } else if value.is_empty() {
+                                set_max_purchase_price(None);
+                            }
+                        }
+                    />
+                </ToolbarField>
+                <ToolbarField label="Category">
+                    <select
+                        class="input input-sm"
+                        on:change=move |ev| {
+                            let val = event_target_value(&ev);
+                            if let Ok(id) = val.parse::<i32>() {
+                                set_category_filter(Some(id));
+                            } else {
+                                set_category_filter(None);
+                            }
+                        }
+                        prop:value=move || category_filter().map(|c| c.to_string()).unwrap_or_default()
+                    >
+                        <option value="">{t!(i18n, analyzer_all_categories)}</option>
+                        {
+                            let mut categories = tracked_data().item_search_categorys
+                                .iter()
+                                .filter(|(_, cat)| !cat.name.is_empty())
+                                .map(|(id, cat)| (id.0, cat.name.clone()))
+                                .collect::<Vec<_>>();
+                            categories.sort_by(|a, b| a.1.cmp(&b.1));
+                            categories.into_iter().map(|(id, name)| {
+                                view! { <option value=id.to_string() selected=move || category_filter() == Some(id)>{name}</option> }
+                            }).collect_view()
+                        }
+                    </select>
+                </ToolbarField>
+                <ToolbarField label="Prices">
+                    // tax_enabled semantics: Some(true) = post-tax (5% deducted), None/Some(false) = pre-tax
+                    // Default unwrap_or(true) means post-tax is the default
+                    <ToolbarPills>
+                        <button
+                            aria-pressed={if tax_enabled().unwrap_or(true) { "false" } else { "true" }}
+                            on:click=move |_| set_tax_enabled(Some(false))
+                        >
+                            "Pre-tax"
+                        </button>
+                        <button
+                            aria-pressed={if tax_enabled().unwrap_or(true) { "true" } else { "false" }}
+                            on:click=move |_| set_tax_enabled(Some(true))
+                        >
+                            "Post-tax"
+                        </button>
+                    </ToolbarPills>
+                </ToolbarField>
+                <ToolbarSpacer />
+                <button
+                    class="btn-secondary flex items-center gap-2"
+                    on:click=move |_| show_more.update(|v| *v = !*v)
                 >
-                    <div class="flex flex-col gap-2">
-                        <div class="text-brand-300">
-                            {move || {
-                                minimum_profit_per_day()
-                                    .map(|profit| Either::Left(view! { <Gil amount=profit /> }))
-                                    .unwrap_or(Either::Right("---"))
-                            }}
-                        </div>
+                    <Icon icon=i::FaFilterSolid />
+                    {move || if show_more.get() { "Fewer Filters" } else { "More Filters" }}
+                </button>
+            </Toolbar>
+
+            // Secondary filter toolbar (expanded)
+            {move || show_more.get().then(|| view! {
+                <Toolbar>
+                    <ToolbarField label="Profit/Day (Min)">
                         <input
-                            class="input"
+                            class="input input-sm w-32"
                             min=0
                             max=100000
                             step=1000
@@ -473,176 +630,57 @@ fn AnalyzerTable(
                             on:input=move |input| {
                                 let value = event_target_value(&input);
                                 if let Ok(profit) = value.parse::<i32>() {
-                                    set_minimum_profit_per_day(Some(profit))
+                                    set_minimum_profit_per_day(Some(profit));
                                 } else if value.is_empty() {
                                     set_minimum_profit_per_day(None);
                                 }
                             }
                         />
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title=t_string!(i18n, analyzer_item_category).to_string()
-                    description=t_string!(i18n, analyzer_item_category_desc).to_string()
-                >
-                    <div class="flex flex-col gap-2">
-                         <select
-                            class="input"
-                            on:change=move |ev| {
-                                let val = event_target_value(&ev);
-                                if let Ok(id) = val.parse::<i32>() {
-                                    set_category_filter(Some(id));
-                                } else {
-                                    set_category_filter(None);
-                                }
-                            }
-                            prop:value=move || category_filter().map(|c| c.to_string()).unwrap_or_default()
-                        >
-                            <option value="">{t!(i18n, analyzer_all_categories)}</option>
-                            {
-                                let mut categories = tracked_data().item_search_categorys
-                                    .iter()
-                                    .filter(|(_, cat)| !cat.name.is_empty())
-                                    .map(|(id, cat)| (id.0, cat.name.clone()))
-                                    .collect::<Vec<_>>();
-                                categories.sort_by(|a, b| a.1.cmp(&b.1));
-                                categories.into_iter().map(|(id, name)| {
-                                    view! { <option value=id.to_string() selected=move || category_filter() == Some(id)>{name}</option> }
-                                }).collect_view()
-                            }
-                        </select>
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title=t_string!(i18n, analyzer_minimum_sales).to_string()
-                    description=t_string!(i18n, analyzer_minimum_sales_desc).to_string()
-                >
-                    <div class="flex flex-col gap-2">
-                        <div class="text-brand-300">
-                            {move || {
-                                minimum_sales()
-                                    .map(|sales| format!("{} sales", sales))
-                                    .unwrap_or("---".to_string())
-                            }}
-                        </div>
+                    </ToolbarField>
+                    <ToolbarField label="Min Buy Price">
                         <input
-                            class="input"
-                            min=0
-                            max=1000
-                            step=1
-                            placeholder="e.g. 5"
-                            type="number"
-                            prop:value=minimum_sales
-                            on:input=move |input| {
-                                let value = event_target_value(&input);
-                                if let Ok(sales) = value.parse::<usize>() {
-                                    set_minimum_sales(Some(sales));
-                                } else if value.is_empty() {
-                                    set_minimum_sales(None);
-                                }
-                            }
-                        />
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title=t_string!(i18n, analyzer_minimum_roi).to_string()
-                    description=t_string!(i18n, analyzer_minimum_roi_desc).to_string()
-                >
-                    <div class="flex flex-col gap-2">
-                        <div class="text-brand-300">
-                            {move || {
-                                minimum_roi()
-                                    .map(|roi| format!("{roi}%"))
-                                    .unwrap_or("---".to_string())
-                            }}
-                        </div>
-                        <input
-                            class="input"
-                            min=0
-                            max=100000
-                            step=10
-                            placeholder="e.g. 200"
-                            type="number"
-                            prop:value=minimum_roi
-                            on:input=move |input| {
-                                let value = event_target_value(&input);
-                                if let Ok(roi) = value.parse::<i32>() {
-                                    set_minimum_roi(Some(roi));
-                                } else if value.is_empty() {
-                                    set_minimum_roi(None);
-                                }
-                            }
-                        />
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title="Maximum Budget"
-                    description="Set the maximum purchase price per item"
-                >
-                    <div class="flex flex-col gap-2">
-                        <div class="text-brand-300">
-                            {move || {
-                                max_purchase_price()
-                                    .map(|p| Either::Left(view! { <Gil amount=p /> }))
-                                    .unwrap_or(Either::Right("---"))
-                            }}
-                        </div>
-                        <input
-                            class="input"
+                            class="input input-sm w-32"
                             min=0
                             step=1000
-                            placeholder="e.g. 500000"
+                            placeholder="e.g. 5000"
                             type="number"
-                            prop:value=max_purchase_price
+                            prop:value=min_buy_price
                             on:input=move |input| {
                                 let value = event_target_value(&input);
                                 if let Ok(p) = value.parse::<i32>() {
-                                    set_max_purchase_price(Some(p));
+                                    set_min_buy_price(Some(p));
                                 } else if value.is_empty() {
-                                    set_max_purchase_price(None);
+                                    set_min_buy_price(None);
                                 }
                             }
                         />
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title=t_string!(i18n, analyzer_sale_time_prediction).to_string()
-                    description=t_string!(i18n, analyzer_sale_time_prediction_desc).to_string()
-                >
-                    <div class="flex flex-col gap-2">
-                        <div class="text-brand-300">{predicted_time_string}</div>
+                    </ToolbarField>
+                    <ToolbarField label="Max Sale Time">
                         <input
-                            class="input"
+                            class="input input-sm w-32"
                             placeholder="e.g. 7d 12h"
                             title="Accepts formats like 1h 30m, 7d, 1M (month), etc."
                             prop:value=move || max_predicted_time().unwrap_or_default()
                             on:input=move |input| {
                                 let value = event_target_value(&input);
-                                set_max_predicted_time(Some(value))
+                                set_max_predicted_time(Some(value));
                             }
                         />
-                    </div>
-                </FilterCard>
-
-                <FilterCard
-                    title=t_string!(i18n, analyzer_tax_calculation).to_string()
-                    description=t_string!(i18n, analyzer_tax_calculation_desc).to_string()
-                >
-                    <div class="flex items-center">
-                        <Toggle
-                            checked=Signal::derive(move || tax_enabled().unwrap_or(true))
-                            set_checked=SignalSetter::map(move |val: bool| set_tax_enabled(val.then_some(true)))
-                            checked_label=Oco::Owned(t_string!(i18n, analyzer_tax_enabled).to_string())
-                            unchecked_label=Oco::Owned(t_string!(i18n, analyzer_tax_disabled).to_string())
+                    </ToolbarField>
+                    <ToolbarField label="Last Sold Within">
+                        <input
+                            class="input input-sm w-32"
+                            placeholder="e.g. 7d"
+                            title="Accepts formats like 1h 30m, 7d, 1M (month), etc."
+                            prop:value=move || last_sold_within().unwrap_or_default()
+                            on:input=move |input| {
+                                let value = event_target_value(&input);
+                                set_last_sold_within(Some(value));
+                            }
                         />
-                    </div>
-                </FilterCard>
-            </div>
+                    </ToolbarField>
+                </Toolbar>
+            })}
 
             // Results summary
             <div class="panel px-4 py-3 flex flex-col md:flex-row md:items-center gap-3 md:gap-0 md:justify-between">
@@ -717,11 +755,31 @@ fn AnalyzerTable(
                                 </span>
                             }.into_any());
                         }
+                        if let Some(p) = min_buy_price() {
+                            chips.push(view! {
+                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
+                                    {t!(i18n, analyzer_min_buy_gte)} <Gil amount=p />
+                                    <button aria-label="Remove filter" class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_min_buy_price(None)>
+                                        <Icon icon=icondata::MdiClose />
+                                    </button>
+                                </span>
+                            }.into_any());
+                        }
                         if let Some(_ns) = max_predicted_time() {
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
                                     {t!(i18n, analyzer_next_sale_lte)} {predicted_time_string()}
                                     <button aria-label="Remove filter" class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_max_predicted_time(None)>
+                                        <Icon icon=icondata::MdiClose />
+                                    </button>
+                                </span>
+                            }.into_any());
+                        }
+                        if last_sold_within().is_some() {
+                            chips.push(view! {
+                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
+                                    {t!(i18n, analyzer_last_sold_lte)} {last_sold_string()}
+                                    <button aria-label="Remove filter" class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_last_sold_within(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -764,28 +822,30 @@ fn AnalyzerTable(
                     set_minimum_sales(None);
                     set_category_filter(None);
                     set_max_purchase_price(None);
+                    set_min_buy_price(None);
+                    set_last_sold_within(None);
                 }>
                     {t!(i18n, analyzer_clear_all)}
                 </button>
             </div>
 
             // Results table
-            <div class="rounded-2xl overflow-x-auto panel content-visible contain-layout contain-paint will-change-scroll forced-layer">
+            <div class="rounded-lg overflow-x-auto border border-[color:var(--color-outline)] content-visible contain-layout contain-paint will-change-scroll forced-layer">
                 <VirtualScroller
                         viewport_height=720.0
                         row_height=40.0
                         overscan=8
-                        header_height=64.0
+                        header_height=56.0
                         variable_height=false
                         header=view! {
-                            <div class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]" role="rowgroup">
-                                <div role="columnheader" class="w-[40px] p-4 text-center">
+                            <div class="flex flex-row items-center h-14 text-xs font-semibold uppercase tracking-wider text-[color:var(--color-text-muted)] border-b border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]" role="rowgroup">
+                                <div role="columnheader" class="w-[44px] px-2 text-center">
                                     {t!(i18n, analyzer_col_hq)}
                                 </div>
-                                <div role="columnheader" class="w-84 p-4">
+                                <div role="columnheader" class="flex-1 min-w-[14rem] px-3">
                                     {t!(i18n, analyzer_col_item)}
                                 </div>
-                                <div role="columnheader" class="w-30 p-4">
+                                <div role="columnheader" class="w-28 px-3 text-right">
                                     <QueryButton
                                         class="!text-brand-300 hover:text-brand-200"
                                         active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
@@ -801,7 +861,7 @@ fn AnalyzerTable(
                                         </div>
                                     </QueryButton>
                                 </div>
-                                <div role="columnheader" class="w-30 p-4">
+                                <div role="columnheader" class="w-28 px-3 py-2">
                                     <QueryButton
                                         class="!text-brand-300 hover:text-brand-200"
                                         active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
@@ -817,7 +877,7 @@ fn AnalyzerTable(
                                         </div>
                                     </QueryButton>
                                 </div>
-                                <div role="columnheader" class="w-30 p-4">
+                                <div role="columnheader" class="w-28 px-3 py-2">
                                     <QueryButton
                                         class="!text-brand-300 hover:text-brand-200"
                                         active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
@@ -834,10 +894,10 @@ fn AnalyzerTable(
                                         </div>
                                     </QueryButton>
                                 </div>
-                                <div role="columnheader" class="w-30 p-4">
+                                <div role="columnheader" class="w-28 px-3 py-2">
                                     {t!(i18n, analyzer_col_buy_price)}
                                 </div>
-                                <div role="columnheader" class="w-30 p-4 flex flex-row gap-2 hidden lg:flex">
+                                <div role="columnheader" class="w-28 px-3 py-2 flex flex-row gap-2 hidden lg:flex">
                                     {t!(i18n, analyzer_col_world)}
                                     <div>
                                         {move || {
@@ -857,7 +917,7 @@ fn AnalyzerTable(
                                         }}
                                     </div>
                                 </div>
-                                <div role="columnheader" class="w-30 p-4 flex flex-row gap-2 hidden xl:flex">
+                                <div role="columnheader" class="w-28 px-3 py-2 flex flex-row gap-2 hidden xl:flex">
                                     {t!(i18n, analyzer_col_datacenter)}
                                     <div>
                                         {move || {
@@ -877,8 +937,11 @@ fn AnalyzerTable(
                                         }}
                                     </div>
                                 </div>
-                                <div role="columnheader" class="w-30 p-4 hidden md:block">
+                                <div role="columnheader" class="w-28 px-3 py-2 hidden md:block">
                                     {t!(i18n, analyzer_col_avg_sale_time)}
+                                </div>
+                                <div role="columnheader" class="w-28 px-3 py-2 hidden md:block">
+                                    {t!(i18n, analyzer_col_last_sold)}
                                 </div>
                             </div>
                         }.into_any()
@@ -929,7 +992,7 @@ fn AnalyzerTable(
                                             None
                                         }}
                                     </div>
-                                    <div role="cell" class="px-4 py-2 flex flex-row w-84 items-center gap-2">
+                                    <div role="cell" class="px-4 py-2 flex flex-row flex-1 min-w-[14rem] items-center gap-2">
                                         <a
                                             class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip w-full"
                                             href=format!("/item/{}/{item_id}", world())
@@ -942,40 +1005,24 @@ fn AnalyzerTable(
                                         <AddToList item_id />
                                         <Clipboard clipboard_text=item.to_string() />
                                     </div>
-                                    <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
+                                    <div role="cell" class="px-3 py-2 w-28 text-right flex items-center justify-end">
                                         <Gil amount=data.profit />
                                     </div>
-                                    <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
+                                    <div role="cell" class="px-3 py-2 w-28 text-right flex items-center justify-end">
                                         <Gil amount=data.profit_per_day />
                                     </div>
-                                    <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
+                                    <div role="cell" class="px-3 py-2 w-28 text-right flex items-center justify-end">
                                         <span class={
                                             let data = data_clone.clone();
-                                            move || {
-                                                let roi = data.return_on_investment;
-                                                let tint = if roi >= 500 {
-                                                    "24%"
-                                                } else if roi >= 200 {
-                                                    "20%"
-                                                } else if roi >= 100 {
-                                                    "16%"
-                                                } else if roi >= 50 {
-                                                    "12%"
-                                                } else {
-                                                    "10%"
-                                                };
-                                                format!(
-                                                    "inline-flex items-center justify-end px-2 py-1 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_{tint},transparent)]"
-                                                )
-                                            }
+                                            move || roi_badge_class(data.return_on_investment)
                                         }>
                                             {format!("{}%", data.return_on_investment)}
                                         </span>
                                     </div>
-                                    <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
+                                    <div role="cell" class="px-3 py-2 w-28 text-right flex items-center justify-end">
                                         <Gil amount=data.inner.cheapest_price />
                                     </div>
-                                    <div role="cell" class="px-4 py-2 w-30 hidden lg:block flex items-center">
+                                    <div role="cell" class="px-3 py-2 w-28 hidden lg:block flex items-center">
                                         <Tooltip tooltip_text=Signal::derive(move || {
                                             t_string!(i18n, analyzer_only_show_world).to_string().replace("%world%", &world())
                                         })>
@@ -990,7 +1037,7 @@ fn AnalyzerTable(
                                             </QueryButton>
                                         </Tooltip>
                                     </div>
-                                    <div role="cell" class="px-4 py-2 w-30 hidden xl:block flex items-center">
+                                    <div role="cell" class="px-3 py-2 w-28 hidden xl:block flex items-center">
                                         <Tooltip tooltip_text=Signal::derive(move || {
                                             t_string!(i18n, analyzer_only_show_world).to_string().replace("%world%", &datacenter())
                                         })>
@@ -1005,25 +1052,28 @@ fn AnalyzerTable(
                                             </QueryButton>
                                         </Tooltip>
                                     </div>
-                                    <div role="cell" class="px-4 py-2 w-30 truncate hidden md:block flex items-center">
+                                    <div role="cell" class="px-3 py-2 w-28 truncate hidden md:block flex items-center">
                                         {data.inner
                                             .sale_summary
                                             .avg_sale_duration
                                             .and_then(|duration| duration.to_std().ok())
-                                            .map(|duration| {
-                                                let secs = duration.as_secs();
+                                            .map(|duration| format_duration_short(duration.as_secs()))
+                                            .unwrap_or_else(|| "---".to_string())}
+                                    </div>
+                                    <div role="cell" class="px-3 py-2 w-28 truncate hidden md:block flex items-center">
+                                        {data.inner
+                                            .sale_summary
+                                            .days_since_last_sale
+                                            .and_then(|d| d.to_std().ok())
+                                            .map(|d| {
+                                                let secs = d.as_secs();
                                                 let days = secs / 86_400;
                                                 let hours = (secs % 86_400) / 3_600;
-                                                let minutes = (secs % 3_600) / 60;
-                                                let seconds = secs % 60;
-                                                let mut parts = Vec::new();
-                                                if days > 0 { parts.push(format!("{}d", days)); }
-                                                if hours > 0 { parts.push(format!("{}h", hours)); }
-                                                if minutes > 0 && parts.len() < 2 { parts.push(format!("{}m", minutes)); }
-                                                if seconds > 0 && parts.len() < 2 { parts.push(format!("{}s", seconds)); }
-                                                if parts.is_empty() { "0s".to_string() } else { parts[..parts.len().min(2)].join(" ") }
+                                                if days > 0 { format!("{}d ago", days) }
+                                                else if hours > 0 { format!("{}h ago", hours) }
+                                                else { "just now".to_string() }
                                             })
-                                            .unwrap_or_else(|| "---".to_string())}
+                                            .unwrap_or_else(|| t_string!(i18n, analyzer_last_sold_never).to_string())}
                                     </div>
                                 </div>
                             }
@@ -1114,13 +1164,17 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     view! {
         <div class="main-content p-2 sm:p-6">
             <MetaTitle title=move || t_string!(i18n, analyzer_meta_title).to_string().replace("%world%", &world()) />
-            <div class="container mx-auto max-w-7xl">
-                <div class="flex flex-col gap-8">
-                    // Header Section
-                    <div class="panel p-4 sm:p-8 rounded-2xl">
-                        <h1 class="text-3xl font-bold text-[color:var(--brand-fg)] mb-4">
-                            {t!(i18n, analyzer_title_for)} {world}
-                        </h1>
+            <div class="flex flex-col gap-8">
+                    <ToolHeader
+                        title="Flip Finder"
+                        summary="Find likely buy-low/sell-high opportunities by comparing cheap listings against recent sale prices."
+                        context="Use the filters below to trade off profit, ROI, purchase budget, and how quickly an item tends to sell."
+                        help_href="/help/flip-finder"
+                        help_body="Flip Finder combines recent sales, cheapest listings, tax settings, and optional cross-region checks. Treat the table as a shortlist: high profit is strongest when sales count and sale pace are also healthy."
+                    />
+
+                    // Controls Section
+                    <div class="panel p-4 sm:p-6 rounded-2xl">
                         <div class="flex flex-col gap-4">
                             <MetaDescription text=move || {
                                 t_string!(i18n, analyzer_meta_desc).to_string().replace("%world%", &world())
@@ -1189,14 +1243,38 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                             // Preset Filters
                             <div class="flex flex-wrap gap-4">
                                 <PresetFilterButton
-                                    href="?next-sale=7d&roi=300&profit=0&sort=profit&"
+                                    href="?min-buy=5000&last-sold=7d&roi=30&sort=profit-per-day"
+                                    label=t_string!(i18n, analyzer_preset_realistic).to_string()
+                                />
+                                <PresetFilterButton
+                                    href="?min-buy=100000&last-sold=14d&roi=20&sort=profit"
+                                    label=t_string!(i18n, analyzer_preset_big_ticket).to_string()
+                                />
+                                <PresetFilterButton
+                                    href="?min-buy=1000&last-sold=3d&sort=profit-per-day"
+                                    label=t_string!(i18n, analyzer_preset_volume).to_string()
+                                />
+                                <PresetFilterButton
+                                    href="?min-buy=1000&last-sold=7d&roi=300&profit=0&sort=profit"
                                     label=t_string!(i18n, analyzer_preset_300_return).to_string()
                                 />
                                 <PresetFilterButton
-                                    href="?next-sale=1M&roi=500&profit=200000&"
+                                    href="?min-buy=10000&last-sold=1M&roi=500&profit=200000"
                                     label=t_string!(i18n, analyzer_preset_500_return).to_string()
                                 />
-                                <PresetFilterButton href="?profit=100000" label=t_string!(i18n, analyzer_preset_100k_profit).to_string() />
+                                <PresetFilterButton
+                                    href="?min-buy=1000&last-sold=30d&profit=100000"
+                                    label=t_string!(i18n, analyzer_preset_100k_profit).to_string()
+                                />
+                            </div>
+                            <CalculationSummary
+                                title="How profit is estimated"
+                                formula="profit = estimated sale price - buy price - market tax"
+                                details="Estimated sale price uses recent sales and the selected world context. Cross-region mode can include cheaper buy worlds outside your current region."
+                            />
+                            <div class="flex flex-wrap gap-2">
+                                <AssumptionBadge text="Cross-region and outlier settings are shown above" />
+                                <AssumptionBadge text="HQ and NQ are compared separately" />
                             </div>
                         </div>
                     </div>
@@ -1248,7 +1326,6 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                         </Suspense>
                     </div>
                 </div>
-            </div>
         </div>
     }
 }
@@ -1309,8 +1386,7 @@ pub fn Analyzer() -> impl IntoView {
         <MetaDescription text=t_string!(i18n, analyzer_index_meta_desc).to_string() />
 
         <div class="main-content p-2 sm:p-6">
-            <div class="container mx-auto max-w-7xl">
-                <div class="flex flex-col gap-8">
+            <div class="flex flex-col gap-8">
                     // Hero Section
                     <div class="panel p-4 sm:p-8 rounded-2xl">
                         <h1 class="text-3xl font-bold text-[color:var(--brand-fg)] mb-4">
@@ -1391,7 +1467,215 @@ pub fn Analyzer() -> impl IntoView {
                         </ul>
                     </div>
                 </div>
-            </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ultros_api_types::recent_sales::{SaleData, Sales};
+
+    fn sale(price: i32, days_ago: i64) -> Sales {
+        let date = Utc::now()
+            .naive_utc()
+            .checked_sub_signed(Duration::days(days_ago))
+            .unwrap();
+        Sales {
+            price_per_unit: price,
+            sale_date: date,
+        }
+    }
+
+    fn sales_row(item_id: i32, hq: bool, prices_and_days: &[(i32, i64)]) -> SaleData {
+        SaleData {
+            item_id,
+            hq,
+            sales: prices_and_days.iter().map(|(p, d)| sale(*p, *d)).collect(),
+        }
+    }
+
+    #[test]
+    fn median_price_is_middle_of_clamped_sales() {
+        let row = sales_row(
+            1,
+            false,
+            &[(100, 0), (110, 1), (120, 2), (130, 3), (140, 4), (150, 5)],
+        );
+        let summary = compute_summary(row, false);
+        // Six even-length sample: median = (third + fourth) / 2 = (120 + 130) / 2 = 125
+        assert_eq!(summary.median_price, 125);
+    }
+
+    #[test]
+    fn sniper_sale_below_10pct_of_median_is_dropped() {
+        // Raw median of [1, 100, 110, 120, 130, 140] sorted = (110+120)/2 = 115.
+        // The "1" is well below 10% of 115 (=11), so it's dropped.
+        let row = sales_row(
+            2,
+            false,
+            &[(1, 0), (100, 1), (110, 2), (120, 3), (130, 4), (140, 5)],
+        );
+        let summary = compute_summary(row, false);
+        // Median of remaining [100, 110, 120, 130, 140] = 120.
+        assert_eq!(summary.median_price, 120);
+        // min_price should also reflect the clamp, not the sniper.
+        assert_eq!(summary.min_price, 100);
+    }
+
+    #[test]
+    fn hq_prices_do_not_contaminate_nq_summary() {
+        // An NQ row with normal prices. compute_summary no longer takes HQ context.
+        let row = sales_row(
+            3,
+            false,
+            &[(500, 0), (510, 1), (520, 2), (530, 3), (540, 4), (550, 5)],
+        );
+        let summary = compute_summary(row, false);
+        assert_eq!(summary.min_price, 500);
+        assert_eq!(summary.median_price, 525);
+    }
+
+    #[test]
+    fn troll_region_floor_drops_row_entirely() {
+        use ultros_api_types::cheapest_listings::{CheapestListingItem, CheapestListings};
+        use ultros_api_types::recent_sales::RecentSales;
+
+        let sales = RecentSales {
+            sales: vec![sales_row(
+                100,
+                false,
+                &[
+                    (1000, 0),
+                    (1000, 1),
+                    (1100, 2),
+                    (1000, 3),
+                    (1050, 4),
+                    (1000, 5),
+                ],
+            )],
+        };
+        // Region cheapest = a troll 999,999,999 listing on a foreign world.
+        let region = CheapestListings {
+            cheapest_listings: vec![CheapestListingItem {
+                item_id: 100,
+                hq: false,
+                cheapest_price: 999_999_999,
+                world_id: 42,
+            }],
+        };
+        // Our own world has a sane cheapest at 1100.
+        let world = CheapestListings {
+            cheapest_listings: vec![CheapestListingItem {
+                item_id: 100,
+                hq: false,
+                cheapest_price: 1100,
+                world_id: 1,
+            }],
+        };
+
+        let table = ProfitTable::new(sales, region, world, vec![], false);
+        // The troll 999M region listing should cause the row to be dropped entirely
+        // (the displayed "deal" would be fictional). table.0 should be empty.
+        assert_eq!(table.0.len(), 0);
+    }
+
+    #[test]
+    fn troll_world_floor_falls_through_to_median() {
+        use ultros_api_types::cheapest_listings::{CheapestListingItem, CheapestListings};
+        use ultros_api_types::recent_sales::RecentSales;
+
+        // Sales settle at a stable median of 1000.
+        let sales = RecentSales {
+            sales: vec![sales_row(
+                300,
+                false,
+                &[
+                    (1000, 0),
+                    (1000, 1),
+                    (1000, 2),
+                    (1000, 3),
+                    (1000, 4),
+                    (1000, 5),
+                ],
+            )],
+        };
+        // Region floor is sane (500 — below median, a real deal).
+        let region = CheapestListings {
+            cheapest_listings: vec![CheapestListingItem {
+                item_id: 300,
+                hq: false,
+                cheapest_price: 500,
+                world_id: 42,
+            }],
+        };
+        // Local world floor is a troll listing.
+        let world = CheapestListings {
+            cheapest_listings: vec![CheapestListingItem {
+                item_id: 300,
+                hq: false,
+                cheapest_price: 999_999_999,
+                world_id: 1,
+            }],
+        };
+
+        let table = ProfitTable::new(sales, region, world, vec![], false);
+        // Row is kept (region floor is sane), but the troll world floor is ignored —
+        // estimated_sale_price falls through to median, not the troll value.
+        assert_eq!(table.0.len(), 1);
+        assert_eq!(table.0[0].estimated_sale_price, 1000);
+    }
+
+    #[test]
+    fn median_i32_odd_length() {
+        // Direct unit test on the helper — exercises the n % 2 == 1 branch.
+        assert_eq!(median_i32(&[100, 200, 300, 400, 500]), 300);
+        assert_eq!(median_i32(&[100, 110, 120, 130, 140]), 120);
+    }
+
+    #[test]
+    fn estimated_sale_price_uses_median_not_min() {
+        use ultros_api_types::cheapest_listings::{CheapestListingItem, CheapestListings};
+        use ultros_api_types::recent_sales::RecentSales;
+
+        let sales = RecentSales {
+            sales: vec![sales_row(
+                200,
+                false,
+                &[
+                    (800, 0),
+                    (1000, 1),
+                    (1000, 2),
+                    (1000, 3),
+                    (1000, 4),
+                    (1200, 5),
+                ],
+            )],
+        };
+        // Region floor is below median (a sane off-world deal).
+        let region = CheapestListings {
+            cheapest_listings: vec![CheapestListingItem {
+                item_id: 200,
+                hq: false,
+                cheapest_price: 700,
+                world_id: 42,
+            }],
+        };
+        // Local world floor is well above the median — the estimate should pin to median (=1000),
+        // not min (=800) and not the world floor (=5000).
+        let world = CheapestListings {
+            cheapest_listings: vec![CheapestListingItem {
+                item_id: 200,
+                hq: false,
+                cheapest_price: 5000,
+                world_id: 1,
+            }],
+        };
+
+        let table = ProfitTable::new(sales, region, world, vec![], false);
+        assert_eq!(table.0.len(), 1);
+        let row = &table.0[0];
+        assert_eq!(row.sale_summary.median_price, 1000);
+        assert_eq!(row.estimated_sale_price, 1000);
     }
 }

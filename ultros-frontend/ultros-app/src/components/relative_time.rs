@@ -4,8 +4,11 @@ use leptos::prelude::*;
 use leptos_use::{UseIntervalReturn, use_interval};
 use timeago::Formatter;
 
+use crate::i18n::*;
+
 #[component]
 pub fn RelativeToNow(timestamp: NaiveDateTime) -> impl IntoView {
+    let i18n = use_i18n();
     // this could probably be moved to a global state so we just have one interval for every clock
     #[cfg(feature = "hydrate")]
     let UseIntervalReturn { counter, .. } = use_interval(1000);
@@ -17,7 +20,7 @@ pub fn RelativeToNow(timestamp: NaiveDateTime) -> impl IntoView {
             .to_std()
             .ok()
             .map(|duration| Formatter::new().convert(duration))
-            .unwrap_or("now".to_string())
+            .unwrap_or_else(|| t_string!(i18n, relative_time_now).to_string())
     });
     view! { <span>{time_display}</span> }.into_any()
 }
