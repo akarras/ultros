@@ -5,8 +5,8 @@ use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
         add_to_list::AddToList, clipboard::*, filter_card::*, gil::*, icon::Icon, item_icon::*,
-        meta::*, query_button::QueryButton, skeleton::BoxSkeleton, toggle::Toggle, tooltip::*,
-        virtual_scroller::*, world_picker::*,
+        meta::*, query_button::QueryButton, skeleton::BoxSkeleton, toggle::Toggle, tool_help::*,
+        tooltip::*, virtual_scroller::*, world_picker::*,
     },
     error::AppError,
     global_state::LocalWorldData,
@@ -1232,11 +1232,16 @@ pub fn AnalyzerWorldView() -> impl IntoView {
             <MetaTitle title=move || t_string!(i18n, analyzer_meta_title).to_string().replace("%world%", &world()) />
             <div class="container mx-auto max-w-7xl">
                 <div class="flex flex-col gap-8">
-                    // Header Section
-                    <div class="panel p-4 sm:p-8 rounded-2xl">
-                        <h1 class="text-3xl font-bold text-[color:var(--brand-fg)] mb-4">
-                            {t!(i18n, analyzer_title_for)} {world}
-                        </h1>
+                    <ToolHeader
+                        title="Flip Finder"
+                        summary="Find likely buy-low/sell-high opportunities by comparing cheap listings against recent sale prices."
+                        context="Use the filters below to trade off profit, ROI, purchase budget, and how quickly an item tends to sell."
+                        help_href="/help/flip-finder"
+                        help_body="Flip Finder combines recent sales, cheapest listings, tax settings, and optional cross-region checks. Treat the table as a shortlist: high profit is strongest when sales count and sale pace are also healthy."
+                    />
+
+                    // Controls Section
+                    <div class="panel p-4 sm:p-6 rounded-2xl">
                         <div class="flex flex-col gap-4">
                             <MetaDescription text=move || {
                                 t_string!(i18n, analyzer_meta_desc).to_string().replace("%world%", &world())
@@ -1328,6 +1333,15 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                     href="?min-buy=1000&last-sold=30d&profit=100000"
                                     label=t_string!(i18n, analyzer_preset_100k_profit).to_string()
                                 />
+                            </div>
+                            <CalculationSummary
+                                title="How profit is estimated"
+                                formula="profit = estimated sale price - buy price - market tax"
+                                details="Estimated sale price uses recent sales and the selected world context. Cross-region mode can include cheaper buy worlds outside your current region."
+                            />
+                            <div class="flex flex-wrap gap-2">
+                                <AssumptionBadge text="Cross-region and outlier settings are shown above" />
+                                <AssumptionBadge text="HQ and NQ are compared separately" />
                             </div>
                         </div>
                     </div>

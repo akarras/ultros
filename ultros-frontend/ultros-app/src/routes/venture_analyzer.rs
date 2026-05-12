@@ -6,7 +6,7 @@ use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
         gil::*, icon::Icon, item_icon::*, query_button::QueryButton, skeleton::BoxSkeleton,
-        virtual_scroller::*, world_picker::WorldOnlyPicker,
+        tool_help::*, virtual_scroller::*, world_picker::WorldOnlyPicker,
     },
     global_state::{
         LocalWorldData, home_world::use_home_world, region_for_world::use_region_for_world,
@@ -503,9 +503,15 @@ pub fn VentureAnalyzer() -> impl IntoView {
             <MetaTitle title=move || t_string!(i18n, venture_analyzer_meta_title).to_string() />
             <MetaDescription text=move || t_string!(i18n, venture_analyzer_meta_desc).to_string() />
 
-            <div class="flex flex-col gap-4 p-4 bg-brand-900/50 rounded-lg border border-brand-800">
-                <div class="flex flex-row justify-between items-center">
-                    <h1 class="text-2xl font-bold text-brand-100">{t!(i18n, venture_analyzer_title)}</h1>
+            <div class="flex flex-col gap-4">
+                <ToolHeader
+                    title="Venture Analyzer"
+                    summary="Rank normal retainer ventures by gross market value and recent sales activity."
+                    context="Profit is gross revenue in this first pass; venture token cost and opportunity cost are not modeled."
+                    help_href="/help/venture-analyzer"
+                    help_body="Venture Analyzer multiplies venture output quantity by current market price, then uses recent sales to help separate practical choices from slow-moving rare drops."
+                />
+                <div class="flex flex-row justify-end items-center">
                     <div class="flex flex-row gap-2 items-center">
                         <Suspense fallback=move || view! { <div class="text-brand-300 text-sm animate-pulse">{t!(i18n, venture_analyzer_loading_sales)}</div> }>
                             {move || {
@@ -526,6 +532,16 @@ pub fn VentureAnalyzer() -> impl IntoView {
                             set_current_world=set_selected_world.into()
                         />
                     </div>
+                </div>
+                <CalculationSummary
+                    title="Gross revenue model"
+                    formula="profit = output quantity * current market price"
+                    details="This does not subtract venture token value or the opportunity cost of sending a retainer on another task."
+                />
+                <div class="flex flex-wrap gap-2">
+                    <AssumptionBadge text="Gross revenue only" />
+                    <AssumptionBadge text="Normal ventures only" />
+                    <AssumptionBadge text="Recent sales affect confidence" />
                 </div>
 
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>

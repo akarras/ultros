@@ -5,7 +5,7 @@ use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
         filter_card::*, gil::*, item_icon::*, query_button::QueryButton, skeleton::BoxSkeleton,
-        virtual_scroller::*, world_picker::WorldOnlyPicker,
+        tool_help::*, virtual_scroller::*, world_picker::WorldOnlyPicker,
     },
     global_state::{home_world::use_home_world, region_for_world::use_region_for_world},
 };
@@ -426,6 +426,22 @@ fn FCCraftingAnalyzerTable(
                             data.total_sales,
                             (data.total_sales as f32 / data.daily_sales.max(0.001))
                         );
+                        let material_rows = data
+                            .materials
+                            .iter()
+                            .take(6)
+                            .map(|material| {
+                                let material_name = items
+                                    .get(&material.item_id)
+                                    .map(|item| item.name.as_str().to_string())
+                                    .unwrap_or_else(|| "Unknown material".to_string());
+                                (
+                                    material_name,
+                                    material.total_quantity,
+                                    material.unit_cost,
+                                )
+                            })
+                            .collect::<Vec<_>>();
 
                         view! {
                             <div class=classes role="row-group">
@@ -437,7 +453,19 @@ fn FCCraftingAnalyzerTable(
                                         <div class="shrink-0">
                                             <ItemIcon item_id=item_id.0 icon_size=IconSize::Small />
                                         </div>
-                                        <span>{item}</span>
+                                        <div class="flex flex-col truncate">
+                                            <span>{item}</span>
+                                            <ResultBreakdownDisclosure title="Material breakdown">
+                                                <div class="flex flex-col gap-1">
+                                                    {material_rows.into_iter().map(|(name, qty, unit_cost)| view! {
+                                                        <div class="flex justify-between gap-3">
+                                                            <span class="truncate">{qty} "x " {name}</span>
+                                                            <Gil amount=unit_cost />
+                                                        </div>
+                                                    }).collect_view()}
+                                                </div>
+                                            </ResultBreakdownDisclosure>
+                                        </div>
                                     </a>
                                 </div>
                                 <div role="cell" class="px-4 py-2 w-30 shrink-0 text-right">
@@ -458,9 +486,12 @@ fn FCCraftingAnalyzerTable(
                                     <Gil amount=data.market_price />
                                 </div>
                                 <div role="cell" class="px-4 py-2 w-30 shrink-0 text-right hidden md:block">
-                                    <span class="text-xs text-[color:var(--color-text-muted)]" title=sales_tooltip>
-                                        {t!(i18n, fc_crafting_analyzer_sales_per_day, sales = format!("{:.1}", data.daily_sales))}
-                                    </span>
+                                    <div class="flex flex-col items-end gap-1" title=sales_tooltip>
+                                        <span class="text-xs text-[color:var(--color-text-muted)]">
+                                            {t!(i18n, fc_crafting_analyzer_sales_per_day, sales = format!("{:.1}", data.daily_sales))}
+                                        </span>
+                                        <ConfidenceBadge total_sales=data.total_sales daily_sales=data.daily_sales />
+                                    </div>
                                 </div>
                             </div>
                         }.into_any()
@@ -507,9 +538,15 @@ pub fn FCCraftingAnalyzer() -> impl IntoView {
             <Title text=t_string!(i18n, fc_crafting_analyzer_meta_title).to_string() />
             <Meta name="description" content=t_string!(i18n, fc_crafting_analyzer_meta_desc).to_string() />
 
-             <div class="flex flex-col gap-4 p-4 bg-brand-900/50 rounded-lg border border-brand-800">
-                 <div class="flex flex-row justify-between items-center">
-                    <h1 class="text-2xl font-bold text-brand-100">{t!(i18n, fc_crafting_analyzer_title)}</h1>
+             <div class="flex flex-col gap-4">
+                <ToolHeader
+                    title="FC Crafting Analyzer"
+                    summary="Estimate Free Company workshop project profit from material costs and recent output sales."
+                    context="Workshop outputs can have sparse sales, so pair profit with velocity before committing expensive materials."
+                    help_href="/help/fc-crafting"
+                    help_body="FC Crafting Analyzer totals company craft materials at current market prices, compares that against the output item, and flags how much recent sales data supports the recommendation."
+                />
+                 <div class="flex flex-row justify-end items-center">
                     <div class="flex flex-row gap-2 items-center">
                         <Suspense fallback=move || view! { <div class="text-brand-300 text-sm animate-pulse">{t!(i18n, fc_crafting_analyzer_loading_sales)}</div> }>
                             {move || {
@@ -533,6 +570,16 @@ pub fn FCCraftingAnalyzer() -> impl IntoView {
                         </div>
                     </div>
                 </Show>
+                <CalculationSummary
+                    title="Project cost model"
+                    formula="profit = output market price - total material cost"
+                    details="Total cost is derived from company craft supply items, required sets, and current market-board listings for each material."
+                />
+                <div class="flex flex-wrap gap-2">
+                    <AssumptionBadge text="Material prices come from market listings" />
+                    <AssumptionBadge text="Sparse output sales lower confidence" />
+                    <AssumptionBadge text="Workshop labor/time is not priced" />
+                </div>
 
                  <Suspense fallback=move || view! { <BoxSkeleton /> }>
                     {move || {

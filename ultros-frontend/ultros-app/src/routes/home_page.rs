@@ -93,13 +93,12 @@ pub fn HomePage() -> impl IntoView {
                                     {move || t_string!(i18n, ultros_description)}
                                 </p>
                                 <div class="flex flex-wrap items-center gap-3 pt-4">
-                                    <a
-                                        rel="external"
-                                        href="https://book.ultros.app"
-                                        class="btn-primary py-3 px-6 text-lg"
+                                    <A
+                                        href="/help/getting-started"
+                                        attr:class="btn-primary py-3 px-6 text-lg"
                                     >
                                         {move || t_string!(i18n, get_started)}
-                                    </a>
+                                    </A>
                                     <A href="/flip-finder" attr:class="btn-primary py-3 px-6 text-lg">
                                         <Icon icon=i::FaMoneyBillTrendUpSolid width="1.25em" height="1.25em" />
                                         <span>{move || t_string!(i18n, open_flip_finder)}</span>

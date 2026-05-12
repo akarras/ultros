@@ -15,6 +15,7 @@ use crate::{
         item_icon::ItemIcon,
         meta::{MetaDescription, MetaTitle},
         skeleton::BoxSkeleton,
+        tool_help::*,
         virtual_scroller::VirtualScroller,
         world_picker::WorldOnlyPicker,
     },
@@ -186,18 +187,26 @@ pub fn Trends() -> impl IntoView {
         <div class="main-content p-6">
             <div class="container mx-auto max-w-7xl">
                 <div class="flex flex-col gap-8">
+                    <ToolHeader
+                        title="Market Trends"
+                        summary="Review high-velocity, rising-price, and falling-price items for the selected world."
+                        context="Trends are directional signals. Open an item page before treating a movement as a buying decision."
+                        help_href="/help/market-trends"
+                        help_body="Market Trends groups items by recent sales and price movement. High velocity is best for demand checks; rising and falling prices are prompts to investigate item history."
+                    />
+
                     // Header Section
-                    <div class="panel p-8 rounded-2xl">
+                    <div class="panel p-6 rounded-2xl">
                         <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
-                            <div>
-                                <h1 class="text-3xl font-bold text-[color:var(--brand-fg)] mb-2">
-                                    "Market Trends"
-                                </h1>
-                                <p class="text-lg text-[color:var(--color-text)]/90">
-                                    "Analyze item price movements and sales velocity for " <span class="font-semibold text-brand-300">{world}</span>
-                                </p>
+                            <div class="text-sm text-[color:var(--color-text-muted)]">
+                                "World context: " <span class="font-semibold text-brand-300">{world}</span>
                             </div>
                             <TrendsWorldNavigator />
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                            <MetricExplainer label="High Velocity" explanation="Items selling frequently enough to be useful for demand and restock decisions." />
+                            <MetricExplainer label="Rising Prices" explanation="Items whose recent price movement points upward. Treat this as a prompt to inspect supply, not a guarantee." />
+                            <MetricExplainer label="Falling Prices" explanation="Items whose recent price movement points downward, often from oversupply or cooling demand." />
                         </div>
 
                         // Tab Selection

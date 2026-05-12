@@ -4,7 +4,7 @@ use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
         add_to_list::AddToList, clipboard::*, filter_card::*, gil::*, icon::Icon, item_icon::*,
-        meta::*, query_button::QueryButton, skeleton::BoxSkeleton, toggle::Toggle,
+        meta::*, query_button::QueryButton, skeleton::BoxSkeleton, toggle::Toggle, tool_help::*,
         virtual_scroller::*, world_picker::*,
     },
     error::AppError,
@@ -707,11 +707,16 @@ pub fn VendorWorldView() -> impl IntoView {
             <MetaTitle title=move || format!("{} - {}", t_string!(i18n, vendor_resale_title), world()) />
             <div class="container mx-auto max-w-7xl">
                 <div class="flex flex-col gap-8">
-                    // Header Section
-                    <div class="panel p-4 sm:p-8 rounded-2xl">
-                        <h1 class="text-3xl font-bold text-[color:var(--brand-fg)] mb-4">
-                            {t!(i18n, vendor_resale_for)} " " {world}
-                        </h1>
+                    <ToolHeader
+                        title="Vendor Resale"
+                        summary="Find NPC vendor items that may be worth buying as NQ items and reselling on the selected world."
+                        context="HQ market listings are excluded because vendor purchases are normal quality. Specific NPC source names are not available yet."
+                        help_href="/help/vendor-resale"
+                        help_body="Vendor Resale is useful for low-risk market checks where the buy price is fixed. Favor results with recent sales; high ROI on an item that rarely sells is still slow gil."
+                    />
+
+                    // Controls Section
+                    <div class="panel p-4 sm:p-6 rounded-2xl">
                         <div class="flex flex-col gap-4">
                             <MetaDescription text=move || {
                                 t_string!(i18n, vendor_resale_meta_desc).to_string().replace("%world%", &world())
@@ -733,6 +738,16 @@ pub fn VendorWorldView() -> impl IntoView {
                                     label=t_string!(i18n, vendor_resale_preset_500_roi).to_string()
                                 />
                                 <PresetFilterButton href="?profit=50000" label=t_string!(i18n, vendor_resale_preset_50k_profit).to_string() />
+                            </div>
+                            <CalculationSummary
+                                title="How profit is estimated"
+                                formula="profit = market price - vendor price - market tax"
+                                details="Vendor items are treated as NQ. The table compares fixed NPC cost against current market-board listings and recent sale speed."
+                            />
+                            <div class="flex flex-wrap gap-2">
+                                <AssumptionBadge text="NQ vendor purchase" />
+                                <AssumptionBadge text="HQ listings excluded" />
+                                <AssumptionBadge text="Vendor source names not shown yet" />
                             </div>
                         </div>
                     </div>

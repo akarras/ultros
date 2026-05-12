@@ -123,6 +123,7 @@ where
                             <Portal mount=document().body().unwrap()>
                                 <div
                                     node_ref=node_ref
+                                    role="tooltip"
                                     class="fixed z-50 px-4 py-2 text-sm
                                     bg-gradient-to-br from-brand-950/95 to-brand-900/95
                                     border border-brand-800/50
@@ -154,6 +155,12 @@ where
             on:mouseleave=move |_| set_is_hovered.set(false)
             on:focusin=move |_| set_is_focused.set(true)
             on:focusout=move |_| set_is_focused.set(false)
+            on:keydown=move |ev| {
+                if ev.key() == "Escape" {
+                    set_is_hovered.set(false);
+                    set_is_focused.set(false);
+                }
+            }
             node_ref=target
         >
             {children()}
