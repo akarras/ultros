@@ -498,7 +498,8 @@ where
     });
     let req_parts = use_context::<Parts>().ok_or(AppError::ParamMissing)?;
     let headers = req_parts.headers;
-    let hostname = "http://localhost:8080";
+    let hostname =
+        std::env::var("HOSTNAME").unwrap_or_else(|_| "http://localhost:8080".to_string());
     let path = format!("{hostname}{path}");
     // headers.remove("Accept-Encoding");
     // this is only necessary because reqwest isn't updated to http 1.0- and I'm being lazy
@@ -582,7 +583,8 @@ where
     });
     let req_parts = use_context::<Parts>().ok_or(AppError::ParamMissing)?;
     let headers = req_parts.headers;
-    let hostname = "http://localhost:8080";
+    let hostname =
+        std::env::var("HOSTNAME").unwrap_or_else(|_| "http://localhost:8080".to_string());
     let path = format!("{hostname}{path}");
     // this is only necessary because reqwest isn't updated to http 1.0- and I'm being lazy
     let mut new_map = reqwest::header::HeaderMap::new();

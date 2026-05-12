@@ -696,7 +696,7 @@ pub fn ChartWrapper(
                                         }.into_any()
                                     } else {
                                         view! {
-                                            <PriceHistoryChart sales=filtered_sales filter_outliers />
+                                            <PriceHistoryChart sales=filtered_sales filter_outliers scope_name=world />
                                         }.into_any()
                                     }
                                 }}

@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::BTreeMap;
 
 use leptos::prelude::*;
 use leptos_chartistry::*;
@@ -6,70 +6,78 @@ use ultros_api_types::SaleHistory;
 use ultros_api_types::world_helper::AnySelector;
 
 use crate::global_state::LocalWorldData;
-use crate::i18n::{t_string, use_i18n};
+use crate::i18n::{t, t_string, use_i18n};
 
 type SeriesPoints = Vec<(chrono::DateTime<chrono::Local>, i32, i32)>;
 
-/// Roll sales up to world / DC / region depending on how many distinct regions
-/// and DCs are represented. Mirrors the rule in `ultros-charts::map_sale_history_to_line`.
-fn group_sales_by_locale(
+const CATEGORY_PALETTE: [&str; 12] = [
+    "#60a5fa", "#f97316", "#34d399", "#a78bfa", "#fb7185", "#facc15", "#22d3ee", "#c084fc",
+    "#4ade80", "#f472b6", "#94a3b8", "#fdba74",
+];
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum ColorBy {
+    Region,
+    Datacenter,
+    World,
+}
+
+impl ColorBy {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Region => "Region",
+            Self::Datacenter => "Datacenter",
+            Self::World => "World",
+        }
+    }
+}
+
+/// Roll sales up by a chosen world hierarchy level for colouring the scatter points.
+fn group_sales_by_level(
     helper: &ultros_api_types::world_helper::WorldHelper,
     sales: &[SaleHistory],
+    color_by: ColorBy,
 ) -> Vec<(String, SeriesPoints)> {
     use itertools::Itertools;
 
-    let world_ids: HashSet<AnySelector> = sales
-        .iter()
-        .map(|s| AnySelector::World(s.world_id))
-        .collect();
-    let datacenters: HashSet<AnySelector> = world_ids
-        .iter()
-        .flat_map(|w| {
-            helper
-                .lookup_selector(*w)
-                .and_then(|r| r.as_world())
-                .map(|w| AnySelector::Datacenter(w.datacenter_id))
-        })
-        .collect();
-    let regions: HashSet<AnySelector> = datacenters
-        .iter()
-        .flat_map(|dc| {
-            helper
-                .lookup_selector(*dc)
-                .and_then(|r| r.as_datacenter())
-                .map(|dc| AnySelector::Region(dc.region_id))
-        })
-        .collect();
-    let selectors = if datacenters.len() == 1 {
-        world_ids
-    } else if regions.len() == 1 {
-        datacenters
-    } else {
-        regions
-    };
-    selectors
-        .into_iter()
-        .filter_map(|sel| {
-            let result = helper.lookup_selector(sel)?;
-            let name = result.get_name().to_string();
-            let points: SeriesPoints = sales
-                .iter()
-                .filter(|s| {
-                    helper
-                        .lookup_selector(AnySelector::World(s.world_id))
-                        .map(|w| w.is_in(&result))
-                        .unwrap_or_default()
-                })
-                .filter_map(|s| {
-                    Some((
-                        s.sold_date.and_local_timezone(chrono::Local).single()?,
-                        s.price_per_item,
-                        s.quantity,
-                    ))
-                })
-                .collect();
-            Some((name, points))
-        })
+    let mut groups = BTreeMap::<AnySelector, (String, SeriesPoints)>::new();
+    for sale in sales {
+        let world = match helper
+            .lookup_selector(AnySelector::World(sale.world_id))
+            .and_then(|result| result.as_world())
+        {
+            Some(world) => world,
+            None => continue,
+        };
+        let selector = match color_by {
+            ColorBy::World => AnySelector::World(world.id),
+            ColorBy::Datacenter => AnySelector::Datacenter(world.datacenter_id),
+            ColorBy::Region => {
+                let datacenter = match helper
+                    .lookup_selector(AnySelector::Datacenter(world.datacenter_id))
+                    .and_then(|result| result.as_datacenter())
+                {
+                    Some(datacenter) => datacenter,
+                    None => continue,
+                };
+                AnySelector::Region(datacenter.region_id)
+            }
+        };
+        let Some(result) = helper.lookup_selector(selector) else {
+            continue;
+        };
+        let Some(sold_date) = sale.sold_date.and_local_timezone(chrono::Local).single() else {
+            continue;
+        };
+        groups
+            .entry(selector)
+            .or_insert_with(|| (result.get_name().to_string(), Vec::new()))
+            .1
+            .push((sold_date, sale.price_per_item, sale.quantity));
+    }
+
+    groups
+        .into_values()
         .sorted_by_cached_key(|(name, _)| name.clone())
         .collect()
 }
@@ -132,7 +140,7 @@ fn short_number(value: i32) -> String {
 #[derive(Clone, Debug, PartialEq)]
 struct ChartStats {
     n: usize,
-    vwap_val: Option<i32>,
+    market_average_val: Option<i32>,
     median_val: Option<i32>,
     min_val: i32,
     max_val: i32,
@@ -147,17 +155,16 @@ struct SaleRow {
     /// Sale timestamp, used as the X axis. chartistry's built-in `DateTime<Utc>`
     /// `Tick` impl automatically formats labels as dates.
     ts: chrono::DateTime<chrono::Utc>,
-    /// Price per item (f64 for chartistry). One column per series; NAN if
-    /// this row does not belong to that series.
-    prices: Vec<f64>,
-    /// Volume-weighted average price overlay (constant across all rows, or NAN).
-    vwap_y: f64,
+    /// Price per item (f64 for chartistry).
+    price: f64,
+    /// The colour/category series this sale belongs to.
+    group_index: usize,
+    /// Quantity sold in this sale event.
+    quantity: f64,
+    /// Quantity-weighted average price overlay (constant across all rows, or NAN).
+    market_average_y: f64,
     /// Least-squares trendline value at this row's timestamp (or NAN).
     trend_y: f64,
-    /// IQR-band upper bound (constant across all rows, or NAN).
-    iqr_hi: f64,
-    /// IQR-band lower bound (constant across all rows, or NAN).
-    iqr_lo: f64,
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
@@ -173,7 +180,8 @@ fn StatsStrip(stats: Signal<Option<ChartStats>>) -> impl IntoView {
                     let n_label = t_string!(i18n, chart_stat_n_sales)
                         .to_string()
                         .replace("{n}", &s.n.to_string());
-                    let vwap_label = t_string!(i18n, chart_stat_vwap).to_string();
+                    let market_average_label =
+                        t_string!(i18n, chart_stat_market_avg).to_string();
                     let median_label = t_string!(i18n, chart_stat_median).to_string();
                     let min_label = t_string!(i18n, chart_stat_min).to_string();
                     let max_label = t_string!(i18n, chart_stat_max).to_string();
@@ -181,11 +189,11 @@ fn StatsStrip(stats: Signal<Option<ChartStats>>) -> impl IntoView {
                         <div class="flex flex-wrap gap-x-4 gap-y-1 text-sm tabular-nums text-[color:var(--color-text)]/70 mb-3">
                             <span>{n_label}</span>
                             {s
-                                .vwap_val
+                                .market_average_val
                                 .map(|v| {
                                     view! {
                                         <span>
-                                            {vwap_label} " " {short_number(v)}
+                                            {market_average_label.clone()} " " {short_number(v)}
                                         </span>
                                     }
                                 })}
@@ -214,15 +222,20 @@ fn StatsStrip(stats: Signal<Option<ChartStats>>) -> impl IntoView {
 pub fn PriceHistoryChart(
     #[prop(into)] sales: Signal<Vec<SaleHistory>>,
     #[prop(into)] filter_outliers: Signal<bool>,
+    #[prop(into)] scope_name: Signal<String>,
 ) -> impl IntoView {
-    // Implementation uses leptos-chartistry 0.2 for a multi-series scatter chart.
-    // Scatter is achieved by setting line width to 0.0 and adding Circle markers.
-    // Each series is a column of f64 prices in a flat Vec<SaleRow>, with NAN for
-    // rows that don't belong to that series.
+    // Implementation uses leptos-chartistry 0.2 for axes/overlays. Sales stay in
+    // one dense series because sparse category series produce misleading tooltip
+    // rows and NaN path warnings; marker colours are applied from the grouping
+    // metadata after chartistry renders the circles.
 
     let local_world_data = use_context::<LocalWorldData>().unwrap();
     let helper = local_world_data.0.unwrap();
     let i18n = use_i18n();
+    let (show_market_average, set_show_market_average) = signal(true);
+    let (show_trend, set_show_trend) = signal(false);
+    let (show_quantity, set_show_quantity) = signal(false);
+    let (color_by, set_color_by) = signal(ColorBy::World);
 
     // Optional IQR outlier filter applied to the incoming (pre-filtered) sales.
     let filtered = Memo::new(move |_| {
@@ -240,7 +253,31 @@ pub fn PriceHistoryChart(
         }
     });
 
-    // Stats computed from the outlier-filtered sales.
+    let helper_for_color_options = helper.clone();
+    let color_by_options = Memo::new(move |_| {
+        match helper_for_color_options.lookup_world_by_name(&scope_name.get()) {
+            Some(result) if result.as_world().is_some() => vec![ColorBy::World],
+            Some(result) if result.as_datacenter().is_some() => {
+                vec![ColorBy::Datacenter, ColorBy::World]
+            }
+            Some(result) if result.as_region().is_some() => {
+                vec![ColorBy::Region, ColorBy::Datacenter, ColorBy::World]
+            }
+            _ => vec![ColorBy::Region, ColorBy::Datacenter, ColorBy::World],
+        }
+    });
+
+    let effective_color_by = Memo::new(move |_| {
+        let selected = color_by.get();
+        let options = color_by_options.get();
+        if options.contains(&selected) {
+            selected
+        } else {
+            *options.last().unwrap_or(&ColorBy::World)
+        }
+    });
+
+    // Stats computed from the sales currently visible in the chart.
     let stats = Memo::new(move |_| {
         let data = filtered.get();
         if data.is_empty() {
@@ -255,7 +292,7 @@ pub fn PriceHistoryChart(
         let max_val = *prices.iter().max().unwrap();
         Some(ChartStats {
             n: data.len(),
-            vwap_val: vwap(&pq),
+            market_average_val: vwap(&pq),
             median_val: median(&prices),
             min_val,
             max_val,
@@ -268,29 +305,23 @@ pub fn PriceHistoryChart(
     let helper_clone = helper.clone();
     let chart_data = Memo::new(move |_| {
         let data = filtered.get();
-        // IQR band uses the incoming sales (before outlier filter) so the band
-        // reflects the broader pre-outlier distribution and is stable when the
-        // outlier toggle changes.
-        let all_sales = sales.get();
-
-        let groups = group_sales_by_locale(&helper_clone, &data);
-        // Build flat rows: one row per sale, prices indexed by series slot.
-        // series_names drives the number of price columns.
-        let n_series = groups.len();
-        if n_series == 0 || data.is_empty() {
+        let groups = group_sales_by_level(&helper_clone, &data, effective_color_by.get());
+        if groups.is_empty() || data.is_empty() {
             return (vec![], vec![]);
         }
         // series_names: stable order (already sorted by group_sales_by_locale)
         let series_names: Vec<String> = groups.iter().map(|(n, _)| n.clone()).collect();
 
-        // Flatten all points into (ts, series_idx, price, qty)
+        // Flatten all points into (ts, price, qty). Chartistry does not skip
+        // sparse series before building ranges, so keep the sales as one
+        // contiguous scatter series and use locale names only for the legend.
         let mut flat: Vec<(chrono::DateTime<chrono::Utc>, usize, f64, i32)> = groups
             .iter()
             .enumerate()
-            .flat_map(|(idx, (_, points))| {
+            .flat_map(|(group_index, (_, points))| {
                 points.iter().map(move |(dt, price, qty)| {
                     let utc = dt.with_timezone(&chrono::Utc);
-                    (utc, idx, *price as f64, *qty)
+                    (utc, group_index, *price as f64, *qty)
                 })
             })
             .collect();
@@ -299,20 +330,13 @@ pub fn PriceHistoryChart(
 
         // ── Overlay computations ──────────────────────────────────────────
 
-        // VWAP (from filtered, same as stats strip)
+        // Market average (from filtered, same as stats strip). This is a
+        // quantity-weighted average, but the UI avoids market-jargon labels.
         let pq_filtered: Vec<(i32, i32)> = data
             .iter()
             .map(|s| (s.price_per_item, s.quantity))
             .collect();
-        let vwap_val = vwap(&pq_filtered).map(|v| v as f64).unwrap_or(f64::NAN);
-
-        // IQR band from the incoming sales (before outlier filter) so the band
-        // reflects the full distribution.
-        let all_prices: Vec<i32> = all_sales.iter().map(|s| s.price_per_item).collect();
-        let (iqr_lo_val, iqr_hi_val) = match iqr_band(&all_prices) {
-            Some((lo, hi)) => (lo as f64, hi as f64),
-            None => (f64::NAN, f64::NAN),
-        };
+        let market_average_val = vwap(&pq_filtered).map(|v| v as f64).unwrap_or(f64::NAN);
 
         // Trendline via least-squares on (ts_secs, price) from filtered set
         // y = b + m*x  where x = timestamp in seconds
@@ -336,9 +360,7 @@ pub fn PriceHistoryChart(
 
         // ── Build rows ────────────────────────────────────────────────────
         let mut rows: Vec<SaleRow> = Vec::with_capacity(flat.len());
-        for (ts, series_idx, price, _qty) in flat {
-            let mut prices = vec![f64::NAN; n_series];
-            prices[series_idx] = price;
+        for (ts, group_index, price, _qty) in flat {
             let trend_y = if trend_m.is_nan() || trend_b.is_nan() {
                 f64::NAN
             } else {
@@ -346,46 +368,37 @@ pub fn PriceHistoryChart(
             };
             rows.push(SaleRow {
                 ts,
-                prices,
-                vwap_y: vwap_val,
+                price,
+                group_index,
+                quantity: _qty as f64,
+                market_average_y: market_average_val,
                 trend_y,
-                iqr_hi: iqr_hi_val,
-                iqr_lo: iqr_lo_val,
             });
         }
         (series_names, rows)
     });
 
-    // Stable series objects: we build them once but read series_names reactively
-    // via the chart_data signal. Chartistry requires fixed series count at
-    // component build time, so we cap at a reasonable max and let extras be NAN.
-    // In practice FFXIV has at most ~8 worlds per DC, so 12 is safe.
-    const MAX_SERIES: usize = 12;
-
-    // Build the PALETTE of colors for up to MAX_SERIES series.
-    // These are Tailwind brand/chart-friendly hex colors.
-    let palette = [
-        "#60a5fa", // blue-400
-        "#f97316", // orange-500
-        "#34d399", // emerald-400
-        "#a78bfa", // violet-400
-        "#fb7185", // rose-400
-        "#facc15", // yellow-400
-        "#22d3ee", // cyan-400
-        "#c084fc", // purple-400
-        "#4ade80", // green-400
-        "#f472b6", // pink-400
-        "#94a3b8", // slate-400
-        "#fdba74", // orange-300
-    ];
-
-    // The Series and AspectRatio are created fresh inside the reactive `move ||`
-    // closure below so they don't need to be `Copy`. The palette array is `Copy`
-    // (array of &'static str) and is captured by value.
-
     view! {
         <div class="flex flex-col gap-3">
             <StatsStrip stats=stats.into() />
+            <div class="flex flex-wrap items-center gap-2 text-xs">
+                <ChartOverlayToggle
+                    label=t_string!(i18n, chart_toggle_market_avg).to_string()
+                    checked=show_market_average
+                    set_checked=set_show_market_average
+                />
+                <ChartOverlayToggle
+                    label=t_string!(i18n, chart_legend_trend).to_string()
+                    checked=show_trend
+                    set_checked=set_show_trend
+                />
+                <ChartOverlayToggle
+                    label=t_string!(i18n, chart_legend_quantity).to_string()
+                    checked=show_quantity
+                    set_checked=set_show_quantity
+                />
+            </div>
+            <ColorByControl options=color_by_options selected=effective_color_by set_selected=set_color_by />
             <div
                 role="img"
                 aria-label=move || {
@@ -396,7 +409,7 @@ pub fn PriceHistoryChart(
                         .replace("{from}", "")
                         .replace("{to}", "")
                 }
-                class="w-full aspect-[16/9] max-h-[520px] overflow-hidden"
+                class="price-history-chart w-full aspect-[16/9] max-h-[520px] overflow-visible"
             >
                 {move || {
                     let (series_names, rows) = chart_data.get();
@@ -409,109 +422,173 @@ pub fn PriceHistoryChart(
                         }
                             .into_any()
                     } else {
-                        // Build reactive legend labels from series_names
-                        // We only show series that have at least one real data point.
-                        // Because Line entries are pre-built with fixed indices,
-                        // the legend names are set on the Line; we override name
-                        // reactively via a wrapper series below.
-                        //
-                        // Since chartistry's Series is not reactive post-construction,
-                        // we build a new Series each render — this is acceptable
-                        // because the chart re-mounts when rows changes.
-                        let n_active = series_names.len().min(MAX_SERIES);
-                        let mut reactive_series =
-                            Series::new(|row: &SaleRow| row.ts);
-                        for i in 0..n_active {
-                            let colour_hex = palette[i % palette.len()];
-                            let colour: Colour = colour_hex
-                                .parse()
-                                .unwrap_or(Colour::from_rgb(96, 165, 250));
-                            let name = series_names
-                                .get(i)
-                                .cloned()
-                                .unwrap_or_default();
-                            let line = Line::new(move |row: &SaleRow| {
-                                if i < row.prices.len() {
-                                    row.prices[i]
-                                } else {
-                                    f64::NAN
-                                }
+                        let marker_css = rows
+                            .iter()
+                            .enumerate()
+                            .map(|(index, row)| {
+                                let colour = CATEGORY_PALETTE[row.group_index % CATEGORY_PALETTE.len()];
+                                format!(
+                                    ".price-history-chart ._chartistry_line_markers circle:nth-of-type({}){{fill:{colour};}}",
+                                    index + 1
+                                )
                             })
-                            .with_name(name)
-                            .with_width(0.0)
-                            .with_marker(
-                                Marker::from_shape(MarkerShape::Circle)
-                                    .with_colour(colour)
-                                    .with_scale(4.0),
-                            );
-                            reactive_series = reactive_series.line(line);
-                        }
+                            .collect::<String>();
+
+                        let sales_colour: Colour = "#60a5fa"
+                            .parse()
+                            .unwrap_or(Colour::from_rgb(96, 165, 250));
+                        let mut reactive_series = Series::new(|row: &SaleRow| row.ts).line(
+                            Line::new(|row: &SaleRow| row.price)
+                                .with_name(t_string!(i18n, chart_legend_sales).to_string())
+                                .with_width(1.0)
+                                .with_colour(sales_colour)
+                                .with_interpolation(Interpolation::Linear)
+                                .with_marker(
+                                    Marker::from_shape(MarkerShape::Circle)
+                                        .with_colour(sales_colour)
+                                        .with_border(
+                                            "#dbeafe"
+                                                .parse()
+                                                .unwrap_or(Colour::from_rgb(219, 234, 254)),
+                                        )
+                                        .with_border_width(0.8)
+                                        .with_scale(1.1),
+                                ),
+                        );
 
                         // ── Overlay lines ─────────────────────────────────────────────
-                        // VWAP: solid yellow-400 horizontal line
-                        reactive_series = reactive_series.line(
-                            Line::new(|r: &SaleRow| r.vwap_y)
-                                .with_name(t_string!(i18n, chart_legend_vwap).to_string())
-                                .with_width(2.0)
-                                .with_colour(
-                                    "#facc15"
-                                        .parse()
-                                        .unwrap_or(Colour::from_rgb(250, 204, 21)),
-                                ),
-                        );
-                        // Trendline: slate-400, slightly thinner
-                        reactive_series = reactive_series.line(
-                            Line::new(|r: &SaleRow| r.trend_y)
-                                .with_name(t_string!(i18n, chart_legend_trend).to_string())
-                                .with_width(1.5)
-                                .with_colour(
-                                    "#94a3b8"
-                                        .parse()
-                                        .unwrap_or(Colour::from_rgb(148, 163, 184)),
-                                ),
-                        );
-                        // IQR high: slate-500, thin
-                        reactive_series = reactive_series.line(
-                            Line::new(|r: &SaleRow| r.iqr_hi)
-                                .with_name(t_string!(i18n, chart_legend_iqr_high).to_string())
-                                .with_width(1.0)
-                                .with_colour(
-                                    "#64748b"
-                                        .parse()
-                                        .unwrap_or(Colour::from_rgb(100, 116, 139)),
-                                ),
-                        );
-                        // IQR low: slate-500, thin
-                        reactive_series = reactive_series.line(
-                            Line::new(|r: &SaleRow| r.iqr_lo)
-                                .with_name(t_string!(i18n, chart_legend_iqr_low).to_string())
-                                .with_width(1.0)
-                                .with_colour(
-                                    "#64748b"
-                                        .parse()
-                                        .unwrap_or(Colour::from_rgb(100, 116, 139)),
-                                ),
-                        );
+                        if show_market_average.get() {
+                            reactive_series = reactive_series.line(
+                                Line::new(|r: &SaleRow| r.market_average_y)
+                                    .with_name(t_string!(i18n, chart_legend_market_avg).to_string())
+                                    .with_width(2.0)
+                                    .with_interpolation(Interpolation::Linear)
+                                    .with_colour(
+                                        "#facc15"
+                                            .parse()
+                                            .unwrap_or(Colour::from_rgb(250, 204, 21)),
+                                    ),
+                            );
+                        }
+                        if show_trend.get() {
+                            reactive_series = reactive_series.line(
+                                Line::new(|r: &SaleRow| r.trend_y)
+                                    .with_name(t_string!(i18n, chart_legend_trend).to_string())
+                                    .with_width(1.5)
+                                    .with_interpolation(Interpolation::Linear)
+                                    .with_colour(
+                                        "#94a3b8"
+                                            .parse()
+                                            .unwrap_or(Colour::from_rgb(148, 163, 184)),
+                                    ),
+                            );
+                        }
 
                         let aspect_ratio = AspectRatio::from_inner_ratio(800.0, 450.0);
-                        let tooltip = Tooltip::left_cursor().skip_missing(true);
+                        let y_tooltip = TickLabels::aligned_floats()
+                            .with_format(|v: &f64, _state| short_number(*v as i32));
+                        let tooltip = Tooltip::new(
+                            TooltipPlacement::LeftCursor,
+                            TickLabels::timestamps(),
+                            y_tooltip,
+                        )
+                        .skip_missing(true)
+                        .with_cursor_distance(14.0);
                         // Y-axis formatter: reuse short_number style for f64 prices.
                         let y_labels = TickLabels::aligned_floats()
+                            .with_min_chars(7)
                             .with_format(|v: &f64, _state| short_number(*v as i32));
+                        let grid_colour: Colour = "#3f3a4a"
+                            .parse()
+                            .unwrap_or(Colour::from_rgb(63, 58, 74));
                         view! {
-                            <Chart
-                                aspect_ratio=aspect_ratio
-                                series=reactive_series
-                                data=rows
-                                bottom=vec![TickLabels::timestamps().into_edge()]
-                                left=vec![y_labels.into_edge()]
-                                inner=vec![
-                                    XGridLine::default().into_inner(),
-                                    YGridLine::default().into_inner(),
-                                ]
-                                tooltip=tooltip
-                                right=vec![Legend::end().into_edge()]
-                            />
+                            <div class="flex h-full min-h-0 flex-col gap-2">
+                                <style>{marker_css}</style>
+                                <Chart
+                                    aspect_ratio=aspect_ratio
+                                    font_height=12.0
+                                    font_width=7.0
+                                    series=reactive_series
+                                    data=rows.clone()
+                                    bottom=vec![TickLabels::timestamps().into_edge()]
+                                    left=vec![y_labels.into_edge()]
+                                    inner=vec![
+                                        XGridLine::default().with_colour(grid_colour).into_inner(),
+                                        YGridLine::default().with_colour(grid_colour).into_inner(),
+                                    ]
+                                    tooltip=tooltip
+                                />
+                                {show_quantity.get().then(|| {
+                                    let quantity_colour: Colour = "#22c55e"
+                                        .parse()
+                                        .unwrap_or(Colour::from_rgb(34, 197, 94));
+                                    let quantity_series = Series::new(|row: &SaleRow| row.ts)
+                                        .bar(
+                                            Bar::new(|row: &SaleRow| row.quantity)
+                                                .with_name(t_string!(i18n, chart_legend_quantity).to_string())
+                                                .with_colour(quantity_colour)
+                                                .with_placement(BarPlacement::Edge)
+                                                .with_gap(0.35),
+                                        );
+                                    let quantity_labels = TickLabels::aligned_floats()
+                                        .with_min_chars(3)
+                                        .with_format(|v: &f64, _state| (*v as i32).to_string());
+                                    let quantity_tooltip = Tooltip::new(
+                                        TooltipPlacement::Hide,
+                                        TickLabels::timestamps(),
+                                        quantity_labels.clone(),
+                                    );
+                                    view! {
+                                        <div class="h-24 border-t border-[color:var(--color-outline)]/70 pt-2">
+                                            <Chart
+                                                aspect_ratio=AspectRatio::from_inner_ratio(800.0, 92.0)
+                                                font_height=10.0
+                                                font_width=6.0
+                                                series=quantity_series
+                                                data=rows.clone()
+                                                left=vec![quantity_labels.into_edge()]
+                                                inner=vec![
+                                                    XGridLine::default().with_colour(grid_colour).into_inner(),
+                                                    YGridLine::default().with_colour(grid_colour).into_inner(),
+                                                ]
+                                                tooltip=quantity_tooltip
+                                            />
+                                        </div>
+                                    }
+                                })}
+                                <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[color:var(--color-text-muted)]">
+                                    {series_names.iter().enumerate().map(|(index, name)| {
+                                        let colour = CATEGORY_PALETTE[index % CATEGORY_PALETTE.len()];
+                                        view! {
+                                            <span class="inline-flex items-center gap-1.5">
+                                                <span
+                                                    class="h-2.5 w-2.5 rounded-full ring-1 ring-blue-100/70"
+                                                    style:background-color=colour
+                                                ></span>
+                                                {name.clone()}
+                                            </span>
+                                        }
+                                    }).collect_view()}
+                                    {show_market_average.get().then(|| view! {
+                                        <span class="inline-flex items-center gap-1.5">
+                                            <span class="h-0.5 w-5 bg-[#facc15]"></span>
+                                            {t!(i18n, chart_legend_market_avg)}
+                                        </span>
+                                    })}
+                                    {show_trend.get().then(|| view! {
+                                        <span class="inline-flex items-center gap-1.5">
+                                            <span class="h-0.5 w-5 bg-[#94a3b8]"></span>
+                                            {t!(i18n, chart_legend_trend)}
+                                        </span>
+                                    })}
+                                    {show_quantity.get().then(|| view! {
+                                        <span class="inline-flex items-center gap-1.5">
+                                            <span class="h-2.5 w-3 rounded-sm bg-[#22c55e]"></span>
+                                            {t!(i18n, chart_legend_quantity)}
+                                        </span>
+                                    })}
+                                </div>
+                            </div>
                         }
                             .into_any()
                     }
@@ -520,6 +597,96 @@ pub fn PriceHistoryChart(
         </div>
     }
     .into_any()
+}
+
+#[component]
+fn ChartOverlayToggle(
+    label: String,
+    #[prop(into)] checked: Signal<bool>,
+    set_checked: WriteSignal<bool>,
+) -> impl IntoView {
+    view! {
+        <label
+            class=move || {
+                [
+                    "inline-flex cursor-pointer select-none items-center gap-1.5 rounded-md border px-2.5 py-1 transition-colors",
+                    if checked.get() {
+                        "border-brand-500/60 bg-brand-700/30 text-brand-100"
+                    } else {
+                        "border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--color-text)_4%,_transparent)] text-[color:var(--color-text-muted)]"
+                    },
+                ]
+                    .join(" ")
+            }
+        >
+            <input
+                class="sr-only"
+                type="checkbox"
+                prop:checked=checked
+                on:change=move |event| set_checked.set(event_target_checked(&event))
+            />
+            <span
+                class=move || {
+                    [
+                        "h-2 w-2 rounded-full",
+                        if checked.get() { "bg-brand-300" } else { "bg-[color:var(--color-text-muted)]/45" },
+                    ]
+                        .join(" ")
+                }
+            ></span>
+            {label}
+        </label>
+    }
+}
+
+#[component]
+fn ColorByControl(
+    #[prop(into)] options: Signal<Vec<ColorBy>>,
+    #[prop(into)] selected: Signal<ColorBy>,
+    set_selected: WriteSignal<ColorBy>,
+) -> impl IntoView {
+    let i18n = use_i18n();
+    view! {
+        <Show when=move || options.with(|options| options.len() > 1)>
+            <div class="flex flex-wrap items-center gap-2 text-xs">
+                <span class="font-semibold uppercase tracking-wide text-[color:var(--color-text-muted)]">
+                    {t!(i18n, chart_color_by)}
+                </span>
+                <div class="inline-flex overflow-hidden rounded-md border border-[color:var(--color-outline)]">
+                <For
+                    each=move || options.get()
+                    key=|option| option.label()
+                    children=move |option| {
+                        view! {
+                            <button
+                                type="button"
+                                class=move || {
+                                    let active = selected.get() == option;
+                                    [
+                                        "border-l border-[color:var(--color-outline)] px-2.5 py-1 transition-colors first:border-l-0",
+                                        if active {
+                                            "bg-brand-600/30 text-brand-100"
+                                        } else {
+                                            "bg-[color:color-mix(in_srgb,_var(--color-text)_4%,_transparent)] text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
+                                        },
+                                    ]
+                                        .join(" ")
+                                }
+                                on:click=move |_| set_selected.set(option)
+                            >
+                                {match option {
+                                    ColorBy::Region => t_string!(i18n, chart_color_region).to_string(),
+                                    ColorBy::Datacenter => t_string!(i18n, chart_color_datacenter).to_string(),
+                                    ColorBy::World => t_string!(i18n, chart_color_world).to_string(),
+                                }}
+                            </button>
+                        }
+                    }
+                />
+                </div>
+            </div>
+        </Show>
+    }
 }
 
 #[cfg(test)]
@@ -604,7 +771,7 @@ mod tests {
         let helper = test_world_helper();
         // Both sales are on worlds inside Aether (DC 10) → one DC → group by world.
         let sales = vec![sale(100, 1000, 1, 0), sale(101, 1100, 1, 1)];
-        let series = group_sales_by_locale(&helper, &sales);
+        let series = group_sales_by_level(&helper, &sales, ColorBy::World);
         let names: Vec<_> = series.iter().map(|(n, _)| n.as_str()).collect();
         assert!(names.contains(&"Gilgamesh"));
         assert!(names.contains(&"Adamantoise"));
@@ -615,7 +782,7 @@ mod tests {
         let helper = test_world_helper();
         // Two DCs (Aether, Crystal) both in NA → one region → group by DC.
         let sales = vec![sale(100, 1000, 1, 0), sale(102, 1100, 1, 1)];
-        let series = group_sales_by_locale(&helper, &sales);
+        let series = group_sales_by_level(&helper, &sales, ColorBy::Datacenter);
         let names: Vec<_> = series.iter().map(|(n, _)| n.as_str()).collect();
         assert!(names.contains(&"Aether"));
         assert!(names.contains(&"Crystal"));
@@ -626,7 +793,7 @@ mod tests {
         let helper = test_world_helper();
         // Worlds from two regions → group by region.
         let sales = vec![sale(100, 1000, 1, 0), sale(200, 1100, 1, 1)];
-        let series = group_sales_by_locale(&helper, &sales);
+        let series = group_sales_by_level(&helper, &sales, ColorBy::Region);
         let names: Vec<_> = series.iter().map(|(n, _)| n.as_str()).collect();
         assert!(names.contains(&"North-America"));
         assert!(names.contains(&"Europe"));
