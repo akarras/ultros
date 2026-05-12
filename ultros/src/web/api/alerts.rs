@@ -307,7 +307,19 @@ pub(crate) async fn resend_alert_event(
     );
     let mut last_err: Option<String> = None;
     let mut any_ok = false;
+    let owner = user.id as i64;
     for endpoint in endpoints {
+        // Defense in depth: today `set_alert_rules` is the only path that links endpoints
+        // to alerts and it verifies ownership at link time, but skipping the check here
+        // would silently deliver through a foreign endpoint if a future code path bypassed
+        // that invariant. Endpoints that don't belong to the caller are treated as missing.
+        if endpoint.user_id != owner {
+            last_err = Some(format!(
+                "endpoint {} not owned by caller; skipped",
+                endpoint.id
+            ));
+            continue;
+        }
         match crate::alerts::delivery::deliver_to_endpoint(
             &endpoint,
             title,

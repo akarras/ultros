@@ -29,7 +29,7 @@ pub(crate) fn validate_discord_webhook_url(url: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
-#[allow(clippy::result_large_err, dead_code)]
+#[allow(clippy::result_large_err)]
 pub(crate) fn validate_discord_channel_id(channel_id: i64) -> Result<(), ApiError> {
     if channel_id <= 0 {
         return Err(ApiError::from(anyhow::anyhow!(
