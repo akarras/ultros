@@ -90,6 +90,18 @@ fn legacy_book_help_path(path: &str) -> &'static str {
     }
 }
 
+/// Send a list event; log at warn level if delivery fails. Send errors
+/// here are best-effort — they only matter for observability, so they
+/// must never propagate into handler results.
+fn send_list_event(
+    senders: &EventSenders,
+    event: crate::event::EventType<std::sync::Arc<ultros_api_types::websocket::ListEventData>>,
+) {
+    if let Err(e) = senders.lists.send(event) {
+        warn!(error = %e, "failed to broadcast list event");
+    }
+}
+
 async fn redirect_legacy_book_host(
     req: axum::extract::Request,
     next: middleware::Next,
@@ -470,11 +482,10 @@ pub(crate) async fn delete_list(
 ) -> Result<Json<()>, ApiError> {
     let list = db.get_list(list_id, user.id as i64).await?;
     db.delete_list(list_id, user.id as i64).await?;
-    let _ = senders
-        .lists
-        .send(EventType::removed(ListEventData::List(List::try_from(
-            list,
-        )?)));
+    send_list_event(
+        &senders,
+        EventType::removed(ListEventData::List(List::try_from(list)?)),
+    );
     Ok(Json(()))
 }
 
@@ -488,9 +499,10 @@ pub(crate) async fn create_list(
     let list = db
         .create_list(discord_user, list.name, Some(list.wdr_filter.into()))
         .await?;
-    let _ = senders
-        .lists
-        .send(EventType::added(ListEventData::List(List::try_from(list)?)));
+    send_list_event(
+        &senders,
+        EventType::added(ListEventData::List(List::try_from(list)?)),
+    );
     Ok(Json(()))
 }
 
@@ -514,11 +526,10 @@ pub(crate) async fn edit_list(
             ulist.name = ActiveValue::Set(list.name);
         })
         .await?;
-    let _ = senders
-        .lists
-        .send(EventType::updated(ListEventData::List(List::try_from(
-            list,
-        )?)));
+    send_list_event(
+        &senders,
+        EventType::updated(ListEventData::List(List::try_from(list)?)),
+    );
     Ok(Json(()))
 }
 
@@ -540,9 +551,10 @@ pub(crate) async fn post_item_to_list(
     let item = db
         .add_item_to_list(&list, user.id as i64, item_id, hq, quantity, acquired)
         .await?;
-    let _ = senders
-        .lists
-        .send(EventType::added(ListEventData::ListItem(item.into())));
+    send_list_event(
+        &senders,
+        EventType::added(ListEventData::ListItem(item.into())),
+    );
     Ok(Json(()))
 }
 
@@ -562,11 +574,10 @@ pub(crate) async fn post_items_to_list(
     // Given the current structure, maybe just sending a list update is enough if we want to be simple,
     // but the task says synchronize buying.
     // For now, let's just trigger a refetch by sending the List update.
-    let _ = senders
-        .lists
-        .send(EventType::updated(ListEventData::List(List::try_from(
-            list,
-        )?)));
+    send_list_event(
+        &senders,
+        EventType::updated(ListEventData::List(List::try_from(list)?)),
+    );
     Ok(Json(()))
 }
 
@@ -578,9 +589,10 @@ pub(crate) async fn edit_list_item(
 ) -> Result<Json<()>, ApiError> {
     let item = item.into();
     let item = db.update_list_item(item, user.id as i64).await?;
-    let _ = senders
-        .lists
-        .send(EventType::updated(ListEventData::ListItem(item.into())));
+    send_list_event(
+        &senders,
+        EventType::updated(ListEventData::ListItem(item.into())),
+    );
     Ok(Json(()))
 }
 
@@ -591,9 +603,10 @@ pub(crate) async fn delete_list_item(
     user: AuthDiscordUser,
 ) -> Result<Json<()>, ApiError> {
     let item = db.remove_item_from_list(user.id as i64, id).await?;
-    let _ = senders
-        .lists
-        .send(EventType::removed(ListEventData::ListItem(item.into())));
+    send_list_event(
+        &senders,
+        EventType::removed(ListEventData::ListItem(item.into())),
+    );
     Ok(Json(()))
 }
 
@@ -609,9 +622,10 @@ pub(crate) async fn delete_multiple_list_items(
     )
     .await?;
     for item in deleted_items {
-        let _ = senders
-            .lists
-            .send(EventType::removed(ListEventData::ListItem(item.into())));
+        send_list_event(
+            &senders,
+            EventType::removed(ListEventData::ListItem(item.into())),
+        );
     }
     Ok(Json(()))
 }
@@ -842,11 +856,10 @@ async fn broadcast_list_update(
     user: i64,
 ) -> Result<(), ApiError> {
     let list = db.get_list(list_id, user).await?;
-    let _ = senders
-        .lists
-        .send(EventType::updated(ListEventData::List(List::try_from(
-            list,
-        )?)));
+    send_list_event(
+        senders,
+        EventType::updated(ListEventData::List(List::try_from(list)?)),
+    );
     Ok(())
 }
 
