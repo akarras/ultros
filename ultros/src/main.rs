@@ -32,6 +32,8 @@ use tikv_jemallocator::Jemalloc;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 use ultros_api_types::websocket::{ListingEventData, SaleEventData};
 use ultros_api_types::world::WorldData;
 use ultros_api_types::world_helper::WorldHelper;
@@ -196,14 +198,36 @@ async fn main() -> Result<()> {
     // Load environment variables from `.env` file, if present
     dotenv().ok();
 
+    // Glitchtip / Sentry error reporting. No-op when GLITCHTIP_DSN is unset, so
+    // local dev runs without it. The guard must be held for the duration of
+    // main() so the background transport can flush on shutdown.
+    let _sentry_guard = std::env::var("GLITCHTIP_DSN").ok().map(|dsn| {
+        sentry::init((
+            dsn,
+            sentry::ClientOptions {
+                release: sentry::release_name!(),
+                // Glitchtip currently ignores performance traces; keep low so
+                // we don't waste bandwidth if a real Sentry endpoint is used.
+                traces_sample_rate: 0.0,
+                attach_stacktrace: true,
+                send_default_pii: false,
+                ..Default::default()
+            },
+        ))
+    });
+
     // Create the db before we proceed
     let filter: EnvFilter =
         EnvFilter::try_from_default_env().unwrap_or("warn,ultros=info,ultros-app=info".into());
-    tracing_subscriber::fmt::fmt()
-        .with_file(true)
-        .with_line_number(true)
-        .with_env_filter(filter)
-        .pretty()
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_file(true)
+                .with_line_number(true)
+                .pretty(),
+        )
+        .with(sentry_tracing::layer())
         .init();
     #[cfg(feature = "profiling")]
     tokio::spawn(async move { start_profiling_server().await });

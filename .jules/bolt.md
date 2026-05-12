@@ -2,3 +2,7 @@
 ## 2025-02-13 - Optimize Retainer Lookup in `ultros-db`
 **Learning:** Found a nested loop where we were searching linearly through a `HashMap` of retainers for every single listing being added to the database (`retainers.values().find(|r| r.id == l.retainer_id)`). This turns an $O(K)$ insertion step into $O(N \times K)$ where $N$ is the number of retainers in the map.
 **Action:** Always prefer reverse lookup maps when repeatedly looking up items by a secondary key (like ID when the primary map key is Name). Building a `HashMap<i32, &retainer::Model>` beforehand makes the lookup $O(1)$.
+
+## 2024-05-18 - [Optimizing Leptos Reactivity & Arc Clones]
+**Learning:** In Leptos, using a `move ||` closure for view arguments creates a dynamic node tracking reactivity. For static/immutable strings, computing it once (outside closure or immediately resolving inside `{ }` block without closure) avoids reactive tracking overhead. Also, when passing structs like `SearchResult` around, passing `Arc<SearchResult>` and cloning the `Arc` is O(1) and far cheaper than extracting and cloning its inner `String` components multiple times for callbacks.
+**Action:** Always prefer cloning `Arc` instead of `String` within closures, and omit `move ||` for static derivations when rendering Leptos components.

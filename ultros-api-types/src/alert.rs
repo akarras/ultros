@@ -28,7 +28,13 @@ pub enum AlertDelivery {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreateAlertRequest {
     pub trigger: AlertTrigger,
-    pub delivery: AlertDelivery,
+    /// Deprecated for new clients; if `endpoint_ids` is empty an endpoint is created from this.
+    /// Kept for backward compatibility with existing client-side code until the drawer is migrated.
+    #[serde(default)]
+    pub delivery: Option<AlertDelivery>,
+    /// Endpoints to attach to this alert. Required if `delivery` is None.
+    #[serde(default)]
+    pub endpoint_ids: Vec<i32>,
     /// Defaults to 3600 (1 hour) if omitted.
     pub cooldown_seconds: Option<i32>,
 }
@@ -43,7 +49,9 @@ pub struct UpdateAlertRequest {
 pub struct Alert {
     pub id: i32,
     pub trigger: AlertTrigger,
+    /// Deprecated; reflects the first endpoint's method for old clients. New clients should use `endpoint_ids`.
     pub delivery: AlertDelivery,
+    pub endpoint_ids: Vec<i32>,
     pub enabled: bool,
     pub cooldown_seconds: i32,
     pub last_fired_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -59,4 +67,116 @@ pub struct AlertEvent {
     pub matched_price: Option<i32>,
     pub delivered: bool,
     pub delivery_error: Option<String>,
+}
+
+/// Delivery channel for a notification endpoint. Mirrors the `method` discriminator
+/// stored in the `notification_endpoint.method` DB column.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "method", rename_all = "PascalCase")]
+pub enum EndpointMethod {
+    DiscordDm { user_id: i64 },
+    DiscordChannel { channel_id: i64 },
+    Webhook { url: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Endpoint {
+    pub id: i32,
+    pub name: String,
+    #[serde(flatten)]
+    pub method: EndpointMethod,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreateEndpointRequest {
+    pub name: String,
+    #[serde(flatten)]
+    pub method: EndpointMethod,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdateEndpointRequest {
+    pub name: Option<String>,
+    pub method: Option<EndpointMethod>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResendResult {
+    pub delivered: bool,
+    pub error: Option<String>,
+}
+
+#[cfg(test)]
+mod endpoint_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn endpoint_method_serializes_with_method_tag() {
+        let m = EndpointMethod::DiscordDm { user_id: 42 };
+        let v = serde_json::to_value(&m).unwrap();
+        assert_eq!(v, json!({"method": "DiscordDm", "user_id": 42}));
+    }
+
+    #[test]
+    fn endpoint_serializes_with_flattened_method() {
+        let e = Endpoint {
+            id: 7,
+            name: "Test".to_string(),
+            method: EndpointMethod::Webhook {
+                url: "https://example.invalid".into(),
+            },
+        };
+        let v = serde_json::to_value(&e).unwrap();
+        assert_eq!(
+            v,
+            json!({"id": 7, "name": "Test", "method": "Webhook", "url": "https://example.invalid"})
+        );
+    }
+
+    #[test]
+    fn create_endpoint_request_round_trips() {
+        let req = CreateEndpointRequest {
+            name: "My channel".into(),
+            method: EndpointMethod::DiscordChannel { channel_id: 9 },
+        };
+        let s = serde_json::to_string(&req).unwrap();
+        let back: CreateEndpointRequest = serde_json::from_str(&s).unwrap();
+        assert_eq!(req, back);
+    }
+
+    #[test]
+    fn update_endpoint_request_all_none_round_trips() {
+        let req = UpdateEndpointRequest {
+            name: None,
+            method: None,
+        };
+        let s = serde_json::to_string(&req).unwrap();
+        let back: UpdateEndpointRequest = serde_json::from_str(&s).unwrap();
+        assert_eq!(req, back);
+    }
+
+    #[test]
+    fn update_endpoint_request_name_only_round_trips() {
+        let req = UpdateEndpointRequest {
+            name: Some("renamed".to_string()),
+            method: None,
+        };
+        let s = serde_json::to_string(&req).unwrap();
+        let back: UpdateEndpointRequest = serde_json::from_str(&s).unwrap();
+        assert_eq!(req, back);
+    }
+
+    #[test]
+    fn update_endpoint_request_method_change_round_trips() {
+        let req = UpdateEndpointRequest {
+            name: None,
+            method: Some(EndpointMethod::Webhook {
+                url: "https://discord.com/api/webhooks/1/abc".into(),
+            }),
+        };
+        let s = serde_json::to_string(&req).unwrap();
+        let back: UpdateEndpointRequest = serde_json::from_str(&s).unwrap();
+        assert_eq!(req, back);
+    }
 }

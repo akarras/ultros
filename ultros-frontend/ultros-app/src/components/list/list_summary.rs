@@ -128,8 +128,8 @@ pub fn ListSummary(items: Vec<(ListItem, Vec<ActiveListing>)>) -> impl IntoView 
 
     if marketable_items.is_empty() {
         return view! {
-            <div class="panel p-4 rounded-xl mt-4">
-                <div class="text-center text-[color:var(--color-text-muted)]">
+            <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] p-4">
+                <div class="text-center text-sm text-[color:var(--color-text-muted)]">
                     "No marketable items in list"
                 </div>
             </div>
@@ -141,9 +141,9 @@ pub fn ListSummary(items: Vec<(ListItem, Vec<ActiveListing>)>) -> impl IntoView 
 
     if grand_total == 0 && world_prices.is_empty() {
         return view! {
-            <div class="panel p-4 rounded-xl mt-4 border-2 border-[color:var(--brand-border)]">
-                <div class="text-center font-bold text-lg text-[color:var(--brand-fg)]">
-                    "All items acquired! 🎉"
+            <div class="rounded-lg border border-[color:var(--brand-ring)]/40 bg-[color:var(--color-background-panel)] p-4">
+                <div class="text-center text-lg font-bold text-[color:var(--brand-fg)]">
+                    "All items acquired."
                 </div>
             </div>
         }
@@ -199,15 +199,17 @@ pub fn ListSummary(items: Vec<(ListItem, Vec<ActiveListing>)>) -> impl IntoView 
     });
 
     view! {
-        <div class="panel p-4 rounded-xl mt-4 border-2 border-[color:var(--brand-border)]">
-            <div class="flex flex-row items-center justify-center gap-2">
-                <span class="text-lg font-semibold text-[color:var(--brand-fg)]">
-                    "Estimated Remaining Cost:"
+        <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)]">
+            <div class="flex flex-col gap-2 border-b border-[color:var(--color-outline)] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <span class="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-text-muted)]">
+                    "Estimated remaining cost"
                 </span>
-                <Gil amount=Signal::derive(move || grand_total) />
+                <div class="text-lg font-bold text-[color:var(--brand-fg)]">
+                    <Gil amount=Signal::derive(move || grand_total) />
+                </div>
             </div>
 
-            <div class="mt-3 flex flex-col gap-3 text-sm">
+            <div class="flex flex-col gap-2 p-3 text-sm">
                 {sorted_datacenters
                     .into_iter()
                     .map(|(dc_id, (dc_name, dc_total, dc_count))| {
@@ -220,9 +222,9 @@ pub fn ListSummary(items: Vec<(ListItem, Vec<ActiveListing>)>) -> impl IntoView 
                             <div class="flex flex-col gap-1">
                                 <div
                                     class=move || {
-                                        let base = "flex flex-row items-center gap-2 justify-between font-semibold text-brand-300 bg-brand-900/20 px-2 py-1 rounded";
+                                        let base = "flex flex-row items-center gap-2 justify-between font-semibold text-[color:var(--brand-fg)] bg-[color:var(--color-background-elevated)] px-3 py-2 rounded-lg border border-[color:var(--color-outline)]";
                                         if has_multiple_datacenters {
-                                            format!("{} cursor-pointer hover:bg-brand-900/30 transition-colors", base)
+                                            format!("{} cursor-pointer hover:border-[color:var(--color-outline-strong)] transition-colors", base)
                                         } else {
                                             base.to_string()
                                         }
@@ -242,7 +244,7 @@ pub fn ListSummary(items: Vec<(ListItem, Vec<ActiveListing>)>) -> impl IntoView 
                                     <div class="flex items-center gap-2">
                                         {move || has_multiple_datacenters.then(|| {
                                             view! {
-                                                <span class="text-brand-400">
+                                                <span class="text-[color:var(--color-text-muted)]">
                                                     {if is_expanded() { "▼" } else { "▶" }}
                                                 </span>
                                             }
@@ -261,7 +263,7 @@ pub fn ListSummary(items: Vec<(ListItem, Vec<ActiveListing>)>) -> impl IntoView 
                                     </div>
                                 </div>
                                 <div
-                                    class="flex flex-col gap-1 pl-4 overflow-hidden transition-all duration-200"
+                                    class="flex flex-col gap-1 overflow-hidden pl-4 transition-all duration-200"
                                     class:hidden=move || has_multiple_datacenters && !is_expanded()
                                 >
                                     {worlds
@@ -271,7 +273,7 @@ pub fn ListSummary(items: Vec<(ListItem, Vec<ActiveListing>)>) -> impl IntoView 
                                             let item_count = world_price.item_count;
                                             let world_name = world_price.world_name;
                                             view! {
-                                                <div class="flex flex-row items-center gap-2 justify-between">
+                                                <div class="flex flex-row items-center gap-2 justify-between px-3 py-1">
                                                     <span class="text-[color:var(--color-text)]">{world_name}</span>
                                                     <div class="flex flex-row items-center gap-2">
                                                         <Gil amount=Signal::derive(move || total_price) />
