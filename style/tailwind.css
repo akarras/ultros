@@ -1821,3 +1821,48 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 .toolbar-spacer {
     flex: 1;
 }
+
+/* ----- Item Explorer chip strip (consumed by ItemExplorerToolbar) ----- */
+@utility item-explorer-chip-row {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 0.5rem;
+    overflow-x: auto;
+    padding: 0.25rem 0.25rem 0.5rem 0.25rem;
+    scrollbar-width: thin;
+    -webkit-mask-image: linear-gradient(
+        to right,
+        black 0,
+        black calc(100% - 2rem),
+        transparent 100%
+    );
+    mask-image: linear-gradient(
+        to right,
+        black 0,
+        black calc(100% - 2rem),
+        transparent 100%
+    );
+}
+
+@utility item-explorer-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.35rem 0.7rem;
+    border: 1px solid var(--color-outline);
+    border-radius: 9999px;
+    background: transparent;
+    color: var(--color-text-muted);
+    font-size: 0.85rem;
+    white-space: nowrap;
+    transition: color 150ms ease, background-color 150ms ease, border-color 150ms ease;
+}
+.item-explorer-chip:hover {
+    color: var(--color-text);
+    background-color: color-mix(in srgb, var(--brand-ring) 8%, transparent);
+}
+.item-explorer-chip[aria-current="page"] {
+    color: var(--color-text);
+    border-color: var(--brand-ring);
+    background-color: color-mix(in srgb, var(--brand-ring) 18%, transparent);
+}
