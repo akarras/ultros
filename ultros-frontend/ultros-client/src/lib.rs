@@ -175,7 +175,7 @@ async fn populate_xiv_gen_data() -> anyhow::Result<()> {
     try_populate_xiv_gen_data().await
 }
 
-async fn get_world_data() -> Result<Arc<WorldHelper>, anyhow::Error> {
+async fn fetch_world_data_once() -> Result<Arc<WorldHelper>, anyhow::Error> {
     let json: WorldData = Request::get("/api/v1/world_data")
         .send()
         .await
@@ -186,18 +186,25 @@ async fn get_world_data() -> Result<Arc<WorldHelper>, anyhow::Error> {
     Ok(Arc::new(WorldHelper::from(json)))
 }
 
+async fn get_world_data() -> Result<Arc<WorldHelper>, anyhow::Error> {
+    retry(fetch_world_data_once, 3).await
+}
+
+async fn fetch_region_once() -> Result<String, anyhow::Error> {
+    Request::get("/api/v1/detectregion")
+        .send()
+        .await
+        .map_err(|e| anyhow!("failed to fetch region: {e}"))?
+        .text()
+        .await
+        .map_err(|e| anyhow!("failed to read region response: {e}"))
+}
+
 async fn get_region() -> String {
-    let response = match Request::get("/api/v1/detectregion").send().await {
-        Ok(resp) => resp,
-        Err(e) => {
-            error!("failed to fetch region: {e}");
-            return String::new();
-        }
-    };
-    match response.text().await {
+    match retry(fetch_region_once, 3).await {
         Ok(text) => text,
         Err(e) => {
-            error!("failed to read region response: {e}");
+            error!("region detection failed after retries: {e}");
             String::new()
         }
     }
