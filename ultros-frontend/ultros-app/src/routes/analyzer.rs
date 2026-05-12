@@ -1,3 +1,4 @@
+use crate::analysis::{SaleSummary, format_duration_short, roi_badge_class};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use crate::{
@@ -31,20 +32,6 @@ use ultros_api_types::{
     world_helper::{AnyResult, AnySelector, WorldHelper},
 };
 use xiv_gen::ItemId;
-
-/// Computed sale stats
-#[derive(Hash, Clone, Debug, PartialEq)]
-struct SaleSummary {
-    item_id: i32,
-    hq: bool,
-    /// this value is limited by the summary returned by the API
-    num_sold: usize,
-    /// Represents the average time between sales within the `num_sold`
-    avg_sale_duration: Option<Duration>,
-    max_price: i32,
-    avg_price: i32,
-    min_price: i32,
-}
 
 #[derive(Hash, Clone, Debug, PartialEq, Eq)]
 struct ProfitKey {
@@ -951,23 +938,7 @@ fn AnalyzerTable(
                                     <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
                                         <span class={
                                             let data = data_clone.clone();
-                                            move || {
-                                                let roi = data.return_on_investment;
-                                                let tint = if roi >= 500 {
-                                                    "24%"
-                                                } else if roi >= 200 {
-                                                    "20%"
-                                                } else if roi >= 100 {
-                                                    "16%"
-                                                } else if roi >= 50 {
-                                                    "12%"
-                                                } else {
-                                                    "10%"
-                                                };
-                                                format!(
-                                                    "inline-flex items-center justify-end px-2 py-1 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_{tint},transparent)]"
-                                                )
-                                            }
+                                            move || roi_badge_class(data.return_on_investment)
                                         }>
                                             {format!("{}%", data.return_on_investment)}
                                         </span>
@@ -1010,19 +981,7 @@ fn AnalyzerTable(
                                             .sale_summary
                                             .avg_sale_duration
                                             .and_then(|duration| duration.to_std().ok())
-                                            .map(|duration| {
-                                                let secs = duration.as_secs();
-                                                let days = secs / 86_400;
-                                                let hours = (secs % 86_400) / 3_600;
-                                                let minutes = (secs % 3_600) / 60;
-                                                let seconds = secs % 60;
-                                                let mut parts = Vec::new();
-                                                if days > 0 { parts.push(format!("{}d", days)); }
-                                                if hours > 0 { parts.push(format!("{}h", hours)); }
-                                                if minutes > 0 && parts.len() < 2 { parts.push(format!("{}m", minutes)); }
-                                                if seconds > 0 && parts.len() < 2 { parts.push(format!("{}s", seconds)); }
-                                                if parts.is_empty() { "0s".to_string() } else { parts[..parts.len().min(2)].join(" ") }
-                                            })
+                                            .map(|duration| format_duration_short(duration.as_secs()))
                                             .unwrap_or_else(|| "---".to_string())}
                                     </div>
                                 </div>

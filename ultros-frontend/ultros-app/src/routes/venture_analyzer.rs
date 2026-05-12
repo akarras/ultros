@@ -8,7 +8,9 @@ use crate::{
         gil::*, icon::Icon, item_icon::*, query_button::QueryButton, skeleton::BoxSkeleton,
         tool_help::*, virtual_scroller::*, world_picker::WorldOnlyPicker,
     },
-    global_state::{LocalWorldData, home_world::use_home_world},
+    global_state::{
+        LocalWorldData, home_world::use_home_world, region_for_world::use_region_for_world,
+    },
 };
 use icondata as i;
 use itertools::Itertools;
@@ -25,7 +27,6 @@ use std::{
 use ultros_api_types::{
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     recent_sales::{RecentSales, SaleData},
-    world_helper::AnyResult,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -170,11 +171,10 @@ fn VentureAnalyzerTable(
                 continue;
             }
 
-            #[allow(clippy::collapsible_if)]
-            if let Some(ids) = &selected_ids {
-                if !ids.contains(&task.class_job_category) {
-                    continue;
-                }
+            if let Some(ids) = &selected_ids
+                && !ids.contains(&task.class_job_category)
+            {
+                continue;
             }
 
             // Check if `task.task` (RowId) corresponds to a RetainerTaskNormal
@@ -213,10 +213,10 @@ fn VentureAnalyzerTable(
                     }
                 };
 
-                let venture_cost_gil = 0; // Placeholder
-
+                // Ventures cost venture coins (not gil), so "profit" here is gross revenue.
+                // If we ever convert ventures to a gil-equivalent cost, subtract it here.
                 let revenue = market_price * quantity;
-                let profit = revenue - venture_cost_gil;
+                let profit = revenue;
 
                 if let Some(min) = minimum_profit()
                     && profit < min
@@ -370,7 +370,7 @@ fn VentureAnalyzerTable(
                     key=move |(index, data): &(usize, Arc<VentureProfitData>)| (*index, data.item_id)
                     view=move |(index, data): (usize, Arc<VentureProfitData>)| {
                         let item_id = data.item_id;
-                        let item = items.get(&xiv_gen::ItemId(item_id)).map(|i| i.name.as_str().to_string()).unwrap_or_else(|| t_string!(i18n, venture_analyzer_unknown_item).to_string());
+                        let item = items.get(&xiv_gen::ItemId(item_id)).map(|i| i.name.as_str().to_string()).unwrap_or_else(|| t_string!(i18n, unknown).to_string());
 
                         let classes = if (index % 2) == 0 {
                             "flex flex-row items-center flex-nowrap h-15 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_6%,transparent)] transition-colors"
@@ -431,25 +431,7 @@ pub fn VentureAnalyzer() -> impl IntoView {
     let (home_world, _) = use_home_world();
     let nav = use_navigate();
 
-    let region = Memo::new(move |_| {
-        let worlds = use_context::<LocalWorldData>()
-            .expect("Worlds should always be populated here")
-            .0
-            .unwrap();
-        // Default to home world region or North-America
-        let world_name = query
-            .with(|p| p.get("world").clone())
-            .or_else(|| home_world.get().map(|w| w.name))
-            .unwrap_or_else(|| "North-America".to_string());
-
-        worlds
-            .lookup_world_by_name(&world_name)
-            .map(|world| {
-                let region = worlds.get_region(world);
-                AnyResult::Region(region).get_name().to_string()
-            })
-            .unwrap_or_else(|| "North-America".to_string())
-    });
+    let region = use_region_for_world(move || query.with(|p| p.get("world").clone()));
 
     let global_cheapest_listings = ArcResource::new(region, move |region: String| async move {
         get_cheapest_listings(&region).await

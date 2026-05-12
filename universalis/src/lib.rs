@@ -6,13 +6,13 @@ extern crate core;
 
 use crate::MarketView::{MultiView, SingleView};
 use chrono::{DateTime, Local};
-use log::info;
 use reqwest::{Client, Method, Request, Url};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_with::{TimestampMilliSeconds, TimestampSeconds, formats::Flexible, serde_as};
 use std::collections::{BTreeMap, HashMap};
 use thiserror::Error;
+use tracing::info;
 
 #[derive(Hash, Copy, Clone, Debug, Deserialize, Serialize, Eq, PartialEq, PartialOrd, Ord)]
 pub struct ItemId(pub i32);

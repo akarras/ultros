@@ -8,7 +8,9 @@ use crate::{
         gil::*, icon::Icon, item_icon::*, query_button::QueryButton, skeleton::BoxSkeleton,
         tool_help::*, virtual_scroller::*, world_picker::WorldOnlyPicker,
     },
-    global_state::{LocalWorldData, home_world::use_home_world},
+    global_state::{
+        LocalWorldData, home_world::use_home_world, region_for_world::use_region_for_world,
+    },
 };
 use icondata as i;
 use leptos::{either::Either, prelude::*};
@@ -20,7 +22,6 @@ use std::{cmp::Reverse, collections::HashMap, sync::Arc};
 use ultros_api_types::{
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     recent_sales::{RecentSales, SaleData},
-    world_helper::AnyResult,
 };
 use xiv_gen::{
     ClassJobCategoryId, CraftLeve, ItemId, Leve, LeveId, LeveRewardItemGroupId, LeveRewardItemId,
@@ -361,15 +362,15 @@ fn LeveAnalyzerTable(
                             }
                         }
                     >
-                        <option value="">{t!(i18n, leve_analyzer_all_jobs)}</option>
-                        <option value="Carpenter" selected=move || job_filter() == Some("Carpenter".to_string())>{t!(i18n, leve_analyzer_job_carpenter)}</option>
-                        <option value="Blacksmith" selected=move || job_filter() == Some("Blacksmith".to_string())>{t!(i18n, leve_analyzer_job_blacksmith)}</option>
-                        <option value="Armorer" selected=move || job_filter() == Some("Armorer".to_string())>{t!(i18n, leve_analyzer_job_armorer)}</option>
-                        <option value="Goldsmith" selected=move || job_filter() == Some("Goldsmith".to_string())>{t!(i18n, leve_analyzer_job_goldsmith)}</option>
-                        <option value="Leatherworker" selected=move || job_filter() == Some("Leatherworker".to_string())>{t!(i18n, leve_analyzer_job_leatherworker)}</option>
-                        <option value="Weaver" selected=move || job_filter() == Some("Weaver".to_string())>{t!(i18n, leve_analyzer_job_weaver)}</option>
-                        <option value="Alchemist" selected=move || job_filter() == Some("Alchemist".to_string())>{t!(i18n, leve_analyzer_job_alchemist)}</option>
-                        <option value="Culinarian" selected=move || job_filter() == Some("Culinarian".to_string())>{t!(i18n, leve_analyzer_job_culinarian)}</option>
+                        <option value="">{t!(i18n, all_jobs)}</option>
+                        <option value="Carpenter" selected=move || job_filter() == Some("Carpenter".to_string())>{t!(i18n, carpenter)}</option>
+                        <option value="Blacksmith" selected=move || job_filter() == Some("Blacksmith".to_string())>{t!(i18n, blacksmith)}</option>
+                        <option value="Armorer" selected=move || job_filter() == Some("Armorer".to_string())>{t!(i18n, armorer)}</option>
+                        <option value="Goldsmith" selected=move || job_filter() == Some("Goldsmith".to_string())>{t!(i18n, goldsmith)}</option>
+                        <option value="Leatherworker" selected=move || job_filter() == Some("Leatherworker".to_string())>{t!(i18n, leatherworker)}</option>
+                        <option value="Weaver" selected=move || job_filter() == Some("Weaver".to_string())>{t!(i18n, weaver)}</option>
+                        <option value="Alchemist" selected=move || job_filter() == Some("Alchemist".to_string())>{t!(i18n, alchemist)}</option>
+                        <option value="Culinarian" selected=move || job_filter() == Some("Culinarian".to_string())>{t!(i18n, culinarian)}</option>
                     </select>
                 </div>
 
@@ -431,7 +432,7 @@ fn LeveAnalyzerTable(
                     key=move |(index, data): &(usize, Arc<LeveProfitData>)| (*index, data.leve.key_id)
                     view=move |(index, data): (usize, Arc<LeveProfitData>)| {
                         let item_id = data.item_id;
-                        let item = items.get(&item_id).map(|i| i.name.as_str().to_string()).unwrap_or_else(|| t_string!(i18n, leve_analyzer_unknown_item).to_string());
+                        let item = items.get(&item_id).map(|i| i.name.as_str().to_string()).unwrap_or_else(|| t_string!(i18n, unknown).to_string());
                         let leve_name = data.leve.name.as_str();
 
                         let classes = if (index % 2) == 0 {
@@ -496,25 +497,7 @@ pub fn LeveAnalyzer() -> impl IntoView {
     let (home_world, _) = use_home_world();
     let nav = use_navigate();
 
-    let region = Memo::new(move |_| {
-        let worlds = use_context::<LocalWorldData>()
-            .expect("Worlds should always be populated here")
-            .0
-            .unwrap();
-        // Default to home world region or North-America
-        let world_name = query
-            .with(|p| p.get("world").clone())
-            .or_else(|| home_world.get().map(|w| w.name))
-            .unwrap_or_else(|| "North-America".to_string());
-
-        worlds
-            .lookup_world_by_name(&world_name)
-            .map(|world| {
-                let region = worlds.get_region(world);
-                AnyResult::Region(region).get_name().to_string()
-            })
-            .unwrap_or_else(|| "North-America".to_string())
-    });
+    let region = use_region_for_world(move || query.with(|p| p.get("world").clone()));
 
     let global_cheapest_listings = ArcResource::new(region, move |region: String| async move {
         get_cheapest_listings(&region).await

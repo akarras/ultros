@@ -11,4 +11,10 @@ pub struct UserGroup {
 pub struct UserGroupMember {
     pub group_id: i32,
     pub user_id: i64,
+    pub username: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CreateGroup {
+    pub name: String,
 }

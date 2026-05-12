@@ -6,22 +6,20 @@ pub(crate) mod error;
 pub(crate) mod item_card;
 pub(crate) mod oauth;
 pub(crate) mod sitemap;
+pub(crate) mod state;
+pub(crate) mod static_files;
 
 use anyhow::Error;
-use axum::body::Body;
-use axum::extract::{FromRef, Path, Query, State};
-use axum::http::{HeaderValue, Response, StatusCode};
+use axum::extract::{Path, Query, State};
 use axum::response::{IntoResponse, Redirect};
 use axum::routing::{delete, get, post};
-use axum::{Json, Router, body, middleware};
-use axum_extra::TypedHeader;
+use axum::{Json, Router, middleware};
 use axum_extra::extract::CookieJar;
-use axum_extra::extract::cookie::{Cookie, Key};
-use axum_extra::headers::{CacheControl, ContentType, HeaderMapExt};
+use axum_extra::extract::cookie::Cookie;
+use axum_extra::headers::{CacheControl, HeaderMapExt};
 use futures::future::{try_join, try_join_all};
 use hyper::header;
 use itertools::Itertools;
-use leptos::config::LeptosOptions;
 use leptos::prelude::provide_context;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
@@ -30,35 +28,33 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::time::timeout;
-use tokio_util::sync::CancellationToken;
 use tower_http::compression::predicate::{NotForContentType, SizeAbove};
 use tower_http::compression::{CompressionLayer, Predicate};
 use tower_http::trace::TraceLayer;
 use tracing::{debug, warn};
-use ultros_api_types::icon_size::IconSize;
-use ultros_api_types::list::{CreateList, List, ListItem, ListPermission};
+use ultros_api_types::list::{
+    CreateInvite, CreateList, List, ListInvite, ListItem, ListSharedGroup, ListSharedUser,
+    ListWithPermission, ShareListGroup, ShareListUser,
+};
 use ultros_api_types::retainer::RetainerListings;
+use ultros_api_types::user::group::{CreateGroup, UserGroup, UserGroupMember};
 use ultros_api_types::user::{OwnedRetainer, UserData, UserRetainerListings, UserRetainers};
 use ultros_api_types::websocket::{ListEventData, ListingEventData};
 use ultros_api_types::world::WorldData;
-use ultros_api_types::world_helper::WorldHelper;
 use ultros_api_types::{
     ActiveListing, CurrentlyShownItem, FfxivCharacter, FfxivCharacterVerification, Retainer,
 };
 use ultros_app::{LocalWorldData, shell};
 use ultros_db::ActiveValue;
-use ultros_db::common_type_conversions::ApiConversionError;
 use ultros_db::world_data::world_cache::AnySelector;
 use ultros_db::{UltrosDb, world_data::world_cache::WorldCache};
-use ultros_xiv_icons::get_item_image;
 use universalis::{ItemId, ListingView, UniversalisClient, WorldId};
 
 use self::character_verifier_service::CharacterVerifierService;
 use self::country_code_decoder::Region;
 use self::error::{ApiError, WebError};
-use self::oauth::{AuthDiscordUser, AuthUserCache, DiscordAuthConfig};
-use crate::analyzer_service::AnalyzerService;
-use crate::event::{EventReceivers, EventSenders, EventType};
+use self::oauth::{AuthDiscordUser, AuthUserCache};
+use crate::event::{EventSenders, EventType};
 use crate::leptos::create_leptos_app;
 use crate::search_service::SearchService;
 use crate::web::api::alerts::{
@@ -235,191 +231,8 @@ async fn refresh_world_item_listings(
     Ok(Redirect::to(&format!("/item/{world}/{item_id}")))
 }
 
-#[derive(Clone)]
-pub(crate) struct WebState {
-    pub(crate) db: UltrosDb,
-    pub(crate) key: Key,
-    pub(crate) oauth_config: DiscordAuthConfig,
-    pub(crate) user_cache: AuthUserCache,
-    pub(crate) event_receivers: EventReceivers,
-    pub(crate) event_senders: EventSenders,
-    pub(crate) world_cache: Arc<WorldCache>,
-    /// Common variant of world_cache. Maybe get rid of world_cache?
-    pub(crate) world_helper: Arc<WorldHelper>,
-    pub(crate) analyzer_service: AnalyzerService,
-    pub(crate) character_verification: CharacterVerifierService,
-    pub(crate) leptos_options: LeptosOptions,
-    pub(crate) search_service: SearchService,
-    pub(crate) token: CancellationToken,
-}
-
-impl FromRef<WebState> for UltrosDb {
-    fn from_ref(input: &WebState) -> Self {
-        input.db.clone()
-    }
-}
-
-impl FromRef<WebState> for Key {
-    fn from_ref(input: &WebState) -> Self {
-        input.key.clone()
-    }
-}
-
-impl FromRef<WebState> for DiscordAuthConfig {
-    fn from_ref(input: &WebState) -> Self {
-        input.oauth_config.clone()
-    }
-}
-
-impl FromRef<WebState> for AuthUserCache {
-    fn from_ref(input: &WebState) -> Self {
-        input.user_cache.clone()
-    }
-}
-
-impl FromRef<WebState> for EventReceivers {
-    fn from_ref(input: &WebState) -> Self {
-        input.event_receivers.clone()
-    }
-}
-
-impl FromRef<WebState> for Arc<WorldCache> {
-    fn from_ref(input: &WebState) -> Self {
-        input.world_cache.clone()
-    }
-}
-
-impl FromRef<WebState> for Arc<WorldHelper> {
-    fn from_ref(input: &WebState) -> Self {
-        input.world_helper.clone()
-    }
-}
-
-impl FromRef<WebState> for AnalyzerService {
-    fn from_ref(input: &WebState) -> Self {
-        input.analyzer_service.clone()
-    }
-}
-
-impl FromRef<WebState> for EventSenders {
-    fn from_ref(input: &WebState) -> Self {
-        input.event_senders.clone()
-    }
-}
-
-impl FromRef<WebState> for CharacterVerifierService {
-    fn from_ref(input: &WebState) -> Self {
-        input.character_verification.clone()
-    }
-}
-
-impl FromRef<WebState> for LeptosOptions {
-    fn from_ref(input: &WebState) -> Self {
-        input.leptos_options.clone()
-    }
-}
-
-impl FromRef<WebState> for SearchService {
-    fn from_ref(input: &WebState) -> Self {
-        input.search_service.clone()
-    }
-}
-
-/// In release mode, return the files from a statically included dir
-#[cfg(not(debug_assertions))]
-fn get_static_file(path: &str) -> Option<&'static [u8]> {
-    use include_dir::include_dir;
-    static STATIC_DIR: include_dir::Dir = include_dir!("$CARGO_MANIFEST_DIR/static");
-    let dir = &STATIC_DIR;
-    let file = dir.get_file(path)?;
-    Some(file.contents())
-}
-
-/// In debug mode, just load the files from disk
-#[cfg(debug_assertions)]
-fn get_static_file(path: &str) -> Option<Vec<u8>> {
-    use std::{io::Read, path::PathBuf};
-
-    let file = PathBuf::from("./ultros/static").join(path);
-    let mut file = std::fs::File::open(file).ok()?;
-    let mut vec = Vec::new();
-    file.read_to_end(&mut vec).ok()?;
-    Some(vec)
-}
-
-async fn get_file(path: &str) -> Result<impl IntoResponse + use<>, WebError> {
-    let mime_type = mime_guess::from_path(path).first_or_text_plain();
-    match get_static_file(path) {
-        None => Ok(Response::builder()
-            .status(StatusCode::NOT_FOUND)
-            .body(Body::new(http_body_util::Empty::new()))?),
-        Some(file) => Ok(Response::builder()
-            .status(StatusCode::OK)
-            .header(
-                header::CONTENT_TYPE,
-                HeaderValue::from_str(mime_type.as_ref()).unwrap(),
-            )
-            .header(
-                header::CACHE_CONTROL,
-                #[cfg(not(debug_assertions))]
-                HeaderValue::from_str("public, max-age=86400").unwrap(),
-                #[cfg(debug_assertions)]
-                HeaderValue::from_str("none").unwrap(),
-            )
-            .body(Body::new(http_body_util::Full::from(file)))?),
-    }
-}
-
-async fn favicon() -> impl IntoResponse {
-    get_file("favicon.ico").await
-}
-
-async fn robots() -> impl IntoResponse {
-    get_file("robots.txt").await
-}
-
-async fn static_path(Path(path): Path<String>) -> impl IntoResponse {
-    let path = path.trim_start_matches('/');
-    get_file(path).await
-}
-
-#[derive(Deserialize)]
-struct IconQuery {
-    size: IconSize,
-}
-
-async fn fallback_item_icon() -> impl IntoResponse {
-    let fallback_image = include_bytes!("../static/fallback-image.png");
-    (TypedHeader(ContentType::png()), fallback_image)
-}
-
-async fn get_item_icon(
-    Path(item_id): Path<u32>,
-    Query(query): Query<IconQuery>,
-) -> Result<Response<body::Body>, WebError> {
-    // When an item has no icon (or the requested size variant is missing),
-    // serve the static fallback PNG with 200 instead of throwing a 500.
-    // Browsers render the placeholder cleanly and no console errors fire.
-    if let Some(bytes) = get_item_image(item_id as i32, query.size) {
-        let mime_type = mime_guess::from_path("icon.webp").first_or_text_plain();
-        Ok(Response::builder()
-            .header(
-                header::CACHE_CONTROL,
-                HeaderValue::from_static("max-age=86400"),
-            )
-            .header(header::CONTENT_TYPE, mime_type.as_ref())
-            .body(body::Body::new(http_body_util::Full::from(bytes)))?)
-    } else {
-        let fallback: &'static [u8] = include_bytes!("../static/fallback-image.png");
-        Ok(Response::builder()
-            .header(
-                header::CACHE_CONTROL,
-                HeaderValue::from_static("max-age=3600"),
-            )
-            .header(header::CONTENT_TYPE, "image/png")
-            .body(body::Body::new(http_body_util::Full::from(fallback)))?)
-    }
-}
+pub(crate) use self::state::WebState;
+use self::static_files::{fallback_item_icon, favicon, get_item_icon, robots, static_path};
 
 pub(crate) async fn invite() -> Redirect {
     let client_id = std::env::var("DISCORD_CLIENT_ID").expect("Unable to get DISCORD_CLIENT_ID");
@@ -558,13 +371,24 @@ pub(crate) async fn unclaim_retainer(
 pub(crate) async fn get_lists(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
-) -> Result<Json<Vec<List>>, ApiError> {
-    let lists = db
-        .get_lists_for_user(user.id as i64)
-        .await?
-        .into_iter()
-        .map(List::try_from)
-        .collect::<Result<Vec<_>, ApiConversionError>>()?;
+) -> Result<Json<Vec<ListWithPermission>>, ApiError> {
+    let lists = try_join_all(
+        db.get_lists_for_user(user.id as i64)
+            .await?
+            .into_iter()
+            .map(|list| {
+                let db = db.clone();
+                let user_id = user.id as i64;
+                async move {
+                    let permission = db.get_permission(list.id, user_id).await?;
+                    Ok::<_, ApiError>(ListWithPermission {
+                        list: List::try_from(list)?,
+                        permission,
+                    })
+                }
+            }),
+    )
+    .await?;
     Ok(Json(lists))
 }
 
@@ -572,17 +396,21 @@ pub(crate) async fn get_list(
     State(db): State<UltrosDb>,
     Path(id): Path<i32>,
     user: AuthDiscordUser,
-) -> Result<Json<(List, Vec<ListItem>)>, ApiError> {
+) -> Result<Json<(ListWithPermission, Vec<ListItem>)>, ApiError> {
     let (list, list_items) = futures::future::try_join(
         db.get_list(id, user.id as i64),
         db.get_list_items(id, user.id as i64),
     )
     .await?;
+    let permission = db.get_permission(id, user.id as i64).await?;
     let list_items = list_items
         .into_iter()
         .map(ListItem::from)
         .collect::<Vec<_>>();
-    let list = List::try_from(list)?;
+    let list = ListWithPermission {
+        list: List::try_from(list)?,
+        permission,
+    };
     Ok(Json((list, list_items)))
 }
 
@@ -591,12 +419,13 @@ pub(crate) async fn get_list_with_listings(
     State(world_cache): State<Arc<WorldCache>>,
     Path(id): Path<i32>,
     user: AuthDiscordUser,
-) -> Result<Json<(List, Vec<(ListItem, Vec<ActiveListing>)>)>, ApiError> {
+) -> Result<Json<(ListWithPermission, Vec<(ListItem, Vec<ActiveListing>)>)>, ApiError> {
     let (list, list_items) = futures::future::try_join(
         db.get_list(id, user.id as i64),
         db.get_list_items(id, user.id as i64),
     )
     .await?;
+    let permission = db.get_permission(id, user.id as i64).await?;
     // tbd: probably don't need to send clients all listings, but for now keep it this way.
     let selector = AnySelector::try_from(&list)?;
     let world = world_cache.lookup_selector(&selector)?;
@@ -623,7 +452,13 @@ pub(crate) async fn get_list_with_listings(
         })
         .collect();
 
-    Ok(Json((List::try_from(list)?, list_items)))
+    Ok(Json((
+        ListWithPermission {
+            list: List::try_from(list)?,
+            permission,
+        },
+        list_items,
+    )))
 }
 
 pub(crate) async fn delete_list(
@@ -666,18 +501,15 @@ pub(crate) async fn edit_list(
 ) -> Result<Json<()>, ApiError> {
     let list = db
         .update_list(list.id, user.id as i64, |ulist| {
-            ulist.datacenter_id = ActiveValue::Set(match list.wdr_filter {
-                ultros_api_types::world_helper::AnySelector::Datacenter(dc) => Some(dc),
-                _ => None,
-            });
-            ulist.region_id = ActiveValue::Set(match list.wdr_filter {
-                ultros_api_types::world_helper::AnySelector::Region(region) => Some(region),
-                _ => None,
-            });
-            ulist.world_id = ActiveValue::Set(match list.wdr_filter {
-                ultros_api_types::world_helper::AnySelector::World(world) => Some(world),
-                _ => None,
-            });
+            use ultros_api_types::world_helper::AnySelector;
+            let (datacenter_id, region_id, world_id) = match list.wdr_filter {
+                AnySelector::Datacenter(dc) => (Some(dc), None, None),
+                AnySelector::Region(region) => (None, Some(region), None),
+                AnySelector::World(world) => (None, None, Some(world)),
+            };
+            ulist.datacenter_id = ActiveValue::Set(datacenter_id);
+            ulist.region_id = ActiveValue::Set(region_id);
+            ulist.world_id = ActiveValue::Set(world_id);
             ulist.name = ActiveValue::Set(list.name);
         })
         .await?;
@@ -875,14 +707,8 @@ async fn character_search(
         .flat_map(|r| {
             // world comes back as World [Datacenter], so strip the datacenter and parse the world
             let (world, _) = r.world.split_once(' ')?;
-            let world = cache
-                .lookup_value_by_name(world)
-                .ok()
-                .unwrap_or_else(|| panic!("World {} not found", world));
-            let (first_name, last_name) = r
-                .name
-                .split_once(' ')
-                .expect("Should always have first last name");
+            let world = cache.lookup_value_by_name(world).ok()?;
+            let (first_name, last_name) = r.name.split_once(' ')?;
             Some(FfxivCharacter {
                 id: r.user_id as i32,
                 first_name: first_name.to_string(),
@@ -929,57 +755,26 @@ async fn unclaim_character(
     Ok(Json(()))
 }
 
-#[derive(Deserialize)]
-struct CreateInvite {
-    permission: ListPermission,
-    max_uses: Option<i32>,
-}
+// --- Group management ---
 
-async fn create_invite(
+pub(crate) async fn get_groups(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
-    Path(id): Path<i32>,
-    Json(data): Json<CreateInvite>,
-) -> Result<Json<String>, ApiError> {
-    let invite = db
-        .create_invite(id, user.id as i64, data.permission, data.max_uses)
-        .await?;
-    Ok(Json(invite.id))
+) -> Result<Json<Vec<UserGroup>>, ApiError> {
+    let groups = db.get_groups_for_user(user.id as i64).await?;
+    Ok(Json(groups.into_iter().map(UserGroup::from).collect()))
 }
 
-async fn use_invite(
+pub(crate) async fn create_group(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
-    Path(id): Path<String>,
-) -> Result<Json<i32>, ApiError> {
-    let shared = db.use_invite(id, user.id as i64).await?;
-    Ok(Json(shared.list_id))
+    Json(group): Json<CreateGroup>,
+) -> Result<Json<UserGroup>, ApiError> {
+    let group = db.create_group(group.name, user.id as i64).await?;
+    Ok(Json(UserGroup::from(group)))
 }
 
-async fn delete_invite(
-    State(db): State<UltrosDb>,
-    user: AuthDiscordUser,
-    Path(id): Path<String>,
-) -> Result<Json<()>, ApiError> {
-    db.delete_invite(id, user.id as i64).await?;
-    Ok(Json(()))
-}
-
-#[derive(Deserialize)]
-struct CreateGroup {
-    name: String,
-}
-
-async fn create_group(
-    State(db): State<UltrosDb>,
-    user: AuthDiscordUser,
-    Json(data): Json<CreateGroup>,
-) -> Result<Json<i32>, ApiError> {
-    let group = db.create_group(data.name, user.id as i64).await?;
-    Ok(Json(group.id))
-}
-
-async fn delete_group(
+pub(crate) async fn delete_group(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
     Path(id): Path<i32>,
@@ -988,82 +783,166 @@ async fn delete_group(
     Ok(Json(()))
 }
 
-#[derive(Deserialize)]
-struct AddMember {
-    user_id: i64,
-}
-
-async fn add_group_member(
+pub(crate) async fn get_group_members(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
     Path(id): Path<i32>,
-    Json(data): Json<AddMember>,
+) -> Result<Json<Vec<UserGroupMember>>, ApiError> {
+    let members = db.get_group_members(id, user.id as i64).await?;
+    Ok(Json(
+        members.into_iter().map(UserGroupMember::from).collect(),
+    ))
+}
+
+pub(crate) async fn add_group_member(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path((group_id, member_id)): Path<(i32, i64)>,
 ) -> Result<Json<()>, ApiError> {
-    db.add_group_member(id, user.id as i64, data.user_id)
+    db.add_group_member(group_id, user.id as i64, member_id)
         .await?;
     Ok(Json(()))
 }
 
-async fn remove_group_member(
+pub(crate) async fn remove_group_member(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
-    Path((id, user_id)): Path<(i32, i64)>,
+    Path((group_id, member_id)): Path<(i32, i64)>,
 ) -> Result<Json<()>, ApiError> {
-    db.remove_group_member(id, user.id as i64, user_id).await?;
-    Ok(Json(()))
-}
-
-#[derive(Deserialize)]
-struct ShareUser {
-    user_id: i64,
-    permission: ListPermission,
-}
-
-#[derive(Deserialize)]
-struct ShareGroup {
-    group_id: i32,
-    permission: ListPermission,
-}
-
-async fn share_list_with_user(
-    State(db): State<UltrosDb>,
-    user: AuthDiscordUser,
-    Path(id): Path<i32>,
-    Json(data): Json<ShareUser>,
-) -> Result<Json<()>, ApiError> {
-    db.share_list_with_user(id, user.id as i64, data.user_id, data.permission)
+    db.remove_group_member(group_id, user.id as i64, member_id)
         .await?;
     Ok(Json(()))
 }
 
-async fn share_list_with_group(
+// --- List sharing ---
+
+pub(crate) async fn get_list_shares(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
     Path(id): Path<i32>,
-    Json(data): Json<ShareGroup>,
+) -> Result<Json<(Vec<ListSharedUser>, Vec<ListSharedGroup>)>, ApiError> {
+    let (users, groups) = futures::future::try_join(
+        db.get_list_shared_users(id, user.id as i64),
+        db.get_list_shared_groups(id, user.id as i64),
+    )
+    .await?;
+    Ok(Json((
+        users.into_iter().map(ListSharedUser::from).collect(),
+        groups.into_iter().map(ListSharedGroup::from).collect(),
+    )))
+}
+
+// Sharing changes who can see the list — broadcast a list-update event so
+// affected clients (the recipient and the owner) refetch their list set.
+async fn broadcast_list_update(
+    db: &UltrosDb,
+    senders: &EventSenders,
+    list_id: i32,
+    user: i64,
+) -> Result<(), ApiError> {
+    let list = db.get_list(list_id, user).await?;
+    let _ = senders
+        .lists
+        .send(EventType::updated(ListEventData::List(List::try_from(
+            list,
+        )?)));
+    Ok(())
+}
+
+pub(crate) async fn share_list_with_user(
+    State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+    Json(share): Json<ShareListUser>,
 ) -> Result<Json<()>, ApiError> {
-    db.share_list_with_group(id, user.id as i64, data.group_id, data.permission)
+    db.share_list_with_user(id, user.id as i64, share.user_id, share.permission)
         .await?;
+    broadcast_list_update(&db, &senders, id, user.id as i64).await?;
     Ok(Json(()))
 }
 
-async fn unshare_list_from_user(
+pub(crate) async fn share_list_with_group(
     State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+    Json(share): Json<ShareListGroup>,
+) -> Result<Json<()>, ApiError> {
+    db.share_list_with_group(id, user.id as i64, share.group_id, share.permission)
+        .await?;
+    broadcast_list_update(&db, &senders, id, user.id as i64).await?;
+    Ok(Json(()))
+}
+
+pub(crate) async fn unshare_list_from_user(
+    State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
     user: AuthDiscordUser,
     Path((id, user_id)): Path<(i32, i64)>,
 ) -> Result<Json<()>, ApiError> {
     db.unshare_list_from_user(id, user.id as i64, user_id)
         .await?;
+    // Best-effort: only broadcast if the caller still has read permission
+    // (e.g. the owner unsharing someone else). If a member removed themselves
+    // they can no longer fetch the list, so skip the broadcast in that case.
+    let _ = broadcast_list_update(&db, &senders, id, user.id as i64).await;
     Ok(Json(()))
 }
 
-async fn unshare_list_from_group(
+pub(crate) async fn unshare_list_from_group(
     State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
     user: AuthDiscordUser,
     Path((id, group_id)): Path<(i32, i32)>,
 ) -> Result<Json<()>, ApiError> {
     db.unshare_list_from_group(id, user.id as i64, group_id)
         .await?;
+    broadcast_list_update(&db, &senders, id, user.id as i64).await?;
+    Ok(Json(()))
+}
+
+// --- Invites ---
+
+pub(crate) async fn get_list_invites(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+) -> Result<Json<Vec<ListInvite>>, ApiError> {
+    let invites = db.get_list_invites(id, user.id as i64).await?;
+    Ok(Json(invites.into_iter().map(ListInvite::from).collect()))
+}
+
+pub(crate) async fn create_invite(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+    Json(invite): Json<CreateInvite>,
+) -> Result<Json<ListInvite>, ApiError> {
+    let invite = db
+        .create_invite(id, user.id as i64, invite.permission, invite.max_uses)
+        .await?;
+    Ok(Json(ListInvite::from(invite)))
+}
+
+pub(crate) async fn use_invite(
+    State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
+    user: AuthDiscordUser,
+    Path(id): Path<String>,
+) -> Result<Json<i32>, ApiError> {
+    let shared = db.use_invite(id, user.id as i64).await?;
+    // The user just gained access — surface the list to their UI.
+    broadcast_list_update(&db, &senders, shared.list_id, user.id as i64).await?;
+    Ok(Json(shared.list_id))
+}
+
+pub(crate) async fn delete_invite(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<String>,
+) -> Result<Json<()>, ApiError> {
+    db.delete_invite(id, user.id as i64).await?;
     Ok(Json(()))
 }
 
@@ -1185,13 +1064,19 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/list/{id}/delete", delete(delete_list))
         .route("/api/v1/list/item/{id}/delete", delete(delete_list_item))
         .route("/api/v1/list/item/delete", post(delete_multiple_list_items))
+        .route("/api/v1/group", get(get_groups))
         .route("/api/v1/group/create", post(create_group))
         .route("/api/v1/group/{id}", delete(delete_group))
-        .route("/api/v1/group/{id}/member/add", post(add_group_member))
+        .route("/api/v1/group/{id}/members", get(get_group_members))
         .route(
-            "/api/v1/group/{id}/member/{user_id}",
+            "/api/v1/group/{group_id}/member/add/{member_id}",
+            post(add_group_member),
+        )
+        .route(
+            "/api/v1/group/{group_id}/member/remove/{member_id}",
             delete(remove_group_member),
         )
+        .route("/api/v1/list/{id}/shares", get(get_list_shares))
         .route("/api/v1/list/{id}/share/user", post(share_list_with_user))
         .route("/api/v1/list/{id}/share/group", post(share_list_with_group))
         .route(
@@ -1202,6 +1087,7 @@ pub(crate) async fn start_web(state: WebState) {
             "/api/v1/list/{id}/share/group/{group_id}",
             delete(unshare_list_from_group),
         )
+        .route("/api/v1/list/{id}/invites", get(get_list_invites))
         .route("/api/v1/list/{id}/invite/create", post(create_invite))
         .route("/api/v1/invite/{id}/use", post(use_invite))
         .route("/api/v1/invite/{id}", delete(delete_invite))

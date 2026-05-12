@@ -1,4 +1,4 @@
-mod group;
+pub mod group;
 mod user_data;
 mod user_retainers;
 

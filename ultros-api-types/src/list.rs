@@ -39,6 +39,12 @@ pub struct List {
     pub wdr_filter: AnySelector,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ListWithPermission {
+    pub list: List,
+    pub permission: ListPermission,
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone, Default, Eq, PartialEq, PartialOrd, Ord)]
 pub struct ListItem {
     pub id: i32,
@@ -57,6 +63,40 @@ pub struct ListInvite {
     pub permission: ListPermission,
     pub max_uses: Option<i32>,
     pub uses: i32,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ListSharedUser {
+    pub list_id: i32,
+    pub user_id: i64,
+    pub username: String,
+    pub permission: ListPermission,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ListSharedGroup {
+    pub list_id: i32,
+    pub group_id: i32,
+    pub group_name: String,
+    pub permission: ListPermission,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ShareListUser {
+    pub user_id: i64,
+    pub permission: ListPermission,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ShareListGroup {
+    pub group_id: i32,
+    pub permission: ListPermission,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CreateInvite {
+    pub permission: ListPermission,
+    pub max_uses: Option<i32>,
 }
 
 #[cfg(test)]
@@ -84,6 +124,23 @@ mod tests {
         assert!(ListPermission::None < ListPermission::Read);
         assert!(ListPermission::Read < ListPermission::Write);
         assert!(ListPermission::Write < ListPermission::Owner);
+    }
+
+    #[test]
+    fn list_with_permission_serde_roundtrip() {
+        let list = ListWithPermission {
+            list: List {
+                id: 1,
+                owner: 2,
+                name: "Shared".into(),
+                wdr_filter: AnySelector::World(3),
+            },
+            permission: ListPermission::Write,
+        };
+        let s = serde_json::to_string(&list).unwrap();
+        let back: ListWithPermission = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.list.id, 1);
+        assert_eq!(back.permission, ListPermission::Write);
     }
 
     #[test]
