@@ -531,6 +531,50 @@ impl UltrosDb {
             .await?;
         Ok(rules.into_iter().map(|r| r.endpoint_id).collect())
     }
+
+    /// Find an existing endpoint owned by `owner` whose method+config matches; otherwise
+    /// create a new one. Returns the endpoint id. Used by bot commands to bind alerts to
+    /// the caller's default DM endpoint without dup-ing rows on repeat use.
+    pub async fn get_or_create_dm_endpoint(&self, owner: i64, name: &str) -> Result<i32> {
+        let cfg = serde_json::json!({ "user_id": owner });
+        if let Some(existing) = notification_endpoint::Entity::find()
+            .filter(notification_endpoint::Column::UserId.eq(owner))
+            .filter(notification_endpoint::Column::Method.eq("DiscordDm"))
+            .filter(Expr::cust_with_values(
+                "config::jsonb = ?::jsonb",
+                vec![cfg.clone()],
+            ))
+            .one(&self.db)
+            .await?
+        {
+            return Ok(existing.id);
+        }
+        self.create_endpoint(owner, name, "DiscordDm", cfg).await
+    }
+
+    /// Same as `get_or_create_dm_endpoint` but for a DiscordChannel pointed at `channel_id`.
+    pub async fn get_or_create_channel_endpoint(
+        &self,
+        owner: i64,
+        channel_id: i64,
+        name: &str,
+    ) -> Result<i32> {
+        let cfg = serde_json::json!({ "channel_id": channel_id });
+        if let Some(existing) = notification_endpoint::Entity::find()
+            .filter(notification_endpoint::Column::UserId.eq(owner))
+            .filter(notification_endpoint::Column::Method.eq("DiscordChannel"))
+            .filter(Expr::cust_with_values(
+                "config::jsonb = ?::jsonb",
+                vec![cfg.clone()],
+            ))
+            .one(&self.db)
+            .await?
+        {
+            return Ok(existing.id);
+        }
+        self.create_endpoint(owner, name, "DiscordChannel", cfg)
+            .await
+    }
 }
 
 #[cfg(test)]
