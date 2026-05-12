@@ -42,8 +42,8 @@ impl TryFrom<&list::Model> for AnySelector {
 impl UltrosDb {
     /// Compute the requesting user's permission on a list, given the loaded list model.
     ///
-    /// Issues at most one DB query (the shared_user + group_perm lookups are issued in
-    /// parallel via `try_join!`). Owner short-circuits without hitting the DB.
+    /// Issues the shared_user + group_perm lookups in parallel via `try_join!`.
+    /// Owner short-circuits without hitting the DB.
     async fn permission_for(&self, list: &list::Model, user_id: i64) -> Result<ListPermission> {
         if list.owner == user_id {
             return Ok(ListPermission::Owner);
