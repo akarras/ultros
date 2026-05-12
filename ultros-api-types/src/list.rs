@@ -157,6 +157,7 @@ mod tests {
         assert!(item.hq.is_none());
         assert!(item.quantity.is_none());
         assert!(item.acquired.is_none());
+        assert!(item.target_price.is_none());
     }
 
     #[test]
@@ -168,6 +169,7 @@ mod tests {
             hq: Some(true),
             quantity: Some(99),
             acquired: Some(50),
+            target_price: Some(150_000),
         };
         let s = serde_json::to_string(&item).unwrap();
         let back: ListItem = serde_json::from_str(&s).unwrap();
