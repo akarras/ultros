@@ -8,6 +8,7 @@ use ultros_api_types::alert::{
 };
 use ultros_db::UltrosDb;
 
+use crate::web::api::endpoint_validation::validate_discord_webhook_url;
 use crate::web::error::ApiError;
 use crate::web::oauth::AuthDiscordUser;
 
@@ -217,35 +218,6 @@ pub(crate) async fn list_alert_events(
     ))
 }
 
-#[allow(clippy::result_large_err)]
-fn validate_discord_webhook_url(url: &str) -> Result<(), ApiError> {
-    let parsed = url::Url::parse(url)
-        .map_err(|e| ApiError::from(anyhow::anyhow!("invalid webhook URL: {e}")))?;
-    if parsed.scheme() != "https" {
-        return Err(ApiError::from(anyhow::anyhow!(
-            "webhook URL must use https"
-        )));
-    }
-    let host = parsed.host_str().unwrap_or("");
-    let allowed = [
-        "discord.com",
-        "discordapp.com",
-        "ptb.discord.com",
-        "canary.discord.com",
-    ];
-    if !allowed.contains(&host) {
-        return Err(ApiError::from(anyhow::anyhow!(
-            "webhook URL host must be a Discord webhook host"
-        )));
-    }
-    if !parsed.path().starts_with("/api/webhooks/") {
-        return Err(ApiError::from(anyhow::anyhow!(
-            "webhook URL path must start with /api/webhooks/"
-        )));
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -294,58 +266,5 @@ mod tests {
         assert!(validate_price_threshold(0).is_err());
         assert!(validate_price_threshold(-1).is_err());
         assert!(validate_price_threshold(i32::MIN).is_err());
-    }
-
-    // ---------- validate_discord_webhook_url ----------
-
-    #[test]
-    fn webhook_url_accepts_canonical_discord_host() {
-        assert!(validate_discord_webhook_url("https://discord.com/api/webhooks/1/abc").is_ok());
-    }
-
-    #[test]
-    fn webhook_url_accepts_all_documented_discord_hosts() {
-        for host in [
-            "discord.com",
-            "discordapp.com",
-            "ptb.discord.com",
-            "canary.discord.com",
-        ] {
-            let url = format!("https://{host}/api/webhooks/1/abc");
-            assert!(
-                validate_discord_webhook_url(&url).is_ok(),
-                "expected ok for {url}"
-            );
-        }
-    }
-
-    #[test]
-    fn webhook_url_rejects_non_https_scheme() {
-        assert!(validate_discord_webhook_url("http://discord.com/api/webhooks/1/abc").is_err());
-        assert!(validate_discord_webhook_url("ftp://discord.com/api/webhooks/1/abc").is_err());
-    }
-
-    #[test]
-    fn webhook_url_rejects_non_discord_host() {
-        assert!(validate_discord_webhook_url("https://evil.com/api/webhooks/1/abc").is_err());
-        assert!(
-            validate_discord_webhook_url("https://discord.com.evil.com/api/webhooks/1/abc")
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn webhook_url_rejects_wrong_path_prefix() {
-        assert!(validate_discord_webhook_url("https://discord.com/").is_err());
-        assert!(validate_discord_webhook_url("https://discord.com/api/").is_err());
-        assert!(
-            validate_discord_webhook_url("https://discord.com/login?next=/api/webhooks/").is_err()
-        );
-    }
-
-    #[test]
-    fn webhook_url_rejects_garbage_string() {
-        assert!(validate_discord_webhook_url("not a url").is_err());
-        assert!(validate_discord_webhook_url("").is_err());
     }
 }
