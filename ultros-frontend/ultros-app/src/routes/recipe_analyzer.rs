@@ -39,7 +39,6 @@ struct RecipeProfitData {
     cost: i32,
     market_price: i32,
     cheapest_world_id: i32,
-    ingredients_cost: Vec<(ItemId, i32)>, // ItemId, Cost
     sub_crafts: Vec<SubcraftInfo>,
     daily_sales: f32,
     avg_price: i32,
@@ -342,7 +341,6 @@ fn RecipeAnalyzerTable(
                 cost: cost_per_unit,
                 market_price,
                 cheapest_world_id,
-                ingredients_cost: vec![], // Populate if needed for tooltip
                 sub_crafts,
                 daily_sales: sales_stats.daily_sales,
                 avg_price: sales_stats.avg_price,

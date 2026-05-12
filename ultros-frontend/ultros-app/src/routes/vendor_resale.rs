@@ -23,7 +23,6 @@ use std::{cmp::Reverse, collections::HashMap, str::FromStr, sync::Arc};
 use ultros_api_types::{
     cheapest_listings::CheapestListings,
     recent_sales::{RecentSales, SaleData},
-    world_helper::WorldHelper,
 };
 use xiv_gen::ItemId;
 
@@ -183,7 +182,6 @@ impl VendorProfitTable {
 fn VendorResaleTable(
     sales: RecentSales,
     world_cheapest_listings: CheapestListings,
-    _worlds: Arc<WorldHelper>,
     world: Signal<String>,
 ) -> impl IntoView {
     let i18n = use_i18n();
@@ -685,10 +683,6 @@ pub fn VendorWorldView() -> impl IntoView {
             get_cheapest_listings(&world).await
         },
     );
-    let worlds = use_context::<LocalWorldData>()
-        .expect("Worlds should always be populated here")
-        .0
-        .unwrap();
 
     view! {
         <div class="main-content p-2 sm:p-6">
@@ -731,8 +725,6 @@ pub fn VendorWorldView() -> impl IntoView {
                             {move || {
                                 let world_cheapest = world_cheapest_listings.get();
                                 let sales = sales.get();
-                                let worlds = worlds.clone();
-
                                 match (world_cheapest, sales) {
                                     (Some(Ok(w)), Some(Ok(s))) => {
                                         Either::Left(
@@ -740,7 +732,6 @@ pub fn VendorWorldView() -> impl IntoView {
                                                 <VendorResaleTable
                                                     sales=s
                                                     world_cheapest_listings=w
-                                                    _worlds=worlds
                                                     world=world.into()
                                                 />
                                             },
