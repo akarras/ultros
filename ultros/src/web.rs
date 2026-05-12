@@ -4,6 +4,7 @@ pub(crate) mod character_verifier_service;
 pub(crate) mod country_code_decoder;
 pub(crate) mod error;
 pub(crate) mod item_card;
+pub(crate) mod list_permission;
 pub(crate) mod oauth;
 pub(crate) mod sitemap;
 pub(crate) mod state;
