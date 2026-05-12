@@ -400,14 +400,19 @@ pub(crate) async fn resend_alert_event(event_id: i64) -> AppResult<ResendResult>
 
 /// Fetch the server's VAPID public key. Used by the browser to call
 /// `pushManager.subscribe({applicationServerKey})`.
-#[allow(dead_code)] // wired up in Task 11 by EndpointsPanel's subscribe flow
+///
+/// SSR builds never invoke this — the browser-side subscribe flow lives behind
+/// `cfg(all(feature = "hydrate", target_arch = "wasm32"))` — so this is "dead"
+/// on the server. The allow is targeted, not a `#[allow]` smell.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub(crate) async fn get_vapid_public_key() -> AppResult<VapidPublicKey> {
     fetch_api("/api/v1/push/vapid-public-key").await
 }
 
 /// Persist the browser's PushSubscription on the server and create a matching
-/// notification endpoint of method=WebPush.
-#[allow(dead_code)] // wired up in Task 11 by EndpointsPanel's subscribe flow
+/// notification endpoint of method=WebPush. SSR-dead, same reasoning as
+/// [`get_vapid_public_key`].
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub(crate) async fn create_push_subscription(
     req: CreatePushSubscriptionRequest,
 ) -> AppResult<Endpoint> {
