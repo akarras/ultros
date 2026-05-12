@@ -109,30 +109,48 @@ pub fn AlertRulesPanel() -> impl IntoView {
                                                 each=move || rows.clone()
                                                 key=|a| a.id
                                                 children=move |a: Alert| {
-                                                    let AlertTrigger::BelowThreshold {
-                                                        item_id,
-                                                        price_threshold,
-                                                        hq_only,
-                                                        world_selector,
-                                                    } = a.trigger.clone();
-                                                    let item_name = tracked_data()
-                                                        .items
-                                                        .get(&ItemId(item_id))
-                                                        .map(|it| it.name.as_str().to_string())
-                                                        .unwrap_or_else(|| format!("Item {item_id}"));
-                                                    let threshold_str = format!("≤ {price_threshold} gil");
-                                                    let world_str = match world_selector {
-                                                        ultros_api_types::world_helper::AnySelector::World(id) => {
-                                                            format!("World({id})")
+                                                    // Display strings differ per trigger variant. List-scoped alerts
+                                                    // don't carry a single item/world/hq — render those columns with
+                                                    // the list id and "—" placeholders so the table stays uniform.
+                                                    let (item_name, threshold_str, world_str, hq_str): (
+                                                        String,
+                                                        String,
+                                                        String,
+                                                        &'static str,
+                                                    ) = match a.trigger.clone() {
+                                                        AlertTrigger::BelowThreshold {
+                                                            item_id,
+                                                            price_threshold,
+                                                            hq_only,
+                                                            world_selector,
+                                                        } => {
+                                                            let name = tracked_data()
+                                                                .items
+                                                                .get(&ItemId(item_id))
+                                                                .map(|it| it.name.as_str().to_string())
+                                                                .unwrap_or_else(|| format!("Item {item_id}"));
+                                                            let threshold = format!("≤ {price_threshold} gil");
+                                                            let world = match world_selector {
+                                                                ultros_api_types::world_helper::AnySelector::World(id) => {
+                                                                    format!("World({id})")
+                                                                }
+                                                                ultros_api_types::world_helper::AnySelector::Datacenter(id) => {
+                                                                    format!("DC({id})")
+                                                                }
+                                                                ultros_api_types::world_helper::AnySelector::Region(id) => {
+                                                                    format!("Region({id})")
+                                                                }
+                                                            };
+                                                            let hq = if hq_only { "HQ" } else { "any" };
+                                                            (name, threshold, world, hq)
                                                         }
-                                                        ultros_api_types::world_helper::AnySelector::Datacenter(id) => {
-                                                            format!("DC({id})")
-                                                        }
-                                                        ultros_api_types::world_helper::AnySelector::Region(id) => {
-                                                            format!("Region({id})")
-                                                        }
+                                                        AlertTrigger::ListItemThreshold { list_id } => (
+                                                            format!("List #{list_id}"),
+                                                            "per-item target".to_string(),
+                                                            "list-defined".to_string(),
+                                                            "—",
+                                                        ),
                                                     };
-                                                    let hq_str = if hq_only { "HQ" } else { "any" };
                                                     let endpoints_str = a
                                                         .endpoint_ids
                                                         .iter()
