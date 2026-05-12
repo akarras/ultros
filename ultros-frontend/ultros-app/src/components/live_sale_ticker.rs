@@ -13,8 +13,8 @@ use xiv_gen::ItemId;
 
 use crate::components::skeleton::BoxSkeleton;
 use crate::global_state::home_world::use_home_world;
-#[cfg(not(feature = "ssr"))]
-use crate::ws::live_data::live_sales;
+use crate::ws::realtime::{RealtimeSubscription, use_realtime};
+use ultros_api_types::websocket::{EventType, FilterPredicate, ServerClient, SocketMessageType};
 
 #[derive(Clone)]
 pub(crate) struct SaleView {
@@ -40,6 +40,8 @@ pub fn LiveSaleTicker() -> impl IntoView {
     let sales = RwSignal::<VecDeque<SaleView>>::new(VecDeque::new());
     let (homeworld, _) = use_home_world();
     let retrigger = RwSignal::new(false);
+    let live_subscription = StoredValue::new(None::<RealtimeSubscription>);
+    let realtime = use_realtime();
     // auto-trigger initial load and refresh on homeworld changes
     Effect::new({
         move |_| {
@@ -52,23 +54,49 @@ pub fn LiveSaleTicker() -> impl IntoView {
         }
     });
     Effect::new(move |_| {
-        #[cfg(not(feature = "ssr"))]
         let hw_1 = homeworld();
-        #[cfg(not(feature = "ssr"))]
         let hw_2 = homeworld();
         if !retrigger.get() {
             return;
         }
+        live_subscription.update_value(|sub| *sub = None);
+        if let (Some(sale), Some(realtime)) = (
+            hw_1.map(|h| ultros_api_types::world_helper::AnySelector::World(h.id)),
+            realtime.clone(),
+        ) {
+            let sub = realtime.subscribe_market(
+                FilterPredicate::World(sale),
+                SocketMessageType::Sales,
+                move |message| match message {
+                    ServerClient::Sales(EventType::Added(add)) => {
+                        let _ = sales.try_update(|sales| {
+                            for (sale, _) in add.sales {
+                                sales.push_front(SaleView {
+                                    item_id: sale.sold_item_id,
+                                    price: sale.price_per_item,
+                                    sold_date: sale.sold_date,
+                                    hq: sale.hq,
+                                });
+                            }
+                            use itertools::Itertools;
+                            sales
+                                .make_contiguous()
+                                .sort_by_key(|sale| std::cmp::Reverse(sale.sold_date));
+                            *sales = sales
+                                .iter()
+                                .unique_by(|sale| (sale.item_id, sale.hq))
+                                .take(8)
+                                .cloned()
+                                .collect();
+                        });
+                    }
+                    ServerClient::Stale { .. } => retrigger.set(true),
+                    _ => {}
+                },
+            );
+            live_subscription.set_value(Some(sub));
+        }
         spawn_local(async move {
-            #[cfg(not(feature = "ssr"))]
-            if let Some(sale) =
-                hw_1.map(|h| ultros_api_types::world_helper::AnySelector::World(h.id))
-            {
-                live_sales(sales, sale).await.unwrap();
-            }
-        });
-        spawn_local(async move {
-            #[cfg(not(feature = "ssr"))]
             #[allow(clippy::collapsible_if)]
             if let Some(world) = hw_2.map(|h| h.name) {
                 #[allow(clippy::collapsible_if)]
@@ -99,6 +127,9 @@ pub fn LiveSaleTicker() -> impl IntoView {
             set_done_loading(true);
         });
         retrigger.set(false);
+    });
+    on_cleanup(move || {
+        live_subscription.update_value(|sub| *sub = None);
     });
 
     view! {

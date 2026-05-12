@@ -7,9 +7,9 @@ license = "MIT"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-serde = {version = "1.0.228", features = ["derive", "rc"]}
-chrono = {version = "0.4.42", features = ["serde"]}
-thiserror = "2.0.17"
+serde = { workspace = true, features = ["derive", "rc"] }
+chrono = { workspace = true, features = ["serde"] }
+thiserror = { workspace = true }
 rkyv = { version = "0.7.42", features = ["validation", "size_64", "hashbrown"], default-features = false, optional = true }
 
 [features]
@@ -17,4 +17,4 @@ default = []
 rkyv = ["dep:rkyv", "chrono/rkyv-64", "chrono/rkyv-validation"]
 
 [dev-dependencies]
-serde_json = "1.0"
+serde_json = { workspace = true }

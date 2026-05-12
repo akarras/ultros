@@ -33,6 +33,7 @@ use crate::{
         currency_exchange::{CurrencyExchange, CurrencySelection, ExchangeItem},
         edit_retainers::*,
         fc_crafting_analyzer::*,
+        help::*,
         history::*,
         home_page::*,
         item_explorer::*,
@@ -67,8 +68,84 @@ use leptos_router::components::{A, ParentRoute, Route, Router, Routes};
 use leptos_router::path;
 use log::info;
 
+fn error_reporting_script() -> Option<String> {
+    let dsn = std::env::var("ULTROS_ERROR_REPORTING_DSN").ok()?;
+    if dsn.trim().is_empty() {
+        return None;
+    }
+
+    let environment = std::env::var("ULTROS_ERROR_REPORTING_ENVIRONMENT")
+        .or_else(|_| std::env::var("LEPTOS_ENVIRONMENT"))
+        .unwrap_or_else(|_| "production".to_string());
+    let sample_rate = std::env::var("ULTROS_ERROR_REPORTING_SAMPLE_RATE")
+        .ok()
+        .and_then(|value| value.parse::<f64>().ok())
+        .unwrap_or(1.0);
+    let traces_sample_rate = std::env::var("ULTROS_ERROR_REPORTING_TRACES_SAMPLE_RATE")
+        .ok()
+        .and_then(|value| value.parse::<f64>().ok())
+        .unwrap_or(0.0);
+    let release = format!("ultros@{}", git_short_hash!());
+
+    let config = serde_json::json!({
+        "dsn": dsn,
+        "release": release,
+        "environment": environment,
+        "sampleRate": sample_rate.clamp(0.0, 1.0),
+        "tracesSampleRate": traces_sample_rate.clamp(0.0, 1.0),
+        "autoSessionTracking": false,
+        "sendDefaultPii": false,
+        "attachStacktrace": true,
+    });
+    let sdk_url = std::env::var("ULTROS_ERROR_REPORTING_SDK_URL")
+        .unwrap_or_else(|_| "https://browser.sentry-cdn.com/10.52.0/bundle.min.js".to_string());
+    let config = serde_json::to_string(&config).expect("Sentry config should serialize");
+    let sdk_url = serde_json::to_string(&sdk_url).expect("SDK URL should serialize");
+
+    Some(format!(
+        r#"(function(){{
+    var config = {config};
+    var sdkUrl = {sdk_url};
+
+    window.__ultrosReportRustPanic = function(message, location) {{
+        var Sentry = window.Sentry;
+        if (!Sentry || !Sentry.captureException) {{
+            return;
+        }}
+
+        var error = new Error(message || "Rust WASM panic");
+        error.name = "RustWasmPanic";
+        Sentry.withScope(function(scope) {{
+            scope.setTag("runtime", "wasm");
+            if (location) {{
+                scope.setContext("rust_panic", {{ location: location }});
+            }}
+            Sentry.captureException(error);
+        }});
+    }};
+
+    var init = function() {{
+        if (!window.Sentry || !window.Sentry.init) {{
+            return;
+        }}
+        window.Sentry.init(config);
+    }};
+
+    var script = document.createElement("script");
+    script.src = sdkUrl;
+    script.crossOrigin = "anonymous";
+    script.onload = init;
+    script.onerror = function() {{
+        console.warn("Ultros error reporting SDK failed to load");
+    }};
+    document.head.appendChild(script);
+}})();"#
+    ))
+}
+
 pub fn shell(options: LeptosOptions) -> impl IntoView {
     let sheet_url = ["/", options.site_pkg_dir.as_ref(), "/ultros.css"].concat();
+    let error_reporting_script = error_reporting_script();
     view! {
         <!DOCTYPE html>
         <html lang="en" data-theme="dark" data-palette="violet">
@@ -93,6 +170,10 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
                 <meta property="og:type" content="website" />
                 <meta property="og:locale" content="en-US" />
                 <meta property="og:site_name" content="Ultros" />
+                {error_reporting_script
+                    .map(|script| {
+                        view! { <script>{script}</script> }
+                    })}
                 <AutoReload options=options.clone() />
                 <HydrationScripts options />
                 <MetaTags />
@@ -130,12 +211,12 @@ pub fn Footer() -> impl IntoView {
                             <span>{t!(i18n, patreon)}</span>
                         </a>
                     </PatreonWrapper>
-                    <a
-                        href="https://book.ultros.app"
-                        class="btn-ghost opacity-80 hover:opacity-100"
+                    <A
+                        href="/help"
+                        attr:class="btn-ghost opacity-80 hover:opacity-100"
                     >
-                        <Icon icon=i::BsBook width="1.2em" height="1.2em" /><span>{t!(i18n, book)}</span>
-                    </a>
+                        <Icon icon=i::BsBook width="1.2em" height="1.2em" /><span>"Help"</span>
+                    </A>
                     <A
                         href="/about"
                         attr:class="btn-ghost opacity-80 hover:opacity-100"
@@ -222,12 +303,13 @@ pub fn NavRow() -> impl IntoView {
                                     <div class="w-full">
                                         <SearchBox />
                                     </div>
-                                    <div class="mt-2 flex items-center justify-between w-full">
+                                    <div class="mt-2 flex items-center justify-between w-full gap-2">
                                         <A href="/" exact=true attr:class="nav-link">
                                             <Icon icon=i::AiHomeFilled />
                                             <span class="hidden sm:inline">{t!(i18n, home)}</span>
                                         </A>
                                         <AppsMenu />
+                                        <LanguageNavMenu />
                                         <UserMenu />
                                     </div>
                                 </div>
@@ -236,7 +318,7 @@ pub fn NavRow() -> impl IntoView {
                                 <div class="hidden lg:flex items-center gap-3">
                     <div class="hidden lg:block">
                         <div class="flex items-center gap-2">
-                            <LanguagePicker />
+                            <LanguageNavMenu />
                             <QuickThemeToggle />
                         </div>
                     </div>
@@ -286,6 +368,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
     provide_theme_settings();
     provide_toast_context();
     provide_xiv_data_revision();
+    ws::realtime::provide_realtime_context();
     // AnimationContext::provide();
     let root_node_ref = NodeRef::<Div>::new();
     #[cfg(feature = "hydrate")]
@@ -361,6 +444,8 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                                 <Route path=path!("trends") view=Trends />
                                 <Route path=path!("settings") view=Settings />
                                 <Route path=path!("welcome") view=Welcome />
+                                <Route path=path!("help") view=HelpIndex />
+                                <Route path=path!("help/:topic") view=HelpArticle />
                                 <Route path=path!("profile") view=Profile />
                                 <Route path=path!("privacy") view=PrivacyPolicy />
                                 <Route path=path!("cookie-policy") view=CookiePolicy />

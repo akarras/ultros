@@ -2,15 +2,16 @@ use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use crate::{
-    analysis::{SalesStats, analyze_sales},
+    analysis::{SalesStats, analyze_sales, roi_badge_class},
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
         add_recipe_to_list::AddRecipeToList, crafter_settings::CrafterSettings, gil::*, icon::Icon,
-        item_icon::*, query_button::QueryButton, skeleton::BoxSkeleton, tooltip::Tooltip,
-        virtual_scroller::*, world_picker::WorldOnlyPicker,
+        item_icon::*, query_button::QueryButton, skeleton::BoxSkeleton, tool_help::*,
+        tooltip::Tooltip, virtual_scroller::*, world_picker::WorldOnlyPicker,
     },
     global_state::{
-        LocalWorldData, cookies::Cookies, crafter_levels::CrafterLevels, home_world::use_home_world,
+        cookies::Cookies, crafter_levels::CrafterLevels, home_world::use_home_world,
+        region_for_world::use_region_for_world,
     },
 };
 use icondata as i;
@@ -20,7 +21,6 @@ use std::{cmp::Reverse, collections::HashMap, fmt::Display, str::FromStr, sync::
 use ultros_api_types::{
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     recent_sales::{RecentSales, SaleData},
-    world_helper::AnyResult,
 };
 use xiv_gen::{ItemId, Recipe, RecipeLevelTableId};
 
@@ -39,7 +39,6 @@ struct RecipeProfitData {
     cost: i32,
     market_price: i32,
     cheapest_world_id: i32,
-    ingredients_cost: Vec<(ItemId, i32)>, // ItemId, Cost
     sub_crafts: Vec<SubcraftInfo>,
     daily_sales: f32,
     avg_price: i32,
@@ -342,7 +341,6 @@ fn RecipeAnalyzerTable(
                 cost: cost_per_unit,
                 market_price,
                 cheapest_world_id,
-                ingredients_cost: vec![], // Populate if needed for tooltip
                 sub_crafts,
                 daily_sales: sales_stats.daily_sales,
                 avg_price: sales_stats.avg_price,
@@ -537,19 +535,28 @@ fn RecipeAnalyzerTable(
                                 }
                             }
                         >
-                            <option value="">"All Jobs"</option>
-                            <option value="CRP" selected=move || job_filter() == Some("CRP".to_string())>"Carpenter"</option>
-                            <option value="BSM" selected=move || job_filter() == Some("BSM".to_string())>"Blacksmith"</option>
-                            <option value="ARM" selected=move || job_filter() == Some("ARM".to_string())>"Armorer"</option>
-                            <option value="GSM" selected=move || job_filter() == Some("GSM".to_string())>"Goldsmith"</option>
-                            <option value="LTW" selected=move || job_filter() == Some("LTW".to_string())>"Leatherworker"</option>
-                            <option value="WVR" selected=move || job_filter() == Some("WVR".to_string())>"Weaver"</option>
-                            <option value="ALC" selected=move || job_filter() == Some("ALC".to_string())>"Alchemist"</option>
-                            <option value="CUL" selected=move || job_filter() == Some("CUL".to_string())>"Culinarian"</option>
+                            <option value="">{t!(i18n, all_jobs)}</option>
+                            <option value="CRP" selected=move || job_filter() == Some("CRP".to_string())>{t!(i18n, carpenter)}</option>
+                            <option value="BSM" selected=move || job_filter() == Some("BSM".to_string())>{t!(i18n, blacksmith)}</option>
+                            <option value="ARM" selected=move || job_filter() == Some("ARM".to_string())>{t!(i18n, armorer)}</option>
+                            <option value="GSM" selected=move || job_filter() == Some("GSM".to_string())>{t!(i18n, goldsmith)}</option>
+                            <option value="LTW" selected=move || job_filter() == Some("LTW".to_string())>{t!(i18n, leatherworker)}</option>
+                            <option value="WVR" selected=move || job_filter() == Some("WVR".to_string())>{t!(i18n, weaver)}</option>
+                            <option value="ALC" selected=move || job_filter() == Some("ALC".to_string())>{t!(i18n, alchemist)}</option>
+                            <option value="CUL" selected=move || job_filter() == Some("CUL".to_string())>{t!(i18n, culinarian)}</option>
                         </select>
                      </div>
                 </FilterCard>
             </div>
+
+            <Show when=move || !has_levels()>
+                <ActionableEmptyState
+                    title="Set crafter levels to see recipe recommendations"
+                    body="Recipe Analyzer filters to crafts your character can make. Open the crafting profile section above and enter at least one crafter level."
+                    action_href="/help/recipe-analyzer"
+                    action_label="Read recipe help"
+                />
+            </Show>
 
             // Results Table
              <div class="rounded-2xl overflow-x-auto panel content-visible contain-layout contain-paint will-change-scroll forced-layer">
@@ -654,11 +661,7 @@ fn RecipeAnalyzerTable(
                                 <div role="cell" class="px-4 py-2 w-32 shrink-0 text-right">
                                      <span class={
                                         let data = data_clone.clone();
-                                        move || {
-                                            let roi = data.return_on_investment;
-                                            let tint = if roi >= 500 { "24%" } else if roi >= 200 { "20%" } else if roi >= 100 { "16%" } else if roi >= 50 { "12%" } else { "10%" };
-                                            format!("inline-flex items-center justify-end px-2 py-1 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_{tint},transparent)]")
-                                        }
+                                        move || roi_badge_class(data.return_on_investment)
                                     }>
                                         {format!("{}%", data.return_on_investment)}
                                     </span>
@@ -740,25 +743,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     let params = use_params_map();
     let (home_world, _) = use_home_world();
 
-    let region = Memo::new(move |_| {
-        let worlds = use_context::<LocalWorldData>()
-            .expect("Worlds should always be populated here")
-            .0
-            .unwrap();
-        // Default to home world region or North-America
-        let world_name = params
-            .with(|p| p.get("world").clone())
-            .or_else(|| home_world.get().map(|w| w.name))
-            .unwrap_or_else(|| "North-America".to_string());
-
-        worlds
-            .lookup_world_by_name(&world_name)
-            .map(|world| {
-                let region = worlds.get_region(world);
-                AnyResult::Region(region).get_name().to_string()
-            })
-            .unwrap_or_else(|| "North-America".to_string())
-    });
+    let region = use_region_for_world(move || params.with(|p| p.get("world").clone()));
 
     let global_cheapest_listings = ArcResource::new(region, move |region: String| async move {
         get_cheapest_listings(&region).await
@@ -775,15 +760,8 @@ pub fn RecipeAnalyzer() -> impl IntoView {
 
     let recent_sales = ArcResource::new(selected_world, move |world| async move {
         if let Some(world) = world {
-            leptos::logging::log!("Fetching sales for world: {}", &world.name);
-            let res = get_recent_sales_for_world(&world.name).await;
-            match &res {
-                Ok(sales) => leptos::logging::log!("Sales result: {} items", sales.sales.len()),
-                Err(e) => leptos::logging::log!("Sales error: {}", e),
-            }
-            res
+            get_recent_sales_for_world(&world.name).await
         } else {
-            leptos::logging::log!("No world selected for sales");
             Ok(RecentSales { sales: vec![] })
         }
     });
@@ -794,9 +772,15 @@ pub fn RecipeAnalyzer() -> impl IntoView {
             <MetaTitle title="Recipe Analyzer - Ultros" />
             <MetaDescription text="Analyze crafting recipes for profitability" />
 
-            <div class="flex flex-col gap-4 p-4 bg-brand-900/50 rounded-lg border border-brand-800">
-                <div class="flex flex-row justify-between items-center">
-                    <h1 class="text-2xl font-bold text-brand-100">"Recipe Analyzer"</h1>
+            <div class="flex flex-col gap-4">
+                <ToolHeader
+                    title="Recipe Analyzer"
+                    summary="Find recipes where estimated craft cost is lower than the market price for the finished item."
+                    context="Configure crafter levels first so the results match recipes you can actually make."
+                    help_href="/help/recipe-analyzer"
+                    help_body="Recipe Analyzer uses cheapest ingredient listings, optional subcraft checks, your crafter levels, and recent sales. A profitable recipe is strongest when the output also sells regularly."
+                />
+                <div class="flex flex-row justify-end items-center">
                     <div class="flex flex-row gap-2 items-center">
                         <Suspense fallback=|| view! { <div class="text-brand-300 text-sm animate-pulse">"Loading sales data..."</div> }>
                             {move || {
@@ -832,6 +816,16 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                         </div>
                     }
                 }
+                <CalculationSummary
+                    title="Ingredient policy"
+                    formula="profit = output market price - ingredient cost"
+                    details="Ingredient cost uses the cheapest matching listings. Subcraft mode checks whether crafting intermediate ingredients is cheaper than buying them directly."
+                />
+                <div class="flex flex-wrap gap-2">
+                    <AssumptionBadge text="Crafter levels filter available recipes" />
+                    <AssumptionBadge text="Subcraft recursion is limited" />
+                    <AssumptionBadge text="Sales velocity affects confidence" />
+                </div>
 
                 <Show when=move || selected_world.get().is_some()>
                     <div class="flex flex-col md:flex-row items-center gap-2">

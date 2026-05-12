@@ -12,11 +12,11 @@ ultros-db = { path = "../ultros-db", features = ["rkyv"] }
 anyhow = { workspace = true }
 axum.workspace = true
 axum-extra.workspace = true
-axum-macros = "0.5.0"
+axum-macros = { workspace = true }
 cookie = "0.18"
 xiv-gen-db = { path = "../xiv-gen-db", features = ["embed"] }
 poise = { version = "0.6.1" }
-chrono = "0.4.42"
+chrono = { workspace = true }
 lodestone = { git = "https://github.com/akarras/lodestone.git", branch = 'async', default-features = false, features = [
     "rustls-tls",
 ] }
@@ -24,7 +24,7 @@ reqwest = { version = "0.11", default-features = false, features = [
     "rustls-tls",
 ] }
 xiv-gen.workspace = true
-serde = { version = "1.0.228", features = ["derive"] }
+serde = { workspace = true }
 include_dir = "0.7.2"
 mime_guess = "2.0.4"
 tokio = { workspace = true }
@@ -34,8 +34,8 @@ tracing-subscriber = "0.3"
 futures = { workspace = true }
 oauth2 = "4.1"
 async-trait = '0.1'
-serde_json = "1.0.85"
-thiserror = "1.0.36"
+serde_json = { workspace = true }
+thiserror = { workspace = true }
 dotenvy = { workspace = true }
 metrics = "0.24.3"
 envy = "0.4"
