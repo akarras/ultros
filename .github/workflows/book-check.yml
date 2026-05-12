@@ -1,0 +1,32 @@
+name: Book Check
+
+on:
+    pull_request:
+
+permissions:
+    contents: read
+
+jobs:
+    check:
+        runs-on: ubuntu-latest
+        env:
+            MDBOOK_VERSION: v0.5.2
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+
+            - name: Install mdBook
+              run: |
+                  set -euo pipefail
+                  url="https://github.com/rust-lang/mdbook/releases/download/${MDBOOK_VERSION}/mdbook-${MDBOOK_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+                  mkdir -p "$HOME/mdbook-bin"
+                  curl --fail --show-error --location "$url" | tar -xz --directory="$HOME/mdbook-bin"
+                  echo "$HOME/mdbook-bin" >> "$GITHUB_PATH"
+
+
+            - name: Build book
+              run: |
+                  cd userguide
+                  mdbook build
