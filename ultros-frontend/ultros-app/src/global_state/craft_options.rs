@@ -1,6 +1,6 @@
 //! Shared craft-options cookie state. Consumed by the recipe analyzer,
 //! FC analyzer, and item-page recipe panel in Tasks 7-9.
-// TODO(Task 7): drop this allow once the first UI consumer lands.
+// TODO(Tasks 8-9): remove this allow once COOKIE_NAME gains callers in the analyzer routes.
 #![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};

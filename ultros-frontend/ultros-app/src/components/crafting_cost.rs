@@ -1,6 +1,6 @@
 //! Crafting cost types and computation — scaffolded in Task 1, implemented in Tasks 2-4.
-//! The entire module is scaffolding; suppress dead_code until consumers exist.
-// TODO(Task 2): remove this allow once compute_ingredient_cost gains a real caller.
+// TODO(Tasks 8-9): remove this allow once CRYSTAL_SEARCH_CATEGORY and item_page_default
+// gain callers in the analyzer routes.
 #![allow(dead_code)]
 
 use std::collections::HashMap;

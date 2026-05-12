@@ -1,7 +1,7 @@
 // ultros-frontend/ultros-app/src/components/on_hand_input.rs
 //! LocalStorage-backed on-hand tracking. Consumed by the analyzer routes in Tasks 7-9.
-// TODO(Task 7): remove this allow once OnHandQuantity, OnHandPanel, and OnHandProvider
-// gain their first UI consumers.
+// TODO(Tasks 8-9): remove this allow once STORAGE_KEY, from_storage, OnHandProvider,
+// and OnHandPanel gain callers in the analyzer routes.
 #![allow(dead_code)]
 
 use crate::components::crafting_cost::OnHand;

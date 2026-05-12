@@ -1,6 +1,6 @@
 use crate::api::{bulk_add_item_to_list, get_lists};
+use crate::components::crafting_cost::IngredientsIter;
 use crate::components::icon::Icon;
-use crate::components::related_items::IngredientsIter;
 use crate::components::{
     item_icon::*, loading::Loading, modal::Modal, small_item_display::SmallItemDisplay,
     toggle::Toggle, tooltip::Tooltip,

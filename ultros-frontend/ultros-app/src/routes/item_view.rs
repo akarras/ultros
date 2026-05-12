@@ -383,7 +383,29 @@ fn MarketStatsPanel(
                                                                 let prices = prices.as_ref().and_then(|prices| prices.as_ref().ok());
                                                                 if let Some(prices) = prices {
                                                                     let prices = prices.clone();
-                                                                    let (hq, lq) = calculate_crafting_cost(recipe, &prices);
+                                                                    let empty = crate::components::crafting_cost::EmptyOnHand;
+                                                                    let recipes_by_output = std::collections::HashMap::new();
+                                                                    let lq_opts = crate::components::crafting_cost::CraftingCostOptions {
+                                                                        require_hq: false,
+                                                                        max_subcraft_depth: 0,
+                                                                        shards: crate::components::crafting_cost::ShardsMode::ExcludeShards,
+                                                                        on_hand: &empty,
+                                                                    };
+                                                                    let hq_opts = crate::components::crafting_cost::CraftingCostOptions {
+                                                                        require_hq: true,
+                                                                        max_subcraft_depth: 0,
+                                                                        shards: crate::components::crafting_cost::ShardsMode::ExcludeShards,
+                                                                        on_hand: &empty,
+                                                                    };
+                                                                    let is_shard = |id: xiv_gen::ItemId| {
+                                                                        crate::global_state::xiv_data::tracked_data()
+                                                                            .items
+                                                                            .get(&id)
+                                                                            .map(|i| i.item_search_category == 59)
+                                                                            .unwrap_or(false)
+                                                                    };
+                                                                    let lq = crate::components::crafting_cost::compute_cost(recipe, &prices, &recipes_by_output, &lq_opts, &is_shard).cost;
+                                                                    let hq = crate::components::crafting_cost::compute_cost(recipe, &prices, &recipes_by_output, &hq_opts, &is_shard).cost;
                                                                     let min_cost = if lq > 0 { lq } else { hq };
                                                                     if min_cost > 0 && recipe.item_result == item_id {
                                                                         view! { <span>{t!(i18n, craft_for)} " ~" <Gil amount=min_cost /></span> }.into_any()
