@@ -284,6 +284,31 @@ pub fn ListItemRow(
                                         }
                                     />
 
+                                    <label class="text-xs">{t!(i18n, list_item_row_target_price_label)}</label>
+                                    <input
+                                        class="input w-24"
+                                        type="number"
+                                        min="0"
+                                        placeholder=move || t_string!(i18n, none).to_string()
+                                        prop:value=move || {
+                                            temp_item
+                                                .with(|i| {
+                                                    i.target_price.map(|v| v.to_string()).unwrap_or_default()
+                                                })
+                                        }
+                                        on:input=move |e| {
+                                            let v = event_target_value(&e);
+                                            temp_item
+                                                .update(|i| {
+                                                    i.target_price = if v.trim().is_empty() {
+                                                        None
+                                                    } else {
+                                                        v.parse::<i64>().ok().filter(|n| *n >= 0)
+                                                    };
+                                                })
+                                        }
+                                    />
+
                                 </div>
                             </td>
                             <td class="px-3 py-3 align-middle">

@@ -78,6 +78,7 @@ pub fn AddRecipeToCurrentListModal(
                         hq: Some(hq && can_be_hq),
                         quantity: Some(total_amount),
                         acquired: None,
+                        target_price: None,
                     })
                 })
                 .collect();

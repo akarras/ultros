@@ -295,6 +295,7 @@ impl From<list_item::Model> for ListItem {
             hq,
             quantity,
             acquired,
+            target_price,
         } = value;
         Self {
             id,
@@ -303,6 +304,7 @@ impl From<list_item::Model> for ListItem {
             hq,
             quantity,
             acquired,
+            target_price,
         }
     }
 }
@@ -316,6 +318,7 @@ impl From<ListItem> for list_item::Model {
             hq,
             quantity,
             acquired,
+            target_price,
         } = value;
         Self {
             id,
@@ -324,6 +327,7 @@ impl From<ListItem> for list_item::Model {
             hq,
             quantity,
             acquired,
+            target_price,
         }
     }
 }

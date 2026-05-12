@@ -88,6 +88,13 @@ sentry = { version = "0.38", default-features = false, features = [
 ] }
 sentry-tracing = "0.38"
 sentry-tower = { version = "0.38", features = ["http"] }
+web-push = { workspace = true }
+# `web-push` pulls in `openssl` transitively via `ece`. Pin the `vendored` feature here
+# so cargo compiles OpenSSL from source (via `openssl-src`) instead of linking the
+# system library. This means `cargo check`/`build` works on Windows MSVC without
+# installing OpenSSL dev headers separately, and on Linux it removes the libssl-dev
+# bootstrap requirement (CI still has libssl-dev installed; vendored is harmless there).
+openssl = { version = "0.10", features = ["vendored"] }
 
 [dev-dependencies]
 tempfile = "3.6.0"

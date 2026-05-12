@@ -6,6 +6,7 @@ use ultros_api_types::alert::{
     Alert, AlertDelivery, AlertEvent as ApiAlertEvent, AlertTrigger, CreateAlertRequest,
     ResendResult, UpdateAlertRequest,
 };
+use ultros_api_types::list::ListPermission;
 use ultros_db::UltrosDb;
 
 use crate::web::api::endpoint_validation::validate_discord_webhook_url;
@@ -47,12 +48,17 @@ pub(crate) async fn create_alert(
     let cooldown = resolve_cooldown_seconds(req.cooldown_seconds);
     let owner = user.id as i64;
 
-    let AlertTrigger::BelowThreshold {
-        item_id,
-        world_selector,
-        price_threshold,
-        hq_only,
-    } = req.trigger;
+    let (item_id, world_selector, price_threshold, hq_only) = match req.trigger {
+        AlertTrigger::BelowThreshold {
+            item_id,
+            world_selector,
+            price_threshold,
+            hq_only,
+        } => (item_id, world_selector, price_threshold, hq_only),
+        AlertTrigger::ListItemThreshold { list_id } => {
+            return create_list_threshold_alert_handler(&db, owner, list_id, cooldown, &req).await;
+        }
+    };
 
     validate_price_threshold(price_threshold)?;
 
@@ -163,6 +169,63 @@ pub(crate) async fn create_alert(
     }))
 }
 
+/// Handle `create_alert` for the `ListItemThreshold` variant. Split out because
+/// the body has its own permission/endpoint flow distinct from the item-scoped
+/// path, and a single big function gets unwieldy.
+async fn create_list_threshold_alert_handler(
+    db: &UltrosDb,
+    owner: i64,
+    list_id: i32,
+    cooldown: i32,
+    req: &CreateAlertRequest,
+) -> Result<Json<Alert>, ApiError> {
+    // List-scoped alerts only support the endpoint_ids delivery shape — the
+    // legacy `delivery` field doesn't carry enough information to bind a
+    // single user to many items.
+    if req.endpoint_ids.is_empty() {
+        return Err(ApiError::from(anyhow::anyhow!(
+            "list-scoped alerts require endpoint_ids"
+        )));
+    }
+
+    // Permission gate: caller must have at least Read on the list. Sharing a
+    // list with View permission is sufficient to subscribe; we don't require
+    // ownership because Tier 4 is explicitly about shared lists.
+    let permission = db
+        .get_permission(list_id, owner)
+        .await
+        .map_err(ApiError::from)?;
+    if permission < ListPermission::Read {
+        return Err(ApiError::from(anyhow::anyhow!(
+            "insufficient permission on list"
+        )));
+    }
+
+    // Verify all endpoints belong to this user before creating the alert.
+    for &eid in &req.endpoint_ids {
+        db.get_endpoint_owned_by(owner, eid)
+            .await
+            .map_err(ApiError::from)?;
+    }
+
+    let alert = db
+        .create_list_threshold_alert(owner, list_id, cooldown, &req.endpoint_ids)
+        .await
+        .map_err(ApiError::from)?;
+
+    Ok(Json(Alert {
+        id: alert.id,
+        trigger: AlertTrigger::ListItemThreshold { list_id },
+        // Deprecated fallback. Real delivery is endpoint_ids; this field only
+        // exists for the older clients that pre-date the endpoints framework.
+        delivery: AlertDelivery::DiscordDm,
+        endpoint_ids: req.endpoint_ids.clone(),
+        enabled: alert.enabled,
+        cooldown_seconds: alert.cooldown_seconds,
+        last_fired_at: alert.last_fired_at.map(|t| t.with_timezone(&chrono::Utc)),
+    }))
+}
+
 pub(crate) async fn list_alerts(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
@@ -204,6 +267,29 @@ pub(crate) async fn list_alerts(
                 hq_only: t.hq_only,
             },
             delivery,
+            endpoint_ids,
+            enabled: a.enabled,
+            cooldown_seconds: a.cooldown_seconds,
+            last_fired_at: a.last_fired_at.map(|t| t.with_timezone(&chrono::Utc)),
+        });
+    }
+
+    // Union with the user's list-threshold alerts. The shape converges on the
+    // same Alert struct — only the trigger variant differs.
+    let list_rows = db
+        .get_user_list_threshold_alerts(user.id as i64)
+        .await
+        .map_err(ApiError::from)?;
+    for (a, t) in list_rows {
+        let endpoint_ids = db
+            .list_endpoint_ids_for_alert(a.id)
+            .await
+            .map_err(ApiError::from)?;
+        out.push(Alert {
+            id: a.id,
+            trigger: AlertTrigger::ListItemThreshold { list_id: t.list_id },
+            // Deprecated; new clients use endpoint_ids.
+            delivery: AlertDelivery::DiscordDm,
             endpoint_ids,
             enabled: a.enabled,
             cooldown_seconds: a.cooldown_seconds,

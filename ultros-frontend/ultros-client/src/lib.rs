@@ -9,7 +9,7 @@ use log::{Level, error, info};
 use rexie::{ObjectStore, Rexie, Store, Transaction, TransactionMode};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use ultros_api_types::{world::WorldData, world_helper::WorldHelper};
+use ultros_api_types::{bootstrap::Bootstrap, world::WorldData, world_helper::WorldHelper};
 use ultros_app::*;
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsCast, JsValue};
@@ -265,6 +265,28 @@ fn report_rust_panic(panic_info: &std::panic::PanicHookInfo<'_>) {
     );
 }
 
+/// Read the bootstrap blob the SSR handler injects as
+/// `window.__ULTROS_BOOTSTRAP__`. Returns `None` if the script wasn't there or
+/// failed to decode — callers should fall back to the legacy fetch path so
+/// the client stays robust to old / mismatched HTML.
+fn read_bootstrap() -> Option<Bootstrap> {
+    use wasm_bindgen::{JsCast, JsValue};
+    let window = leptos::prelude::window();
+    let window_value: &JsValue = window.unchecked_ref();
+    let value =
+        js_sys::Reflect::get(window_value, &JsValue::from_str("__ULTROS_BOOTSTRAP__")).ok()?;
+    if value.is_undefined() || value.is_null() {
+        return None;
+    }
+    match serde_wasm_bindgen::from_value::<Bootstrap>(value) {
+        Ok(b) => Some(b),
+        Err(e) => {
+            error!("Failed to decode __ULTROS_BOOTSTRAP__: {e}");
+            None
+        }
+    }
+}
+
 #[wasm_bindgen]
 pub fn hydrate() {
     set_panic_hook();
@@ -275,11 +297,27 @@ pub fn hydrate() {
     log::info!("hydrate mode - hydrating");
     spawn_local(async move {
         info!("fetching..");
-        let (_, (worlds, region)) = join(
-            populate_xiv_gen_data(),
-            join(get_world_data(), get_region()),
-        )
-        .await;
+        // Use the SSR-injected bootstrap when available; only fall back to
+        // network requests if it's missing (e.g. stale cached HTML).
+        let bootstrap = read_bootstrap();
+        let (worlds, region, current_user) = if let Some(b) = bootstrap {
+            let _ = populate_xiv_gen_data().await;
+            (
+                Ok(Arc::new(WorldHelper::from(b.world_data))),
+                b.region,
+                Some(b.current_user),
+            )
+        } else {
+            info!("bootstrap missing — falling back to HTTP for world_data + region");
+            let (_, (worlds, region)) = join(
+                populate_xiv_gen_data(),
+                join(get_world_data(), get_region()),
+            )
+            .await;
+            // current_user remains absent here; ProfileDisplay will hit
+            // /api/v1/current_user via the existing fetch path.
+            (worlds, region, None)
+        };
         info!("hydrating body");
         let world_data = match worlds {
             Ok(worlds) => LocalWorldData(Ok(worlds)),
@@ -291,8 +329,12 @@ pub fn hydrate() {
         hydrate_body(move || {
             let world_data = world_data.clone();
             let region = region.clone();
+            let current_user = current_user.clone();
             provide_context(GuessedRegion(region));
             provide_context(world_data);
+            if let Some(current_user) = current_user {
+                provide_context(BootstrapUser(current_user));
+            }
             view! { <App /> }
         });
     });

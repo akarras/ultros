@@ -72,6 +72,33 @@ pub(crate) async fn static_path(Path(path): Path<String>) -> impl IntoResponse {
     get_file(path).await
 }
 
+/// Serve `ultros/static/service-worker.js` from the **root path** `/service-worker.js`.
+///
+/// A service worker's scope is restricted to (a subdirectory of) the path it's
+/// served from. Serving it from `/static/service-worker.js` would only let it
+/// control `/static/*`, which is useless. By placing it at `/service-worker.js`
+/// — and explicitly opting in via `Service-Worker-Allowed: /` — we get site-wide
+/// scope. Content-Type must be a JS MIME or browsers reject the registration.
+pub(crate) async fn service_worker_js() -> Result<Response<Body>, WebError> {
+    let bytes = get_static_file("service-worker.js").ok_or(WebError::NotFound)?;
+    // In release mode `bytes` is `&'static [u8]` (embedded); in debug it's `Vec<u8>`
+    // loaded from disk. Normalize to an owned Vec for the response body.
+    #[cfg(not(debug_assertions))]
+    let bytes: Vec<u8> = bytes.to_vec();
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/javascript"),
+        )
+        // Explicitly opt this SW into site-wide scope. Without this header the
+        // browser would reject the registration when called from a non-root page.
+        .header("Service-Worker-Allowed", HeaderValue::from_static("/"))
+        // SW scripts should always come from the network so updates land quickly.
+        .header(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"))
+        .body(Body::new(http_body_util::Full::from(bytes)))?)
+}
+
 #[derive(Deserialize)]
 pub(crate) struct IconQuery {
     pub size: IconSize,

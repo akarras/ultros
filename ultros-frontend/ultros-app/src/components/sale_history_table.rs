@@ -2,13 +2,14 @@ use std::ops::RangeInclusive;
 
 use super::{datacenter_name::*, gil::*, relative_time::*, world_name::*};
 use crate::components::icon::Icon;
-use crate::i18n::*;
 use chrono::{Duration, NaiveDateTime, TimeDelta, Utc};
 use icondata as i;
 use leptos::prelude::*;
 use linregress::{FormulaRegressionBuilder, RegressionDataBuilder};
 use log::{error, info};
 use ultros_api_types::{SaleHistory, world_helper::AnySelector};
+
+use crate::i18n::*;
 
 #[component]
 pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
@@ -285,61 +286,65 @@ fn WindowStats(#[prop(into)] sales: Signal<SalesWindow>) -> impl IntoView {
     let time_between_sales = Memo::new(move |_| sales.with(|s| s.time_between_sales));
     let hq_percent = Memo::new(move |_| sales.with(|s| s.hq_percent));
     view! {
-        <div class="flex flex-wrap gap-2">
-            <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
-                <span class="text-[color:var(--color-text-muted)] mr-1">{t!(i18n, sale_history_stat_gil_sold)}</span>
-                <GenericGil<u64> amount=total_gil />
+        <div class="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+            <div class="col-span-2 rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_12%,_transparent)] px-3 py-2 sm:col-span-1 xl:col-span-2">
+                <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, sale_history_stat_gil_sold)}</div>
+                <div class="mt-1 text-lg font-bold tabular-nums text-[color:var(--brand-fg)]">
+                    <GenericGil<u64> amount=total_gil />
+                </div>
             </div>
-            <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
-                <span class="text-[color:var(--color-text-muted)] mr-1">{t!(i18n, sale_history_stat_avg_price)}</span>
-                <Gil amount=average_unit_price />
+            <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--color-text)_5%,_transparent)] px-3 py-2">
+                <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, sale_history_stat_avg_price)}</div>
+                <div class="mt-1 font-semibold tabular-nums"><Gil amount=average_unit_price /></div>
             </div>
-            <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
-                <span class="text-[color:var(--color-text-muted)] mr-1">{t!(i18n, sale_history_stat_median_price)}</span>
-                <Gil amount=median_unit_price />
+            <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--color-text)_5%,_transparent)] px-3 py-2">
+                <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, sale_history_stat_median_price)}</div>
+                <div class="mt-1 font-semibold tabular-nums"><Gil amount=median_unit_price /></div>
             </div>
-            <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
-                <span class="text-[color:var(--color-text-muted)] mr-1">{t!(i18n, sale_history_stat_min)}</span>
-                <Gil amount=min_unit_price />
+            <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--color-text)_5%,_transparent)] px-3 py-2">
+                <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, sale_history_stat_min)}</div>
+                <div class="mt-1 font-semibold tabular-nums"><Gil amount=min_unit_price /></div>
             </div>
-            <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
-                <span class="text-[color:var(--color-text-muted)] mr-1">{t!(i18n, sale_history_stat_max)}</span>
-                <Gil amount=max_unit_price />
+            <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--color-text)_5%,_transparent)] px-3 py-2">
+                <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, sale_history_stat_max)}</div>
+                <div class="mt-1 font-semibold tabular-nums"><Gil amount=max_unit_price /></div>
             </div>
-            <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
-                <span class="text-[color:var(--color-text-muted)] mr-1">{t!(i18n, sale_history_stat_typical_stack)}</span>
-                {median_stack_size}
+            <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--color-text)_5%,_transparent)] px-3 py-2">
+                <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, sale_history_stat_typical_stack)}</div>
+                <div class="mt-1 font-semibold tabular-nums">{median_stack_size}</div>
             </div>
-            <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
-                <span class="text-[color:var(--color-text-muted)] mr-1">{t!(i18n, sale_history_stat_hq_percent)}</span>
-                {move || format!("{}%", hq_percent())}
+            <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--color-text)_5%,_transparent)] px-3 py-2">
+                <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, sale_history_stat_hq_percent)}</div>
+                <div class="mt-1 font-semibold tabular-nums">{move || format!("{}%", hq_percent())}</div>
             </div>
-            <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
-                <span class="text-[color:var(--color-text-muted)] mr-1">{t!(i18n, sale_history_stat_next_sale)}</span>
-                <Gil amount=guessed_next_sale_price />
+            <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_10%,_transparent)] px-3 py-2">
+                <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, sale_history_stat_next_sale)}</div>
+                <div class="mt-1 font-semibold tabular-nums"><Gil amount=guessed_next_sale_price /></div>
             </div>
-            <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
-                <span class="text-[color:var(--color-text-muted)] mr-1">{t!(i18n, sale_history_stat_time_between_sales)}</span>
-                {move || {
-                    time_between_sales()
-                        .abs()
-                        .to_std()
-                        .map(|d| {
-                            let secs = d.as_secs();
-                            let days = secs / 86_400;
-                            let hours = (secs % 86_400) / 3_600;
-                            let mins = (secs % 3_600) / 60;
-                            let seconds = secs % 60;
-                            let mut parts = Vec::new();
-                            if days > 0 { parts.push(format!("{}d", days)); }
-                            if hours > 0 { parts.push(format!("{}h", hours)); }
-                            if mins > 0 { parts.push(format!("{}m", mins)); }
-                            if seconds > 0 && parts.len() < 2 { parts.push(format!("{}s", seconds)); }
-                            if parts.len() > 2 { parts.truncate(2); }
-                            if parts.is_empty() { "0s".to_string() } else { parts.join(" ") }
-                        })
-                        .unwrap_or_default()
-                }}
+            <div class="col-span-2 rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_10%,_transparent)] px-3 py-2 sm:col-span-1 xl:col-span-2">
+                <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, sale_history_stat_time_between_sales)}</div>
+                <div class="mt-1 font-semibold tabular-nums">
+                    {move || {
+                        time_between_sales()
+                            .abs()
+                            .to_std()
+                            .map(|d| {
+                                let secs = d.as_secs();
+                                let days = secs / 86_400;
+                                let hours = (secs % 86_400) / 3_600;
+                                let mins = (secs % 3_600) / 60;
+                                let seconds = secs % 60;
+                                let mut parts = Vec::new();
+                                if days > 0 { parts.push(format!("{}d", days)); }
+                                if hours > 0 { parts.push(format!("{}h", hours)); }
+                                if mins > 0 { parts.push(format!("{}m", mins)); }
+                                if seconds > 0 && parts.len() < 2 { parts.push(format!("{}s", seconds)); }
+                                if parts.len() > 2 { parts.truncate(2); }
+                                if parts.is_empty() { "0s".to_string() } else { parts.join(" ") }
+                            })
+                            .unwrap_or_default()
+                    }}
+                </div>
             </div>
         </div>
     }
@@ -353,14 +358,17 @@ pub fn SalesInsights(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
     let day_sales = Memo::new(move |_| sales.with(|s| s.past_day.clone()).unwrap_or_default());
     let month_sales = Memo::new(move |_| sales.with(|s| s.month.clone()).unwrap_or_default());
     view! {
-        <h3 class="text-xl font-bold text-[color:var(--brand-fg)] mb-2">{t!(i18n, sale_history_insights_title)}</h3>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div class:hidden=move || sales.with(|s| s.past_day.is_none())>
-                <h4 class="text-sm text-[color:var(--color-text-muted)] mb-1">{t!(i18n, sale_history_last_24h)}</h4>
+        <div class="mb-4 flex flex-wrap items-end justify-between gap-2">
+            <h3 class="text-xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, sale_history_insights_title)}</h3>
+            <span class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, sale_history_insights_subtitle)}</span>
+        </div>
+        <div class="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--color-text)_3%,_transparent)] p-3" class:hidden=move || sales.with(|s| s.past_day.is_none())>
+                <h4 class="mb-3 text-sm font-semibold text-[color:var(--color-text)]">{t!(i18n, sale_history_last_24h)}</h4>
                 <WindowStats sales=day_sales />
             </div>
-            <div class:hidden=move || sales.with(|s| s.month.is_none())>
-                <h4 class="text-sm text-[color:var(--color-text-muted)] mb-1">{t!(i18n, sale_history_last_30d)}</h4>
+            <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--color-text)_3%,_transparent)] p-3" class:hidden=move || sales.with(|s| s.month.is_none())>
+                <h4 class="mb-3 text-sm font-semibold text-[color:var(--color-text)]">{t!(i18n, sale_history_last_30d)}</h4>
                 <WindowStats sales=month_sales />
             </div>
         </div>

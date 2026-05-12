@@ -21,6 +21,7 @@ use crate::components::{
         auto_mark_purchases::AutoMarkPurchases, buying_view::BuyingView,
         list_item_row::ListItemRow, list_summary::*,
     },
+    list_subscribe_drawer::ListSubscribeDrawer,
     loading::*,
     make_place_importer::*,
     tooltip::*,
@@ -136,6 +137,7 @@ pub fn ListView() -> impl IntoView {
     let (menu, set_menu) = signal(MenuState::None);
     let (recipe_modal_open, set_recipe_modal_open) = signal(false);
     let (buying_view, set_buying_view) = signal(false);
+    let (subscribe_open, set_subscribe_open) = signal(false);
 
     let edit_list_mode = RwSignal::new(false);
     let selected_items = RwSignal::new(HashSet::new());
@@ -191,18 +193,30 @@ pub fn ListView() -> impl IntoView {
                         </Tooltip>
                     </div>
 
-                    <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_purchasing_view).to_string()>
-                        <button
-                            class="btn-secondary self-start lg:self-auto"
-                            class:bg-brand-900=buying_view
-                            class:border-brand-500=buying_view
-                            class:active=buying_view
-                            on:click=move |_| set_buying_view.update(|v| *v = !*v)
-                        >
-                            <Icon icon=i::BiCartRegular />
-                            <span>{t!(i18n, list_view_purchasing_view)}</span>
-                        </button>
-                    </Tooltip>
+                    <div class="flex flex-wrap gap-2 self-start lg:self-auto">
+                        <Tooltip tooltip_text=t_string!(i18n, list_view_subscribe_tooltip).to_string()>
+                            <button
+                                class="btn-secondary"
+                                aria-label=t_string!(i18n, list_view_subscribe_aria)
+                                on:click=move |_| set_subscribe_open(true)
+                            >
+                                <Icon icon=i::BsBell />
+                                <span>{t!(i18n, list_view_subscribe_button)}</span>
+                            </button>
+                        </Tooltip>
+                        <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_purchasing_view).to_string()>
+                            <button
+                                class="btn-secondary"
+                                class:bg-brand-900=buying_view
+                                class:border-brand-500=buying_view
+                                class:active=buying_view
+                                on:click=move |_| set_buying_view.update(|v| *v = !*v)
+                            >
+                                <Icon icon=i::BiCartRegular />
+                                <span>{t!(i18n, list_view_purchasing_view)}</span>
+                            </button>
+                        </Tooltip>
+                    </div>
                 </div>
             </div>
 
@@ -215,6 +229,22 @@ pub fn ListView() -> impl IntoView {
                         set_recipe_modal_open(false);
                     }
                 />
+            </Show>
+
+            <Show when=subscribe_open>
+                {move || {
+                    let name = list_view
+                        .get()
+                        .and_then(|r| r.ok().map(|(l, _)| l.list.name))
+                        .unwrap_or_else(|| format!("List {}", list_id()));
+                    view! {
+                        <ListSubscribeDrawer
+                            list_id=list_id()
+                            list_name=name
+                            set_visible=set_subscribe_open.into()
+                        />
+                    }
+                }}
             </Show>
 
             {move || match menu() {

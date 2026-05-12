@@ -36,6 +36,15 @@ web-sys = { version = "0.3", optional = true, features = [
     "MessageEvent",
     "CloseEvent",
     "Event",
+    # Web Push subscribe flow — see push_subscribe::enable_browser_notifications.
+    "ServiceWorkerContainer",
+    "ServiceWorkerRegistration",
+    "PushManager",
+    "PushSubscription",
+    "PushSubscriptionOptionsInit",
+    "PushEncryptionKeyName",
+    "Notification",
+    "NotificationPermission",
 ] }
 ultros-api-types = { path = "../../ultros-api-types" }
 ultros-db = { path = "../../ultros-db", optional = true }
@@ -54,6 +63,7 @@ cookie = { version = "0.18", features = ["percent-encode"] }
 wasm-bindgen = { version = "0.2", optional = true }
 time = "0.3.20"
 js-sys = { version = "0.3.61", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
 tracing = "0.1"
 serde_json = { workspace = true }
 ultros-charts = { path = "../ultros-charts" }
@@ -102,6 +112,7 @@ hydrate = [
     "gloo-net",
     "web-sys",
     "wasm-bindgen",
+    "wasm-bindgen-futures",
     "time/wasm-bindgen",
     "js-sys",
     "leptos_i18n/hydrate",

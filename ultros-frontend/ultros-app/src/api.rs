@@ -7,8 +7,9 @@ use tracing::instrument;
 use ultros_api_types::{
     ActiveListing, CurrentlyShownItem, FfxivCharacter, FfxivCharacterVerification,
     alert::{
-        Alert, AlertEvent, CreateAlertRequest, CreateEndpointRequest, Endpoint, ResendResult,
-        UpdateAlertRequest, UpdateEndpointRequest,
+        Alert, AlertEvent, CreateAlertRequest, CreateEndpointRequest,
+        CreatePushSubscriptionRequest, Endpoint, ResendResult, UpdateAlertRequest,
+        UpdateEndpointRequest, VapidPublicKey,
     },
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     list::{
@@ -41,8 +42,22 @@ pub(crate) async fn get_listings(item_id: i32, world: &str) -> AppResult<Current
     fetch_api(&format!("/api/v1/listings/{world}/{item_id}")).await
 }
 
-/// This is okay because the client will send our login cookie
+/// This is okay because the client will send our login cookie.
+///
+/// Before falling back to the network, consult `BootstrapUser` — the SSR
+/// handler resolves the user from the auth cookie on every page render, and
+/// the client mirrors that into context on hydration from the bootstrap
+/// script. When the context is present we never have to hit
+/// `/api/v1/current_user`.
 pub(crate) async fn get_login() -> AppResult<UserData> {
+    use leptos::prelude::use_context;
+    if let Some(crate::global_state::BootstrapUser(user)) =
+        use_context::<crate::global_state::BootstrapUser>()
+    {
+        return user.ok_or(AppError::ApiError(
+            ultros_api_types::result::ApiError::NotAuthenticated,
+        ));
+    }
     fetch_api("/api/v1/current_user").await
 }
 
@@ -256,6 +271,10 @@ pub(crate) async fn delete_list(list_id: i32) -> AppResult<()> {
     delete_api(&format!("/api/v1/list/{list_id}/delete")).await
 }
 
+pub(crate) async fn leave_list(list_id: i32, self_user_id: u64) -> AppResult<()> {
+    delete_api(&format!("/api/v1/list/{list_id}/share/user/{self_user_id}")).await
+}
+
 pub(crate) async fn create_list(list: CreateList) -> AppResult<()> {
     post_api("/api/v1/list/create", list).await
 }
@@ -393,6 +412,27 @@ pub(crate) async fn resend_alert_event(event_id: i64) -> AppResult<ResendResult>
     post_api(&format!("/api/v1/alerts/events/{event_id}/resend"), ()).await
 }
 
+/// Fetch the server's VAPID public key. Used by the browser to call
+/// `pushManager.subscribe({applicationServerKey})`.
+///
+/// SSR builds never invoke this — the browser-side subscribe flow lives behind
+/// `cfg(all(feature = "hydrate", target_arch = "wasm32"))` — so this is "dead"
+/// on the server. The allow is targeted, not a `#[allow]` smell.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub(crate) async fn get_vapid_public_key() -> AppResult<VapidPublicKey> {
+    fetch_api("/api/v1/push/vapid-public-key").await
+}
+
+/// Persist the browser's PushSubscription on the server and create a matching
+/// notification endpoint of method=WebPush. SSR-dead, same reasoning as
+/// [`get_vapid_public_key`].
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub(crate) async fn create_push_subscription(
+    req: CreatePushSubscriptionRequest,
+) -> AppResult<Endpoint> {
+    post_api("/api/v1/push/subscribe", req).await
+}
+
 /// Return the T, or try and return an AppError
 #[instrument]
 fn deserialize<T>(json: &str) -> AppResult<T>
@@ -472,7 +512,8 @@ where
     });
     let req_parts = use_context::<Parts>().ok_or(AppError::ParamMissing)?;
     let headers = req_parts.headers;
-    let hostname = "http://localhost:8080";
+    let hostname =
+        std::env::var("HOSTNAME").unwrap_or_else(|_| "http://localhost:8080".to_string());
     let path = format!("{hostname}{path}");
     // headers.remove("Accept-Encoding");
     // this is only necessary because reqwest isn't updated to http 1.0- and I'm being lazy
@@ -556,7 +597,8 @@ where
     });
     let req_parts = use_context::<Parts>().ok_or(AppError::ParamMissing)?;
     let headers = req_parts.headers;
-    let hostname = "http://localhost:8080";
+    let hostname =
+        std::env::var("HOSTNAME").unwrap_or_else(|_| "http://localhost:8080".to_string());
     let path = format!("{hostname}{path}");
     // this is only necessary because reqwest isn't updated to http 1.0- and I'm being lazy
     let mut new_map = reqwest::header::HeaderMap::new();

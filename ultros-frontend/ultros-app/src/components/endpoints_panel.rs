@@ -4,6 +4,7 @@ use ultros_api_types::alert::{CreateEndpointRequest, Endpoint, EndpointMethod};
 
 use crate::api::{create_endpoint, delete_endpoint, list_endpoints, test_endpoint};
 use crate::components::icon::Icon;
+use crate::components::push_subscribe::enable_browser_notifications;
 use crate::global_state::toasts::use_toast;
 
 #[component]
@@ -53,13 +54,37 @@ pub fn EndpointsPanel() -> impl IntoView {
         });
     };
 
+    let on_enable_push = move |_| {
+        spawn_local(async move {
+            match enable_browser_notifications().await {
+                Ok(_endpoint) => {
+                    if let Some(t) = toasts {
+                        t.success("Browser notifications enabled");
+                    }
+                    version.update(|v| *v += 1);
+                }
+                Err(msg) => {
+                    if let Some(t) = toasts {
+                        t.error(msg);
+                    }
+                }
+            }
+        });
+    };
+
     view! {
         <div class="space-y-4">
             <div class="flex justify-between items-center">
                 <h2 class="text-lg font-semibold">"Endpoints"</h2>
-                <button class="btn" on:click=move |_| set_show_form.update(|v| *v = !*v)>
-                    {move || if show_form.get() { "Cancel" } else { "Add endpoint" }}
-                </button>
+                <div class="flex gap-2">
+                    <button class="btn" on:click=on_enable_push
+                            title="Subscribe this browser to receive push notifications when your alerts fire">
+                        "Enable browser notifications"
+                    </button>
+                    <button class="btn" on:click=move |_| set_show_form.update(|v| *v = !*v)>
+                        {move || if show_form.get() { "Cancel" } else { "Add endpoint" }}
+                    </button>
+                </div>
             </div>
 
             <Show when=move || show_form.get()>
@@ -86,6 +111,7 @@ pub fn EndpointsPanel() -> impl IntoView {
                                         EndpointMethod::DiscordDm { .. } => "Discord DM",
                                         EndpointMethod::DiscordChannel { .. } => "Discord Channel",
                                         EndpointMethod::Webhook { .. } => "Webhook",
+                                        EndpointMethod::WebPush { .. } => "Browser push",
                                     };
                                     let id = e.id;
                                     view! {
