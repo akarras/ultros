@@ -62,12 +62,12 @@ The bot works but is unforgiving to first-time users. The `prices` group is the 
 
 **Proposal.** Reuse the world cache; suggest regions first, then DCs, then worlds, with each prefixed by its type (e.g. `🌐 Aether (Datacenter)`, `🌍 Faerie (World)`).
 
-### B-2.3 · Defaults for `/ffxiv analyze profit` · P1 · S
+### [shipped 2026-05-12] B-2.3 · Defaults for `/ffxiv analyze profit` · P1 · S
 **Problem.** Four required numeric parameters with no defaults ([analyze.rs:17](ultros/src/discord/ffxiv/analyze.rs:17)).
 
 **Proposal.** Make `minimum_profit` (10_000), `number_recently_sold` (5), `threshold_days` (7) optional. Only `world` stays required. Add an example in the command description.
 
-### [partial — retainer parent shipped] B-2.4 · Fill placeholder subgroup descriptions · P2 · S
+### [partial — retainer and analyze parents shipped] B-2.4 · Fill placeholder subgroup descriptions · P2 · S
 **Problem.** [`character.rs:5`](ultros/src/discord/ffxiv/character.rs:5), [`retainer.rs:25`](ultros/src/discord/ffxiv/retainer.rs:25), [`analyze.rs:12`](ultros/src/discord/ffxiv/analyze.rs:12) all show `"Hello world"` or placeholders. These render in `/help` output.
 
 **Acceptance.** Every command in the tree has a one-sentence description that reads cleanly in `/help`.
