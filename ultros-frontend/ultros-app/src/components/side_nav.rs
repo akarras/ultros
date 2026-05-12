@@ -1,7 +1,7 @@
 use crate::components::icon::Icon;
 use crate::global_state::home_world::use_home_world;
 use crate::global_state::side_nav::use_side_nav_settings;
-use crate::i18n::{t, use_i18n};
+use crate::i18n::{t, t_string, use_i18n};
 use git_const::git_short_hash;
 use icondata as i;
 use leptos::prelude::*;
@@ -40,7 +40,7 @@ pub fn SideNav() -> impl IntoView {
                 </A>
                 <button
                     class="side-nav-collapse hidden lg:inline-flex"
-                    aria-label="Toggle sidebar"
+                    aria-label=t_string!(i18n, side_nav_toggle_sidebar).to_string()
                     aria-pressed=move || if nav.collapsed.get() { "true" } else { "false" }
                     on:click=move |_| nav.collapsed.update(|v| *v = !*v)
                 >
@@ -54,7 +54,7 @@ pub fn SideNav() -> impl IntoView {
                     <span class="side-nav-label">{t!(i18n, home)}</span>
                 </A>
 
-                <div class="side-nav-section-header">"TOOLS"</div>
+                <div class="side-nav-section-header">{t!(i18n, side_nav_tools)}</div>
 
                 <A href=with_world("/flip-finder/{world}", "/flip-finder") attr:class="side-nav-item">
                     <Icon icon=i::FaMoneyBillTrendUpSolid />
@@ -97,7 +97,7 @@ pub fn SideNav() -> impl IntoView {
                     <span class="side-nav-label">{t!(i18n, currency_exchange)}</span>
                 </A>
 
-                <div class="side-nav-section-header">"SAVED"</div>
+                <div class="side-nav-section-header">{t!(i18n, side_nav_saved)}</div>
 
                 <A href="/list" attr:class="side-nav-item">
                     <Icon icon=i::AiOrderedListOutlined />
@@ -109,7 +109,7 @@ pub fn SideNav() -> impl IntoView {
                 </A>
                 <A href="/alerts" attr:class="side-nav-item">
                     <Icon icon=i::BsBell />
-                    <span class="side-nav-label">"Alerts"</span>
+                    <span class="side-nav-label">{t!(i18n, alerts)}</span>
                 </A>
             </nav>
 
@@ -123,7 +123,7 @@ pub fn SideNav() -> impl IntoView {
                 <a
                     href=format!("https://github.com/akarras/ultros/commit/{git_hash}")
                     class="side-nav-version"
-                    title="Version"
+                    title=t_string!(i18n, version).to_string()
                 >
                     {git_hash}
                 </a>

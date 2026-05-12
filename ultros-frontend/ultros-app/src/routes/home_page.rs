@@ -38,7 +38,7 @@ pub fn HomePage() -> impl IntoView {
         <MetaTitle title=move || t_string!(i18n, meta_title).to_string() />
         <MetaDescription text=move || t_string!(i18n, meta_description).to_string() />
         <div class="main-content p-2 sm:p-6">
-            <div class="container flex flex-col gap-6 lg:flex-row-reverse mx-auto items-start max-w-7xl">
+            <div class="container flex w-full min-w-0 flex-col gap-6 lg:flex-row-reverse mx-auto items-start max-w-7xl">
                 // Right sidebar
                 <div class="flex flex-col w-full lg:w-[424px] gap-6 sticky top-4">
                     <LiveSaleTicker />
@@ -47,18 +47,18 @@ pub fn HomePage() -> impl IntoView {
                 </div>
 
                 // Main content
-                <div class="flex flex-col grow gap-8">
+                <div class="flex w-full min-w-0 flex-col grow gap-8">
                     {move || needs_onboarding.get().then(|| view! {
                         <A
                             href="/welcome"
                             attr:class="group focus:outline-none rounded-2xl"
                             attr:aria-label=move || t_string!(i18n, home_onboarding_banner_cta).to_string()
                         >
-                            <div class="panel p-5 sm:p-6 rounded-2xl border-l-4 border-brand-300/70 flex flex-wrap items-center gap-4 hover:border-brand-300 transition-colors">
+                            <div class="panel p-5 sm:p-6 rounded-2xl border-l-4 border-brand-300/70 flex flex-col items-start gap-4 hover:border-brand-300 transition-colors sm:flex-row sm:items-center">
                                 <div class="p-3 rounded-xl bg-[color:var(--brand-bg)] text-[color:var(--brand-fg)] shrink-0">
                                     <Icon icon=i::FaMapLocationDotSolid width="1.75em" height="1.75em" />
                                 </div>
-                                <div class="flex-1 min-w-[16rem]">
+                                <div class="min-w-0 flex-1">
                                     <h2 class="text-xl font-bold text-[color:var(--brand-fg)]">
                                         {t!(i18n, home_onboarding_banner_title)}
                                     </h2>
@@ -66,7 +66,7 @@ pub fn HomePage() -> impl IntoView {
                                         {t!(i18n, home_onboarding_banner_body)}
                                     </p>
                                 </div>
-                                <span class="btn-primary py-2 px-4 group-hover:translate-x-0.5 transition-transform">
+                                <span class="btn-primary w-full justify-center py-2 px-4 group-hover:translate-x-0.5 transition-transform sm:w-auto">
                                     <span>{t!(i18n, home_onboarding_banner_cta)}</span>
                                     <Icon icon=i::FaArrowRightSolid width="0.9em" height="0.9em" />
                                 </span>
@@ -114,8 +114,8 @@ pub fn HomePage() -> impl IntoView {
 
                     // Tool rail — flat chips instead of card grid
                     <div>
-                        <h2 class="text-sm uppercase tracking-wider text-[color:var(--color-text-muted)] mb-3 px-1">"Tools"</h2>
-                        <div class="flex gap-3 overflow-x-auto pb-2 -mx-2 px-2 scroll-snap-x snap-x">
+                        <h2 class="text-sm uppercase tracking-wider text-[color:var(--color-text-muted)] mb-3 px-1">{t!(i18n, side_nav_tools)}</h2>
+                        <div class="flex max-w-full gap-3 overflow-x-auto pb-2 -mx-2 px-2 scroll-snap-x snap-x">
                             <ToolChip href="/items?menu-open=true" label=t!(i18n, item_explorer).into_any()>
                                 <Icon width="1.75em" height="1.75em" icon=i::FaScrewdriverWrenchSolid />
                             </ToolChip>
@@ -146,7 +146,7 @@ pub fn HomePage() -> impl IntoView {
                         </div>
                     </div>
 
-                    <Ad class="w-96 aspect-[21/9] rounded-2xl overflow-hidden" />
+                    <Ad class="w-full max-w-96 aspect-[21/9] rounded-2xl overflow-hidden" />
                 </div>
             </div>
         </div>
