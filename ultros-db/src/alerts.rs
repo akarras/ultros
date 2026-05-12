@@ -523,6 +523,86 @@ impl UltrosDb {
         Ok(alert)
     }
 
+    /// Create an alert + alert_list_threshold in a single transaction and bind
+    /// the supplied notification endpoints. Caller MUST have already checked
+    /// that `owner` has at least `Read` permission on `list_id`.
+    pub async fn create_list_threshold_alert(
+        &self,
+        owner: i64,
+        list_id: i32,
+        cooldown_seconds: i32,
+        endpoint_ids: &[i32],
+    ) -> Result<alert::Model> {
+        use sea_orm::TransactionTrait;
+        // Ownership check on every endpoint id before we open a transaction.
+        for &eid in endpoint_ids {
+            notification_endpoint::Entity::find_by_id(eid)
+                .filter(notification_endpoint::Column::UserId.eq(owner))
+                .one(&self.db)
+                .await?
+                .ok_or_else(|| anyhow::Error::msg(format!("endpoint {eid} not owned by user")))?;
+        }
+        let txn = self.db.begin().await?;
+        let alert = alert::Entity::insert(alert::ActiveModel {
+            id: ActiveValue::default(),
+            owner: Set(owner),
+            enabled: Set(true),
+            last_fired_at: Set(None),
+            cooldown_seconds: Set(cooldown_seconds),
+        })
+        .exec_with_returning(&txn)
+        .await?;
+        alert_list_threshold::Entity::insert(alert_list_threshold::ActiveModel {
+            id: ActiveValue::default(),
+            alert_id: Set(alert.id),
+            list_id: Set(list_id),
+        })
+        .exec(&txn)
+        .await?;
+        for &eid in endpoint_ids {
+            alert_notification_rule::Entity::insert(alert_notification_rule::ActiveModel {
+                alert_id: Set(alert.id),
+                endpoint_id: Set(eid),
+            })
+            .exec(&txn)
+            .await?;
+        }
+        txn.commit().await?;
+        Ok(alert)
+    }
+
+    /// Return the user's list-threshold alerts (alert row + junction row).
+    pub async fn get_user_list_threshold_alerts(
+        &self,
+        owner: i64,
+    ) -> Result<Vec<(alert::Model, alert_list_threshold::Model)>> {
+        let rows = alert::Entity::find()
+            .filter(alert::Column::Owner.eq(owner))
+            .find_with_related(alert_list_threshold::Entity)
+            .all(&self.db)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .flat_map(|(a, ts)| ts.into_iter().map(move |t| (a.clone(), t)))
+            .collect())
+    }
+
+    /// Return all enabled list-threshold alerts. Used by the price tracker on
+    /// each `refresh_from` to rebuild its in-memory index.
+    pub async fn get_all_active_list_threshold_alerts(
+        &self,
+    ) -> Result<Vec<(alert::Model, alert_list_threshold::Model)>> {
+        let rows = alert::Entity::find()
+            .filter(alert::Column::Enabled.eq(true))
+            .find_with_related(alert_list_threshold::Entity)
+            .all(&self.db)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .flat_map(|(a, ts)| ts.into_iter().map(move |t| (a.clone(), t)))
+            .collect())
+    }
+
     /// Return the endpoint ids attached to an alert, in order of attachment.
     pub async fn list_endpoint_ids_for_alert(&self, alert_id: i32) -> Result<Vec<i32>> {
         let rules = alert_notification_rule::Entity::find()
