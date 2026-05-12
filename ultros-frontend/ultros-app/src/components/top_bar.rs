@@ -4,7 +4,7 @@
 
 use crate::components::apps_menu::UserMenu;
 use crate::components::icon::Icon;
-use crate::components::language_picker::LanguagePicker;
+use crate::components::language_picker::LanguageNavMenu;
 use crate::components::search_box::SearchBox;
 use crate::components::theme_picker::QuickThemeToggle;
 use crate::global_state::side_nav::use_side_nav_settings;
@@ -34,7 +34,7 @@ pub fn TopBar() -> impl IntoView {
 
             <div class="top-bar-actions">
                 <div class="hidden md:block">
-                    <LanguagePicker />
+                    <LanguageNavMenu />
                 </div>
                 <div class="hidden md:block">
                     <QuickThemeToggle />

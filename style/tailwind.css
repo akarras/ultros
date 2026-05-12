@@ -1498,9 +1498,13 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     display: none;
 }
 
-/* Collapsed sidebar: 56px icon-only. */
-.app-shell.app-shell-collapsed {
-    grid-template-columns: 56px minmax(0, 1fr);
+/* Collapsed sidebar: 56px icon-only — desktop only.
+   On mobile, .app-shell-collapsed must NOT override the single-column
+   grid (the sidebar is position: fixed and doesn't need a grid track). */
+@media (min-width: 1024px) {
+    .app-shell.app-shell-collapsed {
+        grid-template-columns: 56px minmax(0, 1fr);
+    }
 }
 
 /* Mobile (< 1024px): sidebar becomes an overlay drawer. */
